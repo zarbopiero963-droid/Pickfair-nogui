@@ -13,6 +13,7 @@ from recovery.telegram_autoheal import (
     TelegramAutohealPolicy,
     TelegramAutohealSnapshot,
 )
+from telegram_bot_runtime import TelegramBotApiRuntime
 from telegram_listener import TelegramListener
 
 logger = logging.getLogger(__name__)
@@ -29,15 +30,21 @@ class TelegramService:
     - non contiene logica di trading
     """
 
-    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0):
+    def __init__(self, settings_service, db, bus, client_factory=None, connect_timeout: float = 10.0, bot_transport_factory=None):
         self.settings_service = settings_service
         self.db = db
         self.bus = bus
         # Factory iniettabile del client Telegram (test/diagnostica);
         # None = client Telethon reale costruito dal listener.
         self._client_factory = client_factory
+        # Factory iniettabile del transport Bot API (test/diagnostica);
+        # None = TelegramBotApiTransport reale costruito dall'adapter.
+        # Firma: (bot_token, chat_ids, on_message) -> transport.
+        self._bot_transport_factory = bot_transport_factory
         self._connect_timeout = float(connect_timeout)
-        self.listener: Optional[TelegramListener] = None
+        # Il listener può essere il TelegramListener (path Telethon userbot) o
+        # l'adapter Bot API (path bot_token, PR-5a): stessa superficie runtime.
+        self.listener: Optional[TelegramListener | TelegramBotApiRuntime] = None
         self.connected = False
         self.last_error = ""
         self.state = "CREATED"
@@ -112,6 +119,33 @@ class TelegramService:
             },
         )
 
+    def _stop_partial_listener_on_start_failure(self) -> bool:
+        """Best-effort stop del listener dopo un'eccezione in start() (avvio
+        parziale). Ritorna True se un thread runtime SOPRAVVIVE comunque (orfano da
+        NON nascondere: il chiamante tiene il riferimento perché il guard
+        previous_runtime_still_alive lo veda e blocchi un retry, evitando un secondo
+        getUpdates/409 e segnali di betting duplicati). Fail-safe: eccezioni nello
+        stop non si propagano (siamo già sul path di errore)."""
+        lst = self.listener
+        if lst is None:
+            return False
+        stopper = getattr(lst, "stop", None)
+        if callable(stopper):
+            try:
+                stopper()
+            except Exception:  # pragma: no cover - lo stop non deve mascherare l'errore originale
+                pass
+        thread = getattr(lst, "_runtime_thread", None)
+        if thread is None:
+            return False  # nessun thread runtime => morto (safe: azzera il riferimento)
+        try:
+            return bool(thread.is_alive())
+        except Exception:
+            # Incertezza sulla liveness (is_alive solleva) => FAIL-CLOSED: assumi il
+            # thread VIVO (tieni il listener, blocca il retry). Un fail-open qui
+            # riaprirebbe la duplicazione dei segnali di betting.
+            return True
+
     def _refresh_runtime_truth_from_listener(self) -> None:
         status_getter = getattr(self.listener, "status", None) if self.listener else None
         if callable(status_getter):
@@ -136,6 +170,105 @@ class TelegramService:
     # =========================================================
     # LIFECYCLE
     # =========================================================
+    @staticmethod
+    def _numeric_active_chat_ids(chats: list) -> list:
+        """chat_id NUMERICI e attivi di un bot. getUpdates restituisce chat.id
+        numerico: un chat_id non numerico (es. `@canale`) non è ascoltabile per
+        questa via -> scartato (la risoluzione di `@username` è rimandata). Fa
+        anche da validazione fail-closed: un bot con sole chat non numeriche
+        risulta senza chat utilizzabili (=> non usable)."""
+        out = []
+        for c in chats or []:
+            if not c.get("is_active"):
+                continue
+            s = str(c.get("chat_id") or "").strip()
+            if not s:
+                continue
+            try:
+                int(s)
+            except (TypeError, ValueError):
+                continue
+            out.append(s)
+        return out
+
+    def _select_bot_api_source(self) -> tuple:
+        """Legge i bot Bot API in UNA sola lettura e ritorna `(active_count, usable)`
+        (epica #374 PR-5a):
+        - `active_count`: numero di bot ATTIVI con token — il gate multi-bot fa
+          fail-closed su >1 attivo (niente drop silenzioso di una sorgente attiva),
+          A PRESCINDERE dall'usabilità delle chat;
+        - `usable`: lista `(bot_dict, [chat_id_str])` dei bot attivi con >=1 chat
+          NUMERICA attiva (per la selezione della sorgente).
+
+        Read-only. Gli errori DB **PROPAGANO** (nessun degrado a 0/[] che aprirebbe
+        un buco nel fail-closed: un conteggio azzerato per errore riavvierebbe un
+        singolo bot droppando il 2°): `start()` cattura e fa fail-closed
+        'telegram_bot_config_read_error'. Un'UNICA lettura evita incoerenze tra il
+        conteggio (gate) e la selezione (sorgente) — due letture separate potrebbero
+        divergere. Il token viene letto perché serve comunque a costruire il runtime
+        del bot selezionato (nessuna estrazione extra di segreti solo per contare).
+
+        Un DB senza supporto Bot API (metodo `get_telegram_bots` ASSENTE, es. legacy/
+        minimal) NON è un errore di lettura: significa "nessuna sorgente bot" =>
+        `(0, [])` => `start()` cade nel fail-closed 'Configurazione incompleta'. La
+        propagazione riguarda solo gli errori REALI del metodo quando esiste."""
+        getter = getattr(self.db, "get_telegram_bots", None)
+        if not callable(getter):
+            return 0, []
+        bots = getter(include_token=True) or []
+        active_count = 0
+        usable: list = []
+        for bot in bots:
+            if not bot.get("is_active") or not bot.get("bot_token"):
+                continue
+            active_count += 1
+            chats = self.db.get_telegram_bot_chats(bot["id"]) or []
+            chat_ids = self._numeric_active_chat_ids(chats)
+            if chat_ids:
+                usable.append((bot, chat_ids))
+        return active_count, usable
+
+    def _running_chat_count(self) -> int:
+        """Numero di chat monitorate dal listener IN ESECUZIONE (Telethon o Bot
+        API), per le risposte `already_running` — evita di rivalutare il gate/la
+        selezione su un runtime sano. Fail-safe: 0 se non leggibile."""
+        try:
+            snap = self.listener.status() if self.listener else {}
+            return int(snap.get("monitored_chat_count", 0) or 0)
+        except Exception:  # pragma: no cover - degrado difensivo
+            return 0
+
+    def _build_botapi_runtime(self, bot: dict, chat_ids: list) -> TelegramBotApiRuntime:
+        """Costruisce l'adapter Bot API (path bot_token, PR-5a). Estratto da
+        start() per tenerne bassa la complessità."""
+        return TelegramBotApiRuntime(
+            bot_token=bot["bot_token"],
+            chat_ids=chat_ids,
+            db=self.db,
+            on_signal=self._handle_signal,
+            on_status=self._handle_status,
+            transport_factory=self._bot_transport_factory,
+        )
+
+    def _build_telethon_listener(self, cfg) -> TelegramListener:
+        """Costruisce e configura il listener Telethon userbot (path invariato).
+        Estratto da start() per tenerne bassa la complessità."""
+        listener = TelegramListener(
+            api_id=int(cfg.api_id),
+            api_hash=cfg.api_hash,
+            session_string=cfg.session_string or None,
+            bot_token=getattr(cfg, "bot_token", None),
+            client_factory=self._client_factory,
+            connect_timeout=self._connect_timeout,
+        )
+        listener.set_database(self.db)
+        listener.set_monitored_chats(cfg.monitored_chat_ids)
+        listener.set_callbacks(
+            on_signal=self._handle_signal,
+            on_status=self._handle_status,
+        )
+        return listener
+
     def start(self) -> dict:
         cfg = self.settings_service.load_telegram_config()
 
@@ -149,17 +282,26 @@ class TelegramService:
                 "state": self.state,
             }
 
-        if not cfg.api_id or not cfg.api_hash:
-            self.last_error = "Configurazione Telegram incompleta"
-            self.intentional_stop = False
-            self._set_state("FAILED")
-            raise RuntimeError(self.last_error)
+        # Riallinea lo stato-cache col runtime REALE prima dell'idempotenza: uno
+        # `self.state` stale "CONNECTED" (dopo morte o degrado permanente del
+        # transport, non ancora rinfrescato) NON deve far tornare already_running
+        # su un runtime in realtà morto, impedendo il recovery. Il listener/adapter
+        # riporta lo stato effettivo (FAILED su ingestione morta).
+        if self.listener is not None:
+            self._refresh_runtime_truth_from_listener()
 
+        # Idempotenza PRIMA della selezione sorgente (epica #374 PR-5a): un
+        # servizio GIÀ in esecuzione NON deve rivalutare il gate Bot API. Se la
+        # config DB cambiasse a runtime (2° bot attivato, bot disattivato), una
+        # start() ridondante che rivaluta il gate solleverebbe e forzerebbe FAILED
+        # su un runtime SANO (transport vivo), innescando un autoheal inutile con
+        # possibile perdita d'ingestione. Il conteggio chat qui viene dal listener
+        # in esecuzione (non da una nuova selezione).
         if self.state in {"CONNECTING", "CONNECTED", "RECONNECTING"}:
             return {
                 "started": True,
                 "reason": "already_running",
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": self._running_chat_count(),
                 "state": self.state,
             }
 
@@ -167,7 +309,7 @@ class TelegramService:
             return {
                 "started": True,
                 "reason": "already_running",
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": self._running_chat_count(),
                 "state": self.state,
             }
 
@@ -178,28 +320,70 @@ class TelegramService:
             self.connected = False
             return {"started": False, "reason": "previous_runtime_still_alive", "state": self.state}
 
+        # Selezione sorgente di ingestione. Il path Telethon userbot
+        # (api_id/api_hash) resta prioritario e INVARIATO. Solo quando le
+        # credenziali userbot mancano si tenta il path Bot API (bot_token), che
+        # NON richiede api_id/api_hash: è questo il gate rilassato. Eseguito DOPO
+        # l'idempotenza => non fa mai fallire un runtime già attivo.
+        bot_api_selection = None
+        if not cfg.api_id or not cfg.api_hash:
+            try:
+                # UNA lettura => (active_count, usable) coerenti. Il gate multi-bot
+                # conta i bot ATTIVI (non gli usable): un 2° bot attivo ma non-usable
+                # (es. sole chat non numeriche) NON deve essere droppato in silenzio
+                # avviando il solo bot usable. Errori DB PROPAGANO qui sotto.
+                active_count, usable = self._select_bot_api_source()
+            except Exception as exc:
+                # Errore DB nel determinare il set di bot: NON avviare un set
+                # parziale (fail-closed). Meglio non partire e ritentare che
+                # droppare silenziosamente una sorgente.
+                logger.warning("[TelegramService] selezione bot Bot API fallita: %s", exc)
+                self.last_error = "telegram_bot_config_read_error"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
+            if active_count > 1:
+                # PR-5a wira UN solo bot. Con più bot ATTIVI configurati NON si
+                # droppa silenziosamente nulla — nemmeno se solo uno è usable:
+                # fail-closed, l'orchestrazione N-bot arriva nella PR successiva.
+                self.last_error = "multi_bot_runtime_not_yet_supported"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
+            elif len(usable) == 1:
+                bot_api_selection = usable[0]
+            else:
+                # Né userbot né un bot Bot API utilizzabile: fail-closed come prima.
+                # (active_count<=1 qui: 0 bot attivi, o 1 bot attivo ma non usable.)
+                self.last_error = "Configurazione Telegram incompleta"
+                self.intentional_stop = False
+                self._set_state("FAILED")
+                raise RuntimeError(self.last_error)
+
+        # Conteggio chat della sorgente selezionata per la risposta di avvio:
+        # sul path Bot API le chat vivono nel bot selezionato, NON in
+        # cfg.monitored_chat_ids (lista userbot, vuota qui).
+        active_chat_count = (
+            len(bot_api_selection[1]) if bot_api_selection is not None
+            else len(cfg.monitored_chat_ids)
+        )
+
         try:
             self.intentional_stop = False
             self.reconnect_in_progress = False
             self._set_state("CONNECTING")
-            self.listener = TelegramListener(
-                api_id=int(cfg.api_id),
-                api_hash=cfg.api_hash,
-                session_string=cfg.session_string or None,
-                bot_token=getattr(cfg, "bot_token", None),
-                client_factory=self._client_factory,
-                connect_timeout=self._connect_timeout,
-            )
-
-            self.listener.set_database(self.db)
-            self.listener.set_monitored_chats(cfg.monitored_chat_ids)
-            self.listener.set_callbacks(
-                on_signal=self._handle_signal,
-                on_status=self._handle_status,
-            )
-            self.handlers_registered = sum(
-                1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
-            )
+            if bot_api_selection is not None:
+                # Path Bot API (PR-5a): adapter listener-compatibile alimentato dal
+                # transport HTTP getUpdates. Nessun Telethon, nessun api_id/api_hash.
+                bot, chat_ids = bot_api_selection
+                self.listener = self._build_botapi_runtime(bot, chat_ids)
+                # Un bot Bot API attivo = un handler runtime.
+                self.handlers_registered = 1
+            else:
+                self.listener = self._build_telethon_listener(cfg)
+                self.handlers_registered = sum(
+                    1 for cb in (self._handle_signal, self._handle_status) if callable(cb)
+                )
 
             start_result = self.listener.start()
             started_ok = bool(start_result.get("started", False))
@@ -216,14 +400,27 @@ class TelegramService:
                 # listener_started (che il refresh riallinea al listener,
                 # dove resta True anche per una startup fallita).
                 "started": started_ok and not self.last_error,
-                "chat_count": len(cfg.monitored_chat_ids),
+                "chat_count": active_chat_count,
                 "state": self.state,
                 "connected": self.connected,
             }
 
         except Exception as exc:
             self.connected = False
-            self.listener = None
+            # handlers_registered è impostato PRIMA di listener.start() (1 sul path
+            # Bot API, 2 sul Telethon). Se start() ha (parzialmente) avviato un
+            # thread e poi ha sollevato, NON basta perdere il riferimento: un thread
+            # orfano resterebbe vivo e un retry creerebbe un SECONDO listener (doppio
+            # getUpdates/409, segnali di betting duplicati). Best-effort stop, poi:
+            # - thread MORTO dopo lo stop => azzera listener+handler (snapshot pulito
+            #   e coerente: FAILED => 0 handler);
+            # - thread ANCORA VIVO => TIENI il riferimento (il guard
+            #   previous_runtime_still_alive lo vede e blocca il retry) e mantieni
+            #   handlers_registered=1 (residuo NON nascosto).
+            residual_alive = self._stop_partial_listener_on_start_failure()
+            if not residual_alive:
+                self.listener = None
+                self.handlers_registered = 0
             self.last_error = str(exc)
             self.intentional_stop = False
             self.reconnect_in_progress = False

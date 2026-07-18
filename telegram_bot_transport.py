@@ -110,6 +110,37 @@ class TelegramBotApiTransport:
         self._offset = 0
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
+        # Health-surface (epica #374 PR-5a): fallimenti getUpdates consecutivi.
+        # Un thread vivo ma in backoff PERMANENTE (es. bot_token 401 o 409
+        # Conflict) non riceve nulla: senza questo contatore il runtime resterebbe
+        # "CONNECTED" pur con ingestione morta (fail-open). Azzerato ad ogni poll
+        # riuscito, incrementato ad ogni fallimento; l'adapter lo legge per
+        # degradare lo stato oltre una soglia.
+        # `_health_lock` rende ATOMICA la lettura della coppia (thread_alive,
+        # consecutive_failures) via health_snapshot(): il thread di polling scrive
+        # il contatore sotto lock, il chiamante (watchdog/adapter) lo legge sotto
+        # lock, così lo snapshot non è mai torn (thread morto "tra" le due letture).
+        self._health_lock = threading.Lock()
+        self._consecutive_failures = 0
+        # `_lifecycle_lock` serializza l'INTERO lifecycle start()/stop() come
+        # operazione atomica: senza di esso il solo `_health_lock` protegge la
+        # lettura di `_thread` ma NON l'interleaving stop/restart. Uno stop()
+        # concorrente a uno start() potrebbe: (a) stop() setta `_stop` e legge il
+        # thread vecchio, (b) start() `_stop.clear()` + spawn di un nuovo thread,
+        # (c) stop() fa join SOLO del vecchio => il polling resterebbe VIVO dopo uno
+        # stop richiesto (fail-open: il bot continua a ingerire segnali). Il join
+        # avviene DENTRO `_lifecycle_lock` ma FUORI da `_health_lock` (run()
+        # acquisisce solo `_health_lock`, mai il lifecycle => niente deadlock).
+        self._lifecycle_lock = threading.Lock()
+
+    def health_snapshot(self) -> tuple[bool, int]:
+        """Lettura ATOMICA di (thread_alive, consecutive_failures) sotto lock:
+        i due valori sono coerenti tra loro. Sostituisce l'accesso separato agli
+        attributi da parte dell'adapter (niente stato incoerente cross-thread)."""
+        with self._health_lock:
+            thread = self._thread
+            alive = bool(thread is not None and thread.is_alive())
+            return alive, int(self._consecutive_failures)
 
     def _scheme_allowed(self, url: str) -> bool:
         """True se `url` usa uno schema consentito: sempre https://, e http://
@@ -249,7 +280,11 @@ class TelegramBotApiTransport:
             try:
                 self._offset = self.poll_once(self._offset)
                 backoff = self._base_backoff
+                with self._health_lock:
+                    self._consecutive_failures = 0  # poll riuscito: health OK
             except Exception as exc:
+                with self._health_lock:
+                    self._consecutive_failures += 1  # health-surface (vedi __init__)
                 # Diagnostica SENZA segreti: tipo eccezione + messaggio REDATTO.
                 # Il messaggio (str(exc)) restituisce il "perche'" del fallimento
                 # (prima si loggava solo il nome della classe, perdendo la causa).
@@ -269,19 +304,39 @@ class TelegramBotApiTransport:
     # Lifecycle
     # ------------------------------------------------------------------
     def start(self) -> None:
-        if self._thread is not None and self._thread.is_alive():
-            return
-        self._stop.clear()
-        self._thread = threading.Thread(
-            target=self.run, name="telegram-bot-transport", daemon=True
-        )
-        self._thread.start()
+        # Intero start() sotto `_lifecycle_lock` => non può interleavare con uno
+        # stop() in corso (serializzazione del lifecycle). L'assegnazione di
+        # `_thread` è inoltre sotto `_health_lock`: coerente con la lettura in
+        # health_snapshot()/stop() dal thread watchdog/adapter.
+        with self._lifecycle_lock:
+            with self._health_lock:
+                if self._thread is not None and self._thread.is_alive():
+                    return
+                self._stop.clear()
+                self._consecutive_failures = 0
+                self._thread = threading.Thread(
+                    target=self.run, name="telegram-bot-transport", daemon=True
+                )
+                self._thread.start()
 
     def stop(self, timeout: float = 5.0) -> None:
-        self._stop.set()
-        thread = self._thread
-        if thread is not None and thread.is_alive():
-            thread.join(timeout=timeout)
+        # Intero stop() sotto `_lifecycle_lock`: la sequenza set-stop → lettura
+        # thread → join è ATOMICA rispetto a start(), quindi un restart concorrente
+        # non può rimpiazzare `_thread` e riavviare il polling mentre stop() fa join
+        # del thread precedente (niente transport vivo dopo uno stop richiesto).
+        with self._lifecycle_lock:
+            self._stop.set()
+            # Lettura di `_thread` sotto `_health_lock`: coerente con
+            # l'assegnazione in start() e con health_snapshot() (nessuna lettura
+            # torn cross-thread). Il join() resta FUORI da `_health_lock` (ma dentro
+            # `_lifecycle_lock`): run() acquisisce `_health_lock` a ogni giro
+            # (contatore fallimenti) => tenerlo durante il join deadlockerebbe il
+            # thread di polling in terminazione; run() NON acquisisce mai il
+            # lifecycle lock, quindi tenerlo durante il join è sicuro.
+            with self._health_lock:
+                thread = self._thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout)
 
     # ------------------------------------------------------------------
     # Fetch HTTP di default (produzione; i test iniettano un fake)

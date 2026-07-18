@@ -295,3 +295,45 @@ def test_start_stop_halts_loop():
     t.stop(timeout=2.0)
     assert t._thread is not None and not t._thread.is_alive()
     assert len(calls) >= 1
+
+
+@pytest.mark.unit
+def test_stop_serializes_lifecycle_and_frees_health_lock_during_join():
+    # BLOCK: stop() serializza l'INTERO lifecycle sotto _lifecycle_lock, così un
+    # restart concorrente NON può rimpiazzare _thread e riavviare il polling mentre
+    # stop() fa join del thread precedente (niente transport vivo dopo uno stop
+    # richiesto). Al contempo il join NON deve tenere _health_lock: run() lo
+    # acquisisce a ogni giro (contatore fallimenti) => un join sotto _health_lock
+    # deadlockerebbe il thread di polling in terminazione. Sonda al momento del
+    # join: _lifecycle_lock TENUTO (serializzazione) + _health_lock LIBERO (no
+    # deadlock). run() non acquisisce mai _lifecycle_lock, quindi tenerlo è sicuro.
+    t = _transport(lambda *a: None)
+    probe = {"joined": False, "lifecycle_held": None, "health_free": None}
+
+    class _ProbeThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            probe["joined"] = True
+            # _lifecycle_lock deve essere TENUTO da stop() (acquire fallisce):
+            # garantisce che start() (che richiede lo stesso lock) non interleavi.
+            got_life = t._lifecycle_lock.acquire(blocking=False)
+            probe["lifecycle_held"] = not got_life
+            if got_life:
+                t._lifecycle_lock.release()
+            # _health_lock deve essere LIBERO durante il join (anti-deadlock vs run()).
+            got_health = t._health_lock.acquire(blocking=False)
+            probe["health_free"] = got_health
+            if got_health:
+                t._health_lock.release()
+
+    t._thread = _ProbeThread()  # type: ignore[assignment]
+    t.stop(timeout=1.0)
+    assert probe["joined"], "stop() deve leggere _thread e chiamarne join()"
+    assert probe["lifecycle_held"] is True, (
+        "stop() deve tenere _lifecycle_lock durante il join (serializzazione vs start/restart)"
+    )
+    assert probe["health_free"] is True, (
+        "_health_lock non deve essere tenuto durante join() (deadlock vs run())"
+    )

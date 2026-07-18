@@ -35,7 +35,95 @@ Un bot legge i messaggi **solo** nelle chat dove è stato aggiunto:
   assegna i `chat_id` al bot selezionato (scoped al `bot_id`). Persiste via CRUD
   PR-3 (`set/get_telegram_bot_chats`), **nessun wiring runtime**: le chat
   configurate non sono ancora ascoltate.
-- Le PR successive aggiungono il runtime multi-bot e il ritiro dell'userbot.
+- **PR-5a (questa):** **wiring runtime** — primo step. Quando mancano le
+  credenziali userbot (`api_id`/`api_hash`) ma è configurato **un** bot Bot API
+  attivo con ≥1 chat attiva, `TelegramService.start()` avvia il transport HTTP
+  `getUpdates` (PR-1) invece di Telethon: **gate rilassato** (niente
+  `api_id`/`api_hash` sul path bot_token). Il path Telethon resta prioritario e
+  invariato.
+- Le PR successive aggiungono l'orchestrazione **N-bot**, l'autoheal per-bot e il
+  ritiro dell'userbot.
+
+## Wiring runtime Bot API (PR-5a) — `TelegramBotApiRuntime`
+
+Modulo `telegram_bot_runtime.py`: `TelegramBotApiRuntime` è un **adapter
+listener-compatibile** (`state`, `running`, `_runtime_thread`, `start`/`stop`/
+`status`/`runtime_snapshot`) alimentato da `TelegramBotApiTransport` invece del
+client Telethon. I messaggi ricevuti passano per `TelegramListener.handle_incoming`
+(**riuso integrale**: allow-list, guardia anti-stale, parse, emit) verso gli stessi
+callback `on_signal`/`on_status`: il listener è usato solo come **sink** (mai
+avviato → nessun Telethon, nessun `api_id`/`api_hash`).
+
+Selezione sorgente in `TelegramService.start()`:
+- credenziali userbot presenti → **path Telethon** (invariato, prioritario);
+- userbot assenti + **un** bot Bot API attivo con ≥1 chat attiva → **path Bot API**;
+- userbot assenti + **più di un bot ATTIVO** configurato → **fail-closed**
+  `multi_bot_runtime_not_yet_supported`. Il conteggio è sui bot **attivi** (con
+  token), NON sugli *usable*: così un 2° bot attivo ma non-usable (es. sole chat
+  non numeriche `@canale`) **non** viene droppato in silenzio avviando il solo bot
+  usable — la sorgente configurata resterebbe muta. L'orchestrazione N-bot arriva
+  nella PR successiva;
+- niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+
+Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
+→ `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la
+sorgente (bot usable). Gli **errori REALI del DB propagano** (nessun degrado a
+`0`/`[]`, che riaprirebbe il drop silenzioso): `start()` li cattura e fa
+**fail-closed** `telegram_bot_config_read_error`. Un DB **senza** supporto Bot API
+(metodo `get_telegram_bots` assente, es. legacy) non è un errore di lettura ma
+"nessuna sorgente bot" → `(0, [])` → fail-closed `Configurazione incompleta`.
+
+Coerenza snapshot e anti-orfano su fallimento di `start()`: `handlers_registered`
+è impostato **prima** di `listener.start()`. Se lo start **solleva** dopo aver
+(parzialmente) avviato un thread, l'`except` fa **best-effort stop** del listener e
+poi:
+- thread **morto** ⇒ `listener=None` + `handlers_registered=0` (snapshot pulito e
+  coerente: `FAILED` ⇒ 0 handler);
+- thread **ancora vivo** ⇒ **tiene** il riferimento al listener e
+  `handlers_registered=1` (residuo NON nascosto): il guard
+  `previous_runtime_still_alive` lo vede e **blocca un retry**, evitando un secondo
+  `getUpdates` (409) e segnali di betting duplicati.
+
+Coerenza health/invariant: un transport **sano** conta come **1 handler**
+(l'invariant guard richiede esattamente 1 handler quando `CONNECTED`). Lo stato
+dell'adapter diventa **`FAILED`** (con `last_error`, `handlers_registered=0`) in
+due casi di **ingestione morta**, così l'invariant guard e l'**autoheal esistenti**
+reagiscono invece di restare `CONNECTED` in silenzio (fail-open):
+- il thread `getUpdates` muore in modo non intenzionale (`bot_transport_thread_dead`);
+- il thread è vivo ma i poll `getUpdates` falliscono in modo **permanente** (es.
+  `bot_token` 401 o 409 Conflict): il transport conta i fallimenti consecutivi
+  (`_consecutive_failures`, azzerato a ogni poll riuscito) e oltre la soglia
+  (`_MAX_CONSECUTIVE_FAILURES=5`) l'adapter degrada a `FAILED`
+  (`bot_transport_persistent_poll_failure`). Un `restart` con token ancora
+  invalido rifallisce → lockout autoheal → il problema resta **visibile**.
+
+La coppia `(thread_alive, _consecutive_failures)` è letta in modo **atomico** via
+`health_snapshot()` sotto `_health_lock`; anche `start()` e `stop()` accedono a
+`_thread` sotto lo stesso lock → nessuno snapshot *torn*. In più, l'INTERO
+lifecycle `start()`/`stop()` è serializzato da un secondo lock dedicato
+`_lifecycle_lock`: la sequenza di `stop()` (set-stop → lettura thread → `join`) è
+**atomica** rispetto a `start()`, quindi un restart concorrente **non può**
+rimpiazzare `_thread` e riavviare il polling mentre `stop()` fa `join` del thread
+precedente (niente transport vivo dopo uno stop richiesto). Il `join` avviene
+**dentro** `_lifecycle_lock` ma **fuori** da `_health_lock`: `run()` acquisisce
+solo `_health_lock` (contatore fallimenti) e mai il lifecycle lock, quindi tenere
+il lifecycle lock durante il `join` è sicuro (nessun deadlock).
+
+L'idempotenza (`already_running`) è valutata **prima** della selezione sorgente: un
+runtime già attivo non rivaluta il gate, così un cambio di config a runtime (2° bot
+attivato, bot disattivato) non fa fallire/riavviare un runtime sano.
+
+Solo `chat_id` **numerici** (es. `-100…`) sono ascoltabili via `getUpdates` (che
+restituisce `chat.id` numerico): i `chat_id` non numerici (es. `@canale`) vengono
+**scartati** in selezione (`_numeric_active_chat_ids`); un bot con sole chat non
+numeriche risulta **non utilizzabile** → fail-closed. La risoluzione di
+`@username` è rimandata.
+
+Il `bot_transport_factory` è iniettabile (come il `client_factory` Telethon) per i
+test headless. **Nessun effetto su money-management/ordini/Betfair/dutching/parsing.**
+L'orchestrazione N-bot e l'autoheal **per-bot** sono rimandati alla PR successiva
+(il rilevamento del backoff permanente con thread vivo è invece già coperto qui
+dal contatore `_consecutive_failures`).
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 
