@@ -13,6 +13,7 @@ reale del listener, usato come sink.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -419,26 +420,63 @@ def test_multi_active_bot_starts_orchestrator_and_both_deliver():
     assert svc.health_status()["invariant_ok"] is True
 
 
-def test_handle_signal_serializes_fanin_under_lock():
+def test_handle_signal_serializes_fanin_across_threads():
     # BLOCK PR-5b: con N bot, thread transport distinti chiamano _handle_signal in
     # parallelo. La sezione critica (save_received_signal + bus.publish + mutazione
-    # last_successful_message_ts) deve girare SOTTO _signal_fanin_lock. Sonda:
-    # durante bus.publish il lock è TENUTO (un secondo thread non entrerebbe).
+    # last_successful_message_ts) gira SOTTO _signal_fanin_lock: un ALTRO thread NON
+    # deve poter acquisire il lock durante bus.publish (serializzazione cross-thread).
     svc = _svc(_BotDB(), capture=None)
-    probe = {"locked_during_publish": None, "published": False}
+    probe = {"acquired_by_other_thread": None, "published": False}
 
     class _ProbeBus:
         def publish(self, topic, payload):
             probe["published"] = True
-            got = svc._signal_fanin_lock.acquire(blocking=False)
-            probe["locked_during_publish"] = not got  # non acquisibile => già tenuto
-            if got:
-                svc._signal_fanin_lock.release()
+            result = {}
+
+            def _try():
+                got = svc._signal_fanin_lock.acquire(blocking=False)
+                result["got"] = got
+                if got:
+                    svc._signal_fanin_lock.release()
+
+            th = threading.Thread(target=_try)
+            th.start()
+            th.join()
+            probe["acquired_by_other_thread"] = result.get("got")
 
     svc.bus = _ProbeBus()
     svc._handle_signal({"market_type": "X"})
     assert probe["published"] is True
-    assert probe["locked_during_publish"] is True
+    # Lock TENUTO durante publish: l'altro thread non ha potuto acquisirlo.
+    assert probe["acquired_by_other_thread"] is False
+
+
+def test_fanin_lock_reentrant_no_deadlock_on_sync_resubscribe():
+    # BLOCK (Fable full-range): _signal_fanin_lock è tenuto durante bus.publish. Un
+    # subscriber SINCRONO che rientra in _handle_status dallo STESSO thread NON deve
+    # deadlockare — richiede un lock RIENTRANTE (RLock). Con un Lock non-rientrante
+    # _handle_signal si bloccherebbe per sempre (deadlock del transport del bot).
+    svc = _svc(_BotDB(), capture=None)
+    calls = {"status": 0}
+
+    class _ReentrantBus:
+        def publish(self, topic, payload):
+            if topic == "SIGNAL_RECEIVED":
+                svc._handle_status("INFO", "reentered")  # rientro sincrono, stesso thread
+            elif topic == "TELEGRAM_STATUS":
+                calls["status"] += 1
+
+    svc.bus = _ReentrantBus()
+    done = threading.Event()
+
+    def _run():
+        svc._handle_signal({"market_type": "X"})
+        done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    # RLock rientrante => completa; Lock non-rientrante => deadlock => timeout.
+    assert done.wait(timeout=3.0), "deadlock fan-in: lock non rientrante"
+    assert calls["status"] == 1
 
 
 def test_second_active_unusable_bot_surfaced_not_blocking():

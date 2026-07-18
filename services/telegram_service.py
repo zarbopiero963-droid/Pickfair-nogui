@@ -75,7 +75,12 @@ class TelegramService:
         # (prima single-writer). Il lock serializza la sezione critica (mutazione di
         # last_successful_message_ts + save_received_signal + bus.publish) così le
         # consegne non si intrecciano. Sink di parsing restano per-bot (non condivisi).
-        self._signal_fanin_lock = threading.Lock()
+        # RLock (RIENTRANTE, non Lock): la sezione critica tiene il lock durante
+        # bus.publish; se un subscriber SINCRONO rientra in _handle_signal/
+        # _handle_status sullo STESSO thread, un Lock non-rientrante deadlockerebbe
+        # per sempre il transport del bot. RLock consente la ri-acquisizione dallo
+        # stesso thread; la serializzazione CROSS-thread (lo scopo) resta garantita.
+        self._signal_fanin_lock = threading.RLock()
         # Bot ATTIVI ma non-usable (sole chat non numeriche / @username rimandato):
         # SURFACED in status (visibile), non droppati in silenzio (PR-5b).
         self._unusable_active_bot_count = 0

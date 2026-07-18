@@ -23,6 +23,7 @@ stampa mai). Isolato dal path Telethon esistente, che resta invariato.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
 
 from telegram_bot_transport import TelegramBotApiTransport
@@ -322,6 +323,40 @@ class TelegramBotApiRuntime:
         }
 
 
+def _sum_int_field(dicts: List[dict], key: str) -> int:
+    """Somma robusta di un campo intero across gli status dei child."""
+    return sum(int(d.get(key, 0) or 0) for d in dicts)
+
+
+def _parse_iso_utc(value):
+    """Parse ISO-8601 → datetime normalizzata a UTC (None se non valido)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _latest_iso_ts(values):
+    """Timestamp ISO CRONOLOGICAMENTE più recente tra `values`. Confronta le
+    datetime NORMALIZZATE a UTC, NON le stringhe: il `max()` lessicografico
+    sbaglierebbe con offset timezone diversi tra i child (es. `+05:00` vs `+00:00`)
+    → falsi STALE_RUNTIME nel guard. Fail-safe: valori non parsabili ignorati;
+    None se nessuno è parsabile."""
+    best_str, best_dt = None, None
+    for v in values:
+        dt = _parse_iso_utc(v)
+        if dt is None:
+            continue
+        if best_dt is None or dt > best_dt:
+            best_dt, best_str = dt, v
+    return best_str
+
+
 def _child_thread_alive(runtime: Any) -> bool:
     """True se il runtime child ha un thread runtime VIVO. Fail-closed: se la
     verifica di liveness solleva, assume VIVO (non nascondere un orfano: il guard
@@ -342,11 +377,26 @@ class _AnyAliveThread:
     chiamano `is_alive()`: con N bot un solo thread vivo deve bastare a bloccare un
     secondo avvio (doppio getUpdates/409)."""
 
+    name = "telegram-multibot-any-alive"
+
     def __init__(self, runtimes: List[Any]):
         self._runtimes = runtimes
 
     def is_alive(self) -> bool:
         return any(_child_thread_alive(r) for r in self._runtimes)
+
+    def join(self, timeout=None) -> None:
+        """Fan-out join sui thread child (difensivo: se un chiamante tratta il proxy
+        come un Thread reale, es. shutdown/autoheal, NON deve sollevare
+        AttributeError e saltare l'anti-409). Best-effort, non propaga."""
+        for r in self._runtimes:
+            t = getattr(r, "_runtime_thread", None)
+            joiner = getattr(t, "join", None)
+            if callable(joiner):
+                try:
+                    joiner(timeout=timeout)
+                except Exception:  # pragma: no cover - join difensivo
+                    pass
 
 
 class TelegramMultiBotRuntime:
@@ -384,15 +434,21 @@ class TelegramMultiBotRuntime:
     @property
     def state(self) -> str:
         states = [r.state for r in self._runtimes]
+        # Un child DEGRADATO (FAILED) domina: fail-closed => l'autoheal service-level
+        # riavvia l'intero set (per-bot in PR-5c).
+        if any(s == "FAILED" for s in states):
+            return "FAILED"
         if all(s == "CONNECTED" for s in states):
             return "CONNECTED"
         if all(s == "STOPPED" for s in states):
             return "STOPPED"
         if all(s == "CREATED" for s in states):
             return "CREATED"
-        # Qualsiasi mix (parziale/degradato) => FAILED (fail-closed): l'autoheal
-        # service-level riavvia l'intero set (per-bot in PR-5c).
-        return "FAILED"
+        # Mix TRANSITORIO senza FAILED (es. durante il fan-out sequenziale di
+        # start(): alcuni child già CONNECTED, altri ancora CREATED/CONNECTING) =>
+        # CONNECTING, NON FAILED. Così un check autoheal CONCORRENTE nella finestra
+        # di start non legge un FAILED spurio e non innesca un restart-all (409).
+        return "CONNECTING"
 
     @property
     def running(self) -> bool:
@@ -445,29 +501,22 @@ class TelegramMultiBotRuntime:
 
     def status(self) -> dict:
         child = [r.status() for r in self._runtimes]
-        handlers = sum(int(c.get("handlers_registered", 0) or 0) for c in child)
-        net = sum(int(c.get("active_network_resources", 0) or 0) for c in child)
-        chats = sum(int(c.get("monitored_chat_count", 0) or 0) for c in child)
-        running = bool(child) and all(bool(c.get("running")) for c in child)
         last_error = next((str(c.get("last_error")) for c in child if c.get("last_error")), "")
-        ts_values = [
-            c.get("last_successful_message_ts")
-            for c in child
-            if c.get("last_successful_message_ts") is not None
-        ]
-        last_ts = max(ts_values) if ts_values else None
         return {
             "state": self.state,
-            "running": running,
+            "running": bool(child) and all(bool(c.get("running")) for c in child),
             "intentional_stop": bool(self.intentional_stop),
             "reconnect_attempts": 0,
             "reconnect_in_progress": False,
             "last_error": last_error,
-            "last_successful_message_ts": last_ts,
+            # Confronto CRONOLOGICO (UTC), non lessicografico sulle stringhe ISO.
+            "last_successful_message_ts": _latest_iso_ts(
+                [c.get("last_successful_message_ts") for c in child]
+            ),
             "listener_started": any(bool(c.get("listener_started")) for c in child),
-            "handlers_registered": handlers,
-            "active_network_resources": net,
-            "monitored_chat_count": chats,
+            "handlers_registered": _sum_int_field(child, "handlers_registered"),
+            "active_network_resources": _sum_int_field(child, "active_network_resources"),
+            "monitored_chat_count": _sum_int_field(child, "monitored_chat_count"),
             # Per l'invariant guard generalizzato (CONNECTED => handlers == expected).
             "expected_handlers": len(self._runtimes),
             "bot_count": len(self._runtimes),
