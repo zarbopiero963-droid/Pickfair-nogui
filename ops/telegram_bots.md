@@ -107,11 +107,17 @@ Quindi nessuna lock-order inversion con il fan-in lock, e la consegna ai subscri
 avviene **fuori** dal lock (sui worker). Nota: la consegna era **già** concorrente e
 non ordinata prima di PR-5b (4 worker), quindi i subscriber downstream sono **già**
 tenuti a essere thread-safe; il lock qui garantisce solo l'ordine di *enqueue*.
-`last_successful_message_ts` è **last-write-wins** (riflette la ricezione dell'ultimo
-messaggio; contratto `test_handle_signal_preserves_listener_received_at`): un
-confronto stringa «monotòno» sarebbe stato fragile (offset ISO misti / `None`) e
-avrebbe rischiato di bloccare `save/publish`. `_handle_status` non muta stato
-condiviso ⇒ pubblica **senza** lock.
+`last_successful_message_ts` è **last-write-wins** (riflette il `received_at`
+dell'ultimo messaggio; contratto `test_handle_signal_preserves_listener_received_at`):
+un confronto stringa «monotòno» sarebbe stato fragile (offset ISO misti / `None`) e
+avrebbe rischiato di bloccare `save/publish`. Questo campo è **solo di display**: la
+**staleness detection** dell'invariant guard usa invece `last_message_processed_ts`
+(wall-clock del *processing*, aggiornato a ogni segnale) — così un `received_at`
+**backdated/malformato** del payload **non** può gonfiare `now − last` e innescare un
+`STALE_RUNTIME` spurio → nessun restart/409. Nel `runtime_snapshot` il ts che alimenta
+il guard è: ts del listener (receive-time, primario) → fallback `last_message_processed_ts`
+del service, **mai** il `received_at` LWW. `_handle_status` non muta stato condiviso ⇒
+pubblica **senza** lock.
 
 **Invariant guard generalizzato**: `CONNECTED ⇒ handlers_registered ==
 expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N` per

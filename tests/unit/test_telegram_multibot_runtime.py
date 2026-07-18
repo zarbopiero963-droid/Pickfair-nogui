@@ -257,6 +257,20 @@ def test_stop_preserves_intentional_stop_on_operator_stop():
     assert rt.intentional_stop is True  # PRESERVATO => niente restart contro l'operatore
 
 
+def test_start_clears_intentional_stop_so_restart_is_not_suppressed():
+    # BLOCK (rilievo Fugu Ultra): preservare intentional_stop in stop() non deve
+    # incastrare un restart. `start()` azzera SEMPRE intentional_stop: la sequenza di
+    # restart (stop→start), sia da operatore sia dall'autoheal service-level, riparte
+    # pulita. Così il flag preservato non lascia il listener morto per sempre.
+    a = _FakeChild(thread_alive=True, stop_res={"stopped": True})
+    b = _FakeChild(thread_alive=False, stop_res={"stopped": False, "error": "boom"})
+    rt = TelegramMultiBotRuntime([a, b])
+    rt.stop()
+    assert rt.intentional_stop is True  # preservato dopo stop fallito
+    rt.start()
+    assert rt.intentional_stop is False  # start ripulisce => restart NON soppresso
+
+
 def test_any_failed_child_still_aggregates_failed():
     # Un child DEGRADATO (FAILED) domina comunque => FAILED (fail-closed reale).
     a = _FakeChild(state="CONNECTED")

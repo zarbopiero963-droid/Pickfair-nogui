@@ -56,6 +56,12 @@ class TelegramService:
         self.reconnect_attempts = 0
         self.reconnect_in_progress = False
         self.last_successful_message_ts: str | None = None
+        # Timestamp di PROCESSING (wall-clock del service quando processa un
+        # messaggio), separato dal received_at del segnale. Alimenta la staleness
+        # detection dell'invariant guard: NON è influenzabile da un received_at
+        # backdated/malformato del payload (rilievo convergente GPT-5.6 Terra /
+        # Fable 5 / Fugu Ultra) → niente STALE_RUNTIME spurio → niente restart 409.
+        self._last_message_processed_ts: str | None = None
         self.listener_started = False
         self.handlers_registered = 0
         self.active_network_resources = 0
@@ -121,9 +127,13 @@ class TelegramService:
         # riflette la ricezione dell'ultimo messaggio processato; il confronto stringa
         # (Greptile P1) era fragile (offset ISO misti / None > str → TypeError) e
         # avrebbe bloccato save/publish → rimosso. Sotto fan-in concorrente i timestamp
-        # sono quasi-simultanei: il last-write-wins non falsa la staleness detection.
+        # sono quasi-simultanei. La staleness detection NON usa questo campo ma
+        # `_last_message_processed_ts` (wall-clock del processing) → immune al backdating.
         with self._signal_fanin_lock:
             self.last_successful_message_ts = received_at
+            # Liveness/staleness: wall-clock del PROCESSING (adesso), non il
+            # received_at del payload → immune al backdating (vedi __init__).
+            self._last_message_processed_ts = datetime.now(timezone.utc).isoformat()
             if hasattr(self.db, "save_received_signal"):
                 try:
                     self.db.save_received_signal(signal)
@@ -564,6 +574,9 @@ class TelegramService:
             "reconnect_in_progress": bool(self.reconnect_in_progress),
             "last_error": self.last_error,
             "last_successful_message_ts": self.last_successful_message_ts,
+            # Liveness di processing (immune al backdating del payload): usato dalla
+            # staleness detection quando il listener non espone un proprio ts.
+            "last_message_processed_ts": self._last_message_processed_ts,
             "listener_started": bool(self.listener_started),
             "handlers_registered": int(self.handlers_registered),
             "active_network_resources": int(self.active_network_resources),
@@ -605,11 +618,15 @@ class TelegramService:
             "intentional_stop": bool(status["intentional_stop"]),
             "retry_loop_active": bool(status["reconnect_in_progress"]),
             "last_error": str(status["last_error"] or ""),
-            # Liveness dal listener: il valore cache del service si aggiorna
-            # solo via callback segnale, i messaggi non-segnale no.
+            # Liveness/staleness per l'invariant guard. Primario: il ts del listener
+            # (receive-time nel transport, traccia ANCHE i messaggi non-segnale →
+            # liveness più fedele). Fallback: `last_message_processed_ts` del service
+            # (wall-clock del processing), NON il received_at LWW del segnale: così il
+            # guard non può mai ricevere un valore backdated dal payload (rilievo
+            # convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra) → niente STALE spurio.
             "last_successful_message_ts": (
                 listener_snapshot.get("last_successful_message_ts")
-                or status["last_successful_message_ts"]
+                or status["last_message_processed_ts"]
             ),
         }
 

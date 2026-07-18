@@ -14,11 +14,13 @@ reale del listener, usato come sink.
 from __future__ import annotations
 
 import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.event_bus import EventBus
 from services.telegram_service import TelegramService
 from telegram_bot_runtime import TelegramBotApiRuntime
 
@@ -506,6 +508,50 @@ def test_last_message_ts_is_last_write_wins_and_never_blocks_on_bad_ts():
     assert svc.last_successful_message_ts == "2026-07-18T14:00:00+05:00"
     published = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
     assert len(published) == 3  # tutti pubblicati, nessun blocco
+
+
+def test_staleness_uses_processing_ts_not_backdated_signal_ts():
+    # BLOCK (rilievo convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra): un received_at
+    # BACKDATED del payload NON deve alimentare la staleness detection dell'invariant
+    # guard, altrimenti `now - last` esplode → STALE_RUNTIME spurio → restart 409 /
+    # doppio consumo. Il campo LWW resta per il DISPLAY (contratto preservato), ma lo
+    # snapshot guard-facing usa `last_message_processed_ts` (wall-clock del processing).
+    # Sul vecchio codice runtime_snapshot ripiegava sul campo LWW backdated.
+    svc = _svc(_BotDB(), capture=None)
+    backdated = "2020-01-01T00:00:00+00:00"
+    svc._handle_signal({"market_type": "X", "received_at": backdated})
+    # display LWW preservato (contratto storico)
+    assert svc.status()["last_successful_message_ts"] == backdated
+    proc = svc.status()["last_message_processed_ts"]
+    assert proc is not None and not proc.startswith("2020")  # processing = adesso
+    # lo snapshot che alimenta il guard NON è il ts backdated ma quello di processing
+    assert svc.runtime_snapshot()["last_successful_message_ts"] == proc
+
+
+def test_publish_under_fanin_lock_is_non_blocking():
+    # BLOCK (Fable 5 / Fugu Ultra): tenere `bus.publish` DENTRO `_signal_fanin_lock` è
+    # sicuro solo perché `EventBus.publish` è NON bloccante — la Queue è UNBOUNDED
+    # (`put` non blocca mai) e i subscriber girano su un worker pool asincrono. Prova
+    # esplicita del contratto: (a) queue unbounded; (b) _handle_signal ritorna senza
+    # attendere un subscriber lento (nessuno stallo dei thread transport sotto lock).
+    bus = EventBus(workers=1)
+    assert bus._queue.maxsize == 0  # unbounded => put non blocca mai
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(_payload):
+        entered.set()
+        release.wait(2.0)
+
+    bus.subscribe("SIGNAL_RECEIVED", slow)
+    svc = _svc(_BotDB(), capture=None)
+    svc.bus = bus
+    t0 = time.monotonic()
+    svc._handle_signal({"market_type": "X"})  # publish sotto lock
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.5  # tornato SUBITO: publish non ha atteso il subscriber lento
+    assert entered.wait(2.0)  # il subscriber gira comunque, su un worker asincrono
+    release.set()
 
 
 def test_second_active_unusable_bot_surfaced_not_blocking():
