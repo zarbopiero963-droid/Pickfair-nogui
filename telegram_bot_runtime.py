@@ -429,6 +429,11 @@ class TelegramMultiBotRuntime:
         self._runtimes: List[Any] = list(runtimes)
         self.intentional_stop = False
         self._any_alive = _AnyAliveThread(self._runtimes)
+        # True SOLO durante il fan-out di start(): distingue un mix TRANSITORIO
+        # (CONNECTED+CREATED mentre i child partono in sequenza) da una degradazione
+        # PERSISTENTE (un child giù mentre altri su). Bool = read/write atomico:
+        # l'autoheal può leggerlo concorrentemente senza lock.
+        self._starting = False
 
     # ---- stato aggregato ----
     @property
@@ -444,11 +449,16 @@ class TelegramMultiBotRuntime:
             return "STOPPED"
         if all(s == "CREATED" for s in states):
             return "CREATED"
-        # Mix TRANSITORIO senza FAILED (es. durante il fan-out sequenziale di
-        # start(): alcuni child già CONNECTED, altri ancora CREATED/CONNECTING) =>
-        # CONNECTING, NON FAILED. Così un check autoheal CONCORRENTE nella finestra
-        # di start non legge un FAILED spurio e non innesca un restart-all (409).
-        return "CONNECTING"
+        # Mix senza FAILED. Distingue TRANSITORIO vs PERSISTENTE (rilievo convergente
+        # GPT-5.6 Terra / Fable 5 / Fugu Ultra):
+        # - DURANTE il fan-out di start() (`_starting`): il mix CONNECTED+CREATED è
+        #   normale (i child partono in sequenza) => CONNECTING, NON FAILED, così un
+        #   autoheal concorrente non fa restart-all spurio (409).
+        # - FUORI dalla finestra di start(): un mix che NON converge a all-CONNECTED
+        #   (es. un child rimasto CREATED/STOPPED per orphan/thread morto senza flag
+        #   FAILED) è una DEGRADAZIONE PERSISTENTE => FAILED, così l'autoheal
+        #   service-level riavvia il bot giù (niente mascheramento indefinito).
+        return "CONNECTING" if self._starting else "FAILED"
 
     @property
     def running(self) -> bool:
@@ -465,18 +475,24 @@ class TelegramMultiBotRuntime:
         visibile via `_runtime_thread` any-alive => il guard blocca un retry, e
         l'autoheal service-level farà restart-all)."""
         self.intentional_stop = False
-        results = []
-        for r in self._runtimes:
-            try:
-                res = r.start() or {}
-            except Exception as exc:  # pragma: no cover - start dei child è già fail-safe
-                res = {"started": False, "error": type(exc).__name__}
-            results.append(res)
-        if all(bool(x.get("started")) for x in results):
-            return {"started": True}
-        errors = [str(x.get("error") or "") for x in results if not x.get("started")]
-        detail = ",".join(e for e in errors if e) or "multibot_start_failed"
-        return {"started": False, "error": "multibot_partial_start:" + detail}
+        # `_starting`=True per l'INTERO fan-out: uno stato aggregato letto in questa
+        # finestra (mix CONNECTED+CREATED transitorio) resta CONNECTING, non FAILED.
+        self._starting = True
+        try:
+            results = []
+            for r in self._runtimes:
+                try:
+                    res = r.start() or {}
+                except Exception as exc:  # pragma: no cover - start dei child è già fail-safe
+                    res = {"started": False, "error": type(exc).__name__}
+                results.append(res)
+            if all(bool(x.get("started")) for x in results):
+                return {"started": True}
+            errors = [str(x.get("error") or "") for x in results if not x.get("started")]
+            detail = ",".join(e for e in errors if e) or "multibot_start_failed"
+            return {"started": False, "error": "multibot_partial_start:" + detail}
+        finally:
+            self._starting = False
 
     def stop(self) -> dict:
         """Ferma (fan-out) tutti i child. Fail-closed: se un QUALSIASI thread child
@@ -495,6 +511,11 @@ class TelegramMultiBotRuntime:
             return {"stopped": False, "error": "multibot_thread_still_alive"}
         if all(bool(x.get("stopped")) for x in results):
             return {"stopped": True}
+        # Nessun thread child vivo ma uno stop() ha riportato stopped=False (es.
+        # stop sollevato con thread già morto). Non c'è orfano => NON marcare come
+        # stop intenzionale: azzera intentional_stop così l'autoheal service-level
+        # può auto-guarire al ciclo successivo (rilievo Greptile P2).
+        self.intentional_stop = False
         errors = [str(x.get("error") or "") for x in results if not x.get("stopped")]
         detail = ",".join(e for e in errors if e) or "multibot_stop_failed"
         return {"stopped": False, "error": "multibot_stop_failed:" + detail}

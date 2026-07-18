@@ -422,15 +422,18 @@ def test_multi_active_bot_starts_orchestrator_and_both_deliver():
 
 def test_handle_signal_serializes_fanin_across_threads():
     # BLOCK PR-5b: con N bot, thread transport distinti chiamano _handle_signal in
-    # parallelo. La sezione critica (save_received_signal + bus.publish + mutazione
-    # last_successful_message_ts) gira SOTTO _signal_fanin_lock: un ALTRO thread NON
-    # deve poter acquisire il lock durante bus.publish (serializzazione cross-thread).
-    svc = _svc(_BotDB(), capture=None)
-    probe = {"acquired_by_other_thread": None, "published": False}
+    # parallelo. La SEZIONE CRITICA (update monotono di last_successful_message_ts +
+    # save_received_signal) gira SOTTO _signal_fanin_lock: un ALTRO thread NON deve
+    # poter acquisire il lock mentre la sezione critica è in corso (serializzazione
+    # cross-thread). NB: bus.publish è ora FUORI dal lock (evita lock-order inversion),
+    # quindi la prova sonda il lock durante save_received_signal, non durante publish.
+    probe = {"acquired_by_other_thread": None, "saved_under_lock": False}
+    svc_holder = {}
 
-    class _ProbeBus:
-        def publish(self, topic, payload):
-            probe["published"] = True
+    class _ProbeDB(_BotDB):
+        def save_received_signal(self, payload):
+            probe["saved_under_lock"] = True
+            svc = svc_holder["svc"]
             result = {}
 
             def _try():
@@ -439,34 +442,38 @@ def test_handle_signal_serializes_fanin_across_threads():
                 if got:
                     svc._signal_fanin_lock.release()
 
-            th = threading.Thread(target=_try)
+            th = threading.Thread(target=_try)  # thread DIVERSO => non rientrante
             th.start()
             th.join()
             probe["acquired_by_other_thread"] = result.get("got")
+            super().save_received_signal(payload)
 
-    svc.bus = _ProbeBus()
+    svc = _svc(_ProbeDB(), capture=None)
+    svc_holder["svc"] = svc
     svc._handle_signal({"market_type": "X"})
-    assert probe["published"] is True
-    # Lock TENUTO durante publish: l'altro thread non ha potuto acquisirlo.
+    assert probe["saved_under_lock"] is True
+    # Lock TENUTO durante la sezione critica: l'altro thread non ha potuto acquisirlo.
     assert probe["acquired_by_other_thread"] is False
 
 
 def test_fanin_lock_reentrant_no_deadlock_on_sync_resubscribe():
-    # BLOCK (Fable full-range): _signal_fanin_lock è tenuto durante bus.publish. Un
-    # subscriber SINCRONO che rientra in _handle_status dallo STESSO thread NON deve
-    # deadlockare — richiede un lock RIENTRANTE (RLock). Con un Lock non-rientrante
-    # _handle_signal si bloccherebbe per sempre (deadlock del transport del bot).
-    svc = _svc(_BotDB(), capture=None)
-    calls = {"status": 0}
+    # BLOCK (Fable full-range): _signal_fanin_lock resta RLock per difesa. La sezione
+    # critica (save_received_signal) gira SOTTO il lock; se un hook del DB rientra
+    # sincrono in _handle_signal dallo STESSO thread, un Lock non-rientrante
+    # deadlockerebbe per sempre. L'RLock consente il rientro same-thread e completa.
+    reentry = {"count": 0}
+    svc_holder = {}
 
-    class _ReentrantBus:
-        def publish(self, topic, payload):
-            if topic == "SIGNAL_RECEIVED":
-                svc._handle_status("INFO", "reentered")  # rientro sincrono, stesso thread
-            elif topic == "TELEGRAM_STATUS":
-                calls["status"] += 1
+    class _ReentrantDB(_BotDB):
+        def save_received_signal(self, payload):
+            super().save_received_signal(payload)
+            if reentry["count"] == 0:
+                reentry["count"] += 1
+                # rientro sincrono, STESSO thread, mentre il lock è ancora tenuto
+                svc_holder["svc"]._handle_signal({"market_type": "REENTRY"})
 
-    svc.bus = _ReentrantBus()
+    svc = _svc(_ReentrantDB(), capture=None)
+    svc_holder["svc"] = svc
     done = threading.Event()
 
     def _run():
@@ -476,7 +483,26 @@ def test_fanin_lock_reentrant_no_deadlock_on_sync_resubscribe():
     threading.Thread(target=_run, daemon=True).start()
     # RLock rientrante => completa; Lock non-rientrante => deadlock => timeout.
     assert done.wait(timeout=3.0), "deadlock fan-in: lock non rientrante"
-    assert calls["status"] == 1
+    assert reentry["count"] == 1
+    assert len(svc.db.saved) == 2  # segnale originale + rientro
+
+
+def test_last_message_ts_is_monotonic_across_out_of_order_fanin():
+    # BLOCK (Greptile P1): con N bot i thread transport calcolano received_at FUORI
+    # dal lock e possono acquisirlo in ordine INVERSO ai loro timestamp. L'update
+    # deve essere MONOTONO: un messaggio più VECCHIO che arriva DOPO uno più recente
+    # NON deve far regredire last_successful_message_ts. Sul vecchio codice
+    # (assegnazione incondizionata) il campo regredirebbe al timestamp più vecchio.
+    svc = _svc(_BotDB(), capture=None)
+    newer = "2026-07-18T12:00:05+00:00"
+    older = "2026-07-18T12:00:00+00:00"
+
+    svc._handle_signal({"market_type": "A", "received_at": newer})
+    assert svc.last_successful_message_ts == newer
+    # arriva DOPO un segnale con timestamp più vecchio (fan-in fuori ordine)
+    svc._handle_signal({"market_type": "B", "received_at": older})
+    # MONOTONO: resta al più recente, niente regressione.
+    assert svc.last_successful_message_ts == newer
 
 
 def test_second_active_unusable_bot_surfaced_not_blocking():

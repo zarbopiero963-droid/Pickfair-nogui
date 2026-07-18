@@ -104,16 +104,27 @@ class TelegramService:
         signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
 
         # Fan-in serializzato (PR-5b): con N bot, thread transport distinti chiamano
-        # qui in parallelo. Il lock evita interleaving su last_successful_message_ts
-        # e sulla coppia save_received_signal→bus.publish (consegna coerente).
+        # qui in parallelo. Il lock protegge SOLO la sezione critica breve (update
+        # MONOTONO di last_successful_message_ts + save_received_signal). Il
+        # `bus.publish` è FUORI dal lock: tenerlo dentro esporrebbe a deadlock da
+        # lock-order inversion se un subscriber acquisisce un proprio lock (rilievo
+        # Fable 5) e al deadlock da rientro sincrono (il lock resta RLock per difesa).
         with self._signal_fanin_lock:
-            self.last_successful_message_ts = received_at
+            # MONOTONO (rilievo Greptile P1): `received_at` è calcolato FUORI dal
+            # lock, quindi due thread potrebbero acquisire il lock in ordine inverso
+            # ai loro timestamp; aggiornare solo se più recente evita la regressione
+            # del campo (i timestamp sono UTC ISO => confronto stringa coerente).
+            if (
+                self.last_successful_message_ts is None
+                or received_at > self.last_successful_message_ts
+            ):
+                self.last_successful_message_ts = received_at
             if hasattr(self.db, "save_received_signal"):
                 try:
                     self.db.save_received_signal(signal)
                 except Exception as exc:
                     logger.warning("save_received_signal fallita: %s", exc)
-            self.bus.publish("SIGNAL_RECEIVED", signal)
+        self.bus.publish("SIGNAL_RECEIVED", signal)
 
     def _handle_status(self, *args) -> None:
         """
@@ -131,14 +142,16 @@ class TelegramService:
             status = "INFO"
             message = ""
 
-        with self._signal_fanin_lock:
-            self.bus.publish(
-                "TELEGRAM_STATUS",
-                {
-                    "status": status,
-                    "message": message,
-                },
-            )
+        # publish FUORI dal lock: _handle_status non muta stato condiviso, e tenere
+        # il lock durante il callback dei subscriber esporrebbe a deadlock (rientro
+        # sincrono / lock-order inversion). La consegna al bus è indipendente per bot.
+        self.bus.publish(
+            "TELEGRAM_STATUS",
+            {
+                "status": status,
+                "message": message,
+            },
+        )
 
     def _stop_partial_listener_on_start_failure(self) -> bool:
         """Best-effort stop del listener dopo un'eccezione in start() (avvio

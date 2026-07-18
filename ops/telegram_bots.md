@@ -69,12 +69,21 @@ bot usable), ognuno col **proprio** transport `getUpdates`, thread e **sink di
 parsing PRIVATO** (mai condiviso: `handle_incoming` muta stato non sotto lock →
 condividerlo tra N thread sarebbe una race). Presenta la stessa superficie
 duck-typed attesa dal service, con semantica **aggregata fail-closed**:
-- `state` **CONNECTED** solo se **tutti** i child sono CONNECTED; qualsiasi child
-  degradato/morto ⇒ **FAILED** (in PR-5b l'autoheal **service-level** fa
-  restart-all; l'autoheal **per-bot** arriva in **PR-5c**);
+- `state` **CONNECTED** solo se **tutti** i child sono CONNECTED. Un mix senza
+  child FAILED distingue **transitorio** da **persistente**: **durante** il fan-out
+  di `start()` (flag interno `_starting`) un mix CONNECTED+CREATED è normale ⇒
+  **CONNECTING**, così un check autoheal concorrente non legge un `FAILED` spurio e
+  non innesca un restart-all (409); **fuori** dalla finestra di `start()` un mix che
+  non converge a all-CONNECTED (child rimasto CREATED/STOPPED per orphan/thread
+  morto) è una **degradazione persistente** ⇒ **FAILED**. Qualsiasi child con flag
+  FAILED ⇒ **FAILED** sempre (in PR-5b l'autoheal **service-level** fa restart-all;
+  l'autoheal **per-bot** arriva in **PR-5c**);
 - `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
   scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
 - `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409);
+  se invece nessun thread child è vivo ma uno `stop()` figlio ha riportato
+  `stopped=False` (nessun orfano) azzera `intentional_stop` ⇒ l'autoheal
+  service-level può auto-guarire al ciclo successivo;
 - `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
   sui child; `expected_handlers` = numero di bot.
 
@@ -84,9 +93,15 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
 rimpiazza il fail-closed di PR-5a preservandone l'intento (nessun drop silenzioso).
 
 **Fan-in concorrente**: con N bot, N thread transport chiamano `_handle_signal`/
-`_handle_status` in parallelo (prima single-writer). La sezione critica
-(`last_successful_message_ts` + `save_received_signal` + `bus.publish`) gira sotto
-`_signal_fanin_lock` → consegne serializzate, mai intrecciate.
+`_handle_status` in parallelo (prima single-writer). Sotto `_signal_fanin_lock`
+(un **RLock**, per rientro same-thread) gira **solo** la sezione critica breve:
+update **monotòno** di `last_successful_message_ts` (aggiornato solo se
+`received_at` è più recente ⇒ due thread che acquisiscono il lock in ordine inverso
+ai loro timestamp non fanno regredire il campo) + `save_received_signal`. Il
+`bus.publish` è **fuori** dal lock: tenerlo dentro esporrebbe a **deadlock da
+lock-order inversion** se un subscriber acquisisce un proprio lock, e a deadlock da
+rientro sincrono. `_handle_status` non muta stato condiviso ⇒ pubblica **fuori** dal
+lock. Serializzata quindi la sola sezione critica, non la consegna al bus.
 
 **Invariant guard generalizzato**: `CONNECTED ⇒ handlers_registered ==
 expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N` per

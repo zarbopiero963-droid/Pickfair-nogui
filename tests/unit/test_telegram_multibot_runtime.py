@@ -194,15 +194,64 @@ def test_runtime_snapshot_carries_expected_handlers():
     assert snap["expected_handlers"] == 2
 
 
-def test_transient_mix_connected_created_is_connecting_not_failed():
-    # BLOCK (Fable/Fugu full-range): durante il fan-out sequenziale di start() un mix
-    # CONNECTED+CREATED (nessun FAILED) NON deve degradare a FAILED — altrimenti un
-    # autoheal CONCORRENTE in quella finestra farebbe restart-all su bot sani
-    # (restart-storm / 409). Deve essere CONNECTING (transitorio).
+def test_mix_connecting_only_during_start_failed_when_persistent():
+    # BLOCK (convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra): un mix senza FAILED è
+    # CONNECTING solo DURANTE start() (transitorio, no restart-storm); FUORI dalla
+    # finestra di start() un mix che non converge (child giù senza flag FAILED) è
+    # una DEGRADAZIONE PERSISTENTE => FAILED, così l'autoheal riavvia (niente
+    # mascheramento indefinito che sopprime l'autoheal e perde segnali).
     a = _FakeChild(state="CONNECTED")
     b = _FakeChild(state="CREATED", running=False)
     rt = TelegramMultiBotRuntime([a, b])
-    assert rt.state == "CONNECTING"
+    assert rt.state == "FAILED"          # persistente (fuori start)
+    rt._starting = True
+    assert rt.state == "CONNECTING"      # transitorio (durante start)
+
+
+def test_persistent_connected_stopped_mix_is_failed():
+    # BLOCK (Fable): un child in STOPPED non intenzionale (thread morto) mentre altri
+    # CONNECTED => FAILED (fuori start), NON CONNECTING indefinito.
+    a = _FakeChild(state="CONNECTED")
+    b = _FakeChild(state="STOPPED", running=False)
+    rt = TelegramMultiBotRuntime([a, b])
+    assert rt.state == "FAILED"
+
+
+def test_state_is_connecting_during_actual_start_fanout():
+    # BLOCK: durante il fan-out REALE di start(), lo stato osservato mentre un child
+    # è già CONNECTED e un altro ancora CREATED deve essere CONNECTING (_starting).
+    a = _FakeChild(state="CONNECTED")
+    b = _FakeChild(state="CREATED", running=False)
+    rt = TelegramMultiBotRuntime([a, b])
+    observed = {}
+    orig_b_start = b.start
+
+    def _b_start():
+        observed["state"] = rt.state  # a=CONNECTED, b=CREATED, _starting=True
+        return orig_b_start()
+
+    b.start = _b_start
+    rt.start()
+    assert observed["state"] == "CONNECTING"
+    assert rt.state == "FAILED"  # dopo start(): _starting False, mix persistente
+
+
+def test_stop_resets_intentional_stop_when_threads_dead_but_stop_failed():
+    # BLOCK (Greptile P2): nessun thread child vivo ma uno stop() riporta
+    # stopped=False (stop sollevato con thread già morto). Nessun orfano => NON è uno
+    # stop intenzionale: intentional_stop va azzerato così l'autoheal può auto-guarire.
+    class _DeadButFailedStop(_FakeChild):
+        def stop(self):
+            self.stop_called += 1
+            self._thread = None  # thread morto
+            return {"stopped": False, "error": "boom"}
+
+    a = _FakeChild(thread_alive=True, stop_res={"stopped": True})
+    b = _DeadButFailedStop(thread_alive=False)
+    rt = TelegramMultiBotRuntime([a, b])
+    out = rt.stop()
+    assert out["stopped"] is False
+    assert rt.intentional_stop is False  # azzerato => restart autoheal possibile
 
 
 def test_any_failed_child_still_aggregates_failed():
