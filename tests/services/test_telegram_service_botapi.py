@@ -382,7 +382,11 @@ def test_start_recovers_when_cached_state_is_stale_connected():
     assert r.get("reason") != "already_running"
 
 
-def test_multi_active_bot_fails_closed():
+def test_multi_active_bot_starts_orchestrator_and_both_deliver():
+    # BLOCK PR-5b: 2 bot attivi usable => orchestratore N-bot AVVIATO (non più
+    # fail-closed 'multi_bot_runtime_not_yet_supported'); ogni bot consegna al bus
+    # via il proprio transport/sink; handlers_registered aggregato == 2 e
+    # l'invariant guard è soddisfatto (CONNECTED => handlers == expected == 2).
     db = _BotDB(
         bots=[
             {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
@@ -392,21 +396,56 @@ def test_multi_active_bot_fails_closed():
             1: [{"chat_id": "-100111", "is_active": True}],
             2: [{"chat_id": "-100222", "is_active": True}],
         },
+        patterns=_next_gol_pattern(),
     )
-    svc = _svc(db, capture=[])
-    with pytest.raises(RuntimeError) as exc:
-        svc.start()
-    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
-    assert svc.state == "FAILED"
+    cap = []
+    svc = _svc(db, capture=cap)
+    out = svc.start()
+    assert out["started"] is True
+    assert svc.state == "CONNECTED"
+    assert len(cap) == 2  # un transport per bot
+    st = svc.status()
+    assert st["handlers_registered"] == 2
+    assert st["unusable_active_bot_count"] == 0
+
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
+    cap[0].on_message(MSG_NEXT_GOL, -100111, fresh)   # bot A -> sua chat
+    cap[1].on_message(MSG_NEXT_GOL, -100222, fresh)   # bot B -> sua chat
+    payloads = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
+    assert len(payloads) == 2  # entrambi i bot hanno consegnato
+
+    # Invariant guard generalizzato soddisfatto con N handler == expected (dopo la
+    # prima consegna last_successful_message_ts è valorizzato => niente STALE).
+    assert svc.health_status()["invariant_ok"] is True
 
 
-def test_second_active_but_unusable_bot_still_fails_closed():
-    # BLOCK (rilievo Fable full-range): il gate multi-bot conta i bot ATTIVI, non
-    # gli usable. Con 2 bot ATTIVI di cui uno non-usable (bot B: sole chat non
-    # numeriche `@canale`), il vecchio codice contava len(usable)==1 e avviava il
-    # solo bot A, DROPPANDO in silenzio la sorgente attiva B (perdita segnali,
-    # contro il contratto fail-closed). Ora active_count==2 => fail-closed
-    # multi_bot_runtime_not_yet_supported (nessun avvio silenzioso a singolo bot).
+def test_handle_signal_serializes_fanin_under_lock():
+    # BLOCK PR-5b: con N bot, thread transport distinti chiamano _handle_signal in
+    # parallelo. La sezione critica (save_received_signal + bus.publish + mutazione
+    # last_successful_message_ts) deve girare SOTTO _signal_fanin_lock. Sonda:
+    # durante bus.publish il lock è TENUTO (un secondo thread non entrerebbe).
+    svc = _svc(_BotDB(), capture=None)
+    probe = {"locked_during_publish": None, "published": False}
+
+    class _ProbeBus:
+        def publish(self, topic, payload):
+            probe["published"] = True
+            got = svc._signal_fanin_lock.acquire(blocking=False)
+            probe["locked_during_publish"] = not got  # non acquisibile => già tenuto
+            if got:
+                svc._signal_fanin_lock.release()
+
+    svc.bus = _ProbeBus()
+    svc._handle_signal({"market_type": "X"})
+    assert probe["published"] is True
+    assert probe["locked_during_publish"] is True
+
+
+def test_second_active_unusable_bot_surfaced_not_blocking():
+    # BLOCK PR-5b: un 2° bot ATTIVO ma non-usable (bot B: sole chat non numeriche
+    # `@canale`, risoluzione @username rimandata) NON blocca né viene droppato in
+    # silenzio: il bot usable (A) parte e l'unusable è SURFACED in status
+    # (unusable_active_bot_count=1). Con 1 solo usable => runtime singolo (handlers=1).
     db = _BotDB(
         bots=[
             {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
@@ -417,11 +456,15 @@ def test_second_active_but_unusable_bot_still_fails_closed():
             2: [{"chat_id": "@canale", "is_active": True}],   # attivo ma NON usable
         },
     )
-    svc = _svc(db, capture=[])
-    with pytest.raises(RuntimeError) as exc:
-        svc.start()
-    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
-    assert svc.state == "FAILED"
+    cap = []
+    svc = _svc(db, capture=cap)
+    out = svc.start()
+    assert out["started"] is True
+    assert svc.state == "CONNECTED"
+    assert len(cap) == 1  # solo il bot usable ha un transport
+    st = svc.status()
+    assert st["handlers_registered"] == 1
+    assert st["unusable_active_bot_count"] == 1
 
 
 def test_no_creds_no_bots_still_fails_closed():

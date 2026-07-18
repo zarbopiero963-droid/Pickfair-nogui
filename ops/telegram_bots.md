@@ -56,14 +56,42 @@ avviato → nessun Telethon, nessun `api_id`/`api_hash`).
 
 Selezione sorgente in `TelegramService.start()`:
 - credenziali userbot presenti → **path Telethon** (invariato, prioritario);
-- userbot assenti + **un** bot Bot API attivo con ≥1 chat attiva → **path Bot API**;
-- userbot assenti + **più di un bot ATTIVO** configurato → **fail-closed**
-  `multi_bot_runtime_not_yet_supported`. Il conteggio è sui bot **attivi** (con
-  token), NON sugli *usable*: così un 2° bot attivo ma non-usable (es. sole chat
-  non numeriche `@canale`) **non** viene droppato in silenzio avviando il solo bot
-  usable — la sorgente configurata resterebbe muta. L'orchestrazione N-bot arriva
-  nella PR successiva;
-- niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+- userbot assenti + **un** bot Bot API usable → **path Bot API single-bot** (PR-5a);
+- userbot assenti + **più bot** Bot API usable → **orchestratore N-bot** (PR-5b,
+  `TelegramMultiBotRuntime`): rimpiazza il precedente fail-closed
+  `multi_bot_runtime_not_yet_supported`; i bot ingeriscono in **concorrenza**;
+- niente di usable → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+
+### Orchestrazione N-bot (PR-5b)
+
+`TelegramMultiBotRuntime` compone N `TelegramBotApiRuntime` indipendenti (uno per
+bot usable), ognuno col **proprio** transport `getUpdates`, thread e **sink di
+parsing PRIVATO** (mai condiviso: `handle_incoming` muta stato non sotto lock →
+condividerlo tra N thread sarebbe una race). Presenta la stessa superficie
+duck-typed attesa dal service, con semantica **aggregata fail-closed**:
+- `state` **CONNECTED** solo se **tutti** i child sono CONNECTED; qualsiasi child
+  degradato/morto ⇒ **FAILED** (in PR-5b l'autoheal **service-level** fa
+  restart-all; l'autoheal **per-bot** arriva in **PR-5c**);
+- `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
+  scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
+- `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409);
+- `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
+  sui child; `expected_handlers` = numero di bot.
+
+**Bot attivo ma non-usable** (sole chat non numeriche `@canale`, risoluzione
+`@username` rimandata): **SURFACED** in `status()` come `unusable_active_bot_count`
+(visibile), **non** droppato in silenzio **né** bloccante per i bot usable — questo
+rimpiazza il fail-closed di PR-5a preservandone l'intento (nessun drop silenzioso).
+
+**Fan-in concorrente**: con N bot, N thread transport chiamano `_handle_signal`/
+`_handle_status` in parallelo (prima single-writer). La sezione critica
+(`last_successful_message_ts` + `save_received_signal` + `bus.publish`) gira sotto
+`_signal_fanin_lock` → consegne serializzate, mai intrecciate.
+
+**Invariant guard generalizzato**: `CONNECTED ⇒ handlers_registered ==
+expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N` per
+l'orchestratore), regola duplicati `> expected_handlers`. Così N handler sani con
+aggregato CONNECTED **non** violano l'invariante.
 
 Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
 → `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la

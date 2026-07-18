@@ -22,6 +22,12 @@ class TelegramInvariantSnapshot:
     last_successful_message_ts: str | None
     now_ts: str | None = None
     stale_after_seconds: int = 300
+    # Numero di handler ATTESI quando CONNECTED. Default 1 (single-bot Bot API e
+    # userbot Telethon => backward-compatible). Con l'orchestrazione N-bot
+    # (epica #374 PR-5b) diventa il numero di bot attivi: l'invariante generalizza
+    # "CONNECTED => 1 handler" in "CONNECTED => handlers == expected_handlers",
+    # e la regola duplicati diventa "handlers > expected_handlers".
+    expected_handlers: int = 1
 
 
 @dataclass(frozen=True)
@@ -58,19 +64,23 @@ class TelegramInvariantGuard:
                 )
             )
 
-        if snapshot.state == "CONNECTED" and snapshot.handlers_registered != 1:
+        expected_handlers = int(snapshot.expected_handlers)
+        if snapshot.state == "CONNECTED" and snapshot.handlers_registered != expected_handlers:
             violations.append(
                 TelegramInvariantViolation(
                     code="CONNECTED_REQUIRES_SINGLE_HANDLER",
-                    message="CONNECTED requires exactly one runtime handler registration",
+                    message=(
+                        "CONNECTED requires handlers_registered == expected_handlers "
+                        f"(expected {expected_handlers})"
+                    ),
                 )
             )
 
-        if snapshot.handlers_registered > 1:
+        if snapshot.handlers_registered > expected_handlers:
             violations.append(
                 TelegramInvariantViolation(
                     code="DUPLICATE_HANDLER_REGISTRATION",
-                    message="handlers_registered > 1 indicates duplicate registration",
+                    message="handlers_registered greater than expected indicates duplicate registration",
                 )
             )
 
