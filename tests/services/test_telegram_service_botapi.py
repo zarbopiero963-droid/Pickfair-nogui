@@ -487,22 +487,25 @@ def test_fanin_lock_reentrant_no_deadlock_on_sync_resubscribe():
     assert len(svc.db.saved) == 2  # segnale originale + rientro
 
 
-def test_last_message_ts_is_monotonic_across_out_of_order_fanin():
-    # BLOCK (Greptile P1): con N bot i thread transport calcolano received_at FUORI
-    # dal lock e possono acquisirlo in ordine INVERSO ai loro timestamp. L'update
-    # deve essere MONOTONO: un messaggio più VECCHIO che arriva DOPO uno più recente
-    # NON deve far regredire last_successful_message_ts. Sul vecchio codice
-    # (assegnazione incondizionata) il campo regredirebbe al timestamp più vecchio.
+def test_last_message_ts_is_last_write_wins_and_never_blocks_on_bad_ts():
+    # BLOCK (rilievo convergente Fugu Ultra / Fable 5 + regressione CI su
+    # test_handle_signal_preserves_listener_received_at): last_successful_message_ts
+    # è LAST-WRITE-WINS (riflette la ricezione dell'ultimo messaggio, contratto
+    # storico). Il confronto stringa "monotòno" (Greptile P1) era fragile e va evitato:
+    # (a) un received_at esplicito anche BACKDATED viene preservato;
+    # (b) un received_at malformato / offset misto NON deve sollevare né bloccare
+    #     save/publish. Sul vecchio codice monotòno (a) regrediva e (b) rischiava
+    #     TypeError/blocco della sezione critica.
     svc = _svc(_BotDB(), capture=None)
-    newer = "2026-07-18T12:00:05+00:00"
-    older = "2026-07-18T12:00:00+00:00"
-
-    svc._handle_signal({"market_type": "A", "received_at": newer})
-    assert svc.last_successful_message_ts == newer
-    # arriva DOPO un segnale con timestamp più vecchio (fan-in fuori ordine)
-    svc._handle_signal({"market_type": "B", "received_at": older})
-    # MONOTONO: resta al più recente, niente regressione.
-    assert svc.last_successful_message_ts == newer
+    svc._handle_signal({"market_type": "A", "received_at": "2026-07-18T12:00:05+00:00"})
+    # (a) un segnale successivo con received_at BACKDATED viene preservato (LWW)
+    svc._handle_signal({"market_type": "B", "received_at": "2026-04-15T00:00:00+00:00"})
+    assert svc.last_successful_message_ts == "2026-04-15T00:00:00+00:00"
+    # (b) received_at con offset non-UTC / formato diverso: nessuna eccezione, save+publish avvengono
+    svc._handle_signal({"market_type": "C", "received_at": "2026-07-18T14:00:00+05:00"})
+    assert svc.last_successful_message_ts == "2026-07-18T14:00:00+05:00"
+    published = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
+    assert len(published) == 3  # tutti pubblicati, nessun blocco
 
 
 def test_second_active_unusable_bot_surfaced_not_blocking():

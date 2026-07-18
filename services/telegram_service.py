@@ -104,27 +104,32 @@ class TelegramService:
         signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
 
         # Fan-in serializzato (PR-5b): con N bot, thread transport distinti chiamano
-        # qui in parallelo. Il lock protegge SOLO la sezione critica breve (update
-        # MONOTONO di last_successful_message_ts + save_received_signal). Il
-        # `bus.publish` è FUORI dal lock: tenerlo dentro esporrebbe a deadlock da
-        # lock-order inversion se un subscriber acquisisce un proprio lock (rilievo
-        # Fable 5) e al deadlock da rientro sincrono (il lock resta RLock per difesa).
+        # qui in parallelo (prima single-writer). Il lock serializza l'INTERA sezione
+        # critica — last_successful_message_ts + save_received_signal + bus.publish —
+        # così l'ORDINE di enqueue su bus == ordine di persistenza (nessuna finestra
+        # "A salva, B salva+pubblica, A pubblica": rilievo convergente GPT-5.6 Terra /
+        # Fable 5 / Fugu Ultra). Tenere `bus.publish` DENTRO il lock è sicuro contro
+        # il deadlock: `EventBus.publish` è NON bloccante (solo enqueue su Queue +
+        # breve lock interno leaf), NON esegue i subscriber inline — questi girano su
+        # un worker pool asincrono. Quindi nessuna lock-order inversion col fan-in
+        # lock. Il lock resta RLock per difesa dal rientro sincrono (es. un hook DB
+        # che rientri in _handle_signal sullo stesso thread).
+        #
+        # last_successful_message_ts = LAST-WRITE-WINS (contratto storico
+        # `test_handle_signal_preserves_listener_received_at`: un received_at esplicito
+        # del listener, anche backdated, viene preservato). NON monotòno: il campo
+        # riflette la ricezione dell'ultimo messaggio processato; il confronto stringa
+        # (Greptile P1) era fragile (offset ISO misti / None > str → TypeError) e
+        # avrebbe bloccato save/publish → rimosso. Sotto fan-in concorrente i timestamp
+        # sono quasi-simultanei: il last-write-wins non falsa la staleness detection.
         with self._signal_fanin_lock:
-            # MONOTONO (rilievo Greptile P1): `received_at` è calcolato FUORI dal
-            # lock, quindi due thread potrebbero acquisire il lock in ordine inverso
-            # ai loro timestamp; aggiornare solo se più recente evita la regressione
-            # del campo (i timestamp sono UTC ISO => confronto stringa coerente).
-            if (
-                self.last_successful_message_ts is None
-                or received_at > self.last_successful_message_ts
-            ):
-                self.last_successful_message_ts = received_at
+            self.last_successful_message_ts = received_at
             if hasattr(self.db, "save_received_signal"):
                 try:
                     self.db.save_received_signal(signal)
                 except Exception as exc:
                     logger.warning("save_received_signal fallita: %s", exc)
-        self.bus.publish("SIGNAL_RECEIVED", signal)
+            self.bus.publish("SIGNAL_RECEIVED", signal)
 
     def _handle_status(self, *args) -> None:
         """
@@ -142,9 +147,9 @@ class TelegramService:
             status = "INFO"
             message = ""
 
-        # publish FUORI dal lock: _handle_status non muta stato condiviso, e tenere
-        # il lock durante il callback dei subscriber esporrebbe a deadlock (rientro
-        # sincrono / lock-order inversion). La consegna al bus è indipendente per bot.
+        # Nessun lock: _handle_status non muta stato condiviso e l'ordine dei
+        # messaggi di stato non è safety-relevant. `EventBus.publish` è comunque non
+        # bloccante (solo enqueue), i subscriber girano su un worker pool asincrono.
         self.bus.publish(
             "TELEGRAM_STATUS",
             {

@@ -236,10 +236,13 @@ def test_state_is_connecting_during_actual_start_fanout():
     assert rt.state == "FAILED"  # dopo start(): _starting False, mix persistente
 
 
-def test_stop_resets_intentional_stop_when_threads_dead_but_stop_failed():
-    # BLOCK (Greptile P2): nessun thread child vivo ma uno stop() riporta
-    # stopped=False (stop sollevato con thread già morto). Nessun orfano => NON è uno
-    # stop intenzionale: intentional_stop va azzerato così l'autoheal può auto-guarire.
+def test_stop_preserves_intentional_stop_on_operator_stop():
+    # BLOCK (Fable 5): stop() è invocato per intento OPERATORE. Anche se un child
+    # riporta stopped=False senza thread vivi, intentional_stop DEVE restare True: se
+    # venisse azzerato, l'autoheal service-level riavvierebbe il listener DOPO uno
+    # shutdown voluto (ripresa consumo segnali/piazzamenti contro l'intento operatore
+    # = rischio safety). Senza thread vivi non c'è orfano né consumo => preservare è
+    # sicuro. [Supera Greptile P2, che azzerava il flag e riabilitava il restart.]
     class _DeadButFailedStop(_FakeChild):
         def stop(self):
             self.stop_called += 1
@@ -251,7 +254,7 @@ def test_stop_resets_intentional_stop_when_threads_dead_but_stop_failed():
     rt = TelegramMultiBotRuntime([a, b])
     out = rt.stop()
     assert out["stopped"] is False
-    assert rt.intentional_stop is False  # azzerato => restart autoheal possibile
+    assert rt.intentional_stop is True  # PRESERVATO => niente restart contro l'operatore
 
 
 def test_any_failed_child_still_aggregates_failed():

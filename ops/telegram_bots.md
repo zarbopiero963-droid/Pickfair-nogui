@@ -80,10 +80,12 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
   l'autoheal **per-bot** arriva in **PR-5c**);
 - `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
   scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
-- `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409);
-  se invece nessun thread child è vivo ma uno `stop()` figlio ha riportato
-  `stopped=False` (nessun orfano) azzera `intentional_stop` ⇒ l'autoheal
-  service-level può auto-guarire al ciclo successivo;
+- `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409).
+  `stop()` è invocato per **intento operatore** e imposta `intentional_stop=True`:
+  il flag resta True anche se un child riporta `stopped=False` senza thread vivi —
+  azzerarlo farebbe **riavviare** il listener dall'autoheal service-level dopo uno
+  shutdown voluto (ripresa consumo segnali/piazzamenti contro l'intento operatore).
+  Senza thread vivi non c'è orfano né consumo in corso ⇒ preservare il flag è sicuro;
 - `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
   sui child; `expected_handlers` = numero di bot.
 
@@ -93,15 +95,23 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
 rimpiazza il fail-closed di PR-5a preservandone l'intento (nessun drop silenzioso).
 
 **Fan-in concorrente**: con N bot, N thread transport chiamano `_handle_signal`/
-`_handle_status` in parallelo (prima single-writer). Sotto `_signal_fanin_lock`
-(un **RLock**, per rientro same-thread) gira **solo** la sezione critica breve:
-update **monotòno** di `last_successful_message_ts` (aggiornato solo se
-`received_at` è più recente ⇒ due thread che acquisiscono il lock in ordine inverso
-ai loro timestamp non fanno regredire il campo) + `save_received_signal`. Il
-`bus.publish` è **fuori** dal lock: tenerlo dentro esporrebbe a **deadlock da
-lock-order inversion** se un subscriber acquisisce un proprio lock, e a deadlock da
-rientro sincrono. `_handle_status` non muta stato condiviso ⇒ pubblica **fuori** dal
-lock. Serializzata quindi la sola sezione critica, non la consegna al bus.
+`_handle_status` in parallelo (prima single-writer). In `_handle_signal`
+`_signal_fanin_lock` (un **RLock**, per rientro same-thread) serializza l'**intera**
+sezione critica — `last_successful_message_ts` + `save_received_signal` +
+`bus.publish` — così l'**ordine di enqueue sul bus == ordine di persistenza** (niente
+finestra «A salva, B salva+pubblica, A pubblica»). Tenere `bus.publish` **dentro** il
+lock è sicuro contro il deadlock perché **`EventBus.publish` è non bloccante**: fa
+solo `enqueue` su una `Queue` (più un breve lock interno *leaf*) e **non** esegue i
+subscriber inline — questi girano su un **worker pool asincrono** (`workers=4`).
+Quindi nessuna lock-order inversion con il fan-in lock, e la consegna ai subscriber
+avviene **fuori** dal lock (sui worker). Nota: la consegna era **già** concorrente e
+non ordinata prima di PR-5b (4 worker), quindi i subscriber downstream sono **già**
+tenuti a essere thread-safe; il lock qui garantisce solo l'ordine di *enqueue*.
+`last_successful_message_ts` è **last-write-wins** (riflette la ricezione dell'ultimo
+messaggio; contratto `test_handle_signal_preserves_listener_received_at`): un
+confronto stringa «monotòno» sarebbe stato fragile (offset ISO misti / `None`) e
+avrebbe rischiato di bloccare `save/publish`. `_handle_status` non muta stato
+condiviso ⇒ pubblica **senza** lock.
 
 **Invariant guard generalizzato**: `CONNECTED ⇒ handlers_registered ==
 expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N` per

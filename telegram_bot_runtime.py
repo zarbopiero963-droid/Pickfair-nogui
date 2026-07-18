@@ -511,11 +511,14 @@ class TelegramMultiBotRuntime:
             return {"stopped": False, "error": "multibot_thread_still_alive"}
         if all(bool(x.get("stopped")) for x in results):
             return {"stopped": True}
-        # Nessun thread child vivo ma uno stop() ha riportato stopped=False (es.
-        # stop sollevato con thread già morto). Non c'è orfano => NON marcare come
-        # stop intenzionale: azzera intentional_stop così l'autoheal service-level
-        # può auto-guarire al ciclo successivo (rilievo Greptile P2).
-        self.intentional_stop = False
+        # Nessun thread child vivo ma uno stop() figlio ha riportato stopped=False.
+        # PRESERVA intentional_stop (rilievo Fable 5): stop() è invocato per intento
+        # OPERATORE; azzerare il flag qui farebbe RIAVVIARE il listener dall'autoheal
+        # service-level DOPO uno shutdown voluto (ripresa consumo segnali/piazzamenti
+        # contro l'intento operatore = rischio safety). Senza thread vivi non c'è
+        # orfano né consumo in corso: lasciare intentional_stop=True è sicuro e non
+        # incastra nulla (nessun thread da guarire). [Supera il precedente rilievo
+        # Greptile P2, che non distingueva stop-operatore da stop-di-healing.]
         errors = [str(x.get("error") or "") for x in results if not x.get("stopped")]
         detail = ",".join(e for e in errors if e) or "multibot_stop_failed"
         return {"stopped": False, "error": "multibot_stop_failed:" + detail}
