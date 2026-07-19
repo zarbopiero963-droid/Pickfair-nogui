@@ -88,7 +88,15 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
   restart-all aprirebbe un **secondo getUpdates** sullo stesso token (**409**/doppio
   consumo). Il fail-closed corretto è **non riavviare** dopo uno stop operatore; lo
   zombie è **SURFACED** (aggregato not-stopped + thread vivo ⇒ anti-409 guard) per
-  intervento manuale / autoheal per-bot (**PR-5c**), mai per restart-all automatico;
+  intervento manuale / autoheal per-bot (**PR-5c**), mai per restart-all automatico.
+  **Finestra di stop (nota, pre-esistente al transport, non introdotta da PR-5b):**
+  la terminazione del thread è **cooperativa** (`run()` esce su `_stop.is_set()`; i
+  thread Python non sono killabili a forza), quindi il long-poll `getUpdates`
+  **in volo** può consegnare **un ultimo batch** prima che il loop noti lo stop —
+  finestra **limitata** dal `long_poll_timeout`, non uno zombie indefinito. Vale
+  identica per il single-bot (`telegram_bot_transport.py`, invariato in PR-5b). La
+  terminazione per-bot più rapida (drop del batch post-stop / kill del consumo
+  orfano) è tracciata per **PR-5c**;
 - `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
   sui child; `expected_handlers` = numero di bot.
 
