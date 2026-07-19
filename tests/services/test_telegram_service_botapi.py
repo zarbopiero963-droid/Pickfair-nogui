@@ -13,11 +13,14 @@ reale del listener, usato come sink.
 """
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.event_bus import EventBus
 from services.telegram_service import TelegramService
 from telegram_bot_runtime import TelegramBotApiRuntime
 
@@ -382,7 +385,11 @@ def test_start_recovers_when_cached_state_is_stale_connected():
     assert r.get("reason") != "already_running"
 
 
-def test_multi_active_bot_fails_closed():
+def test_multi_active_bot_starts_orchestrator_and_both_deliver():
+    # BLOCK PR-5b: 2 bot attivi usable => orchestratore N-bot AVVIATO (non più
+    # fail-closed 'multi_bot_runtime_not_yet_supported'); ogni bot consegna al bus
+    # via il proprio transport/sink; handlers_registered aggregato == 2 e
+    # l'invariant guard è soddisfatto (CONNECTED => handlers == expected == 2).
     db = _BotDB(
         bots=[
             {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
@@ -392,21 +399,166 @@ def test_multi_active_bot_fails_closed():
             1: [{"chat_id": "-100111", "is_active": True}],
             2: [{"chat_id": "-100222", "is_active": True}],
         },
+        patterns=_next_gol_pattern(),
     )
-    svc = _svc(db, capture=[])
-    with pytest.raises(RuntimeError) as exc:
-        svc.start()
-    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
-    assert svc.state == "FAILED"
+    cap = []
+    svc = _svc(db, capture=cap)
+    out = svc.start()
+    assert out["started"] is True
+    assert svc.state == "CONNECTED"
+    assert len(cap) == 2  # un transport per bot
+    st = svc.status()
+    assert st["handlers_registered"] == 2
+    assert st["unusable_active_bot_count"] == 0
+
+    fresh = datetime.now(timezone.utc) - timedelta(seconds=5)
+    cap[0].on_message(MSG_NEXT_GOL, -100111, fresh)   # bot A -> sua chat
+    cap[1].on_message(MSG_NEXT_GOL, -100222, fresh)   # bot B -> sua chat
+    payloads = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
+    assert len(payloads) == 2  # entrambi i bot hanno consegnato
+
+    # Invariant guard generalizzato soddisfatto con N handler == expected (dopo la
+    # prima consegna last_successful_message_ts è valorizzato => niente STALE).
+    assert svc.health_status()["invariant_ok"] is True
 
 
-def test_second_active_but_unusable_bot_still_fails_closed():
-    # BLOCK (rilievo Fable full-range): il gate multi-bot conta i bot ATTIVI, non
-    # gli usable. Con 2 bot ATTIVI di cui uno non-usable (bot B: sole chat non
-    # numeriche `@canale`), il vecchio codice contava len(usable)==1 e avviava il
-    # solo bot A, DROPPANDO in silenzio la sorgente attiva B (perdita segnali,
-    # contro il contratto fail-closed). Ora active_count==2 => fail-closed
-    # multi_bot_runtime_not_yet_supported (nessun avvio silenzioso a singolo bot).
+def test_handle_signal_serializes_fanin_across_threads():
+    # BLOCK PR-5b: con N bot, thread transport distinti chiamano _handle_signal in
+    # parallelo. La SEZIONE CRITICA (last_successful_message_ts last-write-wins +
+    # _last_message_processed_ts + save_received_signal + bus.publish) gira TUTTA
+    # SOTTO _signal_fanin_lock: un ALTRO thread NON deve poter acquisire il lock
+    # mentre la sezione critica è in corso (serializzazione cross-thread). La prova
+    # sonda il lock durante save_received_signal, che è dentro la sezione critica.
+    probe = {"acquired_by_other_thread": None, "saved_under_lock": False}
+    svc_holder = {}
+
+    class _ProbeDB(_BotDB):
+        def save_received_signal(self, payload):
+            probe["saved_under_lock"] = True
+            svc = svc_holder["svc"]
+            result = {}
+
+            def _try():
+                got = svc._signal_fanin_lock.acquire(blocking=False)
+                result["got"] = got
+                if got:
+                    svc._signal_fanin_lock.release()
+
+            th = threading.Thread(target=_try)  # thread DIVERSO => non rientrante
+            th.start()
+            th.join()
+            probe["acquired_by_other_thread"] = result.get("got")
+            super().save_received_signal(payload)
+
+    svc = _svc(_ProbeDB(), capture=None)
+    svc_holder["svc"] = svc
+    svc._handle_signal({"market_type": "X"})
+    assert probe["saved_under_lock"] is True
+    # Lock TENUTO durante la sezione critica: l'altro thread non ha potuto acquisirlo.
+    assert probe["acquired_by_other_thread"] is False
+
+
+def test_fanin_lock_reentrant_no_deadlock_on_sync_resubscribe():
+    # BLOCK (Fable full-range): _signal_fanin_lock resta RLock per difesa. La sezione
+    # critica (save_received_signal) gira SOTTO il lock; se un hook del DB rientra
+    # sincrono in _handle_signal dallo STESSO thread, un Lock non-rientrante
+    # deadlockerebbe per sempre. L'RLock consente il rientro same-thread e completa.
+    reentry = {"count": 0}
+    svc_holder = {}
+
+    class _ReentrantDB(_BotDB):
+        def save_received_signal(self, payload):
+            super().save_received_signal(payload)
+            if reentry["count"] == 0:
+                reentry["count"] += 1
+                # rientro sincrono, STESSO thread, mentre il lock è ancora tenuto
+                svc_holder["svc"]._handle_signal({"market_type": "REENTRY"})
+
+    svc = _svc(_ReentrantDB(), capture=None)
+    svc_holder["svc"] = svc
+    done = threading.Event()
+
+    def _run():
+        svc._handle_signal({"market_type": "X"})
+        done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    # RLock rientrante => completa; Lock non-rientrante => deadlock => timeout.
+    assert done.wait(timeout=3.0), "deadlock fan-in: lock non rientrante"
+    assert reentry["count"] == 1
+    assert len(svc.db.saved) == 2  # segnale originale + rientro
+
+
+def test_last_message_ts_is_last_write_wins_and_never_blocks_on_bad_ts():
+    # BLOCK (rilievo convergente Fugu Ultra / Fable 5 + regressione CI su
+    # test_handle_signal_preserves_listener_received_at): last_successful_message_ts
+    # è LAST-WRITE-WINS (riflette la ricezione dell'ultimo messaggio, contratto
+    # storico). Il confronto stringa "monotòno" (Greptile P1) era fragile e va evitato:
+    # (a) un received_at esplicito anche BACKDATED viene preservato;
+    # (b) un received_at malformato / offset misto NON deve sollevare né bloccare
+    #     save/publish. Sul vecchio codice monotòno (a) regrediva e (b) rischiava
+    #     TypeError/blocco della sezione critica.
+    svc = _svc(_BotDB(), capture=None)
+    svc._handle_signal({"market_type": "A", "received_at": "2026-07-18T12:00:05+00:00"})
+    # (a) un segnale successivo con received_at BACKDATED viene preservato (LWW)
+    svc._handle_signal({"market_type": "B", "received_at": "2026-04-15T00:00:00+00:00"})
+    assert svc.last_successful_message_ts == "2026-04-15T00:00:00+00:00"
+    # (b) received_at con offset non-UTC / formato diverso: nessuna eccezione, save+publish avvengono
+    svc._handle_signal({"market_type": "C", "received_at": "2026-07-18T14:00:00+05:00"})
+    assert svc.last_successful_message_ts == "2026-07-18T14:00:00+05:00"
+    published = [p for t, p in svc.bus.events if t == "SIGNAL_RECEIVED"]
+    assert len(published) == 3  # tutti pubblicati, nessun blocco
+
+
+def test_staleness_uses_processing_ts_not_backdated_signal_ts():
+    # BLOCK (rilievo convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra): un received_at
+    # BACKDATED del payload NON deve alimentare la staleness detection dell'invariant
+    # guard, altrimenti `now - last` esplode → STALE_RUNTIME spurio → restart 409 /
+    # doppio consumo. Il campo LWW resta per il DISPLAY (contratto preservato), ma lo
+    # snapshot guard-facing usa `last_message_processed_ts` (wall-clock del processing).
+    # Sul vecchio codice runtime_snapshot ripiegava sul campo LWW backdated.
+    svc = _svc(_BotDB(), capture=None)
+    backdated = "2020-01-01T00:00:00+00:00"
+    svc._handle_signal({"market_type": "X", "received_at": backdated})
+    # display LWW preservato (contratto storico)
+    assert svc.status()["last_successful_message_ts"] == backdated
+    proc = svc.status()["last_message_processed_ts"]
+    assert proc is not None and not proc.startswith("2020")  # processing = adesso
+    # lo snapshot che alimenta il guard NON è il ts backdated ma quello di processing
+    assert svc.runtime_snapshot()["last_successful_message_ts"] == proc
+
+
+def test_publish_under_fanin_lock_is_non_blocking():
+    # BLOCK (Fable 5 / Fugu Ultra): tenere `bus.publish` DENTRO `_signal_fanin_lock` è
+    # sicuro solo perché `EventBus.publish` è NON bloccante — la Queue è UNBOUNDED
+    # (`put` non blocca mai) e i subscriber girano su un worker pool asincrono. Prova
+    # esplicita del contratto: (a) queue unbounded; (b) _handle_signal ritorna senza
+    # attendere un subscriber lento (nessuno stallo dei thread transport sotto lock).
+    bus = EventBus(workers=1)
+    assert bus._queue.maxsize == 0  # unbounded => put non blocca mai
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(_payload):
+        entered.set()
+        release.wait(2.0)
+
+    bus.subscribe("SIGNAL_RECEIVED", slow)
+    svc = _svc(_BotDB(), capture=None)
+    svc.bus = bus
+    t0 = time.monotonic()
+    svc._handle_signal({"market_type": "X"})  # publish sotto lock
+    elapsed = time.monotonic() - t0
+    assert elapsed < 0.5  # tornato SUBITO: publish non ha atteso il subscriber lento
+    assert entered.wait(2.0)  # il subscriber gira comunque, su un worker asincrono
+    release.set()
+
+
+def test_second_active_unusable_bot_surfaced_not_blocking():
+    # BLOCK PR-5b: un 2° bot ATTIVO ma non-usable (bot B: sole chat non numeriche
+    # `@canale`, risoluzione @username rimandata) NON blocca né viene droppato in
+    # silenzio: il bot usable (A) parte e l'unusable è SURFACED in status
+    # (unusable_active_bot_count=1). Con 1 solo usable => runtime singolo (handlers=1).
     db = _BotDB(
         bots=[
             {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
@@ -417,11 +569,15 @@ def test_second_active_but_unusable_bot_still_fails_closed():
             2: [{"chat_id": "@canale", "is_active": True}],   # attivo ma NON usable
         },
     )
-    svc = _svc(db, capture=[])
-    with pytest.raises(RuntimeError) as exc:
-        svc.start()
-    assert "multi_bot_runtime_not_yet_supported" in str(exc.value)
-    assert svc.state == "FAILED"
+    cap = []
+    svc = _svc(db, capture=cap)
+    out = svc.start()
+    assert out["started"] is True
+    assert svc.state == "CONNECTED"
+    assert len(cap) == 1  # solo il bot usable ha un transport
+    st = svc.status()
+    assert st["handlers_registered"] == 1
+    assert st["unusable_active_bot_count"] == 1
 
 
 def test_no_creds_no_bots_still_fails_closed():

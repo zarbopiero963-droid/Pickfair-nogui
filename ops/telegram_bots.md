@@ -56,14 +56,84 @@ avviato → nessun Telethon, nessun `api_id`/`api_hash`).
 
 Selezione sorgente in `TelegramService.start()`:
 - credenziali userbot presenti → **path Telethon** (invariato, prioritario);
-- userbot assenti + **un** bot Bot API attivo con ≥1 chat attiva → **path Bot API**;
-- userbot assenti + **più di un bot ATTIVO** configurato → **fail-closed**
-  `multi_bot_runtime_not_yet_supported`. Il conteggio è sui bot **attivi** (con
-  token), NON sugli *usable*: così un 2° bot attivo ma non-usable (es. sole chat
-  non numeriche `@canale`) **non** viene droppato in silenzio avviando il solo bot
-  usable — la sorgente configurata resterebbe muta. L'orchestrazione N-bot arriva
-  nella PR successiva;
-- niente di utilizzabile → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+- userbot assenti + **un** bot Bot API usable → **path Bot API single-bot** (PR-5a);
+- userbot assenti + **più bot** Bot API usable → **orchestratore N-bot** (PR-5b,
+  `TelegramMultiBotRuntime`): rimpiazza il precedente fail-closed
+  `multi_bot_runtime_not_yet_supported`; i bot ingeriscono in **concorrenza**;
+- niente di usable → **fail-closed** `Configurazione Telegram incompleta` (invariato).
+
+### Orchestrazione N-bot (PR-5b)
+
+`TelegramMultiBotRuntime` compone N `TelegramBotApiRuntime` indipendenti (uno per
+bot usable), ognuno col **proprio** transport `getUpdates`, thread e **sink di
+parsing PRIVATO** (mai condiviso: `handle_incoming` muta stato non sotto lock →
+condividerlo tra N thread sarebbe una race). Presenta la stessa superficie
+duck-typed attesa dal service, con semantica **aggregata fail-closed**:
+- `state` **CONNECTED** solo se **tutti** i child sono CONNECTED. Un mix senza
+  child FAILED distingue **transitorio** da **persistente**: **durante** il fan-out
+  di `start()` (flag interno `_starting`) un mix CONNECTED+CREATED è normale ⇒
+  **CONNECTING**, così un check autoheal concorrente non legge un `FAILED` spurio e
+  non innesca un restart-all (409); **fuori** dalla finestra di `start()` un mix che
+  non converge a all-CONNECTED (child rimasto CREATED/STOPPED per orphan/thread
+  morto) è una **degradazione persistente** ⇒ **FAILED**. Qualsiasi child con flag
+  FAILED ⇒ **FAILED** sempre (in PR-5b l'autoheal **service-level** fa restart-all;
+  l'autoheal **per-bot** arriva in **PR-5c**);
+- `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
+  scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
+- `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409).
+  `stop()` è invocato per **intento operatore** e imposta `intentional_stop=True`, che
+  **resta True in TUTTI i rami** non-success (thread zombie superstite **o** stop
+  figlio fallito senza thread vivi). Azzerarlo permetterebbe all'autoheal
+  service-level di **riavviare** dopo uno shutdown voluto: con uno zombie vivo un
+  restart-all aprirebbe un **secondo getUpdates** sullo stesso token (**409**/doppio
+  consumo). Il fail-closed corretto è **non riavviare** dopo uno stop operatore; lo
+  zombie è **SURFACED** (aggregato not-stopped + thread vivo ⇒ anti-409 guard) per
+  intervento manuale / autoheal per-bot (**PR-5c**), mai per restart-all automatico.
+  **Finestra di stop (nota, pre-esistente al transport, non introdotta da PR-5b):**
+  la terminazione del thread è **cooperativa** (`run()` esce su `_stop.is_set()`; i
+  thread Python non sono killabili a forza), quindi il long-poll `getUpdates`
+  **in volo** può consegnare **un ultimo batch** prima che il loop noti lo stop —
+  finestra **limitata** dal `long_poll_timeout`, non uno zombie indefinito. Vale
+  identica per il single-bot (`telegram_bot_transport.py`, invariato in PR-5b). La
+  terminazione per-bot più rapida (drop del batch post-stop / kill del consumo
+  orfano) è tracciata per **PR-5c**;
+- `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
+  sui child; `expected_handlers` = numero di bot.
+
+**Bot attivo ma non-usable** (sole chat non numeriche `@canale`, risoluzione
+`@username` rimandata): **SURFACED** in `status()` come `unusable_active_bot_count`
+(visibile), **non** droppato in silenzio **né** bloccante per i bot usable — questo
+rimpiazza il fail-closed di PR-5a preservandone l'intento (nessun drop silenzioso).
+
+**Fan-in concorrente**: con N bot, N thread transport chiamano `_handle_signal`/
+`_handle_status` in parallelo (prima single-writer). In `_handle_signal`
+`_signal_fanin_lock` (un **RLock**, per rientro same-thread) serializza l'**intera**
+sezione critica — `last_successful_message_ts` + `save_received_signal` +
+`bus.publish` — così l'**ordine di enqueue sul bus == ordine di persistenza** (niente
+finestra «A salva, B salva+pubblica, A pubblica»). Tenere `bus.publish` **dentro** il
+lock è sicuro contro il deadlock perché **`EventBus.publish` è non bloccante**: fa
+solo `enqueue` su una `Queue` (più un breve lock interno *leaf*) e **non** esegue i
+subscriber inline — questi girano su un **worker pool asincrono** (`workers=4`).
+Quindi nessuna lock-order inversion con il fan-in lock, e la consegna ai subscriber
+avviene **fuori** dal lock (sui worker). Nota: la consegna era **già** concorrente e
+non ordinata prima di PR-5b (4 worker), quindi i subscriber downstream sono **già**
+tenuti a essere thread-safe; il lock qui garantisce solo l'ordine di *enqueue*.
+`last_successful_message_ts` è **last-write-wins** (riflette il `received_at`
+dell'ultimo messaggio; contratto `test_handle_signal_preserves_listener_received_at`):
+un confronto stringa «monotòno» sarebbe stato fragile (offset ISO misti / `None`) e
+avrebbe rischiato di bloccare `save/publish`. Questo campo è **solo di display**: la
+**staleness detection** dell'invariant guard usa invece `last_message_processed_ts`
+(wall-clock del *processing*, aggiornato a ogni segnale) — così un `received_at`
+**backdated/malformato** del payload **non** può gonfiare `now − last` e innescare un
+`STALE_RUNTIME` spurio → nessun restart/409. Nel `runtime_snapshot` il ts che alimenta
+il guard è: ts del listener (receive-time, primario) → fallback `last_message_processed_ts`
+del service, **mai** il `received_at` LWW. `_handle_status` non muta stato condiviso ⇒
+pubblica **senza** lock.
+
+**Invariant guard generalizzato**: `CONNECTED ⇒ handlers_registered ==
+expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N` per
+l'orchestratore), regola duplicati `> expected_handlers`. Così N handler sani con
+aggregato CONNECTED **non** violano l'invariante.
 
 Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
 → `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la

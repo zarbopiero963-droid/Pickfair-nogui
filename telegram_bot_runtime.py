@@ -9,17 +9,21 @@ allow-list, guardia anti-stale, parse, emit) verso gli stessi callback
 `on_signal`/`on_status` del path Telethon. La semantica di parsing NON è
 modificata: il listener è usato solo come SINK (mai avviato — nessun Telethon).
 
-SOLO wiring di UN bot (PR-5a). Rimandati alle PR successive:
-- orchestrazione multi-bot (N transport + fan-in);
-- autoheal/health per-bot (qui il transport non ha un vero health-surface: la
-  liveness deriva dal thread vivo e dall'ultimo messaggio processato dal sink);
-- validazione avanzata dei chat_id (qui: coercizione a int per l'allow-list).
+PR-5a wira UN bot (`TelegramBotApiRuntime`). PR-5b aggiunge
+`TelegramMultiBotRuntime`: orchestrazione N-bot (N transport indipendenti +
+fan-in) con la stessa superficie listener-compatibile e semantica AGGREGATA
+fail-closed. Rimandati alle PR successive:
+- autoheal/health PER-BOT (PR-5c): oggi l'aggregato è fail-closed (se un bot
+  degrada l'intero runtime va FAILED => autoheal service-level restart-all);
+- validazione avanzata dei chat_id / risoluzione `@username` (qui: coercizione a
+  int per l'allow-list; un bot con sole chat non numeriche è non-usable).
 
 Il `bot_token` è un SEGRETO: mai loggato (il transport redige; qui non lo si
 stampa mai). Isolato dal path Telethon esistente, che resta invariato.
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
 
 from telegram_bot_transport import TelegramBotApiTransport
@@ -307,6 +311,259 @@ class TelegramBotApiRuntime:
             "listener_started": st["listener_started"],
             "client_alive": st["running"],
             "handlers_registered": st["handlers_registered"],
+            # Un singolo bot ATTESO = 1 handler quando CONNECTED (invariant guard).
+            "expected_handlers": 1,
+            "reconnect_in_progress": False,
+            "reconnect_attempts": 0,
+            "active_network_resources": st["active_network_resources"],
+            "intentional_stop": st["intentional_stop"],
+            "retry_loop_active": False,
+            "last_error": st["last_error"],
+            "last_successful_message_ts": st["last_successful_message_ts"],
+        }
+
+
+def _sum_int_field(dicts: List[dict], key: str) -> int:
+    """Somma robusta di un campo intero across gli status dei child."""
+    return sum(int(d.get(key, 0) or 0) for d in dicts)
+
+
+def _parse_iso_utc(value):
+    """Parse ISO-8601 → datetime normalizzata a UTC (None se non valido)."""
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _latest_iso_ts(values):
+    """Timestamp ISO CRONOLOGICAMENTE più recente tra `values`. Confronta le
+    datetime NORMALIZZATE a UTC, NON le stringhe: il `max()` lessicografico
+    sbaglierebbe con offset timezone diversi tra i child (es. `+05:00` vs `+00:00`)
+    → falsi STALE_RUNTIME nel guard. Fail-safe: valori non parsabili ignorati;
+    None se nessuno è parsabile."""
+    best_str, best_dt = None, None
+    for v in values:
+        dt = _parse_iso_utc(v)
+        if dt is None:
+            continue
+        if best_dt is None or dt > best_dt:
+            best_dt, best_str = dt, v
+    return best_str
+
+
+def _child_thread_alive(runtime: Any) -> bool:
+    """True se il runtime child ha un thread runtime VIVO. Fail-closed: se la
+    verifica di liveness solleva, assume VIVO (non nascondere un orfano: il guard
+    del service deve poterlo vedere e bloccare un retry -> anti-409)."""
+    thread = getattr(runtime, "_runtime_thread", None)
+    if thread is None:
+        return False
+    try:
+        return bool(thread.is_alive())
+    except Exception:  # pragma: no cover - is_alive difensivo
+        return True
+
+
+class _AnyAliveThread:
+    """Proxy `_runtime_thread` per l'orchestratore: `is_alive()` è True se un
+    QUALSIASI transport child è vivo. Serve al guard `previous_runtime_still_alive`
+    e all'anti-orfano del service, che leggono `listener._runtime_thread` e ne
+    chiamano `is_alive()`: con N bot un solo thread vivo deve bastare a bloccare un
+    secondo avvio (doppio getUpdates/409)."""
+
+    name = "telegram-multibot-any-alive"
+
+    def __init__(self, runtimes: List[Any]):
+        self._runtimes = runtimes
+
+    def is_alive(self) -> bool:
+        return any(_child_thread_alive(r) for r in self._runtimes)
+
+    def join(self, timeout=None) -> None:
+        """Fan-out join sui thread child (difensivo: se un chiamante tratta il proxy
+        come un Thread reale, es. shutdown/autoheal, NON deve sollevare
+        AttributeError e saltare l'anti-409). Best-effort, non propaga."""
+        for r in self._runtimes:
+            t = getattr(r, "_runtime_thread", None)
+            joiner = getattr(t, "join", None)
+            if callable(joiner):
+                try:
+                    joiner(timeout=timeout)
+                except Exception:  # pragma: no cover - join difensivo
+                    pass
+
+
+class TelegramMultiBotRuntime:
+    """Orchestratore N-bot (epica #374 PR-5b): compone N `TelegramBotApiRuntime`
+    indipendenti (uno per bot attivo *usable*) presentando la STESSA superficie
+    duck-typed attesa da `TelegramService.self.listener`
+    (`state`/`running`/`_runtime_thread`/`start`/`stop`/`status`/`runtime_snapshot`).
+
+    Ogni child mantiene i propri invarianti per-token: transport getUpdates
+    dedicato, thread proprio, sink di parsing PRIVATO (mai condiviso — `handle_
+    incoming` muta stato non sotto lock, quindi N thread su un sink solo sarebbe una
+    race). Il punto di fan-in condiviso è a valle, in `TelegramService._handle_
+    signal` (serializzato lì con un lock in PR-5b).
+
+    Semantica AGGREGATA fail-closed:
+    - `state`: CONNECTED solo se TUTTI i child sono CONNECTED; qualsiasi child non
+      CONNECTED => FAILED (in PR-5b l'autoheal service-level fa restart-all;
+      l'autoheal per-bot arriva in PR-5c). STOPPED/CREATED solo se TUTTI lo sono.
+    - `running`: True solo se TUTTI i child sono running.
+    - `_runtime_thread`: proxy any-alive (un solo thread child vivo blocca un retry).
+    - `stop()`: fail-closed se un QUALSIASI thread child sopravvive (anti-409).
+    - `handlers_registered`/`active_network_resources`/`monitored_chat_count`:
+      SOMMA sui child. `expected_handlers` = numero di bot (per l'invariant guard
+      generalizzato). `healthy_bot_count` = child con >=1 handler.
+    """
+
+    def __init__(self, runtimes: List[TelegramBotApiRuntime]):
+        if not runtimes:
+            raise ValueError("TelegramMultiBotRuntime richiede almeno un runtime")
+        self._runtimes: List[Any] = list(runtimes)
+        self.intentional_stop = False
+        self._any_alive = _AnyAliveThread(self._runtimes)
+        # True SOLO durante il fan-out di start(): distingue un mix TRANSITORIO
+        # (CONNECTED+CREATED mentre i child partono in sequenza) da una degradazione
+        # PERSISTENTE (un child giù mentre altri su). Bool = read/write atomico:
+        # l'autoheal può leggerlo concorrentemente senza lock.
+        self._starting = False
+
+    # ---- stato aggregato ----
+    @property
+    def state(self) -> str:
+        states = [r.state for r in self._runtimes]
+        # Un child DEGRADATO (FAILED) domina: fail-closed => l'autoheal service-level
+        # riavvia l'intero set (per-bot in PR-5c).
+        if any(s == "FAILED" for s in states):
+            return "FAILED"
+        if all(s == "CONNECTED" for s in states):
+            return "CONNECTED"
+        if all(s == "STOPPED" for s in states):
+            return "STOPPED"
+        if all(s == "CREATED" for s in states):
+            return "CREATED"
+        # Mix senza FAILED. Distingue TRANSITORIO vs PERSISTENTE (rilievo convergente
+        # GPT-5.6 Terra / Fable 5 / Fugu Ultra):
+        # - DURANTE il fan-out di start() (`_starting`): il mix CONNECTED+CREATED è
+        #   normale (i child partono in sequenza) => CONNECTING, NON FAILED, così un
+        #   autoheal concorrente non fa restart-all spurio (409).
+        # - FUORI dalla finestra di start(): un mix che NON converge a all-CONNECTED
+        #   (es. un child rimasto CREATED/STOPPED per orphan/thread morto senza flag
+        #   FAILED) è una DEGRADAZIONE PERSISTENTE => FAILED, così l'autoheal
+        #   service-level riavvia il bot giù (niente mascheramento indefinito).
+        return "CONNECTING" if self._starting else "FAILED"
+
+    @property
+    def running(self) -> bool:
+        return bool(self._runtimes) and all(bool(r.running) for r in self._runtimes)
+
+    @property
+    def _runtime_thread(self):
+        return self._any_alive
+
+    def start(self) -> dict:
+        """Avvia (fan-out) tutti i child. Aggregato: `started=True` solo se TUTTI
+        partono. Su fallimento parziale/totale => `started=False` con gli errori
+        aggregati; i child già avviati NON vengono fermati qui (il loro thread resta
+        visibile via `_runtime_thread` any-alive => il guard blocca un retry, e
+        l'autoheal service-level farà restart-all)."""
+        self.intentional_stop = False
+        # `_starting`=True per l'INTERO fan-out: uno stato aggregato letto in questa
+        # finestra (mix CONNECTED+CREATED transitorio) resta CONNECTING, non FAILED.
+        self._starting = True
+        try:
+            results = []
+            for r in self._runtimes:
+                try:
+                    res = r.start() or {}
+                except Exception as exc:  # pragma: no cover - start dei child è già fail-safe
+                    res = {"started": False, "error": type(exc).__name__}
+                results.append(res)
+            if all(bool(x.get("started")) for x in results):
+                return {"started": True}
+            errors = [str(x.get("error") or "") for x in results if not x.get("started")]
+            detail = ",".join(e for e in errors if e) or "multibot_start_failed"
+            return {"started": False, "error": "multibot_partial_start:" + detail}
+        finally:
+            self._starting = False
+
+    def stop(self) -> dict:
+        """Ferma (fan-out) tutti i child. Fail-closed: se un QUALSIASI thread child
+        sopravvive => `stopped=False` (anti-409: un restart aprirebbe un secondo
+        getUpdates sullo stesso token)."""
+        self.intentional_stop = True
+        results = []
+        for r in self._runtimes:
+            try:
+                res = r.stop() or {}
+            except Exception as exc:  # pragma: no cover - stop dei child è già best-effort
+                res = {"stopped": False, "error": type(exc).__name__}
+            results.append(res)
+        if any(_child_thread_alive(r) for r in self._runtimes):
+            # Thread child SUPERSTITE (zombie) dopo uno stop OPERATORE. PRESERVA
+            # intentional_stop=True (rilievo Fugu Ultra, coerente col ramo sotto):
+            # un restart-all per "ripulire" lo zombie aprirebbe un secondo getUpdates
+            # sullo stesso bot (Telegram 409 Conflict / doppio consumo). Il fail-closed è NON
+            # riavviare dopo uno stop operatore; lo zombie è SURFACED (aggregato
+            # not-stopped + thread vivo => anti-409 guard) per intervento manuale /
+            # autoheal per-bot (PR-5c), mai per restart-all automatico.
+            return {"stopped": False, "error": "multibot_thread_still_alive"}
+        if all(bool(x.get("stopped")) for x in results):
+            return {"stopped": True}
+        # Nessun thread child vivo ma uno stop() figlio ha riportato stopped=False.
+        # PRESERVA intentional_stop (rilievo Fable 5): stop() è invocato per intento
+        # OPERATORE; azzerare il flag qui farebbe RIAVVIARE il listener dall'autoheal
+        # service-level DOPO uno shutdown voluto (ripresa consumo segnali/piazzamenti
+        # contro l'intento operatore = rischio safety). Senza thread vivi non c'è
+        # orfano né consumo in corso: lasciare intentional_stop=True è sicuro e non
+        # incastra nulla (nessun thread da guarire). [Supera il precedente rilievo
+        # Greptile P2, che non distingueva stop-operatore da stop-di-healing.]
+        errors = [str(x.get("error") or "") for x in results if not x.get("stopped")]
+        detail = ",".join(e for e in errors if e) or "multibot_stop_failed"
+        return {"stopped": False, "error": "multibot_stop_failed:" + detail}
+
+    def status(self) -> dict:
+        child = [r.status() for r in self._runtimes]
+        last_error = next((str(c.get("last_error")) for c in child if c.get("last_error")), "")
+        return {
+            "state": self.state,
+            "running": bool(child) and all(bool(c.get("running")) for c in child),
+            "intentional_stop": bool(self.intentional_stop),
+            "reconnect_attempts": 0,
+            "reconnect_in_progress": False,
+            "last_error": last_error,
+            # Confronto CRONOLOGICO (UTC), non lessicografico sulle stringhe ISO.
+            "last_successful_message_ts": _latest_iso_ts(
+                [c.get("last_successful_message_ts") for c in child]
+            ),
+            "listener_started": any(bool(c.get("listener_started")) for c in child),
+            "handlers_registered": _sum_int_field(child, "handlers_registered"),
+            "active_network_resources": _sum_int_field(child, "active_network_resources"),
+            "monitored_chat_count": _sum_int_field(child, "monitored_chat_count"),
+            # Per l'invariant guard generalizzato (CONNECTED => handlers == expected).
+            "expected_handlers": len(self._runtimes),
+            "bot_count": len(self._runtimes),
+            "healthy_bot_count": sum(
+                1 for c in child if int(c.get("handlers_registered", 0) or 0) >= 1
+            ),
+        }
+
+    def runtime_snapshot(self) -> dict:
+        st = self.status()
+        return {
+            "state": st["state"],
+            "running": st["running"],
+            "listener_started": st["listener_started"],
+            "client_alive": st["running"],
+            "handlers_registered": st["handlers_registered"],
+            "expected_handlers": st["expected_handlers"],
             "reconnect_in_progress": False,
             "reconnect_attempts": 0,
             "active_network_resources": st["active_network_resources"],

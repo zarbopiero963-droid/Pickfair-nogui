@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -13,7 +14,7 @@ from recovery.telegram_autoheal import (
     TelegramAutohealPolicy,
     TelegramAutohealSnapshot,
 )
-from telegram_bot_runtime import TelegramBotApiRuntime
+from telegram_bot_runtime import TelegramBotApiRuntime, TelegramMultiBotRuntime
 from telegram_listener import TelegramListener
 
 logger = logging.getLogger(__name__)
@@ -42,9 +43,12 @@ class TelegramService:
         # Firma: (bot_token, chat_ids, on_message) -> transport.
         self._bot_transport_factory = bot_transport_factory
         self._connect_timeout = float(connect_timeout)
-        # Il listener può essere il TelegramListener (path Telethon userbot) o
-        # l'adapter Bot API (path bot_token, PR-5a): stessa superficie runtime.
-        self.listener: Optional[TelegramListener | TelegramBotApiRuntime] = None
+        # Il listener può essere il TelegramListener (path Telethon userbot),
+        # l'adapter Bot API single-bot (PR-5a) o l'orchestratore N-bot (PR-5b):
+        # stessa superficie runtime duck-typed.
+        self.listener: Optional[
+            TelegramListener | TelegramBotApiRuntime | TelegramMultiBotRuntime
+        ] = None
         self.connected = False
         self.last_error = ""
         self.state = "CREATED"
@@ -52,6 +56,12 @@ class TelegramService:
         self.reconnect_attempts = 0
         self.reconnect_in_progress = False
         self.last_successful_message_ts: str | None = None
+        # Timestamp di PROCESSING (wall-clock del service quando processa un
+        # messaggio), separato dal received_at del segnale. Alimenta la staleness
+        # detection dell'invariant guard: NON è influenzabile da un received_at
+        # backdated/malformato del payload (rilievo convergente GPT-5.6 Terra /
+        # Fable 5 / Fugu Ultra) → niente STALE_RUNTIME spurio → niente restart 409.
+        self._last_message_processed_ts: str | None = None
         self.listener_started = False
         self.handlers_registered = 0
         self.active_network_resources = 0
@@ -66,6 +76,20 @@ class TelegramService:
         self._last_autoheal_action = TelegramAutohealAction.NO_ACTION.value
         self._last_autoheal_decision_reason = "not_evaluated"
         self._restart_in_progress = False
+        # Fan-in N-bot (PR-5b): con l'orchestratore multi-bot, N thread transport
+        # consegnano segnali/status CONCORRENTEMENTE a _handle_signal/_handle_status
+        # (prima single-writer). Il lock serializza la sezione critica (mutazione di
+        # last_successful_message_ts + save_received_signal + bus.publish) così le
+        # consegne non si intrecciano. Sink di parsing restano per-bot (non condivisi).
+        # RLock (RIENTRANTE, non Lock): la sezione critica tiene il lock durante
+        # bus.publish; se un subscriber SINCRONO rientra in _handle_signal/
+        # _handle_status sullo STESSO thread, un Lock non-rientrante deadlockerebbe
+        # per sempre il transport del bot. RLock consente la ri-acquisizione dallo
+        # stesso thread; la serializzazione CROSS-thread (lo scopo) resta garantita.
+        self._signal_fanin_lock = threading.RLock()
+        # Bot ATTIVI ma non-usable (sole chat non numeriche / @username rimandato):
+        # SURFACED in status (visibile), non droppati in silenzio (PR-5b).
+        self._unusable_active_bot_count = 0
 
     def _set_state(self, new_state: str) -> None:
         allowed_states = {"CREATED", "CONNECTING", "CONNECTED", "RECONNECTING", "STOPPED", "FAILED"}
@@ -82,18 +106,40 @@ class TelegramService:
         # genera solo come fallback (l'ora di processing non e' la ricezione).
         received_at = signal.get("received_at") or datetime.now(timezone.utc).isoformat()
         signal["received_at"] = received_at
-        self.last_successful_message_ts = received_at
-
         # conserva eventuale flag simulation_mode già presente
         signal["simulation_mode"] = bool(signal.get("simulation_mode", False))
 
-        if hasattr(self.db, "save_received_signal"):
-            try:
-                self.db.save_received_signal(signal)
-            except Exception as exc:
-                logger.warning("save_received_signal fallita: %s", exc)
-
-        self.bus.publish("SIGNAL_RECEIVED", signal)
+        # Fan-in serializzato (PR-5b): con N bot, thread transport distinti chiamano
+        # qui in parallelo (prima single-writer). Il lock serializza l'INTERA sezione
+        # critica — last_successful_message_ts + save_received_signal + bus.publish —
+        # così l'ORDINE di enqueue su bus == ordine di persistenza (nessuna finestra
+        # "A salva, B salva+pubblica, A pubblica": rilievo convergente GPT-5.6 Terra /
+        # Fable 5 / Fugu Ultra). Tenere `bus.publish` DENTRO il lock è sicuro contro
+        # il deadlock: `EventBus.publish` è NON bloccante (solo enqueue su Queue +
+        # breve lock interno leaf), NON esegue i subscriber inline — questi girano su
+        # un worker pool asincrono. Quindi nessuna lock-order inversion col fan-in
+        # lock. Il lock resta RLock per difesa dal rientro sincrono (es. un hook DB
+        # che rientri in _handle_signal sullo stesso thread).
+        #
+        # last_successful_message_ts = LAST-WRITE-WINS (contratto storico
+        # `test_handle_signal_preserves_listener_received_at`: un received_at esplicito
+        # del listener, anche backdated, viene preservato). NON monotòno: il campo
+        # riflette la ricezione dell'ultimo messaggio processato; il confronto stringa
+        # (Greptile P1) era fragile (offset ISO misti / None > str → TypeError) e
+        # avrebbe bloccato save/publish → rimosso. Sotto fan-in concorrente i timestamp
+        # sono quasi-simultanei. La staleness detection NON usa questo campo ma
+        # `_last_message_processed_ts` (wall-clock del processing) → immune al backdating.
+        with self._signal_fanin_lock:
+            self.last_successful_message_ts = received_at
+            # Liveness/staleness: wall-clock del PROCESSING (adesso), non il
+            # received_at del payload → immune al backdating (vedi __init__).
+            self._last_message_processed_ts = datetime.now(timezone.utc).isoformat()
+            if hasattr(self.db, "save_received_signal"):
+                try:
+                    self.db.save_received_signal(signal)
+                except Exception as exc:
+                    logger.warning("save_received_signal fallita: %s", exc)
+            self.bus.publish("SIGNAL_RECEIVED", signal)
 
     def _handle_status(self, *args) -> None:
         """
@@ -111,6 +157,9 @@ class TelegramService:
             status = "INFO"
             message = ""
 
+        # Nessun lock: _handle_status non muta stato condiviso e l'ordine dei
+        # messaggi di stato non è safety-relevant. `EventBus.publish` è comunque non
+        # bloccante (solo enqueue), i subscriber girano su un worker pool asincrono.
         self.bus.publish(
             "TELEGRAM_STATUS",
             {
@@ -250,6 +299,15 @@ class TelegramService:
             transport_factory=self._bot_transport_factory,
         )
 
+    def _build_multibot_runtime(self, usable: list) -> TelegramMultiBotRuntime:
+        """Costruisce l'orchestratore N-bot (PR-5b): un TelegramBotApiRuntime per
+        ciascun bot usable, tutti con fan-in verso gli STESSI callback
+        on_signal/on_status (serializzati da _signal_fanin_lock). Ogni child ha il
+        proprio transport getUpdates, thread e sink di parsing PRIVATO."""
+        return TelegramMultiBotRuntime(
+            [self._build_botapi_runtime(bot, chat_ids) for bot, chat_ids in usable]
+        )
+
     def _build_telethon_listener(self, cfg) -> TelegramListener:
         """Costruisce e configura il listener Telethon userbot (path invariato).
         Estratto da start() per tenerne bassa la complessità."""
@@ -325,13 +383,10 @@ class TelegramService:
         # credenziali userbot mancano si tenta il path Bot API (bot_token), che
         # NON richiede api_id/api_hash: è questo il gate rilassato. Eseguito DOPO
         # l'idempotenza => non fa mai fallire un runtime già attivo.
-        bot_api_selection = None
+        bot_api_usable = None
         if not cfg.api_id or not cfg.api_hash:
             try:
-                # UNA lettura => (active_count, usable) coerenti. Il gate multi-bot
-                # conta i bot ATTIVI (non gli usable): un 2° bot attivo ma non-usable
-                # (es. sole chat non numeriche) NON deve essere droppato in silenzio
-                # avviando il solo bot usable. Errori DB PROPAGANO qui sotto.
+                # UNA lettura => (active_count, usable) coerenti. Errori DB PROPAGANO.
                 active_count, usable = self._select_bot_api_source()
             except Exception as exc:
                 # Errore DB nel determinare il set di bot: NON avviare un set
@@ -342,29 +397,28 @@ class TelegramService:
                 self.intentional_stop = False
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
-            if active_count > 1:
-                # PR-5a wira UN solo bot. Con più bot ATTIVI configurati NON si
-                # droppa silenziosamente nulla — nemmeno se solo uno è usable:
-                # fail-closed, l'orchestrazione N-bot arriva nella PR successiva.
-                self.last_error = "multi_bot_runtime_not_yet_supported"
-                self.intentional_stop = False
-                self._set_state("FAILED")
-                raise RuntimeError(self.last_error)
-            elif len(usable) == 1:
-                bot_api_selection = usable[0]
+            # Bot ATTIVI ma non-usable (sole chat non numeriche, @username rimandato):
+            # SURFACED (visibile in status), non droppati in silenzio né bloccanti.
+            self._unusable_active_bot_count = max(0, int(active_count) - len(usable))
+            if len(usable) >= 1:
+                # PR-5b: uno o PIÙ bot usable => si avvia l'ingestione (runtime
+                # singolo o orchestratore N-bot). Rimpiazza il fail-closed
+                # 'multi_bot_runtime_not_yet_supported' di PR-5a.
+                bot_api_usable = usable
             else:
-                # Né userbot né un bot Bot API utilizzabile: fail-closed come prima.
-                # (active_count<=1 qui: 0 bot attivi, o 1 bot attivo ma non usable.)
+                # Nessun bot usable (0 attivi, o attivi senza chat numeriche):
+                # fail-closed come prima.
                 self.last_error = "Configurazione Telegram incompleta"
                 self.intentional_stop = False
                 self._set_state("FAILED")
                 raise RuntimeError(self.last_error)
 
         # Conteggio chat della sorgente selezionata per la risposta di avvio:
-        # sul path Bot API le chat vivono nel bot selezionato, NON in
+        # sul path Bot API le chat vivono nei bot usable (somma su N), NON in
         # cfg.monitored_chat_ids (lista userbot, vuota qui).
         active_chat_count = (
-            len(bot_api_selection[1]) if bot_api_selection is not None
+            sum(len(chat_ids) for _bot, chat_ids in bot_api_usable)
+            if bot_api_usable is not None
             else len(cfg.monitored_chat_ids)
         )
 
@@ -372,13 +426,17 @@ class TelegramService:
             self.intentional_stop = False
             self.reconnect_in_progress = False
             self._set_state("CONNECTING")
-            if bot_api_selection is not None:
-                # Path Bot API (PR-5a): adapter listener-compatibile alimentato dal
-                # transport HTTP getUpdates. Nessun Telethon, nessun api_id/api_hash.
-                bot, chat_ids = bot_api_selection
-                self.listener = self._build_botapi_runtime(bot, chat_ids)
-                # Un bot Bot API attivo = un handler runtime.
-                self.handlers_registered = 1
+            if bot_api_usable is not None:
+                # Path Bot API: 1 bot => runtime singolo (PR-5a); >1 bot =>
+                # orchestratore N-bot (PR-5b). Nessun Telethon/api_id/api_hash.
+                if len(bot_api_usable) == 1:
+                    bot, chat_ids = bot_api_usable[0]
+                    self.listener = self._build_botapi_runtime(bot, chat_ids)
+                    self.handlers_registered = 1
+                else:
+                    self.listener = self._build_multibot_runtime(bot_api_usable)
+                    # N bot usable = N handler runtime (uno per transport sano).
+                    self.handlers_registered = len(bot_api_usable)
             else:
                 self.listener = self._build_telethon_listener(cfg)
                 self.handlers_registered = sum(
@@ -516,6 +574,9 @@ class TelegramService:
             "reconnect_in_progress": bool(self.reconnect_in_progress),
             "last_error": self.last_error,
             "last_successful_message_ts": self.last_successful_message_ts,
+            # Liveness di processing (immune al backdating del payload): usato dalla
+            # staleness detection quando il listener non espone un proprio ts.
+            "last_message_processed_ts": self._last_message_processed_ts,
             "listener_started": bool(self.listener_started),
             "handlers_registered": int(self.handlers_registered),
             "active_network_resources": int(self.active_network_resources),
@@ -527,6 +588,9 @@ class TelegramService:
             "last_autoheal_action": self._last_autoheal_action,
             "last_autoheal_decision_reason": self._last_autoheal_decision_reason,
             "recovery_allowed": bool(not self._lockout_active and not self.intentional_stop),
+            # Bot ATTIVI ma non-usable (sole chat non numeriche / @username
+            # rimandato): SURFACED (visibile), non droppati in silenzio (PR-5b).
+            "unusable_active_bot_count": int(self._unusable_active_bot_count),
         }
 
     def runtime_snapshot(self) -> dict:
@@ -545,17 +609,24 @@ class TelegramService:
             "handlers_registered": int(
                 listener_snapshot.get("handlers_registered", status["handlers_registered"])
             ),
+            # Handler ATTESI quando CONNECTED: 1 per single-bot/Telethon, N per
+            # l'orchestratore N-bot (PR-5b). Alimenta l'invariant guard generalizzato.
+            "expected_handlers": int(listener_snapshot.get("expected_handlers", 1)),
             "reconnect_in_progress": bool(status["reconnect_in_progress"]),
             "reconnect_attempts": int(status["reconnect_attempts"]),
             "active_network_resources": int(status["active_network_resources"]),
             "intentional_stop": bool(status["intentional_stop"]),
             "retry_loop_active": bool(status["reconnect_in_progress"]),
             "last_error": str(status["last_error"] or ""),
-            # Liveness dal listener: il valore cache del service si aggiorna
-            # solo via callback segnale, i messaggi non-segnale no.
+            # Liveness/staleness per l'invariant guard. Primario: il ts del listener
+            # (receive-time nel transport, traccia ANCHE i messaggi non-segnale →
+            # liveness più fedele). Fallback: `last_message_processed_ts` del service
+            # (wall-clock del processing), NON il received_at LWW del segnale: così il
+            # guard non può mai ricevere un valore backdated dal payload (rilievo
+            # convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra) → niente STALE spurio.
             "last_successful_message_ts": (
                 listener_snapshot.get("last_successful_message_ts")
-                or status["last_successful_message_ts"]
+                or status["last_message_processed_ts"]
             ),
         }
 
@@ -579,6 +650,7 @@ class TelegramService:
             last_error=str(snap["last_error"] or ""),
             last_successful_message_ts=snap["last_successful_message_ts"],
             now_ts=checked_at,
+            expected_handlers=int(snap.get("expected_handlers", 1)),
         )
         health = self._health_probe.evaluate(invariant_snapshot, checked_at=checked_at)
         return {
