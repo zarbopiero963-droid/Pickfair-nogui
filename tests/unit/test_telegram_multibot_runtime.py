@@ -514,3 +514,30 @@ def test_perbot_autoheal_healed_counts_only_successful_restart():
     out = rt.run_perbot_autoheal_once(now_ts=1000.0)
     assert out["healed"] == 1          # solo `heals`
     assert out["restart_failed"] == 1  # `fails` conteggiato come tentativo non riuscito
+
+
+def test_perbot_autoheal_restart_in_progress_guard_skips_concurrent_restart():
+    # BLOCK (GPT/Fable/Fugu): con restart() fuori dal lock, un ciclo che trova
+    # `_child_restart_in_progress` già True per quel child NON deve avviare un secondo
+    # restart in parallelo (doppio getUpdates/orphan, budget incoerente).
+    b = _FakeChild(state="FAILED", running=False, handlers=0, restart_heals_to="CONNECTED")
+    rt = TelegramMultiBotRuntime([b])
+    rt._child_restart_in_progress[0] = True  # simula un restart già in corso
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert any(a["action"] == "restart_in_progress" for a in out["actions"])
+    assert b.restart_called == 0             # NESSUN secondo restart
+
+
+def test_perbot_autoheal_stuck_lockout_suppresses_next_cycle_no_restart():
+    # BLOCK (Fugu/Fable): dopo il lockout "stuck" un bot NON deve essere riavviato al
+    # ciclo successivo (policy => SUPPRESS_RESTART finché il lockout è attivo): niente
+    # restart storm su un thread permanentemente bloccato.
+    b = _FakeChild(state="FAILED", running=False, handlers=0, restart_stop_ok=False)
+    rt = TelegramMultiBotRuntime([b])
+    for t in (0.0, 25.0, 50.0):   # 3 deferral consecutivi => stuck lockout al 3°
+        rt.run_perbot_autoheal_once(now_ts=t)
+    assert rt.locked_out_bot_count(now_ts=50.0) == 1
+    calls_before = b.restart_called
+    out = rt.run_perbot_autoheal_once(now_ts=60.0)   # entro il lockout
+    assert b.restart_called == calls_before          # SUPPRESS: nessun nuovo restart
+    assert out["healed"] == 0

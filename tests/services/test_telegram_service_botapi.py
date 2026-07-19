@@ -1038,3 +1038,19 @@ def test_bot_api_runtime_restart_returns_false_when_stop_leaves_thread_alive():
     # BLOCK (Fable 5): il ramo fail-closed di stop() riporta intentional_stop=False,
     # così il child NON resta escluso per sempre dall'autoheal (recovery non soppresso).
     assert rt.intentional_stop is False
+
+
+def test_run_autoheal_once_perbot_restart_failed_maps_to_schedule_restart():
+    # BLOCK (Fugu): con restart_failed>0 (recovery attiva ma fallita) l'azione del
+    # service NON deve essere NO_ACTION (gap di allarme) ma SCHEDULE_RESTART.
+    from recovery.telegram_autoheal import TelegramAutohealAction
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    svc.listener.run_perbot_autoheal_once = lambda now_ts=None: {
+        "healed": 0, "locked_out": 0, "locked_out_now": 0, "restart_failed": 1, "actions": [],
+    }
+    out = svc.run_autoheal_once(
+        checked_at_ts=1000.0, startup_grace_active=False,
+        reconnect_grace_active=False, failure_escalated=False,
+    )
+    assert out["action"] == TelegramAutohealAction.SCHEDULE_RESTART.value
