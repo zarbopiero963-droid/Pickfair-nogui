@@ -762,10 +762,13 @@ class TelegramService:
         healed = int(result.get("healed", 0) or 0)
         locked_out_now = int(result.get("locked_out_now", result.get("locked_out", 0)) or 0)
         restart_failed = int(result.get("restart_failed", 0) or 0)
-        if healed:
-            action = TelegramAutohealAction.SCHEDULE_RESTART.value
-        elif locked_out_now:
+        if locked_out_now:
             action = TelegramAutohealAction.ENTER_FAILED_LOCKOUT.value
+        elif healed or restart_failed:
+            # `restart_failed>0` => recovery ATTIVA con tentativi falliti: NON
+            # mascherare come NO_ACTION (gap di allarme, rilievo Fugu Ultra) — resta
+            # SCHEDULE_RESTART finché non guarisce o entra in lockout.
+            action = TelegramAutohealAction.SCHEDULE_RESTART.value
         else:
             action = TelegramAutohealAction.NO_ACTION.value
         self._last_autoheal_action = action

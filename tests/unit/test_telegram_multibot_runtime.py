@@ -458,7 +458,7 @@ def test_perbot_autoheal_recovered_child_resets_budget():
     # nuova degradazione: deve TENTARE il restart (budget fresco), non essere in lockout
     b.force_state("FAILED")
     b._restart_heals_to = None
-    out = rt.run_perbot_autoheal_once(now_ts=50.0)
+    rt.run_perbot_autoheal_once(now_ts=50.0)
     assert b.restart_called == 2                 # tentativo reale (budget resettato)
     assert rt.locked_out_bot_count(now_ts=50.0) == 0  # NON in lockout
 
@@ -472,19 +472,23 @@ def test_perbot_autoheal_skips_intentionally_stopped_child():
     assert b.restart_called == 0
 
 
-def test_perbot_autoheal_orphan_deferred_does_not_consume_budget():
-    # BLOCK (Fable/Fugu/Greptile): se lo stop del transport NON riesce (thread ancora
-    # vivo => nessun ciclo reale), il restart è DEFERRED e NON consuma budget: un bot
-    # il cui thread si sta ancora spegnendo non deve finire in lockout senza essere
-    # mai stato realmente riavviato. Ripetuto molte volte: mai lockout.
+def test_perbot_autoheal_orphan_deferred_then_stuck_lockout():
+    # BLOCK (Fable/Fugu/Greptile + GPT): uno stop che NON cicla il transport (thread
+    # vivo) è DEFERRED e NON consuma il budget restart (un wind-down transitorio non
+    # deve far lockout). MA un thread PERMANENTEMENTE bloccato non deve generare retry
+    # infiniti (rilievo GPT/Fable): dopo N deferral CONSECUTIVI => lockout "stuck".
     b = _FakeChild(state="FAILED", running=False, handlers=0, restart_stop_ok=False)
     rt = TelegramMultiBotRuntime([b])
-    for t in (0.0, 25.0, 50.0, 75.0, 100.0):
+    # primi cicli: deferred, nessun lockout (finestra di wind-down)
+    for t in (0.0, 25.0):
         out = rt.run_perbot_autoheal_once(now_ts=t)
-        assert out["restart_failed"] == 1        # restart_deferred conteggiato qui
-        assert out["healed"] == 0
-    assert rt.locked_out_bot_count(now_ts=100.0) == 0   # MAI in lockout (budget intatto)
-    assert rt.status()["perbot_restart_total"] == 0     # nessun restart reale contato
+        assert out["restart_failed"] == 1 and out["healed"] == 0
+        assert out["locked_out"] == 0
+    # 3° ciclo: deferral consecutivi >= max_restarts_in_window => lockout stuck
+    out = rt.run_perbot_autoheal_once(now_ts=50.0)
+    assert out["locked_out"] == 1
+    assert rt.locked_out_bot_count(now_ts=50.0) == 1
+    assert rt.status()["perbot_restart_total"] == 0   # nessun restart REALE contato
 
 
 def test_perbot_autoheal_failing_child_does_not_abort_healthy_siblings():

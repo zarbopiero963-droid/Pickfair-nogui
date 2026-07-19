@@ -160,8 +160,15 @@ lockout senza essere mai stato riavviato. `restart()` fail-fast: se `stop()` non
 ferma il transport **non** chiama `start()` (eviterebbe un falso `already_running`).
 `locked_out_now` espone i bot **attualmente** in lockout (il service logga la
 degradazione **persistente**, non solo la transizione). Lo stato per-child è
-serializzato da un lock (`_perbot_heal_lock`) e il ciclo **isola le eccezioni per
-child** (un bot che solleva non aborta la cura degli altri). `_last_autoheal_action`
+serializzato da un lock (`_perbot_heal_lock`) tenuto **solo** su decisione e mutazioni
+brevi: `child.restart()` (stop con `join` fino a ~5s) gira **fuori** dal lock, così
+`status()`/`locked_out_bot_count()` (probe/watchdog) non si bloccano durante un restart
+storm. Il ciclo **isola le eccezioni per child** (un bot che solleva non aborta la cura
+degli altri). Un thread **permanentemente bloccato** (stop mai efficace) non genera
+retry infiniti: dopo `max_restarts_in_window` **deferral consecutivi** entra in lockout
+"stuck" (fail-closed). Un `restart_failed>0` è **recovery attiva** (mappata su
+`SCHEDULE_RESTART`, non `NO_ACTION`): i restart falliti non restano mascherati fino al
+lockout. `_last_autoheal_action`
 resta nel contratto enum `TelegramAutohealAction` (dettaglio nel `reason`). Nota di
 scope: per il **Bot API** la salute per-bot è il **poll-failure** del transport
 (`_consecutive_failures`), non la staleness dei messaggi (un bot che poll-a ma è

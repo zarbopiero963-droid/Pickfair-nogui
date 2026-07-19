@@ -1035,3 +1035,6 @@ def test_bot_api_runtime_restart_returns_false_when_stop_leaves_thread_alive():
     assert res["restarted"] is False              # restart NON riuscito (stop fallito)
     assert res["stop"].get("stopped") is False
     assert len(cap) == 1                          # NESSUN nuovo transport costruito
+    # BLOCK (Fable 5): il ramo fail-closed di stop() riporta intentional_stop=False,
+    # così il child NON resta escluso per sempre dall'autoheal (recovery non soppresso).
+    assert rt.intentional_stop is False
