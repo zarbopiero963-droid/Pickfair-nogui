@@ -660,38 +660,48 @@ class TelegramMultiBotRuntime:
                 return {"index": i, "action": "restart_in_progress"}
             self._child_restart_in_progress[i] = True
         # SCHEDULE_RESTART: `restart()` FUORI dal lock (I/O lento). La guardia
-        # `_child_restart_in_progress[i]` resta True finché non registriamo l'esito;
-        # va SEMPRE azzerata (anche su eccezione) per non escludere il child.
+        # `_child_restart_in_progress[i]` va SEMPRE azzerata (`finally`): un `restart()`
+        # che solleva O un esito MALFORMATO (`stop`/`start` non-dict) non deve escludere
+        # il child per sempre (rilievo GPT-5.6 Terra). Il parsing è difensivo
+        # (`isinstance`), così un esito non conforme diventa un restart_deferred, non
+        # un'eccezione.
         try:
-            res = child.restart() or {}
-        except Exception:
+            res = child.restart()
+            res = res if isinstance(res, dict) else {}
+            stop_res = res.get("stop")
+            start_res = res.get("start")
+            stopped_ok = isinstance(stop_res, dict) and stop_res.get("stopped") is True
+            started_ok = bool(isinstance(start_res, dict) and start_res.get("started"))
+            with self._perbot_heal_lock:
+                return self._record_restart_result_locked(i, now_ts, stopped_ok, started_ok, decision.reason)
+        finally:
             with self._perbot_heal_lock:
                 self._child_restart_in_progress[i] = False
-            raise
-        stopped_ok = (res.get("stop") or {}).get("stopped") is True
-        started_ok = bool((res.get("start") or {}).get("started"))
-        with self._perbot_heal_lock:
-            self._child_restart_in_progress[i] = False
-            if not stopped_ok:
-                # Lo stop NON ha ciclato il transport (thread vivo). Un wind-down
-                # TRANSITORIO non consuma il budget restart; ma un thread
-                # PERMANENTEMENTE bloccato non deve generare retry infiniti (rilievo
-                # GPT-5.6 Terra / Fable 5): dopo `max_restarts_in_window` deferral
-                # CONSECUTIVI => lockout "stuck" (fail-closed, niente loop infinito).
-                self._child_deferred_consecutive[i] += 1
-                if self._child_deferred_consecutive[i] >= self._autoheal_policy.max_restarts_in_window:
-                    self._child_deferred_consecutive[i] = 0  # assorbito dal lockout
-                    if self._child_lockout_since[i] is None:
-                        self._child_lockout_since[i] = now_ts
-                    return {"index": i, "action": "lockout", "reason": "restart_deferred_stuck"}
-                return {"index": i, "action": "restart_deferred", "restarted": False, "reason": decision.reason}
-            # Transport realmente ciclato: reset deferred, consuma budget.
-            self._child_deferred_consecutive[i] = 0
-            self._child_restart_ts[i].append(now_ts)
-            self._child_restart_total[i] += 1
+
+    def _record_restart_result_locked(
+        self, i: int, now_ts: float, stopped_ok: bool, started_ok: bool, reason: str
+    ) -> dict:
+        """Registra l'esito di `restart()` e ritorna l'action dict. Sotto lock.
+
+        Budget consumato SOLO se il transport è stato realmente ciclato (`stopped_ok`);
+        uno stop non riuscito è `restart_deferred` (non consuma budget), ma dopo
+        `max_restarts_in_window` deferral CONSECUTIVI diventa lockout "stuck"
+        (fail-closed, niente loop infinito su un thread permanentemente bloccato).
+        """
+        if not stopped_ok:
+            self._child_deferred_consecutive[i] += 1
+            if self._child_deferred_consecutive[i] >= self._autoheal_policy.max_restarts_in_window:
+                self._child_deferred_consecutive[i] = 0  # assorbito dal lockout
+                if self._child_lockout_since[i] is None:
+                    self._child_lockout_since[i] = now_ts
+                return {"index": i, "action": "lockout", "reason": "restart_deferred_stuck"}
+            return {"index": i, "action": "restart_deferred", "restarted": False, "reason": reason}
+        self._child_deferred_consecutive[i] = 0
+        self._child_restart_ts[i].append(now_ts)
+        self._child_restart_total[i] += 1
         if started_ok:
-            return {"index": i, "action": "restart", "restarted": True, "reason": decision.reason}
-        return {"index": i, "action": "restart_failed", "restarted": False, "reason": decision.reason}
+            return {"index": i, "action": "restart", "restarted": True, "reason": reason}
+        return {"index": i, "action": "restart_failed", "restarted": False, "reason": reason}
 
     def _prune_child_heal_state_locked(self, i: int, now_ts: float) -> None:
         """Prune dei restart fuori finestra + scadenza lockout. Sotto lock."""

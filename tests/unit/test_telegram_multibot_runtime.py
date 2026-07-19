@@ -33,7 +33,7 @@ class _FakeChild:
     def __init__(self, *, state="CONNECTED", running=True, thread_alive=True,
                  handlers=1, chats=1, start_res=None, stop_res=None, last_error="",
                  intentional_stop=False, restart_heals_to=None, restart_stop_ok=True,
-                 raise_on=None):
+                 raise_on=None, restart_malformed=None):
         self._state = state
         self._running = running
         self._thread = _FakeThread(thread_alive) if thread_alive is not None else None
@@ -54,6 +54,10 @@ class _FakeChild:
         self._restart_stop_ok = restart_stop_ok
         # "runtime_snapshot"/"restart" => solleva su quel metodo (isolamento eccezioni).
         self._raise_on = raise_on
+        # Se impostato, restart() ritorna QUESTO dict (esito malformato): p.es.
+        # {"stop": "notadict", "start": True} => `stop`/`start` non-dict. Il parsing
+        # difensivo dell'orchestratore NON deve sollevare né lasciare la guardia stuck.
+        self._restart_malformed = restart_malformed
 
     def runtime_snapshot(self):
         if self._raise_on == "runtime_snapshot":
@@ -71,6 +75,10 @@ class _FakeChild:
         if self._raise_on == "restart":
             raise RuntimeError("boom_restart")
         self.restart_called += 1
+        if self._restart_malformed is not None:
+            # Esito NON conforme (stop/start non-dict): l'orchestratore deve
+            # trattarlo come restart_deferred, non sollevare.
+            return self._restart_malformed
         if not self._restart_stop_ok:
             # stop NON riuscito (thread ancora vivo): nessun ciclo reale del transport.
             return {"restarted": False,
@@ -541,3 +549,26 @@ def test_perbot_autoheal_stuck_lockout_suppresses_next_cycle_no_restart():
     out = rt.run_perbot_autoheal_once(now_ts=60.0)   # entro il lockout
     assert b.restart_called == calls_before          # SUPPRESS: nessun nuovo restart
     assert out["healed"] == 0
+
+
+def test_perbot_autoheal_malformed_restart_result_does_not_wedge_guard():
+    # BLOCK (GPT-5.6 Terra, round-5): se restart() ritorna un esito NON conforme
+    # (`stop`/`start` truthy ma non-dict), il parsing NON deve sollevare fuori dal
+    # percorso di reset: la guardia `_child_restart_in_progress[i]` va SEMPRE azzerata
+    # (`finally`), altrimenti il child resta escluso dall'autoheal per sempre.
+    b = _FakeChild(state="FAILED", running=False, handlers=0,
+                   restart_malformed={"restarted": True, "stop": "notadict", "start": True})
+    rt = TelegramMultiBotRuntime([b])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    # Esito malformato => trattato come deferral (stop non provato), NON eccezione
+    # (nessuna action "error", che sarebbe la firma della guardia stuck su pre-fix).
+    assert b.restart_called == 1
+    assert out["healed"] == 0
+    assert out["errors"] == 0
+    assert any(a["action"] == "restart_deferred" for a in out["actions"])
+    # Guardia azzerata: il child NON è escluso permanentemente.
+    assert rt._child_restart_in_progress[0] is False
+    # Ciclo successivo: il child viene di nuovo valutato/riavviato (non "restart_in_progress").
+    out2 = rt.run_perbot_autoheal_once(now_ts=1001.0)
+    assert b.restart_called == 2
+    assert not any(a["action"] == "restart_in_progress" for a in out2["actions"])

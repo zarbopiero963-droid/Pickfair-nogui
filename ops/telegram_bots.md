@@ -166,8 +166,11 @@ brevi: `child.restart()` (stop con `join` fino a ~5s) gira **fuori** dal lock, c
 storm. Il ciclo **isola le eccezioni per child** (un bot che solleva non aborta la cura
 degli altri). Poiché `restart()` gira fuori dal lock, una **guardia per-child**
 (`_child_restart_in_progress`) impedisce che due cicli concorrenti riavviino lo
-**stesso** transport in parallelo (doppio getUpdates/orphan); è sempre azzerata (anche
-su eccezione). Un thread **permanentemente bloccato** (stop mai efficace) non genera
+**stesso** transport in parallelo (doppio getUpdates/orphan); è **sempre** azzerata via
+`finally` — sia se `restart()` solleva, sia se ne ritorna un esito **malformato**
+(`stop`/`start` non-`dict`): l'esito viene interpretato in modo difensivo (`isinstance`)
+e degradato a `restart_deferred`, così un bot non resta **escluso permanentemente**
+dall'autoheal. Un thread **permanentemente bloccato** (stop mai efficace) non genera
 retry infiniti: dopo `max_restarts_in_window` **deferral consecutivi** entra in lockout
 "stuck" (fail-closed). Un `restart_failed>0` è **recovery attiva** (mappata su
 `SCHEDULE_RESTART`, non `NO_ACTION`): i restart falliti non restano mascherati fino al
