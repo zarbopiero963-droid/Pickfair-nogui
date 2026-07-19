@@ -76,8 +76,9 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
   non innesca un restart-all (409); **fuori** dalla finestra di `start()` un mix che
   non converge a all-CONNECTED (child rimasto CREATED/STOPPED per orphan/thread
   morto) è una **degradazione persistente** ⇒ **FAILED**. Qualsiasi child con flag
-  FAILED ⇒ **FAILED** sempre (in PR-5b l'autoheal **service-level** fa restart-all;
-  l'autoheal **per-bot** arriva in **PR-5c**);
+  FAILED ⇒ **FAILED** sempre (l'aggregato resta un segnale **onesto**: un bot è giù).
+  Il **recovery** però NON è più restart-all: **PR-5c** aggiunge l'**autoheal
+  PER-BOT** (vedi sotto) — l'aggregato torna CONNECTED quando il bot giù è guarito;
 - `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
   scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
 - `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409).
@@ -135,6 +136,21 @@ expected_handlers` (default `1` ⇒ backward-compatible single-bot/Telethon; `N`
 l'orchestratore), regola duplicati `> expected_handlers`. Così N handler sani con
 aggregato CONNECTED **non** violano l'invariante.
 
+**Autoheal PER-BOT (PR-5c)**: `TelegramMultiBotRuntime.run_perbot_autoheal_once()`
+valuta **ogni child indipendentemente** e riavvia **solo** il bot non-sano (via
+`TelegramBotApiRuntime.restart()` = `stop()`→`start()`, anti-409 preservato), **senza
+toccare i bot sani** — sink/transport per-child sono isolati. Rimpiazza il restart-ALL
+service-level: un singolo bot giù non butta più giù gli altri. Usa la **stessa**
+`TelegramAutohealPolicy` del service (stateless), applicata con una **history
+per-child** (`restart_timestamps` + `lockout_since`): budget di **3 restart nella
+finestra di 300s**, cooldown 20s, poi **lockout per-bot di 300s** (fail-closed: niente
+restart storm; il bot resta giù e **SURFACED** — `status()["locked_out_bot_count"]`,
+`perbot_restart_total`). Un bot tornato **CONNECTED azzera** il proprio budget
+(recovery pulito). Il service delega: `TelegramService.run_autoheal_once` chiama
+`run_perbot_autoheal_once` quando il listener espone il metodo (multi-bot), **invece**
+del restart-ALL — gate service-level (`intentional_stop` / grace) applicati prima di
+delegare; il path single-bot/Telethon resta il restart aggregato invariato.
+
 Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
 → `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la
 sorgente (bot usable). Gli **errori REALI del DB propagano** (nessun degrado a
@@ -191,9 +207,9 @@ numeriche risulta **non utilizzabile** → fail-closed. La risoluzione di
 
 Il `bot_transport_factory` è iniettabile (come il `client_factory` Telethon) per i
 test headless. **Nessun effetto su money-management/ordini/Betfair/dutching/parsing.**
-L'orchestrazione N-bot e l'autoheal **per-bot** sono rimandati alla PR successiva
-(il rilevamento del backoff permanente con thread vivo è invece già coperto qui
-dal contatore `_consecutive_failures`).
+L'orchestrazione N-bot (**PR-5b**) e l'autoheal **per-bot** (**PR-5c**, vedi sezione
+«Autoheal PER-BOT» sopra) sono ora implementati; il rilevamento del backoff permanente
+con thread vivo è coperto dal contatore `_consecutive_failures` per-child.
 
 ## GUI — gestione bot (PR-4, tab Telegram)
 

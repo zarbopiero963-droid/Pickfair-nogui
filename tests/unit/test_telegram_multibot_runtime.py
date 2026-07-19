@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+from recovery.telegram_autoheal import TelegramAutohealPolicy
 from telegram_bot_runtime import (
     TelegramMultiBotRuntime,
     _child_thread_alive,
@@ -30,7 +31,8 @@ class _FakeChild:
     """Child runtime fake: espone la superficie che l'orchestratore consuma."""
 
     def __init__(self, *, state="CONNECTED", running=True, thread_alive=True,
-                 handlers=1, chats=1, start_res=None, stop_res=None, last_error=""):
+                 handlers=1, chats=1, start_res=None, stop_res=None, last_error="",
+                 intentional_stop=False, restart_heals_to=None):
         self._state = state
         self._running = running
         self._thread = _FakeThread(thread_alive) if thread_alive is not None else None
@@ -39,8 +41,39 @@ class _FakeChild:
         self._start_res = start_res if start_res is not None else {"started": True}
         self._stop_res = stop_res if stop_res is not None else {"stopped": True}
         self._last_error = last_error
+        self.intentional_stop = intentional_stop
         self.start_called = 0
         self.stop_called = 0
+        self.restart_called = 0
+        # Se impostato, dopo restart() lo stato diventa `restart_heals_to`
+        # (simula heal riuscito -> CONNECTED, o fallito -> resta FAILED se None).
+        self._restart_heals_to = restart_heals_to
+
+    def runtime_snapshot(self):
+        return {
+            "state": self._state,
+            "intentional_stop": self.intentional_stop,
+            "last_error": self._last_error,
+            "running": self._running,
+            "handlers_registered": self._handlers,
+            "last_successful_message_ts": None,
+        }
+
+    def restart(self):
+        self.restart_called += 1
+        self.stop_called += 1
+        self.start_called += 1
+        if self._restart_heals_to is not None:
+            self._state = self._restart_heals_to
+            self._running = self._restart_heals_to == "CONNECTED"
+            self._handlers = 1 if self._restart_heals_to == "CONNECTED" else 0
+        return {"restarted": self._state == "CONNECTED"}
+
+    def force_state(self, state):
+        """Helper test: forza lo stato (simula una nuova degradazione runtime)."""
+        self._state = state
+        self._running = state == "CONNECTED"
+        self._handlers = 1 if state == "CONNECTED" else 0
 
     @property
     def state(self):
@@ -345,3 +378,79 @@ def test_child_thread_alive_failclosed_on_exception():
         _runtime_thread = _BoomThread()
 
     assert _child_thread_alive(_Child()) is True
+
+
+# ============================ PR-5c: autoheal PER-BOT ============================
+
+def test_perbot_autoheal_restarts_only_failed_child():
+    # BLOCK PR-5c: con un bot sano (A) e uno FAILED (B), l'autoheal per-bot riavvia
+    # SOLO B; A NON viene toccato (niente restart-ALL). Prima di PR-5c non esiste
+    # `run_perbot_autoheal_once` e il recovery era il restart-ALL del service.
+    a = _FakeChild(state="CONNECTED")
+    b = _FakeChild(state="FAILED", running=False, handlers=0, restart_heals_to="CONNECTED")
+    rt = TelegramMultiBotRuntime([a, b])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert out["healed"] == 1
+    assert a.restart_called == 0   # bot sano MAI toccato
+    assert b.restart_called == 1   # solo il bot giù riavviato
+    assert rt.state == "CONNECTED"  # B guarito => aggregato torna CONNECTED
+
+
+def test_perbot_autoheal_all_healthy_is_noop():
+    a = _FakeChild(state="CONNECTED")
+    b = _FakeChild(state="CONNECTED")
+    rt = TelegramMultiBotRuntime([a, b])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert out["healed"] == 0 and out["locked_out"] == 0
+    assert a.restart_called == 0 and b.restart_called == 0
+
+
+def test_perbot_autoheal_budget_exhaustion_locks_out_only_that_bot():
+    # BLOCK PR-5c: un bot che resta FAILED dopo i restart esaurisce il budget
+    # per-child (max 3 nella finestra) => lockout del SOLO bot (niente restart storm),
+    # senza mai toccare il bot sano.
+    # Clock iniettato: così run_perbot_autoheal_once E status() (che legge il lockout)
+    # condividono lo STESSO tempo — altrimenti status() userebbe il clock reale.
+    clock = {"t": 0.0}
+    policy = TelegramAutohealPolicy(clock=lambda: clock["t"])
+    a = _FakeChild(state="CONNECTED")
+    b = _FakeChild(state="FAILED", running=False, handlers=0)  # non guarisce mai
+    rt = TelegramMultiBotRuntime([a, b], autoheal_policy=policy)
+    # 3 restart, avanzando oltre il cooldown (20s) e dentro la finestra (300s)
+    for t in (0.0, 25.0, 50.0):
+        clock["t"] = t
+        rt.run_perbot_autoheal_once()
+    assert b.restart_called == 3
+    # 4° ciclo: budget esaurito => lockout, nessun ulteriore restart
+    clock["t"] = 75.0
+    out = rt.run_perbot_autoheal_once()
+    assert out["locked_out"] == 1
+    assert b.restart_called == 3
+    assert rt.locked_out_bot_count() == 1
+    assert rt.status()["locked_out_bot_count"] == 1
+    assert a.restart_called == 0
+
+
+def test_perbot_autoheal_recovered_child_resets_budget():
+    # Un bot che si riavvia con successo (torna CONNECTED) AZZERA il proprio budget:
+    # una degradazione SUCCESSIVA riparte con budget fresco, non subito in lockout.
+    b = _FakeChild(state="FAILED", running=False, handlers=0, restart_heals_to="CONNECTED")
+    rt = TelegramMultiBotRuntime([b])
+    rt.run_perbot_autoheal_once(now_ts=0.0)    # restart => guarisce (CONNECTED)
+    assert b.restart_called == 1 and b.state == "CONNECTED"
+    rt.run_perbot_autoheal_once(now_ts=25.0)   # sano => reset budget
+    # nuova degradazione: deve riavviare (budget fresco), non essere in lockout
+    b.force_state("FAILED")
+    b._restart_heals_to = None
+    out = rt.run_perbot_autoheal_once(now_ts=50.0)
+    assert out["healed"] == 1
+    assert b.restart_called == 2
+
+
+def test_perbot_autoheal_skips_intentionally_stopped_child():
+    # Un bot STOPPED intenzionalmente NON deve essere riavviato dall'autoheal.
+    b = _FakeChild(state="STOPPED", running=False, handlers=0, intentional_stop=True)
+    rt = TelegramMultiBotRuntime([b])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert out["healed"] == 0
+    assert b.restart_called == 0

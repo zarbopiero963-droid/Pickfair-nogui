@@ -742,6 +742,42 @@ class TelegramService:
         reconnect_grace_active: bool,
         failure_escalated: bool,
     ) -> dict:
+        # PR-5c: se il listener è un orchestratore MULTI-BOT (espone
+        # `run_perbot_autoheal_once`), l'autoheal è PER-BOT — riavvia il SOLO bot
+        # giù con budget/lockout per-child — invece del restart-ALL del service, che
+        # butterebbe giù anche i bot sani (perdita di servizio + finestra 409). I gate
+        # service-level (stop operatore / grace) si applicano PRIMA di delegare.
+        perbot = getattr(self.listener, "run_perbot_autoheal_once", None)
+        if callable(perbot):
+            now_ts = float(
+                checked_at_ts if checked_at_ts is not None else self._autoheal_policy.now()
+            )
+            if self.intentional_stop:
+                self._last_autoheal_action = TelegramAutohealAction.NO_ACTION.value
+                self._last_autoheal_decision_reason = "intentional_stop"
+                return {"action": self._last_autoheal_action, "reason": "intentional_stop", "mode": "perbot"}
+            if startup_grace_active or reconnect_grace_active:
+                self._last_autoheal_action = TelegramAutohealAction.SUPPRESS_RESTART.value
+                self._last_autoheal_decision_reason = "grace_period_active"
+                return {"action": self._last_autoheal_action, "reason": "grace_period_active", "mode": "perbot"}
+            result = perbot(now_ts) or {}
+            healed = int(result.get("healed", 0) or 0)
+            locked_out = int(result.get("locked_out", 0) or 0)
+            self._last_autoheal_action = "PERBOT_HEAL"
+            self._last_autoheal_decision_reason = f"healed={healed},locked_out={locked_out}"
+            if healed or locked_out:
+                logger.warning(
+                    "[TelegramService] autoheal PER-BOT: healed=%d locked_out=%d",
+                    healed,
+                    locked_out,
+                )
+            return {
+                "action": "PERBOT_HEAL",
+                "reason": self._last_autoheal_decision_reason,
+                "mode": "perbot",
+                "perbot_result": result,
+            }
+        # Single-bot / Telethon: percorso AGGREGATO esistente (restart-ALL).
         decision = self.evaluate_autoheal(
             checked_at_ts=checked_at_ts,
             startup_grace_active=startup_grace_active,

@@ -1049,6 +1049,19 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "telegram_perbot_autoheal": {
+      "description": "PR-5c epica #374 (migrazione Telegram Bot API): autoheal PER-BOT. TelegramMultiBotRuntime.run_perbot_autoheal_once valuta ogni child indipendentemente e riavvia SOLO il bot non-sano (TelegramBotApiRuntime.restart = stop->start, anti-409) con budget/lockout PER-CHILD (stessa TelegramAutohealPolicy stateless, history per-child), senza toccare i bot sani; bot in lockout SURFACED in status (locked_out_bot_count, perbot_restart_total); un bot tornato CONNECTED azzera il budget. TelegramService.run_autoheal_once delega a run_perbot_autoheal_once quando il listener e' multi-bot (invece del restart-ALL), con gate intentional_stop/grace; path single-bot/Telethon invariato. recovery/telegram_autoheal.py RIUSATO invariato. Niente money-management/Betfair/dutching/parsing toccati. Test hard PASS+BLOCK: restart solo del bot giu', no-op sui sani, budget->lockout per-bot, reset budget su recovery, skip intentional_stop, delega service->per-bot, child restart stop->start. Doc ops/telegram_bots.md aggiornata. PR safety-critical (services/telegram_service.py runtime autoheal) => merge MANUALE owner.",
+      "files": [
+        "telegram_bot_runtime.py",
+        "services/telegram_service.py",
+        "tests/unit/test_telegram_multibot_runtime.py",
+        "tests/services/test_telegram_service_botapi.py",
+        "ops/telegram_bots.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6,
+      "allow_tests": true
     }
   }
 }
