@@ -174,7 +174,12 @@ dall'autoheal. Un thread **permanentemente bloccato** (stop mai efficace) non ge
 retry infiniti: dopo `max_restarts_in_window` **deferral consecutivi** entra in lockout
 "stuck" (fail-closed). Un `restart_failed>0` è **recovery attiva** (mappata su
 `SCHEDULE_RESTART`, non `NO_ACTION`): i restart falliti non restano mascherati fino al
-lockout. `_last_autoheal_action`
+lockout. Anche `errors>0` (un child ha **sollevato** in `runtime_snapshot()`/
+`restart()`, eccezione isolata dall'orchestratore) è mappato su `SCHEDULE_RESTART` +
+**warning** dal service: un'eccezione non consuma budget e non porta il child in
+lockout da sé, quindi mapparla su `NO_ACTION` la renderebbe un **retry silenzioso
+infinito** senza allarme — invece la degradazione resta visibile (`errors=N` nel
+`reason` e nel log). `_last_autoheal_action`
 resta nel contratto enum `TelegramAutohealAction` (dettaglio nel `reason`). Nota di
 scope: per il **Bot API** la salute per-bot è il **poll-failure** del transport
 (`_consecutive_failures`), non la staleness dei messaggi (un bot che poll-a ma è

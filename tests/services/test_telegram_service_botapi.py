@@ -1054,3 +1054,32 @@ def test_run_autoheal_once_perbot_restart_failed_maps_to_schedule_restart():
         reconnect_grace_active=False, failure_escalated=False,
     )
     assert out["action"] == TelegramAutohealAction.SCHEDULE_RESTART.value
+
+
+def test_run_autoheal_once_perbot_errors_are_not_silently_no_action(caplog):
+    # BLOCK (Fugu Ultra full-range): se un child SOLLEVA in runtime_snapshot()/
+    # restart(), l'orchestratore isola l'eccezione => `errors>0` con
+    # healed/locked_out/restart_failed=0. Mapparlo su NO_ACTION senza log sarebbe un
+    # retry silenzioso infinito (nessun allarme, budget mai consumato). Il service
+    # DEVE segnalare la degradazione: action SCHEDULE_RESTART + warning con errors.
+    import logging
+    from recovery.telegram_autoheal import TelegramAutohealAction
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    svc.listener.run_perbot_autoheal_once = lambda now_ts=None: {
+        "healed": 0, "locked_out": 0, "locked_out_now": 0, "restart_failed": 0,
+        "errors": 1, "actions": [{"index": 0, "action": "error", "error": "RuntimeError"}],
+    }
+    with caplog.at_level(logging.WARNING):
+        out = svc.run_autoheal_once(
+            checked_at_ts=1000.0, startup_grace_active=False,
+            reconnect_grace_active=False, failure_escalated=False,
+        )
+    assert out["action"] == TelegramAutohealAction.SCHEDULE_RESTART.value
+    assert "errors=1" in out["reason"]
+    assert any(
+        r.levelno == logging.WARNING
+        and "autoheal PER-BOT" in r.getMessage()
+        and "errors=1" in r.getMessage()
+        for r in caplog.records
+    )

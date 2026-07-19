@@ -762,25 +762,32 @@ class TelegramService:
         healed = int(result.get("healed", 0) or 0)
         locked_out_now = int(result.get("locked_out_now", result.get("locked_out", 0)) or 0)
         restart_failed = int(result.get("restart_failed", 0) or 0)
+        errors = int(result.get("errors", 0) or 0)
         if locked_out_now:
             action = TelegramAutohealAction.ENTER_FAILED_LOCKOUT.value
-        elif healed or restart_failed:
-            # `restart_failed>0` => recovery ATTIVA con tentativi falliti: NON
-            # mascherare come NO_ACTION (gap di allarme, rilievo Fugu Ultra) — resta
-            # SCHEDULE_RESTART finché non guarisce o entra in lockout.
+        elif healed or restart_failed or errors:
+            # `restart_failed>0` => recovery ATTIVA con tentativi falliti; `errors>0`
+            # => un child ha SOLLEVATO in runtime_snapshot()/restart() (eccezione
+            # isolata dall'orchestratore): il bot è degradato ma NON consuma budget e
+            # NON entra in lockout da solo. Mapparlo su NO_ACTION lo renderebbe un
+            # retry silenzioso infinito senza allarme (rilievo Fugu Ultra full-range):
+            # resta SCHEDULE_RESTART (recovery attiva) così il gap è visibile.
             action = TelegramAutohealAction.SCHEDULE_RESTART.value
         else:
             action = TelegramAutohealAction.NO_ACTION.value
         self._last_autoheal_action = action
         self._last_autoheal_decision_reason = (
-            f"perbot:healed={healed},locked_out_now={locked_out_now},restart_failed={restart_failed}"
+            f"perbot:healed={healed},locked_out_now={locked_out_now},"
+            f"restart_failed={restart_failed},errors={errors}"
         )
-        if healed or locked_out_now or restart_failed:
+        if healed or locked_out_now or restart_failed or errors:
             logger.warning(
-                "[TelegramService] autoheal PER-BOT: healed=%d locked_out_now=%d restart_failed=%d",
+                "[TelegramService] autoheal PER-BOT: healed=%d locked_out_now=%d "
+                "restart_failed=%d errors=%d",
                 healed,
                 locked_out_now,
                 restart_failed,
+                errors,
             )
         return {"action": action, "reason": self._last_autoheal_decision_reason,
                 "mode": "perbot", "perbot_result": result}
