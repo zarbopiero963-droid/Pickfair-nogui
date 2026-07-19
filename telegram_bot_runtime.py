@@ -25,6 +25,7 @@ stampa mai). Isolato dal path Telethon esistente, che resta invariato.
 """
 from __future__ import annotations
 
+import threading
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
 
@@ -280,6 +281,13 @@ class TelegramBotApiRuntime:
         `intentional_stop=True`, ma `start()` (o il ramo fail-closed di `stop()`) lo
         riporta a False, così il recovery non resta soppresso."""
         stop_res = self.stop() or {}
+        if not stop_res.get("stopped", False):
+            # stop() NON ha fermato il transport (thread ancora vivo): NON chiamare
+            # start() — con `_started` residuo True risponderebbe "already_running"
+            # mascherando un restart mai avvenuto (rilievo CodeRabbit/Greptile).
+            # Anti-409 preservato: nessun secondo transport aperto; il thread si
+            # spegne e il retry riparte al ciclo successivo.
+            return {"restarted": False, "stop": stop_res, "start": {}}
         start_res = self.start() or {}
         return {
             "restarted": bool(start_res.get("started")),
@@ -471,6 +479,12 @@ class TelegramMultiBotRuntime:
         self._child_restart_ts: List[List[float]] = [[] for _ in self._runtimes]
         self._child_lockout_since: List[Optional[float]] = [None for _ in self._runtimes]
         self._child_restart_total: List[int] = [0 for _ in self._runtimes]
+        # Serializza lo stato autoheal per-child (liste `_child_*`). L'autoheal gira
+        # sul singolo thread watchdog (`run_autoheal_once`, lifecycle serializzato),
+        # ma il lock difende comunque contro letture concorrenti da
+        # `status()`/`locked_out_bot_count` (probe) e da eventuali chiamate concorrenti
+        # future — così budget/lockout non vengono calcolati due volte sullo stesso bot.
+        self._perbot_heal_lock = threading.Lock()
 
     # ---- stato aggregato ----
     @property
@@ -569,88 +583,132 @@ class TelegramMultiBotRuntime:
         return {"stopped": False, "error": "multibot_stop_failed:" + detail}
 
     def run_perbot_autoheal_once(self, now_ts: Optional[float] = None) -> dict:
-        """Autoheal PER-BOT (PR-5c): valuta OGNI child indipendentemente e riavvia
-        SOLO i bot non-sani, con budget/lockout PER-CHILD, senza toccare i bot sani.
-        Rimpiazza il restart-ALL service-level: un singolo bot giù non butta giù gli
-        altri (sink/transport per-child sono isolati). La policy è la stessa del
-        service (stateless), applicata per-child con la sua history dedicata.
-        Fail-closed: budget esaurito nella finestra => lockout del SOLO bot (niente
-        restart storm); un bot tornato CONNECTED azzera il proprio budget (recovery
-        pulito). Idempotente sui bot sani (no-op)."""
+        """Autoheal PER-BOT (PR-5c): valuta OGNI child e riavvia SOLO i bot non-sani.
+
+        Con budget/lockout PER-CHILD, senza toccare i bot sani (sink/transport
+        isolati): rimpiazza il restart-ALL service-level. La policy è la stessa del
+        service (stateless), applicata per-child con history dedicata. Fail-closed:
+        budget esaurito nella finestra => lockout del SOLO bot (niente restart storm);
+        un bot tornato CONNECTED azzera il budget. Idempotente sui bot sani.
+
+        Osservabilità onesta: `healed` conta i restart REALMENTE riusciti (transport
+        ciclato + start ok), NON i tentativi; `restart_failed` i tentativi reali non
+        riusciti; `restart_deferred` i casi in cui lo stop non ha ciclato il transport
+        (thread ancora vivo => anti-409, NON consuma budget); `locked_out` le NUOVE
+        transizioni in lockout e `locked_out_now` i bot ATTUALMENTE in lockout (così il
+        service può loggare la degradazione persistente, non solo la transizione).
+        Resiliente: un'eccezione su un child NON aborta il ciclo degli altri.
+        """
         now_ts = float(now_ts if now_ts is not None else self._autoheal_policy.now())
-        window = self._autoheal_policy.restart_window_sec
-        lockout_sec = self._autoheal_policy.lockout_sec
         actions: List[dict] = []
-        for i, child in enumerate(self._runtimes):
-            snap = child.runtime_snapshot() or {}
-            state = str(snap.get("state") or "")
-            # Bot SANO: azzera budget e lockout (recovery pulito => finestra fresca).
-            if state == "CONNECTED":
-                self._child_restart_ts[i] = []
-                self._child_lockout_since[i] = None
-                actions.append({"index": i, "action": "healthy"})
-                continue
-            # Prune dei restart fuori finestra; scadenza lockout (riabilita il bot).
-            self._child_restart_ts[i] = [
-                t for t in self._child_restart_ts[i] if (now_ts - t) <= window
-            ]
-            if (
-                self._child_lockout_since[i] is not None
-                and (now_ts - self._child_lockout_since[i]) >= lockout_sec
-            ):
-                self._child_lockout_since[i] = None
-            lockout_active = self._child_lockout_since[i] is not None
-            ah_snap = TelegramAutohealSnapshot(
-                state=state,
-                invariant_ok=True,
-                active_alert_codes=(),
-                reconnect_attempts=len(self._child_restart_ts[i]),
-                restart_attempts_total=int(self._child_restart_total[i]),
-                restart_in_progress=False,
-                intentional_stop=bool(snap.get("intentional_stop")),
-                startup_grace_active=False,
-                reconnect_grace_active=False,
-                lockout_active=lockout_active,
-                last_error_category=str(snap.get("last_error") or ""),
-                failure_escalated=False,
-                listener_stale=False,
-                now_ts=now_ts,
-            )
-            history = TelegramAutohealHistory(
-                restart_timestamps=tuple(self._child_restart_ts[i]),
-                lockout_since_ts=self._child_lockout_since[i],
-            )
-            decision = self._autoheal_policy.evaluate(ah_snap, history)
-            if decision.action == TelegramAutohealAction.SCHEDULE_RESTART:
-                res = child.restart() or {}
-                self._child_restart_ts[i].append(now_ts)
-                self._child_restart_total[i] += 1
-                actions.append({
-                    "index": i, "action": "restart",
-                    "restarted": bool(res.get("restarted")), "reason": decision.reason,
-                })
-            elif decision.action == TelegramAutohealAction.ENTER_FAILED_LOCKOUT:
-                if self._child_lockout_since[i] is None:
-                    self._child_lockout_since[i] = now_ts
-                actions.append({"index": i, "action": "lockout", "reason": decision.reason})
-            else:
-                actions.append({"index": i, "action": decision.action.value, "reason": decision.reason})
+        with self._perbot_heal_lock:
+            for i, child in enumerate(self._runtimes):
+                try:
+                    actions.append(self._heal_one_child_locked(i, child, now_ts))
+                except Exception as exc:  # resilienza: un bot che solleva non blocca gli altri
+                    actions.append({"index": i, "action": "error", "error": type(exc).__name__})
+            locked_out_now = self._locked_out_count_locked(now_ts)
         healed = sum(1 for a in actions if a["action"] == "restart")
         locked_out = sum(1 for a in actions if a["action"] == "lockout")
-        return {"healed": healed, "locked_out": locked_out, "actions": actions}
+        restart_failed = sum(1 for a in actions if a["action"] in ("restart_failed", "restart_deferred"))
+        errors = sum(1 for a in actions if a["action"] == "error")
+        return {
+            "healed": healed, "locked_out": locked_out, "locked_out_now": locked_out_now,
+            "restart_failed": restart_failed, "errors": errors, "actions": actions,
+        }
 
-    def locked_out_bot_count(self, now_ts: Optional[float] = None) -> int:
-        """Numero di bot attualmente in lockout per-bot (budget restart esaurito)."""
-        now_ts = float(now_ts if now_ts is not None else self._autoheal_policy.now())
+    def _heal_one_child_locked(self, i: int, child: Any, now_ts: float) -> dict:
+        """Valuta e cura il child `i`. Chiamato SOTTO `_perbot_heal_lock`."""
+        snap = child.runtime_snapshot() or {}
+        state = str(snap.get("state") or "")
+        # Bot SANO: azzera budget e lockout (recovery pulito => finestra fresca).
+        if state == "CONNECTED":
+            self._child_restart_ts[i] = []
+            self._child_lockout_since[i] = None
+            return {"index": i, "action": "healthy"}
+        self._prune_child_heal_state_locked(i, now_ts)
+        decision = self._autoheal_policy.evaluate(
+            self._child_ah_snapshot_locked(i, snap, now_ts),
+            self._child_ah_history_locked(i),
+        )
+        if decision.action == TelegramAutohealAction.ENTER_FAILED_LOCKOUT:
+            if self._child_lockout_since[i] is None:
+                self._child_lockout_since[i] = now_ts
+            return {"index": i, "action": "lockout", "reason": decision.reason}
+        if decision.action != TelegramAutohealAction.SCHEDULE_RESTART:
+            return {"index": i, "action": decision.action.value, "reason": decision.reason}
+        # SCHEDULE_RESTART. Il budget si consuma SOLO se il transport è stato
+        # realmente ciclato: `stop().stopped is True`. Se lo stop NON ha fermato il
+        # thread (ancora vivo => `start()` può tornare orphan_alive O already_running,
+        # rilievo Greptile), NON c'è stato un restart reale => niente budget (l'anti-409
+        # difende, il thread si spegne, si ritenta al ciclo dopo) — evita lockout
+        # spuri per un bot il cui transport non è mai stato riavviato.
+        res = child.restart() or {}
+        stopped_ok = (res.get("stop") or {}).get("stopped") is True
+        started_ok = bool((res.get("start") or {}).get("started"))
+        if not stopped_ok:
+            return {"index": i, "action": "restart_deferred", "restarted": False, "reason": decision.reason}
+        self._child_restart_ts[i].append(now_ts)
+        self._child_restart_total[i] += 1
+        if started_ok:
+            return {"index": i, "action": "restart", "restarted": True, "reason": decision.reason}
+        return {"index": i, "action": "restart_failed", "restarted": False, "reason": decision.reason}
+
+    def _prune_child_heal_state_locked(self, i: int, now_ts: float) -> None:
+        """Prune dei restart fuori finestra + scadenza lockout. Sotto lock."""
+        window = self._autoheal_policy.restart_window_sec
+        self._child_restart_ts[i] = [t for t in self._child_restart_ts[i] if (now_ts - t) <= window]
+        since = self._child_lockout_since[i]
+        if since is not None and (now_ts - since) >= self._autoheal_policy.lockout_sec:
+            self._child_lockout_since[i] = None
+
+    def _child_ah_history_locked(self, i: int) -> TelegramAutohealHistory:
+        return TelegramAutohealHistory(
+            restart_timestamps=tuple(self._child_restart_ts[i]),
+            lockout_since_ts=self._child_lockout_since[i],
+        )
+
+    def _child_ah_snapshot_locked(self, i: int, snap: dict, now_ts: float) -> TelegramAutohealSnapshot:
+        since = self._child_lockout_since[i]
+        lockout_active = since is not None and (now_ts - since) < self._autoheal_policy.lockout_sec
+        return TelegramAutohealSnapshot(
+            state=str(snap.get("state") or ""),
+            invariant_ok=True,
+            active_alert_codes=(),
+            reconnect_attempts=len(self._child_restart_ts[i]),
+            restart_attempts_total=int(self._child_restart_total[i]),
+            restart_in_progress=False,
+            intentional_stop=bool(snap.get("intentional_stop")),
+            startup_grace_active=False,
+            reconnect_grace_active=False,
+            lockout_active=lockout_active,
+            last_error_category=str(snap.get("last_error") or ""),
+            failure_escalated=False,
+            listener_stale=False,
+            now_ts=now_ts,
+        )
+
+    def _locked_out_count_locked(self, now_ts: float) -> int:
         lockout_sec = self._autoheal_policy.lockout_sec
         return sum(
             1 for since in self._child_lockout_since
             if since is not None and (now_ts - since) < lockout_sec
         )
 
+    def locked_out_bot_count(self, now_ts: Optional[float] = None) -> int:
+        """Numero di bot attualmente in lockout per-bot (budget restart esaurito)."""
+        now_ts = float(now_ts if now_ts is not None else self._autoheal_policy.now())
+        with self._perbot_heal_lock:
+            return self._locked_out_count_locked(now_ts)
+
     def status(self) -> dict:
         child = [r.status() for r in self._runtimes]
         last_error = next((str(c.get("last_error")) for c in child if c.get("last_error")), "")
+        # Letture per-bot sotto lock (coerenti con le mutazioni in
+        # run_perbot_autoheal_once): un'unica sezione critica per entrambi i campi.
+        with self._perbot_heal_lock:
+            locked_out_bot_count = self._locked_out_count_locked(self._autoheal_policy.now())
+            perbot_restart_total = sum(int(t) for t in self._child_restart_total)
         return {
             "state": self.state,
             "running": bool(child) and all(bool(c.get("running")) for c in child),
@@ -674,8 +732,8 @@ class TelegramMultiBotRuntime:
             ),
             # Autoheal PER-BOT (PR-5c): bot in lockout (budget restart esaurito) e
             # totale restart per-bot cumulativo — SURFACED per l'osservabilità.
-            "locked_out_bot_count": self.locked_out_bot_count(),
-            "perbot_restart_total": sum(int(t) for t in self._child_restart_total),
+            "locked_out_bot_count": locked_out_bot_count,
+            "perbot_restart_total": perbot_restart_total,
         }
 
     def runtime_snapshot(self) -> dict:

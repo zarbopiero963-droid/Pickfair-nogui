@@ -151,6 +151,23 @@ restart storm; il bot resta giù e **SURFACED** — `status()["locked_out_bot_co
 del restart-ALL — gate service-level (`intentional_stop` / grace) applicati prima di
 delegare; il path single-bot/Telethon resta il restart aggregato invariato.
 
+*Osservabilità onesta e robustezza (round-2 review).* `healed` conta i restart
+**realmente riusciti** (transport ciclato + `start` ok), NON i tentativi;
+`restart_failed` i tentativi reali falliti; `restart_deferred` i casi in cui lo
+**stop non ha ciclato il transport** (thread ancora vivo ⇒ anti-409): questi **non**
+consumano budget, così un bot il cui thread si sta ancora spegnendo non finisce in
+lockout senza essere mai stato riavviato. `restart()` fail-fast: se `stop()` non
+ferma il transport **non** chiama `start()` (eviterebbe un falso `already_running`).
+`locked_out_now` espone i bot **attualmente** in lockout (il service logga la
+degradazione **persistente**, non solo la transizione). Lo stato per-child è
+serializzato da un lock (`_perbot_heal_lock`) e il ciclo **isola le eccezioni per
+child** (un bot che solleva non aborta la cura degli altri). `_last_autoheal_action`
+resta nel contratto enum `TelegramAutohealAction` (dettaglio nel `reason`). Nota di
+scope: per il **Bot API** la salute per-bot è il **poll-failure** del transport
+(`_consecutive_failures`), non la staleness dei messaggi (un bot che poll-a ma è
+"silenzioso" non è guasto) ⇒ il per-bot agisce sullo **stato del child**; la staleness
+aggregata resta per il path single-bot/Telethon.
+
 Conteggio e selezione derivano da **un'unica lettura** DB (`_select_bot_api_source`
 → `(active_count, usable)`): evita incoerenze tra il gate (bot attivi) e la
 sorgente (bot usable). Gli **errori REALI del DB propagano** (nessun degrado a

@@ -1009,3 +1009,29 @@ def test_bot_api_runtime_restart_stops_then_starts_new_transport():
     assert cap[0].stopped is True                     # vecchio transport fermato
     assert len(cap) == 2 and cap[1].started is True   # nuovo transport avviato
     assert rt.intentional_stop is False               # restart != stop operatore
+
+
+def test_bot_api_runtime_restart_returns_false_when_stop_leaves_thread_alive():
+    # BLOCK (CodeRabbit/Greptile): se lo stop del transport NON ferma il thread,
+    # restart() NON deve chiamare start() (che risponderebbe "already_running"
+    # mascherando un restart mai avvenuto): restarted=False, nessun nuovo transport.
+    cap = []
+
+    class _StubbornTransport(_FakeTransport):
+        def stop(self, timeout=5.0):
+            pass  # NON ferma: il thread resta vivo (stopped resta False)
+
+    def factory(bot_token, chat_ids, on_message):
+        t = _StubbornTransport(bot_token, chat_ids, on_message)
+        cap.append(t)
+        return t
+
+    rt = TelegramBotApiRuntime(
+        bot_token="tok", chat_ids=["-100111"], db=_BotDB(), transport_factory=factory,
+    )
+    assert rt.start()["started"] is True
+    assert len(cap) == 1
+    res = rt.restart()
+    assert res["restarted"] is False              # restart NON riuscito (stop fallito)
+    assert res["stop"].get("stopped") is False
+    assert len(cap) == 1                          # NESSUN nuovo transport costruito

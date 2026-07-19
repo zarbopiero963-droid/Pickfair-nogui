@@ -32,7 +32,8 @@ class _FakeChild:
 
     def __init__(self, *, state="CONNECTED", running=True, thread_alive=True,
                  handlers=1, chats=1, start_res=None, stop_res=None, last_error="",
-                 intentional_stop=False, restart_heals_to=None):
+                 intentional_stop=False, restart_heals_to=None, restart_stop_ok=True,
+                 raise_on=None):
         self._state = state
         self._running = running
         self._thread = _FakeThread(thread_alive) if thread_alive is not None else None
@@ -48,8 +49,15 @@ class _FakeChild:
         # Se impostato, dopo restart() lo stato diventa `restart_heals_to`
         # (simula heal riuscito -> CONNECTED, o fallito -> resta FAILED se None).
         self._restart_heals_to = restart_heals_to
+        # False => restart() simula uno stop NON riuscito (thread ancora vivo):
+        # nessun ciclo del transport, `restarted=False`, `stop.stopped=False`.
+        self._restart_stop_ok = restart_stop_ok
+        # "runtime_snapshot"/"restart" => solleva su quel metodo (isolamento eccezioni).
+        self._raise_on = raise_on
 
     def runtime_snapshot(self):
+        if self._raise_on == "runtime_snapshot":
+            raise RuntimeError("boom_snapshot")
         return {
             "state": self._state,
             "intentional_stop": self.intentional_stop,
@@ -60,14 +68,22 @@ class _FakeChild:
         }
 
     def restart(self):
+        if self._raise_on == "restart":
+            raise RuntimeError("boom_restart")
         self.restart_called += 1
+        if not self._restart_stop_ok:
+            # stop NON riuscito (thread ancora vivo): nessun ciclo reale del transport.
+            return {"restarted": False,
+                    "stop": {"stopped": False, "error": "bot_transport_thread_still_alive"},
+                    "start": {}}
         self.stop_called += 1
         self.start_called += 1
         if self._restart_heals_to is not None:
             self._state = self._restart_heals_to
             self._running = self._restart_heals_to == "CONNECTED"
             self._handlers = 1 if self._restart_heals_to == "CONNECTED" else 0
-        return {"restarted": self._state == "CONNECTED"}
+        started = self._state == "CONNECTED"
+        return {"restarted": started, "stop": {"stopped": True}, "start": {"started": started}}
 
     def force_state(self, state):
         """Helper test: forza lo stato (simula una nuova degradazione runtime)."""
@@ -439,12 +455,12 @@ def test_perbot_autoheal_recovered_child_resets_budget():
     rt.run_perbot_autoheal_once(now_ts=0.0)    # restart => guarisce (CONNECTED)
     assert b.restart_called == 1 and b.state == "CONNECTED"
     rt.run_perbot_autoheal_once(now_ts=25.0)   # sano => reset budget
-    # nuova degradazione: deve riavviare (budget fresco), non essere in lockout
+    # nuova degradazione: deve TENTARE il restart (budget fresco), non essere in lockout
     b.force_state("FAILED")
     b._restart_heals_to = None
     out = rt.run_perbot_autoheal_once(now_ts=50.0)
-    assert out["healed"] == 1
-    assert b.restart_called == 2
+    assert b.restart_called == 2                 # tentativo reale (budget resettato)
+    assert rt.locked_out_bot_count(now_ts=50.0) == 0  # NON in lockout
 
 
 def test_perbot_autoheal_skips_intentionally_stopped_child():
@@ -454,3 +470,43 @@ def test_perbot_autoheal_skips_intentionally_stopped_child():
     out = rt.run_perbot_autoheal_once(now_ts=1000.0)
     assert out["healed"] == 0
     assert b.restart_called == 0
+
+
+def test_perbot_autoheal_orphan_deferred_does_not_consume_budget():
+    # BLOCK (Fable/Fugu/Greptile): se lo stop del transport NON riesce (thread ancora
+    # vivo => nessun ciclo reale), il restart è DEFERRED e NON consuma budget: un bot
+    # il cui thread si sta ancora spegnendo non deve finire in lockout senza essere
+    # mai stato realmente riavviato. Ripetuto molte volte: mai lockout.
+    b = _FakeChild(state="FAILED", running=False, handlers=0, restart_stop_ok=False)
+    rt = TelegramMultiBotRuntime([b])
+    for t in (0.0, 25.0, 50.0, 75.0, 100.0):
+        out = rt.run_perbot_autoheal_once(now_ts=t)
+        assert out["restart_failed"] == 1        # restart_deferred conteggiato qui
+        assert out["healed"] == 0
+    assert rt.locked_out_bot_count(now_ts=100.0) == 0   # MAI in lockout (budget intatto)
+    assert rt.status()["perbot_restart_total"] == 0     # nessun restart reale contato
+
+
+def test_perbot_autoheal_failing_child_does_not_abort_healthy_siblings():
+    # BLOCK (CodeRabbit critical): un'eccezione su un child (runtime_snapshot o
+    # restart) NON deve abortire il ciclo per gli altri — «un singolo bot giù non
+    # butta giù gli altri». Il child che solleva è registrato come action=error.
+    boom_snap = _FakeChild(state="FAILED", running=False, handlers=0, raise_on="runtime_snapshot")
+    boom_restart = _FakeChild(state="FAILED", running=False, handlers=0, raise_on="restart")
+    good = _FakeChild(state="FAILED", running=False, handlers=0, restart_heals_to="CONNECTED")
+    rt = TelegramMultiBotRuntime([boom_snap, boom_restart, good])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert out["errors"] == 2                 # i due child che sollevano
+    assert out["healed"] == 1                 # il bot sano è stato comunque curato
+    assert good.restart_called == 1
+
+
+def test_perbot_autoheal_healed_counts_only_successful_restart():
+    # BLOCK (CodeRabbit/Greptile/Fugu): `healed` conta SOLO i restart REALMENTE
+    # riusciti, non i tentativi. Un bot che si riavvia ma resta FAILED è restart_failed.
+    fails = _FakeChild(state="FAILED", running=False, handlers=0)                  # non guarisce
+    heals = _FakeChild(state="FAILED", running=False, handlers=0, restart_heals_to="CONNECTED")
+    rt = TelegramMultiBotRuntime([fails, heals])
+    out = rt.run_perbot_autoheal_once(now_ts=1000.0)
+    assert out["healed"] == 1          # solo `heals`
+    assert out["restart_failed"] == 1  # `fails` conteggiato come tentativo non riuscito
