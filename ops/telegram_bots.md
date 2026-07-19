@@ -81,11 +81,14 @@ duck-typed attesa dal service, con semantica **aggregata fail-closed**:
 - `_runtime_thread` = proxy **any-alive** (un solo thread child vivo basta a far
   scattare il guard `previous_runtime_still_alive` → blocca un retry/409);
 - `stop()` **fail-closed** se un **qualsiasi** thread child sopravvive (anti-409).
-  `stop()` è invocato per **intento operatore** e imposta `intentional_stop=True`:
-  il flag resta True anche se un child riporta `stopped=False` senza thread vivi —
-  azzerarlo farebbe **riavviare** il listener dall'autoheal service-level dopo uno
-  shutdown voluto (ripresa consumo segnali/piazzamenti contro l'intento operatore).
-  Senza thread vivi non c'è orfano né consumo in corso ⇒ preservare il flag è sicuro;
+  `stop()` è invocato per **intento operatore** e imposta `intentional_stop=True`, che
+  **resta True in TUTTI i rami** non-success (thread zombie superstite **o** stop
+  figlio fallito senza thread vivi). Azzerarlo permetterebbe all'autoheal
+  service-level di **riavviare** dopo uno shutdown voluto: con uno zombie vivo un
+  restart-all aprirebbe un **secondo getUpdates** sullo stesso token (**409**/doppio
+  consumo). Il fail-closed corretto è **non riavviare** dopo uno stop operatore; lo
+  zombie è **SURFACED** (aggregato not-stopped + thread vivo ⇒ anti-409 guard) per
+  intervento manuale / autoheal per-bot (**PR-5c**), mai per restart-all automatico;
 - `handlers_registered`/`monitored_chat_count`/`active_network_resources` = **somma**
   sui child; `expected_handlers` = numero di bot.
 

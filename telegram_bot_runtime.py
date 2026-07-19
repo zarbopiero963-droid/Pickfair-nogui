@@ -507,7 +507,13 @@ class TelegramMultiBotRuntime:
                 res = {"stopped": False, "error": type(exc).__name__}
             results.append(res)
         if any(_child_thread_alive(r) for r in self._runtimes):
-            self.intentional_stop = False
+            # Thread child SUPERSTITE (zombie) dopo uno stop OPERATORE. PRESERVA
+            # intentional_stop=True (rilievo Fugu Ultra, coerente col ramo sotto):
+            # un restart-all per "ripulire" lo zombie aprirebbe un secondo getUpdates
+            # sullo stesso token => 409/doppio consumo. Il fail-closed corretto è NON
+            # riavviare dopo uno stop operatore; lo zombie è SURFACED (aggregato
+            # not-stopped + thread vivo => anti-409 guard) per intervento manuale /
+            # autoheal per-bot (PR-5c), mai per restart-all automatico.
             return {"stopped": False, "error": "multibot_thread_still_alive"}
         if all(bool(x.get("stopped")) for x in results):
             return {"stopped": True}

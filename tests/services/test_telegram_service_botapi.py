@@ -424,11 +424,11 @@ def test_multi_active_bot_starts_orchestrator_and_both_deliver():
 
 def test_handle_signal_serializes_fanin_across_threads():
     # BLOCK PR-5b: con N bot, thread transport distinti chiamano _handle_signal in
-    # parallelo. La SEZIONE CRITICA (update monotono di last_successful_message_ts +
-    # save_received_signal) gira SOTTO _signal_fanin_lock: un ALTRO thread NON deve
-    # poter acquisire il lock mentre la sezione critica è in corso (serializzazione
-    # cross-thread). NB: bus.publish è ora FUORI dal lock (evita lock-order inversion),
-    # quindi la prova sonda il lock durante save_received_signal, non durante publish.
+    # parallelo. La SEZIONE CRITICA (last_successful_message_ts last-write-wins +
+    # _last_message_processed_ts + save_received_signal + bus.publish) gira TUTTA
+    # SOTTO _signal_fanin_lock: un ALTRO thread NON deve poter acquisire il lock
+    # mentre la sezione critica è in corso (serializzazione cross-thread). La prova
+    # sonda il lock durante save_received_signal, che è dentro la sezione critica.
     probe = {"acquired_by_other_thread": None, "saved_under_lock": False}
     svc_holder = {}
 

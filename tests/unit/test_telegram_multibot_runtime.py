@@ -160,6 +160,22 @@ def test_partial_start_then_stop_recovers_not_wedged():
     assert rt.stop()["stopped"] is True          # fermabile => non wedged, restart possibile
 
 
+def test_partial_start_keeps_anti_409_guard_active_no_restart_storm():
+    # Evidence (Fugu full-range #2): dopo un avvio PARZIALE (un child vivo, uno
+    # fallito) l'aggregato è FAILED ma il child avviato resta VIVO => il proxy
+    # _runtime_thread è any-alive => True. Il service legge questo come
+    # `previous_runtime_still_alive` e BLOCCA il restart-all (anti-409): niente
+    # secondo getUpdates sullo stesso token, niente loop di 409/doppio consumo. Il
+    # child sano continua a servire; la gestione per-bot dello stato FAILED è PR-5c.
+    a = _FakeChild(start_res={"started": True}, thread_alive=True, state="CONNECTED")
+    b = _FakeChild(start_res={"started": False, "error": "boom"}, thread_alive=False,
+                   state="FAILED", running=False, handlers=0)
+    rt = TelegramMultiBotRuntime([a, b])
+    assert rt.start()["started"] is False          # avvio parziale => aggregato non-started
+    assert rt.state == "FAILED"                     # un child FAILED => aggregato FAILED
+    assert rt._runtime_thread.is_alive() is True    # anti-409 attivo => restart-all BLOCCATO
+
+
 def test_stop_all_dead_is_stopped():
     a = _FakeChild(thread_alive=True, stop_res={"stopped": True})
     b = _FakeChild(thread_alive=True, stop_res={"stopped": True})
@@ -184,7 +200,10 @@ def test_stop_failclosed_if_any_child_thread_survives():
     out = rt.stop()
     assert out["stopped"] is False
     assert "multibot_thread_still_alive" in out["error"]
-    assert rt.intentional_stop is False
+    # intentional_stop PRESERVATO anche con thread zombie superstite (rilievo Fugu
+    # Ultra): stop() è intento operatore => niente restart-all automatico (che
+    # 409-erebbe sullo zombie). Coerente col ramo "nessun thread vivo".
+    assert rt.intentional_stop is True
 
 
 def test_runtime_snapshot_carries_expected_handlers():
