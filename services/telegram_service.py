@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Callable, Optional
 
 from observability.telegram_health_probe import TelegramHealthProbe
 from observability.telegram_invariant_guard import TelegramInvariantSnapshot
@@ -734,6 +734,64 @@ class TelegramService:
                 logger.info("[TelegramService] autoheal lockout scaduto: recovery riabilitato")
         return decision
 
+    def _run_perbot_autoheal(
+        self,
+        perbot,
+        *,
+        now_ts: float,
+        startup_grace_active: bool,
+        reconnect_grace_active: bool,
+    ) -> dict:
+        """Delega l'autoheal PER-BOT (PR-5c) all'orchestratore multi-bot.
+
+        Gate service-level applicati PRIMA di delegare: stop operatore e grace
+        sospendono il recovery. `_last_autoheal_action` resta dentro il contratto
+        enum `TelegramAutohealAction` (rilievo CodeRabbit/Fable): l'esito per-bot è
+        mappato su un valore enum, col dettaglio nel `reason`. Logga la degradazione
+        PERSISTENTE (`locked_out_now`, non solo la transizione del ciclo — Greptile).
+        """
+        if self.intentional_stop:
+            self._last_autoheal_action = TelegramAutohealAction.NO_ACTION.value
+            self._last_autoheal_decision_reason = "intentional_stop"
+            return {"action": self._last_autoheal_action, "reason": "intentional_stop", "mode": "perbot"}
+        if startup_grace_active or reconnect_grace_active:
+            self._last_autoheal_action = TelegramAutohealAction.SUPPRESS_RESTART.value
+            self._last_autoheal_decision_reason = "grace_period_active"
+            return {"action": self._last_autoheal_action, "reason": "grace_period_active", "mode": "perbot"}
+        result = perbot(now_ts) or {}
+        healed = int(result.get("healed", 0) or 0)
+        locked_out_now = int(result.get("locked_out_now", result.get("locked_out", 0)) or 0)
+        restart_failed = int(result.get("restart_failed", 0) or 0)
+        errors = int(result.get("errors", 0) or 0)
+        if locked_out_now:
+            action = TelegramAutohealAction.ENTER_FAILED_LOCKOUT.value
+        elif healed or restart_failed or errors:
+            # `restart_failed>0` => recovery ATTIVA con tentativi falliti; `errors>0`
+            # => un child ha SOLLEVATO in runtime_snapshot()/restart() (eccezione
+            # isolata dall'orchestratore): il bot è degradato ma NON consuma budget e
+            # NON entra in lockout da solo. Mapparlo su NO_ACTION lo renderebbe un
+            # retry silenzioso infinito senza allarme (rilievo Fugu Ultra full-range):
+            # resta SCHEDULE_RESTART (recovery attiva) così il gap è visibile.
+            action = TelegramAutohealAction.SCHEDULE_RESTART.value
+        else:
+            action = TelegramAutohealAction.NO_ACTION.value
+        self._last_autoheal_action = action
+        self._last_autoheal_decision_reason = (
+            f"perbot:healed={healed},locked_out_now={locked_out_now},"
+            f"restart_failed={restart_failed},errors={errors}"
+        )
+        if healed or locked_out_now or restart_failed or errors:
+            logger.warning(
+                "[TelegramService] autoheal PER-BOT: healed=%d locked_out_now=%d "
+                "restart_failed=%d errors=%d",
+                healed,
+                locked_out_now,
+                restart_failed,
+                errors,
+            )
+        return {"action": action, "reason": self._last_autoheal_decision_reason,
+                "mode": "perbot", "perbot_result": result}
+
     def run_autoheal_once(
         self,
         *,
@@ -742,6 +800,25 @@ class TelegramService:
         reconnect_grace_active: bool,
         failure_escalated: bool,
     ) -> dict:
+        # PR-5c: se il listener è un orchestratore MULTI-BOT (espone
+        # `run_perbot_autoheal_once`), l'autoheal è PER-BOT — riavvia il SOLO bot
+        # giù con budget/lockout per-child — invece del restart-ALL del service, che
+        # butterebbe giù anche i bot sani (perdita di servizio + finestra 409). I gate
+        # service-level (stop operatore / grace) si applicano PRIMA di delegare.
+        perbot: Optional[Callable[[float], dict]] = getattr(
+            self.listener, "run_perbot_autoheal_once", None
+        )
+        if callable(perbot):
+            now_ts = float(
+                checked_at_ts if checked_at_ts is not None else self._autoheal_policy.now()
+            )
+            return self._run_perbot_autoheal(
+                perbot,
+                now_ts=now_ts,
+                startup_grace_active=startup_grace_active,
+                reconnect_grace_active=reconnect_grace_active,
+            )
+        # Single-bot / Telethon: percorso AGGREGATO esistente (restart-ALL).
         decision = self.evaluate_autoheal(
             checked_at_ts=checked_at_ts,
             startup_grace_active=startup_grace_active,

@@ -926,3 +926,160 @@ def test_service_stop_failclosed_keeps_listener_if_transport_survives():
     assert out["stopped"] is False
     assert svc.listener is not None  # fail-closed: non staccato
     assert svc.state == "FAILED"
+
+
+# ============================ PR-5c: autoheal PER-BOT ============================
+
+def _two_usable_bots_db():
+    return _BotDB(
+        bots=[
+            {"id": 1, "label": "A", "bot_token": "tok-a", "is_active": True, "has_token": True},
+            {"id": 2, "label": "B", "bot_token": "tok-b", "is_active": True, "has_token": True},
+        ],
+        chats_by_bot={
+            1: [{"chat_id": "-100111", "is_active": True}],
+            2: [{"chat_id": "-100222", "is_active": True}],
+        },
+    )
+
+
+def test_run_autoheal_once_delegates_to_perbot_for_multibot():
+    # BLOCK PR-5c: con un listener MULTI-BOT, run_autoheal_once DELEGA all'autoheal
+    # PER-BOT (riavvio del solo bot giù) e NON fa il restart-ALL del service (che
+    # butterebbe giù anche i bot sani). Prima di PR-5c chiamava self.restart().
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    calls = {"perbot": 0, "restart_all": 0}
+
+    def _perbot_spy(now_ts=None):
+        calls["perbot"] += 1
+        return {"healed": 0, "locked_out": 0, "actions": []}
+
+    svc.listener.run_perbot_autoheal_once = _perbot_spy
+
+    def _restart_spy(*a, **k):
+        calls["restart_all"] += 1
+        return {"started": True}
+
+    svc.restart = _restart_spy
+    out = svc.run_autoheal_once(
+        checked_at_ts=1000.0, startup_grace_active=False,
+        reconnect_grace_active=False, failure_escalated=False,
+    )
+    assert out["mode"] == "perbot"
+    assert calls["perbot"] == 1
+    assert calls["restart_all"] == 0  # restart-ALL del service MAI invocato
+
+
+def test_run_autoheal_once_perbot_respects_intentional_stop_and_grace():
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    calls = {"perbot": 0}
+    svc.listener.run_perbot_autoheal_once = (
+        lambda now_ts=None: calls.__setitem__("perbot", calls["perbot"] + 1) or {"healed": 0, "locked_out": 0}
+    )
+    # stop operatore => nessuna delega per-bot
+    svc.intentional_stop = True
+    out = svc.run_autoheal_once(
+        checked_at_ts=1000.0, startup_grace_active=False,
+        reconnect_grace_active=False, failure_escalated=False,
+    )
+    assert out["reason"] == "intentional_stop" and calls["perbot"] == 0
+    # grace attiva => suppress, nessuna delega
+    svc.intentional_stop = False
+    out = svc.run_autoheal_once(
+        checked_at_ts=1000.0, startup_grace_active=True,
+        reconnect_grace_active=False, failure_escalated=False,
+    )
+    assert out["reason"] == "grace_period_active" and calls["perbot"] == 0
+
+
+def test_bot_api_runtime_restart_stops_then_starts_new_transport():
+    # PR-5c: TelegramBotApiRuntime.restart() = stop() + start(): ferma il transport
+    # corrente e ne avvia uno NUOVO (usato dall'autoheal per-bot).
+    cap = []
+    rt = TelegramBotApiRuntime(
+        bot_token="tok", chat_ids=["-100111"], db=_BotDB(),
+        transport_factory=_make_factory(cap),
+    )
+    assert rt.start()["started"] is True
+    assert len(cap) == 1 and cap[0].started is True
+    res = rt.restart()
+    assert res["restarted"] is True
+    assert cap[0].stopped is True                     # vecchio transport fermato
+    assert len(cap) == 2 and cap[1].started is True   # nuovo transport avviato
+    assert rt.intentional_stop is False               # restart != stop operatore
+
+
+def test_bot_api_runtime_restart_returns_false_when_stop_leaves_thread_alive():
+    # BLOCK (CodeRabbit/Greptile): se lo stop del transport NON ferma il thread,
+    # restart() NON deve chiamare start() (che risponderebbe "already_running"
+    # mascherando un restart mai avvenuto): restarted=False, nessun nuovo transport.
+    cap = []
+
+    class _StubbornTransport(_FakeTransport):
+        def stop(self, timeout=5.0):
+            pass  # NON ferma: il thread resta vivo (stopped resta False)
+
+    def factory(bot_token, chat_ids, on_message):
+        t = _StubbornTransport(bot_token, chat_ids, on_message)
+        cap.append(t)
+        return t
+
+    rt = TelegramBotApiRuntime(
+        bot_token="tok", chat_ids=["-100111"], db=_BotDB(), transport_factory=factory,
+    )
+    assert rt.start()["started"] is True
+    assert len(cap) == 1
+    res = rt.restart()
+    assert res["restarted"] is False              # restart NON riuscito (stop fallito)
+    assert res["stop"].get("stopped") is False
+    assert len(cap) == 1                          # NESSUN nuovo transport costruito
+    # BLOCK (Fable 5): il ramo fail-closed di stop() riporta intentional_stop=False,
+    # così il child NON resta escluso per sempre dall'autoheal (recovery non soppresso).
+    assert rt.intentional_stop is False
+
+
+def test_run_autoheal_once_perbot_restart_failed_maps_to_schedule_restart():
+    # BLOCK (Fugu): con restart_failed>0 (recovery attiva ma fallita) l'azione del
+    # service NON deve essere NO_ACTION (gap di allarme) ma SCHEDULE_RESTART.
+    from recovery.telegram_autoheal import TelegramAutohealAction
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    svc.listener.run_perbot_autoheal_once = lambda now_ts=None: {
+        "healed": 0, "locked_out": 0, "locked_out_now": 0, "restart_failed": 1, "actions": [],
+    }
+    out = svc.run_autoheal_once(
+        checked_at_ts=1000.0, startup_grace_active=False,
+        reconnect_grace_active=False, failure_escalated=False,
+    )
+    assert out["action"] == TelegramAutohealAction.SCHEDULE_RESTART.value
+
+
+def test_run_autoheal_once_perbot_errors_are_not_silently_no_action(caplog):
+    # BLOCK (Fugu Ultra full-range): se un child SOLLEVA in runtime_snapshot()/
+    # restart(), l'orchestratore isola l'eccezione => `errors>0` con
+    # healed/locked_out/restart_failed=0. Mapparlo su NO_ACTION senza log sarebbe un
+    # retry silenzioso infinito (nessun allarme, budget mai consumato). Il service
+    # DEVE segnalare la degradazione: action SCHEDULE_RESTART + warning con errors.
+    import logging
+    from recovery.telegram_autoheal import TelegramAutohealAction
+    svc = _svc(_two_usable_bots_db(), capture=[])
+    svc.start()
+    svc.listener.run_perbot_autoheal_once = lambda now_ts=None: {
+        "healed": 0, "locked_out": 0, "locked_out_now": 0, "restart_failed": 0,
+        "errors": 1, "actions": [{"index": 0, "action": "error", "error": "RuntimeError"}],
+    }
+    with caplog.at_level(logging.WARNING):
+        out = svc.run_autoheal_once(
+            checked_at_ts=1000.0, startup_grace_active=False,
+            reconnect_grace_active=False, failure_escalated=False,
+        )
+    assert out["action"] == TelegramAutohealAction.SCHEDULE_RESTART.value
+    assert "errors=1" in out["reason"]
+    assert any(
+        r.levelno == logging.WARNING
+        and "autoheal PER-BOT" in r.getMessage()
+        and "errors=1" in r.getMessage()
+        for r in caplog.records
+    )
