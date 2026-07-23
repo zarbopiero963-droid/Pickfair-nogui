@@ -2,12 +2,59 @@
 
 ## GLOBAL EXECUTION POLICY
 
-This repository uses strict SERIAL TASK EXECUTION.
+This repository uses strict, safe, SERIAL TASK EXECUTION with gated automation.
 
-The goal is to prevent parallel work, duplicate pull requests, scope creep, unsafe changes, and accidental work on `main`, while still allowing agents to:
+Project goal: maintain and improve **Pickfair (no-GUI)**, a headless Betfair
+trading bot that:
+
+- listens to selected Telegram signal chats/channels and parses supported
+  signal formats;
+- validates markets and prices via the Betfair API (`betfair_client`,
+  `betfair_market_api`, `market_validator`);
+- computes dutching stakes and places/cancels orders (`dutching*`,
+  `order_manager`, `executor_manager`, cashout modules);
+- enforces money management, safety layers, circuit breakers and safe mode
+  (`safe_mode*`, `circuit_breaker`, `auto_throttle`, `safety_logger`);
+- persists state in a local database (`database`, `database_schema`) and
+  reconciles it with Betfair on startup/recovery;
+- runs headless (`headless_main`) with an optional mini GUI (`mini_gui`,
+  `ui_panels`).
+
+The repository is safety-critical because a wrong order, a duplicated bet, a
+stale signal replay, or a weakened safety gate can place **real money** on
+Betfair. Runtime behavior around orders, stakes, dedupe, reconciliation and
+teardown must be treated with the same care as production trading code.
+
+The goal of this policy is to prevent parallel work, duplicate pull requests,
+scope creep, unsafe changes, and accidental work on `main`, while still
+allowing agents to:
 
 1. create a new PR when no PR exists for the requested task;
-2. continue fixing the currently open PR when checks, review comments, static analysis, or handoff files request follow-up fixes.
+2. continue fixing the currently open PR when checks, review comments, static
+   analysis, or handoff files request follow-up fixes.
+
+---
+
+## Mandatory companion specs
+
+This file is the entry point, not the whole rulebook. Before any task that
+modifies code destined for a PR, touches `scripts/pr_*.py` or their tests, or
+requires commit/push/resolve/merge-readiness decisions, the agent MUST also
+read and follow:
+
+- `CLAUDE.md` — non-negotiable rules (fail-closed, one PR, current-head only,
+  gated external actions, check-completion gate, docs-in-same-PR).
+- `docs/auto_pr_flow_spec.md` — the full PR state machine (INIT, preflight,
+  Phase 0, patch, micro-audit, tests, gated push, check status, review triage,
+  fix loop, evidence resolve, READY_TO_MERGE / NEEDS_MANUAL / FAILED).
+- `docs/hard_verify_spec.md` — the layered final implementation verification
+  (contract, static audit, PASS+BLOCK tests, wiring, scope, fail-closed,
+  docs alignment §12-bis, final labels).
+- `docs/ai_audit_workflows.md` — operational detail of the AI review
+  workflows and their security posture.
+
+If this file and a spec ever conflict, the stricter (more fail-closed) rule
+wins, and the conflict must be reported.
 
 ---
 
@@ -18,9 +65,150 @@ The goal is to prevent parallel work, duplicate pull requests, scope creep, unsa
 - Never work directly on `main`.
 - Never execute multiple tasks in parallel.
 - Never create a second PR while another PR is open.
-- Never merge a PR unless explicitly instructed by the repository owner.
-- Never mark work complete while required checks are failing or blocking review comments remain unresolved.
-- Never expand scope beyond the current task, current PR, or provided handoff file.
+- Merge is gated: auto-merge is allowed ONLY under the conditions of the
+  "Auto-merge (owner-authorized, gated)" section; outside them merge is
+  manual and owner-only. Safety-critical PRs are never auto-merged without
+  the explicit per-issue owner override.
+- Never mark work complete while checks are pending, checks are failing, or
+  blocking review comments remain unresolved.
+- Never expand scope beyond the current task, current PR, or provided handoff.
+- Every task that modifies code MUST add or update truthful hard tests that
+  exercise the real behavior of the change — including, where relevant,
+  resilience scenarios (crash/recovery, reconnect, concurrency/race,
+  START/STOP teardown, order dedupe, reconciliation, write-failure with
+  rollback). A code change without matching hard tests is an incomplete PR
+  and cannot be declared DONE.
+- Every code change updates the corresponding documentation in the SAME PR
+  (see "Documentation maintenance"): docs must never drift from code.
+- Never commit secrets, real Betfair app keys/session tokens/certificates,
+  real Telegram bot tokens or chat IDs, a `config.json` containing real
+  credentials, `.env` files, database files, logs, caches, build artifacts,
+  EXE/ZIP artifacts, or generated reports, unless explicitly requested.
+- Never add direct real-money execution paths, browser automation,
+  mouse/keyboard automation, or new live-trading capabilities beyond the
+  existing gated runtime, unless explicitly requested by the owner and
+  protected by a dedicated safety plan.
+- Respect `files_allowed` / `files_forbidden`. By default NEVER touch:
+  `.github/workflows/*`, `core/*`, `services/*`, secrets, runtime trading
+  files, Betfair modules, Telegram live modules — UNLESS the task spec
+  explicitly includes them in `files_allowed`. Violation => FAILED.
+- New-task PRs MUST register the task key in `.guardrails/allowed_scope.json`
+  (`tasks` object, with its allowed `files` and `max_files`) in the SAME PR.
+  The `[TASK: <key>]` marker must match a registered key: the `guard` check
+  validates presence AND registration — a present marker with an unregistered
+  key => "Unknown TASK tag" => guard FAILED. The PR may include
+  `.guardrails/allowed_scope.json` among its own files (it is not a critical
+  file): it self-registers and the guard passes on the same head.
+
+---
+
+## Project-specific safety invariants
+
+The following behavior must be preserved unless the task explicitly asks to
+change it.
+
+### Betfair / order safety
+
+- Order placement must stay idempotent: the same signal must never produce
+  duplicate orders. Dedupe state must survive restart.
+- Never bypass, weaken, or default-disable `safety_layer` behavior,
+  `circuit_breaker`, `auto_throttle`, `safe_mode` / `safe_mode_manager`, or
+  reconciliation. Their fail-closed defaults are the product.
+- Startup/recovery must reconcile local state with Betfair before any new
+  order can be placed; stale pending orders must be handled, never silently
+  dropped or blindly re-placed.
+- Unmatched-order TTL, cancel paths and cashout paths
+  (`direct_unmatched_ttl`, `cashout_*`) must not be weakened silently.
+- API errors, timeouts and ambiguous responses must fail closed (no order /
+  block) — never fail open into placing or repeating a bet.
+- Never hardcode credentials, session tokens, or user-specific paths.
+
+### Dutching / money management safety
+
+- Never silently change stake calculation, dutching distribution, rounding,
+  min/max price validation, liability caps, daily limits, or `stake_mode`
+  behavior. Any change here is safety-critical by definition.
+- Invalid or incomplete parsed signals must be skipped, blocked, or clearly
+  logged — never turned into a partial or "best effort" betting instruction.
+- Numeric handling (odds/stake conversion, comma vs dot, precision) must be
+  covered by tests when touched.
+
+### Telegram safety
+
+- The Telegram bot token must never be printed in full, committed, or
+  exposed in logs (`telegram_sanitizer` exists for a reason — keep using it).
+- Chat/source filtering must remain strict. If chat_id filtering exists, do
+  not weaken it. Never make the bot listen to every chat/channel unless the
+  task explicitly requests it.
+- Do not process old Telegram messages on startup unless the task explicitly
+  requires replay behavior and deduplication exists.
+- Do not retry the same message into an order without a deduplication rule.
+- A new START epoch must invalidate old pollers/listeners: no stale listener
+  may survive and write into the new session.
+
+### Config & secrets safety
+
+- Settings must survive app close/reopen. Corrupted config must be backed up,
+  not silently overwritten; failed saves must not destroy the existing config.
+- Defaults must be safe (live/real-money behavior never enabled by default).
+- Never store real secrets in committed files; `config.json` in the repo must
+  contain only safe placeholders/defaults.
+- Keep backward compatibility with existing config keys where practical; a
+  removed/renamed config key is a documented, deliberate change.
+
+### Database safety
+
+- `database_schema` changes are breaking changes: they require explicit task
+  approval, a migration/compatibility note, and tests. Never silently drop or
+  repurpose columns/tables.
+- Writes that are part of order lifecycle (queue, dedupe, daily limits, PnL)
+  must be consistent: a failed write must roll back related state so a signal
+  can be retried safely, never half-applied.
+
+### Runtime / GUI safety
+
+- `headless_main` must remain runnable headless; the mini GUI is optional and
+  must not become a hard dependency of the runtime.
+- START failure must not leave the session active; STOP/shutdown
+  (`shutdown_manager`) must tear down listeners, timers and executors cleanly.
+- Expiry, manual clear, and processing of the same signal must be serialized
+  (no race between timers and handlers).
+- Do not remove or hide safety-relevant controls, logs or status indicators
+  without explanation.
+
+---
+
+## Mandatory execution sequence
+
+For any task that modifies code, tests, workflows, parser behavior, Betfair
+behavior, dutching/money-management behavior, Telegram behavior, config or
+database behavior, runtime behavior, or build behavior, the agent must follow
+this exact sequence (detailed in `docs/auto_pr_flow_spec.md`):
+
+1. Clean branch preflight.
+2. Phase 0 read-only inspection (Matrix Phase 0 for safety-critical areas).
+3. Patch plan.
+4. Narrow patch.
+5. Post-fix micro-audit.
+6. Hard truthful local validation/tests.
+7. Commit and push (gated: explicit flags or explicit owner request).
+8. Wait until all GitHub checks finish on the new head.
+9. Collect checks, annotations, review bodies, PR comments, inline comments,
+   and unresolved threads.
+10. Review triage.
+11. If more patching is needed, repeat from Phase 0.
+12. Final hard verify (`docs/hard_verify_spec.md`).
+13. Report final status: READY_TO_MERGE, NEEDS_MANUAL, FAILED,
+    CHECKS_PENDING or PATCH_REQUIRED_LOOP_STOPPED, with REASON.
+
+The agent must not skip Phase 0, the post-fix micro-audit, hard truthful
+tests, the check-completion gate, review triage, or final hard verify.
+
+If any required step cannot be completed safely, stop and report
+NEEDS_MANUAL, CHECKS_PENDING, or BLOCKED.
+
+The flow is NOT required for: questions, explanations, read-only analysis,
+or work that does not touch PR code.
 
 ---
 
@@ -36,7 +224,9 @@ Use this mode if any of these are true:
 - The prompt mentions an existing PR branch.
 - The current branch is already associated with an open PR.
 - A handoff `.md` references an existing PR.
-- The request is about failing checks, review comments, Codacy, DeepSource, CodeRabbit, Sourcery, Gitar, GitHub Actions, or other feedback on an existing PR.
+- The request is about failing checks, review comments, Codacy, DeepSource,
+  CodeRabbit, Sourcery, Gitar, GitHub Actions, or other feedback on an
+  existing PR.
 - The request says to continue on the same PR, same branch, or current PR.
 
 Behavior:
@@ -44,7 +234,7 @@ Behavior:
 - Continue on the existing PR branch.
 - Do not create a new branch.
 - Do not create a new PR.
-- Do not merge.
+- Do not merge outside the gated auto-merge policy.
 - Do not work on `main`.
 - Fix only the reported current-PR issues.
 - Commit and push to the same PR branch.
@@ -56,18 +246,23 @@ Use this mode only if all are true:
 
 - No open PR exists for the requested work.
 - The request is a new task, not a fix for an existing PR.
-- The task is explicitly provided by the repository owner, Codex Web, Codex CLI, Linear, Slack, Telegram, GitHub issue/comment, or another clear prompt/handoff.
-- The work can be completed without violating scope rules.
+- The task is explicitly provided by the repository owner, Codex Web, Codex
+  CLI, Linear, Slack, Telegram, GitHub issue/comment, or another clear
+  prompt/handoff.
+- The work can be completed without violating scope and safety rules.
 
 Behavior:
 
 - Create a new branch from the correct base branch.
 - Implement only the requested task.
+- Register the task key in `.guardrails/allowed_scope.json` in the same PR.
 - Create exactly one PR.
-- Do not merge.
+- Do not merge outside the gated auto-merge policy.
 - Include a clear PR body with:
   - what changed
   - why it changed
+  - safety impact (Betfair / dutching / money management / Telegram /
+    config / database)
   - tests/checks run
   - limitations or follow-up notes
   - task identifier or source if provided
@@ -76,13 +271,21 @@ Behavior:
 
 Use this mode if:
 
-- A different unrelated PR is already open and the request is trying to start a new task.
-- The task requires files outside allowed scope.
+- A different unrelated PR is already open and the request is trying to
+  start a new task.
+- The task requires unsafe files outside allowed scope.
 - The requested work would require opening a second PR.
 - The requested work would require working directly on `main`.
-- The requested work would require merging without explicit owner instruction.
+- The requested work would require merging outside the gated auto-merge
+  policy without explicit owner instruction.
 - The current PR branch cannot be determined safely.
-- Git remote or credentials are missing and pushing/creating a PR is required.
+- Git remote or credentials are missing and pushing/creating a PR is
+  required.
+- The task requires exposing secrets or credentials.
+- The task requires real Betfair or Telegram credentials that are not
+  available safely.
+- The task would increase betting risk (stakes, limits, dedupe, safety
+  gates) without explicit owner approval.
 
 Behavior:
 
@@ -109,7 +312,171 @@ There is no required `ops/tasks/` task directory.
 
 Do not assume tasks are stored in `ops/tasks/`.
 Do not move task files to `ops/tasks_done/`.
-Do not create, delete, or reorganize task files unless the repository owner explicitly requests it.
+Do not create, delete, or reorganize task files unless the repository owner
+explicitly requests it.
+
+---
+
+## Before editing
+
+Always inspect first:
+
+```bash
+git status --short
+git branch --show-current
+git remote -v
+git fetch origin main --quiet
+```
+
+Then identify:
+
+- current branch;
+- current task;
+- whether this is a new task or current PR repair;
+- files likely needed;
+- files that must not be touched (`files_forbidden`, default forbidden list);
+- safety-critical areas affected (Betfair, dutching, money management,
+  Telegram, config/secrets, database, workflows).
+
+If the current branch is `main`, create or switch to a proper task branch
+before editing.
+
+---
+
+## Phase 0 read-only inspection
+
+Before making any code change, the agent must perform a read-only Phase 0
+(Matrix Phase 0 for safety-critical areas — see `docs/auto_pr_flow_spec.md`
+§4). Phase 0 must not modify files.
+
+Phase 0 must identify:
+
+- requested task;
+- detected mode: new task or current PR repair;
+- current branch and whether it is `main`;
+- open PR state, if any;
+- files inspected;
+- files likely to be changed;
+- files that must not be changed;
+- Betfair/dutching/money-management/Telegram/config/database/runtime
+  behavior affected;
+- safety risks;
+- hard truthful test plan;
+- stop conditions;
+- last-5 merged PR sweep for unaddressed AI findings (see the AI review
+  section), de-duplicated against existing Issues.
+
+Required Phase 0 output:
+
+```text
+PICKFAIR_PHASE_0
+
+Task:
+- <requested task>
+
+Detected mode:
+- <New task / Current PR repair / Unknown>
+
+Current branch:
+- <branch>
+
+Files inspected:
+- <files>
+
+Expected files to change:
+- <files>
+
+Forbidden files / artifacts:
+- <files or patterns>
+
+Safety risks:
+- <duplicate order / stale signal replay / stake or limit change / weakened
+  safety gate / token leak / config loss / schema break / race condition>
+
+Patch plan:
+- <smallest safe patch>
+
+Hard truthful tests/checks:
+- <commands>
+
+Stop conditions:
+- <conditions>
+
+Last-5 merged PR sweep:
+- <findings or none>
+```
+
+If Phase 0 cannot determine safe scope, the agent must stop with:
+
+```text
+NEEDS_MANUAL
+
+Reason:
+- Phase 0 could not determine safe scope.
+```
+
+---
+
+## Implementation rules
+
+- Make the smallest safe patch.
+- Do not broad-refactor unless explicitly requested.
+- Do not change business/trading behavior silently.
+- Keep backward compatibility when possible.
+- Prefer adding narrow helper functions over rewriting modules.
+- Avoid adding heavy dependencies unless explicitly needed.
+- Do not add external services unless explicitly requested.
+- Do not add hidden network calls.
+- Do not hide errors silently when they affect order, money, Telegram,
+  config, or database safety.
+- Use clear logging, but redact secrets (tokens, keys, session IDs).
+- Avoid bare `except Exception: pass` in new code where the error affects
+  safety; if a fail-safe except is genuinely needed, justify it.
+- If changing parser behavior, include examples of accepted/rejected
+  messages in tests or docs.
+- If changing order/dutching behavior, include the expected computation and
+  a worked example in tests or docs.
+- Keep Linux compatibility (the runtime targets Linux; see
+  `install_linux.sh`, `requirements-build-linux.*`).
+
+---
+
+## Documentation maintenance — required
+
+Whenever you add, change, or remove code (function, class, module, behavior,
+config key, database column, parser rule, gate, contract, roadmap entry),
+you must update the corresponding documentation in the SAME PR. Docs must
+never drift from code: a new function with no doc, or a removed one whose
+doc still lingers, is an incomplete PR.
+
+In the same PR, update — when applicable:
+
+- `README.md` → user-visible changes or main flow;
+- `CHANGELOG.md` → notable behavior changes;
+- `docs/` domain docs (e.g. `docs/cashout_overview.md`) → changes to the
+  documented domain;
+- `docs/auto_pr_flow_spec.md` / `docs/hard_verify_spec.md` /
+  `docs/ai_audit_workflows.md` → changes to the PR flow, verification, or
+  review workflows;
+- `ops/` runbooks → operational behavior changes;
+- docstrings or technical comments → public functions, services, or
+  non-trivial modules;
+- new/removed config key, database column, gate → update the related docs.
+
+Scope constraint (from CLAUDE.md and `hard_verify_spec.md` §12-bis): if the
+doc to update is OUTSIDE `files_allowed`, do NOT force the scope (no commit
+outside the allowlist) => report NEEDS_MANUAL or request an explicit
+allowlist extension. The doc-update obligation applies only within
+`files_allowed`. If no doc genuinely needs updating, state N/A with the
+reason.
+
+The post-fix micro-audit and final hard verify must include a
+"docs updated: PASS/FAIL/N/A" check:
+
+- PASS = documentation updated in the same PR;
+- FAIL = code changed but documentation missing;
+- N/A = purely internal change with no documentation impact — you must
+  explain why.
 
 ---
 
@@ -120,11 +487,12 @@ When no PR exists for the requested task:
 1. Confirm the current branch is not `main` before editing.
 2. Create a dedicated branch for the task.
 3. Implement only the requested task requirements.
-4. Run relevant tests/checks.
-5. Commit only relevant files.
-6. Push the branch.
-7. Create exactly one PR.
-8. Do not merge the PR.
+4. Register the task key in `.guardrails/allowed_scope.json` in the same PR.
+5. Run relevant tests/checks.
+6. Commit only relevant files.
+7. Push the branch.
+8. Create exactly one PR.
+9. Do not merge outside the gated auto-merge policy.
 
 The PR body must include:
 
@@ -134,6 +502,9 @@ Summary:
 
 Reason:
 - <why it changed>
+
+Safety:
+- <Betfair / dutching / money management / Telegram / config / database impact>
 
 Tests:
 - <commands run and results>
@@ -145,13 +516,17 @@ Notes:
 - <limitations or follow-up>
 ```
 
-If the task includes a task file path, task ID, Linear issue, GitHub issue, Slack/Telegram handoff, or other identifier, include it in the PR body.
+If the task includes a task file path, task ID, Linear issue, GitHub issue,
+Slack/Telegram handoff, or other identifier, include it in the PR body.
 
 When there is already an open PR:
 
-- If the requested work is unrelated to the open PR, stop and report `BLOCKED`.
-- If the requested work is about fixing the open PR, continue on the same PR branch.
-- If the request includes a handoff `.md` for the open PR, treat it as current-PR repair work.
+- If the requested work is unrelated to the open PR, stop and report
+  `BLOCKED`.
+- If the requested work is about fixing the open PR, continue on the same PR
+  branch.
+- If the request includes a handoff `.md` for the open PR, treat it as
+  current-PR repair work.
 
 ---
 
@@ -162,8 +537,9 @@ If the current request is about the currently open PR:
 - Continue on the same PR branch.
 - Push to the same PR branch.
 - Do not create a new PR.
-- Do not create a new branch unless explicitly required to recover from a broken local checkout.
-- Do not merge.
+- Do not create a new branch unless explicitly required to recover from a
+  broken local checkout.
+- Do not merge outside the gated auto-merge policy.
 - Do not work on `main`.
 - Fix only the reported problems.
 - Keep the scope limited to the current PR.
@@ -183,13 +559,15 @@ This applies to:
 - Gitar comments.
 - Security/scanner feedback attached to the PR.
 - Generated `.md` handoff files for the current PR.
-- Telegram/Slack/Linear/GitHub handoff reports that clearly reference the current PR.
+- Telegram/Slack/Linear/GitHub handoff reports that clearly reference the
+  current PR.
 
 ---
 
 ## Handoff file behavior
 
-A handoff file may contain failing checks, logs, annotations, review comments, and a section such as:
+A handoff file may contain failing checks, logs, annotations, review
+comments, and a section such as:
 
 ```text
 FIX THESE ISSUES ONLY
@@ -202,36 +580,296 @@ When a handoff file is provided for the current PR:
 - Fix only the deduplicated issues listed there.
 - Use failing checks, logs, annotations, and review comments as evidence.
 - Ignore duplicated old monitor comments.
-- Ignore PR Health Monitor / PR Telegram Notify / PR Codex Monitor self-check noise.
-- Ignore Node.js/action deprecation warnings unless they are directly blocking the current PR.
+- Ignore PR Health Monitor / PR Telegram Notify / PR Codex Monitor
+  self-check noise.
+- Ignore Node.js/action deprecation warnings unless they are directly
+  blocking the current PR.
 - Do not chase unrelated style cleanup outside files touched by the PR.
 - Do not refactor unrelated code.
 - Do not modify unrelated tests.
-- Do not change business logic unless the handoff/task explicitly requires it.
+- Do not change trading/business behavior unless the handoff/task explicitly
+  requires it.
 
-If the handoff conflicts with repository rules, follow repository rules and report the conflict.
+If the handoff conflicts with repository rules, follow repository rules and
+report the conflict.
 
-If the handoff asks to create a new PR while the current task already has an open PR, do not create a new PR. Continue on the existing PR branch and report that the handoff was interpreted as a current-PR fix request.
+If the handoff asks to create a new PR while the current task already has an
+open PR, do not create a new PR. Continue on the existing PR branch and
+report that the handoff was interpreted as a current-PR fix request.
 
 When a handoff file is provided and no PR exists:
 
 - Treat it as a new task only if it clearly describes new work.
 - Create one branch and one PR.
-- Do not treat old PR logs as active work unless they clearly apply to the new task.
+- Do not treat old PR logs as active work unless they clearly apply to the
+  new task.
 
 ---
 
 ## PR behavior
 
 - Create exactly one PR per task.
-- If no PR exists for the task, create one PR after completing the requested work.
+- If no PR exists for the task, create one PR after completing the requested
+  work.
 - If a PR already exists for the current task, continue working on that PR.
 - Do not create a new PR for follow-up fixes.
 - Do not create a new PR for review comment fixes.
 - Do not create a new PR for failing check fixes.
 - Do not create a new PR for Codacy/DeepSource/static analysis fixes.
 - Do not create a new PR from a handoff file that references the current PR.
-- Do not merge PRs.
+- Merge only via the gated auto-merge policy; otherwise merge is manual and
+  owner-only.
+
+---
+
+## Post-fix micro-audit
+
+After patching and before running tests, committing, pushing, resolving
+comments, or declaring completion, the agent must perform a post-fix
+micro-audit.
+
+The micro-audit must verify:
+
+- only intended files were changed;
+- no forbidden files were changed (`.github/workflows/*`, `core/*`,
+  `services/*`, secrets, runtime trading, Betfair, Telegram live — unless
+  explicitly allowed by the task spec);
+- no real Betfair credentials, session tokens or certificates were added;
+- no real Telegram token or chat ID was added;
+- no `.env` or local `config.json` with real data was added;
+- no database files, logs, caches, EXE/ZIP, build artifacts, or generated
+  reports were added;
+- no ungated auto-merge, default auto-push, or default auto-resolve was
+  introduced;
+- no live/real-money execution path was introduced or enabled by default;
+- no broad unrelated refactor was introduced;
+- parser behavior was not changed outside task scope;
+- stake/dutching/money-management/limit behavior was not changed unless
+  explicitly required;
+- order dedupe / idempotency / reconciliation behavior was preserved unless
+  explicitly changed;
+- Telegram chat filtering was not weakened;
+- config persistence and database schema compatibility were not broken;
+- fail-closed behavior was preserved (no new fail-open branch);
+- Linux runtime compatibility was preserved;
+- tests were added/updated for changed behavior;
+- documentation was updated for the change, or a note explains why none was
+  needed.
+
+Required micro-audit output:
+
+```text
+POST_FIX_MICRO_AUDIT
+
+Scope:
+- PASS / FAIL
+
+Forbidden files:
+- PASS / FAIL
+
+Secrets:
+- PASS / FAIL
+
+Betfair/order safety:
+- PASS / FAIL
+
+Dutching/money management safety:
+- PASS / FAIL
+
+Telegram safety:
+- PASS / FAIL
+
+Config/database safety:
+- PASS / FAIL
+
+Duplicate-order risk:
+- PASS / FAIL
+
+Fail-closed preserved:
+- PASS / FAIL
+
+Gated actions (push/resolve/merge):
+- PASS / FAIL
+
+Docs updated:
+- PASS / FAIL / N/A
+  (PASS = docs updated in the same PR · FAIL = code changed but docs missing ·
+   N/A = purely internal change with no documentation impact, with a written
+   reason)
+
+Result:
+- PASS / FAIL
+
+Notes:
+- <evidence>
+```
+
+If the micro-audit fails:
+
+```text
+POST_FIX_AUDIT=FAIL
+
+Reason:
+- <why>
+
+Action:
+- Do not test.
+- Do not commit.
+- Do not push.
+- Do not resolve review threads.
+- Do not declare DONE.
+```
+
+The agent may only continue to tests/commit/push if:
+
+```text
+POST_FIX_AUDIT=PASS
+```
+
+---
+
+## Hard truthful tests
+
+Tests must be real, targeted, and verifiable.
+
+The agent must never claim a test passed unless it actually executed the
+command and observed a passing exit code.
+
+Forbidden test behavior:
+
+- Do not invent test results.
+- Do not write tests that only assert `True`.
+- Do not write tests that do not exercise real project functions.
+- Do not mark tests as passed because they are "expected to pass".
+- Do not hide failing tests with `|| true`.
+- Do not skip tests without a written reason.
+- Do not use fake coverage as proof.
+- Do not claim live Betfair, live Telegram, or GUI behavior was tested
+  unless it was actually tested.
+
+Minimum local validation for Python changes:
+
+```bash
+python3 -m py_compile <changed_python_files>
+```
+
+Plus targeted tests:
+
+```bash
+python3 -m pytest -q <test_files> -k "<task selectors>"
+```
+
+If parser, order, dutching, or database behavior changes, add or update hard
+targeted tests where practical. Hard tests should exercise real functions,
+for example:
+
+- parser functions with a valid signal message and with unsupported/empty
+  input;
+- odds/stake conversion and rounding;
+- dutching stake distribution with real parsed data;
+- order dedupe: repeated signals do not produce duplicate orders;
+- invalid or incomplete signals do not create dangerous order instructions;
+- reconciliation/recovery paths with stale state on disk;
+- config load/save round-trip, corrupted-config backup, safe defaults.
+
+Recommended test style:
+
+- Use `tempfile` or pytest `tmp_path` for files and databases.
+- Do not use real Betfair or Telegram credentials.
+- Do not call live Betfair/Telegram APIs in normal unit tests (use the
+  simulation broker / stubs: `simulation_broker`, `headless_ui_stubs`).
+- Keep unit tests deterministic and offline.
+- Cover PASS, BLOCK, MALFORMED and EDGE cases (see `hard_verify_spec.md`
+  §6): for safety-critical tasks the BLOCK tests are the most important.
+- If a live/manual test is needed, document it separately as manual
+  verification.
+
+Required hard test report:
+
+```text
+HARD_TEST_EVIDENCE
+
+Commands run:
+- <exact command>: PASS / FAIL
+
+Exit codes:
+- <command>: <exit code>
+
+What was actually tested:
+- <real behavior>
+
+What was not tested:
+- <live Betfair / live Telegram / GUI, with reason>
+
+Test quality:
+- REAL / PARTIAL / MANUAL_ONLY
+
+Notes:
+- <evidence>
+```
+
+If tests cannot be run:
+
+```text
+TESTS_SKIPPED
+
+Reason:
+- <exact reason>
+
+Risk:
+- <what remains unverified>
+
+Required owner action:
+- <manual command or environment needed>
+```
+
+A task cannot be DONE if the only evidence is unrun, fake, decorative, or
+assumed tests.
+
+---
+
+## Mandatory hard safety tests for critical runtime behavior
+
+For every change that touches runtime execution, START/STOP, the Telegram
+listener, reconnect/backoff, order placement/cancel, cashout, dutching
+computation, money management, signal queue, dedupe, daily limits,
+reconciliation, config persistence, database schema, parser routing, or
+shutdown behavior, the agent must automatically add or update serious
+targeted tests before declaring the task complete.
+
+The tests must exercise the real project functions/classes and must cover
+the highest-risk failure modes that are practical to test offline:
+
+- **crash / power-loss recovery**: stale local state (pending orders, queue
+  entries) left on disk must be reconciled on next start before any new
+  order can be placed;
+- **connection loss**: reconnect/backoff policy, STOP during backoff, no
+  retry on permanent errors, and stale Telegram messages older than the
+  configured max age must not produce orders;
+- **order lifecycle**: dedupe survives restart, rate/daily limits hold,
+  queue timeouts remove expired signals, write failures roll back
+  queue/dedupe/daily state so a signal can be retried safely, cancel/cashout
+  paths do not leave orphaned state;
+- **money management**: stake computation, liability caps and limits are
+  enforced fail-closed; malformed inputs block instead of producing a
+  partial bet;
+- **config persistence**: existing config survives failed saves, corrupted
+  config is backed up, defaults remain safe, no real credentials are
+  committed;
+- **database**: schema compatibility, consistent multi-step writes,
+  rollback on failure;
+- **runtime race conditions**: START failure must not leave the session
+  active, STOP must tear down cleanly (`shutdown_manager`), expiry/manual
+  clear/processing must be serialized, and no old Telegram poller may
+  survive a new START epoch.
+
+If a risk cannot be tested automatically because it requires live Betfair,
+live Telegram, a real GUI session, or hardware reboot behavior, the agent
+must add a deterministic offline unit/integration test for the pure logic
+and also document an explicit manual smoke test with exact steps, expected
+result, and what remains unverified. The agent must not claim the behavior
+is covered unless the automated or manual test was actually run and reported
+with real evidence.
 
 ---
 
@@ -353,7 +991,10 @@ it and for each real/actionable finding open an Issue (PR number, head SHA,
 file:line, bot, severity, comment link) and a dedicated fix PR branched from
 the latest main (Phase 0 + micro-audit + hard PASS/BLOCK tests; never reuse or
 stack on the merged PR). In Phase 0 of every task, sweep the last 5 merged PRs
-for AI findings never addressed, de-duplicating against existing Issues.
+for AI findings never addressed, de-duplicating against existing Issues (open
+and closed). Fix-PR creation is deferred while another task/PR is active: the
+one-active-task / one-open-PR rule wins — the Issue holds the findings until no
+other PR/task is active.
 
 **Skip on unavailability (usage-quota / rate-limit) — applies to ALL
 reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
@@ -392,6 +1033,179 @@ GitHub thread `Fatto in commit <SHA>` with evidence (test command: PASS,
 file:line changed). For skipped findings: `Skipped / already covered` with the
 reason (outdated / duplicate / cosmetic / out of scope) and evidence. Marking a
 thread "resolved" is gated: current-head + all checks settled + evidence.
+
+---
+
+## Check completion gate — required before final decisions
+
+The agent must not perform final PR review, evidence resolve, thread resolve,
+or final READY/DONE judgment while GitHub checks are still running.
+
+Before any final decision, the agent must inspect all current-head checks and
+statuses, including:
+
+- GitHub Actions check runs;
+- commit statuses;
+- statusCheckRollup;
+- Codacy;
+- DeepSource;
+- CodeRabbit/Sourcery/Gitar if present (subject to the absence rules above);
+- guard / merge readiness / PR flow guardrails;
+- build and test workflows.
+
+The agent must wait until ALL current-head checks are settled. Settled means
+there are no checks/statuses in any of these states:
+
+- PENDING
+- QUEUED
+- IN_PROGRESS
+- WAITING
+- REQUESTED
+- EXPECTED
+- UNKNOWN
+- null / empty / unknown running state
+
+Read review findings, inline comments and review bodies **after** checks
+finish — the bots (CodeRabbit/Codacy/DeepSource/Sourcery/Gitar) often publish
+only when their check completes. After EVERY push repeat the cycle: push =>
+wait for checks => re-read checks + annotations + comments + inline + threads
+=> triage => patch if needed. An intermediate monitoring status is allowed,
+but it never counts as a final judgment.
+
+If any check is still pending or in progress, the agent must stop the final
+control phase and report:
+
+```text
+CHECKS_PENDING
+
+Reason:
+- Some PR checks are still running.
+
+Pending checks:
+- <check name>
+```
+
+When checks are pending:
+
+- do not mark the PR ready;
+- do not resolve review threads;
+- do not reply that findings are fully covered;
+- do not declare final DONE;
+- do not declare READY_TO_MERGE;
+- do not merge;
+- do not start a second PR;
+- do not make random extra patches while waiting.
+
+The final review pass must happen in this order:
+
+1. confirm current PR head SHA;
+2. wait for all checks to finish;
+3. collect check results and annotations;
+4. collect PR conversation comments;
+5. collect review bodies;
+6. collect inline review comments and unresolved threads;
+7. classify findings (review triage);
+8. patch only real current-head blockers;
+9. run hard truthful local validation;
+10. push if needed;
+11. wait again for all checks to finish;
+12. only then decide DONE, PARTIAL, NOT DONE, CHECKS_PENDING, or
+    NEEDS_MANUAL.
+
+A PR is not ready while checks are pending, even if local tests pass.
+
+---
+
+## CI minutes / push-churn — do not waste CI
+
+Beyond reviewer API cost, every push and every re-run consume GitHub Actions
+minutes. The repo is private → minutes are metered and capped by the spending
+limit; exhausting it blocks ALL CI (jobs fail instantly, `runner_id: 0`, no
+logs — not a code bug, it's billing).
+
+Rules:
+
+- batch fixes into a single push per round (no rapid successive pushes);
+- never spam empty commits / re-runs — if a check is red, first diagnose
+  (transient vs real) from the logs, re-trigger once, then verify before
+  retrying;
+- do not churn labels (remove+re-add) right after a push — this does not
+  forbid firing the final-review gate: do that once, deliberately, when the
+  head is stable; the rule bans repeated/reflexive remove+add while checks
+  are still moving;
+- if every check fails in ~2s with no logs and `runner_id: 0`, stop — that
+  is the spending limit / billing, an owner action, do not keep pushing;
+- prefer waiting on an in-progress check over re-triggering it.
+
+---
+
+## Review triage rules
+
+For every review comment or inline thread, classify it as one of:
+
+- **PATCH_REQUIRED** — active, non-outdated, valid issue on the current head
+  that needs a code/test/docs fix (narrow patch).
+- **TEST_REQUIRED** — code may already exist, but coverage is missing or
+  unclear.
+- **EVIDENCE_RESOLVE** — already fixed or outdated, but needs evidence.
+- **SKIP_OUTDATED** — outdated and not applicable to the current head.
+- **SKIP_DUPLICATE** — duplicate of another handled finding.
+- **NEEDS_MANUAL** — unclear, risky, product decision, or outside safe scope.
+
+Blockers = unresolved `PATCH_REQUIRED` and `NEEDS_MANUAL`: do NOT declare the
+work complete while they remain.
+
+The agent must fix only active, non-outdated, non-resolved, current-head
+issues. Do not chase stale, duplicate, resolved, or unrelated comments.
+
+DeepSource is advisory by default: patch only if it is a required failing
+check on the current head or demonstrates a real bug / safety issue /
+fail-open branch.
+
+### Inline comment handling
+
+For inline review comments:
+
+- Read the exact file and line referenced by the comment.
+- Check whether the comment still applies to the current PR head.
+- If the line changed, inspect the current equivalent code.
+- If the issue still exists, patch the smallest safe fix.
+- If the issue is already fixed, provide evidence instead of patching again.
+- If the comment is outside the current diff or cannot be mapped safely,
+  report NEEDS_MANUAL.
+
+### Evidence before resolving
+
+Before replying that a comment is fixed or already covered, the agent must
+provide evidence:
+
+- commit SHA;
+- file path changed or inspected;
+- relevant test command;
+- real test result;
+- explanation of why the issue is fixed, outdated, duplicate, or covered.
+
+Never resolve or mark a review comment handled only because it "seems fixed".
+
+### Resolving threads
+
+Marking a GitHub review thread as resolved is a GATED external action. The
+agent may resolve a thread only if ALL are true:
+
+- `AUTO_RESOLVE_ENABLED=true` or the owner's explicit mandate covers it;
+- all checks are settled for the current PR head;
+- the thread is active and non-outdated;
+- the related issue is fixed or demonstrably already covered;
+- relevant tests/checks pass;
+- the current PR head SHA matches the commit being reported.
+
+If resolve permission is unavailable, reply with evidence but do not claim
+the thread was resolved.
+
+Never resolve a thread when: checks are still pending; tests are failing;
+evidence is missing; the fix is only assumed; the comment is unclear; the fix
+would require unsafe scope expansion; or the thread requires an owner/product
+decision.
 
 ---
 
@@ -473,6 +1287,91 @@ quota, the merge is the owner's decision, never the agent's.
 
 ---
 
+## Final hard verify
+
+Before declaring DONE, READY, or PARTIAL, the agent must perform the final
+hard verify defined in `docs/hard_verify_spec.md`: task contract,
+current-head, static audit in the authoritative files, PASS and BLOCK tests,
+`py_compile`, targeted `pytest`, wiring into the final flow, clean scope,
+fail-closed behavior, docs aligned with the change (§12-bis).
+
+Final hard verify requires:
+
+- Phase 0 completed;
+- post-fix micro-audit passed;
+- hard truthful local validation completed;
+- all current-head GitHub checks completed (settled);
+- failing checks triaged;
+- review bodies, PR comments, inline comments and unresolved threads read;
+- real findings patched or answered with evidence;
+- no blocking review comments left unevidenced;
+- final labels fired and the strong reviewers' full-range outcome read;
+- last-5 merged PR sweep done;
+- no ungated merge.
+
+Required final hard verify output:
+
+```text
+FINAL_HARD_VERIFY
+
+Phase 0:
+- PASS / FAIL
+
+Post-fix micro-audit:
+- PASS / FAIL
+
+Hard truthful tests:
+- PASS / FAIL / SKIPPED with reason
+
+Hard tests created/updated for the change:
+- PASS / FAIL / N/A with reason
+
+Docs updated for the change:
+- PASS / FAIL / N/A with reason
+
+GitHub checks completed (settled):
+- YES / NO
+
+GitHub checks result:
+- PASS / FAIL / PENDING
+
+PR comments checked:
+- YES / NO
+
+Review bodies checked:
+- YES / NO
+
+Inline comments checked:
+- YES / NO
+
+Unresolved threads checked:
+- YES / NO
+
+Final labels fired + strong reviewers (Fugu/Fable) full-range outcome read:
+- YES / NO
+
+Last-5 PR post-merge sweep:
+- YES / NO
+
+Safety invariants:
+- PASS / FAIL
+
+Merge:
+- AUTO-MERGE (gated conditions met, non-safety-critical) / MANUAL OWNER
+
+Implementation label:
+- MISSING / PARTIAL / IMPLEMENTED_WITH_NOTE / FULLY_IMPLEMENTED /
+  MERGED_BUT_NOT_FULLY_AUTOMATED
+
+Final status:
+- DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
+```
+
+"PR merged" alone is NOT proof of implementation. If any required final hard
+verify item is missing, do not declare DONE.
+
+---
+
 ## Failure handling
 
 If tests fail:
@@ -495,9 +1394,11 @@ If review comments are present:
 
 - Continue working on the same PR.
 - Do not create a new PR.
-- Do not merge.
-- Address active, non-outdated, non-resolved comments.
-- If a comment is already outdated or already fixed by the current code, explain that clearly.
+- Do not merge while blockers remain.
+- Address active, non-outdated, non-resolved comments (see "Review triage
+  rules").
+- If a comment is already outdated or already fixed by the current code,
+  explain that clearly with evidence.
 - For each comment actually fixed, reply in the related GitHub thread with:
 
 ```text
@@ -508,7 +1409,7 @@ If branch conflicts with base:
 
 - Resolve conflicts in the same PR.
 - Do not create a new PR.
-- Do not merge unless explicitly instructed by the repository owner.
+- Do not merge outside the gated auto-merge policy.
 - If the conflict cannot be resolved safely, stop and report `BLOCKED`.
 
 ---
@@ -528,7 +1429,11 @@ When committing:
 
 - Commit only relevant files.
 - Use a clear commit message.
-- Do not include generated temporary files, logs, secrets, local caches, or unrelated artifacts.
+- Do not include generated temporary files, logs, secrets, local caches,
+  database files, CSV/report output, build artifacts, EXE/ZIP files, or
+  unrelated artifacts.
+- Never include real Betfair credentials, session tokens, certificates,
+  Telegram tokens, chat IDs, `.env`, or a `config.json` with real data.
 - Push only to:
   - the existing PR branch in current-PR repair mode; or
   - the newly created task branch in new-task mode.
@@ -556,29 +1461,52 @@ Then explain why, including:
 A task is not complete until:
 
 - The PR has been created or updated.
-- Required tests/checks pass or are clearly outside scope.
-- Blocking review comments are resolved, outdated, or explicitly handled.
-- The PR is ready for owner review or merge.
+- Phase 0 has passed.
+- The post-fix micro-audit has passed.
+- Hard truthful local tests have passed or are explicitly skipped with a
+  real reason.
+- All current-head checks have completed (settled).
+- Relevant checks have passed or are clearly outside scope.
+- Betfair/dutching/money-management/Telegram/config/database safety impact
+  is explained.
+- Blocking review comments are resolved, outdated, or explicitly handled
+  with evidence.
+- The final label gate has been fired and the strong reviewers' full-range
+  outcome read.
+- The final hard verify has been performed.
+- The PR is ready for owner review (or auto-merged under the gated policy).
 
 Do not mark work complete while checks are failing.
+Do not mark work complete while checks are pending.
 Do not mark work complete while active review comments remain unresolved.
-Do not move files to `ops/tasks_done/` unless explicitly instructed by the repository owner.
+Do not mark work complete after only editing files without running at least
+`py_compile` for Python changes.
+Do not mark work complete with fake, assumed, or decorative tests.
+Do not move files to `ops/tasks_done/` unless explicitly instructed by the
+repository owner.
 
 ---
 
 ## Scope control
 
-- Modify only files required by the task, checks, review comments, or handoff file.
+- Modify only files required by the task, checks, review comments, or
+  handoff file.
 - Do not refactor unrelated code.
 - Do not expand scope.
-- Do not change business logic unless explicitly required.
+- Do not change trading/business logic unless explicitly required.
+- Do not change parser/order/dutching/money-management behavior unless
+  explicitly required.
 - Do not make broad cleanup changes unless necessary for the current task.
 - Do not modify unrelated tests.
-- Do not modify CI configuration unless the task or failing check specifically requires it.
+- Do not modify CI configuration unless the task or failing check
+  specifically requires it.
 - Do not silence tests or checks just to make the PR green.
-- Do not delete tests unless the task explicitly requires it and the reason is documented.
-- Do not remove guardrails.
-- Do not bypass security/static analysis findings by ignoring them without justification.
+- Do not delete tests unless the task explicitly requires it and the reason
+  is documented.
+- Do not remove guardrails or safety gates.
+- Do not bypass security/static analysis findings by ignoring them without
+  justification.
+- Do not add real secrets or sample secrets.
 
 ---
 
@@ -586,15 +1514,23 @@ Do not move files to `ops/tasks_done/` unless explicitly instructed by the repos
 
 Stop immediately and report `BLOCKED` if:
 
-- A different unrelated PR is already open and the current request is trying to start a new task.
+- A different unrelated PR is already open and the current request is trying
+  to start a new task.
 - The task requires files outside the allowed scope.
 - The conflict cannot be resolved safely.
 - Tests cannot be fixed without violating scope rules.
 - The requested work would require opening a second PR.
 - The requested work would require working directly on `main`.
-- The requested work would require merging without explicit owner instruction.
-- The requested work would require disabling project guardrails.
+- The requested work would require merging outside the gated auto-merge
+  policy without explicit owner instruction.
+- The requested work would require disabling project guardrails or safety
+  gates (safety_layer, circuit_breaker, safe_mode, reconciliation).
 - The requested work would require exposing secrets or credentials.
+- The task requires real Betfair or Telegram credentials that are not
+  available safely.
+- The task would increase betting risk (stakes, limits, dedupe, price
+  validation) without explicit owner approval.
+- The task would produce malformed or partial order instructions.
 - The requested mode cannot be determined safely.
 
 Do not stop if:
@@ -615,7 +1551,7 @@ In those cases:
 - Continue on the same PR.
 - Push to the same PR branch.
 - Do not open a new PR.
-- Do not merge.
+- Do not merge outside the gated auto-merge policy.
 - Report what changed and provide the commit SHA.
 
 ---
@@ -625,7 +1561,7 @@ In those cases:
 After completing a new task and creating a PR, respond with:
 
 ```text
-DONE / PARTIAL / NOT DONE
+DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
 
 Summary:
 - <what was changed>
@@ -639,14 +1575,32 @@ PR:
 Commit:
 - <commit SHA>
 
-Checks:
+Safety:
+- <Betfair / dutching / money management / Telegram / config / database impact>
+
+Phase 0:
+- PASS / FAIL
+
+Post-fix micro-audit:
+- PASS / FAIL
+
+Hard truthful tests:
 - <command run>: pass/fail/skipped with reason
+
+GitHub checks:
+- complete/pass/fail/pending with reason
+
+Review comments handled:
+- <thread/comment URL or summary>: fixed/skipped/needs manual with evidence
 
 Files changed:
 - <file path>
 
 Files created:
 - <file path>
+
+Final hard verify:
+- DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
 
 Notes:
 - <anything the repository owner must know>
@@ -667,7 +1621,7 @@ and explain why.
 After fixing a current PR request, respond with:
 
 ```text
-DONE / PARTIAL / NOT DONE
+DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
 
 Summary:
 - <what was changed>
@@ -678,16 +1632,31 @@ Commit:
 New PR head SHA:
 - <new PR head SHA>
 
-Checks:
-- <check name>: expected status or result
+Safety:
+- <Betfair / dutching / money management / Telegram / config / database impact>
+
+Phase 0:
+- PASS / FAIL
+
+Post-fix micro-audit:
+- PASS / FAIL
+
+Hard truthful tests:
 - <command run>: pass/fail/skipped with reason
 
+GitHub checks:
+- complete/pass/fail/pending with reason
+
 Review comments handled:
-- <comment/thread URL or summary>: Fatto in commit <SHA>
-- <comment/thread URL or summary>: skipped because <reason>
+- <comment/thread URL or summary>: fixed in commit <SHA>; evidence: <test command PASS>
+- <comment/thread URL or summary>: skipped because <reason>; evidence: <file/test>
+- <comment/thread URL or summary>: needs manual because <reason>
 
 Files changed:
 - <file path>
+
+Final hard verify:
+- DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
 
 Notes:
 - <anything the repository owner must know>
@@ -727,16 +1696,39 @@ Required owner action:
 
 ---
 
+## Required response format when checks are pending
+
+```text
+CHECKS_PENDING
+
+Reason:
+- Current-head PR checks are not all finished yet.
+
+Current head:
+- <SHA>
+
+Pending checks:
+- <check name>
+
+Next allowed action:
+- Wait for checks to complete, then re-read checks, annotations, review
+  bodies, inline comments, unresolved threads, and only then decide final
+  status.
+```
+
+---
+
 ## Automation-specific rules
 
-Automated agents, Codex CLI, Codex Web, self-hosted runners, Slack, Telegram, Linear, and GitHub Actions must all follow this file.
+Automated agents, Codex CLI, Codex Web, self-hosted runners, Slack, Telegram,
+Linear, and GitHub Actions must all follow this file.
 
 For new-task automation:
 
 - Run only when no unrelated PR is open.
 - Create one branch.
 - Create one PR.
-- Do not merge.
+- Do not merge outside the gated auto-merge policy.
 - Stop after PR creation and notify the owner.
 
 For automated PR repair loops:
@@ -746,7 +1738,9 @@ For automated PR repair loops:
 - Make at most one fix commit per automation attempt.
 - Push only to the current PR branch.
 - Let GitHub checks run after push.
-- If checks remain red, generate or wait for a new handoff and run another controlled attempt.
+- Wait until checks complete before final review/comment/inline triage.
+- If checks remain red, generate or wait for a new handoff and run another
+  controlled attempt.
 - Do not loop forever.
 - Stop after the configured maximum attempts and notify the owner.
 
