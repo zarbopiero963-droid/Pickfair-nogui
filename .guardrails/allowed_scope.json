@@ -1071,6 +1071,17 @@
       ],
       "max_files": 2,
       "allow_tests": false
+    },
+    "claude_md_pickfair_rules": {
+      "description": "Adeguamento di CLAUDE.md con le regole mancanti rispetto al CLAUDE.md di XTrader Bridge 2, adattate a Pickfair no-GUI, senza duplicare AGENTS.md: REGOLA PRINCIPALE (leggi AGENTS.md + identita' progetto e catena di rischio real-money), QUANDO USARE QUESTE REGOLE (trigger per dominio), LAVORO IN BACKGROUND (ciclo PR autonomo con esito obbligatorio: auto-merge gated eseguito oppure verdetto esplicito PRONTA PER MERGE/NEEDS_MANUAL con motivo), GENERAZIONE AUTOMATICA TEST HARD con matrice di resilienza per dominio, sezioni QUANDO TOCCHI X (parser Telegram, Betfair/ordini, dutching/money management, database, config, mini GUI, motore AI ai/, build/packaging), GATE DESIGN HANDOFF con creazione della prima stesura di docs/design/design_handoff.md (mappa veritiera della mini GUI: tab, controlli con label verbatim, stati, colori, dialoghi, invarianti), PRIORITA' TECNICHE e REGOLA D'ORO, fix di coerenza della condizione 2 AUTO-MERGE (CodeRabbit mai gate d'attesa, nessun cap-timer). In AGENTS.md solo i campi 'Design handoff updated' nei template micro-audit/hard-verify e il rimando docs. Solo documentazione: nessun codice runtime toccato.",
+      "files": [
+        "CLAUDE.md",
+        "AGENTS.md",
+        "docs/design/design_handoff.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4,
+      "allow_tests": false
     }
   }
 }

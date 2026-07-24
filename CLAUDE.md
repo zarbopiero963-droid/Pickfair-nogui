@@ -1,5 +1,64 @@
 # CLAUDE.md
 
+## REGOLA PRINCIPALE
+
+Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le
+policy complete (invarianti di safety, sequenza operativa, template Phase 0 /
+micro-audit / test / hard verify, formati di risposta). Questo file aggiunge
+le regole operative per-dominio e i puntatori alle spec — non duplica AGENTS.md.
+
+Questo repository è **Pickfair (no-GUI)**: un bot di trading Betfair headless.
+La catena di rischio è: Telegram → parser → validazione → dutching/money
+management → ordine Betfair con **denaro reale** → riconciliazione → database.
+Una modifica sbagliata può piazzare un ordine errato, duplicare una puntata,
+rigiocare un segnale stantio o indebolire un gate di sicurezza. Tratta ordini,
+stake, dedupe, riconciliazione e teardown come codice di produzione trading.
+
+Il merge è gated: vedi la sezione AUTO-MERGE (autorizzazione owner). Fuori
+dalle condizioni gated il merge resta manuale dell'owner.
+
+## QUANDO USARE QUESTE REGOLE
+
+Usa il flusso completo (AUTO PR FLOW + AGENTS.md) per qualsiasi task che:
+
+- modifica `headless_main`, `mini_gui`, `ui_panels/`, runtime o teardown;
+- modifica parser Telegram, listener, filtro chat, token;
+- modifica `betfair_client`, `betfair_market_api`, `order_manager`,
+  `market_validator`, cashout;
+- modifica `dutching*`, `stake_mode`, money management, limiti;
+- modifica `database`, `database_schema`, persistenza stato;
+- modifica config (`config.json`, `trading_config`, `config_registry`);
+- modifica il motore AI (`ai/ai_pattern_engine`, `ai/ai_guardrail`,
+  `ai/wom_engine`);
+- modifica build/packaging (`packaging/`, `pickfair.spec`,
+  `install_linux.sh`, `*.bat`), dipendenze o workflow;
+- richiede commit, push, PR, resolve thread o valutazione merge;
+- corregge review comments, check rossi, Codacy, DeepSource, CodeRabbit,
+  Sourcery, Gitar o GitHub Actions.
+
+Per domande, spiegazioni o analisi read-only non serve il flusso.
+
+## LAVORO IN BACKGROUND — CICLO AUTONOMO E VERDETTO OBBLIGATORIO
+
+L'agente porta avanti l'intero ciclo PR **in autonomia, senza fermarsi ad
+aspettare istruzioni intermedie**: push → attesa check settled → lettura e
+triage review → patch strette → gate finale a label → hard verify. Niente
+domande all'owner per i passi che le policy già coprono; ci si ferma solo per
+i need-manual reali (decisioni owner, ambiguità, rischio).
+
+Il ciclo termina SEMPRE in uno di questi due esiti — mai in attesa passiva:
+
+1. **Tutte le condizioni AUTO-MERGE soddisfatte E PR non safety-critical**
+   => l'agente **esegue il merge da solo** e riporta lo SHA di merge.
+2. **Qualsiasi altra situazione** (PR safety-critical, bloccante reale,
+   Fugu/Fable in usage-quota, condizione gated mancante) => l'agente **NON
+   resta in silenzio**: dichiara esplicitamente all'owner **"PRONTA PER
+   MERGE"** (o lo stato reale: NEEDS_MANUAL / CHECKS_PENDING / FAILED) con
+   il motivo preciso per cui il merge resta manuale.
+
+Un ciclo che finisce senza merge eseguito né verdetto esplicito consegnato
+all'owner è un ciclo incompleto.
+
 ## AUTO PR FLOW (OBBLIGATORIO)
 
 Segui la macchina a stati definita in docs/auto_pr_flow_spec.md
@@ -287,8 +346,11 @@ qui sotto l'agente PUÒ mergiare; fuori da esse il merge resta manuale dell'owne
 
 **Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
 1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
-2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) e da
-   CodeRabbit; CodeRabbit COMPLETATO (o cap ~15 min scaduto).
+2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) e —
+   se ha completato la review — da CodeRabbit. CodeRabbit NON è mai un gate
+   d'attesa (nessun cap-timer): in rate-limit/usage-quota o non completato =
+   ASSENTE (vedi «Skip per indisponibilità»), i suoi eventuali rilievi tardivi
+   vanno al tracciamento post-merge.
 3. Nessuna label `manual-review-required`, nessun thread bloccante irrisolto,
    nessun rilievo `PATCH_REQUIRED`/`NEEDS_MANUAL` aperto.
 4. La PR è "able to merge" su GitHub (mergeable, nessun conflitto, branch
@@ -354,3 +416,163 @@ salto consente all'agente di non restare in stallo nel REPORT (annota il
 reviewer come assente), ma NON autorizza l'auto-merge senza i gate forti finali.
 Per MERGIARE in automatico servono Fugu Ultra e Fable 5 effettivamente eseguiti
 e senza bloccanti; se sono in quota, il merge lo decide l'owner, mai l'agente.
+
+## GENERAZIONE AUTOMATICA TEST HARD (OBBLIGATORIO)
+
+La creazione di test hard veritieri NON è opzionale per NESSUNA modifica di
+codice: è parte della patch (estende «Ogni fix verificato con test hard», che
+vale per i fix da review, a OGNI cambiamento). Regole:
+
+- Ogni funzione/ramo nuovo o modificato DEVE avere un test mirato che chiama
+  il codice reale del progetto (niente `assert True`, niente mock-only,
+  niente "dovrebbe passare", niente `|| true`).
+- Il test deve FALLIRE se il bug torna (regressione bloccata), non solo
+  passare (PASS + BLOCK, vedi hard_verify_spec §6).
+- Per ogni fix da finding/review/bug: PRIMA il test che riproduce il problema
+  (fallisce sul vecchio codice), POI la patch che lo fa passare.
+- Test deterministici e offline: `simulation_broker`, stub, `tmp_path`; mai
+  credenziali reali, mai chiamate live Betfair/Telegram nei test unitari.
+
+Matrice di resilienza per aree safety-critical (scegli i casi pertinenti):
+
+- **Ordini/dedupe**: segnale duplicato bloccato, dedupe persistente dopo
+  restart, rate/daily limit rispettati, write failure con rollback di
+  queue/dedupe/daily (segnale ritentabile in sicurezza), nessun ordine
+  parziale da input malformato (fail-closed).
+- **Riconciliazione/crash**: stato pendente su disco riconciliato all'avvio
+  prima di qualsiasi nuovo ordine; crash tra write e commit non corrompe;
+  ordini orfani gestiti, mai ri-piazzati alla cieca.
+- **Dutching/money management**: distribuzione stake, arrotondamenti,
+  virgola/punto, cap di liability, limiti giornalieri fail-closed; input
+  NaN/inf/malformato => blocco.
+- **Cashout/TTL unmatched**: cancel/cashout non lasciano stato orfano;
+  TTL rispettato.
+- **Config/DB**: config esistente intatta dopo save fallito, config corrotta
+  in backup, default sicuri; modifiche `database_schema` con test di
+  compatibilità e rollback su write multi-step.
+- **Race runtime**: START fallito non lascia sessione attiva; STOP
+  (`shutdown_manager`) teardown pulito; expiry/manual clear/process
+  serializzati; nessun vecchio poller Telegram sopravvive a un nuovo epoch.
+- **Motore AI**: `ai_guardrail` blocca nei casi previsti (errori consecutivi,
+  volatilità, overtrade, dati insufficienti); auto-entry mai fail-open.
+
+Limiti onesti: ciò che richiede ambiente live (Betfair reale, Telegram live,
+GUI reale, AppImage/EXE) va scritto come smoke/manual checklist precisa e
+marcato MANUAL_ONLY, mai dichiarato testato automaticamente.
+
+## QUANDO TOCCHI IL PARSER TELEGRAM
+
+Verifica almeno: messaggio valido dei formati supportati; messaggio
+vuoto/non supportato => nessun segnale; quota con virgola e con punto;
+campi obbligatori mancanti => segnale scartato, MAI ordine parziale;
+chat non configurata => ignorata; nessun replay di messaggi vecchi senza
+dedup. Il parser non inventa mai dati mancanti (mercato, selezione, quota,
+stake). Token mai in log non redatto (`telegram_sanitizer`).
+
+## QUANDO TOCCHI BETFAIR CLIENT / ORDINI
+
+Verifica almeno: idempotenza (stesso segnale => mai due ordini);
+errori/timeout/risposte ambigue dell'API => fail-closed (blocco, non
+retry cieco); riconciliazione all'avvio intatta; TTL unmatched e path di
+cancel/cashout non indeboliti; nessuna credenziale hardcoded; `safe_mode`,
+`circuit_breaker`, `auto_throttle` e `safety_layer` mai bypassati o
+disattivati di default.
+
+## QUANDO TOCCHI DUTCHING / MONEY MANAGEMENT
+
+Safety-critical per definizione. Verifica almeno: calcolo stake con esempio
+numerico verificato nei test; arrotondamenti e conversioni; cap di liability
+e limiti giornalieri fail-closed; `stake_mode` retrocompatibile; nessun
+cambiamento silenzioso di distribuzione/validazione prezzi. Documenta il
+calcolo atteso nel PR body o nei test.
+
+## QUANDO TOCCHI IL DATABASE
+
+Modifiche a `database_schema` = breaking change: servono approvazione
+esplicita del task, nota di migrazione/compatibilità e test. Mai drop o
+riuso silenzioso di colonne/tabelle. Scritture del ciclo ordine (queue,
+dedupe, daily, PnL) consistenti: write fallita => rollback dello stato
+correlato, mai stato mezzo-applicato.
+
+## QUANDO TOCCHI CONFIG / IMPOSTAZIONI
+
+Verifica almeno: config esistente caricata correttamente; nuove chiavi con
+default SICURI (mai live/real-money di default); compatibilità col
+`config.json` esistente; save fallito non distrugge la config; config
+corrotta va in backup; nessun segreto reale committato; nessun path locale
+hardcoded.
+
+## QUANDO TOCCHI LA MINI GUI
+
+`headless_main` deve restare avviabile headless: la GUI è opzionale e non
+può diventare dipendenza dura del runtime. Verifica (o descrivi il controllo
+manuale): app avviabile; START/STOP funzionano; chiusura finestra fa
+teardown pulito; indicatori di stato coerenti col runtime reale; nessun
+controllo safety-rilevante rimosso o nascosto senza spiegazione. Ogni
+modifica che tocca l'aspetto design/UI/UX attiva il GATE DESIGN HANDOFF
+(sezione dedicata).
+
+## QUANDO TOCCHI IL MOTORE AI (ai/)
+
+`ai_pattern_engine` (Weight of Money), `wom_engine` e `ai_guardrail` sono
+aree safety: l'auto-entry BACK/LAY resta gated dal guardrail. Verifica
+almeno: nessun livello/soglia del guardrail indebolito di default; i
+BlockReason esistenti continuano a bloccare; dati insufficienti o errori
+consecutivi => blocco (mai fail-open); nessun ordine generato dall'AI senza
+passare da money management e safety layer.
+
+## QUANDO TOCCHI BUILD / PACKAGING
+
+Verifica: workflow YAML valido; dipendenze coerenti coi requirements/lock;
+`pickfair.spec` e `packaging/` (AppImage Linux) coerenti; `.bat` Windows non
+rotti; artifact con nome chiaro; nessun segreto negli artifact; la build non
+fa push o merge automatici. Se non hai eseguito la build reale scrivi
+`Build not run in this environment` — mai dichiarare artifact generati se
+non è vero.
+
+## GATE DESIGN HANDOFF (OBBLIGATORIO PRIMA DI DICHIARARE PRONTA)
+
+`docs/design/design_handoff.md` è la fonte unica di verità sull'aspetto
+UI/UX della mini GUI e non deve mai restare disallineata dall'app reale.
+
+- Prima di dichiarare una PR pronta/mergiabile (qualsiasi stato DONE/READY/
+  PRONTA PER MERGE), se la modifica tocca l'aspetto design — finestre, tab,
+  controlli/campi/pulsanti, stati o indicatori dinamici, flussi di conferma,
+  palette colori e loro semantica di sicurezza, copy/microcopy della UI,
+  information architecture, o le invarianti di sicurezza lato UI — DEVI
+  aggiornare `docs/design/design_handoff.md` NELLO STESSO PR.
+- L'aggiornamento deve essere veritiero e coerente col codice (label
+  verbatim, stati/flussi corretti), come per il resto delle docs.
+- Modifica puramente interna senza impatto design => dichiara N/A con
+  motivazione scritta. Mai saltare in silenzio.
+- È un gate, non un consiglio: PR che cambia il design con handoff stantio =
+  PR incompleta, non dichiarabile pronta.
+- Micro-audit e hard verify includono il check "design handoff aggiornato:
+  PASS/FAIL/N/A" (vedi template in AGENTS.md).
+
+## PRIORITÀ TECNICHE DEL REPOSITORY
+
+Preserva sempre:
+
+- Telegram legge solo messaggi validi e solo dalle chat configurate.
+- Il parser non inventa dati mancanti.
+- Un segnale valido produce UN SOLO ordine, quello giusto; mai duplicati.
+- Money management e safety layer non si bypassano mai.
+- La riconciliazione all'avvio precede qualsiasi nuovo ordine.
+- Il database resta coerente anche su crash/write failure.
+- START/STOP e chiusura non lasciano thread, poller o sessioni incoerenti.
+- La config si salva e ricarica senza perdere dati; default sempre sicuri.
+- Token e segreti non finiscono mai nel repository né nei log.
+- Linux resta il target primario del runtime; la GUI resta opzionale.
+- Il merge segue SOLO la policy gated della sezione AUTO-MERGE.
+
+## REGOLA D'ORO
+
+Non cercare di "fare tutto". Meglio una patch piccola, chiara e sicura che
+una grande riscrittura. Il bot deve restare prevedibile:
+
+Telegram corretto → parsing corretto → validazione → dutching corretto →
+UN SOLO ordine, quello giusto → riconciliazione → database coerente.
+
+Qualsiasi modifica che rompe questa catena va bloccata o approvata
+esplicitamente dall'owner.
