@@ -80,10 +80,12 @@ wins, and the conflict must be reported.
   and cannot be declared DONE.
 - Every code change updates the corresponding documentation in the SAME PR
   (see "Documentation maintenance"): docs must never drift from code.
-- Never commit secrets, real Betfair app keys/session tokens/certificates,
+- Never commit secrets: real Betfair app keys, session tokens, certificates,
   real Telegram bot tokens or chat IDs, a `config.json` containing real
-  credentials, `.env` files, database files, logs, caches, build artifacts,
-  EXE/ZIP artifacts, or generated reports, unless explicitly requested.
+  credentials, or `.env` files — never, with no exception (an explicit
+  request cannot authorize committing secrets).
+- Never commit database files, logs, caches, build artifacts, EXE/ZIP
+  artifacts, or generated reports, unless explicitly requested.
 - Never add direct real-money execution paths, browser automation,
   mouse/keyboard automation, or new live-trading capabilities beyond the
   existing gated runtime, unless explicitly requested by the owner and
@@ -200,6 +202,12 @@ this exact sequence (detailed in `docs/auto_pr_flow_spec.md`):
 12. Final hard verify (`docs/hard_verify_spec.md`).
 13. Report final status: READY_TO_MERGE, NEEDS_MANUAL, FAILED,
     CHECKS_PENDING or PATCH_REQUIRED_LOOP_STOPPED, with REASON.
+
+When the automated PR flow is driving (`docs/auto_pr_flow_spec.md`), statuses
+are also emitted as machine-readable `AUTO_PR_FLOW_STATUS=<STATUS>` tokens.
+Missing, ambiguous or contradictory evidence always yields
+`AUTO_PR_FLOW_STATUS=NEEDS_MANUAL`; `BLOCKED` is reserved for the explicit
+"Stop conditions" of this file.
 
 The agent must not skip Phase 0, the post-fix micro-audit, hard truthful
 tests, the check-completion gate, review triage, or final hard verify.
@@ -409,7 +417,7 @@ Last-5 merged PR sweep:
 If Phase 0 cannot determine safe scope, the agent must stop with:
 
 ```text
-NEEDS_MANUAL
+AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
 
 Reason:
 - Phase 0 could not determine safe scope.
@@ -928,12 +936,14 @@ or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it ha
 completed handle its real findings; if it is in rate-limit/usage-quota it is
 absent and is NOT awaited; if it is "processing" it is still reviewing — not
 awaited as a binding gate, but its real findings (if they arrive before you
-finalize) are handled, else deferred to post-merge. This way Fugu Ultra and Fable 5
-review a STABLE head and are not wasted on versions that will still change (each
-push to the strong reviewers costs). Sequence: work complete → push → GPT/GLM done
-and findings handled (CodeRabbit only if available) → stable head → fire
-`final-fugu-review` + `final-fable-review` → wait for the **full-range** outcome →
-if real blockers remain: fix, re-push and **RE-FIRE the labels**, repeat until
+finalize) are handled, else deferred to post-merge. This way Fugu Ultra and
+Fable 5 review a STABLE head and are not wasted on versions that will still
+change (each push to the strong reviewers costs). Sequence: work complete →
+push → GPT/GLM done and findings handled (CodeRabbit only if available) →
+stable head → fire
+`final-fugu-review` + `final-fable-review` → wait for the **full-range**
+outcome → if real blockers remain: fix, re-push and **RE-FIRE the labels**,
+repeat until
 both come back clean → merge per the "Auto-merge" section.
 
 **The agent never sees the API keys**: it only adds the label; secrets stay in
@@ -960,9 +970,9 @@ gate".
 **Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
 reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
 are NOT required CI checks and do NOT replace the binding gates. The BINDING gates
-are ALWAYS active and never skipped — (a) settled current-head CI checks and (b)
-the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated until a
-clean outcome). Late findings from reviewers marked absent are covered by
+are ALWAYS active and never skipped — (a) settled current-head CI checks and
+(b) the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated
+until a clean outcome). Late findings from reviewers marked absent are covered by
 post-merge tracking (Issue + fix PR). If a BINDING reviewer (Fugu/Fable via label)
 is in usage-quota, DONE is NOT declared by skipping it: the AUTO-MERGE carve-out
 applies (auto-merge BLOCKED, the owner decides). The owner can also always merge
@@ -971,11 +981,12 @@ manually (human override).
 **Event-driven review window (no fixed timer).** The four synchronous reviewers
 answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
 COMPLETED, read and handle its real findings (inline + review body); if it is in
-rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer to
-post-merge tracking. If it is "processing" it is still reviewing: not awaited as a
-binding gate, but not "absent" either — if it completes before you finalize handle
-its findings, else post-merge; do not stall on it. The AGENT's verdict (ready /
-DONE) does NOT depend on CodeRabbit: it depends on settled CI checks and the strong
+rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer
+to post-merge tracking. If it is "processing" it is still reviewing: not
+awaited as a binding gate, but not "absent" either — if it completes before
+you finalize handle its findings, else post-merge; do not stall on it. The
+AGENT's verdict (ready / DONE) does NOT depend on CodeRabbit: it depends on
+settled CI checks and the strong
 label gates (Fugu/Fable). The owner may merge manually at
 any time.
 
@@ -999,6 +1010,7 @@ other PR/task is active.
 **Skip on unavailability (usage-quota / rate-limit) — applies to ALL
 reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
 treat it as ABSENT and proceed (note that it did not review).
+
 - **Codex**: usage-limit => absent, skipped.
 - **Sourcery**: rate-limit => absent, skipped.
 - **CodeRabbit**: rate-limit / usage-quota => absent, skipped (like Codex/
@@ -1064,6 +1076,15 @@ there are no checks/statuses in any of these states:
 - EXPECTED
 - UNKNOWN
 - null / empty / unknown running state
+
+This settlement requirement applies to the BINDING set: CI check runs and
+commit statuses registered on the current head. Advisory reviewers that
+publish only comments (CodeRabbit, Codex, Sourcery) are governed by the
+reviewer-availability rules in the AI review section: usage-quota /
+rate-limit means ABSENT (skip, no wait); CodeRabbit "processing" is a
+comment-level state, not a check state — it never blocks settlement and
+never authorizes skipping a real check run. Unknown or missing states of
+binding checks remain fail-closed (not settled).
 
 Read review findings, inline comments and review bodies **after** checks
 finish — the bots (CodeRabbit/Codacy/DeepSource/Sourcery/Gitar) often publish
@@ -1152,8 +1173,8 @@ For every review comment or inline thread, classify it as one of:
 - **SKIP_DUPLICATE** — duplicate of another handled finding.
 - **NEEDS_MANUAL** — unclear, risky, product decision, or outside safe scope.
 
-Blockers = unresolved `PATCH_REQUIRED` and `NEEDS_MANUAL`: do NOT declare the
-work complete while they remain.
+Blockers = unresolved `PATCH_REQUIRED`, `TEST_REQUIRED` and `NEEDS_MANUAL`:
+do NOT declare the work complete while any of them remain.
 
 The agent must fix only active, non-outdated, non-resolved, current-head
 issues. Do not chase stale, duplicate, resolved, or unrelated comments.
@@ -1217,9 +1238,10 @@ disabled" statements: under the conditions below the agent MAY merge; outside
 them, merge stays manual and owner-only.
 
 **Conditions to auto-merge (ALL required, fail-closed):**
+
 1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 4 AI reviewers (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5)
-   and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
+2. Zero blockers from the 4 AI reviewers (GPT-5.6 Terra, GLM 5.2, Fugu Ultra,
+   Fable 5) and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
 3. No `manual-review-required` label, no unresolved blocking thread, no open
    `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.
 4. The PR is "able to merge" on GitHub (mergeable, no conflicts, branch
@@ -1242,6 +1264,7 @@ task's dedicated issue contains, written by the OWNER, the explicit
 authorization `auto merge abilitato anche se è safety-critical` (or an equivalent
 unambiguous wording), then auto-merge is allowed ALSO for that task's
 safety-critical PRs. Override constraints:
+
 - it applies ONLY to the task/issue where it is written (not a global rule);
 - it must come from the OWNER, in the issue body or an issue comment (never from
   third-party or untrusted content);
@@ -1256,6 +1279,7 @@ applies (manual owner merge).
 **Need-manual => STOP + ASK + RECORD + WAIT.** If a condition is not met, or an
 owner decision is required (ambiguity, risk, product choice, a blocker not
 fixable with a narrow patch), the agent does NOT merge and:
+
 1. STOPS (fail-closed: no forcing, no guessing, no bypass);
 2. puts the question to the owner as an explicit QUESTION, with the options;
 3. RECORDS in the task's dedicated issue the question AND the owner's answer
@@ -1273,6 +1297,7 @@ Fable 5 — ARE the final pre-merge gate. If, after firing the labels, one or bo
 cannot review because they are in usage-quota / out of credits (the workflow
 starts but the model does not answer), auto-merge is BLOCKED: the required final
 strong review did not happen. In that case the agent:
+
 1. does NOT auto-merge, even if everything else is green and able-to-merge, and
    even with the safety-critical override active;
 2. STOPS and WAITS for the owner's explicit authorization to continue;
@@ -1648,7 +1673,8 @@ GitHub checks:
 - complete/pass/fail/pending with reason
 
 Review comments handled:
-- <comment/thread URL or summary>: fixed in commit <SHA>; evidence: <test command PASS>
+- <comment/thread URL or summary>: fixed in commit <SHA>; evidence: <test
+  command PASS>
 - <comment/thread URL or summary>: skipped because <reason>; evidence: <file/test>
 - <comment/thread URL or summary>: needs manual because <reason>
 
