@@ -346,11 +346,15 @@ qui sotto l'agente PUÒ mergiare; fuori da esse il merge resta manuale dell'owne
 
 **Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
 1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
-2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) e —
-   se ha completato la review — da CodeRabbit. CodeRabbit NON è mai un gate
-   d'attesa (nessun cap-timer): in rate-limit/usage-quota o non completato =
-   ASSENTE (vedi «Skip per indisponibilità»), i suoi eventuali rilievi tardivi
-   vanno al tracciamento post-merge.
+2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Terra, GLM 5.2, Fugu Ultra,
+   Fable 5) e — se ha completato la review — da CodeRabbit. CodeRabbit NON è
+   mai un gate d'attesa (nessun cap-timer). Distinzione fail-closed:
+   rate-limit / usage-quota / non disponibile = ASSENTE da subito (vedi
+   «Skip per indisponibilità»): si procede, e i suoi eventuali rilievi
+   tardivi vanno al tracciamento post-merge. «Processing» (sta ancora
+   revisionando) NON è assente ma NON si aspetta: se i suoi rilievi reali
+   arrivano PRIMA della finalizzazione vanno trattati, altrimenti
+   post-merge tracking.
 3. Nessuna label `manual-review-required`, nessun thread bloccante irrisolto,
    nessun rilievo `PATCH_REQUIRED`/`NEEDS_MANUAL` aperto.
 4. La PR è "able to merge" su GitHub (mergeable, nessun conflitto, branch
