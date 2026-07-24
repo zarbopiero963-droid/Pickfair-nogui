@@ -1062,6 +1062,15 @@
       ],
       "max_files": 6,
       "allow_tests": true
+    },
+    "agents_md_pickfair_rules": {
+      "description": "Riscrittura di AGENTS.md con le regole mancanti rispetto ad AGENTS.md di XTrader Bridge 2, adattate al dominio Pickfair no-GUI: project goal e contesto safety-critical, rimando alle spec obbligatorie (CLAUDE.md, auto_pr_flow_spec, hard_verify_spec, ai_audit_workflows), core rules estese (test hard obbligatori, docs nello stesso PR, lista never-commit, registrazione task key), invarianti di safety di progetto (Betfair/ordini, dutching/money management, Telegram, config/segreti, database, runtime), sequenza di esecuzione obbligatoria, Phase 0 con template PICKFAIR_PHASE_0, micro-audit post-fix con template, hard truthful tests (HARD_TEST_EVIDENCE/TESTS_SKIPPED), test hard runtime critico, check completion gate con CHECKS_PENDING, regole CI minutes/push-churn, triage review a 6 classi con evidence-resolve gated, final hard verify con template FINAL_HARD_VERIFY, formati di risposta estesi. Solo documentazione: nessun codice toccato. Sezioni AI review e auto-merge gated preservate.",
+      "files": [
+        "AGENTS.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 2,
+      "allow_tests": false
     }
   }
 }
