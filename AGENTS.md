@@ -472,7 +472,11 @@ In the same PR, update — when applicable:
 - `ops/` runbooks → operational behavior changes;
 - docstrings or technical comments → public functions, services, or
   non-trivial modules;
-- new/removed config key, database column, gate → update the related docs.
+- new/removed config key, database column, gate → update the related docs;
+- `docs/design/design_handoff.md` → any change touching the design/UI/UX
+  aspect of the mini GUI (windows, tabs, controls, dynamic states/indicators,
+  confirmation flows, color semantics, UI copy) — see the design handoff gate
+  in CLAUDE.md; no design impact => N/A with a written reason.
 
 Scope constraint (from CLAUDE.md and `hard_verify_spec.md` §12-bis): if the
 doc to update is OUTSIDE `files_allowed`, do NOT force the scope (no commit
@@ -665,7 +669,10 @@ The micro-audit must verify:
 - Linux runtime compatibility was preserved;
 - tests were added/updated for changed behavior;
 - documentation was updated for the change, or a note explains why none was
-  needed.
+  needed;
+- the design handoff (`docs/design/design_handoff.md`) was updated when the
+  change touches the design/UI/UX aspect of the mini GUI, or a note explains
+  why it has no design impact (see the design handoff gate in CLAUDE.md).
 
 Required micro-audit output:
 
@@ -707,6 +714,12 @@ Docs updated:
   (PASS = docs updated in the same PR · FAIL = code changed but docs missing ·
    N/A = purely internal change with no documentation impact, with a written
    reason)
+
+Design handoff updated:
+- PASS / FAIL / N/A
+  (PASS = docs/design/design_handoff.md updated in the same PR when the
+   design/UI/UX aspect changed · FAIL = design aspect changed but handoff
+   stale · N/A = no design impact, with a written reason)
 
 Result:
 - PASS / FAIL
@@ -1333,6 +1346,8 @@ Final hard verify requires:
 - failing checks triaged;
 - review bodies, PR comments, inline comments and unresolved threads read;
 - real findings patched or answered with evidence;
+- design handoff (`docs/design/design_handoff.md`) updated when the
+  design/UI/UX aspect changed, or N/A with reason;
 - no blocking review comments left unevidenced;
 - final labels fired and the strong reviewers' full-range outcome read;
 - last-5 merged PR sweep done;
@@ -1356,6 +1371,9 @@ Hard tests created/updated for the change:
 - PASS / FAIL / N/A with reason
 
 Docs updated for the change:
+- PASS / FAIL / N/A with reason
+
+Design handoff updated for the change:
 - PASS / FAIL / N/A with reason
 
 GitHub checks completed (settled):
