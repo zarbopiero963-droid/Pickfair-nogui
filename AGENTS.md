@@ -203,17 +203,20 @@ this exact sequence (detailed in `docs/auto_pr_flow_spec.md`):
 13. Report final status: READY_TO_MERGE, NEEDS_MANUAL, FAILED,
     CHECKS_PENDING or PATCH_REQUIRED_LOOP_STOPPED, with REASON.
 
-When the automated PR flow is driving (`docs/auto_pr_flow_spec.md`), statuses
-are also emitted as machine-readable `AUTO_PR_FLOW_STATUS=<STATUS>` tokens.
-Missing, ambiguous or contradictory evidence always yields
-`AUTO_PR_FLOW_STATUS=NEEDS_MANUAL`; `BLOCKED` is reserved for the explicit
-"Stop conditions" of this file.
+Statuses that map to the automated PR flow (`docs/auto_pr_flow_spec.md`) are
+always also emitted as machine-readable `AUTO_PR_FLOW_STATUS=<STATUS>`
+tokens. Missing, ambiguous or contradictory evidence ALWAYS yields
+`AUTO_PR_FLOW_STATUS=NEEDS_MANUAL` — never only a bare human-readable
+status — while `BLOCKED` is reserved for the explicit "Stop conditions" of
+this file.
 
 The agent must not skip Phase 0, the post-fix micro-audit, hard truthful
 tests, the check-completion gate, review triage, or final hard verify.
 
 If any required step cannot be completed safely, stop and report
-NEEDS_MANUAL, CHECKS_PENDING, or BLOCKED.
+NEEDS_MANUAL, CHECKS_PENDING, or BLOCKED — and, whenever the outcome maps to
+a flow status, also emit the machine-readable token (e.g.
+`AUTO_PR_FLOW_STATUS=NEEDS_MANUAL`, `AUTO_PR_FLOW_STATUS=CHECKS_PENDING`).
 
 The flow is NOT required for: questions, explanations, read-only analysis,
 or work that does not touch PR code.
@@ -1098,6 +1101,7 @@ control phase and report:
 
 ```text
 CHECKS_PENDING
+AUTO_PR_FLOW_STATUS=CHECKS_PENDING
 
 Reason:
 - Some PR checks are still running.
@@ -1587,6 +1591,8 @@ After completing a new task and creating a PR, respond with:
 
 ```text
 DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
+AUTO_PR_FLOW_STATUS=<STATUS — mandatory when the outcome maps to a flow
+status, e.g. NEEDS_MANUAL / CHECKS_PENDING>
 
 Summary:
 - <what was changed>
@@ -1647,6 +1653,8 @@ After fixing a current PR request, respond with:
 
 ```text
 DONE / PARTIAL / NOT DONE / CHECKS_PENDING / NEEDS_MANUAL
+AUTO_PR_FLOW_STATUS=<STATUS — mandatory when the outcome maps to a flow
+status, e.g. NEEDS_MANUAL / CHECKS_PENDING>
 
 Summary:
 - <what was changed>
@@ -1726,6 +1734,7 @@ Required owner action:
 
 ```text
 CHECKS_PENDING
+AUTO_PR_FLOW_STATUS=CHECKS_PENDING
 
 Reason:
 - Current-head PR checks are not all finished yet.
