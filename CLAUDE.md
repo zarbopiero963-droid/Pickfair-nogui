@@ -183,7 +183,7 @@ Ogni PR è coperta da quattro workflow di review AI (GitHub Actions con API
 key nei Secret del repo) più CodeRabbit. Dettaglio operativo e postura di
 sicurezza in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.6 Terra** e **GLM 5.2**: girano a OGNI push della PR. Review MIRATA e
+- **GPT-5.6 Sol** e **Grok 4.6**: girano a OGNI push della PR. Review MIRATA e
   corta: solo `## Bloccanti` + `## Verdetto finale` (tetti di output alti →
   non troncano; si pagano solo i token generati).
 - **Fugu Ultra** e **Claude Fable 5** (reviewer forti, costosi): partono da
@@ -216,7 +216,7 @@ della sezione AUTO-MERGE: auto-merge BLOCCATO, decide l'owner.
 
 **Nota diff-only / push-range vs full-range (appreso su #393).** I reviewer sono
 diff-only (no checkout, no esecuzione). Le review **per-push** (auto su ogni push:
-GPT/GLM sempre; Fugu/Fable su file core) vedono SOLO l'ultimo commit del range,
+GPT/Grok sempre; Fugu/Fable su file core) vedono SOLO l'ultimo commit del range,
 quindi possono dare falsi positivi su import/coerenza/«codice assente» quando il
 codice citato sta in commit precedenti. Le review **a label** girano invece
 sull'INTERA range della PR (`base…head`) e vedono tutto il diff, quindi risolvono
@@ -226,14 +226,14 @@ push-range: ri-lancia le label e leggi la full-range.
 
 **Timing: i gate forti sono l'ULTIMO passo pre-merge.** Fai scattare le due
 label quando la PR è stabile e in teoria pronta al merge: i reviewer per-push
-(GPT-5.6 Terra, GLM 5.2) hanno COMPLETATO e i loro rilievi reali sono stati trattati
+(GPT-5.6 Sol, Grok 4.6) hanno COMPLETATO e i loro rilievi reali sono stati trattati
 (patch o evidenza in-thread). CodeRabbit NON è un gate d'attesa: se ha completato
 tratta i suoi rilievi reali; se è in rate-limit/usage-quota è assente e NON lo si
 aspetta; se è «processing» sta ancora revisionando: non lo si aspetta come gate
 vincolante, ma i suoi rilievi reali — se arrivano prima di finalizzare — si
 trattano, altrimenti post-merge tracking. Così Fugu Ultra e Fable 5 revisionano un head
 STABILE e non si sprecano su versioni che cambieranno ancora (ogni push ai forti
-costa). Sequenza: lavoro completo → push → GPT/GLM finiti e finding trattati
+costa). Sequenza: lavoro completo → push → GPT/Grok finiti e finding trattati
 (CodeRabbit solo se disponibile) → head stabile → fai partire `final-fugu-review`
 + `final-fable-review` → attendi l'esito **full-range** → se restano bloccanti
 reali: fixa, ri-pusha e **RI-LANCIA le label**, ripeti finché entrambi tornano
@@ -251,7 +251,7 @@ presenza di bloccanti l'auto-merge è VIETATO (fail-closed): si auto-mergia solo
 a verde totale senza bloccanti e nei limiti della sezione AUTO-MERGE.
 
 **Reviewer da aspettare / non aspettare.** La copertura di default su OGNI PR è:
-i 4 workflow API (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) + CodeRabbit. Codex,
+i 4 workflow API (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) + CodeRabbit. Codex,
 Sourcery **e CodeRabbit** NON sono un gate d'attesa: se pubblicano usage-limit /
 rate-limit / usage-quota, trattali come ASSENTI (non pending) — non aspettarli,
 non contarli nel check-completion gate, non bloccare il DONE su di loro; annota
@@ -283,7 +283,7 @@ CI settled e dai gate forti a label (Fugu/Fable). L'owner può mergiare a mano i
 qualsiasi momento.
 
 **Parsimonia push (costo API + minuti CI).** Ogni push che aggiorna il head
-paga i modelli (GPT/GLM sempre; Fugu/Fable su push core/critici). Accorpa i fix
+paga i modelli (GPT/Grok sempre; Fugu/Fable su push core/critici). Accorpa i fix
 di review in UN push per giro; non pushare per cleanup cosmetici o per
 rincorrere falsi positivi da diff-per-push (rispondi in-thread con evidenza,
 mai con un commit).
@@ -308,7 +308,7 @@ trattalo come ASSENTE e prosegui (annota che non ha revisionato).
   vincolante (il DONE poggia su check CI settled + Fugu/Fable a label); se completa
   in tempo tratta i rilievi reali, altrimenti post-merge. Se ha già completato,
   tratta i rilievi reali.
-- **I 4 workflow API** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): se un giro
+- **I 4 workflow API** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): se un giro
   riporta usage-quota / rate-limit del provider, quel reviewer è assente per quel
   push => non aspettarlo, non contarlo nel check-completion gate, non bloccare il
   DONE su di lui.
@@ -346,7 +346,7 @@ qui sotto l'agente PUÒ mergiare; fuori da esse il merge resta manuale dell'owne
 
 **Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
 1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
-2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Terra, GLM 5.2, Fugu Ultra,
+2. Zero bloccanti dai 4 reviewer AI (GPT-5.6 Sol, Grok 4.6, Fugu Ultra,
    Fable 5) e — se ha completato la review — da CodeRabbit. CodeRabbit NON è
    mai un gate d'attesa (nessun cap-timer). Distinzione fail-closed:
    rate-limit / usage-quota / non disponibile = ASSENTE da subito (vedi

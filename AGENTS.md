@@ -903,7 +903,7 @@ Every PR is covered by four AI review workflows (GitHub Actions driven by API
 keys in the repo Secrets) plus CodeRabbit. Operational detail and security
 posture live in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.6 Terra** and **GLM 5.2** run on every push. Output is TARGETED and short
+- **GPT-5.6 Sol** and **Grok 4.6** run on every push. Output is TARGETED and short
   (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
   they never truncate — only generated tokens are billed.
 - **Fugu Ultra** and **Claude Fable 5** (strong, costly reviewers) fire on
@@ -914,7 +914,7 @@ posture live in `docs/ai_audit_workflows.md`.
   workflows, config/secrets, or the safety areas (money management, dutching,
   safety_layer, reconciliation, runtime, catalog) — OR when the final label is
   added. On pushes touching only docs/tests both jobs start but exit without
-  calling the model (zero cost); those are still covered by GPT-5.6 Terra/GLM.
+  calling the model (zero cost); those are still covered by GPT-5.6 Sol/Grok.
 
 **Final label gate (mandatory pre-merge, REPEAT until clean).** Triggering the
 final reviews via label `final-fugu-review` and `final-fable-review` (already
@@ -937,7 +937,7 @@ auto-merge BLOCKED, the owner decides.
 
 **Diff-only / push-range vs full-range note (learned on #393).** The reviewers
 are diff-only (no checkout, no execution). The **per-push** reviews (auto on every
-push: GPT/GLM always; Fugu/Fable on core files) see ONLY the latest commit of the
+push: GPT/Grok always; Fugu/Fable on core files) see ONLY the latest commit of the
 range, so they can produce false positives on imports/consistency/"missing code"
 when the cited code lives in earlier commits. The **label** reviews instead run
 over the WHOLE PR range (`base…head`) and see the full diff, so they resolve those
@@ -947,7 +947,7 @@ with a commit: re-fire the labels and read the full-range.
 
 **Timing: the strong gates are the LAST pre-merge step.** Fire the two labels
 when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-5.6 Terra, GLM 5.2) have COMPLETED and their real findings are handled (patched
+(GPT-5.6 Sol, Grok 4.6) have COMPLETED and their real findings are handled (patched
 or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
 completed handle its real findings; if it is in rate-limit/usage-quota it is
 absent and is NOT awaited; if it is "processing" it is still reviewing — not
@@ -955,7 +955,7 @@ awaited as a binding gate, but its real findings (if they arrive before you
 finalize) are handled, else deferred to post-merge. This way Fugu Ultra and
 Fable 5 review a STABLE head and are not wasted on versions that will still
 change (each push to the strong reviewers costs). Sequence: work complete →
-push → GPT/GLM done and findings handled (CodeRabbit only if available) →
+push → GPT/Grok done and findings handled (CodeRabbit only if available) →
 stable head → fire
 `final-fugu-review` + `final-fable-review` → wait for the **full-range**
 outcome → if real blockers remain: fix, re-push and **RE-FIRE the labels**,
@@ -974,7 +974,7 @@ blockers, auto-merge is forbidden (fail-closed); otherwise auto-merge follows
 the gated policy in "Auto-merge (owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the four API
-workflows (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
+workflows (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
 Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
 rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
 wait, do not count them in the check-completion gate, do not block DONE on them.
@@ -1007,7 +1007,7 @@ label gates (Fugu/Fable). The owner may merge manually at
 any time.
 
 **Be frugal with pushes (API + CI cost).** Every push that updates the head pays
-the models (GPT/GLM always; Fugu/Fable on core/critical pushes). Batch review
+the models (GPT/Grok always; Fugu/Fable on core/critical pushes). Batch review
 fixes into ONE push per round; never push for cosmetic cleanups or to chase
 per-push-range false positives — answer those in-thread with evidence, not a
 commit.
@@ -1034,7 +1034,7 @@ treat it as ABSENT and proceed (note that it did not review).
   = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
   settled CI checks + Fugu/Fable label); if it completes in time handle its real
   findings, else post-merge. If it has already completed, handle its real findings.
-- **The 4 API workflows** (GPT-5.6 Terra, GLM 5.2, Fugu Ultra, Fable 5): if a round
+- **The 4 API workflows** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): if a round
   reports provider usage-quota / rate-limit, that reviewer is absent for that
   push => do not wait for it, do not count it in the check-completion gate, do
   not block DONE on it.
@@ -1257,7 +1257,7 @@ them, merge stays manual and owner-only.
 **Conditions to auto-merge (ALL required, fail-closed):**
 
 1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 4 AI reviewers (GPT-5.6 Terra, GLM 5.2, Fugu Ultra,
+2. Zero blockers from the 4 AI reviewers (GPT-5.6 Sol, Grok 4.6, Fugu Ultra,
    Fable 5) and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
 3. No `manual-review-required` label, no unresolved blocking thread, no open
    `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.

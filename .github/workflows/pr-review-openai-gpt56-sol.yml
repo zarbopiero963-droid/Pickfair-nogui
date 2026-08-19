@@ -1,12 +1,12 @@
-name: PR Review OpenRouter GLM 5.2
+name: PR Review OpenAI GPT-5.6 Sol
 
-# Review AI automatica di ogni push sulla PR con GLM 5.2 via OpenRouter
-# (endpoint chat/completions stile OpenAI). Analizza il range `base...head` della
-# PR via GitHub Compare API (un done_marker per range evita di ripagare). Diff-only: niente checkout,
-# niente esecuzione del codice della PR. Redige i possibili segreti (inclusi
-# nomi file) prima dell'invio, pubblica/aggiorna un commento per range e marca
-# le aree sensibili. Reviewer OPZIONALE: se il secret non è configurato il job
-# esce con successo (skip), non fa fallire la PR. Vedi
+# Review AI automatica di ogni push sulla PR con GPT-5.6 Sol (OpenAI Responses API,
+# store: false). Analizza il range `base...head` della PR via GitHub Compare API
+# (un done_marker per range evita di ripagare la stessa review). Diff-only: niente
+# checkout, niente esecuzione del codice della PR. Redige i possibili segreti
+# (inclusi nomi file) prima dell'invio, pubblica/aggiorna un commento per range
+# e marca le aree sensibili. Reviewer OPZIONALE: se il secret non è configurato
+# il job esce con successo (skip), non fa fallire la PR. Vedi
 # docs/ai_audit_workflows.md (in questo repo).
 
 on:
@@ -24,22 +24,22 @@ permissions:
   issues: write
 
 concurrency:
-  group: pr-review-glm52-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  group: pr-review-gpt56sol-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:
   review:
-    name: GLM 5.2 push-range review
+    name: GPT-5.6 Sol push-range review
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
 
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository
 
     env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
-      OPENROUTER_MODEL: z-ai/glm-5.2
+      OPENAI_API_KEY: ${{ secrets.PICKFAIR_OPENAI }}
+      OPENAI_MODEL: gpt-5.6-sol
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -50,35 +50,36 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
-      REVIEW_ID: glm52
-      MODEL_LABEL: GLM 5.2
+      REVIEW_ID: gpt56sol
+      MODEL_LABEL: GPT-5.6 Sol
 
-      MAX_PATCH_PER_FILE_CHARS: "5000"
-      MAX_TOTAL_PATCH_CHARS: "18000"
-      # Tetto ALTO anti-troncamento: è un CEILING, non il costo (si pagano solo i
-      # token generati). Il prompt MIRATO (150 parole, 2 sezioni) tiene l'output
-      # reale a ~200-300 token, quindi 2000 dà ampio margine e NON tronca mai, a
-      # costo ~invariato. reasoning disabilitato → tutti i token vanno all'output.
-      MAX_OUTPUT_TOKENS: "2000"
+      MAX_PATCH_PER_FILE_CHARS: "7000"
+      MAX_TOTAL_PATCH_CHARS: "24000"
+      # openai/gpt-5.6-sol: se è un modello reasoning, i token di reasoning contano nel budget di output.
+      # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
+      # "low" + prompt MIRATO (150 parole, 2 sezioni) l'output reale resta corto,
+      # ma 2500 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
+      # solo i token effettivamente generati.
+      MAX_OUTPUT_TOKENS: "2500"
 
-      PRICE_INPUT_PER_MILLION: "0.93"
-      PRICE_OUTPUT_PER_MILLION: "3.00"
+      PRICE_INPUT_PER_MILLION: "5.00"
+      PRICE_OUTPUT_PER_MILLION: "30.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with GLM 5.2
+      - name: Review pushed commit range with GPT-5.6 Sol
         shell: bash
         run: |
           set -euo pipefail
 
           # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
-          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GLM 5.2 saltato (nessun check rosso)."
+          if [ -z "${OPENAI_API_KEY:-}" ]; then
+            echo "::notice::OPENAI_API_KEY non configurato: reviewer GPT-5.6 Sol saltato (nessun check rosso)."
             exit 0
           fi
 
-          echo "::add-mask::$OPENROUTER_API_KEY"
+          echo "::add-mask::$OPENAI_API_KEY"
 
           python3 <<'PY'
           import json
@@ -93,20 +94,21 @@ jobs:
           PR_NUMBER = os.environ["PR_NUMBER"]
           EVENT_ACTION = os.environ.get("EVENT_ACTION", "")
           BEFORE_SHA = os.environ.get("BEFORE_SHA", "") or ""
+          AFTER_SHA = os.environ.get("AFTER_SHA", "") or ""
           HEAD_SHA = os.environ["HEAD_SHA"]
           BASE_SHA = os.environ["BASE_SHA"]
           GITHUB_TOKEN = os.environ["GITHUB_TOKEN"].strip()
 
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
-          OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"].strip()
-          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "z-ai/glm-5.2")
-          REVIEW_ID = os.environ.get("REVIEW_ID", "glm52")
-          MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENROUTER_MODEL)
+          OPENAI_API_KEY = os.environ["OPENAI_API_KEY"].strip()
+          OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5.6-sol")
+          REVIEW_ID = os.environ.get("REVIEW_ID", "gpt56sol")
+          MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENAI_MODEL)
 
-          MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "5000"))
-          MAX_TOTAL_PATCH_CHARS = int(os.environ.get("MAX_TOTAL_PATCH_CHARS", "18000"))
-          MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "700"))
+          MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "7000"))
+          MAX_TOTAL_PATCH_CHARS = int(os.environ.get("MAX_TOTAL_PATCH_CHARS", "24000"))
+          MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "1000"))
 
           PRICE_INPUT_PER_MILLION = float(os.environ.get("PRICE_INPUT_PER_MILLION", "0"))
           PRICE_OUTPUT_PER_MILLION = float(os.environ.get("PRICE_OUTPUT_PER_MILLION", "0"))
@@ -132,6 +134,7 @@ jobs:
               (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "[REDACTED_PRIVATE_KEY]"),
               (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_OPENAI_KEY]"),
               (re.compile(r"\bsk-or-v1-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_OPENROUTER_KEY]"),
+              (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_XAI_KEY]"),
               (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED_GITHUB_PAT]"),
               (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"), "[REDACTED_GITHUB_TOKEN]"),
               (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
@@ -297,23 +300,18 @@ jobs:
 
           def call_model(system_prompt: str, user_prompt: str):
               payload = {
-                  "model": OPENROUTER_MODEL,
-                  "messages": [
+                  "model": OPENAI_MODEL,
+                  "input": [
                       {"role": "system", "content": system_prompt},
                       {"role": "user", "content": user_prompt},
                   ],
-                  "temperature": 0.1,
-                  "max_tokens": MAX_OUTPUT_TOKENS,
-                  # GLM-5.2 è un modello di ragionamento: col tetto basso (700) spende
-                  # TUTTO max_tokens in reasoning nascosto e tronca la review a 0 testo
-                  # (finish_reason=length, content vuoto — osservato live su #310 anche
-                  # con effort='low', che GLM ha ignorato). Qui il reviewer economico
-                  # deve solo produrre una review corta e concisa: NON serve il
-                  # ragionamento, quindi lo disabilitiamo del tutto e lasciamo tutti i
-                  # 700 token all'output. OpenRouter ignora il campo sui modelli
-                  # non-reasoning, quindi resta sicuro comunque.
-                  "reasoning": {"enabled": False},
-                  "usage": {"include": True},
+                  "store": False,
+                  # openai/gpt-5.6-sol: se è un modello reasoning, i token di reasoning contano in
+                  # max_output_tokens. Con budget basso (1000) il reasoning "medium"
+                  # di default esauriva tutto prima del testo (review troncata a 0).
+                  # effort "low" lascia spazio alla review breve dentro il budget.
+                  "reasoning": {"effort": "low"},
+                  "max_output_tokens": MAX_OUTPUT_TOKENS,
               }
 
               data = json.dumps(payload).encode("utf-8")
@@ -322,14 +320,12 @@ jobs:
               # 3 tentativi × 100s + backoff: worst-case < timeout-minutes del job.
               for attempt in range(1, 4):
                   req = urllib.request.Request(
-                      "https://openrouter.ai/api/v1/chat/completions",
+                      "https://api.openai.com/v1/responses",
                       data=data,
                       method="POST",
                       headers={
-                          "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                          "Authorization": f"Bearer {OPENAI_API_KEY}",
                           "Content-Type": "application/json",
-                          "HTTP-Referer": f"https://github.com/{REPO}",
-                          "X-Title": "Pickfair GLM 5.2 PR Review",
                           "User-Agent": f"{REVIEW_ID}-push-range-review",
                       },
                   )
@@ -337,35 +333,34 @@ jobs:
                       with urllib.request.urlopen(req, timeout=100) as resp:
                           body = json.loads(resp.read().decode("utf-8"))
 
-                      choices = body.get("choices") or []
-                      if not choices:
-                          return "Il modello non ha restituito choices.", body.get("usage", {})
+                      text = body.get("output_text")
+                      if not text:
+                          parts = []
+                          for item in body.get("output", []):
+                              for content in item.get("content", []):
+                                  if isinstance(content.get("text"), str):
+                                      parts.append(content["text"])
+                          text = "\n".join(parts)
 
-                      msg = choices[0].get("message") or {}
-                      # content può essere null (JSON null → None) o lista di blocchi.
-                      # Normalizza None a "" PRIMA di str(): altrimenti str(None)="None"
-                      # verrebbe pubblicato come testo e il ramo di troncamento (not text)
-                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Terra).
-                      content = msg.get("content") or ""
-                      if isinstance(content, list):
-                          # str(... or ""): un blocco con "text": null darebbe None e
-                          # farebbe fallire "\n".join (TypeError) su una risposta valida.
-                          content = "\n".join(str(part.get("text") or "") for part in content if isinstance(part, dict))
-
-                      text = str(content).strip()
-                      # Troncamento = finish_reason=length, INDIPENDENTE dal fatto che
-                      # ci sia testo: anche una review PARZIALE non vuota è incompleta
-                      # (Codex P1). Il banner "Output troncato" in testa fa scattare il
+                      text = (text or "").strip()
+                      # Troncamento = status=incomplete/max_output_tokens, INDIPENDENTE
+                      # dal fatto che ci sia testo: anche una review PARZIALE non vuota è
+                      # incompleta (Codex P1). Il reasoning di un modello reasoning conta
+                      # nel budget. Il banner "Output troncato" in testa fa scattare il
                       # guard del chiamante (startswith) → niente done_marker e la review
                       # parziale non viene deduplicata come completata.
-                      truncated = choices[0].get("finish_reason") == "length"
+                      incomplete = body.get("incomplete_details") or {}
+                      truncated = (
+                          body.get("status") == "incomplete"
+                          and incomplete.get("reason") == "max_output_tokens"
+                      )
                       if not text:
-                          # Budget di output esaurito prima del testo: segnalalo con
-                          # verità.
+                          # Budget esaurito prima di qualsiasi testo: dillo, non
+                          # "nessun testo".
                           if truncated:
                               text = (
                                   "Output troncato: il modello ha esaurito il budget "
-                                  f"(MAX_OUTPUT_TOKENS={MAX_OUTPUT_TOKENS}, finish_reason=length) "
+                                  f"(MAX_OUTPUT_TOKENS={MAX_OUTPUT_TOKENS}, status=incomplete/max_output_tokens) "
                                   "prima di produrre la review. Aumenta MAX_OUTPUT_TOKENS "
                                   "o riduci l'ampiezza del diff."
                               )
@@ -377,7 +372,7 @@ jobs:
                           text = (
                               "Output troncato: il modello ha prodotto solo una review "
                               f"PARZIALE (MAX_OUTPUT_TOKENS={MAX_OUTPUT_TOKENS}, "
-                              "finish_reason=length). Segue il testo parziale.\n\n"
+                              "status=incomplete/max_output_tokens). Segue il testo parziale.\n\n"
                               + text
                           )
                       return text, body.get("usage", {})
@@ -392,20 +387,20 @@ jobs:
                       last_error = str(exc)
                       time.sleep(min(45, 2 ** attempt))
 
-              raise RuntimeError(redact(f"OpenRouter request failed after retries: {last_error}"))
+              raise RuntimeError(redact(f"OpenAI request failed after retries: {last_error}"))
 
           def usage_note(usage, system_prompt, user_prompt, review):
-              prompt_tokens = int((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens") or 0)
-              completion_tokens = int((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens") or 0)
-              source = "OpenRouter usage"
+              prompt_tokens = int((usage or {}).get("input_tokens") or (usage or {}).get("prompt_tokens") or 0)
+              completion_tokens = int((usage or {}).get("output_tokens") or (usage or {}).get("completion_tokens") or 0)
 
+              source = "OpenAI usage"
               if prompt_tokens <= 0:
                   prompt_tokens = max(1, len(system_prompt + user_prompt) // 4)
                   source = "stimato localmente"
               if completion_tokens <= 0:
                   completion_tokens = max(1, len(review) // 4)
 
-              total = prompt_tokens + completion_tokens
+              total_tokens = prompt_tokens + completion_tokens
               estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + completion_tokens / 1_000_000 * PRICE_OUTPUT_PER_MILLION
 
               return (
@@ -413,7 +408,7 @@ jobs:
                   f"- Fonte token: `{source}`\n"
                   f"- Prompt token: `{prompt_tokens}`\n"
                   f"- Completion token: `{completion_tokens}`\n"
-                  f"- Total token: `{total}`\n"
+                  f"- Total token: `{total_tokens}`\n"
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
               )
 
@@ -527,7 +522,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # OpenRouter GLM 5.2 PR Review
+          # GPT-5.6 Sol PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -569,7 +564,7 @@ jobs:
           Scope: {range_scope}
           Range: {range_base}...{range_head}
           Commits nel range: {commit_count}
-          Modello: {MODEL_LABEL} ({OPENROUTER_MODEL})
+          Modello: {MODEL_LABEL} ({OPENAI_MODEL})
 
           Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
           sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
@@ -585,7 +580,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review GLM 5.2 non completata\n\n"
+                  "## Review GPT-5.6 Sol non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -602,13 +597,12 @@ jobs:
           review_complete = not review.lstrip().startswith((
               "Output troncato",
               "Il modello non ha restituito testo",
-              "Il modello non ha restituito choices",
-              "## Review GLM 5.2 non completata",
+              "## Review GPT-5.6 Sol non completata",
           ))
           done_line = done_marker if review_complete else ""
 
           body = f"""{marker}{done_line}
-          # OpenRouter GLM 5.2 PR Review
+          # GPT-5.6 Sol PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
@@ -617,7 +611,7 @@ jobs:
           **Checkout codice PR:** no
           **Esecuzione codice PR:** no
           **Auto-merge / auto-approve:** no
-          **Model:** `{OPENROUTER_MODEL}`
+          **Model:** `{OPENAI_MODEL}`
           **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
           **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
 
@@ -630,7 +624,7 @@ jobs:
           {skipped_note}
 
           ---
-          Nota: questa review AI è un filtro tecnico economico, non sostituisce il controllo umano.
+          Nota: questa review AI è un filtro tecnico, non sostituisce il controllo umano.
           """
 
           upsert_comment(marker, body[:64000])
