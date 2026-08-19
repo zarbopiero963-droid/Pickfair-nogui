@@ -554,10 +554,21 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
     # fonte: senza, `G()` caricherebbe il trading_config reale e — ora che la
     # validazione e' in blocco — un config incompleto nell'ambiente darebbe
     # RISK_CONFIG_MISSING. Il test parlerebbe dell'ambiente, non dell'invariante.
-    cfg_src = "class Cfg:\n" + "".join(
-        f"    {k} = {getattr(_Cfg, k)!r}\n"
-        for k in vars(_Cfg) if not k.startswith("__")
-    )
+    #
+    # L'elenco delle costanti viene da `core.risk_gate`, non da `vars(_Cfg)`:
+    # cosi' `getattr` segue anche l'ereditarieta' e il config generato copre per
+    # costruzione esattamente cio' che il gate pretende. Il tipo e' controllato
+    # qui perche' un valore senza `repr` valido come literal genererebbe codice
+    # rotto nel sottoprocesso, e il test fallirebbe per il motivo sbagliato.
+    righe = []
+    for nome in _REQUIRED_LIMITS + _REQUIRED_FLAGS:
+        valore = getattr(_Cfg, nome)
+        assert isinstance(valore, (int, float, bool)), (
+            f"_Cfg.{nome} = {valore!r} non e' un literal: il config del "
+            f"sottoprocesso non si puo' generare cosi'"
+        )
+        righe.append(f"    {nome} = {valore!r}\n")
+    cfg_src = "class Cfg:\n" + "".join(righe)
     code = (
         "from core.risk_gate import RiskGate\n"
         + cfg_src
