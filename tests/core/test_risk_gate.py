@@ -385,7 +385,9 @@ def test_block_lay_con_vincita_bassa_ma_liability_enorme() -> None:
 # BLOCK: nessun default silenzioso sui limiti
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
-    "missing", ["MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK"],
+    "missing",
+    ["MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK",
+     "LIQUIDITY_MULTIPLIER", "MIN_LIQUIDITY_ABSOLUTE"],
 )
 def test_block_costante_di_rischio_mancante_nega(missing: str) -> None:
     """Un typo in trading_config disarmerebbe il limite in silenzio.
@@ -393,14 +395,7 @@ def test_block_costante_di_rischio_mancante_nega(missing: str) -> None:
     Con `getattr(cfg, name, default)` il gate avrebbe applicato un numero
     scritto dentro se stesso, facendo credere che il limite fosse attivo.
     """
-    class _Partial:
-        pass
-    part = _Partial()
-    for name in ("MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK",
-                 "LIQUIDITY_GUARD_ENABLED"):
-        if name != missing:
-            setattr(part, name, getattr(_Cfg, name))
-    r = RiskGate(config=part).check(payload(book_pct=100.0))
+    r = RiskGate(config=_cfg_senza(missing)).check(payload(book_pct=100.0))
     assert r["allowed"] is False
     assert r["reason"] == "RISK_CONFIG_MISSING"
 
@@ -488,6 +483,30 @@ def test_pass_i_due_booleani_veri_restano_leggibili() -> None:
     assert RiskGate(config=cfg).check(payload(available_liquidity=1.0))["allowed"] is True
 
 
+@pytest.mark.parametrize(
+    "rotta",
+    ["BOOK_BLOCK", "LIQUIDITY_MULTIPLIER", "MIN_LIQUIDITY_ABSOLUTE",
+     "LIQUIDITY_WARNING_ONLY"],
+)
+def test_block_config_rotta_emerge_al_primo_ordine_non_al_peggiore(rotta: str) -> None:
+    """Le letture pigre nascondono il guasto fino al momento sbagliato.
+
+    Queste quattro costanti servono solo su certi rami: `BOOK_BLOCK` se il
+    payload porta un book_pct, le altre tre quando la liquidita' e' gia' sotto
+    soglia. Lette pigramente, un config rotto resterebbe invisibile per tutta la
+    sessione e verrebbe fuori sul mercato sottile — ordini negati in blocco
+    proprio quando servono. Il payload qui NON tocca nessuno di quei rami:
+    deve negare lo stesso, perche' il config viene letto tutto in blocco.
+    """
+    p = payload()
+    assert "book_pct" not in p and "available_liquidity" not in p, (
+        "il test perde senso se il payload attiva il ramo che usa la costante"
+    )
+    r = RiskGate(config=_cfg_senza(rotta)).check(p)
+    assert r["allowed"] is False, f"{rotta} rotta e' passata inosservata"
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
 # ---------------------------------------------------------------------------
 # BLOCK: l'invariante interna nega, non prosegue
 # ---------------------------------------------------------------------------
@@ -518,16 +537,31 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
     `-O` disattiva gli assert; se la guardia fosse ancora un assert questo
     sottoprocesso approverebbe l'ordine.
     """
+    import os
     import subprocess
     import sys
 
+    # Il gate rotto e' ridefinito QUI DENTRO di proposito: importare
+    # `tests.core.test_risk_gate` legherebbe il test alla directory da cui
+    # pytest e' stato lanciato e all'esistenza di `tests/__init__.py` (che non
+    # c'e'). Riprodotto: lanciando pytest da tests/ il sottoprocesso moriva con
+    # ModuleNotFoundError. Cosi' serve solo che `core` sia importabile.
     code = (
-        "from tests.core.test_risk_gate import _GateRotto, payload;"
-        "r = _GateRotto().check(payload());"
-        "print(r['allowed'], r['reason'])"
+        "from core.risk_gate import RiskGate\n"
+        "class G(RiskGate):\n"
+        "    def _check_stake(self, payload):\n"
+        "        return None, None\n"
+        "r = G().check({'bet_type': 'BACK', 'price': 2.0, 'stake': 10.0})\n"
+        "print(r['allowed'], r['reason'])\n"
     )
-    out = subprocess.run([sys.executable, "-O", "-c", code],
-                         capture_output=True, text=True, cwd=".")
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [root] + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else []))
+    # check=False esplicito: l'uscita non nulla la vogliamo VEDERE nell'assert
+    # sotto, con lo stderr del sottoprocesso in chiaro, non come CalledProcessError.
+    out = subprocess.run([sys.executable, "-O", "-c", code], check=False,
+                         capture_output=True, text=True, cwd=root, env=env)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "False RISK_INTERNAL_INVARIANT", out.stdout
 

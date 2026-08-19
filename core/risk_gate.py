@@ -42,6 +42,14 @@ BACK = "BACK"
 LAY = "LAY"
 _SIDES = frozenset({BACK, LAY})
 
+# Tutto cio' che il gate pretende di saper leggere dal config, elencato qui e
+# verificato IN BLOCCO a ogni check. Vedi `_validate_config` per il perche'.
+_REQUIRED_LIMITS = (
+    "MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK",
+    "LIQUIDITY_MULTIPLIER", "MIN_LIQUIDITY_ABSOLUTE",
+)
+_REQUIRED_FLAGS = ("LIQUIDITY_GUARD_ENABLED", "LIQUIDITY_WARNING_ONLY")
+
 # Verdetto gia' pronto, oppure None se il controllo e' passato.
 _Verdict = Optional[Dict[str, Any]]
 
@@ -118,6 +126,23 @@ class RiskGate:
         if value is not True and value is not False:
             raise MissingRiskConfig(f"{name} non e' un bool ({value!r})")
         return value
+
+    def _validate_config(self) -> None:
+        """Legge TUTTE le costanti di rischio, non solo quelle che servono ora.
+
+        Senza questo, le letture sono pigre e un config rotto resta invisibile
+        finche' non arriva l'ordine che tocca quel ramo: `BOOK_BLOCK` solo con
+        un book_pct nel payload, `LIQUIDITY_WARNING_ONLY` solo quando la
+        liquidita' e' gia' sotto la soglia. Il difetto verrebbe alla luce nel
+        momento peggiore — mercato sottile, ordini negati in blocco — invece che
+        al primo ordine della sessione.
+        Costa la lettura di otto attributi per ordine, e rende il config rotto
+        un guasto immediato e riconoscibile invece che una mina.
+        """
+        for name in _REQUIRED_LIMITS:
+            self._limit(name)
+        for name in _REQUIRED_FLAGS:
+            self._flag(name)
 
     @staticmethod
     def _finite(raw: Any) -> Optional[float]:
@@ -248,6 +273,8 @@ class RiskGate:
     def _check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             return self._deny(payload, "RISK_PAYLOAD_NOT_DICT")
+
+        self._validate_config()
 
         stake, denial = self._check_stake(payload)
         if denial is not None:
