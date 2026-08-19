@@ -567,7 +567,16 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
             f"_Cfg.{nome} = {valore!r} non e' un literal: il config del "
             f"sottoprocesso non si puo' generare cosi'"
         )
+        # inf e nan passano isinstance ma repr() ne fa 'inf'/'nan', che in
+        # Python non sono literal: nel sottoprocesso darebbero NameError.
+        assert isinstance(valore, bool) or math.isfinite(valore), (
+            f"_Cfg.{nome} = {valore!r}: repr() non produce un literal valido"
+        )
         righe.append(f"    {nome} = {valore!r}\n")
+    assert righe, (
+        "elenchi di costanti vuoti: `class Cfg:` senza corpo darebbe SyntaxError "
+        "nel sottoprocesso, mascherando l'invariante che questo test verifica"
+    )
     cfg_src = "class Cfg:\n" + "".join(righe)
     code = (
         "from core.risk_gate import RiskGate\n"
