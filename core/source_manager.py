@@ -98,10 +98,10 @@ def _is_malformed_enabled(raw_enabled) -> bool:
 _SHOWN_MAX = 60
 # Coppie (chat_id, hash del valore) già segnalate a log: `source_chats` può girare in
 # hot path (una normalizzazione per messaggio), e una config corrotta non deve
-# riempire il log con lo stesso warning a ogni evento (review GLM/GPT #309). La chiave
+# riempire il log con lo stesso warning a ogni evento (review Grok/GPT #309). La chiave
 # usa l'hash del valore COMPLETO (dimensione fissa: niente valori giganti in memoria)
 # e non il testo troncato: due valori distinti con lo stesso prefisso loggano entrambi
-# (review GLM/GPT round 3). Cap assoluto sotto: il set non cresce oltre `_WARNED_CAP`
+# (review Grok/GPT round 3). Cap assoluto sotto: il set non cresce oltre `_WARNED_CAP`
 # nemmeno con garbage variabile in un processo long-running (review Fable round 3).
 _WARNED_ENABLED = set()
 # Oltre il cap i warning NUOVI sono soppressi fino al riavvio/reset: config patologica

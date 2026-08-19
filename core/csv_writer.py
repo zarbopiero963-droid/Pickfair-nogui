@@ -95,7 +95,7 @@ def get_csv_language() -> str:
 
 def _localize_decimal(value, lang: str):
     """Serializza il valore di una colonna DECIMALE per la lingua: virgola per IT/ES, punto
-    per EN. Regola UNIFORME e deterministica (review #344 Fable/GLM/Fugu):
+    per EN. Regola UNIFORME e deterministica (review #344 Fable/Grok/Fugu):
 
     - il valore esce **sempre trimmato** (una colonna decimale non porta MAI padding verso
       XTrader, il cui parser numerico non è garantito tolleri spazi);

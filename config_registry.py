@@ -260,7 +260,7 @@ class ConfigRegistry:
             # dell'eccezione. I loader dei segreti (betfair_config, password)
             # potrebbero includere credenziali o materiale di decrittazione nel
             # messaggio/traceback. Si logga solo nome loader + tipo eccezione,
-            # sufficiente per la diagnosi senza rischio di leak. Rilievo GPT-5.6 Terra.
+            # sufficiente per la diagnosi senza rischio di leak. Rilievo GPT-5.6 Sol.
             logger.warning("ConfigRegistry: lettura di '%s' fallita (%s)", name, type(exc).__name__)
             return default, False
 

@@ -278,7 +278,7 @@ def test_leg_potential_win_semantics():
 
 
 def test_leg_potential_win_lay_liability_failclosed():
-    # FAIL-CLOSED (rilievo convergente GPT-5.6 Terra + Fable 5 + Fugu Ultra): una
+    # FAIL-CLOSED (rilievo convergente GPT-5.6 Sol + Fable 5 + Fugu Ultra): una
     # liability precomputata None / 0 / non-numerica / non-finita / sottostimata NON
     # deve abbassare il rischio LAY: si ricalcola stake*(price-1) e si prende il MAX.
     from controllers.dutching_controller import DutchingController

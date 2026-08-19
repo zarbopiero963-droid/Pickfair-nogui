@@ -59,7 +59,7 @@ class TelegramService:
         # Timestamp di PROCESSING (wall-clock del service quando processa un
         # messaggio), separato dal received_at del segnale. Alimenta la staleness
         # detection dell'invariant guard: NON è influenzabile da un received_at
-        # backdated/malformato del payload (rilievo convergente GPT-5.6 Terra /
+        # backdated/malformato del payload (rilievo convergente GPT-5.6 Sol /
         # Fable 5 / Fugu Ultra) → niente STALE_RUNTIME spurio → niente restart 409.
         self._last_message_processed_ts: str | None = None
         self.listener_started = False
@@ -113,7 +113,7 @@ class TelegramService:
         # qui in parallelo (prima single-writer). Il lock serializza l'INTERA sezione
         # critica — last_successful_message_ts + save_received_signal + bus.publish —
         # così l'ORDINE di enqueue su bus == ordine di persistenza (nessuna finestra
-        # "A salva, B salva+pubblica, A pubblica": rilievo convergente GPT-5.6 Terra /
+        # "A salva, B salva+pubblica, A pubblica": rilievo convergente GPT-5.6 Sol /
         # Fable 5 / Fugu Ultra). Tenere `bus.publish` DENTRO il lock è sicuro contro
         # il deadlock: `EventBus.publish` è NON bloccante (solo enqueue su Queue +
         # breve lock interno leaf), NON esegue i subscriber inline — questi girano su
@@ -623,7 +623,7 @@ class TelegramService:
             # liveness più fedele). Fallback: `last_message_processed_ts` del service
             # (wall-clock del processing), NON il received_at LWW del segnale: così il
             # guard non può mai ricevere un valore backdated dal payload (rilievo
-            # convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra) → niente STALE spurio.
+            # convergente GPT-5.6 Sol / Fable 5 / Fugu Ultra) → niente STALE spurio.
             "last_successful_message_ts": (
                 listener_snapshot.get("last_successful_message_ts")
                 or status["last_message_processed_ts"]

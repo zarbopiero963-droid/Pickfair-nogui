@@ -58,9 +58,11 @@ jobs:
       # openai/gpt-5.6-sol: se è un modello reasoning, i token di reasoning contano nel budget di output.
       # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
       # "low" + prompt MIRATO (150 parole, 2 sezioni) l'output reale resta corto,
-      # ma 2500 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
-      # solo i token effettivamente generati.
-      MAX_OUTPUT_TOKENS: "2500"
+      # ma 3000 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
+      # solo i token effettivamente generati, quindi allineare il tetto a quello
+      # degli altri tre reviewer (3000) NON aumenta la spesa: toglie solo il
+      # rischio che una review esca tagliata, cioè pagata e inutile.
+      MAX_OUTPUT_TOKENS: "3000"
 
       PRICE_INPUT_PER_MILLION: "5.00"
       PRICE_OUTPUT_PER_MILLION: "30.00"

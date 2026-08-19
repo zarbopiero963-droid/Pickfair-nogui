@@ -202,7 +202,7 @@ def test_cross_type_same_target_no_double_schedule():
 def test_cashout_all_cancels_pending_grace_timers():
     # CASHOUT singolo in grace, poi CASHOUT_ALL: l'ALL chiude tutto inline e
     # CANCELLA il timer pendente => nessun secondo green-up su target gia' chiuso
-    # (race ALL vs grace, GPT-5.6 Terra/Fugu).
+    # (race ALL vs grace, GPT-5.6 Sol/Fugu).
     rc = _RC(enabled=True)
     rc._route_cashout_signal(_sig(market="1.1", sel=7))     # arma il grace
     t = _FakeTimer.instances[0]

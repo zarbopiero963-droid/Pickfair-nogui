@@ -5,7 +5,7 @@ Test guard su due livelli:
 
 1. ASSENZA dei nomi rimossi in trading_config (falliscono sul vecchio codice
    dove esistevano => BLOCK anti-reintroduzione zombie).
-2. PROVA GLOBALE (richiesta dai reviewer GPT-5.6 Terra / Fugu Ultra / Fable 5):
+2. PROVA GLOBALE (richiesta dai reviewer GPT-5.6 Sol / Fugu Ultra / Fable 5):
    nessun modulo .py del repo referenzia le costanti rimosse, cosi' un
    `from trading_config import <NAME>` residuo in un modulo non coperto dai
    test non puo' sfuggire e causare ImportError a runtime.

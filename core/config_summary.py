@@ -139,7 +139,7 @@ def summarize_channel(cfg: dict, row: dict, *, existing_names: set,
 
     parser_names = tuple(parser_manager.resolve_parser_names(cfg, chat_id))   # PR-2: lista completa
     parser_name = parser_names[0] if parser_names else ""                     # primario (retro-compat)
-    # UNA sola lettura da disco (GLM #391: niente doppio I/O `load_active` + `load_active_list`):
+    # UNA sola lettura da disco (Grok #391: niente doppio I/O `load_active` + `load_active_list`):
     # `load_active_list` carica in ordine i parser CARICABILI; da lì ricaviamo il primario e
     # quali NON si caricano — primario O secondari (Fable #391: un secondario rotto perderebbe
     # bet in silenzio → reso visibile in readiness + riga Parser).

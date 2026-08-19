@@ -59,7 +59,7 @@ fi
 # Integrità: SEMPRE calcolata+stampata; se APPIMAGETOOL_SHA256 è impostato,
 # verificata FAIL-CLOSED sul binario EFFETTIVAMENTE usato — che venga dal PATH
 # o dal download (rilievo GPT: la verifica non deve essere aggirabile via PATH)
-# — e PRIMA di renderlo eseguibile/eseguirlo (rilievo GLM: verify-before-chmod).
+# — e PRIMA di renderlo eseguibile/eseguirlo (rilievo Grok: verify-before-chmod).
 got="$(sha256sum "${TOOL}" | awk '{print $1}')"
 echo ">> appimagetool sha256: ${got}  (${TOOL})"
 if [ -n "${APPIMAGETOOL_SHA256}" ] && [ "${got}" != "${APPIMAGETOOL_SHA256}" ]; then

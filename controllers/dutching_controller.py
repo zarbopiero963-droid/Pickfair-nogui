@@ -346,7 +346,7 @@ class DutchingController:
             # ricalcolo. Cosi' un precomputato assente / None / 0 / non-numerico /
             # non-finito / sottostimato NON puo' mai abbassare il rischio sotto il
             # valore reale (fail-CLOSED: il gate money-management non si aggira con
-            # una liability stale/corrotta — rilievo GPT-5.6 Terra + Fable 5 su #393).
+            # una liability stale/corrotta — rilievo GPT-5.6 Sol + Fable 5 su #393).
             recomputed = max(0.0, stake * max(0.0, price - 1.0))
             raw_liability = item.get("liability")
             if raw_liability is not None:
@@ -1037,7 +1037,7 @@ class DutchingController:
         # ESPOSTO (profit_spread) e' lo STESSO spread usato per la decisione, ripulito
         # solo dal rumore float (round a 4 decimali) — cosi' display e decisione non si
         # contraddicono MAI (niente "0.50 mostrato con avviso attivo" per un raw 0.504:
-        # si mostra 0.504) e non si nasconde uno sbilancio sub-centesimo (GPT-5.6 Terra).
+        # si mostra 0.504) e non si nasconde uno sbilancio sub-centesimo (GPT-5.6 Sol).
         # In produzione profitIfWinsNet e' gia' cent-preciso (dutching _round_step),
         # quindi profit_spread esce naturalmente a 2 decimali. L'avviso scatta SOLO se
         # abilitato dalla GUI (default on): disattivarlo lo silenzia senza toccare la soglia.

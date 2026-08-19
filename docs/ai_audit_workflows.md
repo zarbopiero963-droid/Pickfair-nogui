@@ -100,7 +100,11 @@ Read and write permissions*.
 ## Label
 
 - `final-fugu-review` / `final-fable-review`: attivano il gate finale del
-  rispettivo reviewer forte sull'intera PR (pre-merge).
+  rispettivo reviewer forte sull'intera PR (pre-merge). **Le mette solo l'owner,
+  o l'agente su sua autorizzazione esplicita, mai di iniziativa**: sono i due
+  reviewer costosi e ogni lancio è spesa (vedi CLAUDE.md / AGENTS.md). Resta
+  invece automatica — e non richiede autorizzazione — la partenza sui push che
+  toccano file **core o critici**: quella è la rete di sicurezza.
 - `manual-review-required`: applicata automaticamente quando il diff tocca aree
   sensibili o la Compare API è troncata.
 

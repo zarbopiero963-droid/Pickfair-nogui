@@ -197,7 +197,7 @@ class TelegramListener:
     # LIFECYCLE
     # =========================================================
     def start(self, monitored_chats: Optional[List[Any]] = None):
-        # Mutua esclusione login/runtime (rilievo Fugu/GPT/GLM/CodeRabbit): un
+        # Mutua esclusione login/runtime (rilievo Fugu/GPT/Grok/CodeRabbit): un
         # login interattivo pendente/abbandonato non deve convivere col runtime.
         # Cleanup PRIMA del guard already_running, cosi' vale su OGNI chiamata.
         # Nessuna race col login: request_code gira solo nel comando standalone

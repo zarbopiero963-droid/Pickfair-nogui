@@ -502,7 +502,7 @@ def _login_db(settings=None):
 
 
 def test_run_telegram_login_persists_only_after_success(monkeypatch):
-    # BLOCK (Fable/Fugu/GLM): le credenziali CLI/env su un login RIUSCITO vengono
+    # BLOCK (Fable/Fugu/Grok): le credenziali CLI/env su un login RIUSCITO vengono
     # salvate nel DB, complete di session_string. api_id da CLI, api_hash da env.
     db = _login_db()
     app = HeadlessApp.__new__(HeadlessApp)
@@ -587,7 +587,7 @@ def test_run_telegram_login_rejects_nonpositive_api_id(monkeypatch):
 
 
 def test_run_telegram_login_missing_api_hash_returns_2(monkeypatch):
-    # Simmetrico (GLM/Fable): api_id presente ma api_hash assente (env/DB vuoti) e
+    # Simmetrico (Grok/Fable): api_id presente ma api_hash assente (env/DB vuoti) e
     # input nascosto vuoto => return 2, senza avviare il flow né persistere.
     db = _login_db({"api_id": "123", "api_hash": "", "session_string": ""})
     app = HeadlessApp.__new__(HeadlessApp)

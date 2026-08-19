@@ -82,7 +82,7 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
 
 
 def test_unmatched_string_signal_rejected_by_runtime_mandatory_gate():
-    # End-to-end del fail-closed Telegram->denaro (GLM/Fugu, PR #352): il
+    # End-to-end del fail-closed Telegram->denaro (Grok/Fugu, PR #352): il
     # segnale normalizzato da una stringa non parsabile (market_id e
     # selection_id None) DEVE essere RIFIUTATO dal gate campi-obbligatori di
     # RuntimeController._on_signal_received, mai inoltrato all'order path.

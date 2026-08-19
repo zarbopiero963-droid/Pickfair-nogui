@@ -291,7 +291,7 @@ def test_all_safety_entries_invalid_on_read_error():
     # BLOCK fail-closed COMPLETO: se la lettura fallisce, OGNI campo
     # safety-critical risulta valid=False con "(errore lettura)", non un default
     # plausibile. Prova che _safety_entry forza il fail-closed su read_ok=False
-    # per tutte le entry, non solo execution_mode (rilievo GLM 5.2).
+    # per tutte le entry, non solo execution_mode (rilievo Grok 4.6).
     reg = ConfigRegistry(_AllRaisingSettings())
     entries = {e.key: e for e in reg.entries()}
     for key in (
@@ -337,7 +337,7 @@ def test_betfair_read_error_distinguishes_from_unset():
 def test_read_error_log_does_not_leak_exception_message(caplog):
     # BLOCK sicurezza: il log su errore di lettura segnala nome loader + tipo
     # eccezione, ma MAI il messaggio/traceback, che per i loader dei segreti
-    # (betfair/password) potrebbe contenere credenziali (rilievo GPT-5.6 Terra).
+    # (betfair/password) potrebbe contenere credenziali (rilievo GPT-5.6 Sol).
     import logging
 
     reg = ConfigRegistry(_RaisingSettings())

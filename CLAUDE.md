@@ -195,18 +195,81 @@ sicurezza in `docs/ai_audit_workflows.md`.
   reconciliation, runtime, catalog) — OPPURE con la label finale. Su push di
   soli docs/test i due job partono ma NON spendono (costo zero).
 
-**Gate finale a label (obbligatorio pre-merge, da RIPETERE fino a pulito).**
-Far partire le review finali via label `final-fugu-review` e `final-fable-review`
-(già create dall'owner) è **OBBLIGATORIO** prima di dichiarare pronta QUALSIASI
-PR — anche se non ha toccato file core/critici (quindi i forti non sono partiti
-da soli) e anche se i workflow "final review" sono già girati sul push. Con i
-tool MCP GitHub: **rimuovi e riaggiungi** le due label alla PR (GitHub non emette
-un nuovo evento `labeled` se la label è già presente). Requisiti prima di
-lanciarle: lavoro completo, check locali tentati, branch pushato, PR non draft.
+### Costo dei reviewer: NON troncare, ma non bruciare crediti
+
+Regola d'ingresso, perché quasi tutti sbagliano qui: **`max_tokens` /
+`MAX_OUTPUT_TOKENS` è un TETTO, non un addebito.** Si paga ciò che il modello
+GENERA davvero, non il tetto che gli hai concesso. Conseguenze operative, da
+non ri-litigare a ogni giro:
+
+- **Alzare il tetto è GRATIS** e toglie il troncamento. Un tetto alto su una
+  review che il prompt vincola a 150 parole non costa un token in più.
+- **Abbassare il tetto NON fa risparmiare.** Non riduce quel che il modello
+  genera: lo taglia a metà. Il risultato è una review troncata — cioè spesa
+  piena e valore zero, il peggiore dei due mondi. Non è una leva di risparmio,
+  è un modo di pagare per niente.
+
+Quindi: se una review esce troncata **si alza il tetto**, non si accorcia il
+prompt sperando che basti.
+
+**Le leve che risparmiano davvero** (in ordine di resa):
+
+1. **Non chiamare due volte lo stesso range.** Il `done_marker` per range è già
+   cablato nei 4 workflow: non toglierlo e non "forzare" un ri-lancio per
+   vedere se stavolta va meglio.
+2. **Meno push, non push più piccoli.** Ogni push paga DUE chiamate (GPT-5.6 Sol
+   + Grok 4.6). Accorpa i fix e pusha una volta sola quando il lavoro è
+   completo: tre push da un fix ciascuno costano il triplo di un push da tre fix
+   e producono la stessa review.
+3. **Autorizzazione owner sulle due label** (sezione sotto): è la leva più
+   grossa, perché Fugu e Fable sono i costosi.
+4. **`reasoning_effort` basso dove il modello ragiona.** I token di
+   ragionamento si pagano come output: su Grok 4.6 (default `high`) è impostato
+   `low`, perché qui il reviewer deve produrre 150 parole, non pensare a lungo.
+
+**Leve VIETATE, che sembrano risparmio e non lo sono:** abbassare i tetti di
+output (vedi sopra); stringere `MAX_TOTAL_PATCH_CHARS` finché il reviewer
+smette di vedere il codice (un reviewer che non vede è un check verde falso,
+non un risparmio); disattivare un reviewer per "fare prima". Se il budget è il
+problema, si riduce il NUMERO delle chiamate, mai la QUALITÀ della singola.
+
+### Chi avvia le due label: SOLO l'owner autorizza — MAI di iniziativa
+
+**Le label `final-fugu-review` e `final-fable-review` non si mettono mai da
+soli.** Sono i due reviewer costosi: ogni lancio è denaro dell'owner, quindi
+la decisione di spenderlo è dell'owner, non dell'agente. Regola in tre passi,
+nessuno saltabile:
+
+1. L'agente porta la PR a uno stato stabile e **consegna il verdetto**: «pronta
+   al merge» (o non pronta, con cosa manca). Il verdetto va dato SEMPRE, anche
+   su un branch pushato senza PR.
+2. **L'owner autorizza.** Finché non arriva l'autorizzazione esplicita, le label
+   NON si toccano — nemmeno se la PR è ferma, nemmeno se «tanto servirebbero
+   comunque», nemmeno per "portarsi avanti".
+3. Solo allora l'agente le fa partire, con i tool MCP GitHub: **rimuovi e
+   riaggiungi** le due label (GitHub non emette un nuovo evento `labeled` se la
+   label è già presente), **una alla volta**.
+
+Il gate resta **OBBLIGATORIO pre-merge** e resta da **RIPETERE** finché Fugu e
+Fable non tornano puliti: quel che cambia non è se si fanno, è **chi decide
+quando**. Se il head cambia e servirebbe un nuovo giro, l'agente lo DICHIARA e
+richiede l'autorizzazione — non la presume da quella del giro precedente.
+Un'autorizzazione vale per il lancio per cui è stata data.
+
+Requisiti da avere già soddisfatti prima di chiedere l'autorizzazione: lavoro
+completo, check locali tentati, branch pushato, PR non draft.
+
+**L'unica partenza automatica ammessa è quella dei file critici.** Se un push
+tocca `core/`, `services/`, `controllers/`, i moduli root, dipendenze, workflow,
+config/segreti o le aree safety, Fugu e Fable partono **da soli** per decisione
+del workflow: quella non è un'iniziativa dell'agente e non richiede
+autorizzazione — è la rete di sicurezza che non deve dipendere da nessuno. Non
+disattivarla e non aggirarla per risparmiare.
 
 **Ripeti il lancio finché Fugu/Fable non tornano SENZA bloccanti (decisione
-owner).** Ogni volta che il head cambia (un fix, un allineamento) ri-lancia le
-due label sul nuovo head stabile e attendi il loro esito full-range. Il gate è
+owner).** Ogni volta che il head cambia (un fix, un allineamento) serve un nuovo
+giro: dichiaralo, **fatti autorizzare** e ri-lancia le due label sul nuovo head
+stabile, poi attendi il loro esito full-range. Il gate è
 soddisfatto SOLO quando ENTRAMBI tornano senza bloccanti reali. Un falso positivo
 persistente NON è un bloccante reale (vedi nota diff-only): trattalo con evidenza,
 non ciclare all'infinito — se dopo il lancio full-range resta solo un falso
@@ -234,10 +297,12 @@ vincolante, ma i suoi rilievi reali — se arrivano prima di finalizzare — si
 trattano, altrimenti post-merge tracking. Così Fugu Ultra e Fable 5 revisionano un head
 STABILE e non si sprecano su versioni che cambieranno ancora (ogni push ai forti
 costa). Sequenza: lavoro completo → push → GPT/Grok finiti e finding trattati
-(CodeRabbit solo se disponibile) → head stabile → fai partire `final-fugu-review`
-+ `final-fable-review` → attendi l'esito **full-range** → se restano bloccanti
-reali: fixa, ri-pusha e **RI-LANCIA le label**, ripeti finché entrambi tornano
-puliti → merge secondo la sezione AUTO-MERGE.
+(CodeRabbit solo se disponibile) → head stabile → **consegna il verdetto di
+merge-readiness all'owner e ATTENDI la sua autorizzazione** → solo dopo fai
+partire `final-fugu-review` + `final-fable-review` → attendi l'esito
+**full-range** → se restano bloccanti reali: fixa, ri-pusha, **ri-consegna il
+verdetto e richiedi una NUOVA autorizzazione** prima di ri-lanciare le label,
+ripeti finché entrambi tornano puliti → merge secondo la sezione AUTO-MERGE.
 
 **L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
 nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente

@@ -40,7 +40,7 @@ class CatalogSyncService:
             #    ogni elemento e' {"event": {...}, "marketCount": N}).
             events = self.client.list_events([SOCCER_EVENT_TYPE_ID], in_play_only=False)
 
-            # Fail-safe (rilievo GPT/GLM): un sync che non recupera NESSUN evento
+            # Fail-safe (rilievo GPT/Grok): un sync che non recupera NESSUN evento
             # non deve toccare il catalogo esistente. Succede in SIM (il catalogo
             # arriva dai feed streaming, non via API) o in LIVE su risposta
             # vuota/anomala. Senza questo guard, cleanup_stale_bf_data cancella
@@ -59,7 +59,7 @@ class CatalogSyncService:
             event_ids = list(event_meta.keys())
 
             # 2. Mercati in BATCH per evitare N+1 / rate-limit 429 in LIVE
-            #    (rilievo Greptile/Codacy/GLM/Fable): listMarketCatalogue accetta
+            #    (rilievo Greptile/Codacy/Grok/Fable): listMarketCatalogue accetta
             #    piu' eventIds e riporta event + competition in ogni market
             #    (marketProjection). Chunk per non superare maxResults.
             #    maxResults=200 (NON 1000): con marketProjection MARKET_DESCRIPTION
@@ -85,7 +85,7 @@ class CatalogSyncService:
                     market_type_codes=market_types,
                     max_results=max_results,
                 )
-                # Completeness guard (rilievo GPT-5.6 Terra): se un batch raggiunge
+                # Completeness guard (rilievo GPT-5.6 Sol): se un batch raggiunge
                 # maxResults la risposta di listMarketCatalogue puo' essere troncata
                 # silenziosamente -> alcuni mercati non entrano in markets_by_event.
                 # In quel caso il sync e' INCOMPLETO: NON eseguiamo cleanup/meta piu'
@@ -110,7 +110,7 @@ class CatalogSyncService:
             for event_id, event in event_meta.items():
                 ev_markets = markets_by_event.get(event_id, [])
 
-                # Competition dal primo mercato CHE ne ha una (rilievo GLM):
+                # Competition dal primo mercato CHE ne ha una (rilievo Grok):
                 # non tutti i tipi mercato la riportano.
                 competition: Dict[str, Any] = {}
                 for mk in ev_markets:
@@ -164,7 +164,7 @@ class CatalogSyncService:
             # 4. Pulizia + meta SOLO se il sync e' COMPLETO: eventi popolati,
             #    almeno un mercato, e nessun batch troncato. Fail-safe che
             #    impedisce di cancellare il catalogo su sync a 0 eventi, troncato
-            #    o senza mercati (rilievo GPT/GLM/Fugu/Fable/CodeRabbit). Un
+            #    o senza mercati (rilievo GPT/Grok/Fugu/Fable/CodeRabbit). Un
             #    cleanup su catalogo parziale rimuoverebbe mercati/runner ancora
             #    validi -> rischio blocco/errore nel trading LIVE.
             if event_count > 0 and market_count == 0:

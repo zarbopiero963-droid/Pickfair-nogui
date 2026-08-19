@@ -349,7 +349,7 @@ class CustomParserPanel(ctk.CTkFrame):
         applica alcuna mappatura), quindi non gonfia il conteggio dell'indicatore (Fable #336)."""
         # `getattr(..., set())` sui set «risolti» come per le etichette/dizionari: se un ordine di
         # costruzione o un reload parziale non li ha ancora inizializzati, si conta 0 (nessuna
-        # traduzione attiva) invece di sollevare `AttributeError` al toggle (GPT/GLM/Fable #336).
+        # traduzione attiva) invece di sollevare `AttributeError` al toggle (GPT/Grok/Fable #336).
         if self.__dict__.get("_nm_status_lbl") is not None and "_profile_checks" in self.__dict__:
             existing = getattr(self, "_existing_profiles", set())
             active = [p for p in self._selected_profiles() if p in existing]

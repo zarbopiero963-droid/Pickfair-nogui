@@ -271,7 +271,7 @@ def test_runtime_snapshot_carries_expected_handlers():
 
 
 def test_mix_connecting_only_during_start_failed_when_persistent():
-    # BLOCK (convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra): un mix senza FAILED è
+    # BLOCK (convergente GPT-5.6 Sol / Fable 5 / Fugu Ultra): un mix senza FAILED è
     # CONNECTING solo DURANTE start() (transitorio, no restart-storm); FUORI dalla
     # finestra di start() un mix che non converge (child giù senza flag FAILED) è
     # una DEGRADAZIONE PERSISTENTE => FAILED, così l'autoheal riavvia (niente
@@ -552,7 +552,7 @@ def test_perbot_autoheal_stuck_lockout_suppresses_next_cycle_no_restart():
 
 
 def test_perbot_autoheal_malformed_restart_result_does_not_wedge_guard():
-    # BLOCK (GPT-5.6 Terra, round-5): se restart() ritorna un esito NON conforme
+    # BLOCK (GPT-5.6 Sol, round-5): se restart() ritorna un esito NON conforme
     # (`stop`/`start` truthy ma non-dict), il parsing NON deve sollevare fuori dal
     # percorso di reset: la guardia `_child_restart_in_progress[i]` va SEMPRE azzerata
     # (`finally`), altrimenti il child resta escluso dall'autoheal per sempre.

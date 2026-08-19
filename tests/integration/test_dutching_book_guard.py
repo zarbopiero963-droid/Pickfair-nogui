@@ -240,7 +240,7 @@ def test_gui_saves_book_thresholds(monkeypatch):
 
 @pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc"])
 def test_gui_save_blocks_invalid_book_value(monkeypatch, bad):
-    # BLOCK (rilievo GLM/Fable/Fugu/Greptile): un valore book non valido NON deve
+    # BLOCK (rilievo Grok/Fable/Fugu/Greptile): un valore book non valido NON deve
     # essere persistito (niente drift GUI-vs-enforcement), ne' salvare a meta'.
     app = _make_gui(monkeypatch)
     try:

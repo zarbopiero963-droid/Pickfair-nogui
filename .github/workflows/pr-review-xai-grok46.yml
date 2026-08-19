@@ -57,12 +57,22 @@ jobs:
       MAX_TOTAL_PATCH_CHARS: "18000"
       # Tetto ALTO anti-troncamento: è un CEILING, non il costo (si pagano solo i
       # token generati). Il prompt MIRATO (150 parole, 2 sezioni) tiene l'output
-      # reale a ~200-300 token, quindi 2000 dà ampio margine e NON tronca mai, a
-      # costo ~invariato. reasoning disabilitato → tutti i token vanno all'output.
-      MAX_OUTPUT_TOKENS: "2000"
+      # reale a ~200-300 token, quindi il margine è ampio e NON tronca mai, a
+      # costo ~invariato.
+      # ATTENZIONE, cambiato rispetto al predecessore GLM: lì il ragionamento era
+      # DISABILITATO e tutti i token andavano all'output. Qui NON lo è — su xAI si
+      # può solo abbassarlo (reasoning_effort=low, vedi call_model), non spegnerlo,
+      # e i token di ragionamento si pagano come output. Il tetto sale quindi da
+      # 2000 a 3000 per coprire ragionamento + testo senza troncare: essendo un
+      # ceiling, l'aumento NON costa nulla di per sé.
+      MAX_OUTPUT_TOKENS: "3000"
 
-      PRICE_INPUT_PER_MILLION: "0.93"
-      PRICE_OUTPUT_PER_MILLION: "3.00"
+      # Listino xAI per grok-4.6, prompt < 200k token (misurato su
+      # https://docs.x.ai/docs/models). NB: ~2x il predecessore GLM 5.2 via
+      # OpenRouter (0.93 / 3.00). A ~4.5k token di input e ~300-600 di output la
+      # singola review resta nell'ordine del centesimo di dollaro.
+      PRICE_INPUT_PER_MILLION: "2.00"
+      PRICE_OUTPUT_PER_MILLION: "6.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
@@ -354,7 +364,7 @@ jobs:
                       # content può essere null (JSON null → None) o lista di blocchi.
                       # Normalizza None a "" PRIMA di str(): altrimenti str(None)="None"
                       # verrebbe pubblicato come testo e il ramo di troncamento (not text)
-                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Terra).
+                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Sol).
                       content = msg.get("content") or ""
                       if isinstance(content, list):
                           # str(... or ""): un blocco con "text": null darebbe None e
