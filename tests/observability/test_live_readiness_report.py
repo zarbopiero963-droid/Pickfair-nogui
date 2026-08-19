@@ -305,7 +305,7 @@ def test_no_checker_components_do_not_block_live_readiness_at_boot():
 
 
 def test_no_checker_components_do_not_block_live_readiness_at_runtime():
-    # #361 B-1 (GPT-5.6 Terra + Fable 5, BLOCK): il rilassamento 'no-checker'
+    # #361 B-1 (GPT-5.6 Sol + Fable 5, BLOCK): il rilassamento 'no-checker'
     # NON e' phase-aware. A runtime (default: watchdog / is_live_allowed /
     # _on_signal_received) i componenti strutturalmente senza checker
     # (database/runtime_controller/shutdown_manager, che non hanno is_ready)

@@ -160,7 +160,7 @@ _CSV_ROW_BTN_WIDTH = 100           # larghezza dei pulsanti «📁 Sfoglia…» 
 # Padding orizzontale (`padx`) dei widget della riga «⚙️ Generale» e della tabview. Estratti in
 # costanti così `_build_ui` e il test di budget layout condividono UNA SOLA fonte di verità e non
 # possono andare fuori sync (drift): se qui cambia un padding, il test lo recepisce da solo
-# (GPT-5.5 + GLM 5.2 su #330). `padx` come tuple `(sinistra, destra)`, `_TABVIEW_PADX` per lato.
+# (GPT-5.5 + Grok 4.6 su #330). `padx` come tuple `(sinistra, destra)`, `_TABVIEW_PADX` per lato.
 _TABVIEW_PADX = 15                 # tabs.pack(padx=_TABVIEW_PADX) — per lato
 _GEN_LABEL_PADX = (10, 5)          # etichetta del campo
 _GEN_ENTRY_PADX = (0, 8)           # casella del campo
@@ -238,7 +238,7 @@ class App(ctk.CTk):
         # Windows con scaling 125–150% niente bitmap-stretch sfocato e misure Tk in
         # pixel reali. Stesso valore che imposterebbe customtkinter (mai in
         # conflitto); fail-open per contratto: non solleva mai, l'app parte comunque.
-        # Esito nel log di modulo (CodeRabbit/GPT/GLM #355): la GUI non esiste ancora,
+        # Esito nel log di modulo (CodeRabbit/GPT/Grok #355): la GUI non esiste ancora,
         # ma un FAILED su Windows reale resta diagnosticabile.
         logger.debug("DPI awareness: %s", dpi_awareness.enable_dpi_awareness())
         super().__init__()

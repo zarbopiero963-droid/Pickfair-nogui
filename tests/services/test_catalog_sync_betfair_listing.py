@@ -126,7 +126,7 @@ def test_catalog_sync_batches_market_catalogue():
 
 
 def test_catalog_sync_batches_multiple_chunks():
-    # BLOCK N+1/paginazione (GLM): >20 eventi -> piu' batch (chunk_size=20),
+    # BLOCK N+1/paginazione (Grok): >20 eventi -> piu' batch (chunk_size=20),
     # ognuno con i propri eventIds, nessun evento perso, max 20/batch.
     events = [{"event": {"id": str(30000 + i), "name": f"E{i}", "openDate": "x"}} for i in range(45)]
     client = _RecordingClient(events, [])
@@ -197,7 +197,7 @@ def test_catalog_sync_events_but_zero_markets_skips_cleanup():
 
 
 def test_catalog_sync_empty_events_preserves_catalog():
-    # BLOCK regressione (GPT/GLM/Fable): 0 eventi -> NON cancellare il catalogo.
+    # BLOCK regressione (GPT/Grok/Fable): 0 eventi -> NON cancellare il catalogo.
     db = _FakeDB()
     CatalogSyncService(db, _RecordingClient([], [])).run_sync(force=True)
     assert db.cleanup_called is False

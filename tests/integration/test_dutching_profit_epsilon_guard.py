@@ -174,7 +174,7 @@ def test_no_warning_when_spread_under_epsilon(monkeypatch):
 
 def test_guard_compares_exact_spread_not_rounded(monkeypatch):
     # GUARD money-management: il confronto usa lo spread ESATTO, non arrotondato
-    # (GPT-5.6 Terra). Uno spread reale 0.504 SUPERA la tolleranza 0.50 => WARNA,
+    # (GPT-5.6 Sol). Uno spread reale 0.504 SUPERA la tolleranza 0.50 => WARNA,
     # anche se il valore mostrato (profit_spread) e' arrotondato a 0.50 per display.
     # Non si nasconde mai uno sbilancio reale sub-centesimo (arrotondare prima del
     # confronto alzerebbe la soglia effettiva fino a ~0.505). In produzione

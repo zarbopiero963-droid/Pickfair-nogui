@@ -9,8 +9,8 @@ controllo umano** e **non approvano né mergiano** nulla.
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
 |---|---|---|---|
-| `pr-review-openai-gpt56-terra.yml` | GPT-5.6 Terra | OpenAI Responses API | ogni push della PR |
-| `pr-review-openrouter-glm52.yml` | GLM 5.2 | OpenRouter | ogni push della PR |
+| `pr-review-openai-gpt56-sol.yml` | GPT-5.6 Sol | OpenAI Responses API | ogni push della PR |
+| `pr-review-xai-grok46.yml` | Grok 4.6 | xAI API | ogni push della PR |
 | `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-fugu-review` |
 | `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
 
@@ -48,7 +48,7 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   > Nota: poiché la versione eseguita è quella del branch base, un workflow
   > **nuovo** inizia a girare solo dopo che è stato **merge-ato** sul base; sulla
   > PR che lo introduce non parte da solo.
-- **Redazione segreti**: chiavi private, API key (OpenAI/OpenRouter/GitHub/AWS),
+- **Redazione segreti**: chiavi private, API key (OpenAI/OpenRouter/xAI/GitHub/AWS),
   token Telegram e coppie `key=value` sensibili vengono redatte **prima**
   dell'invio al modello e **prima** della pubblicazione del commento — inclusi i
   nomi file e l'**output** del modello.
@@ -73,15 +73,16 @@ Configurare in *Settings → Secrets and variables → Actions*:
 
 | Secret (nome nel repo) | Provider | Usato da |
 |---|---|---|
-| `PICKFAIR_OPENAI` | OpenAI API | GPT-5.6 Terra |
-| `OPENROUTER_PICKFAIR` | OpenRouter | GLM 5.2, Fugu Ultra |
+| `PICKFAIR_OPENAI` | OpenAI API | GPT-5.6 Sol |
+| `GROK_PICKFAIR` | xAI API | Grok 4.6 |
+| `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra |
 | `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5 |
 
 > I workflow leggono il segreto tramite questi nomi (`secrets.PICKFAIR_OPENAI`,
-> `secrets.OPENROUTER_PICKFAIR`, `secrets.CLAUDE_PICKFAIR`) e lo espongono allo
-> script con una env var interna (`OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
-> `ANTHROPIC_API_KEY`): il nome del segreto e quello della env interna sono
-> volutamente distinti.
+> `secrets.GROK_PICKFAIR`, `secrets.OPENROUTER_PICKFAIR`, `secrets.CLAUDE_PICKFAIR`)
+> e lo espongono allo script con una env var interna (`OPENAI_API_KEY` /
+> `XAI_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`): il nome del segreto
+> e quello della env interna sono volutamente distinti.
 
 `GITHUB_TOKEN` è fornito automaticamente da Actions. Per far pubblicare i
 commenti al bot serve *Settings → Actions → General → Workflow permissions →
@@ -99,7 +100,11 @@ Read and write permissions*.
 ## Label
 
 - `final-fugu-review` / `final-fable-review`: attivano il gate finale del
-  rispettivo reviewer forte sull'intera PR (pre-merge).
+  rispettivo reviewer forte sull'intera PR (pre-merge). **Le mette solo l'owner,
+  o l'agente su sua autorizzazione esplicita, mai di iniziativa**: sono i due
+  reviewer costosi e ogni lancio è spesa (vedi CLAUDE.md / AGENTS.md). Resta
+  invece automatica — e non richiede autorizzazione — la partenza sui push che
+  toccano file **core o critici**: quella è la rete di sicurezza.
 - `manual-review-required`: applicata automaticamente quando il diff tocca aree
   sensibili o la Compare API è troncata.
 

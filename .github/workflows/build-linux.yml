@@ -39,7 +39,7 @@ jobs:
           sudo apt-get install -y python3-tk
           # NB: niente `pip install --upgrade pip` — scaricherebbe un pip NON
           # pinnato/non-hash prima del lock, riaprendo la supply-chain che il
-          # fail-closed protegge (rilievo GPT-5.6 Terra). Si usa il pip
+          # fail-closed protegge (rilievo GPT-5.6 Sol). Si usa il pip
           # preinstallato del runner (parte dell'immagine, gia' recente e con
           # --require-hashes). Il lock e' l'unica sorgente della toolchain.
           if [ ! -f requirements-build-linux.lock ]; then

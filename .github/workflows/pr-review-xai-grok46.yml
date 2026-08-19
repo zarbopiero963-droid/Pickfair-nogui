@@ -1,6 +1,6 @@
-name: PR Review OpenRouter GLM 5.2
+name: PR Review xAI Grok 4.6
 
-# Review AI automatica di ogni push sulla PR con GLM 5.2 via OpenRouter
+# Review AI automatica di ogni push sulla PR con Grok 4.6 via API xAI
 # (endpoint chat/completions stile OpenAI). Analizza il range `base...head` della
 # PR via GitHub Compare API (un done_marker per range evita di ripagare). Diff-only: niente checkout,
 # niente esecuzione del codice della PR. Redige i possibili segreti (inclusi
@@ -24,12 +24,12 @@ permissions:
   issues: write
 
 concurrency:
-  group: pr-review-glm52-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:
   review:
-    name: GLM 5.2 push-range review
+    name: Grok 4.6 push-range review
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -38,8 +38,8 @@ jobs:
       github.event.pull_request.head.repo.full_name == github.repository
 
     env:
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
-      OPENROUTER_MODEL: z-ai/glm-5.2
+      XAI_API_KEY: ${{ secrets.GROK_PICKFAIR }}
+      XAI_MODEL: grok-4.6
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -50,35 +50,45 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
-      REVIEW_ID: glm52
-      MODEL_LABEL: GLM 5.2
+      REVIEW_ID: grok46
+      MODEL_LABEL: Grok 4.6
 
       MAX_PATCH_PER_FILE_CHARS: "5000"
       MAX_TOTAL_PATCH_CHARS: "18000"
       # Tetto ALTO anti-troncamento: è un CEILING, non il costo (si pagano solo i
       # token generati). Il prompt MIRATO (150 parole, 2 sezioni) tiene l'output
-      # reale a ~200-300 token, quindi 2000 dà ampio margine e NON tronca mai, a
-      # costo ~invariato. reasoning disabilitato → tutti i token vanno all'output.
-      MAX_OUTPUT_TOKENS: "2000"
+      # reale a ~200-300 token, quindi il margine è ampio e NON tronca mai, a
+      # costo ~invariato.
+      # ATTENZIONE, cambiato rispetto al predecessore GLM: lì il ragionamento era
+      # DISABILITATO e tutti i token andavano all'output. Qui NON lo è — su xAI si
+      # può solo abbassarlo (reasoning_effort=low, vedi call_model), non spegnerlo,
+      # e i token di ragionamento si pagano come output. Il tetto sale quindi da
+      # 2000 a 3000 per coprire ragionamento + testo senza troncare: essendo un
+      # ceiling, l'aumento NON costa nulla di per sé.
+      MAX_OUTPUT_TOKENS: "3000"
 
-      PRICE_INPUT_PER_MILLION: "0.93"
-      PRICE_OUTPUT_PER_MILLION: "3.00"
+      # Listino xAI per grok-4.6, prompt < 200k token (misurato su
+      # https://docs.x.ai/docs/models). NB: ~2x il predecessore GLM 5.2 via
+      # OpenRouter (0.93 / 3.00). A ~4.5k token di input e ~300-600 di output la
+      # singola review resta nell'ordine del centesimo di dollaro.
+      PRICE_INPUT_PER_MILLION: "2.00"
+      PRICE_OUTPUT_PER_MILLION: "6.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with GLM 5.2
+      - name: Review pushed commit range with Grok 4.6
         shell: bash
         run: |
           set -euo pipefail
 
           # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
-          if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GLM 5.2 saltato (nessun check rosso)."
+          if [ -z "${XAI_API_KEY:-}" ]; then
+            echo "::notice::XAI_API_KEY non configurato: reviewer Grok 4.6 saltato (nessun check rosso)."
             exit 0
           fi
 
-          echo "::add-mask::$OPENROUTER_API_KEY"
+          echo "::add-mask::$XAI_API_KEY"
 
           python3 <<'PY'
           import json
@@ -99,10 +109,10 @@ jobs:
 
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
-          OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"].strip()
-          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "z-ai/glm-5.2")
-          REVIEW_ID = os.environ.get("REVIEW_ID", "glm52")
-          MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENROUTER_MODEL)
+          XAI_API_KEY = os.environ["XAI_API_KEY"].strip()
+          XAI_MODEL = os.environ.get("XAI_MODEL", "grok-4.6")
+          REVIEW_ID = os.environ.get("REVIEW_ID", "grok46")
+          MODEL_LABEL = os.environ.get("MODEL_LABEL", XAI_MODEL)
 
           MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "5000"))
           MAX_TOTAL_PATCH_CHARS = int(os.environ.get("MAX_TOTAL_PATCH_CHARS", "18000"))
@@ -132,6 +142,7 @@ jobs:
               (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "[REDACTED_PRIVATE_KEY]"),
               (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_OPENAI_KEY]"),
               (re.compile(r"\bsk-or-v1-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_OPENROUTER_KEY]"),
+              (re.compile(r"\bxai-[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_XAI_KEY]"),
               (re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"), "[REDACTED_GITHUB_PAT]"),
               (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"), "[REDACTED_GITHUB_TOKEN]"),
               (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
@@ -297,23 +308,33 @@ jobs:
 
           def call_model(system_prompt: str, user_prompt: str):
               payload = {
-                  "model": OPENROUTER_MODEL,
+                  "model": XAI_MODEL,
                   "messages": [
                       {"role": "system", "content": system_prompt},
                       {"role": "user", "content": user_prompt},
                   ],
                   "temperature": 0.1,
                   "max_tokens": MAX_OUTPUT_TOKENS,
-                  # GLM-5.2 è un modello di ragionamento: col tetto basso (700) spende
-                  # TUTTO max_tokens in reasoning nascosto e tronca la review a 0 testo
-                  # (finish_reason=length, content vuoto — osservato live su #310 anche
-                  # con effort='low', che GLM ha ignorato). Qui il reviewer economico
-                  # deve solo produrre una review corta e concisa: NON serve il
-                  # ragionamento, quindi lo disabilitiamo del tutto e lasciamo tutti i
-                  # 700 token all'output. OpenRouter ignora il campo sui modelli
-                  # non-reasoning, quindi resta sicuro comunque.
-                  "reasoning": {"enabled": False},
-                  "usage": {"include": True},
+                  # Controllo del ragionamento: forma xAI, NON forma OpenRouter.
+                  # Il predecessore di questo workflow (GLM 5.2 via OpenRouter)
+                  # passava "reasoning": {"enabled": False} e "usage": {"include": True}.
+                  # Quei due campi sono dell'API OpenRouter e NON esistono nell'API xAI:
+                  # copiarli qui rischia un 400, cioè un reviewer che non revisiona.
+                  # xAI restituisce "usage" nativamente, quindi non va richiesto.
+                  #
+                  # MISURATO su https://docs.x.ai/docs/guides/reasoning :
+                  #   - grok-4.6 accetta reasoning_effort con low|medium|high|xhigh;
+                  #   - il default e' "high";
+                  #   - i parametri non supportati vengono RIFIUTATI con errore, quindi
+                  #     non si "prova" un campo per vedere se passa.
+                  # NON MISURATO: se i reasoning token consumino max_tokens su xAI —
+                  # la doc non lo dichiara. Finche' resta ignoto si tiene il ragionamento
+                  # al minimo: qui il reviewer deve produrre 150 parole, non ragionare.
+                  # Se la review dovesse comunque uscire troncata, il rilevatore
+                  # finish_reason=length piu' sotto la marca INCOMPLETA (niente
+                  # done_marker -> ritenta al push successivo) e chiede di alzare
+                  # MAX_OUTPUT_TOKENS: il fallimento e' visibile, non silenzioso.
+                  "reasoning_effort": "low",
               }
 
               data = json.dumps(payload).encode("utf-8")
@@ -322,14 +343,12 @@ jobs:
               # 3 tentativi × 100s + backoff: worst-case < timeout-minutes del job.
               for attempt in range(1, 4):
                   req = urllib.request.Request(
-                      "https://openrouter.ai/api/v1/chat/completions",
+                      "https://api.x.ai/v1/chat/completions",
                       data=data,
                       method="POST",
                       headers={
-                          "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                          "Authorization": f"Bearer {XAI_API_KEY}",
                           "Content-Type": "application/json",
-                          "HTTP-Referer": f"https://github.com/{REPO}",
-                          "X-Title": "Pickfair GLM 5.2 PR Review",
                           "User-Agent": f"{REVIEW_ID}-push-range-review",
                       },
                   )
@@ -345,7 +364,7 @@ jobs:
                       # content può essere null (JSON null → None) o lista di blocchi.
                       # Normalizza None a "" PRIMA di str(): altrimenti str(None)="None"
                       # verrebbe pubblicato come testo e il ramo di troncamento (not text)
-                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Terra).
+                      # non scatterebbe nemmeno con finish_reason=length (review GPT-5.6 Sol).
                       content = msg.get("content") or ""
                       if isinstance(content, list):
                           # str(... or ""): un blocco con "text": null darebbe None e
@@ -392,27 +411,76 @@ jobs:
                       last_error = str(exc)
                       time.sleep(min(45, 2 ** attempt))
 
-              raise RuntimeError(redact(f"OpenRouter request failed after retries: {last_error}"))
+              raise RuntimeError(redact(f"xAI request failed after retries: {last_error}"))
 
           def usage_note(usage, system_prompt, user_prompt, review):
               prompt_tokens = int((usage or {}).get("prompt_tokens") or (usage or {}).get("input_tokens") or 0)
               completion_tokens = int((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens") or 0)
-              source = "OpenRouter usage"
+              source = "xAI usage"
+
+              # I token di RAGIONAMENTO si pagano come output. Con
+              # reasoning_effort="low" Grok ne genera comunque, quindi ignorarli
+              # pubblicherebbe un costo piu' basso del reale (rilievo Codex P2).
+              details = (usage or {}).get("completion_tokens_details") or {}
+              if not isinstance(details, dict):
+                  details = {}
+              reasoning_tokens = int(details.get("reasoning_tokens") or (usage or {}).get("reasoning_tokens") or 0)
+              api_total = int((usage or {}).get("total_tokens") or 0)
+
+              # Traccia SE i due valori vengono dall'API o da una stima locale:
+              # l'euristica sotto confronta e sottrae da api_total, che e' un
+              # valore API. Mescolare una stima locale con valori API produce un
+              # billed_output gonfiato o incoerente (rilievo Fable 5).
+              prompt_from_api = prompt_tokens > 0
+              completion_from_api = completion_tokens > 0
 
               if prompt_tokens <= 0:
                   prompt_tokens = max(1, len(system_prompt + user_prompt) // 4)
                   source = "stimato localmente"
               if completion_tokens <= 0:
                   completion_tokens = max(1, len(review) // 4)
+                  source = "stimato localmente"
 
-              total = prompt_tokens + completion_tokens
-              estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + completion_tokens / 1_000_000 * PRICE_OUTPUT_PER_MILLION
+              # NON e' documentato da xAI se completion_tokens INCLUDA gia' i
+              # reasoning token (convenzione OpenAI) o li tenga FUORI: la guida
+              # dice solo che "usage expose reasoning_tokens", e la API reference
+              # e' ambigua. Sommarli alla cieca raddoppierebbe la stima nel primo
+              # caso; ignorarli la dimezzerebbe nel secondo. Invece di assumere una
+              # convenzione, la si DEDUCE dai numeri che l'API stessa restituisce:
+              # se il suo total supera prompt+completion, il reasoning e' contato
+              # a parte e va aggiunto; altrimenti e' gia' dentro completion_tokens.
+              # L'euristica vale SOLO se prompt e completion vengono entrambi
+              # dall'API: altrimenti si confronterebbe una stima locale con
+              # api_total e la sottrazione non avrebbe senso.
+              deducible = prompt_from_api and completion_from_api and api_total > 0
+              if deducible and api_total > prompt_tokens + completion_tokens:
+                  billed_output = api_total - prompt_tokens
+                  convention = "reasoning FUORI da completion_tokens, dedotto da total_tokens"
+              elif deducible:
+                  billed_output = completion_tokens
+                  convention = "reasoning gia' incluso in completion_tokens, dedotto da total_tokens"
+              else:
+                  # Non deducibile: niente total_tokens utilizzabile, oppure uno dei
+                  # due valori e' una stima locale. Si NON afferma una convenzione:
+                  # si dichiara l'incertezza invece di pubblicare un numero che
+                  # sembra certo (rilievo GLM). Il reasoning, se riportato, viene
+                  # sommato perche' fra i due errori possibili la sottostima del
+                  # costo e' quella che nasconde spesa all'owner.
+                  billed_output = completion_tokens + reasoning_tokens
+                  convention = "convenzione NON deducibile: stima prudenziale, possibile sovrastima"
+
+              total = prompt_tokens + billed_output
+              estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + billed_output / 1_000_000 * PRICE_OUTPUT_PER_MILLION
+
+              reasoning_line = f"- Di cui reasoning token: `{reasoning_tokens}`\n" if reasoning_tokens else ""
 
               return (
                   "\n\n## Uso token / costo stimato\n"
                   f"- Fonte token: `{source}`\n"
                   f"- Prompt token: `{prompt_tokens}`\n"
                   f"- Completion token: `{completion_tokens}`\n"
+                  f"{reasoning_line}"
+                  f"- Output fatturato: `{billed_output}` ({convention})\n"
                   f"- Total token: `{total}`\n"
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
               )
@@ -527,7 +595,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # OpenRouter GLM 5.2 PR Review
+          # xAI Grok 4.6 PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -569,7 +637,7 @@ jobs:
           Scope: {range_scope}
           Range: {range_base}...{range_head}
           Commits nel range: {commit_count}
-          Modello: {MODEL_LABEL} ({OPENROUTER_MODEL})
+          Modello: {MODEL_LABEL} ({XAI_MODEL})
 
           Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
           sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
@@ -585,7 +653,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review GLM 5.2 non completata\n\n"
+                  "## Review Grok 4.6 non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -603,12 +671,12 @@ jobs:
               "Output troncato",
               "Il modello non ha restituito testo",
               "Il modello non ha restituito choices",
-              "## Review GLM 5.2 non completata",
+              "## Review Grok 4.6 non completata",
           ))
           done_line = done_marker if review_complete else ""
 
           body = f"""{marker}{done_line}
-          # OpenRouter GLM 5.2 PR Review
+          # xAI Grok 4.6 PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
@@ -617,7 +685,7 @@ jobs:
           **Checkout codice PR:** no
           **Esecuzione codice PR:** no
           **Auto-merge / auto-approve:** no
-          **Model:** `{OPENROUTER_MODEL}`
+          **Model:** `{XAI_MODEL}`
           **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
           **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
 

@@ -68,7 +68,7 @@ def test_generate_workflow_is_deterministic_and_reproducible():
 def test_generate_workflow_triggers_on_transitive_requirements():
     # Il .in include transitivamente requirements.txt/dev/test: un bump la' deve
     # ri-triggerare l'anti-stale, altrimenti il lock diventa silenziosamente
-    # obsoleto (rilievo GPT-5.6 Terra / Fable 5).
+    # obsoleto (rilievo GPT-5.6 Sol / Fable 5).
     wf = _read(GEN_WF)
     for req in ("requirements.txt", "requirements-dev.txt", "requirements-test.txt"):
         assert f'"{req}"' in wf, f"il trigger del workflow non include {req}"

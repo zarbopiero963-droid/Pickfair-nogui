@@ -236,7 +236,7 @@ def test_botapi_selection_failclosed_on_chat_read_error():
 
 
 def test_botapi_selection_failclosed_on_bots_list_error():
-    # BLOCK (rilievo GPT-5.6 Terra + Fable full-range): un errore DB nell'ELENCARE i
+    # BLOCK (rilievo GPT-5.6 Sol + Fable full-range): un errore DB nell'ELENCARE i
     # bot NON deve essere degradato a "0 bot attivi" (che, con un bot usable letto
     # separatamente, riavvierebbe un singolo bot droppando il 2° attivo). Con la
     # lettura UNICA di _select_bot_api_source() l'errore PROPAGA => start() fa
@@ -277,7 +277,7 @@ def test_start_failure_raising_resets_handlers_registered():
 
 
 def test_start_failure_keeps_listener_if_runtime_thread_survives():
-    # BLOCK (GPT-5.6 Terra): se listener.start() avvia PARZIALMENTE un thread e poi
+    # BLOCK (GPT-5.6 Sol): se listener.start() avvia PARZIALMENTE un thread e poi
     # solleva, l'orfano NON va nascosto azzerando il riferimento: il service tenta
     # lo stop e, se il thread SOPRAVVIVE, TIENE il listener così il guard
     # previous_runtime_still_alive lo vede e un retry NON crea un secondo runtime
@@ -326,7 +326,7 @@ def test_start_failure_keeps_listener_if_runtime_thread_survives():
 
 
 def test_start_failure_failclosed_when_liveness_check_raises():
-    # BLOCK (GPT-5.6 Terra): se la verifica di liveness del thread residuo SOLLEVA,
+    # BLOCK (GPT-5.6 Sol): se la verifica di liveness del thread residuo SOLLEVA,
     # il fallback deve essere FAIL-CLOSED (assumi il thread VIVO): si TIENE il
     # listener e il retry resta bloccato. Un fail-open (assumere morto) azzererebbe
     # il riferimento e riaprirebbe la duplicazione dei segnali di betting.
@@ -511,7 +511,7 @@ def test_last_message_ts_is_last_write_wins_and_never_blocks_on_bad_ts():
 
 
 def test_staleness_uses_processing_ts_not_backdated_signal_ts():
-    # BLOCK (rilievo convergente GPT-5.6 Terra / Fable 5 / Fugu Ultra): un received_at
+    # BLOCK (rilievo convergente GPT-5.6 Sol / Fable 5 / Fugu Ultra): un received_at
     # BACKDATED del payload NON deve alimentare la staleness detection dell'invariant
     # guard, altrimenti `now - last` esplode → STALE_RUNTIME spurio → restart 409 /
     # doppio consumo. Il campo LWW resta per il DISPLAY (contratto preservato), ma lo

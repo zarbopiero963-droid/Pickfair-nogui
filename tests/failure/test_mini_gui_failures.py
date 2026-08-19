@@ -166,7 +166,7 @@ def test_refresh_with_failures_does_not_crash(gui):
 def test_toggle_simulation_with_save_failure_does_not_crash(gui):
     gui.simulation_mode_var.set(False)
     gui._toggle_simulation_mode()
-    # Fail-closed #350 (policy owner "2+guardia", concorde GPT/Fable/GLM):
+    # Fail-closed #350 (policy owner "2+guardia", concorde GPT/Fable/Grok):
     # la sync col runtime e' FALLITA, quindi l'intento LIVE NON persiste —
     # rollback allo stato confermato (SIM) su flag, var e label, fallimento
     # marcato. Mai split-brain GUI-SIM/runtime-LIVE.

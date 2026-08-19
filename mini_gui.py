@@ -491,7 +491,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         try:
             self.runtime.set_simulation_mode(desired)
         except Exception:
-            # Policy owner #350 ("2+guardia", concorde con GPT/Fable/GLM/Codacy):
+            # Policy owner #350 ("2+guardia", concorde con GPT/Fable/Grok/Codacy):
             # un intento NON confermato dal runtime non deve MAI persistere, ne'
             # nel flag ne' nelle var/label GUI -> rollback all'ultimo stato
             # CONFERMATO (evita split-brain GUI-SIM/runtime-LIVE) e blocco

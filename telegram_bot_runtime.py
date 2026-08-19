@@ -482,7 +482,7 @@ class TelegramMultiBotRuntime:
         # Deferral CONSECUTIVI (stop che non cicla il transport, thread vivo): un
         # wind-down transitorio non consuma il budget restart, ma un thread
         # PERMANENTEMENTE bloccato non deve generare retry infiniti (rilievo GPT-5.6
-        # Terra) => dopo `max_restarts_in_window` deferral consecutivi => lockout stuck.
+        # Sol) => dopo `max_restarts_in_window` deferral consecutivi => lockout stuck.
         self._child_deferred_consecutive: List[int] = [0 for _ in self._runtimes]
         # Guardia per-child: True mentre `child.restart()` è in corso (fuori dal lock).
         # Impedisce che due cicli autoheal concorrenti riavviino lo STESSO transport in
@@ -512,7 +512,7 @@ class TelegramMultiBotRuntime:
         if all(s == "CREATED" for s in states):
             return "CREATED"
         # Mix senza FAILED. Distingue TRANSITORIO vs PERSISTENTE (rilievo convergente
-        # GPT-5.6 Terra / Fable 5 / Fugu Ultra):
+        # GPT-5.6 Sol / Fable 5 / Fugu Ultra):
         # - DURANTE il fan-out di start() (`_starting`): il mix CONNECTED+CREATED è
         #   normale (i child partono in sequenza) => CONNECTING, NON FAILED, così un
         #   autoheal concorrente non fa restart-all spurio (409).
@@ -662,7 +662,7 @@ class TelegramMultiBotRuntime:
         # SCHEDULE_RESTART: `restart()` FUORI dal lock (I/O lento). La guardia
         # `_child_restart_in_progress[i]` va SEMPRE azzerata (`finally`): un `restart()`
         # che solleva O un esito MALFORMATO (`stop`/`start` non-dict) non deve escludere
-        # il child per sempre (rilievo GPT-5.6 Terra). Il parsing è difensivo
+        # il child per sempre (rilievo GPT-5.6 Sol). Il parsing è difensivo
         # (`isinstance`), così un esito non conforme diventa un restart_deferred, non
         # un'eccezione.
         try:

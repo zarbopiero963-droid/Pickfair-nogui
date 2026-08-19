@@ -1933,7 +1933,7 @@ class RuntimeController:
             # Tieni la pending-guard DURANTE la route inline e rilasciala nel
             # finally (dopo, anche su errore): rilasciarla prima aprirebbe una
             # finestra in cui un duplicato concorrente sullo stesso target
-            # instrada un secondo cashout (GPT-5.6 Terra/Fable). _execute_cashout_route
+            # instrada un secondo cashout (GPT-5.6 Sol/Fable). _execute_cashout_route
             # e' gia' exception-safe (pubblica CASHOUT_FAILED internamente).
             try:
                 self._execute_cashout_route(signal)
@@ -2091,7 +2091,7 @@ class RuntimeController:
         """Cancella TUTTI i grace pendenti (usato quando un CASHOUT_ALL chiude
         tutto inline): un timer non deve fissare un secondo green-up su un target
         gia' chiuso dall'ALL, anche se la chiusura dell'ALL e' ancora unmatched al
-        fire (GPT-5.6 Terra/Fugu). ``Timer.cancel`` e' no-op se gia' partito; il
+        fire (GPT-5.6 Sol/Fugu). ``Timer.cancel`` e' no-op se gia' partito; il
         callback resta comunque fail-closed (ri-check gate + recompute fresco)."""
         # Difensivo: se lo stato del grace non e' inizializzato (istanza bare),
         # non c'e' nulla da fare.
