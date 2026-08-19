@@ -1138,6 +1138,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 3
+    },
+    "risk_gate_reale_h04_h13_h14": {
+      "description": "H-04/H-13/H-14: add core/risk_gate.py — the real risk gate the engine's check(payload) contract expects, which no class in the repo implemented (core/risk_middleware.py is a bus subscriber with no check()). Enforces ONLY the limits already configured in trading_config (MIN_STAKE, MIN_PRICE, MAX_WIN, BOOK_BLOCK, LIQUIDITY_*), no invented numbers, and honours LIQUIDITY_WARNING_ONLY=True (owner decision #383). H-13: isfinite is checked BEFORE every threshold, because NaN passes all of them. H-14: LAY exposure is the liability stake*(price-1), not the stake. Wired into headless_main.py and mini_gui.py, which until now built TradingEngine with no risk_middleware at all, so the approve-everything placeholder was live in production.",
+      "allow_tests": true,
+      "files": [
+        "core/risk_gate.py",
+        "tests/core/test_risk_gate.py",
+        "headless_main.py",
+        "mini_gui.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }
