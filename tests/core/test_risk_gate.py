@@ -121,15 +121,15 @@ def test_block_stake_non_positivo(bad: float) -> None:
 
 
 def test_block_sotto_min_stake() -> None:
-    assert trading_config.MIN_STAKE == 0.10
-    assert verdict(stake=0.09)["reason"] == "RISK_BELOW_MIN_STAKE"
-    assert verdict(stake=0.10)["allowed"] is True, "il limite e' incluso"
+    lim = trading_config.MIN_STAKE
+    assert verdict(stake=lim / 2)["reason"] == "RISK_BELOW_MIN_STAKE"
+    assert verdict(stake=lim)["allowed"] is True, "il limite e' incluso"
 
 
 def test_block_quota_sotto_il_minimo() -> None:
-    assert trading_config.MIN_PRICE == 1.02
-    assert verdict(price=1.01)["reason"] == "RISK_PRICE_BELOW_MIN"
-    assert verdict(price=1.02)["allowed"] is True, "il limite e' incluso"
+    lim = trading_config.MIN_PRICE
+    assert verdict(price=lim - 0.01)["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert verdict(price=lim)["allowed"] is True, "il limite e' incluso"
 
 
 @pytest.mark.parametrize(
@@ -143,31 +143,37 @@ def test_block_bet_type_invalido(bad: Any) -> None:
 # ---------------------------------------------------------------------------
 # BLOCK H-14: la LAY si misura come liability, non come stake
 # ---------------------------------------------------------------------------
-def test_block_lay_oltre_il_cap_mentre_la_back_passa() -> None:
-    """Stesso stake, stessa quota: la BACK passa, la LAY no.
+def test_block_stesso_ordine_motivo_diverso_per_lato() -> None:
+    """H-14 reso osservabile: stessi numeri, rifiuto per ragioni opposte.
 
-    E' la dimostrazione di H-14. Con stake 600 a quota 21 la BACK rischia 600,
-    la LAY rischia 600*20 = 12.000, oltre MAX_WIN di 10.000. Un gate che
-    misurasse la LAY come stake le farebbe passare entrambe.
+    Con un solo tetto per vincita ed esposizione i due lati sono simmetrici
+    nell'ESITO — quel che cambia e' DOVE sta il denaro a rischio, e il motivo
+    lo dice:
+      BACK 100 @ 500 -> vincita  49.900 oltre il cap -> MAX_WIN
+      LAY  100 @ 500 -> vincita     100 sotto il cap,
+                        ma liability 49.900          -> MAX_EXPOSURE
+    Un gate che misurasse la LAY come stake vedrebbe solo 100 e la farebbe
+    passare: e' esattamente il buco di H-14.
     """
-    assert trading_config.MAX_WIN == 10000.0
-    stake, price = 600.0, 21.0
-    assert stake <= trading_config.MAX_WIN
-    assert stake * (price - 1) > trading_config.MAX_WIN
+    cap = trading_config.MAX_WIN
+    stake, price = 100.0, 500.0
+    payout = stake * (price - 1)
+    assert stake <= cap and payout > cap
 
-    assert verdict(bet_type="BACK", stake=stake, price=price)["allowed"] is True
-    r = verdict(bet_type="LAY", stake=stake, price=price)
-    assert r["allowed"] is False
-    assert r["reason"] == "RISK_MAX_WIN_EXCEEDED"
+    assert verdict(bet_type="BACK", stake=stake, price=price)["reason"] == "RISK_MAX_WIN_EXCEEDED"
+    assert verdict(bet_type="LAY", stake=stake, price=price)["reason"] == "RISK_MAX_EXPOSURE_EXCEEDED"
 
 
 def test_block_back_oltre_max_win() -> None:
-    assert verdict(stake=10_001.0)["reason"] == "RISK_MAX_WIN_EXCEEDED"
+    # BACK: vincita = stake*(price-1). Con quota 2.0 basta superare il cap.
+    assert verdict(stake=trading_config.MAX_WIN + 1, price=2.0)["reason"] == "RISK_MAX_WIN_EXCEEDED"
 
 
 def test_pass_lay_esattamente_al_cap() -> None:
-    # liability = 10000 * (2-1) = 10000, esattamente MAX_WIN: ammesso
-    assert verdict(bet_type="LAY", stake=10_000.0, price=2.0)["allowed"] is True
+    # LAY: vincita = stake, liability = stake*(price-1). A quota 2.0 sono pari
+    # al cap: entrambi ammessi perche' il confronto e' stretto.
+    cap = trading_config.MAX_WIN
+    assert verdict(bet_type="LAY", stake=cap, price=2.0)["allowed"] is True
 
 
 def test_block_esposizione_che_trabocca() -> None:
@@ -183,9 +189,9 @@ def test_block_esposizione_che_trabocca() -> None:
 # BOOK e LIQUIDITA': controllati solo se il payload li porta
 # ---------------------------------------------------------------------------
 def test_block_book_oltre_soglia() -> None:
-    assert trading_config.BOOK_BLOCK == 110.0
-    assert verdict(book_pct=110.0)["reason"] == "RISK_BOOK_OVER_BLOCK"
-    assert verdict(book_pct=109.9)["allowed"] is True
+    lim = trading_config.BOOK_BLOCK
+    assert verdict(book_pct=lim)["reason"] == "RISK_BOOK_OVER_BLOCK"
+    assert verdict(book_pct=lim - 0.1)["allowed"] is True
 
 
 def test_pass_book_assente_non_e_verificato() -> None:
@@ -298,3 +304,127 @@ def test_block_engine_usa_davvero_il_gate() -> None:
     denied = engine._risk_gate(payload(stake=0.01))
     assert denied["allowed"] is False
     assert denied["reason"] == "RISK_BELOW_MIN_STAKE"
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: campo opzionale PRESENTE ma invalido != campo ASSENTE
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), "abc", None, [], True],
+    ids=["nan", "inf", "testo", "None", "lista", "bool"],
+)
+def test_block_book_presente_ma_invalido(bad: Any) -> None:
+    """Un `book_pct` illeggibile aggirava BOOK_BLOCK.
+
+    Trattare "presente ma invalido" come "assente" e' un fail-open: bastava un
+    NaN per saltare la soglia invece di farla scattare.
+    """
+    r = verdict(book_pct=bad)
+    assert r["allowed"] is False, f"book_pct={bad!r} ha aggirato la soglia"
+    assert r["reason"] == "RISK_BOOK_NOT_FINITE"
+
+
+@pytest.mark.parametrize(
+    "bad", [float("nan"), float("inf"), "abc", None],
+    ids=["nan", "inf", "testo", "None"],
+)
+def test_block_liquidita_presente_ma_invalida(bad: Any) -> None:
+    """Vale anche in modalita' solo-avviso.
+
+    `LIQUIDITY_WARNING_ONLY` dice "accetto mercati sottili", non "accetto
+    numeri illeggibili": un dato corrotto non e' una liquidita' bassa.
+    """
+    for warning_only in (True, False):
+        cfg = _Cfg()
+        cfg.LIQUIDITY_WARNING_ONLY = warning_only
+        r = RiskGate(config=cfg).check(payload(available_liquidity=bad))
+        assert r["allowed"] is False, f"warning_only={warning_only}, valore {bad!r}"
+        assert r["reason"] == "RISK_LIQUIDITY_NOT_FINITE"
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: MAX_WIN misura la VINCITA, non il rischio
+# ---------------------------------------------------------------------------
+def test_block_back_che_puo_vincere_oltre_il_cap() -> None:
+    """`MAX_WIN` dice "vincita massima": va confrontata con la vincita.
+
+    Il difetto era confrontarla col RISCHIO. Una BACK da 500 a quota 100
+    rischia solo 500 e passava, ma puo' vincere 49.500.
+    """
+    cap = trading_config.MAX_WIN
+    stake, price = 500.0, 100.0
+    assert stake <= cap, "il rischio della BACK sta sotto il tetto"
+    assert stake * (price - 1) > cap, "ma la vincita lo supera"
+
+    r = verdict(bet_type="BACK", stake=stake, price=price)
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_MAX_WIN_EXCEEDED"
+
+
+def test_block_lay_con_vincita_bassa_ma_liability_enorme() -> None:
+    """Il verso opposto: senza il tetto d'esposizione H-14 resterebbe scoperto.
+
+    Una LAY con stake piccolo e quota alta ha vincita bassa (= stake) ma
+    liability enorme. Controllare solo la vincita la lascerebbe passare.
+    """
+    cap = trading_config.MAX_WIN
+    stake, price = 60.0, 900.0
+    assert stake <= cap, "la vincita della LAY e' bassa"
+    assert stake * (price - 1) > cap, "la liability no"
+
+    r = verdict(bet_type="LAY", stake=stake, price=price)
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_MAX_EXPOSURE_EXCEEDED"
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: nessun default silenzioso sui limiti
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "missing", ["MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK"],
+)
+def test_block_costante_di_rischio_mancante_nega(missing: str) -> None:
+    """Un typo in trading_config disarmerebbe il limite in silenzio.
+
+    Con `getattr(cfg, name, default)` il gate avrebbe applicato un numero
+    scritto dentro se stesso, facendo credere che il limite fosse attivo.
+    """
+    class _Partial:
+        pass
+    part = _Partial()
+    for name in ("MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK",
+                 "LIQUIDITY_GUARD_ENABLED"):
+        if name != missing:
+            setattr(part, name, getattr(_Cfg, name))
+    r = RiskGate(config=part).check(payload(book_pct=100.0))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), "abc", None], ids=["nan", "testo", "None"])
+def test_block_costante_non_numerica_nega(bad: Any) -> None:
+    cfg = _Cfg()
+    cfg.MIN_STAKE = bad
+    r = RiskGate(config=cfg).check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+# ---------------------------------------------------------------------------
+# Tripwire: i limiti configurati OGGI
+# ---------------------------------------------------------------------------
+def test_tripwire_limiti_configurati_oggi() -> None:
+    """Test DELIBERATAMENTE legato ai valori correnti.
+
+    Non e' un test di comportamento — quelli sopra derivano dal config e lo
+    seguono. Questo esiste per FARE RUMORE se qualcuno cambia un limite di
+    rischio: su un sistema che muove denaro, accorgersene e' il punto.
+    Se il cambio e' voluto, si aggiorna questa riga nella stessa PR.
+    """
+    assert trading_config.MIN_STAKE == 0.10
+    assert trading_config.MIN_PRICE == 1.02
+    assert trading_config.MAX_WIN == 10000.0
+    assert trading_config.BOOK_BLOCK == 110.0
+    assert trading_config.LIQUIDITY_MULTIPLIER == 3.0
+    assert trading_config.MIN_LIQUIDITY_ABSOLUTE == 50.0
+    assert trading_config.LIQUIDITY_WARNING_ONLY is True
