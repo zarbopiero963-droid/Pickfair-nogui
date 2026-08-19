@@ -50,23 +50,36 @@ FILE_PROPRI_420 = [".github/workflows/pr-review-claude-fable5.yml",
 def _script_python(workflow: str) -> str:
     """Ritaglia lo script python3 incorporato nel workflow."""
     righe = (ROOT / workflow).read_text(encoding="utf-8").splitlines()
-    inizio = next(i for i, r in enumerate(righe) if r.strip() == "python3 <<'PY'")
-    fine = next(i for i in range(inizio + 1, len(righe)) if righe[i].strip() == "PY")
+    try:
+        inizio = next(i for i, r in enumerate(righe) if r.strip() == "python3 <<'PY'")
+        fine = next(i for i in range(inizio + 1, len(righe)) if righe[i].strip() == "PY")
+    except StopIteration:
+        # Se il workflow cambia forma, meglio dirlo che morire con uno
+        # StopIteration nudo a chi legge il rosso in CI.
+        raise AssertionError(
+            f"{workflow}: blocco `python3 <<'PY' ... PY` non trovato; il test "
+            f"estrae la funzione da li', quindi va aggiornato insieme al workflow"
+        ) from None
     return textwrap.dedent("\n".join(righe[inizio + 1:fine]))
 
 
-def carica_funzione(workflow: str, *, base_sha: str, pr_files: Any) -> Callable:
+def carica_funzione(workflow: str, *, base_sha: str, pr_files: Any,
+                    chiamate: List[str] | None = None) -> Callable:
     """Estrae SOLO la funzione dal workflow e la esegue con dipendenze finte.
 
     `pr_files` puo' essere una lista (risposta della Compare API) oppure
     un'eccezione da sollevare, per esercitare il ramo di errore.
+    `chiamate`, se passata, registra ogni chiamata a compare_range: serve ad
+    affermare che in certi rami GitHub non viene contattato affatto.
     """
     albero = ast.parse(_script_python(workflow))
     nodo = next((n for n in ast.walk(albero)
                  if isinstance(n, ast.FunctionDef) and n.name == FUNZIONE), None)
     assert nodo is not None, f"{FUNZIONE} non trovata in {workflow}"
 
-    def compare_range(_base: str, _head: str) -> Dict[str, Any]:
+    def compare_range(base: str, head: str) -> Dict[str, Any]:
+        if chiamate is not None:
+            chiamate.append(f"{base}...{head}")
         if isinstance(pr_files, Exception):
             raise pr_files
         return {"files": pr_files}
@@ -78,7 +91,14 @@ def carica_funzione(workflow: str, *, base_sha: str, pr_files: Any) -> Callable:
         "compare_range": compare_range,
         "redact": lambda s: s,
     }
-    exec(compile(ast.Module(body=[nodo], type_ignores=[]), workflow, "exec"), spazio)
+    # `exec` e' deliberato ed e' il punto di tutto il test: eseguire la funzione
+    # COME STA NEL WORKFLOW invece di una copia. L'input non e' arbitrario — e'
+    # un file versionato di questo repo, gia' passato dal parser `ast`, e si
+    # compila il SOLO nodo della funzione cercata, non lo script intero. Il test
+    # gira in CI, non in produzione. L'alternativa (ricopiare la funzione) e'
+    # esattamente il difetto che questo test esiste per impedire.
+    exec(  # skipcq: PY-W0122 - vedi commento sopra: si esegue codice versionato del repo
+        compile(ast.Module(body=[nodo], type_ignores=[]), workflow, "exec"), spazio)
     return spazio[FUNZIONE]
 
 
@@ -120,12 +140,14 @@ def test_pass_una_push_normale_non_viene_toccata(workflow: str) -> None:
 @pytest.mark.parametrize("workflow", WORKFLOWS)
 def test_pass_sul_gate_a_label_e_un_no_op(workflow: str) -> None:
     """Con range gia' PR-vs-base non c'e' niente da togliere, e non si chiama GitHub."""
-    esplode = RuntimeError("compare_range non deve essere chiamata qui")
-    fn = carica_funzione(workflow, base_sha="a" * 40, pr_files=esplode)
+    chiamate: List[str] = []
+    fn = carica_funzione(workflow, base_sha="a" * 40,
+                         pr_files=_f(["src/tutt_altro.py"]), chiamate=chiamate)
     tenuti, esclusi = fn(_f(RANGE_420), "a" * 40, "c" * 40)
 
     assert [t["filename"] for t in tenuti] == RANGE_420
     assert esclusi == []
+    assert chiamate == [], "range gia' PR-vs-base: GitHub non va interrogato"
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)
@@ -144,6 +166,49 @@ def test_block_errore_github_non_restringe_il_range(workflow: str) -> None:
         "un errore GitHub ha ristretto il range: review silenziosamente ridotta"
     )
     assert esclusi == []
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_lista_file_della_pr_troncata_non_restringe(workflow: str) -> None:
+    """Rilievo di GPT-5.6 Sol, Grok, Fable e Fugu — tutti e quattro, ed era vero.
+
+    La Compare API tronca a 300 file. Con la lista dei file PROPRI troncata,
+    `nomi_propri` e' incompleto e l'intersezione butterebbe fuori dalla review
+    file veri della PR, anche critici, in silenzio: e' il fail-close che il ramo
+    d'errore evita di proposito, quindi va evitato anche qui.
+    """
+    propri_troncati = _f([f"src/modulo_{i}.py" for i in range(300)])
+    fn = carica_funzione(workflow, base_sha="b" * 40, pr_files=propri_troncati)
+    tenuti, esclusi = fn(_f(RANGE_420), "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == RANGE_420, (
+        "lista dei file della PR troncata: il range e' stato ristretto lo stesso, "
+        "review silenziosamente ridotta"
+    )
+    assert esclusi == []
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_lista_file_della_push_al_cap_non_restringe(workflow: str) -> None:
+    """Secondo verso dello stesso difetto, e ha una conseguenza in piu'.
+
+    Se la lista della PUSH e' gia' al cap non si sa cosa manchi; ma soprattutto
+    ridurre `files` spegnerebbe il fail-safe a valle, che riconosce il
+    troncamento proprio da `len(files) >= 300` e per quello forza la review
+    forte. Restringere qui lo disinnescherebbe senza che nessuno lo veda.
+    E non si chiama nemmeno GitHub: non serve.
+    """
+    push_al_cap = _f([f"src/spinto_{i}.py" for i in range(300)])
+    # File propri che NON intersecano: senza la guardia la restrizione
+    # svuoterebbe il range, quindi il test distingue davvero i due casi.
+    chiamate: List[str] = []
+    fn = carica_funzione(workflow, base_sha="b" * 40,
+                         pr_files=_f(["src/tutt_altro.py"]), chiamate=chiamate)
+    tenuti, esclusi = fn(push_al_cap, "a" * 40, "c" * 40)
+
+    assert len(tenuti) == 300, "il fail-safe a valle sul troncamento e' stato spento"
+    assert esclusi == []
+    assert chiamate == [], "al cap non serve chiedere nulla a GitHub"
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)

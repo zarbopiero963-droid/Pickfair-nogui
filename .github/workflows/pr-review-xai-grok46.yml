@@ -244,6 +244,14 @@ jobs:
               """
               if range_base == BASE_SHA or not good_sha(BASE_SHA):
                   return files, []  # gia' PR-vs-base: non c'e' niente da togliere
+              # La Compare API tronca la lista a 300 file. Se la lista della PUSH e'
+              # gia' al cap non si restringe, per due motivi: non si sa cosa manchi,
+              # e ridurre `files` spegnerebbe il fail-safe a valle, che riconosce il
+              # troncamento proprio da `len(files) >= 300`.
+              if len(files) >= 300:
+                  print(f"::warning::{REVIEW_ID}: lista file della push al cap della "
+                        f"Compare API (>= 300) -> range non ristretto.")
+                  return files, []
               try:
                   propri = compare_range(BASE_SHA, range_head).get("files") or []
               except Exception as exc:
@@ -251,6 +259,16 @@ jobs:
                   # deve poter restringere in silenzio cio' che viene revisionato.
                   print(f"::warning::{REVIEW_ID}: file propri della PR non calcolabili "
                         f"({redact(str(exc))[:200]}) -> range non ristretto.")
+                  return files, []
+              # Stesso cap sulla lista dei file PROPRI della PR. Se e' troncata,
+              # `nomi_propri` e' incompleto e l'intersezione butterebbe fuori dalla
+              # review file veri della PR — anche critici — in silenzio. E' il
+              # fail-close che il ramo except qui sopra evita di proposito, quindi
+              # va evitato anche qui: nel dubbio si rivede tutto.
+              if len(propri) >= 300:
+                  print(f"::warning::{REVIEW_ID}: lista file della PR al cap della "
+                        f"Compare API (>= 300) -> range non ristretto (non si puo' "
+                        f"escludere che un file della PR sia oltre il limite).")
                   return files, []
               nomi_propri = {f.get("filename") for f in propri}
               nomi_propri |= {f.get("previous_filename") for f in propri}
