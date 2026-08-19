@@ -20,6 +20,7 @@ from services.telegram_alerts_service import TelegramAlertsService
 from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
+from core.risk_gate import RiskGate
 from core.runtime_controller import RuntimeController
 from core.order_router import OrderRouter
 from cashout_executor import CashoutExecutor
@@ -262,12 +263,16 @@ class HeadlessApp:
 
             self.safe_mode = get_safe_mode_manager()
 
+            # H-04: senza questo argomento l'engine ripiega sul segnaposto che
+            # approva ogni richiesta, e nessun limite di trading_config viene
+            # applicato sul percorso dell'ordine.
             self.trading_engine = TradingEngine(
                 bus=self.bus,
                 db=self.db,
                 client_getter=self.betfair_service.get_client,
                 executor=self.executor,
                 safe_mode=self.safe_mode,
+                risk_middleware=RiskGate(),
             )
 
             self.runtime = RuntimeController(
