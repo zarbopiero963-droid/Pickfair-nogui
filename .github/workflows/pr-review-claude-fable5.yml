@@ -251,6 +251,49 @@ jobs:
                   compared = compare_range(fallback_base, HEAD_SHA)
                   return fallback_base, HEAD_SHA, "fallback single-parent commit", compared
 
+          def solo_file_della_pr(files, range_base, range_head):
+              """Toglie dal range i file che arrivano dal branch BASE, non dalla PR.
+
+              Il push-range di GitHub e' `merge-base(base, head)...head`. Quando la
+              push e' un merge del branch base dentro la PR, quel range si tira
+              dentro TUTTO cio' che arriva da main: codice gia' revisionato, gia'
+              mergiato e gia' pagato, che qui verrebbe riletto e ripagato.
+
+              Misurato sulla PR #420, push 49dc486...3488672:
+                  nel range         : allowed_scope.json, core/risk_gate.py,
+                                      headless_main.py, mini_gui.py,
+                                      tests/core/test_risk_gate.py
+                  di questi, dalla PR: allowed_scope.json
+              Quattro file su cinque venivano da main. Il prompt di un reviewer e'
+              passato da ~13k a 48k token, ~0,57$ in una sola push fra i due
+              reviewer forti, e le review hanno segnalato come "non verificabile"
+              codice che non era nemmeno di quella PR.
+
+              Si intersecano quindi i file della push con i file che la PR cambia
+              rispetto alla propria base. Su una push normale l'intersezione e'
+              l'insieme di partenza (tutto cio' che pushi e' roba tua), quindi non
+              cambia nulla: agisce solo dove il range e' contaminato.
+              """
+              if range_base == BASE_SHA or not good_sha(BASE_SHA):
+                  return files, []  # gia' PR-vs-base: non c'e' niente da togliere
+              try:
+                  propri = compare_range(BASE_SHA, range_head).get("files") or []
+              except Exception as exc:
+                  # Nel dubbio si rivede DI PIU', non di meno: un errore GitHub non
+                  # deve poter restringere in silenzio cio' che viene revisionato.
+                  print(f"::warning::{REVIEW_ID}: file propri della PR non calcolabili "
+                        f"({redact(str(exc))[:200]}) -> range non ristretto.")
+                  return files, []
+              nomi_propri = {f.get("filename") for f in propri}
+              nomi_propri |= {f.get("previous_filename") for f in propri}
+              nomi_propri.discard(None)
+              tenuti = [f for f in files
+                        if f.get("filename") in nomi_propri
+                        or f.get("previous_filename") in nomi_propri]
+              esclusi = sorted({f.get("filename") for f in files}
+                               - {f.get("filename") for f in tenuti})
+              return tenuti, esclusi
+
           def is_critical(filename: str) -> bool:
               return any(re.search(pattern, filename) for pattern in CRITICAL_PATTERNS)
 
@@ -486,6 +529,15 @@ jobs:
                   sys.exit(1)
               sys.exit(0)
           files = compared.get("files") or []
+          # Prima di qualunque altra cosa: via i file che vengono dal branch base.
+          # Sta qui, PRIMA del gate di costo, di proposito — cosi' il gate decide
+          # su cio' che la PR cambia davvero, e una push che dal punto di vista
+          # della PR non cambia niente non arriva nemmeno a chiamare il modello.
+          files, files_dal_base = solo_file_della_pr(files, range_base, range_head)
+          if files_dal_base:
+              print(f"::notice::{REVIEW_ID}: {len(files_dal_base)} file esclusi dal range "
+                    f"perche' provenienti dal branch base (gia' revisionati e mergiati): "
+                    f"{', '.join(files_dal_base[:10])}")
           commit_count = len(compared.get("commits") or [])
 
           # Gate costo: questo reviewer forte costa. Chiama il modello SOLO se il

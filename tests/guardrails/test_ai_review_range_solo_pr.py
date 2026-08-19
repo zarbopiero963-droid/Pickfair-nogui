@@ -1,0 +1,161 @@
+"""Il range revisionato non deve contenere codice che arriva dal branch base.
+
+Il push-range di GitHub e' `merge-base(base, head)...head`. Quando una push e' un
+merge del branch base dentro la PR, quel range si tira dentro tutto cio' che
+arriva da main: codice gia' revisionato, gia' mergiato e gia' pagato.
+
+Misurato sulla PR #420, push `49dc486...3488672`:
+
+    nel range           : allowed_scope.json, core/risk_gate.py, headless_main.py,
+                          mini_gui.py, tests/core/test_risk_gate.py
+    di questi, dalla PR : allowed_scope.json
+
+Quattro file su cinque venivano da main. Il prompt di un reviewer e' passato da
+~13k a 48k token — ~0,57$ in una sola push fra i due reviewer forti — e le review
+hanno segnalato come "non verificabile perche' troncato" un file che non era
+nemmeno di quella PR.
+
+La funzione qui sotto NON e' ricopiata: viene estratta dai workflow veri e
+compilata, altrimenti il test verificherebbe una copia e non cio' che gira.
+"""
+from __future__ import annotations
+
+import ast
+import textwrap
+from pathlib import Path
+from typing import Any, Callable, Dict, List
+
+import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+WORKFLOWS = [
+    ".github/workflows/pr-review-claude-fable5.yml",
+    ".github/workflows/pr-review-openai-gpt56-sol.yml",
+    ".github/workflows/pr-review-xai-grok46.yml",
+    ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+]
+
+FUNZIONE = "solo_file_della_pr"
+
+# Il caso reale, dalla PR #420 push 49dc486...3488672 (verificato con git).
+RANGE_420 = [".guardrails/allowed_scope.json", "core/risk_gate.py",
+             "headless_main.py", "mini_gui.py", "tests/core/test_risk_gate.py"]
+FILE_PROPRI_420 = [".github/workflows/pr-review-claude-fable5.yml",
+                   ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+                   ".guardrails/allowed_scope.json",
+                   "tests/guardrails/test_ai_review_cost_gate.py"]
+
+
+def _script_python(workflow: str) -> str:
+    """Ritaglia lo script python3 incorporato nel workflow."""
+    righe = (ROOT / workflow).read_text(encoding="utf-8").splitlines()
+    inizio = next(i for i, r in enumerate(righe) if r.strip() == "python3 <<'PY'")
+    fine = next(i for i in range(inizio + 1, len(righe)) if righe[i].strip() == "PY")
+    return textwrap.dedent("\n".join(righe[inizio + 1:fine]))
+
+
+def carica_funzione(workflow: str, *, base_sha: str, pr_files: Any) -> Callable:
+    """Estrae SOLO la funzione dal workflow e la esegue con dipendenze finte.
+
+    `pr_files` puo' essere una lista (risposta della Compare API) oppure
+    un'eccezione da sollevare, per esercitare il ramo di errore.
+    """
+    albero = ast.parse(_script_python(workflow))
+    nodo = next((n for n in ast.walk(albero)
+                 if isinstance(n, ast.FunctionDef) and n.name == FUNZIONE), None)
+    assert nodo is not None, f"{FUNZIONE} non trovata in {workflow}"
+
+    def compare_range(_base: str, _head: str) -> Dict[str, Any]:
+        if isinstance(pr_files, Exception):
+            raise pr_files
+        return {"files": pr_files}
+
+    spazio: Dict[str, Any] = {
+        "BASE_SHA": base_sha,
+        "REVIEW_ID": "test",
+        "good_sha": lambda s: bool(s) and s != "0" * 40,
+        "compare_range": compare_range,
+        "redact": lambda s: s,
+    }
+    exec(compile(ast.Module(body=[nodo], type_ignores=[]), workflow, "exec"), spazio)
+    return spazio[FUNZIONE]
+
+
+def _f(nomi: List[str]) -> List[Dict[str, str]]:
+    return [{"filename": n} for n in nomi]
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_il_codice_che_arriva_da_main_esce_dal_range(workflow: str) -> None:
+    """Il caso misurato: 5 file nel range, 4 provenienti da main."""
+    fn = carica_funzione(workflow, base_sha="b" * 40, pr_files=_f(FILE_PROPRI_420))
+    tenuti, esclusi = fn(_f(RANGE_420), "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == [".guardrails/allowed_scope.json"], (
+        "nel range deve restare solo cio' che la PR cambia davvero"
+    )
+    assert esclusi == ["core/risk_gate.py", "headless_main.py", "mini_gui.py",
+                       "tests/core/test_risk_gate.py"]
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_pass_una_push_normale_non_viene_toccata(workflow: str) -> None:
+    """La contropartita: dove non c'e' contaminazione non deve cambiare nulla.
+
+    Su una push normale tutto cio' che pushi fa parte della tua PR, quindi
+    l'intersezione e' l'insieme di partenza. Se questo diventasse rosso, il
+    risparmio sarebbe stato ottenuto togliendo file dalla review — molto peggio
+    del costo che risolve.
+    """
+    spinti = ["core/risk_gate.py", "tests/core/test_risk_gate.py"]
+    propri = spinti + ["headless_main.py", "mini_gui.py"]
+    fn = carica_funzione(workflow, base_sha="b" * 40, pr_files=_f(propri))
+    tenuti, esclusi = fn(_f(spinti), "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == spinti
+    assert esclusi == []
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_pass_sul_gate_a_label_e_un_no_op(workflow: str) -> None:
+    """Con range gia' PR-vs-base non c'e' niente da togliere, e non si chiama GitHub."""
+    esplode = RuntimeError("compare_range non deve essere chiamata qui")
+    fn = carica_funzione(workflow, base_sha="a" * 40, pr_files=esplode)
+    tenuti, esclusi = fn(_f(RANGE_420), "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == RANGE_420
+    assert esclusi == []
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_errore_github_non_restringe_il_range(workflow: str) -> None:
+    """Nel dubbio si rivede DI PIU', non di meno.
+
+    Se la chiamata a GitHub fallisce non si sa quali file siano della PR. Il
+    verso prudente e' lasciare il range intero: un errore d'infrastruttura non
+    deve poter ridurre in silenzio cio' che viene revisionato.
+    """
+    fn = carica_funzione(workflow, base_sha="b" * 40,
+                         pr_files=RuntimeError("502 Bad Gateway"))
+    tenuti, esclusi = fn(_f(RANGE_420), "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == RANGE_420, (
+        "un errore GitHub ha ristretto il range: review silenziosamente ridotta"
+    )
+    assert esclusi == []
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_pass_un_file_rinominato_resta_nel_range(workflow: str) -> None:
+    """Un rename ha nome nuovo nel range e nome vecchio fra i file della PR (o
+    viceversa): guardare solo `filename` lo butterebbe fuori per sbaglio."""
+    fn = carica_funzione(
+        workflow, base_sha="b" * 40,
+        pr_files=[{"filename": "core/nuovo.py", "previous_filename": "core/vecchio.py"}])
+    tenuti, esclusi = fn(
+        [{"filename": "core/nuovo.py", "previous_filename": "core/vecchio.py"}],
+        "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == ["core/nuovo.py"]
+    assert esclusi == []
