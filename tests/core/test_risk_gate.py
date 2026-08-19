@@ -12,7 +12,7 @@ from typing import Any, Dict
 import pytest
 
 import trading_config
-from core.risk_gate import RiskGate
+from core.risk_gate import _REQUIRED_FLAGS, _REQUIRED_LIMITS, RiskGate
 from core.trading_engine import TradingEngine
 
 
@@ -525,8 +525,12 @@ def test_block_invariante_interna_nega_invece_di_proseguire() -> None:
     confronto successivo sarebbe esploso (rifiuto per errore interno) oppure,
     peggio, sarebbe stato saltato. Ora quel caso ha un rifiuto suo, con un
     motivo che lo rende riconoscibile nell'audit.
+
+    Config esplicito, non quello reale: con la validazione in blocco un
+    trading_config incompleto darebbe RISK_CONFIG_MISSING e il test parlerebbe
+    dell'ambiente invece che dell'invariante.
     """
-    r = _GateRotto().check(payload())
+    r = _GateRotto(config=_Cfg()).check(payload())
     assert r["allowed"] is False
     assert r["reason"] == "RISK_INTERNAL_INVARIANT"
 
@@ -546,12 +550,21 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
     # pytest e' stato lanciato e all'esistenza di `tests/__init__.py` (che non
     # c'e'). Riprodotto: lanciando pytest da tests/ il sottoprocesso moriva con
     # ModuleNotFoundError. Cosi' serve solo che `core` sia importabile.
+    # Il config viaggia con il codice, generato da _Cfg cosi' resta una sola
+    # fonte: senza, `G()` caricherebbe il trading_config reale e — ora che la
+    # validazione e' in blocco — un config incompleto nell'ambiente darebbe
+    # RISK_CONFIG_MISSING. Il test parlerebbe dell'ambiente, non dell'invariante.
+    cfg_src = "class Cfg:\n" + "".join(
+        f"    {k} = {getattr(_Cfg, k)!r}\n"
+        for k in vars(_Cfg) if not k.startswith("__")
+    )
     code = (
         "from core.risk_gate import RiskGate\n"
-        "class G(RiskGate):\n"
+        + cfg_src
+        + "class G(RiskGate):\n"
         "    def _check_stake(self, payload):\n"
         "        return None, None\n"
-        "r = G().check({'bet_type': 'BACK', 'price': 2.0, 'stake': 10.0})\n"
+        "r = G(config=Cfg()).check({'bet_type': 'BACK', 'price': 2.0, 'stake': 10.0})\n"
         "print(r['allowed'], r['reason'])\n"
     )
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -564,6 +577,34 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
                          capture_output=True, text=True, cwd=root, env=env)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip() == "False RISK_INTERNAL_INVARIANT", out.stdout
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: il config REALE deve soddisfare il contratto del gate
+# ---------------------------------------------------------------------------
+def test_block_il_trading_config_reale_soddisfa_il_contratto_del_gate() -> None:
+    """La contropartita della lettura in blocco, resa automatica.
+
+    Leggere tutto il config a ogni ordine ha un prezzo dichiarato: se
+    `trading_config` perdesse anche UNA delle costanti attese, ogni ordine
+    verrebbe negato con RISK_CONFIG_MISSING — blocco totale del trading, non
+    una degradazione parziale. E' il verso giusto (meglio fermi che senza
+    limiti), ma va sorvegliato, e sorvegliarlo "prima del deploy" e' una
+    raccomandazione che nessuno esegue.
+    Questo test lo esegue a ogni commit: se qualcuno rinomina o cancella una
+    costante di rischio, diventa rosso qui invece che in produzione.
+    """
+    mancanti = [n for n in _REQUIRED_LIMITS + _REQUIRED_FLAGS
+                if not hasattr(trading_config, n)]
+    assert not mancanti, (
+        f"trading_config non espone {mancanti}: con la validazione in blocco "
+        f"il gate negherebbe OGNI ordine"
+    )
+    # non basta che esistano: devono essere leggibili come il gate pretende
+    RiskGate()._validate_config()
+    assert GATE.check(payload())["allowed"] is True, (
+        "col config reale un ordine regolare deve passare"
+    )
 
 
 # ---------------------------------------------------------------------------
