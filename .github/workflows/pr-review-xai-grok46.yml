@@ -418,20 +418,48 @@ jobs:
               completion_tokens = int((usage or {}).get("completion_tokens") or (usage or {}).get("output_tokens") or 0)
               source = "xAI usage"
 
+              # I token di RAGIONAMENTO si pagano come output. Con
+              # reasoning_effort="low" Grok ne genera comunque, quindi ignorarli
+              # pubblicherebbe un costo piu' basso del reale (rilievo Codex P2).
+              details = (usage or {}).get("completion_tokens_details") or {}
+              if not isinstance(details, dict):
+                  details = {}
+              reasoning_tokens = int(details.get("reasoning_tokens") or (usage or {}).get("reasoning_tokens") or 0)
+              api_total = int((usage or {}).get("total_tokens") or 0)
+
               if prompt_tokens <= 0:
                   prompt_tokens = max(1, len(system_prompt + user_prompt) // 4)
                   source = "stimato localmente"
               if completion_tokens <= 0:
                   completion_tokens = max(1, len(review) // 4)
 
-              total = prompt_tokens + completion_tokens
-              estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + completion_tokens / 1_000_000 * PRICE_OUTPUT_PER_MILLION
+              # NON e' documentato da xAI se completion_tokens INCLUDA gia' i
+              # reasoning token (convenzione OpenAI) o li tenga FUORI: la guida
+              # dice solo che "usage expose reasoning_tokens", e la API reference
+              # e' ambigua. Sommarli alla cieca raddoppierebbe la stima nel primo
+              # caso; ignorarli la dimezzerebbe nel secondo. Invece di assumere una
+              # convenzione, la si DEDUCE dai numeri che l'API stessa restituisce:
+              # se il suo total supera prompt+completion, il reasoning e' contato
+              # a parte e va aggiunto; altrimenti e' gia' dentro completion_tokens.
+              if api_total > prompt_tokens + completion_tokens:
+                  billed_output = api_total - prompt_tokens
+                  convention = "reasoning FUORI da completion_tokens (dedotto da total_tokens)"
+              else:
+                  billed_output = completion_tokens
+                  convention = "reasoning gia' incluso in completion_tokens"
+
+              total = prompt_tokens + billed_output
+              estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + billed_output / 1_000_000 * PRICE_OUTPUT_PER_MILLION
+
+              reasoning_line = f"- Di cui reasoning token: `{reasoning_tokens}`\n" if reasoning_tokens else ""
 
               return (
                   "\n\n## Uso token / costo stimato\n"
                   f"- Fonte token: `{source}`\n"
                   f"- Prompt token: `{prompt_tokens}`\n"
                   f"- Completion token: `{completion_tokens}`\n"
+                  f"{reasoning_line}"
+                  f"- Output fatturato: `{billed_output}` ({convention})\n"
                   f"- Total token: `{total}`\n"
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
               )
