@@ -103,6 +103,22 @@ class RiskGate:
             raise MissingRiskConfig(f"{name} non e' un numero finito")
         return value
 
+    def _flag(self, name: str) -> bool:
+        """Legge un interruttore dal config. Assente o non bool -> NEGA.
+
+        Stessa regola di `_limit`, e per lo stesso motivo. Lasciare questi due
+        su `getattr(..., default)` era un'incoerenza pericolosa: il default di
+        LIQUIDITY_GUARD_ENABLED era False mentre il valore configurato e' True,
+        quindi una costante rinominata avrebbe DISARMATO la guardia di
+        liquidita' in silenzio, proprio mentre gli altri limiti erano protetti.
+        """
+        if not hasattr(self.config, name):
+            raise MissingRiskConfig(name)
+        value = getattr(self.config, name)
+        if value is not True and value is not False:
+            raise MissingRiskConfig(f"{name} non e' un bool ({value!r})")
+        return value
+
     @staticmethod
     def _finite(raw: Any) -> Optional[float]:
         """float finito, oppure None per QUALUNQUE altra cosa.
@@ -145,9 +161,8 @@ class RiskGate:
     # -- singoli controlli ------------------------------------------------
     def _check_stake(self, payload: Dict[str, Any]) -> Tuple[Optional[float], _Verdict]:
         stake, denial = self._required(payload, "stake", "RISK_STAKE_NOT_FINITE")
-        if denial is not None:
+        if stake is None:
             return None, denial
-        assert stake is not None
         if stake <= 0:
             return None, self._deny(payload, "RISK_STAKE_NOT_POSITIVE")
         if stake < self._limit("MIN_STAKE"):
@@ -156,9 +171,8 @@ class RiskGate:
 
     def _check_price(self, payload: Dict[str, Any]) -> Tuple[Optional[float], _Verdict]:
         price, denial = self._required(payload, "price", "RISK_PRICE_NOT_FINITE")
-        if denial is not None:
+        if price is None:
             return None, denial
-        assert price is not None
         if price < self._limit("MIN_PRICE"):
             return None, self._deny(payload, "RISK_PRICE_BELOW_MIN")
         return price, None
@@ -203,7 +217,7 @@ class RiskGate:
         return None
 
     def _check_liquidity(self, payload: Dict[str, Any], stake: float) -> _Verdict:
-        if not bool(getattr(self.config, "LIQUIDITY_GUARD_ENABLED", False)):
+        if not self._flag("LIQUIDITY_GUARD_ENABLED"):
             return None
 
         liquidity, denial = self._optional(
@@ -221,7 +235,7 @@ class RiskGate:
         if liquidity >= required:
             return None
 
-        if bool(getattr(self.config, "LIQUIDITY_WARNING_ONLY", True)):
+        if self._flag("LIQUIDITY_WARNING_ONLY"):
             # Scelta dell'owner (#383): qui si avvisa e basta.
             logger.warning(
                 "Liquidita' %.2f sotto la richiesta %.2f: AVVISO "
@@ -241,7 +255,15 @@ class RiskGate:
         price, denial = self._check_price(payload)
         if denial is not None:
             return denial
-        assert stake is not None and price is not None
+        if stake is None or price is None:
+            # Invariante interna: un controllo obbligatorio ha restituito
+            # "nessun valore" SENZA rifiutare. Oggi non e' raggiungibile, ma un
+            # `assert` qui sarebbe peggio che inutile: sotto `python -O` sparisce,
+            # e proprio sul percorso del denaro la guardia scomparirebbe in
+            # silenzio lasciando proseguire con None. Si nega, e si dice perche'.
+            logger.error("Invariante RiskGate violata: stake=%r price=%r -> DENY",
+                         stake, price)
+            return self._deny(payload, "RISK_INTERNAL_INVARIANT")
 
         side = str(payload.get("bet_type") or "").strip().upper()
         if side not in _SIDES:

@@ -158,15 +158,18 @@ def test_block_stesso_ordine_motivo_diverso_per_lato() -> None:
     cap = trading_config.MAX_WIN
     stake, price = 100.0, 500.0
     payout = stake * (price - 1)
-    assert stake <= cap and payout > cap
+    assert stake <= cap < payout, "i numeri del test devono davvero stare a cavallo del cap"
 
-    assert verdict(bet_type="BACK", stake=stake, price=price)["reason"] == "RISK_MAX_WIN_EXCEEDED"
-    assert verdict(bet_type="LAY", stake=stake, price=price)["reason"] == "RISK_MAX_EXPOSURE_EXCEEDED"
+    back = verdict(bet_type="BACK", stake=stake, price=price)
+    lay = verdict(bet_type="LAY", stake=stake, price=price)
+    assert back["reason"] == "RISK_MAX_WIN_EXCEEDED"
+    assert lay["reason"] == "RISK_MAX_EXPOSURE_EXCEEDED"
 
 
 def test_block_back_oltre_max_win() -> None:
     # BACK: vincita = stake*(price-1). Con quota 2.0 basta superare il cap.
-    assert verdict(stake=trading_config.MAX_WIN + 1, price=2.0)["reason"] == "RISK_MAX_WIN_EXCEEDED"
+    r = verdict(stake=trading_config.MAX_WIN + 1, price=2.0)
+    assert r["reason"] == "RISK_MAX_WIN_EXCEEDED"
 
 
 def test_pass_lay_esattamente_al_cap() -> None:
@@ -250,7 +253,8 @@ def test_pass_liquidita_sufficiente() -> None:
 # Contratto con l'engine
 # ---------------------------------------------------------------------------
 def test_block_payload_non_dict() -> None:
-    assert GATE.check("non sono un dict")["reason"] == "RISK_PAYLOAD_NOT_DICT"  # type: ignore[arg-type]
+    r = GATE.check("non sono un dict")  # type: ignore[arg-type]
+    assert r["reason"] == "RISK_PAYLOAD_NOT_DICT"
 
 
 def test_block_gate_che_esplode_nega() -> None:
@@ -408,6 +412,124 @@ def test_block_costante_non_numerica_nega(bad: Any) -> None:
     r = RiskGate(config=cfg).check(payload())
     assert r["allowed"] is False
     assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: nemmeno gli INTERRUTTORI hanno un default silenzioso
+# ---------------------------------------------------------------------------
+def _cfg_senza(name: str) -> Any:
+    """Copia di _Cfg priva di UNA costante, senza toccare la classe condivisa."""
+    class _Partial:
+        pass
+    part = _Partial()
+    for attr in vars(_Cfg):
+        if attr.startswith("__") or attr == name:
+            continue
+        setattr(part, attr, getattr(_Cfg, attr))
+    return part
+
+
+def test_block_guardia_liquidita_assente_nega() -> None:
+    """Il difetto che questo test blocca era peggiore di un default qualsiasi.
+
+    Il default scritto nel gate era False mentre il valore realmente
+    configurato e' True: una costante rinominata avrebbe DISARMATO la guardia
+    di liquidita' in silenzio, e il gate avrebbe continuato a sembrare intero.
+    """
+    assert trading_config.LIQUIDITY_GUARD_ENABLED is True, (
+        "il valore configurato e' l'opposto del vecchio default: e' questo che "
+        "rendeva il fallback pericoloso"
+    )
+    r = RiskGate(config=_cfg_senza("LIQUIDITY_GUARD_ENABLED")).check(
+        payload(available_liquidity=1.0))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_block_modalita_avviso_assente_nega() -> None:
+    """Anche il flag che ALLENTA il controllo va letto, non presunto.
+
+    Presumerlo True aprirebbe il passaggio a mercati sottili senza che l'owner
+    lo abbia mai deciso; presumerlo False bloccherebbe una scelta che invece ha
+    preso (#383). Non si presume: se manca, si nega.
+    """
+    r = RiskGate(config=_cfg_senza("LIQUIDITY_WARNING_ONLY")).check(
+        payload(available_liquidity=1.0))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+@pytest.mark.parametrize(
+    "bad", [1, 0, "True", "false", "", None, 1.0, [], object()],
+    ids=["int_1", "int_0", "str_True", "str_false", "vuota", "None", "float",
+         "lista", "oggetto"],
+)
+@pytest.mark.parametrize(
+    "flag", ["LIQUIDITY_GUARD_ENABLED", "LIQUIDITY_WARNING_ONLY"],
+)
+def test_block_interruttore_non_booleano_nega(flag: str, bad: Any) -> None:
+    """Un interruttore va letto come bool VERO, non come qualcosa di truthy.
+
+    `if not cfg.LIQUIDITY_GUARD_ENABLED` su una stringa "false" lascerebbe la
+    guardia ATTIVA per caso, e su `0` la spegnerebbe senza che nessuno lo abbia
+    scritto: in entrambi i casi il comportamento non e' quello configurato.
+    """
+    cfg = _Cfg()
+    setattr(cfg, flag, bad)
+    r = RiskGate(config=cfg).check(payload(available_liquidity=1.0))
+    assert r["allowed"] is False, f"{flag}={bad!r} e' stato interpretato come un bool"
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_pass_i_due_booleani_veri_restano_leggibili() -> None:
+    cfg = _Cfg()
+    cfg.LIQUIDITY_GUARD_ENABLED = False
+    # guardia spenta: la liquidita' ridicola non viene nemmeno guardata
+    assert RiskGate(config=cfg).check(payload(available_liquidity=1.0))["allowed"] is True
+
+
+# ---------------------------------------------------------------------------
+# BLOCK: l'invariante interna nega, non prosegue
+# ---------------------------------------------------------------------------
+class _GateRotto(RiskGate):
+    """Simula una regressione futura: un controllo che non nega e non decide."""
+
+    def _check_stake(self, payload: Dict[str, Any]) -> Any:
+        return None, None
+
+
+def test_block_invariante_interna_nega_invece_di_proseguire() -> None:
+    """Qui c'era un `assert`, e sotto `python -O` sarebbe sparito.
+
+    Con l'assert, un controllo obbligatorio che restituisse "nessun valore"
+    senza rifiutare avrebbe fatto proseguire il gate con stake=None: il
+    confronto successivo sarebbe esploso (rifiuto per errore interno) oppure,
+    peggio, sarebbe stato saltato. Ora quel caso ha un rifiuto suo, con un
+    motivo che lo rende riconoscibile nell'audit.
+    """
+    r = _GateRotto().check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_INTERNAL_INVARIANT"
+
+
+def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
+    """Controprova esplicita: il rifiuto non dipende dagli assert.
+
+    `-O` disattiva gli assert; se la guardia fosse ancora un assert questo
+    sottoprocesso approverebbe l'ordine.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "from tests.core.test_risk_gate import _GateRotto, payload;"
+        "r = _GateRotto().check(payload());"
+        "print(r['allowed'], r['reason'])"
+    )
+    out = subprocess.run([sys.executable, "-O", "-c", code],
+                         capture_output=True, text=True, cwd=".")
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "False RISK_INTERNAL_INVARIANT", out.stdout
 
 
 # ---------------------------------------------------------------------------
