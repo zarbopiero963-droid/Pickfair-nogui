@@ -62,7 +62,20 @@ jobs:
       # solo i token effettivamente generati, quindi allineare il tetto a quello
       # degli altri tre reviewer (3000) NON aumenta la spesa: toglie solo il
       # rischio che una review esca tagliata, cioè pagata e inutile.
-      MAX_OUTPUT_TOKENS: "3000"
+      # ESPERIMENTO (2 PR): i tre reviewer non-Anthropic giravano a `low`, cioe'
+      # sotto il default del loro stesso modello. Fable, l'unico a piena
+      # profondita', e' l'unico che trovava difetti veri. Si alzano a `high` e si
+      # confrontano costo e reperti contro il periodo a `low`. Per tornare
+      # indietro basta rimettere "low" qui.
+      REVIEW_EFFORT: "high"
+      # A effort alto il ragionamento MANGIA questo tetto:
+      #   OpenAI    - "i reasoning token contano dentro max_output_tokens",
+      #               raccomandano di riservarne >= 25.000
+      #   OpenRouter- a "high" il reasoning prende ~80% di max_tokens (a "low" ~20%)
+      # Con 3000 la review verrebbe TRONCATA e sembrerebbe che "high trova meno":
+      # conclusione opposta, e sbagliata. Il tetto e' un massimale, non un addebito:
+      # si paga cio' che viene generato, quindi alzarlo non costa nulla di per se'.
+      MAX_OUTPUT_TOKENS: "25000"
 
       PRICE_INPUT_PER_MILLION: "5.00"
       PRICE_OUTPUT_PER_MILLION: "30.00"
@@ -111,6 +124,15 @@ jobs:
           MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "7000"))
           MAX_TOTAL_PATCH_CHARS = int(os.environ.get("MAX_TOTAL_PATCH_CHARS", "24000"))
           MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "1000"))
+          # Effort del ragionamento: da env, cosi' l'esperimento si ferma senza
+          # toccare il codice. Un valore non valido farebbe 400 e ucciderebbe la
+          # review, quindi si ripiega su "high" segnalandolo.
+          _EFFORT_AMMESSI = {"low", "medium", "high", "xhigh"}
+          REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "high").strip().lower()
+          if REVIEW_EFFORT not in _EFFORT_AMMESSI:
+              print(f"::warning::REVIEW_EFFORT={REVIEW_EFFORT!r} non valido "
+                    f"(ammessi: {sorted(_EFFORT_AMMESSI)}) -> uso 'high'.")
+              REVIEW_EFFORT = "high"
 
           PRICE_INPUT_PER_MILLION = float(os.environ.get("PRICE_INPUT_PER_MILLION", "0"))
           PRICE_OUTPUT_PER_MILLION = float(os.environ.get("PRICE_OUTPUT_PER_MILLION", "0"))
@@ -312,7 +334,7 @@ jobs:
                   # max_output_tokens. Con budget basso (1000) il reasoning "medium"
                   # di default esauriva tutto prima del testo (review troncata a 0).
                   # effort "low" lascia spazio alla review breve dentro il budget.
-                  "reasoning": {"effort": "low"},
+                  "reasoning": {"effort": REVIEW_EFFORT},
                   "max_output_tokens": MAX_OUTPUT_TOKENS,
               }
 

@@ -1150,6 +1150,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "ci_esperimento_effort_reviewer_economici": {
+      "description": "Experiment (2 PRs): the three non-Anthropic reviewers ran at reasoning effort 'low', below their own model default (grok-4.6 defaults to 'high'). Fable, the only one at full depth, was the only one finding real defects. Raise them to 'high' via a REVIEW_EFFORT env var and compare cost and findings against the 'low' period; reverting is a one-line env change, no code edit and no extra paid review round. MAX_OUTPUT_TOKENS raised from 3000 to 25000 on those three because at deep effort reasoning eats that ceiling (OpenAI: reasoning tokens count against max_output_tokens, they recommend reserving >= 25000; OpenRouter: ~80% of max_tokens at 'high' vs ~20% at 'low') - with 3000 the review would be truncated and it would look like high effort finds less, the opposite of the truth. The ceiling is a cap, not a charge. A test pins the invariant (deep effort requires an adequate ceiling) and pins that Fable stays out of the experiment.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-openai-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        "tests/guardrails/test_ai_review_effort.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }
