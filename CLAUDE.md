@@ -38,6 +38,114 @@ Usa il flusso completo (AUTO PR FLOW + AGENTS.md) per qualsiasi task che:
 
 Per domande, spiegazioni o analisi read-only non serve il flusso.
 
+## LE CINQUE REGOLE ANTI-REGRESSIONE — OBBLIGATORIE
+
+Valgono per **ogni** PR che tocca codice, in aggiunta al resto di questo file
+e ad AGENTS.md. Gli esempi qui sotto sono di questo repository e sono stati
+**misurati**, non ipotizzati.
+
+### 1. Test fail-first, sempre
+
+Prima il test che riproduce il difetto, **verificato rosso sul codice
+attuale**; poi la patch. Un test scritto dopo la patch dimostra solo che la
+patch fa quello che fa, non che il difetto è chiuso. Nel report va scritto
+l'esito del test **prima** della correzione, non solo dopo.
+
+### 2. Cerca la CLASSE, non il sito
+
+Prima di chiudere una PR, `grep` del pattern corretto su tutto il repository.
+
+**Esempio reale.** `core/trading_engine.py` sostituisce in silenzio un
+`_NullRiskMiddleware` che approva tutto quando il risk gate non è cablato.
+Correggere quello non basta: la stessa forma è su `_NullReconciliationEngine`
+(enqueue no-op, `is_ready()` sempre `True`) e su `_NullStateRecovery`
+(`recover()` sempre `ok`). **Tre siti, una sola classe di difetto.** Chi si
+ferma al primo chiude la PR col difetto ancora vivo.
+
+### 2-bis. Cerca i CONSUMATORI, non solo i siti
+
+Il grep della regola 2 trova i posti che hanno lo stesso difetto. **Non trova
+i posti che si fidavano del comportamento che stai cambiando.**
+
+Ogni volta che cambi un valore di ritorno, dove una funzione scrive, o una
+promessa del docstring (*non solleva* / *è best-effort* / *è idempotente*):
+
+- `grep` di **chi chiama** quella funzione — non del pattern del difetto;
+- per ciascun chiamante, leggi cosa fa del risultato: lo converte? si fida che
+  non sollevi? si aspetta il dato in quella posizione?
+- il test fail-first va scritto **sul chiamante**, non solo sulla funzione.
+
+**Esempio reale.** `list_runner_book` restituisce `[]` sia quando non ci sono
+dati sia quando il mercato è chiuso. La funzione è corretta e i suoi test
+passano. Il chiamante però non distingue *«ritenta al polling successivo»* da
+*«disattiva la regola»*, e una regola su mercato chiuso interrogherebbe
+Betfair per sempre. Il difetto è invisibile testando la funzione da sola.
+
+### 3. Fonte unica dove esiste
+
+Se una correzione va scritta in due posti, il posto giusto è **zero**: va
+estratta in una fonte unica **prima** di correggere. Due copie corrette oggi
+sono due copie divergenti domani.
+
+**Esempio reale.** Le mappe nomi/mercati esistono due volte: come profili su
+config (`core/name_mapping_store.py`, `core/market_mapping_store.py` — usati
+da 10 moduli) e come tabelle DB (`name_aliases`, `market_aliases` — presenti
+nella DDL, senza CRUD). Nessuna delle due è sbagliata; averle entrambe lo è.
+Vedi la decisione registrata su #290.
+
+### 4. Una PR aperta alla volta — **dimostrata, non dichiarata**
+
+PR che toccano lo stesso modulo in parallelo si conflittano, e il merge
+risolto a mano è dove nascono i difetti nuovi.
+
+A differenza delle altre quattro non è ispezionabile dal diff, ma è
+**verificabile**. Nell'hard verify va riportato l'**elenco effettivo** delle PR
+aperte al momento del controllo (tool MCP GitHub o API), non un PASS asserito.
+Elenco vuoto o contenente solo questa PR ⇒ PASS; qualsiasi altra PR aperta ⇒
+si dichiara quale e perché non è in conflitto, oppure FAIL.
+
+Elenco non ottenibile ⇒ **UNKNOWN con il motivo, mai PASS**. UNKNOWN blocca il
+DONE esattamente come un FAIL.
+
+### 5. Non toccare ciò che è dichiarato sano — **se è vincolato da test**
+
+Le aree da non toccare senza task esplicito sono il contratto degli ordini
+Betfair (`customerRef`/`customerOrderRef`, single-shot su `placeOrders`,
+tassonomia `order_unknown`), il filtro delle chat e i gate di money management.
+
+**Ma «dichiarato sano» significa qualcosa solo se ci sono test eseguibili che
+diventano rossi quando lo tocchi.** Una regola che vieta di toccare una cosa,
+appoggiata a una prova che non esiste, è il meccanismo con cui un difetto
+sopravvive per mesi.
+
+**Esempio reale.** La tab Telegram della GUI dichiara *«configurazione
+persistita, non ancora attiva a runtime»*. È falso dalla PR-5a: il path Bot API
+è cablato in `TelegramService` e si attiva da solo quando `api_id`/`api_hash`
+sono vuoti (`services/telegram_service.py:386`). L'affermazione è rimasta in
+piedi perché nessuno l'aveva misurata.
+
+Se un task sembra richiedere di toccare un'area dichiarata sana, **fermati e
+chiedi** invece di procedere.
+
+## MISURATO O RIFERITO — DICHIARA SEMPRE QUALE DEI DUE
+
+Quando scrivi in una doc, in un report o in un commento che qualcosa **è**
+in un certo modo, devi poter dire **come lo sai**. Le due categorie ammesse:
+
+| Etichetta | Significato |
+|---|---|
+| **misurato** | ho eseguito il comando / letto il log / ispezionato il file, e riporto l'evidenza |
+| **riferito** | me l'ha detto qualcuno, o l'ho letto in una doc che a sua volta non è misurata |
+
+Un'affermazione **riferita** non diventa vera perché è scritta in un file di
+questo repository. Non scrivere che un Secret esiste prima di aver visto il
+log che lo usa; non scrivere che un comportamento è verificato prima di averlo
+eseguito; non scrivere che un componente è attivo perché lo dice l'interfaccia.
+
+E una regola scritta può contenere, **nella stessa frase, l'affermazione e la
+sua smentita**: quando scrivi «solo X», controlla che il codice dica *solo X* e
+non *diverso da Y* — sono due cose opposte e si somigliano.
+
 ## LAVORO IN BACKGROUND — CICLO AUTONOMO E VERDETTO OBBLIGATORIO
 
 L'agente porta avanti l'intero ciclo PR **in autonomia, senza fermarsi ad
@@ -242,6 +350,59 @@ puliti → merge secondo la sezione AUTO-MERGE.
 **L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
 nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente
 checkout né esecuzione del codice PR, redazione segreti).
+
+**UN CHECK VERDE NON È PROVA DI REVIEW.** Un workflow di review esce **verde**
+anche quando non ha chiamato il modello: Secret assente, credito esaurito
+(HTTP 402), dedup su `done_marker` già presente. Nessun errore, nessun check
+rosso, e una PR con quattro spunte e zero righe lette. Per dichiarare che un
+reviewer ha coperto un head devi **leggere il log e trovare la riga d'uso
+token**. Se compare un `::notice` «non configurato», o il job è uscito dalla
+dedup, quel reviewer non ha revisionato: dichiaralo, non tacerlo.
+
+Corollario già costato caro su questo repository (#374, PR #8): la condizione
+«due giri full-range consecutivi sullo stesso head» è **impossibile per
+costruzione**, perché al secondo lancio la dedup fa uscire il job senza
+interrogare il modello. Il check è verde perché il job è uscito pulito, non
+perché qualcuno abbia revisionato.
+
+**Le due meccaniche delle label che non sono deducibili dai log.**
+
+- **Il gate si arma solo con la SUA label.** Su un evento `labeled` un workflow
+  si arma solo se la label **appena aggiunta** è la propria — non basta che sia
+  presente nell'elenco. Aggiungere `manual-review-required` a una PR che ha già
+  le label finali **non** rilancia i due reviewer forti.
+- **Una alla volta, mai in una sola chiamata.** Aggiungere entrambe le label
+  insieme emette un evento `labeled` per ciascuna; i job gatano su
+  `github.event.label.name`, l'evento della label che non è la propria viene
+  rifiutato dalla condizione e — col gruppo di concorrenza della PR — i job
+  buoni finiscono **skipped**. Il sintomo è «ho messo le label e i reviewer non
+  partono», e non è deducibile dai log. Rimuovi e riaggiungi **una alla volta**,
+  con una pausa fra le due.
+
+**I tre modi in cui un reviewer non vede il codice.** Prima di trattare un
+bloccante come reale, stabilisci in quale dei tre stati si trova.
+
+1. **File non inviato.** Ogni review stampa in fondo l'elenco dei file che il
+   workflow non le ha mandato. Se il file citato è lì, quella review non poteva
+   verificarlo — e questo è **tutto** ciò che l'omissione dimostra: non prova
+   che il difetto non esista.
+2. **File inviato TRONCATO.** È il caso peggiore, perché non si nota: il
+   modello riceve codice vero ma incompleto e conclude su ciò che manca. Un
+   bloccante nella forma «non verificabile dal diff» è tipicamente questo.
+3. **Review troncata in USCITA.** Il modello si interrompe a metà della propria
+   review. Una review interrotta **non è una review completa**: nessuna delle
+   sue omissioni prova niente, non ha finito di guardare.
+
+Regola di lettura degli stati 1 e 2: **non si patcha e non si archivia sulla
+fiducia, si verifica** — ispezione diretta del file, i test che lo vincolano, i
+suoi chiamanti. Verifica conferma ⇒ il difetto è reale e va corretto, chiunque
+l'abbia visto. Verifica smentisce ⇒ si risponde nel thread con quell'evidenza
+(comando eseguito, righe lette, esito), **non con un commit**. Verifica
+impossibile ⇒ si dichiara il limite e decide l'owner.
+
+Quando un reviewer etichetta i propri rilievi, un `[INSUFFICIENT_CONTEXT]` non
+è un difetto: è una **richiesta di verifica**, e va trattata come sopra.
+L'etichetta dice da dove viene il dubbio, non che il dubbio sia infondato.
 
 **Se una review segnala bloccanti** (bug, security, rischi Betfair/dutching/
 money management, gestione segreti, rischi workflow o `manual-review-required`):
@@ -473,6 +634,30 @@ chat non configurata => ignorata; nessun replay di messaggi vecchi senza
 dedup. Il parser non inventa mai dati mancanti (mercato, selezione, quota,
 stake). Token mai in log non redatto (`telegram_sanitizer`).
 
+### Marcatori e codifica — specifica di questo repository
+
+I marcatori del parser personalizzato (`start_after` / `end_before`) **non
+stanno nel sorgente: arrivano dalla configurazione dell'utente**, e i messaggi
+Telegram contengono emoji. Il confronto avviene quindi fra due stringhe di
+**provenienza diversa** — file di config e payload di rete — e questo lo rende
+più fragile, non meno.
+
+Un confronto su emoji che fallisce **non solleva un errore**: restituisce
+«non riconosciuto», e il segnale non produce mai un ordine senza che nessuno
+se ne accorga.
+
+- Ogni test su un parser con marcatore emoji deve confrontare i **codepoint**,
+  non fidarsi dell'aspetto visivo: `🆚` e la stessa emoji con un variation
+  selector si vedono identiche e **non** sono uguali.
+- Oggi non esiste alcuna normalizzazione unicode nel percorso di parsing
+  (verificato: nessun uso di `unicodedata` in `core/` e `services/`). Se
+  introduci una normalizzazione, va applicata **a entrambi i lati** del
+  confronto e coperta da un test che usa le due forme.
+- I file sorgente sono UTF-8. Un marcatore non ASCII incollato in una config
+  eredita la codifica di chi l'ha scritta: quando un parser «smette di
+  funzionare senza motivo», questo è il primo posto da guardare.
+
+
 ## QUANDO TOCCHI BETFAIR CLIENT / ORDINI
 
 Verifica almeno: idempotenza (stesso segnale => mai due ordini);
@@ -553,6 +738,82 @@ UI/UX della mini GUI e non deve mai restare disallineata dall'app reale.
   PR incompleta, non dichiarabile pronta.
 - Micro-audit e hard verify includono il check "design handoff aggiornato:
   PASS/FAIL/N/A" (vedi template in AGENTS.md).
+
+## GATE XVFB — PROVA D'INTEGRAZIONE OBBLIGATORIA IN OGNI PR
+
+**Non basta che i test hard passino: va dimostrato che il lavoro è davvero
+integrato e funzionante nell'applicazione reale.** Un test unitario verde
+prova che una funzione fa quello che fa; non prova che sia collegata a
+qualcosa. Questo repository ha già quattro sottosistemi scritti e **mai
+collegati** — il motore del parser (~3.150 righe che `telegram_listener.py:898`
+non chiama), `stake_mode.py` importato da nessuno, `core/risk_middleware.py`
+sostituito da un null object, `core/event_journal.py` scollegato. Ognuno ha i
+suoi test verdi. Questo gate esiste perché non succeda una quinta volta.
+
+### Cosa è obbligatorio
+
+Ogni PR che tocca una superficie osservabile — GUI, tab, pannelli, flussi di
+conferma, avvio/arresto, pipeline segnale→ordine, o qualunque cosa l'utente
+possa vedere o premere — deve includere una **prova d'integrazione eseguita
+sotto Xvfb**, con:
+
+- **avvio reale dell'applicazione** nel display virtuale (non un import, non un
+  mock): l'app deve partire davvero;
+- **i passaggi che esercitano il cambiamento** — click sui controlli reali,
+  scroll dove il contenuto eccede la finestra, cambio di tab, apertura delle
+  finestre secondarie coinvolte;
+- **screenshot** dei passaggi rilevanti, con lo stato prima e dopo quando la
+  modifica cambia ciò che si vede;
+- **zero eccezioni non gestite** durante il percorso, riportate come evidenza.
+
+### Come si esegue — verificato in questo ambiente
+
+Xvfb è disponibile e la GUI parte davvero: misurato il 2026-08-19, tutte e 12
+le tab renderizzate e catturate. Il percorso che funziona:
+
+1. `python3-tk` va installato e serve un interprete che ce l'abbia — non tutti
+   gli interpreti presenti lo hanno; `customtkinter` **non è in
+   `requirements.txt`** pur essendo indispensabile alla GUI, va installato a
+   parte;
+2. 🔴 **prima di avviare, neutralizza `config.json`**: svuota credenziali
+   Betfair, disabilita Telegram e proxy. `main.py` e i service registrano
+   sessioni all'avvio: far partire l'app con la config reale significa tentare
+   un login vero con le credenziali del proprietario. Verifica che nessun
+   valore originale sia rimasto **prima** di lanciare;
+3. avvia `Xvfb` su un display dedicato, poi istanzia la GUI con
+   `force_simulation=True` e pilotala dall'interno (cambio tab, scroll dei
+   contenitori scrollabili, click) invece di simulare eventi dall'esterno:
+   è deterministico e non dipende dai tempi di rendering;
+4. cattura con uno strumento di screenshot sul display virtuale.
+
+### Screenshot — regola segreti
+
+Prima di allegare o committare uno screenshot, **oscura credenziali, token,
+chat ID, percorsi locali e qualsiasi dato sensibile**. Uno screenshot è un
+canale di fuga come un log. Se lo screenshot serve solo come evidenza nel
+report della PR e non come documentazione, non va committato.
+
+### Cosa dichiarare, e cosa non si può dimostrare così
+
+Il gate copre l'integrazione nell'applicazione, **non** il comportamento
+contro servizi reali. Betfair live, Telegram live e l'esecuzione di ordini
+veri restano `MANUAL_ONLY` con checklist precisa: scriverlo, non spacciarlo.
+
+Se il cambiamento è puramente interno e non ha alcuna superficie osservabile
+(una funzione pura, una costante, una doc), dichiara **N/A con motivazione
+scritta**. Mai saltare in silenzio.
+
+Micro-audit e hard verify includono il check:
+
+```
+Prova d'integrazione Xvfb (avvio reale + click/scroll + screenshot):
+- PASS / FAIL / N/A con motivazione scritta / MANUAL_ONLY con checklist
+```
+
+Una PR che cambia una superficie osservabile senza prova d'integrazione è
+**incompleta** e non è dichiarabile pronta, esattamente come una PR senza
+test hard.
+
 
 ## PRIORITÀ TECNICHE DEL REPOSITORY
 

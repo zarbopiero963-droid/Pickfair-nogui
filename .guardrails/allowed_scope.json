@@ -1082,6 +1082,15 @@
       ],
       "max_files": 4,
       "allow_tests": false
+    },
+    "claude_md_antiregressione_xvfb": {
+      "description": "Integrazione in CLAUDE.md delle regole mancanti rispetto al CLAUDE.md di XTrader Signal Relay, adattate a Pickfair no-GUI e con esempi misurati su QUESTO repository: (1) LE CINQUE REGOLE ANTI-REGRESSIONE (test fail-first; cerca la CLASSE non il sito, con l'esempio dei tre null-object fail-open di core/trading_engine.py; 2-bis cerca i CONSUMATORI, con l'esempio di list_runner_book che non distingue 'nessun dato' da 'mercato chiuso'; fonte unica, con l'esempio del doppione name_mapping_store/market_mapping_store su config contro name_aliases/market_aliases su DB; una PR aperta alla volta DIMOSTRATA con elenco effettivo, UNKNOWN mai PASS; non toccare cio' che e' dichiarato sano SOLO se vincolato da test eseguibili, con l'esempio della nota GUI 'non ancora attiva a runtime' falsa dalla PR-5a); (2) MISURATO O RIFERITO, obbligo di dichiarare come si sa cio' che si afferma; (3) dentro AI PR REVIEW: un check verde non e' prova di review (riga d'uso token nel log, dedup su done_marker, HTTP 402), le due meccaniche delle label non deducibili dai log (il gate si arma solo con la SUA label; rimuovi/riaggiungi UNA ALLA VOLTA per il gruppo di concorrenza) e i tre modi in cui un reviewer non vede il codice (file non inviato, file troncato in input, review troncata in uscita) con la regola di lettura verifica-non-fiducia; (4) Marcatori e codifica, specifica di questo repository: i marcatori arrivano dalla config utente e non dal sorgente, confronto per codepoint, nessuna normalizzazione unicode oggi presente; (5) GATE XVFB, prova d'integrazione obbligatoria in ogni PR con avvio reale dell'app nel display virtuale, click/scroll/screenshot, neutralizzazione di config.json prima dell'avvio, regola segreti sugli screenshot e check PASS/FAIL/N/A in micro-audit e hard verify. Solo documentazione di policy: nessun codice runtime toccato.",
+      "files": [
+        "CLAUDE.md",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 2,
+      "allow_tests": false
     }
   }
 }
