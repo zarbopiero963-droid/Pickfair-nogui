@@ -20,11 +20,11 @@ Alzarlo non costa nulla di per se'; non alzarlo costa la validita' della misura.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Dict
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -42,18 +42,43 @@ EFFORT_PROFONDI = {"high", "xhigh", "max"}
 TETTO_MINIMO_PER_EFFORT_PROFONDO = 20000
 
 
-def _env(workflow: str) -> Dict[str, Any]:
-    dati = yaml.safe_load((ROOT / workflow).read_text(encoding="utf-8"))
-    job = (dati.get("jobs") or {}).get("review") or {}
-    return job.get("env") or {}
+def _testo(workflow: str) -> str:
+    percorso = ROOT / workflow
+    assert percorso.is_file(), (
+        f"{workflow} non esiste: se il workflow e' stato rinominato o rimosso, "
+        f"questo test va aggiornato nella stessa PR"
+    )
+    return percorso.read_text(encoding="utf-8")
+
+
+def _senza_commenti(testo: str) -> str:
+    """Righe di solo commento via: un rilievo su una parola dentro un commento
+    sarebbe un falso positivo, e un test che grida al lupo si smette di leggerlo."""
+    return "\n".join(r for r in testo.splitlines() if not r.strip().startswith("#"))
+
+
+def _env(workflow: str) -> Dict[str, str]:
+    """Legge il blocco `env:` del job leggendo il file, senza PyYAML.
+
+    PyYAML non e' garantito negli ambienti CI di questo repo — infatti gli altri
+    test sui workflow lo importano dentro un try/except. Importarlo in testa
+    faceva fallire la RACCOLTA dell'intero job, non solo questo test.
+    Le chiavi del job-env stanno a sei spazi d'indentazione: `      CHIAVE: valore`.
+    """
+    voci: Dict[str, str] = {}
+    for riga in _testo(workflow).splitlines():
+        m = re.match(r'^      ([A-Z][A-Z0-9_]*): +(.*?)\s*$', riga)
+        if m:
+            voci[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    return voci
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
 def test_block_effort_profondo_richiede_un_tetto_adeguato(workflow: str) -> None:
     """E' l'invariante che tiene in piedi la misura, non un dettaglio."""
     env = _env(workflow)
-    effort = str(env.get("REVIEW_EFFORT", "")).strip().lower()
-    tetto = int(str(env.get("MAX_OUTPUT_TOKENS", "0")))
+    effort = env.get("REVIEW_EFFORT", "").strip().lower()
+    tetto = int(env.get("MAX_OUTPUT_TOKENS", "0"))
 
     if effort not in EFFORT_PROFONDI:
         pytest.skip(f"{workflow}: effort '{effort}', la soglia non si applica")
@@ -76,7 +101,7 @@ def test_block_effort_arriva_da_env_non_scritto_nel_payload(workflow: str) -> No
     un'altra PR e un altro giro di review a pagamento — cioe' il contrario del
     motivo per cui l'esperimento esiste.
     """
-    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    testo = _testo(workflow)
     assert "REVIEW_EFFORT" in _env(workflow), f"{workflow}: REVIEW_EFFORT non nell'env"
     assert 'REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT"' in testo, (
         f"{workflow}: l'effort non viene letto dall'ambiente"
@@ -87,6 +112,29 @@ def test_block_effort_arriva_da_env_non_scritto_nel_payload(workflow: str) -> No
             f"{workflow}: effort scritto nel payload ({scritto}): non si potrebbe "
             f"piu' fermare l'esperimento dall'ambiente"
         )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
+def test_block_whitelist_solo_intersezione_sicura(workflow: str) -> None:
+    """La whitelist non deve ammettere livelli che un provider potrebbe rifiutare.
+
+    Rilievo di GPT-5.6 Sol e Fable: la validazione era la stessa per tutti e tre
+    ma i provider non accettano gli stessi livelli. Un valore rifiutato produce
+    400 e uccide la review — proprio il guasto che la guardia dovrebbe evitare —
+    e lo fa solo in CI, dove nessuno lo prova prima.
+    Si ammette percio' la sola intersezione documentata per tutti e tre. Allargarla
+    richiede di verificare il provider, non di procedere per analogia.
+    """
+    codice = _senza_commenti(_testo(workflow))
+    riga = next((r for r in codice.splitlines() if "_EFFORT_AMMESSI" in r and "=" in r), "")
+    assert riga, f"{workflow}: _EFFORT_AMMESSI non trovata"
+    ammessi = {v.strip().strip('"').strip("'") for v in
+               riga.split("{", 1)[1].rsplit("}", 1)[0].split(",") if v.strip()}
+    assert ammessi <= {"low", "medium", "high"}, (
+        f"{workflow}: la whitelist ammette {sorted(ammessi - {'low','medium','high'})}, "
+        f"livelli non documentati per tutti e tre i provider: un valore rifiutato "
+        f"darebbe 400 e la review andrebbe persa"
+    )
 
 
 def test_block_fable_resta_a_piena_profondita() -> None:
@@ -103,7 +151,9 @@ def test_block_fable_resta_a_piena_profondita() -> None:
         "Fable ha guadagnato un REVIEW_EFFORT: se e' voluto, va deciso "
         "esplicitamente e questo test aggiornato nella stessa PR"
     )
-    testo = (ROOT / WORKFLOW_FABLE).read_text(encoding="utf-8")
-    assert '"effort"' not in testo, (
-        "Fable ha guadagnato un parametro effort: senza, gira al default 'high'"
+    # Si guarda il codice, non i commenti: la parola "effort" in una spiegazione
+    # non e' un parametro, e un test che la scambiasse per tale sarebbe rumore.
+    codice = _senza_commenti(_testo(WORKFLOW_FABLE))
+    assert '"effort"' not in codice, (
+        "Fable ha guadagnato un parametro effort: senza, gira al default del modello"
     )

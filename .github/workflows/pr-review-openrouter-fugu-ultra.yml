@@ -96,8 +96,14 @@ jobs:
       #               raccomandano di riservarne >= 25.000
       #   OpenRouter- a "high" il reasoning prende ~80% di max_tokens (a "low" ~20%)
       # Con 3000 la review verrebbe TRONCATA e sembrerebbe che "high trova meno":
-      # conclusione opposta, e sbagliata. Il tetto e' un massimale, non un addebito:
-      # si paga cio' che viene generato, quindi alzarlo non costa nulla di per se'.
+      # conclusione opposta, e sbagliata.
+      # Due cose distinte, da non confondere:
+      #   il TETTO   e' un massimale, non un addebito: alzarlo da solo non costa
+      #   l'EFFORT   alto FA generare piu' token, e quelli si pagano come output
+      # Quindi questo esperimento costa di piu' — e' il punto: si misura quanto,
+      # e se i reperti in piu' lo giustificano. Il controllo non e' un tetto di
+      # spesa automatico, sono due: i workflow stampano costo e token a ogni
+      # review, e REVIEW_EFFORT qui sopra lo ferma cambiando una riga.
       MAX_OUTPUT_TOKENS: "25000"
 
       PRICE_INPUT_PER_MILLION: "5.00"
@@ -159,7 +165,12 @@ jobs:
           # Effort del ragionamento: da env, cosi' l'esperimento si ferma senza
           # toccare il codice. Un valore non valido farebbe 400 e ucciderebbe la
           # review, quindi si ripiega su "high" segnalandolo.
-          _EFFORT_AMMESSI = {"low", "medium", "high", "xhigh"}
+          # Solo l'intersezione sicura fra i tre provider. `xhigh`/`max` sono
+          # documentati da alcuni ma non da tutti: un valore rifiutato darebbe 400
+          # e ucciderebbe la review, cioe' proprio il guasto che questa guardia
+          # deve evitare. Se un domani serve un livello piu' alto, si allarga qui
+          # dopo aver verificato il provider, non per analogia con un altro.
+          _EFFORT_AMMESSI = {"low", "medium", "high"}
           REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "high").strip().lower()
           if REVIEW_EFFORT not in _EFFORT_AMMESSI:
               print(f"::warning::REVIEW_EFFORT={REVIEW_EFFORT!r} non valido "
