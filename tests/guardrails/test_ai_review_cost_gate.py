@@ -121,6 +121,45 @@ def test_pass_le_aree_critiche_restano_coperte(workflow: str, critico: str) -> N
     assert _spenderebbe(testo, critico), f"{critico} non e' piu' coperto in {workflow}"
 
 
+def test_block_i_tre_moduli_restano_solo_alla_radice() -> None:
+    """Il presupposto su cui poggia l'ancoraggio, verificato invece che assunto.
+
+    `^core/` e' corretto solo finche' i tre moduli stanno SOLO alla radice. Se
+    un domani nascesse del codice vero annidato — `pkg/core/x.py`, `app/services/
+    y.py` — la review forte verrebbe saltata su quel codice IN SILENZIO: nessun
+    errore, nessun avviso, solo un modulo di produzione che smette di essere
+    revisionato. E' lo stesso difetto che questa PR sta chiudendo, rovesciato.
+    Qui l'assunto diventa una condizione che la CI ricontrolla a ogni commit: se
+    diventa rosso, vanno riviste le regole nei due workflow, non questo test.
+
+    Si guardano i file TRACCIATI da git, non il filesystem: cosi' un .venv o una
+    cache locale non producono falsi allarmi, e si guarda esattamente cio' che
+    la Compare API vede.
+    """
+    import subprocess
+
+    esito = subprocess.run(
+        ["git", "ls-files", "-z"], check=False, capture_output=True, cwd=ROOT)
+    assert esito.returncode == 0, (
+        f"git ls-files non eseguibile: {esito.stderr.decode('utf-8', 'replace')}"
+    )
+    tracciati = esito.stdout.decode("utf-8").split("\0")
+
+    annidati = sorted({
+        "/".join(parti[:i + 1])
+        for percorso in tracciati if percorso
+        for parti in [percorso.split("/")]
+        for i, pezzo in enumerate(parti[:-1])
+        # i > 0  -> non e' la radice;  non sotto tests/ -> non e' una copia di test
+        if pezzo in SOLO_ALLA_RADICE and i > 0 and parti[0] != "tests"
+    })
+    assert not annidati, (
+        f"moduli annidati trovati: {annidati}. I pattern nei due workflow sono "
+        f"ancorati a ^, quindi questo codice NON riceverebbe la review forte, e "
+        f"lo farebbe in silenzio. Rivedere CORE_TRIGGER_PATTERNS."
+    )
+
+
 @pytest.mark.parametrize("workflow", WORKFLOWS)
 def test_block_niente_pattern_non_ancorati_sulle_tre_cartelle(workflow: str) -> None:
     """Blocca il ritorno esatto della forma difettosa, non solo il suo effetto.
