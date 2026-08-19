@@ -1138,6 +1138,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 3
+    },
+    "ci_costo_review_forti_tests_core": {
+      "description": "CI cost gate: the strong AI reviewers (Fable 5, Fugu Ultra) declare they do not spend on pushes touching only workflow/docs/test, but the CORE patterns were written (^|/)core/ and so also matched tests/core/, tests/services/ and tests/controllers/. Measured on PR #419: three pushes touching only tests/core/test_risk_gate.py ran both strong reviewers, ~$0.56 wasted, repeating on every PR touching those directories. The three real modules exist only at repo root, so the patterns are anchored with ^. Critical areas (workflows, requirements, betfair/telegram/money/...) are untouched and still trigger the strong review. A regression test extracts the patterns from the real workflow files and compiles them, so it verifies what actually ships.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        "tests/guardrails/test_ai_review_cost_gate.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }
