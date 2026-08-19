@@ -427,11 +427,19 @@ jobs:
               reasoning_tokens = int(details.get("reasoning_tokens") or (usage or {}).get("reasoning_tokens") or 0)
               api_total = int((usage or {}).get("total_tokens") or 0)
 
+              # Traccia SE i due valori vengono dall'API o da una stima locale:
+              # l'euristica sotto confronta e sottrae da api_total, che e' un
+              # valore API. Mescolare una stima locale con valori API produce un
+              # billed_output gonfiato o incoerente (rilievo Fable 5).
+              prompt_from_api = prompt_tokens > 0
+              completion_from_api = completion_tokens > 0
+
               if prompt_tokens <= 0:
                   prompt_tokens = max(1, len(system_prompt + user_prompt) // 4)
                   source = "stimato localmente"
               if completion_tokens <= 0:
                   completion_tokens = max(1, len(review) // 4)
+                  source = "stimato localmente"
 
               # NON e' documentato da xAI se completion_tokens INCLUDA gia' i
               # reasoning token (convenzione OpenAI) o li tenga FUORI: la guida
@@ -441,12 +449,25 @@ jobs:
               # convenzione, la si DEDUCE dai numeri che l'API stessa restituisce:
               # se il suo total supera prompt+completion, il reasoning e' contato
               # a parte e va aggiunto; altrimenti e' gia' dentro completion_tokens.
-              if api_total > prompt_tokens + completion_tokens:
+              # L'euristica vale SOLO se prompt e completion vengono entrambi
+              # dall'API: altrimenti si confronterebbe una stima locale con
+              # api_total e la sottrazione non avrebbe senso.
+              deducible = prompt_from_api and completion_from_api and api_total > 0
+              if deducible and api_total > prompt_tokens + completion_tokens:
                   billed_output = api_total - prompt_tokens
-                  convention = "reasoning FUORI da completion_tokens (dedotto da total_tokens)"
-              else:
+                  convention = "reasoning FUORI da completion_tokens, dedotto da total_tokens"
+              elif deducible:
                   billed_output = completion_tokens
-                  convention = "reasoning gia' incluso in completion_tokens"
+                  convention = "reasoning gia' incluso in completion_tokens, dedotto da total_tokens"
+              else:
+                  # Non deducibile: niente total_tokens utilizzabile, oppure uno dei
+                  # due valori e' una stima locale. Si NON afferma una convenzione:
+                  # si dichiara l'incertezza invece di pubblicare un numero che
+                  # sembra certo (rilievo GLM). Il reasoning, se riportato, viene
+                  # sommato perche' fra i due errori possibili la sottostima del
+                  # costo e' quella che nasconde spesa all'owner.
+                  billed_output = completion_tokens + reasoning_tokens
+                  convention = "convenzione NON deducibile: stima prudenziale, possibile sovrastima"
 
               total = prompt_tokens + billed_output
               estimated = prompt_tokens / 1_000_000 * PRICE_INPUT_PER_MILLION + billed_output / 1_000_000 * PRICE_OUTPUT_PER_MILLION

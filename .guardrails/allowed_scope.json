@@ -1127,7 +1127,7 @@
         "tests/unit/test_telegram_login.py",
         "tests/unit/test_telegram_multibot_runtime.py"
       ],
-      "max_files": 42
+      "max_files": 39
     }
   }
 }
