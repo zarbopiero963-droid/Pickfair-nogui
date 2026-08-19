@@ -188,12 +188,6 @@ class TradingEngine:
         self.executor = executor
         self.safe_mode = safe_mode or _NullSafeMode()
         self.risk_middleware = risk_middleware or _NullRiskMiddleware()
-        # H-04: un gate assente non deve poter passare per un gate che approva.
-        # `is_wired()` esiste solo sul segnaposto; un gate reale non lo espone e
-        # vale come cablato.
-        self.risk_gate_wired: bool = bool(
-            getattr(self.risk_middleware, "is_wired", lambda: True)()
-        )
         if not self.risk_gate_wired:
             logger.warning(
                 "RISK GATE NON CABLATO: TradingEngine sta usando il segnaposto che "
@@ -258,6 +252,26 @@ class TradingEngine:
 
     def readiness(self) -> Dict[str, Any]:
         return {"state": self._runtime_state, "health": dict(self._health)}
+
+    @property
+    def risk_gate_wired(self) -> bool:
+        """Se il gate ATTUALE e' reale o e' il segnaposto (H-04).
+
+        Calcolata al momento, non memorizzata in __init__: se qualcuno
+        sostituisce `risk_middleware` dopo la costruzione, un valore congelato
+        direbbe il falso proprio nel punto in cui conta (rilievo Fable 5).
+        `is_wired()` esiste solo sul segnaposto; un gate reale non lo espone e
+        vale come cablato. Se `is_wired` esplode, si assume NON cablato: il
+        dubbio, qui, va risolto verso la prudenza.
+        """
+        probe = getattr(self.risk_middleware, "is_wired", None)
+        if not callable(probe):
+            return True
+        try:
+            return probe() is not False
+        except Exception:
+            logger.exception("is_wired() del risk gate ha sollevato -> assumo NON cablato")
+            return False
 
     def _risk_gate_health(self) -> Dict[str, Any]:
         """Salute del risk gate, che distingue CABLATO da SEGNAPOSTO (H-04).
@@ -1332,6 +1346,18 @@ class TradingEngine:
         if "allowed" not in result:
             logger.error("Risk gate ha restituito un dict senza 'allowed' -> DENY")
             return self._risk_deny(request, "RISK_GATE_NO_VERDICT")
+
+        # Il verdetto deve essere un bool VERO, non qualcosa di truthy.
+        # Il chiamante legge `bool(risk_result.get("allowed", False))`, e in Python
+        # bool("false") e bool("no") valgono True: un gate che rispondesse la
+        # stringa "false" AUTORIZZEREBBE l'ordine. Stessa trappola con 1, con le
+        # liste non vuote e con qualunque oggetto che definisca __bool__.
+        # `is True` / `is False` accetta solo i due singleton: niente coercizione.
+        verdict = result["allowed"]
+        if verdict is not True and verdict is not False:
+            logger.error("Risk gate ha restituito allowed=%r (%s) invece di bool -> DENY",
+                         verdict, type(verdict).__name__)
+            return self._risk_deny(request, "RISK_GATE_NON_BOOLEAN_VERDICT")
         return result
 
     # ==================================================================

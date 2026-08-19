@@ -160,7 +160,94 @@ def test_pass_gate_reale_risulta_cablato() -> None:
     assert engine.readiness()["health"]["risk_middleware"]["wired"] is True
 
 
-def test_block_segnaposto_marca_la_propria_decisione() -> None:
-    """Anche quando approva, si firma: chi legge l'audit distingue il permesso
-    di un gate reale da quello di un segnaposto."""
-    assert _NullRiskMiddleware().check(REQUEST)["gate"] == "UNWIRED"
+def test_known_gap_il_segnaposto_approva_e_lo_dichiara() -> None:
+    """LACUNA NOTA, non un comportamento voluto.
+
+    Finche' nessun gate reale esiste nel repo, il segnaposto APPROVA: e' il
+    fail-open residuo di H-04, che questa PR rende visibile ma non chiude.
+    Il test lo fissa per iscritto perche' non venga scambiato per sicurezza, e
+    perche' `gate: UNWIRED` permetta all'audit di distinguere questo permesso da
+    quello di un gate vero. Quando il gate reale arrivera', questo test va
+    SOSTITUITO da uno che pretende il rifiuto.
+    """
+    decision = _NullRiskMiddleware().check(REQUEST)
+    assert decision["gate"] == "UNWIRED", "il permesso del segnaposto deve essere riconoscibile"
+    assert decision["allowed"] is True, "lacuna nota: senza gate reale si approva ancora"
+
+
+# --------------------------------------------------------------------------
+# BLOCK: il verdetto deve essere un bool VERO, non qualcosa di truthy
+# --------------------------------------------------------------------------
+class _Truthy:
+    """Un gate che risponde con qualcosa di truthy al posto di True."""
+    def __init__(self, verdict: Any) -> None: self._v = verdict
+    def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"allowed": self._v, "reason": None, "payload": payload}
+    def is_ready(self) -> bool: return True
+
+
+class _AlwaysTrue:
+    def __bool__(self) -> bool: return True
+
+
+@pytest.mark.parametrize(
+    "verdict",
+    ["false", "no", "False", "0", 1, -1, 3.14, [0], {"x": 1}, _AlwaysTrue()],
+    ids=["str_false", "str_no", "str_False", "str_zero", "int_1", "int_neg",
+         "float", "lista", "dict", "oggetto_con_bool"],
+)
+def test_block_verdetto_non_booleano_viene_negato(verdict: Any) -> None:
+    """Il chiamante fa `bool(risk_result.get("allowed", False))`.
+
+    bool("false") e' True: un gate che rispondesse la stringa "false"
+    AUTORIZZEREBBE l'ordine. Tutti questi valori sono truthy o comunque non
+    booleani e devono essere rifiutati PRIMA di arrivare al chiamante.
+    """
+    result = _engine(_Truthy(verdict))._risk_gate(REQUEST)
+
+    assert result["allowed"] is False, (
+        f"allowed={verdict!r} e' passato: bool() lo avrebbe reso un'autorizzazione"
+    )
+    assert result["reason"] == "RISK_GATE_NON_BOOLEAN_VERDICT"
+
+
+@pytest.mark.parametrize("verdict", [0, 0.0, "", [], None], ids=["0", "0.0", "vuota", "lista", "None"])
+def test_block_verdetto_falsy_ma_non_bool_viene_comunque_negato(verdict: Any) -> None:
+    """Anche i falsy non-bool vanno rifiutati con motivo esplicito: un gate che
+    non parla il contratto e' rotto, non 'implicitamente prudente'."""
+    result = _engine(_Truthy(verdict))._risk_gate(REQUEST)
+    assert result["allowed"] is False
+    assert result["reason"] == "RISK_GATE_NON_BOOLEAN_VERDICT"
+
+
+def test_pass_i_due_booleani_veri_passano() -> None:
+    assert _engine(_Truthy(True))._risk_gate(REQUEST)["allowed"] is True
+    assert _engine(_Truthy(False))._risk_gate(REQUEST)["allowed"] is False
+
+
+# --------------------------------------------------------------------------
+# BLOCK: lo stato di cablatura non deve restare indietro
+# --------------------------------------------------------------------------
+def test_block_wired_segue_la_sostituzione_a_runtime() -> None:
+    """Se il gate viene sostituito dopo la costruzione, `risk_gate_wired` e la
+    readiness devono dire la verita' sul gate ATTUALE, non su quello iniziale."""
+    engine = _engine()
+    assert engine.risk_gate_wired is False
+
+    engine.risk_middleware = _Allows()
+    assert engine.risk_gate_wired is True, "valore congelato in __init__: direbbe il falso"
+
+    engine.risk_middleware = _NullRiskMiddleware()
+    assert engine.risk_gate_wired is False
+
+
+class _WiredExplodes:
+    def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"allowed": True, "reason": None, "payload": payload}
+    def is_ready(self) -> bool: return True
+    def is_wired(self) -> bool: raise RuntimeError("boom")
+
+
+def test_block_is_wired_che_solleva_vale_come_non_cablato() -> None:
+    """Nel dubbio si dichiara il gate assente: e' il verso prudente."""
+    assert _engine(_WiredExplodes()).risk_gate_wired is False
