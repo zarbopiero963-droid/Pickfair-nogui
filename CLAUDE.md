@@ -127,6 +127,54 @@ piedi perché nessuno l'aveva misurata.
 Se un task sembra richiedere di toccare un'area dichiarata sana, **fermati e
 chiedi** invece di procedere.
 
+## LA PATCH È CODICE NUOVO — NON INTRODURRE DIFETTI CORREGGENDO
+
+Le cinque regole qui sopra si applicano al difetto che stai chiudendo. **Si
+applicano anche alla tua correzione**, che è codice nuovo scritto in fretta,
+sotto la pressione di un ciclo di review già aperto, ed è il posto dove i
+difetti nuovi nascono più spesso.
+
+**Il pattern che si ripete**, e da cui viene questa regola: si analizza **un**
+percorso di uscita, si scrive il fix per quello, e si generalizza agli altri
+**senza eseguirli**. Il fix è corretto sul ramo guardato e sbagliato sugli
+altri, e nessun test lo intercetta perché i test coprono il ramo che si stava
+guardando.
+
+Casi misurati su questo repository e sui suoi fratelli:
+
+- una validazione degli host aggiunta senza derivare l'host di identity ⇒ login
+  su un dominio e keepAlive su un altro, sessione mai rinnovata;
+- un fix del circuit breaker che rendeva 429 e 408 né ritentabili né contati;
+- un guard HALF_OPEN aggiunto senza controllo di proprietà, e poi col token non
+  invalidato fra i cicli — **due giri per lo stesso guard**;
+- una condizione di troncamento corretta come whitelist in un workflow e
+  lasciata nella forma debole negli altri due: **regola 2 non applicata alla
+  propria patch**.
+
+Tutti e quattro sono difetti *della correzione*, non del difetto originale.
+
+### Cosa è obbligatorio prima di dichiarare chiusa una patch
+
+- **Enumera i percorsi di uscita** della funzione che stai toccando — successo,
+  ogni errore, timeout, valore assente, tipo inatteso — e **eseguili**. Non
+  dedurre il comportamento di un ramo da quello di un altro: se non l'hai
+  eseguito, non lo sai.
+- **Applica la regola 2 alla tua stessa patch**: se hai corretto una forma in
+  un punto, `grep` della stessa forma altrove. Il caso della whitelist nasce
+  esattamente da qui.
+- **Applica la regola 2-bis alla tua stessa patch**: se la correzione cambia un
+  valore di ritorno o una promessa, i chiamanti vanno riletti.
+- **Audit dei call-site** della funzione corretta, non solo dei suoi test.
+
+### Il segnale d'allarme
+
+Se una PR supera i tre giri di patch e ogni giro produce un rilievo nuovo sulla
+**stessa area**, non stai convergendo: stai inseguendo la tua stessa
+correzione. Fermati, enumera i percorsi, ed esegui — invece di scrivere il
+quinto fix. Se dopo l'enumerazione i rilievi continuano a cambiare forma,
+**dichiara lo stato all'owner e chiedi**, non spendere un altro giro.
+
+
 ## MISURATO O RIFERITO — DICHIARA SEMPRE QUALE DEI DUE
 
 Quando scrivi in una doc, in un report o in un commento che qualcosa **è**
@@ -166,6 +214,25 @@ Il ciclo termina SEMPRE in uno di questi due esiti — mai in attesa passiva:
 
 Un ciclo che finisce senza merge eseguito né verdetto esplicito consegnato
 all'owner è un ciclo incompleto.
+
+**Il verdetto vale anche senza PR.** La regola sopra presuppone una PR aperta,
+ma il caso più frequente è un altro: lavoro completo, branch pushato, PR non
+ancora aperta — perché l'owner ha chiesto di aprirla lui, o perché il flusso si
+è fermato prima. Anche lì il ciclo **non può chiudersi in silenzio**: va
+consegnato lo stesso verdetto, riferito al **branch** invece che alla PR, e
+deve dire almeno:
+
+- cosa è stato verificato e **come** (comandi eseguiti, esito, evidenza) —
+  distinguendo misurato da riferito;
+- cosa **non** è stato verificato, e perché;
+- quali gate di questo file sono soddisfatti, quali no e quali sono N/A con
+  motivo — inclusi il gate design handoff e il gate Xvfb;
+- lo stato esplicito: **PRONTA PER MERGE** (una volta aperta la PR e passati i
+  check) / **NEEDS_MANUAL** / **PARTIAL** / **NOT DONE**, con il motivo preciso.
+
+Consegnare il branch dicendo solo «fatto, dimmi se apro la PR» è un ciclo
+incompleto: manca il verdetto, che è la parte che serve all'owner per decidere.
+
 
 ## AUTO PR FLOW (OBBLIGATORIO)
 
