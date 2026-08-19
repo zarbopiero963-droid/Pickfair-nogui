@@ -1128,6 +1128,16 @@
         "tests/unit/test_telegram_multibot_runtime.py"
       ],
       "max_files": 39
+    },
+    "risk_gate_fail_closed_h04": {
+      "description": "H-04/R2: make the TradingEngine risk gate FAIL-CLOSED. Every anomalous path (missing/non-callable check, raising checker, non-dict result, dict without 'allowed') previously fell through to {'allowed': True}, so a BROKEN gate let money through and was indistinguishable from a real approval. Each path now denies with its own reason. Also makes the unwired state visible: the placeholder declares is_wired()=False, the engine records risk_gate_wired and readiness() reports it as DEGRADED with a reason. NOTE: this does NOT complete H-04 — core/risk_middleware.py exposes no check() and is a bus subscriber, so no real gate exists in the repo yet to make mandatory.",
+      "allow_tests": true,
+      "files": [
+        "core/trading_engine.py",
+        "tests/core/test_trading_engine_risk_gate_fail_closed.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 3
     }
   }
 }

@@ -103,9 +103,23 @@ class _NullSafeMode:
 
 
 class _NullRiskMiddleware:
+    """Segnaposto usato quando NESSUN risk gate reale e' stato cablato.
+
+    Approva tutto: e' il fail-open storico di H-04/R2. Resta approvante per non
+    fermare test e simulazione, ma da qui in poi si DICHIARA non cablato via
+    `is_wired()`, cosi' che l'engine possa esporlo nella readiness invece di
+    farlo sembrare un gate funzionante.
+
+    ATTENZIONE: nel repo NON esiste ancora un gate reale da mettere al suo
+    posto. `core/risk_middleware.py` NON e' un sostituto: e' un sottoscrittore
+    di eventi sul bus e non espone `check()`, quindi cablarlo qui lascerebbe
+    `_risk_gate` senza `check` — cioe' fail-open travestito da risolto.
+    """
+
     def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        return {"allowed": True, "reason": None, "payload": payload}
+        return {"allowed": True, "reason": None, "payload": payload, "gate": "UNWIRED"}
     def is_ready(self) -> bool: return True
+    def is_wired(self) -> bool: return False
 
 
 class _NullReconciliationEngine:
@@ -174,6 +188,12 @@ class TradingEngine:
         self.executor = executor
         self.safe_mode = safe_mode or _NullSafeMode()
         self.risk_middleware = risk_middleware or _NullRiskMiddleware()
+        if not self.risk_gate_wired:
+            logger.warning(
+                "RISK GATE NON CABLATO: TradingEngine sta usando il segnaposto che "
+                "approva ogni richiesta. Nessun limite di rischio viene applicato. "
+                "Vedi readiness()['health']['risk_middleware']."
+            )
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery = state_recovery or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
@@ -211,7 +231,7 @@ class TradingEngine:
             "client_getter": self._dep(self.client_getter, required=True),
             "executor": self._dep(self.executor, required=False),
             "safe_mode": self._dep(self.safe_mode, required=False),
-            "risk_middleware": self._dep(self.risk_middleware, required=False),
+            "risk_middleware": self._risk_gate_health(),
             "reconciliation_engine": self._dep(self.reconciliation_engine, required=False),
             "state_recovery": self._dep(self.state_recovery, required=False),
             "async_db_writer": self._dep(self.async_db_writer, required=False),
@@ -232,6 +252,48 @@ class TradingEngine:
 
     def readiness(self) -> Dict[str, Any]:
         return {"state": self._runtime_state, "health": dict(self._health)}
+
+    @property
+    def risk_gate_wired(self) -> bool:
+        """Se il gate ATTUALE e' reale o e' il segnaposto (H-04).
+
+        Calcolata al momento, non memorizzata in __init__: se qualcuno
+        sostituisce `risk_middleware` dopo la costruzione, un valore congelato
+        direbbe il falso proprio nel punto in cui conta (rilievo Fable 5).
+        `is_wired()` esiste solo sul segnaposto; un gate reale non lo espone e
+        vale come cablato. Ma se lo espone, si accetta SOLO `True`: `is not False`
+        avrebbe contato come cablati anche `None`, `0`, `""` — cioe' un gate con
+        `is_wired()` difettoso sarebbe risultato operativo nella readiness
+        (rilievo GPT-5.6 Sol e Fable 5). Se `is_wired` esplode, si assume NON
+        cablato. In ogni ramo ambiguo la risposta e' "non cablato": qui il dubbio
+        si risolve verso la prudenza, non verso la comodita'.
+        """
+        probe = getattr(self.risk_middleware, "is_wired", None)
+        if not callable(probe):
+            return True
+        try:
+            return probe() is True
+        except Exception:
+            logger.exception("is_wired() del risk gate ha sollevato -> assumo NON cablato")
+            return False
+
+    def _risk_gate_health(self) -> Dict[str, Any]:
+        """Salute del risk gate, che distingue CABLATO da SEGNAPOSTO (H-04).
+
+        `_dep()` non basta: il segnaposto risponde `is_ready() -> True` e
+        risulterebbe READY come un gate vero. Un gate che non c'e' e' DEGRADED,
+        e il motivo lo dice a chi legge la readiness.
+        """
+        base = self._dep(self.risk_middleware, required=False)
+        if not self.risk_gate_wired:
+            return {
+                "state": DEGRADED,
+                "reason": "risk_gate_not_wired",
+                "detail": "segnaposto che approva ogni richiesta: nessun limite applicato",
+                "wired": False,
+            }
+        base["wired"] = True
+        return base
 
     def _dep(self, dep: Any, *, required: bool) -> Dict[str, Any]:
         if dep is None:
@@ -1253,13 +1315,54 @@ class TradingEngine:
         getter = getattr(self.safe_mode, "is_enabled", None)
         return bool(getter()) if callable(getter) else False
 
+    @staticmethod
+    def _risk_deny(request: Dict[str, Any], reason: str) -> Dict[str, Any]:
+        return {"allowed": False, "reason": reason, "payload": request}
+
     def _risk_gate(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """FAIL-CLOSED: qualsiasi anomalia del gate NEGA l'ordine (H-04).
+
+        Prima ogni percorso anomalo — `check` assente, non callable, risultato
+        non-dict, dict senza `allowed`, eccezione sollevata — cadeva sullo
+        stesso `return {"allowed": True}`. Cioe' un gate ROTTO lasciava passare
+        denaro, ed era indistinguibile da un gate che aveva davvero approvato:
+        l'evento RISK_DECISION riportava un permesso che nessuno aveva dato.
+
+        Ora ogni percorso anomalo nega con un motivo suo, cosi' il rifiuto e'
+        leggibile in RISK_DENIED e nell'esito dell'ordine.
+        """
         checker = getattr(self.risk_middleware, "check", None)
-        if callable(checker):
+        if not callable(checker):
+            logger.error("Risk gate senza check() callable -> DENY (fail-closed)")
+            return self._risk_deny(request, "RISK_GATE_MISSING_CHECK")
+
+        try:
             result = checker(request)
-            if isinstance(result, dict) and "allowed" in result:
-                return result
-        return {"allowed": True, "reason": None, "payload": request}
+        except Exception:
+            # Un gate che esplode non e' un gate che approva.
+            logger.exception("Risk gate ha sollevato -> DENY (fail-closed)")
+            return self._risk_deny(request, "RISK_GATE_RAISED")
+
+        if not isinstance(result, dict):
+            logger.error("Risk gate ha restituito %s invece di dict -> DENY",
+                         type(result).__name__)
+            return self._risk_deny(request, "RISK_GATE_BAD_RESULT_TYPE")
+        if "allowed" not in result:
+            logger.error("Risk gate ha restituito un dict senza 'allowed' -> DENY")
+            return self._risk_deny(request, "RISK_GATE_NO_VERDICT")
+
+        # Il verdetto deve essere un bool VERO, non qualcosa di truthy.
+        # Il chiamante legge `bool(risk_result.get("allowed", False))`, e in Python
+        # bool("false") e bool("no") valgono True: un gate che rispondesse la
+        # stringa "false" AUTORIZZEREBBE l'ordine. Stessa trappola con 1, con le
+        # liste non vuote e con qualunque oggetto che definisca __bool__.
+        # `is True` / `is False` accetta solo i due singleton: niente coercizione.
+        verdict = result["allowed"]
+        if verdict is not True and verdict is not False:
+            logger.error("Risk gate ha restituito allowed=%r (%s) invece di bool -> DENY",
+                         verdict, type(verdict).__name__)
+            return self._risk_deny(request, "RISK_GATE_NON_BOOLEAN_VERDICT")
+        return result
 
     # ==================================================================
     # DEDUP
