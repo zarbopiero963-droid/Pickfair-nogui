@@ -261,14 +261,18 @@ class TradingEngine:
         sostituisce `risk_middleware` dopo la costruzione, un valore congelato
         direbbe il falso proprio nel punto in cui conta (rilievo Fable 5).
         `is_wired()` esiste solo sul segnaposto; un gate reale non lo espone e
-        vale come cablato. Se `is_wired` esplode, si assume NON cablato: il
-        dubbio, qui, va risolto verso la prudenza.
+        vale come cablato. Ma se lo espone, si accetta SOLO `True`: `is not False`
+        avrebbe contato come cablati anche `None`, `0`, `""` — cioe' un gate con
+        `is_wired()` difettoso sarebbe risultato operativo nella readiness
+        (rilievo GPT-5.6 Sol e Fable 5). Se `is_wired` esplode, si assume NON
+        cablato. In ogni ramo ambiguo la risposta e' "non cablato": qui il dubbio
+        si risolve verso la prudenza, non verso la comodita'.
         """
         probe = getattr(self.risk_middleware, "is_wired", None)
         if not callable(probe):
             return True
         try:
-            return probe() is not False
+            return probe() is True
         except Exception:
             logger.exception("is_wired() del risk gate ha sollevato -> assumo NON cablato")
             return False

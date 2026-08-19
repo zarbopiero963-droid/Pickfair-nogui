@@ -251,3 +251,40 @@ class _WiredExplodes:
 def test_block_is_wired_che_solleva_vale_come_non_cablato() -> None:
     """Nel dubbio si dichiara il gate assente: e' il verso prudente."""
     assert _engine(_WiredExplodes()).risk_gate_wired is False
+
+
+class _WiredReturns:
+    def __init__(self, v: Any) -> None: self._v = v
+    def check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return {"allowed": True, "reason": None, "payload": payload}
+    def is_ready(self) -> bool: return True
+    def is_wired(self) -> Any: return self._v
+
+
+@pytest.mark.parametrize(
+    "value", [None, 0, "", [], {}, "si", 1, "True"],
+    ids=["None", "zero", "vuota", "lista", "dict", "str_si", "int_1", "str_True"],
+)
+def test_block_is_wired_non_booleano_vale_come_non_cablato(value: Any) -> None:
+    """`is not False` avrebbe contato come CABLATI tutti questi valori.
+
+    Un gate con `is_wired()` difettoso sarebbe cosi' risultato operativo nella
+    readiness, che e' il contrario della prudenza dichiarata. Si accetta solo il
+    singleton `True`.
+    """
+    assert _engine(_WiredReturns(value)).risk_gate_wired is False, (
+        f"is_wired()={value!r} e' stato contato come gate cablato"
+    )
+
+
+def test_pass_is_wired_true_vale_come_cablato() -> None:
+    assert _engine(_WiredReturns(True)).risk_gate_wired is True
+
+
+def test_block_property_senza_setter_non_rompe_nessuno() -> None:
+    """`risk_gate_wired` e' una property in sola lettura: chi provasse ad
+    assegnarla otterrebbe AttributeError. Nessun codice lo fa (verificato con
+    grep sull'intero repo), ma il test lo fissa perche' resti vero."""
+    engine = _engine()
+    with pytest.raises(AttributeError):
+        engine.risk_gate_wired = True  # type: ignore[misc]
