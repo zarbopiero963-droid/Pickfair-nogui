@@ -108,7 +108,7 @@ def test_block_nessun_riferimento_pendente_ai_workflow_ritirati() -> None:
     """Un `workflow_run` che aspetta un workflow inesistente non da' errore:
     semplicemente non parte mai. Un innesco morto in silenzio e' peggio di uno
     rotto, perche' sembra che ci sia."""
-    nomi_file = {n for n in RITIRATI}
+    nomi_file = set(RITIRATI)
     pendenti = []
     for f in _workflow_files():
         for riga in f.read_text(encoding="utf-8").splitlines():
