@@ -1151,6 +1151,30 @@
       ],
       "max_files": 5
     },
+    "ci_costo_review_forti_tests_core": {
+      "description": "CI cost gate: the strong AI reviewers (Fable 5, Fugu Ultra) declare they do not spend on pushes touching only workflow/docs/test, but the CORE patterns were written (^|/)core/ and so also matched tests/core/, tests/services/ and tests/controllers/. Measured on PR #419: three pushes touching only tests/core/test_risk_gate.py ran both strong reviewers, ~$0.56 wasted, repeating on every PR touching those directories. The three real modules exist only at repo root, so the patterns are anchored with ^. Critical areas (workflows, requirements, betfair/telegram/money/...) are untouched and still trigger the strong review. A regression test extracts the patterns from the real workflow files and compiles them, so it verifies what actually ships.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        "tests/guardrails/test_ai_review_cost_gate.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
+    },
+    "ci_range_review_solo_file_della_pr": {
+      "description": "AI review range: GitHub's push-range compare is merge-base(base, head)...head, so a push that merges the base branch into the PR pulls in everything coming from main - code already reviewed, already merged and already paid for. Measured on PR #420, push 49dc486...3488672: 5 files in the range, 4 of them from main; one reviewer's prompt went from ~13k to 48k tokens, ~$0.57 in a single push across the two strong reviewers, and the reviews flagged as 'not verifiable, truncated' a file that was not even part of that PR. The range is now intersected with the files the PR actually changes against its own base, before the cost gate, so a push that changes nothing of the PR never reaches the model. A normal push is unaffected (everything you push is yours). On a GitHub API error the range is NOT restricted - reviewing more is the prudent direction. A regression test extracts the function from the real workflow files and runs it, so it verifies what actually ships.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openai-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        "tests/guardrails/test_ai_review_range_solo_pr.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
+    },
     "ci_esperimento_effort_reviewer_economici": {
       "description": "Experiment (2 PRs): the three non-Anthropic reviewers ran at reasoning effort 'low', below their own model default (grok-4.6 defaults to 'high'). Fable, the only one at full depth, was the only one finding real defects. Raise them to 'high' via a REVIEW_EFFORT env var and compare cost and findings against the 'low' period; reverting is a one-line env change, no code edit and no extra paid review round. MAX_OUTPUT_TOKENS raised from 3000 to 25000 on those three because at deep effort reasoning eats that ceiling (OpenAI: reasoning tokens count against max_output_tokens, they recommend reserving >= 25000; OpenRouter: ~80% of max_tokens at 'high' vs ~20% at 'low') - with 3000 the review would be truncated and it would look like high effort finds less, the opposite of the truth. The ceiling is a cap, not a charge. A test pins the invariant (deep effort requires an adequate ceiling) and pins that Fable stays out of the experiment.",
       "allow_tests": true,
