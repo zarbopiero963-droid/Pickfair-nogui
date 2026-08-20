@@ -72,11 +72,24 @@ ALWAYS_RECORDED = frozenset().union(
 # una proprieta' del FLUSSO di esecuzione, non del recorder: due thread che processano
 # due messaggi diversi devono avere due catene distinte senza passarsele a mano.
 #
-# LIMITE DICHIARATO: un thread nuovo NON eredita il contesto di chi lo ha creato. Una
-# catena che nasce nel thread Telegram e prosegue in quello Tk va ricucita passando
-# `root` esplicitamente (o con `chain(root)` nel thread di destinazione). Non e'
-# aggirabile qui: ereditare implicitamente attraverso i thread e' proprio il modo in cui
-# si producono correlazioni SBAGLIATE, che sono peggio di correlazioni assenti.
+# Due limiti, di segno opposto, entrambi dichiarati.
+#
+# 1. Un thread NUOVO non eredita il contesto di chi lo ha creato: una catena che nasce
+#    nel thread Telegram e prosegue in quello Tk va ricucita con `chain(root)` nel punto
+#    di destinazione. Non e' aggirabile, ed e' voluto — ereditare implicitamente
+#    attraverso i thread e' proprio il modo in cui si producono correlazioni SBAGLIATE,
+#    peggiori di correlazioni assenti.
+#
+# 2. Un thread RIUSATO (pool) conserva invece i valori lasciati dal lavoro PRECEDENTE
+#    (rilievo di Fugu su #427, accolto). Un `record(..., start_chain=True)` che non
+#    venga chiuso lascia la catena appesa: il messaggio successivo servito dallo stesso
+#    thread erediterebbe il `root` di quello prima, e il diario mostrerebbe due giocate
+#    distinte come una sola — l'errore esattamente opposto a quello che il punto 1
+#    evita, e altrettanto grave.
+#
+#    Per questo la via maestra e' `open_chain(...)`, che apre e CHIUDE la catena per
+#    costruzione. La forma `record(..., start_chain=True)` resta per chi controlla lui
+#    stesso l'ambito, e va usata solo la' dove la chiusura e' garantita.
 _current_root: contextvars.ContextVar = contextvars.ContextVar(
     "pickfair_recorder_root", default=None)
 _current_corr: contextvars.ContextVar = contextvars.ContextVar(
@@ -231,6 +244,31 @@ class SessionRecorder:
             _current_root.reset(token_root)
             _current_corr.reset(token_corr)
 
+    @contextlib.contextmanager
+    def open_chain(self, event_type, *, level=None, **data):
+        """Apre una catena registrando l'evento capostipite, e la CHIUDE all'uscita.
+
+        E' la forma da preferire: su un thread di un pool la catena non sopravvive al
+        lavoro corrente, quindi il messaggio successivo servito dallo stesso thread non
+        eredita il `root` di quello prima.
+
+        Restituisce l'id del capostipite, oppure `None` se l'evento non e' stato scritto
+        (recorder spento, path assente): in quel caso il blocco gira lo stesso, e gli
+        eventi interni semplicemente non avranno `root`. Un recorder spento non deve
+        cambiare il flusso del chiamante.
+
+            with recorder.open_chain("TG_MESSAGE_IN", chat=impronta) as root:
+                ...   # tutto cio' che segue porta questo `root`
+        """
+        precedente_root = _current_root.get()
+        precedente_corr = _current_corr.get()
+        radice = self.record(event_type, level=level, start_chain=True, **data)
+        try:
+            yield radice
+        finally:
+            _current_root.set(precedente_root)
+            _current_corr.set(precedente_corr)
+
     @staticmethod
     def clear_chain() -> None:
         """Chiude la catena corrente (gli eventi successivi non avranno `root`)."""
@@ -248,7 +286,10 @@ class SessionRecorder:
         scartato la ripetizione, path non impostato.
 
         - `start_chain=True` apre una catena: l'evento diventa il `root` di quelli
-          successivi nello stesso flusso (tipicamente il messaggio Telegram in arrivo);
+          successivi nello stesso flusso (tipicamente il messaggio Telegram in arrivo).
+          **Non la chiude**: su un thread di un pool la catena resterebbe appesa e il
+          lavoro successivo erediterebbe questo `root`. Salvo che l'ambito sia sotto il
+          controllo del chiamante, usare `open_chain(...)`, che chiude per costruzione;
         - `corr`/`root` espliciti vincono sulla catena corrente, per i casi in cui il
           nesso e' noto al chiamante meglio che al contesto;
         - `sample_key` + `min_interval` campionano gli eventi continui.

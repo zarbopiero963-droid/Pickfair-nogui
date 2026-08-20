@@ -49,6 +49,30 @@ def _ts_label(ts) -> str:
         return str(ts)
 
 
+def _accetta_tipo(types, cats):
+    """Predicato «questo evento passa il filtro tipo/categoria?», o `None` se non c'è
+    nessun filtro da applicare (nessun `types`, nessun `cats`).
+
+    Estratto da `filter_events` per tenerne bassa la complessità: la funzione applica
+    già quattro filtri indipendenti, e infilarci dentro anche la risoluzione della
+    categoria la rendeva difficile da leggere per un motivo che non è suo.
+
+    La categoria è ricavata dal TIPO, non letta dal campo `cat` della riga: così il
+    filtro funziona anche sugli eventi storici, scritti prima che quel campo esistesse.
+    """
+    if types is None and cats is None:
+        return None
+    tipi_voluti = {str(t) for t in (types or ())}
+    categorie_volute = {str(c).upper() for c in (cats or ())}
+
+    def accetta(event) -> bool:
+        tipo = event.get("type")
+        return (tipo in tipi_voluti
+                or event_journal.category_of(tipo) in categorie_volute)
+
+    return accetta
+
+
 def filter_events(events, *, types=None, cats=None, last=None, since=None,
                   until=None) -> list:
     """Eventi **ordinati per `ts`** e filtrati (tutti i filtri sono opzionali):
@@ -64,18 +88,14 @@ def filter_events(events, *, types=None, cats=None, last=None, since=None,
     `types` e `cats` insieme si SOMMANO (unione, non intersezione): chi chiede una
     categoria più un tipo fuori da essa vuole vedere entrambi, non l'insieme vuoto.
 
-    La categoria è ricavata dal TIPO (`event_journal.category_of`), non letta dal campo
-    `cat` della riga: così il filtro funziona anche sugli eventi storici, scritti prima
-    che il campo esistesse.
+    Il predicato tipo/categoria sta in `_accetta_tipo` (che documenta anche perché la
+    categoria è ricavata dal tipo e non letta dalla riga).
 
     Non muta la lista in ingresso (lavora su una copia)."""
     out = sorted(events, key=_ts_value)
-    if types is not None or cats is not None:
-        want_types = {str(t) for t in (types or ())}
-        want_cats = {str(c).upper() for c in (cats or ())}
-        out = [e for e in out
-               if e.get("type") in want_types
-               or event_journal.category_of(e.get("type")) in want_cats]
+    accetta = _accetta_tipo(types, cats)
+    if accetta is not None:
+        out = [e for e in out if accetta(e)]
     if since is not None:
         out = [e for e in out if _ts_value(e) >= since]
     if until is not None:

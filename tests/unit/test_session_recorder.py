@@ -201,6 +201,63 @@ class TestCatenaCausale:
         rec.record("ORDER_MATCHED", root="scelto-a-mano")
         assert leggi(rec.path)[1]["root"] == "scelto-a-mano"
 
+    def test_open_chain_apre_e_chiude(self, rec):
+        rec.clear_chain()
+        with rec.open_chain("TG_MESSAGE_IN", chat="x") as radice:
+            rec.record("PARSE_OK")
+        rec.record("UI_CLICK")
+        eventi = leggi(rec.path)
+        assert [e.get("root") for e in eventi] == [radice, radice, None]
+
+    def test_open_chain_gira_anche_a_recorder_spento(self, tmp_path):
+        """Un recorder spento non deve cambiare il flusso del chiamante: il blocco
+        `with` gira lo stesso, semplicemente senza `root`."""
+        r = SessionRecorder(str(tmp_path / "j.jsonl"), enabled=False)
+        eseguito = False
+        with r.open_chain("TG_MESSAGE_IN") as radice:
+            eseguito = True
+        assert eseguito and radice is None
+
+    def test_su_thread_RIUSATO_open_chain_non_fa_colare_la_catena(self, rec):
+        """Rilievo di Fugu su #427, accolto.
+
+        I `contextvars` sopravvivono nel thread che li ha impostati. In un pool, il
+        lavoro successivo servito dallo STESSO thread erediterebbe la catena di quello
+        prima: due giocate distinte apparirebbero come una sola nel diario. `open_chain`
+        chiude per costruzione, quindi non cola.
+        """
+        import threading
+
+        def pool():
+            with rec.open_chain("TG_MESSAGE_IN", chat="A"):
+                rec.record("ORDER_MATCHED")
+            # secondo lavoro sullo STESSO thread, senza catena propria
+            rec.record("UI_CLICK")
+
+        t = threading.Thread(target=pool)
+        t.start()
+        t.join()
+        eventi = leggi(rec.path)
+        assert eventi[-1]["type"] == "UI_CLICK"
+        assert "root" not in eventi[-1], "la catena e' colata nel lavoro successivo"
+
+    def test_su_thread_RIUSATO_start_chain_grezzo_invece_cola(self, rec):
+        """Documenta il comportamento della forma grezza, che resta disponibile per chi
+        controlla lui stesso l'ambito. Non e' un difetto nascosto: e' il motivo per cui
+        `open_chain` esiste ed e' la via da preferire."""
+        import threading
+
+        def pool():
+            rec.record("TG_MESSAGE_IN", start_chain=True, chat="A")
+            rec.record("UI_CLICK")            # lavoro successivo, stesso thread
+
+        t = threading.Thread(target=pool)
+        t.start()
+        t.join()
+        eventi = leggi(rec.path)
+        assert eventi[-1]["type"] == "UI_CLICK"
+        assert eventi[-1].get("root") == eventi[0]["id"]    # eredita: e' il rischio
+
     def test_senza_catena_non_ci_sono_campi_di_correlazione(self, rec):
         rec.clear_chain()
         rec.record("UI_CLICK")
@@ -305,3 +362,36 @@ class TestCablaggioInApp:
         corpo = ast.dump(funzioni[0])
         assert "_recorder" in corpo, "_journal non passa piu' dal recorder"
         assert "record" in corpo, "_journal non chiama piu' recorder.record"
+
+    def test_nessun_emettitore_usa_un_nome_riservato_di_record(self):
+        """Rilievo di Fable su #427, accolto.
+
+        `record(event_type, *, level, corr, root, ...)` raccoglie il payload con
+        `**data`: un emettitore che passasse `level=...` come CAMPO del payload lo
+        vedrebbe interpretato come PARAMETRO, e il campo sparirebbe dal diario **senza
+        errore**. Oggi non succede, ma la fase A2 aggiunge decine di emettitori
+        (`TG_*`, `ORDER_*`, `RISK_*`) ed e' esattamente il momento in cui una
+        collisione entrerebbe inosservata.
+
+        I nomi riservati si leggono dalla FIRMA, non da un elenco ricopiato: aggiungerne
+        uno a `record` estende automaticamente il controllo, invece di lasciare il test
+        a proteggere una versione vecchia della firma."""
+        import inspect
+
+        riservati = {
+            nome for nome, par in inspect.signature(SessionRecorder.record).parameters.items()
+            if par.kind is inspect.Parameter.KEYWORD_ONLY
+        }
+        assert riservati, "la firma di record() non ha piu' parametri keyword-only"
+
+        collisioni = []
+        for nodo in ast.walk(self._albero()):
+            if (isinstance(nodo, ast.Call)
+                    and isinstance(nodo.func, ast.Attribute)
+                    and nodo.func.attr in ("_journal", "_journal_csv_cleared_if_had_row")):
+                tipo = (nodo.args[0].value
+                        if nodo.args and isinstance(nodo.args[0], ast.Constant) else "?")
+                collisioni += [(tipo, k.arg) for k in nodo.keywords
+                               if k.arg in riservati]
+        assert not collisioni, (
+            f"kwarg di payload che collidono coi parametri di record(): {collisioni}")

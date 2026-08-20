@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from core import event_journal, event_log
+from core import event_journal, event_log, journal_view
 
 pytestmark = pytest.mark.unit
 
@@ -188,3 +188,58 @@ class TestScritturaSuFile:
             assert segreto not in grezzo
         finally:
             event_log.unregister_secret(segreto)
+
+
+class TestFiltroPerCategoria:
+    """`journal_view` è il consumatore che rende usabile un catalogo da 122 tipi.
+
+    Senza il filtro per categoria l'unico modo di consultare il diario sarebbe
+    conoscere a memoria i nomi dei tipi. Anche questo modulo non aveva test.
+    """
+
+    EVENTI = [
+        {"ts": 1, "type": "ORDER_MATCHED"},
+        {"ts": 2, "type": "UI_CLICK"},
+        {"ts": 3, "type": "START"},
+    ]
+
+    def _tipi(self, **kwargs):
+        return [e["type"] for e in journal_view.filter_events(self.EVENTI, **kwargs)]
+
+    def test_nessun_filtro_restituisce_tutto(self):
+        assert len(self._tipi()) == 3
+
+    def test_filtro_per_categoria(self):
+        assert self._tipi(cats=["ORDER"]) == ["ORDER_MATCHED"]
+
+    def test_categoria_insensibile_al_maiuscolo(self):
+        assert self._tipi(cats=["order"]) == ["ORDER_MATCHED"]
+
+    def test_tipo_e_categoria_si_SOMMANO(self):
+        """Unione, non intersezione: chi chiede una categoria più un tipo fuori da essa
+        vuole vedere entrambi, non l'insieme vuoto."""
+        assert self._tipi(cats=["ORDER"], types=["START"]) == ["ORDER_MATCHED", "START"]
+
+    def test_filtro_per_tipo_invariato(self):
+        """Regressione: i chiamanti storici passano solo `types`."""
+        assert self._tipi(types=["UI_CLICK"]) == ["UI_CLICK"]
+
+    def test_categoria_inesistente_non_seleziona_nulla(self):
+        assert self._tipi(cats=["NON_ESISTE"]) == []
+
+    def test_gli_altri_filtri_restano_composti(self):
+        assert self._tipi(since=2, until=2) == ["UI_CLICK"]
+        assert self._tipi(last=1) == ["START"]
+
+    def test_evento_storico_senza_cat_e_comunque_filtrabile(self):
+        """La categoria è ricavata dal TIPO, non letta dalla riga: un ledger scritto
+        prima che il campo `cat` esistesse resta consultabile per categoria."""
+        storici = [{"ts": 1, "type": "CSV_WRITTEN"}]      # nessun campo `cat`
+        assert journal_view.filter_events(storici, cats=["LEGACY"]) == storici
+
+    def test_catalogo_elenca_ogni_categoria_e_ogni_tipo(self):
+        testo = journal_view.format_catalog()
+        for cat in event_journal.EVENT_CATEGORIES:
+            assert cat in testo
+        for tipo in event_journal.EVENT_TYPES:
+            assert tipo in testo
