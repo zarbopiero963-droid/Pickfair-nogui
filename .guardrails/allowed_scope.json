@@ -1151,6 +1151,17 @@
       ],
       "max_files": 5
     },
+    "ci_costo_review_forti_tests_core": {
+      "description": "CI cost gate: the strong AI reviewers (Fable 5, Fugu Ultra) declare they do not spend on pushes touching only workflow/docs/test, but the CORE patterns were written (^|/)core/ and so also matched tests/core/, tests/services/ and tests/controllers/. Measured on PR #419: three pushes touching only tests/core/test_risk_gate.py ran both strong reviewers, ~$0.56 wasted, repeating on every PR touching those directories. The three real modules exist only at repo root, so the patterns are anchored with ^. Critical areas (workflows, requirements, betfair/telegram/money/...) are untouched and still trigger the strong review. A regression test extracts the patterns from the real workflow files and compiles them, so it verifies what actually ships.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        "tests/guardrails/test_ai_review_cost_gate.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
+    },
     "ci_range_review_solo_file_della_pr": {
       "description": "AI review range: GitHub's push-range compare is merge-base(base, head)...head, so a push that merges the base branch into the PR pulls in everything coming from main - code already reviewed, already merged and already paid for. Measured on PR #420, push 49dc486...3488672: 5 files in the range, 4 of them from main; one reviewer's prompt went from ~13k to 48k tokens, ~$0.57 in a single push across the two strong reviewers, and the reviews flagged as 'not verifiable, truncated' a file that was not even part of that PR. The range is now intersected with the files the PR actually changes against its own base, before the cost gate, so a push that changes nothing of the PR never reaches the model. A normal push is unaffected (everything you push is yours). On a GitHub API error the range is NOT restricted - reviewing more is the prudent direction. A regression test extracts the function from the real workflow files and runs it, so it verifies what actually ships.",
       "allow_tests": true,

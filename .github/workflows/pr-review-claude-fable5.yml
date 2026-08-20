@@ -564,9 +564,17 @@ jobs:
           # toccano solo workflow/docs/test il job parte ma NON spende — i reviewer
           # automatici GPT-5.6 Sol/Grok coprono comunque ogni push.
           CORE_TRIGGER_PATTERNS = [
-              re.compile(r"(^|/)core/"),
-              re.compile(r"(^|/)services/"),
-              re.compile(r"(^|/)controllers/"),
+              # Ancorati a inizio path DI PROPOSITO. Con `(^|/)` il pattern
+              # prendeva anche tests/core/, tests/services/ e tests/controllers/,
+              # quindi una push di soli TEST faceva partire i reviewer costosi
+              # contro la regola scritta qui sopra ("push che toccano solo
+              # workflow/docs/test: il job parte ma NON spende"). Misurato sulla
+              # PR #419: tre push di solo tests/core/ hanno speso ~0,56$.
+              # I tre moduli reali stanno solo alla radice del repo; le loro
+              # copie sotto tests/ sono test, e come test vanno trattate.
+              re.compile(r"^core/"),
+              re.compile(r"^services/"),
+              re.compile(r"^controllers/"),
               re.compile(r"(^|/)(headless_main|mini_gui|betfair_client|betfair_market_api|order_manager|dutching|database|database_schema|trading_config)\.py$"),
               re.compile(r"(^|/)requirements[^/]*\.(txt|in|lock)$"),
               re.compile(r"(^|/)pyproject\.toml$"),
