@@ -13,7 +13,7 @@ import pathlib
 import pytest
 
 from core import event_journal, session_recorder
-from core.session_recorder import SessionRecorder
+from core.session_recorder import SessionRecorder, _current_corr, _current_root
 
 pytestmark = pytest.mark.unit
 
@@ -240,6 +240,45 @@ class TestCatenaCausale:
         eventi = leggi(rec.path)
         assert eventi[-1]["type"] == "UI_CLICK"
         assert "root" not in eventi[-1], "la catena e' colata nel lavoro successivo"
+
+    def test_open_chain_non_lascia_la_catena_appesa_se_record_solleva(self, rec):
+        """Rilievo di Fable su #427, accolto.
+
+        Oggi `record` non solleva (cattura `Exception` e ritorna None), ma imposta i
+        contextvar PRIMA di ritornare: con la chiamata fuori dal `try`, qualcosa che ne
+        uscisse — o una `BaseException`, che quel `except` non prende — lascerebbe la
+        catena appesa proprio nel caso che `open_chain` esiste per escludere.
+
+        Il test non presume che `record` sia innocuo: lo sostituisce con uno che imposta
+        la catena e POI solleva, e verifica la garanzia strutturale."""
+        rec.clear_chain()
+
+        def record_che_solleva(*_a, **_k):
+            _current_root.set("rimasto-appeso")
+            _current_corr.set("rimasto-appeso")
+            raise RuntimeError("boom")
+
+        rec.record = record_che_solleva
+        with pytest.raises(RuntimeError):
+            with rec.open_chain("TG_MESSAGE_IN"):
+                pass
+        assert rec.current_chain() == (None, None), "la catena e' rimasta appesa"
+
+    def test_open_chain_ripristina_anche_se_il_blocco_solleva(self, rec):
+        rec.clear_chain()
+        with pytest.raises(ValueError):
+            with rec.open_chain("TG_MESSAGE_IN"):
+                raise ValueError("errore dentro il blocco")
+        assert rec.current_chain() == (None, None)
+
+    def test_open_chain_annidata_ripristina_il_livello_esterno(self, rec):
+        """Con `reset(token)` l'annidamento torna al livello giusto, non a «vuoto»."""
+        rec.clear_chain()
+        with rec.open_chain("TG_MESSAGE_IN", chat="A") as esterna:
+            with rec.open_chain("TG_MESSAGE_IN", chat="B"):
+                pass
+            assert rec.current_chain()[0] == esterna
+        assert rec.current_chain() == (None, None)
 
     def test_su_thread_RIUSATO_start_chain_grezzo_invece_cola(self, rec):
         """Documenta il comportamento della forma grezza, che resta disponibile per chi

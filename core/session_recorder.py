@@ -260,14 +260,25 @@ class SessionRecorder:
             with recorder.open_chain("TG_MESSAGE_IN", chat=impronta) as root:
                 ...   # tutto cio' che segue porta questo `root`
         """
-        precedente_root = _current_root.get()
-        precedente_corr = _current_corr.get()
-        radice = self.record(event_type, level=level, start_chain=True, **data)
+        # Il token si ottiene ri-impostando il valore CORRENTE: `reset(token)` riporta poi
+        # esattamente lo stato di prima, «non impostato» compreso — cosa che `set(valore
+        # precedente)` non distingue. Stesso meccanismo di `chain()`: due modi diversi di
+        # ripristinare la stessa coppia di variabili sarebbero due modi di sbagliare
+        # (rilievo di Fable su #427, accolto).
+        token_root = _current_root.set(_current_root.get())
+        token_corr = _current_corr.set(_current_corr.get())
         try:
+            # `record` sta DENTRO il try (rilievo di Fable, accolto). Oggi non solleva —
+            # cattura `Exception` e ritorna None — ma imposta i contextvar PRIMA di
+            # ritornare: se un domani ne uscisse qualcosa (o passasse una BaseException,
+            # che quel `except` non prende), la catena resterebbe appesa proprio nel caso
+            # che `open_chain` esiste per escludere. La garanzia «chiude per costruzione»
+            # non deve dipendere da un'invariante scritta in un altro metodo.
+            radice = self.record(event_type, level=level, start_chain=True, **data)
             yield radice
         finally:
-            _current_root.set(precedente_root)
-            _current_corr.set(precedente_corr)
+            _current_root.reset(token_root)
+            _current_corr.reset(token_corr)
 
     @staticmethod
     def clear_chain() -> None:
