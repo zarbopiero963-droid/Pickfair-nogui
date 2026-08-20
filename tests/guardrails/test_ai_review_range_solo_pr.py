@@ -224,3 +224,70 @@ def test_pass_un_file_rinominato_resta_nel_range(workflow: str) -> None:
 
     assert [t["filename"] for t in tenuti] == ["core/nuovo.py"]
     assert esclusi == []
+
+
+# ---------------------------------------------------------------------------
+# I test qui sopra eseguono la funzione. Restano verdi anche se il workflow
+# smette di CHIAMARLA: la funzione esisterebbe, inerte, e il range tornerebbe
+# in silenzio a contenere codice di main. Il cablaggio va affermato a parte.
+# ---------------------------------------------------------------------------
+
+RIGA_SORGENTE = 'files = compared.get("files")'
+RIGA_CHIAMATA = ("files, files_dal_base = solo_file_della_pr("
+                 "files, range_base, range_head)")
+
+
+def _riga_attiva(workflow: str, frammento: str) -> int:
+    """Indice dell'unica riga NON commentata che contiene `frammento`."""
+    righe = (ROOT / workflow).read_text(encoding="utf-8").splitlines()
+    trovate = [i for i, r in enumerate(righe)
+               if frammento in r and not r.lstrip().startswith("#")]
+    assert trovate, (
+        f"{workflow}: riga attiva `{frammento}` assente. La restrizione del "
+        f"range non e' piu' cablata: il reviewer tornerebbe a leggere (e a far "
+        f"pagare) codice che arriva dal branch base."
+    )
+    assert len(trovate) == 1, (
+        f"{workflow}: `{frammento}` compare {len(trovate)} volte "
+        f"(righe {[i + 1 for i in trovate]}); l'ordine non e' piu' decidibile."
+    )
+    return trovate[0]
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_il_workflow_chiama_davvero_la_restrizione(workflow: str) -> None:
+    """La restrizione deve essere applicata alla lista che si usa davvero."""
+    i_sorgente = _riga_attiva(workflow, RIGA_SORGENTE)
+    i_chiamata = _riga_attiva(workflow, RIGA_CHIAMATA)
+
+    assert i_sorgente < i_chiamata, (
+        f"{workflow}: `solo_file_della_pr` viene chiamata a riga "
+        f"{i_chiamata + 1}, prima che `files` sia popolata a riga "
+        f"{i_sorgente + 1}."
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_la_restrizione_precede_il_gate_di_costo(workflow: str) -> None:
+    """Dove esiste un gate di costo, il gate deve decidere sui file GIA'
+    ristretti: altrimenti una push che dal punto di vista della PR non cambia
+    niente supererebbe comunque il gate e pagherebbe una review intera.
+    I due reviewer economici non hanno gate di costo, e li' non c'e' ordine
+    da verificare — ma il caso va riconosciuto, non dato per scontato.
+    """
+    righe = (ROOT / workflow).read_text(encoding="utf-8").splitlines()
+    gate = [i for i, r in enumerate(righe)
+            if "def touches_core" in r and not r.lstrip().startswith("#")]
+    if not gate:
+        assert "CORE_TRIGGER_PATTERNS" not in "\n".join(righe), (
+            f"{workflow}: ci sono i pattern del gate di costo ma non "
+            f"`touches_core`; questo test non sa piu' dov'e' il gate."
+        )
+        return
+
+    i_chiamata = _riga_attiva(workflow, RIGA_CHIAMATA)
+    assert i_chiamata < gate[0], (
+        f"{workflow}: il gate di costo (riga {gate[0] + 1}) decide prima "
+        f"della restrizione del range (riga {i_chiamata + 1}): valuterebbe "
+        f"anche i file che arrivano da main."
+    )
