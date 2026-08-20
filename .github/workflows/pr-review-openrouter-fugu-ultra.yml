@@ -85,7 +85,26 @@ jobs:
       # come Fable su #322). Alzarlo a 3000 elimina il cutoff a costo ~invariato: il
       # PROMPT controlla la lunghezza reale, il tetto previene solo il taglio. (Il vecchio
       # rischio ~0,70$/19k token era del prompt LUNGO, ora sostituito dall'ultra-corto.)
-      MAX_OUTPUT_TOKENS: "3000"
+      # ESPERIMENTO (2 PR): i tre reviewer non-Anthropic giravano a `low`, cioe'
+      # sotto il default del loro stesso modello. Fable, l'unico a piena
+      # profondita', e' l'unico che trovava difetti veri. Si alzano a `high` e si
+      # confrontano costo e reperti contro il periodo a `low`. Per tornare
+      # indietro basta rimettere "low" qui.
+      REVIEW_EFFORT: "high"
+      # A effort alto il ragionamento MANGIA questo tetto:
+      #   OpenAI    - "i reasoning token contano dentro max_output_tokens",
+      #               raccomandano di riservarne >= 25.000
+      #   OpenRouter- a "high" il reasoning prende ~80% di max_tokens (a "low" ~20%)
+      # Con 3000 la review verrebbe TRONCATA e sembrerebbe che "high trova meno":
+      # conclusione opposta, e sbagliata.
+      # Due cose distinte, da non confondere:
+      #   il TETTO   e' un massimale, non un addebito: alzarlo da solo non costa
+      #   l'EFFORT   alto FA generare piu' token, e quelli si pagano come output
+      # Quindi questo esperimento costa di piu' — e' il punto: si misura quanto,
+      # e se i reperti in piu' lo giustificano. Il controllo non e' un tetto di
+      # spesa automatico, sono due: i workflow stampano costo e token a ogni
+      # review, e REVIEW_EFFORT qui sopra lo ferma cambiando una riga.
+      MAX_OUTPUT_TOKENS: "25000"
 
       PRICE_INPUT_PER_MILLION: "5.00"
       PRICE_OUTPUT_PER_MILLION: "30.00"
@@ -143,6 +162,20 @@ jobs:
           MAX_PATCH_PER_FILE_CHARS_ESCALATED = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS_ESCALATED", "15000"))
           MAX_TOTAL_PATCH_CHARS_ESCALATED = int(os.environ.get("MAX_TOTAL_PATCH_CHARS_ESCALATED", "60000"))
           MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "3000"))
+          # Effort del ragionamento: da env, cosi' l'esperimento si ferma senza
+          # toccare il codice. Un valore non valido farebbe 400 e ucciderebbe la
+          # review, quindi si ripiega su "high" segnalandolo.
+          # Solo l'intersezione sicura fra i tre provider. `xhigh`/`max` sono
+          # documentati da alcuni ma non da tutti: un valore rifiutato darebbe 400
+          # e ucciderebbe la review, cioe' proprio il guasto che questa guardia
+          # deve evitare. Se un domani serve un livello piu' alto, si allarga qui
+          # dopo aver verificato il provider, non per analogia con un altro.
+          _EFFORT_AMMESSI = {"low", "medium", "high"}
+          REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "high").strip().lower()
+          if REVIEW_EFFORT not in _EFFORT_AMMESSI:
+              print(f"::warning::REVIEW_EFFORT={REVIEW_EFFORT!r} non valido "
+                    f"(ammessi: {sorted(_EFFORT_AMMESSI)}) -> uso 'high'.")
+              REVIEW_EFFORT = "high"
 
           PRICE_INPUT_PER_MILLION = float(os.environ.get("PRICE_INPUT_PER_MILLION", "0"))
           PRICE_OUTPUT_PER_MILLION = float(os.environ.get("PRICE_OUTPUT_PER_MILLION", "0"))
@@ -415,7 +448,7 @@ jobs:
                   # troncerebbe la review (finish_reason=length, content vuoto).
                   # effort=low libera budget per il testo; OpenRouter lo ignora per
                   # i modelli non-reasoning, quindi è sicuro comunque.
-                  "reasoning": {"effort": "low"},
+                  "reasoning": {"effort": REVIEW_EFFORT},
                   "usage": {"include": True},
               }
 
