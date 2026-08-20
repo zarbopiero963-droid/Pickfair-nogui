@@ -269,25 +269,39 @@ def test_block_il_workflow_chiama_davvero_la_restrizione(workflow: str) -> None:
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)
 def test_block_la_restrizione_precede_il_gate_di_costo(workflow: str) -> None:
-    """Dove esiste un gate di costo, il gate deve decidere sui file GIA'
+    """Dove esiste un gate di costo, il gate deve DECIDERE sui file gia'
     ristretti: altrimenti una push che dal punto di vista della PR non cambia
     niente supererebbe comunque il gate e pagherebbe una review intera.
-    I due reviewer economici non hanno gate di costo, e li' non c'e' ordine
-    da verificare — ma il caso va riconosciuto, non dato per scontato.
+
+    L'ancora e' l'INVOCAZIONE di `touches_core`, non la sua definizione. In
+    questi script le funzioni stanno tutte in cima (`solo_file_della_pr` e'
+    definita centinaia di righe prima del punto in cui la si usa): ancorarsi
+    al `def` farebbe fallire il test su un raggruppamento delle definizioni —
+    un refactor corretto — e soprattutto non affermerebbe cio' che conta, cioe'
+    l'ordine in cui le due cose vengono ESEGUITE.
+
+    I due reviewer economici non hanno gate di costo, e li' non c'e' ordine da
+    verificare: il caso viene riconosciuto esplicitamente, non dato per
+    scontato, cosi' se un domani il gate comparisse il test non tace.
     """
     righe = (ROOT / workflow).read_text(encoding="utf-8").splitlines()
-    gate = [i for i, r in enumerate(righe)
-            if "def touches_core" in r and not r.lstrip().startswith("#")]
-    if not gate:
-        assert "CORE_TRIGGER_PATTERNS" not in "\n".join(righe), (
-            f"{workflow}: ci sono i pattern del gate di costo ma non "
-            f"`touches_core`; questo test non sa piu' dov'e' il gate."
+    invocazioni = [i for i, r in enumerate(righe)
+                   if "touches_core(" in r
+                   and not r.lstrip().startswith("#")
+                   and not r.lstrip().startswith("def ")]
+
+    if not invocazioni:
+        assert not any("CORE_TRIGGER_PATTERNS" in r for r in righe), (
+            f"{workflow}: ci sono i pattern del gate di costo ma `touches_core` "
+            f"non viene mai invocata; il gate non decide piu' niente, oppure "
+            f"questo test non sa piu' dove guardare."
         )
         return
 
     i_chiamata = _riga_attiva(workflow, RIGA_CHIAMATA)
-    assert i_chiamata < gate[0], (
-        f"{workflow}: il gate di costo (riga {gate[0] + 1}) decide prima "
-        f"della restrizione del range (riga {i_chiamata + 1}): valuterebbe "
-        f"anche i file che arrivano da main."
+    assert i_chiamata < min(invocazioni), (
+        f"{workflow}: il gate di costo decide a riga {min(invocazioni) + 1}, "
+        f"prima che la restrizione del range sia applicata a riga "
+        f"{i_chiamata + 1}: valuterebbe anche i file che arrivano da main, e "
+        f"una push che per la PR non cambia niente pagherebbe una review."
     )
