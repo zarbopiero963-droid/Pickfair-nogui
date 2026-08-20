@@ -70,6 +70,19 @@ def _env(workflow: str) -> Dict[str, str]:
         m = re.match(r'^      ([A-Z][A-Z0-9_]*): +(.*?)\s*$', riga)
         if m:
             voci[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    # Zero chiavi vuol dire che il parser non ha letto NIENTE, non che l'env sia
+    # vuoto: questi workflow un job-env ce l'hanno sempre. Senza questa riga il
+    # fallimento del parser sarebbe silenzioso e passerebbe per un successo —
+    # il test del tetto salterebbe (`effort` vuoto, soglia "non applicabile") e
+    # quello su Fable passerebbe (`REVIEW_EFFORT` non e' in un dict vuoto).
+    # Il guardrail sparirebbe restando verde, che e' il modo peggiore di
+    # rompersi. Se cambia la forma del workflow va aggiornato il parser.
+    assert voci, (
+        f"{workflow}: nessuna chiave letta dal blocco `env:` del job. Il parser "
+        f"cerca `      CHIAVE: valore` a sei spazi di indentazione: se il "
+        f"workflow ha cambiato forma, i test dell'effort non stanno piu' "
+        f"verificando niente."
+    )
     return voci
 
 
@@ -77,10 +90,18 @@ def _env(workflow: str) -> Dict[str, str]:
 def test_block_effort_profondo_richiede_un_tetto_adeguato(workflow: str) -> None:
     """E' l'invariante che tiene in piedi la misura, non un dettaglio."""
     env = _env(workflow)
-    effort = env.get("REVIEW_EFFORT", "").strip().lower()
+    assert "REVIEW_EFFORT" in env, (
+        f"{workflow} e' fra i workflow dell'esperimento ma non dichiara "
+        f"REVIEW_EFFORT nell'env del job: senza, il test salterebbe la soglia "
+        f"invece di verificarla."
+    )
+    effort = env["REVIEW_EFFORT"].strip().lower()
     tetto = int(env.get("MAX_OUTPUT_TOKENS", "0"))
 
     if effort not in EFFORT_PROFONDI:
+        # Non e' un buco: a effort basso la soglia non ha ragione di esistere.
+        # Qui `effort` e' un valore letto davvero, non il vuoto di un parser
+        # rotto — quel caso muore prima, dentro `_env`.
         pytest.skip(f"{workflow}: effort '{effort}', la soglia non si applica")
 
     assert tetto >= TETTO_MINIMO_PER_EFFORT_PROFONDO, (
