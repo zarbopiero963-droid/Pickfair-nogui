@@ -309,8 +309,44 @@ jobs:
               tenuti = [f for f in files
                         if f.get("filename") in nomi_propri
                         or f.get("previous_filename") in nomi_propri]
-              esclusi = sorted({f.get("filename") for f in files}
-                               - {f.get("filename") for f in tenuti})
+              # `esclusi` si calcola PRIMA di toccare i patch, cosi' confronta nomi
+              # omogenei (entrambi dal range della push).
+              # Il `- {None}` non e' decorativo: la Compare API documenta `filename`
+              # come sempre presente, ma se mancasse, `sorted` confronterebbe None con
+              # str e il job morirebbe invece di degradare. E con UN SOLO escluso non
+              # morirebbe nemmeno qui: `sorted` restituirebbe [None] e a morire sarebbe
+              # il `", ".join(...)` del chiamante, piu' lontano dalla causa.
+              nomi_tenuti = {f.get("filename") for f in tenuti}
+              esclusi = sorted({f.get("filename") for f in files} - nomi_tenuti - {None})
+              # Restringere la LISTA dei file non basta: il patch che GitHub allega nel
+              # range di una push-merge contiene anche le righe che arrivano dal branch
+              # base, e il modello le legge come se fossero della PR. Misurato sulla
+              # PR #422: 80 righe viste contro 37 reali, e due falsi positivi in una
+              # sola tornata (test "inesistenti" perche' stanno su main; anchoring
+              # "applicato a un solo workflow"). Per i file tenuti si usa quindi
+              # l'entry di `propri`, il cui patch e' calcolato sulla BASE della PR.
+              # `propri` e' gia' in mano: nessuna chiamata in piu'.
+              #
+              # Si fa SOLO se la push ha davvero portato dentro roba non della PR
+              # (`esclusi` non vuoto). Su una push incrementale normale il patch della
+              # push e' esattamente cio' che si vuole rivedere: sostituirlo con quello
+              # vs base mostrerebbe di nuovo TUTTO il file gia' revisionato nelle push
+              # precedenti — piu' caro e contro lo scopo della review incrementale.
+              # Resta scoperto un caso: una merge che tocchi solo file che la PR cambia
+              # a sua volta lascia `esclusi` vuoto e il patch contaminato. Piu' raro, e
+              # il ripiego e' il comportamento di oggi, non uno peggiore.
+              if esclusi:
+                  per_nome = {}
+                  for f in propri:
+                      if f.get("previous_filename"):
+                          per_nome[f["previous_filename"]] = f
+                  for f in propri:
+                      if f.get("filename"):
+                          per_nome[f["filename"]] = f
+                  tenuti = [per_nome.get(f.get("filename"))
+                            or per_nome.get(f.get("previous_filename"))
+                            or f
+                            for f in tenuti]
               return tenuti, esclusi
 
           def is_critical(filename: str) -> bool:
