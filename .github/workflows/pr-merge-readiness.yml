@@ -14,8 +14,6 @@ on:
       - pnl-engine
       - stateful-integrity
       - merge-simulation-hard
-      - PR Autofix Safe Supervisor
-      - CloudCLI PR Fix
     types: [completed]
   workflow_dispatch:
     inputs:
