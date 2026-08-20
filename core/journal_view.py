@@ -49,19 +49,53 @@ def _ts_label(ts) -> str:
         return str(ts)
 
 
-def filter_events(events, *, types=None, last=None, since=None, until=None) -> list:
+def _accetta_tipo(types, cats):
+    """Predicato «questo evento passa il filtro tipo/categoria?», o `None` se non c'è
+    nessun filtro da applicare (nessun `types`, nessun `cats`).
+
+    Estratto da `filter_events` per tenerne bassa la complessità: la funzione applica
+    già quattro filtri indipendenti, e infilarci dentro anche la risoluzione della
+    categoria la rendeva difficile da leggere per un motivo che non è suo.
+
+    La categoria è ricavata dal TIPO, non letta dal campo `cat` della riga: così il
+    filtro funziona anche sugli eventi storici, scritti prima che quel campo esistesse.
+    """
+    if types is None and cats is None:
+        return None
+    tipi_voluti = {str(t) for t in (types or ())}
+    categorie_volute = {str(c).upper() for c in (cats or ())}
+
+    def accetta(event) -> bool:
+        tipo = event.get("type")
+        return (tipo in tipi_voluti
+                or event_journal.category_of(tipo) in categorie_volute)
+
+    return accetta
+
+
+def filter_events(events, *, types=None, cats=None, last=None, since=None,
+                  until=None) -> list:
     """Eventi **ordinati per `ts`** e filtrati (tutti i filtri sono opzionali):
 
     - `types`: iterabile di tipi ammessi (gli altri sono esclusi);
+    - `cats`: iterabile di CATEGORIE ammesse (`ORDER`, `TELEGRAM`, ...). Con oltre 120
+      tipi in catalogo, chiedere «tutto quello che riguarda gli ordini» senza doverne
+      elencare i nomi è il modo normale di consultare il diario;
     - `since`/`until`: intervallo epoch inclusivo su `ts`;
     - `last`: solo gli ultimi N (dopo l'ordinamento); `last=0` → nessun evento,
       `last<0` è ignorato (nessun taglio).
 
+    `types` e `cats` insieme si SOMMANO (unione, non intersezione): chi chiede una
+    categoria più un tipo fuori da essa vuole vedere entrambi, non l'insieme vuoto.
+
+    Il predicato tipo/categoria sta in `_accetta_tipo` (che documenta anche perché la
+    categoria è ricavata dal tipo e non letta dalla riga).
+
     Non muta la lista in ingresso (lavora su una copia)."""
     out = sorted(events, key=_ts_value)
-    if types is not None:
-        want = {str(t) for t in types}
-        out = [e for e in out if e.get("type") in want]
+    accetta = _accetta_tipo(types, cats)
+    if accetta is not None:
+        out = [e for e in out if accetta(e)]
     if since is not None:
         out = [e for e in out if _ts_value(e) >= since]
     if until is not None:
@@ -102,14 +136,28 @@ def format_json(events) -> str:
     return json.dumps(list(events), ensure_ascii=False, indent=2)
 
 
-def render(path=None, *, types=None, last=None, since=None, until=None,
+def render(path=None, *, types=None, cats=None, last=None, since=None, until=None,
            as_json=False) -> str:
     """Legge il ledger (`path` o default), applica i filtri e formatta. Read-only:
     file assente/illeggibile → stringa vuota (via `read_events` → `[]`)."""
     path = path or default_path()
-    events = filter_events(event_journal.read_events(path), types=types, last=last,
-                           since=since, until=until)
+    events = filter_events(event_journal.read_events(path), types=types, cats=cats,
+                           last=last, since=since, until=until)
     return format_json(events) if as_json else format_table(events)
+
+
+def format_catalog() -> str:
+    """Catalogo dei tipi evento raggruppato per categoria, una categoria per blocco.
+
+    Sostituisce l'elenco piatto che stava nell'help di `--type`: con 122 tipi quella
+    riga era diventata illeggibile, e un help illeggibile non è un help."""
+    lines = []
+    for cat in sorted(event_journal.EVENT_CATEGORIES):
+        types = sorted(event_journal.EVENT_CATEGORIES[cat])
+        lines.append(f"{cat} ({len(types)}):")
+        lines.extend(f"  {t}" for t in types)
+        lines.append("")
+    return "\n".join(lines).rstrip()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -120,8 +168,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--path", default=None,
                    help="Percorso del .jsonl (default: cartella di configurazione).")
     p.add_argument("--type", action="append", dest="types", metavar="TYPE",
-                   help="Filtra per tipo evento (ripetibile). Tipi: "
-                        + ", ".join(sorted(event_journal.EVENT_TYPES)) + ".")
+                   help="Filtra per tipo evento (ripetibile). "
+                        "Elenco completo: --list-types.")
+    p.add_argument("--cat", action="append", dest="cats", metavar="CAT",
+                   help="Filtra per categoria (ripetibile): "
+                        + ", ".join(sorted(event_journal.EVENT_CATEGORIES)) + ".")
+    p.add_argument("--list-types", action="store_true", dest="list_types",
+                   help="Stampa il catalogo dei tipi evento per categoria ed esce.")
     p.add_argument("--last", type=int, default=None, metavar="N",
                    help="Solo gli ultimi N eventi (dopo l'ordinamento per ts).")
     p.add_argument("--since", type=float, default=None, metavar="TS",
@@ -136,8 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     """Entrypoint CLI: stampa la vista e ritorna 0. Non scrive mai il ledger."""
     args = build_parser().parse_args(argv)
-    print(render(args.path, types=args.types, last=args.last, since=args.since,
-                 until=args.until, as_json=args.as_json))
+    if args.list_types:
+        print(format_catalog())
+        return 0
+    print(render(args.path, types=args.types, cats=args.cats, last=args.last,
+                 since=args.since, until=args.until, as_json=args.as_json))
     return 0
 
 

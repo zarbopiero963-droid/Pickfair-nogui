@@ -62,6 +62,7 @@ from . import (
     reconnect_policy,
     runtime_state,
     safety_guard,
+    session_recorder,
     settings_controller,
     settings_validation,
     signal_dedupe,
@@ -339,6 +340,16 @@ class App(ctk.CTk):
         # BEST-EFFORT (mai bloccante). Potato allo startup per non crescere all'infinito.
         self._journal_path = runtime_state.event_journal_path(config_dir())
         event_journal.prune_events(self._journal_path, _EVENT_JOURNAL_KEEP)
+        # Recorder di sessione (fase A): aggiunge a OGNI evento del diario l'identita'
+        # della sessione, il progressivo (un buco = un evento perso), l'orologio monotono
+        # e la catena causale. Non e' un secondo sistema di logging: scrive sullo stesso
+        # ledger, tramite lo stesso `event_journal`. L'interruttore governa solo la
+        # registrazione ESTESA — gli eventi gia' emessi oggi restano scritti comunque
+        # (`session_recorder.ALWAYS_RECORDED`), altrimenti un default OFF toglierebbe una
+        # traccia forense che esiste dal #230.
+        self._recorder = session_recorder.SessionRecorder(
+            self._journal_path,
+            enabled=bool((self._config or {}).get("recorder_enabled", False)))
         # #234: stato REALE del CSV operativo PRIMA del cleanup d'avvio. Il diario emette un
         # clear/recovery SOLO sulla transizione riga→solo-header (vedi `_journal_csv_cleared_if_had_row`),
         # così una riscrittura idempotente di un CSV già a solo header NON viene scambiata per un
@@ -495,7 +506,20 @@ class App(ctk.CTk):
         non solleva MAI e non altera il flusso di trading (il journal è uno strumento di
         ricostruzione, non parte del percorso CSV/coda). No-op se il path non è impostato
         (es. istanze headless di test che non chiamano `__init__`). Il payload è redatto da
-        `event_journal` (mai token in chiaro)."""
+        `event_journal` (mai token in chiaro).
+
+        Dalla fase A passa dal `SessionRecorder`, che arricchisce l'evento con sessione,
+        progressivo, orologio monotono e catena causale. Il percorso resta identico per
+        il chiamante: stessa firma, stesso best-effort, stesso ledger."""
+        recorder = self.__dict__.get("_recorder")
+        if recorder is not None:
+            # `record` non solleva mai e ritorna None se non ha scritto (recorder spento
+            # per un tipo non essenziale, campionamento, path assente): non c'e' nulla da
+            # gestire qui, il diario resta best-effort com'era.
+            recorder.record(event_type, **data)
+            return
+        # Fallback per le istanze headless dei test che NON passano da `__init__` (e
+        # quindi non hanno un recorder): comportamento identico a prima del recorder.
         path = self.__dict__.get("_journal_path")
         if not path:
             return

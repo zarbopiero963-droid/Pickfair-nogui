@@ -1238,6 +1238,21 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "recorder_sessione_fase_a": {
+      "description": "Recorder di sessione, fase A (fondamenta) — richiesta owner su #374: registrare la storia reale di una sessione d'uso per poterla analizzare dopo, invece di ricostruirla a memoria. NON introduce un secondo sistema di logging: core/event_journal.py e' gia' un ledger append-only JSONL con fsync per evento, riga troncata da crash gestita in lettura e in append, e retention. Cosa cambia: (1) il vocabolario passa da 11 tipi di epoca bridge/CSV a un catalogo di 122 raggruppati in 10 categorie (EVENT_CATEGORIES: LEGACY/SESSION/CONFIG/UI/TELEGRAM/SIGNAL/BETFAIR/RISK/ORDER/SYSTEM); gli 11 storici restano invariati e in LEGACY, perche' su quei tipi ci sono ledger gia' scritti su disco. (2) make_event/append_event guadagnano i campi opzionali del Recorder: sess (due avvii sullo stesso file restano distinguibili), seq (un buco nella numerazione dice che si e' PERSO un evento — altrimenti un ledger amputato sembra solo piu' corto), mono (orologio monotono: ts e' wall-clock e puo' arretrare per NTP o sospensione, falsando ogni latenza in silenzio), lvl, corr e root (catena causale: filtrando per root si ha la storia intera di una giocata dal messaggio Telegram al P&L, e da un ordine strano si risale in un passo a cosa l'ha prodotto). Retro-compatibili: un chiamante storico produce la stessa riga piu' il solo cat, derivato dal tipo. (3) Nuovo core/session_recorder.py: identita' di sessione, progressivo sotto lock, orologio monotono, catena via contextvars (con limite DICHIARATO: un thread nuovo non eredita il contesto, la catena si ricuce con chain(root)), campionamento per-chiave a tetto limitato, e l'interruttore. Semantica dell'interruttore (ALWAYS_RECORDED): a recorder spento restano registrati ordini, rischio, eccezioni, ciclo di vita e TUTTO il LEGACY — l'interruttore governa il rumore, non le prove; il contrario trasformerebbe una preferenza di verbosita' in una perdita di traccia forense preesistente dal #230. Non solleva mai: tipo ignoto, disco pieno, dato non serializzabile -> ritorna None, il percorso di trading non se ne accorge. (4) core/app.py: _journal passa dal recorder, cosi' gli 8 punti di emissione esistenti guadagnano i campi nuovi senza toccarne nemmeno uno; fallback invariato per le istanze headless che non passano da __init__. (5) config_store: recorder_enabled, opt-in fail-closed con as_bool_optin come debug_message_payload (un refuso NON accende la registrazione estesa). (6) journal_view: filtro --cat e --list-types, perche' l'help di --type elencava tutti i tipi e con 122 sarebbe diventato illeggibile. FUORI PERIMETRO, gia' annotato come fase A2: gli emettitori delle 9 categorie nuove (nessuno emette ancora UI_*, TG_*, ORDER_*: il catalogo c'e', i punti di emissione arrivano dopo) e la tendina della scheda Diario, che enumera EVENT_TYPES e va portata a due livelli categoria+tipo. Nessun GitHub: il trasporto e' la fase C.",
+      "allow_tests": true,
+      "files": [
+        "core/event_journal.py",
+        "core/session_recorder.py",
+        "core/journal_view.py",
+        "core/config_store.py",
+        "core/app.py",
+        "tests/unit/test_event_journal_catalogo.py",
+        "tests/unit/test_session_recorder.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }

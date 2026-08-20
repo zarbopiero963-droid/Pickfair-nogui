@@ -195,6 +195,14 @@ DEFAULTS = {
     # consapevole). Default OFF = privacy on; coerce via `as_bool_optin` (ALLOWLIST
     # fail-closed: solo un "sì" esplicito riconosciuto attiva, refusi/sconosciuti → OFF).
     "debug_message_payload":        False,
+    # Recorder di sessione (fase A): registrazione ESTESA nel diario eventi — passaggi
+    # d'interfaccia, configurazione (con la sorgente: app o bot), Telegram, segnali,
+    # Betfair. Default OFF: e' uno strumento diagnostico, si accende quando serve.
+    # Spegnerlo NON toglie gli eventi del percorso soldi e dei guasti, che restano
+    # sempre registrati (vedi `session_recorder.ALWAYS_RECORDED`): l'interruttore
+    # governa il rumore, non le prove. Coerce con `as_bool_optin` come gli altri
+    # opt-in (ALLOWLIST fail-closed: un refuso NON accende la registrazione estesa).
+    "recorder_enabled":             False,
     # Auto Sync del dizionario Betfair (issue #86 PR-P8). Default OFF: l'auto-sync
     # parte solo se l'utente la attiva esplicitamente. `betfair_auto_sync_hour` è
     # l'ora locale (HH, 0-23) in cui scatta una volta al giorno; default 23.
@@ -434,6 +442,10 @@ def _migrate(cfg: dict) -> dict:
             elif key == "debug_message_payload":
                 # Privacy fail-closed (helper unico): solo un truthy ESPLICITO attiva il log
                 # completo; None/`null`/vuoto → False (il payload resta redatto di default).
+                cfg[key] = as_bool_optin(cfg.get(key))
+            elif key == "recorder_enabled":
+                # Recorder = opt-in fail-closed: solo un truthy esplicito accende la
+                # registrazione estesa (stessa regola di `debug_message_payload`).
                 cfg[key] = as_bool_optin(cfg.get(key))
             elif key == "betfair_auto_sync":
                 # Auto-sync Betfair = opt-in fail-closed (issue #86 PR-P8): un valore
