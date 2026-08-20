@@ -1186,6 +1186,21 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "ci_irrobustimento_range_e_una_sola_pr": {
+      "description": "CI hardening, three items from the same area. CI-F1: in solo_file_della_pr the `esclusi` set could contain None if a Compare API entry lacked `filename`; with two exclusions sorted() raises TypeError and the job dies instead of degrading, and with a single one sorted returns [None] and the caller's join dies further from the cause. Both reproduced. `discard(None)` was already there on nomi_propri, so the inconsistency was real. CI-F2: restricting the file LIST is not enough - the patch GitHub attaches for a push-merge range still carries the lines coming from the base branch, and the model reads them as the PR's. Measured on PR #422: 80 lines seen against 37 real, two false positives in one round (tests 'missing' because they live on main; anchoring 'applied to one workflow only'). Kept files now take their entry from the PR-vs-base compare, which is already in hand - no extra API call. Only when the push actually dragged in foreign files, otherwise a normal incremental push would re-show (and re-pay) the whole file. CI-F3: 'one open PR at a time' is a non-negotiable rule of CLAUDE.md and was violated twice with CI fully green - overlap-check exits 1 only on five hardcoded critical files, and no check on the NUMBER of open PRs existed. Regression tests extract the functions from the real workflows and run them, so they verify what actually ships.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openai-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-overlap-guard.yml",
+        "tests/guardrails/test_ai_review_range_solo_pr.py",
+        "tests/guardrails/test_una_sola_pr_aperta.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 8
     }
   }
 }
