@@ -397,3 +397,37 @@ def test_pass_su_push_normale_il_patch_incrementale_non_viene_sostituito(
         f"con il diff completo della PR. Ogni push farebbe rileggere (e "
         f"ripagare) codice gia' revisionato."
     )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_non_si_scambia_un_patch_presente_con_uno_assente(
+        workflow: str) -> None:
+    """Il diff vs base e' CUMULATIVO, quindi piu' grande dell'incrementale, e
+    GitHub omette `patch` oltre una certa dimensione.
+
+    Scambiare un'entry CON patch per una SENZA farebbe saltare il file da
+    `build_patch_payload` (`if not patch: skipped; continue`), e quel salto
+    non fa scattare il tier-2 perche' non e' un troncamento da budget: la
+    modifica sparirebbe dalla review in silenzio. Rilievo di GPT-5.6 Sol su
+    #423, accolto — e su una PR lunga e' il caso normale, non un limite.
+    """
+    fn = carica_funzione(
+        workflow, base_sha="b" * 40,
+        pr_files=[{"filename": "core/enorme.py"},          # <- niente `patch`
+                  {"filename": "core/piccolo.py", "patch": "PATCH_VS_BASE"}])
+    tenuti, esclusi = fn(
+        [{"filename": "core/enorme.py", "patch": "PATCH_INCREMENTALE"},
+         {"filename": "core/piccolo.py", "patch": "patch della push"},
+         {"filename": "arriva_da_main.py", "patch": "roba di main"}],
+        "a" * 40, "c" * 40)
+
+    assert esclusi == ["arriva_da_main.py"]
+    per_nome = {t["filename"]: t for t in tenuti}
+
+    assert per_nome["core/enorme.py"].get("patch") == "PATCH_INCREMENTALE", (
+        f"{workflow}: il file ha perso il patch. A valle verrebbe saltato "
+        f"senza nemmeno alzare il tier-2: modifiche vere invisibili al modello."
+    )
+    # Dove il patch vs base c'e', si scambia comunque: la protezione non deve
+    # spegnere la correzione.
+    assert per_nome["core/piccolo.py"]["patch"] == "PATCH_VS_BASE"

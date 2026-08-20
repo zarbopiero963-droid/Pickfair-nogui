@@ -342,10 +342,32 @@ jobs:
                   for f in propri:
                       if f.get("filename"):
                           per_nome[f["filename"]] = f
-                  tenuti = [per_nome.get(f.get("filename"))
-                            or per_nome.get(f.get("previous_filename"))
-                            or f
-                            for f in tenuti]
+
+                  def dalla_base(f):
+                      """L'entry calcolata sulla base, ma solo se porta un patch.
+
+                      Il confronto con la base e' CUMULATIVO, quindi piu' grande di
+                      quello incrementale della push, e GitHub omette `patch` oltre
+                      una certa dimensione. Scambiare un'entry CON patch per una
+                      SENZA la farebbe saltare del tutto da build_patch_payload
+                      (`if not patch: skipped; continue`), e quel salto non fa
+                      nemmeno scattare il tier-2, perche' non e' un troncamento da
+                      budget. Si perderebbero modifiche vere IN SILENZIO: peggio del
+                      patch contaminato che si sta cercando di evitare.
+                      """
+                      proprio = (per_nome.get(f.get("filename"))
+                                 or per_nome.get(f.get("previous_filename")))
+                      return proprio if proprio and proprio.get("patch") else f
+
+                  non_scambiati = [f.get("filename") for f in tenuti
+                                   if dalla_base(f) is f and f.get("patch")]
+                  tenuti = [dalla_base(f) for f in tenuti]
+                  if non_scambiati:
+                      print(f"::warning::{REVIEW_ID}: patch vs base non disponibile per "
+                            f"{len(non_scambiati)} file (diff cumulativo oltre il limite "
+                            f"della Compare API): si tiene quello della push, che puo' "
+                            f"contenere righe del branch base -> "
+                            f"{', '.join(str(n) for n in non_scambiati[:10])}")
               return tenuti, esclusi
 
           def is_critical(filename: str) -> bool:

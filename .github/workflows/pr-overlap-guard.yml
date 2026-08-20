@@ -59,6 +59,18 @@ jobs:
               `numero_corrente` non filtra niente: serve solo a marcare nel
               report quale PR sta girando, perche' il check e' rosso su TUTTE le
               PR aperte finche' la situazione non rientra — che e' il punto.
+
+              LIMITE DICHIARATO (rilievo di GPT-5.6 Sol su #423, accolto): gli
+              esiti non si aggiornano da soli. Il workflow parte su
+              opened/synchronize/reopened della PR, quindi aprire la seconda non
+              rifa girare il check sulla prima, che resta verde; e chiudere il
+              surplus non rifa girare quello rosso sulla seconda. Renderlo
+              coerente vorrebbe dire una macchina a stati fra PR, sproporzionata
+              al problema. Il punto di applicazione regge lo stesso: la PR di
+              troppo diventa rossa quando viene aperta, ed e' li' che ci si deve
+              fermare. Per farla tornare verde dopo aver chiuso il surplus si usa
+              "Re-run jobs" — il payload dell'evento e' lo stesso, ma la lista
+              delle PR aperte viene riletta dall'API in quel momento.
               """
               numeri = sorted(p["number"] for p in prs_aperte)
               return numeri[1:]
@@ -97,7 +109,12 @@ jobs:
           print("   Lavoro NON correlato a una PR gia' aperta -> fermarsi,")
           print("   non aprire la seconda. Lavoro di fix sulla PR aperta ->")
           print("   continuare sullo STESSO branch.")
-          print("   Si rientra mergiando o chiudendo, non ignorando questo check.")
+          print()
+          print("   Si rientra mergiando o chiudendo il surplus, non ignorando")
+          print("   questo check. Attenzione: NON torna verde da solo — il")
+          print("   workflow parte sugli eventi della PR, non sulla chiusura di")
+          print("   un'altra. Dopo aver chiuso il surplus usa \"Re-run jobs\" qui:")
+          print("   la lista delle PR aperte viene riletta dall'API in quel momento.")
           sys.exit(1)
           PY
 

@@ -46,7 +46,7 @@ def _carica() -> Callable:
     assert nodo is not None, f"{FUNZIONE} non trovata in {WORKFLOW}"
 
     spazio: Dict[str, Any] = {}
-    exec(  # skipcq: PY-W0122 - codice versionato di questo repo, gia' passato da ast
+    exec(  # skipcq: PY-W0122, PYL-W0122 - codice versionato del repo, gia passato da ast
         compile(ast.Module(body=[nodo], type_ignores=[]), WORKFLOW, "exec"), spazio)
     return spazio[FUNZIONE]
 
