@@ -26,6 +26,98 @@ jobs:
             "https://api.github.com/repos/$REPO/pulls?state=open&per_page=100" \
             > open_prs.json
 
+      - name: Una sola PR aperta alla volta
+        run: |
+          python3 <<'PY'
+          import json
+          import sys
+
+          def pr_di_troppo(prs_aperte, numero_corrente):
+              """Le PR aperte di troppo. Lista vuota = regola rispettata.
+
+              La regola sta fra le NON NEGOZIABILI di CLAUDE.md: una sola PR
+              aperta, un solo task attivo, e una nuova PR solo dopo che la
+              precedente e' merged o closed.
+
+              E' stata violata due volte senza che niente diventasse rosso.
+              `overlap-check`, in questo stesso workflow, esce 1 soltanto se la
+              sovrapposizione tocca cinque file critici scritti a mano: su
+              `.guardrails/` e `.github/workflows/` stampava
+              "Non-critical overlap detected (allowed, but be careful)" e usciva
+              0. Un controllo sul NUMERO di PR aperte non esisteva affatto.
+
+              Di troppo sono quelle aperte dopo la prima: la piu' vecchia e'
+              quella legittima, le successive non andavano aperte. Si ordina per
+              numero, che in GitHub cresce con l'ordine di apertura.
+
+              Le bozze contano: una draft e' comunque una PR aperta e un task in
+              volo. Nel repo non ci sono dependabot ne' renovate configurati,
+              quindi nessun bot puo' far diventare rosso questo check da solo;
+              se un domani ne venisse aggiunto uno, questa scelta va rivista qui
+              e non aggirata a valle.
+
+              `numero_corrente` non filtra niente: serve solo a marcare nel
+              report quale PR sta girando, perche' il check e' rosso su TUTTE le
+              PR aperte finche' la situazione non rientra — che e' il punto.
+
+              LIMITE DICHIARATO (rilievo di GPT-5.6 Sol su #423, accolto): gli
+              esiti non si aggiornano da soli. Il workflow parte su
+              opened/synchronize/reopened della PR, quindi aprire la seconda non
+              rifa girare il check sulla prima, che resta verde; e chiudere il
+              surplus non rifa girare quello rosso sulla seconda. Renderlo
+              coerente vorrebbe dire una macchina a stati fra PR, sproporzionata
+              al problema. Il punto di applicazione regge lo stesso: la PR di
+              troppo diventa rossa quando viene aperta, ed e' li' che ci si deve
+              fermare. Per farla tornare verde dopo aver chiuso il surplus si usa
+              "Re-run jobs" — il payload dell'evento e' lo stesso, ma la lista
+              delle PR aperte viene riletta dall'API in quel momento.
+              """
+              numeri = sorted(p["number"] for p in prs_aperte)
+              return numeri[1:]
+
+          with open("open_prs.json", encoding="utf-8") as fh:
+              aperte = json.load(fh)
+
+          corrente = int("${{ github.event.pull_request.number }}")
+          di_troppo = pr_di_troppo(aperte, corrente)
+
+          print("=" * 80)
+          print("UNA SOLA PR APERTA ALLA VOLTA")
+          print("=" * 80)
+
+          for pr in sorted(aperte, key=lambda p: p["number"]):
+              marcatori = []
+              if pr["number"] == corrente:
+                  marcatori.append("<- questa")
+              if pr["number"] in di_troppo:
+                  marcatori.append("DI TROPPO")
+              if pr.get("draft"):
+                  marcatori.append("draft")
+              print(f'  #{pr["number"]:<5} {pr.get("title", "")[:70]}'
+                    f'{"  [" + ", ".join(marcatori) + "]" if marcatori else ""}')
+
+          if not di_troppo:
+              print()
+              print(f"OK: {len(aperte)} PR aperta.")
+              sys.exit(0)
+
+          print()
+          print("❌ REGOLA NON NEGOZIABILE VIOLATA (CLAUDE.md):")
+          print(f"   {len(aperte)} PR aperte contemporaneamente.")
+          print(f"   Di troppo: {', '.join('#' + str(n) for n in di_troppo)}")
+          print()
+          print("   Lavoro NON correlato a una PR gia' aperta -> fermarsi,")
+          print("   non aprire la seconda. Lavoro di fix sulla PR aperta ->")
+          print("   continuare sullo STESSO branch.")
+          print()
+          print("   Si rientra mergiando o chiudendo il surplus, non ignorando")
+          print("   questo check. Attenzione: NON torna verde da solo — il")
+          print("   workflow parte sugli eventi della PR, non sulla chiusura di")
+          print("   un'altra. Dopo aver chiuso il surplus usa \"Re-run jobs\" qui:")
+          print("   la lista delle PR aperte viene riletta dall'API in quel momento.")
+          sys.exit(1)
+          PY
+
       - name: Fetch current PR files
         run: |
           PR_NUMBER="${{ github.event.pull_request.number }}"

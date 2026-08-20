@@ -305,3 +305,129 @@ def test_block_la_restrizione_precede_il_gate_di_costo(workflow: str) -> None:
         f"{i_chiamata + 1}: valuterebbe anche i file che arrivano da main, e "
         f"una push che per la PR non cambia niente pagherebbe una review."
     )
+
+
+# ---------------------------------------------------------------------------
+# CI-F1: `esclusi` non deve poter contenere None.
+# La Compare API documenta `filename` come sempre presente. Se non lo fosse,
+# il job morirebbe invece di degradare — e in un punto lontano dalla causa.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_una_entry_senza_filename_non_uccide_il_job(workflow: str) -> None:
+    """Con DUE esclusi e uno privo di `filename`, `sorted` confronterebbe None
+    con str: TypeError, e la review non gira affatto."""
+    fn = carica_funzione(workflow, base_sha="b" * 40,
+                         pr_files=[{"filename": "core/mio.py"}])
+    tenuti, esclusi = fn(
+        [{"previous_filename": "senza_nome.py"},   # entry senza `filename`
+         {"filename": "da_main.py"},
+         {"filename": "core/mio.py"}],
+        "a" * 40, "c" * 40)
+
+    assert [t["filename"] for t in tenuti] == ["core/mio.py"]
+    assert esclusi == ["da_main.py"], (
+        f"{workflow}: esclusi={esclusi!r}. Deve contenere solo nomi veri: "
+        f"None qui dentro fa esplodere sorted() o il join del chiamante."
+    )
+    assert None not in esclusi
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_un_solo_escluso_senza_filename_non_passa_none_al_chiamante(
+        workflow: str) -> None:
+    """Il caso insidioso: con UN SOLO escluso `sorted` non solleva niente e
+    restituisce [None]. A morire e' il `", ".join(...)` del chiamante, che
+    stampa la notice — cioe' il codice muore lontano dalla causa."""
+    fn = carica_funzione(workflow, base_sha="b" * 40,
+                         pr_files=[{"filename": "core/mio.py"}])
+    _, esclusi = fn([{"previous_filename": "senza_nome.py"},
+                     {"filename": "core/mio.py"}],
+                    "a" * 40, "c" * 40)
+
+    assert esclusi == []
+    # La riga che moriva davvero: si esercita, non si assume.
+    ", ".join(esclusi[:10])
+
+
+# ---------------------------------------------------------------------------
+# CI-F2: il patch deve venire dalla BASE della PR, non dal range della push.
+# Restringere la lista dei file non basta — vedi PR #422, 80 righe viste
+# contro 37 reali e due falsi positivi in una sola tornata.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_su_push_contaminata_il_patch_arriva_dalla_base_della_pr(
+        workflow: str) -> None:
+    fn = carica_funzione(
+        workflow, base_sha="b" * 40,
+        pr_files=[{"filename": "core/mio.py", "patch": "PATCH_VS_BASE"}])
+    tenuti, esclusi = fn(
+        [{"filename": "core/mio.py", "patch": "PATCH_DELLA_PUSH_CONTAMINATO"},
+         {"filename": "arriva_da_main.py", "patch": "roba di main"}],
+        "a" * 40, "c" * 40)
+
+    assert esclusi == ["arriva_da_main.py"]
+    assert [t["filename"] for t in tenuti] == ["core/mio.py"]
+    assert tenuti[0]["patch"] == "PATCH_VS_BASE", (
+        f"{workflow}: il patch e' ancora quello del range della push. La lista "
+        f"dei file e' ristretta ma il modello legge comunque righe che "
+        f"arrivano dal branch base, e le attribuisce alla PR."
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_pass_su_push_normale_il_patch_incrementale_non_viene_sostituito(
+        workflow: str) -> None:
+    """Senza contaminazione il patch della push e' esattamente cio' che si
+    vuole rivedere. Sostituirlo mostrerebbe di nuovo tutto il file gia'
+    revisionato nelle push precedenti: piu' caro, e contro lo scopo della
+    review incrementale."""
+    fn = carica_funzione(
+        workflow, base_sha="b" * 40,
+        pr_files=[{"filename": "core/mio.py", "patch": "TUTTA_LA_PR"},
+                  {"filename": "toccato_prima.py", "patch": "..."}])
+    tenuti, esclusi = fn(
+        [{"filename": "core/mio.py", "patch": "SOLO_QUESTA_PUSH"}],
+        "a" * 40, "c" * 40)
+
+    assert esclusi == [], "nessun file estraneo: la push non e' contaminata"
+    assert tenuti[0]["patch"] == "SOLO_QUESTA_PUSH", (
+        f"{workflow}: su una push incrementale il patch e' stato sostituito "
+        f"con il diff completo della PR. Ogni push farebbe rileggere (e "
+        f"ripagare) codice gia' revisionato."
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_non_si_scambia_un_patch_presente_con_uno_assente(
+        workflow: str) -> None:
+    """Il diff vs base e' CUMULATIVO, quindi piu' grande dell'incrementale, e
+    GitHub omette `patch` oltre una certa dimensione.
+
+    Scambiare un'entry CON patch per una SENZA farebbe saltare il file da
+    `build_patch_payload` (`if not patch: skipped; continue`), e quel salto
+    non fa scattare il tier-2 perche' non e' un troncamento da budget: la
+    modifica sparirebbe dalla review in silenzio. Rilievo di GPT-5.6 Sol su
+    #423, accolto — e su una PR lunga e' il caso normale, non un limite.
+    """
+    fn = carica_funzione(
+        workflow, base_sha="b" * 40,
+        pr_files=[{"filename": "core/enorme.py"},          # <- niente `patch`
+                  {"filename": "core/piccolo.py", "patch": "PATCH_VS_BASE"}])
+    tenuti, esclusi = fn(
+        [{"filename": "core/enorme.py", "patch": "PATCH_INCREMENTALE"},
+         {"filename": "core/piccolo.py", "patch": "patch della push"},
+         {"filename": "arriva_da_main.py", "patch": "roba di main"}],
+        "a" * 40, "c" * 40)
+
+    assert esclusi == ["arriva_da_main.py"]
+    per_nome = {t["filename"]: t for t in tenuti}
+
+    assert per_nome["core/enorme.py"].get("patch") == "PATCH_INCREMENTALE", (
+        f"{workflow}: il file ha perso il patch. A valle verrebbe saltato "
+        f"senza nemmeno alzare il tier-2: modifiche vere invisibili al modello."
+    )
+    # Dove il patch vs base c'e', si scambia comunque: la protezione non deve
+    # spegnere la correzione.
+    assert per_nome["core/piccolo.py"]["patch"] == "PATCH_VS_BASE"
