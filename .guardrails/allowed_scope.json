@@ -1201,6 +1201,31 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "pulizia_automazioni_dismesse": {
+      "description": "Owner decision 2026-08-20: retire the Telegram -> CloudCLI -> GitHub chain and the notification/watchdog automations no longer in use. The dangerous part was NOT dormant legacy: telegram-command-bridge.yml ran on cron */5 with permissions actions:write, polled Telegram and dispatched cloudcli-controller, which handed PICKFAIR_ACTIONS_TOKEN to an external service allowed to commit, push and open PRs. Its only authorisation check was chatId != allowedChatId, never message.from.id: with a group chat, any member of the group could drive the chain without any GitHub access at all. 15 workflows removed (~6500 lines); self-firing scheduled workflows go from 7 to 1; PICKFAIR_ACTIONS_TOKEN drops from 13 users to 1. Two dead workflow_run entries removed from pr-merge-readiness.yml. A regression test asserts both the retired names and the SHAPE that made the chain reachable - no scheduled workflow may also hold actions:write - so a rename does not bypass it. Deliberately NOT touched: .github/quarantined-workflows/ (its .disabled copies are required fail-closed by scripts/ci/check_ci_quarantine.py, removing them means rewriting that guard) and the two inert filter entries naming retired workflows in scripts/pr_automation_controller.py and scripts/pr_flow_automation.py, which are ignore-lists that simply stop matching and sit inside the live Merge readiness engine.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/telegram-command-bridge.yml",
+        ".github/workflows/cloudcli-controller.yml",
+        ".github/workflows/cloudcli-new-task.yml",
+        ".github/workflows/cloudcli-pr-fix.yml",
+        ".github/workflows/cloudcli-auto-pr-loop.yml",
+        ".github/workflows/cloudcli-health.yml",
+        ".github/workflows/pr-telegram-notify.yml",
+        ".github/workflows/pr-flow-guardrails.yml",
+        ".github/workflows/pr-health-monitor.yml",
+        ".github/workflows/audit-result-telegram.yml",
+        ".github/workflows/pr-self-check-refresh.yml",
+        ".github/workflows/pr-safe-autofix-canary.yml",
+        ".github/workflows/vps-runner-health.yml",
+        ".github/workflows/runner-watchdog-dispatch.yml",
+        ".github/workflows/selfhosted-smoke.yml",
+        ".github/workflows/pr-merge-readiness.yml",
+        "tests/guardrails/test_automazioni_ritirate.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 18
     }
   }
 }
