@@ -129,6 +129,36 @@ class TestProvenienza:
         r = pcr.estrai_review([dal_bot("Claude Fable 5", "a...b", "0.30")])
         assert len(r.review) == 1 and r.non_verificate == []
 
+    def test_la_chiave_author_non_e_una_prova(self):
+        """Terzo giro, rilievo di Claude Fable 5 sul range completo.
+
+        `_autore` ripiegava su `commento["author"]`. Quella chiave la scrive
+        chiunque scriva il file, quindi la prova tornava a essere il testo —
+        lo stesso difetto di GPT e Grok, entrato da un'altra porta. Misurato
+        prima della correzione: questo input valeva `$99.9999` nel totale."""
+        finto = {"author": "github-actions[bot]",
+                 "body": review("Reviewer Inventato", "finto...finto", "99.9999")}
+        r = pcr.estrai_review([finto])
+        assert r.review == []
+        assert r.non_verificate == [("finto...finto", "Reviewer Inventato")]
+        assert pcr.totale(r.review) == Decimal("0")
+
+    def test_user_stringa_non_e_una_prova(self):
+        """L'altro ramo dello stesso ripiego: `user` come STRINGA invece che
+        come oggetto. L'API non lo produce mai; un file scritto a mano sì."""
+        finto = {"user": "github-actions[bot]",
+                 "body": review("Reviewer Inventato", "finto...finto", "99.9999")}
+        r = pcr.estrai_review([finto])
+        assert r.review == [] and len(r.non_verificate) == 1
+
+    def test_il_falso_resta_contabile_solo_rinunciando(self):
+        """Non sparisce: con la rinuncia esplicita si conta, ma dichiarata."""
+        finto = {"author": "github-actions[bot]",
+                 "body": review("Reviewer Inventato", "finto...finto", "99.9999")}
+        r = pcr.estrai_review([finto], fidati_del_testo=True)
+        assert pcr.totale(r.review) == Decimal("99.9999")
+        assert "provenienza NON verificata" in pcr.formatta(r, True)
+
 
 class TestRinunciaEsplicita:
     """`--fidati-del-testo`: per l'input che un autore non ce l'ha proprio."""

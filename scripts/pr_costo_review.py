@@ -69,6 +69,10 @@ _COSTO_RE = re.compile(r"Costo stimato base:\s*`~\$([0-9]+(?:\.[0-9]+)?)`")
 # decidere: sta nel corpo del commento, quindi chiunque può copiarlo. Non
 # rimetterlo qui — accettarlo in OR con l'autore riporterebbe il controllo a non
 # impedire niente (rilievo di GPT-5.6 Sol su #428).
+# Limite dichiarato (rilievo di Claude Fable 5 su #428): `github-actions[bot]`
+# e' il login di OGNI workflow del repo, non solo dei reviewer. Chi puo' aggiungere
+# un workflow puo' quindi far contare una review. E' il massimo che GitHub offre —
+# non esiste un'identita' per-workflow — ma va saputo invece che dato per scontato.
 AUTORI_FIDATI = frozenset({"github-actions[bot]"})
 
 SENZA_RANGE = "(range non dichiarato)"
@@ -92,13 +96,28 @@ def _corpo(commento) -> str:
 
 
 def _autore(commento) -> str:
-    """Login dell'autore, se il commento lo porta; stringa vuota altrimenti."""
+    """Login COSÌ COME LO SCRIVE GITHUB: `user.login` dentro un oggetto, e basta.
+
+    Nessun ripiego su altre chiavi (rilievo di Claude Fable 5 su #428, giro a
+    label). La versione precedente cadeva su `commento["author"]`, oppure su
+    `user` quando era una stringa invece di un oggetto. Sembrava tolleranza
+    verso input diversi; in realtà **riapriva per intero il buco** che questa
+    funzione esiste per chiudere: `{"author": "github-actions[bot]"}` lo scrive
+    chiunque, quindi tornava a valere quanto un login scritto da GitHub.
+    Misurato prima della correzione: un file scritto a mano con il solo campo
+    `author` entrava nel totale con `$99.9999`, in silenzio.
+
+    Un ripiego del genere può servire solo a input costruito a mano — che è
+    esattamente l'input che non prova niente. Per quel caso c'è
+    `--fidati-del-testo`, che almeno lo dichiara invece di fingere una prova.
+    Non rimetterlo.
+    """
     if not isinstance(commento, dict):
         return ""
     utente = commento.get("user")
-    if isinstance(utente, dict):
-        return str(utente.get("login") or "")
-    return str(commento.get("author") or utente or "")
+    if not isinstance(utente, dict):
+        return ""
+    return str(utente.get("login") or "")
 
 
 def _e_autentica(commento, fidati_del_testo: bool = False) -> bool:
