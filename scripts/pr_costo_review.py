@@ -15,13 +15,19 @@ fondo, una riga `Costo stimato base: ~$…`. Si raggruppa per range, si somma.
 
 Invarianti:
 
-- **Provenienza verificata** (rilievo di GPT-5.6 Sol su #428). Il testo di un
-  commento non è una prova di chi l'ha scritto: chiunque possa commentare
-  potrebbe incollare un'intestazione di review e un costo inventato, e il totale
-  mostrato all'owner cambierebbe. Si contano solo le review che portano il
-  marker HTML emesso dal workflow (`<!-- <id>-pr-review:… -->`) oppure che
-  arrivano da un autore fidato. Le altre finiscono fra le `non_verificate`, e
-  vengono MOSTRATE: scartarle in silenzio sarebbe lo stesso difetto al contrario.
+- **Provenienza: solo l'autore** (rilievo di GPT-5.6 Sol su #428, in due giri).
+  Il testo di un commento non prova chi l'ha scritto. La prima versione di questo
+  controllo accettava «marker del workflow OPPURE autore fidato», ma il marker è
+  testo dentro il corpo: chiunque possa commentare può copiarlo, quindi quel ramo
+  annullava l'altro e il controllo non impediva nulla. Ora l'unica prova è
+  `user.login`, che lo scrive GitHub e non il commentatore.
+
+  Conseguenza dichiarata: un commento senza autore — testo salvato o incollato a
+  mano — NON è verificabile e non entra nel totale. Per quel caso c'è
+  `--fidati-del-testo`, che è una scelta esplicita di chi esegue e viene STAMPATA
+  nel rapporto, così un totale ottenuto fidandosi non si confonde con uno
+  verificato. Le review scartate vengono comunque MOSTRATE: scartarle in silenzio
+  sarebbe lo stesso difetto al contrario.
 - **Niente cap silenziosi.** Un commento di review SENZA riga di costo (review
   fallita a metà, output troncato) viene contato a parte e SEGNALATO. Un totale
   che tace su ciò che non è riuscito a leggere è peggio di nessun totale: si
@@ -56,14 +62,13 @@ _REVIEWER_RE = re.compile(r"^#\s+(.+?)\s+PR Review\s*$", re.MULTILINE)
 _RANGE_RE = re.compile(r"\*\*Range:\*\*\s*`([^`]+)`")
 _COSTO_RE = re.compile(r"Costo stimato base:\s*`~\$([0-9]+(?:\.[0-9]+)?)`")
 
-# Marker HTML che i workflow di review antepongono al commento, es.
-# `<!-- gpt56sol-pr-review:pickfair-nogui:aaa...bbb -->`. È la prova di
-# provenienza piu' semplice disponibile nel testo: lo scrive il workflow.
-_MARKER_RE = re.compile(r"<!--\s*[A-Za-z0-9_-]+-pr-review:")
-
-# Autori che possono emettere review. Usato solo quando il commento arriva come
-# dict dell'API e porta quindi un autore; una stringa nuda non ne ha, e in quel
-# caso decide il marker.
+# Autori che possono emettere review. È l'UNICA prova di provenienza accettata:
+# `user.login` lo mette GitHub, non chi commenta.
+#
+# Il marker HTML del workflow (`<!-- gpt56sol-pr-review:… -->`) NON è usato per
+# decidere: sta nel corpo del commento, quindi chiunque può copiarlo. Non
+# rimetterlo qui — accettarlo in OR con l'autore riporterebbe il controllo a non
+# impedire niente (rilievo di GPT-5.6 Sol su #428).
 AUTORI_FIDATI = frozenset({"github-actions[bot]"})
 
 SENZA_RANGE = "(range non dichiarato)"
@@ -96,17 +101,17 @@ def _autore(commento) -> str:
     return str(commento.get("author") or utente or "")
 
 
-def _e_autentica(commento) -> bool:
+def _e_autentica(commento, fidati_del_testo: bool = False) -> bool:
     """La review porta una prova di provenienza?
 
-    Basta UNA delle due: il marker scritto dal workflow, oppure un autore
-    fidato. Il marker da solo copre il caso in cui i commenti arrivano come
-    testo nudo (nessun autore da controllare), l'autore copre il caso di un
-    workflow futuro che smettesse di emettere il marker."""
-    return bool(_MARKER_RE.search(_corpo(commento))) or _autore(commento) in AUTORI_FIDATI
+    L'unica prova è l'autore: `user.login` lo scrive GitHub. `fidati_del_testo`
+    è la rinuncia esplicita a quella prova, per l'input che un autore non ce
+    l'ha proprio (testo salvato o incollato); chi la usa lo dichiara, e il
+    rapporto lo stampa."""
+    return fidati_del_testo or _autore(commento) in AUTORI_FIDATI
 
 
-def estrai_review(commenti) -> Risultato:
+def estrai_review(commenti, *, fidati_del_testo: bool = False) -> Risultato:
     """Divide i commenti in conteggiate / senza costo / non verificate.
 
     Un commento che non è affatto una review (il testo dell'autore, un bot di
@@ -125,7 +130,7 @@ def estrai_review(commenti) -> Risultato:
         m_rng = _RANGE_RE.search(corpo)
         rng = m_rng.group(1).strip() if m_rng else SENZA_RANGE
 
-        if not _e_autentica(commento):
+        if not _e_autentica(commento, fidati_del_testo):
             non_verificate.append((rng, reviewer))
             continue
 
@@ -158,10 +163,15 @@ def _euro(valore: Decimal, quanto: Decimal = CENTESIMO) -> str:
     return f"${valore.quantize(quanto, rounding=ROUND_HALF_UP)}"
 
 
-def formatta(risultato: Risultato) -> str:
+def formatta(risultato: Risultato, fidati_del_testo: bool = False) -> str:
     """Rendering testuale: un blocco per range, subtotale, totale finale."""
     gruppi = raggruppa(risultato.review)
     righe: list = []
+    if fidati_del_testo:
+        # Un totale ottenuto rinunciando alla prova di provenienza non deve
+        # somigliare a uno verificato: lo si dice in testa, dove si legge.
+        righe.append("⚠️  --fidati-del-testo ATTIVO: provenienza NON verificata.")
+        righe.append("")
     for rng, voci in gruppi.items():
         righe.append(rng)
         larghezza = max((len(r) for r, _ in voci), default=0)
@@ -197,12 +207,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default="-",
                    help="File JSON con i commenti della PR (lista di oggetti con "
                         "`body` e `user.login`, o lista di stringhe). '-' = stdin. "
-                        "Nota: contano solo le review con prova di provenienza — "
-                        "marker del workflow oppure autore fidato. Del testo "
-                        "incollato a mano, senza ne' l'uno ne' l'altro, viene "
-                        "elencato come non verificato invece che sommato.")
+                        "Nota: contano solo le review con prova di provenienza, "
+                        "cioe' un autore fidato in `user.login`. Il testo salvato "
+                        "o incollato a mano non ce l'ha: viene elencato come non "
+                        "verificato invece che sommato (vedi --fidati-del-testo).")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="Output JSON invece che testuale.")
+    p.add_argument("--fidati-del-testo", action="store_true", dest="fidati",
+                   help="Conta le review anche senza autore verificabile. Serve "
+                        "all'input salvato o incollato a mano, che un autore non "
+                        "ce l'ha; e' una rinuncia esplicita alla prova di "
+                        "provenienza, e viene STAMPATA nel rapporto.")
     return p
 
 
@@ -221,11 +236,12 @@ def main(argv=None) -> int:
         print(f"❌ impossibile leggere i commenti: {exc}", file=sys.stderr)
         return 1
 
-    risultato = estrai_review(commenti)
+    risultato = estrai_review(commenti, fidati_del_testo=args.fidati)
     if args.as_json:
         # Gli importi restano STRINGHE: passare da float per serializzarli
         # rimetterebbe l'imprecisione che `Decimal` serve a togliere.
         print(json.dumps({
+            "provenienza_verificata": not args.fidati,
             "totale": str(totale(risultato.review).quantize(
                 QUATTRO_DECIMALI, rounding=ROUND_HALF_UP)),
             "review": len(risultato.review),
@@ -236,7 +252,7 @@ def main(argv=None) -> int:
                                for r, x in risultato.non_verificate],
         }, ensure_ascii=False, indent=2))
     else:
-        print(formatta(risultato))
+        print(formatta(risultato, args.fidati))
     return 0
 
 
