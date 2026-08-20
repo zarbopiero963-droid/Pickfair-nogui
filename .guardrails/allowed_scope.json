@@ -1226,6 +1226,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 18
+    },
+    "t0_nota_bot_api_obsoleta": {
+      "description": "T0 of the #374 T-block: correct documentation that declares a wiring absent when it exists. Zero production lines. The Telegram tab still told the user 'configurazione persistita, non ancora attiva a runtime' under the Bot API section. True when written (PR-4, persistence only), false since PR-5a/5b: TelegramService.start() selects the Bot API path when api_id/api_hash are empty, and starts active bots holding at least one numeric chat - one bot gives the single runtime, more than one gives _build_multibot_runtime. Verified in code and against the 40 existing behaviour tests in tests/services/test_telegram_service_botapi.py. Four stale statements fixed, not the two the tracker listed: the two tab notes, the section comment in telegram_module.py claiming 'Nessun wiring runtime', and the docstring of _select_bot_api_source, which still described the PR-5a fail-closed on more than one active bot that PR-5b replaced - the most misleading of the four, because it sits in the file that decides which Telegram source starts. A note like this is not cosmetic: it tells the user the bots being configured will not be listened to, so it drives them away from a working feature or sends them hunting a problem that does not exist. The regression test holds both halves - the phrase must not return AND the wiring that makes the new text true must stay - so if the wiring is ever removed the test says to fix the user-facing text too, instead of letting the UI lie the other way.",
+      "allow_tests": true,
+      "files": [
+        "telegram_tab_ui.py",
+        "telegram_module.py",
+        "services/telegram_service.py",
+        "tests/guardrails/test_nota_bot_api_non_obsoleta.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }

@@ -243,9 +243,12 @@ class TelegramService:
     def _select_bot_api_source(self) -> tuple:
         """Legge i bot Bot API in UNA sola lettura e ritorna `(active_count, usable)`
         (epica #374 PR-5a):
-        - `active_count`: numero di bot ATTIVI con token — il gate multi-bot fa
-          fail-closed su >1 attivo (niente drop silenzioso di una sorgente attiva),
-          A PRESCINDERE dall'usabilità delle chat;
+        - `active_count`: numero di bot ATTIVI con token, A PRESCINDERE
+          dall'usabilità delle chat. Serviva al fail-closed su >1 attivo di
+          PR-5a; da PR-5b più bot usable avviano l'orchestratore multi-bot, e
+          questo conteggio resta per misurare quanti bot attivi NON sono usable
+          (`_unusable_active_bot_count`) — cioè attivi ma senza chat numeriche,
+          che verrebbero droppati in silenzio senza contarli;
         - `usable`: lista `(bot_dict, [chat_id_str])` dei bot attivi con >=1 chat
           NUMERICA attiva (per la selezione della sorgente).
 

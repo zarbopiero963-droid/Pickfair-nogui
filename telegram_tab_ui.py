@@ -285,7 +285,9 @@ class TelegramTabUI:
             text=(
                 "Bot multipli via Bot API (token BotFather). Il token è cifrato a "
                 "riposo e mascherato; in modifica lascialo VUOTO per non cambiarlo. "
-                "Nota: configurazione persistita, non ancora attiva a runtime."
+                "I bot attivi con almeno una chat numerica vengono ascoltati a "
+                "runtime: uno solo avvia il runtime singolo, piu' di uno "
+                "l'orchestratore multi-bot."
             ),
             wraplength=520,
             justify="left",
@@ -386,7 +388,8 @@ class TelegramTabUI:
             bots_frame,
             text=(
                 "Seleziona un bot qui sopra, poi aggiungi le chat che deve "
-                "ascoltare. Configurazione persistita, non ancora attiva a runtime."
+                "ascoltare. Servono chat con id numerico: un bot attivo che non "
+                "ne ha nessuna non viene avviato."
             ),
             wraplength=520,
             justify="left",

@@ -1141,9 +1141,12 @@ class TelegramModule:
 
     # =========================================================
     # MULTI-BOT (Bot API) — gestione GUI (epica #374 PR-4)
-    # SOLO persistenza via CRUD PR-3 (telegram_bots). Nessun wiring runtime:
-    # i bot configurati sono persistiti ma non ancora ascoltati (arriva nella
-    # PR di wiring). Il bot_token e' un segreto: mai loggato, entry mascherata,
+    # Persistenza via CRUD PR-3 (telegram_bots). Il wiring runtime ESISTE ed e'
+    # arrivato con PR-5a/5b: TelegramService.start() sceglie il path Bot API
+    # quando api_id/api_hash sono vuoti e avvia i bot attivi con almeno una
+    # chat numerica (uno => runtime singolo, piu' di uno => orchestratore
+    # multi-bot). Cio' che si configura qui viene quindi ascoltato davvero.
+    # Il bot_token e' un segreto: mai loggato, entry mascherata,
     # e in update NON si ricarica in chiaro (vuoto = preserva il token cifrato).
     # =========================================================
     def _selected_bot_id(self):
