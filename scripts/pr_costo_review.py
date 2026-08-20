@@ -28,6 +28,27 @@ Invarianti:
   nel rapporto, così un totale ottenuto fidandosi non si confonde con uno
   verificato. Le review scartate vengono comunque MOSTRATE: scartarle in silenzio
   sarebbe lo stesso difetto al contrario.
+
+  **Il confine di fiducia, detto per intero** (rilievo di GPT-5.6 Sol su #428,
+  terzo giro, fondato). Questo controllo NON autentica il file: autentica il
+  RECORD dentro un file di cui ci si fida già. Un file scritto a mano può
+  contenere `{"user": {"login": "github-actions[bot]"}}` ed entra nel totale,
+  perché il modulo è puro e non ha modo di chiedere a GitHub se quel commento
+  esista davvero.
+
+  Ciò che il controllo impedisce è l'altra cosa, che è quella che capita: dentro
+  un dump VERO dell'API, un commento scritto da chiunque non sia un autore fidato
+  non viene contato — e lì `user.login` lo scrive GitHub, non il commentatore.
+
+  Quindi la garanzia si enuncia così, e non più larga di così:
+
+      con input preso dall'API, conta solo ciò che ha scritto un autore fidato;
+      con input scritto a mano, non conta niente di dimostrato.
+
+  Renderla vera anche nel secondo caso richiederebbe che lo script interrogasse
+  GitHub — cioè I/O di rete, che questo modulo esclude apposta per restare
+  testabile headless. La scelta è: modulo puro con il limite DICHIARATO, invece
+  di modulo in rete con il limite nascosto.
 - **Niente cap silenziosi.** Un commento di review SENZA riga di costo (review
   fallita a metà, output troncato) viene contato a parte e SEGNALATO. Un totale
   che tace su ciò che non è riuscito a leggere è peggio di nessun totale: si
@@ -123,10 +144,14 @@ def _autore(commento) -> str:
 def _e_autentica(commento, fidati_del_testo: bool = False) -> bool:
     """La review porta una prova di provenienza?
 
-    L'unica prova è l'autore: `user.login` lo scrive GitHub. `fidati_del_testo`
-    è la rinuncia esplicita a quella prova, per l'input che un autore non ce
-    l'ha proprio (testo salvato o incollato); chi la usa lo dichiara, e il
-    rapporto lo stampa."""
+    L'unica prova accettata è l'autore. Vale però quanto vale la FONTE: in un
+    dump dell'API `user.login` lo scrive GitHub, in un file scritto a mano lo
+    scrive chi ha scritto il file. Questa funzione filtra i record dentro un
+    dump; non può sapere da dove arriva il dump — vedi il confine di fiducia
+    nella docstring del modulo.
+
+    `fidati_del_testo` è la rinuncia esplicita anche a questo poco: chi la usa
+    lo dichiara, e il rapporto lo stampa."""
     return fidati_del_testo or _autore(commento) in AUTORI_FIDATI
 
 
@@ -226,10 +251,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", nargs="?", default="-",
                    help="File JSON con i commenti della PR (lista di oggetti con "
                         "`body` e `user.login`, o lista di stringhe). '-' = stdin. "
-                        "Nota: contano solo le review con prova di provenienza, "
-                        "cioe' un autore fidato in `user.login`. Il testo salvato "
-                        "o incollato a mano non ce l'ha: viene elencato come non "
-                        "verificato invece che sommato (vedi --fidati-del-testo).")
+                        "Nota: dentro il file contano solo le review di un autore "
+                        "fidato (`user.login`). Il filtro vale quanto vale la fonte: "
+                        "su un dump dell'API quel campo lo scrive GitHub, su un file "
+                        "scritto a mano lo scrive chi lo ha scritto — il modulo e' "
+                        "puro e non lo puo' verificare. Vedi --fidati-del-testo.")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="Output JSON invece che testuale.")
     p.add_argument("--fidati-del-testo", action="store_true", dest="fidati",

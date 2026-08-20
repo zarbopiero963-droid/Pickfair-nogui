@@ -151,6 +151,34 @@ class TestProvenienza:
         r = pcr.estrai_review([finto])
         assert r.review == [] and len(r.non_verificate) == 1
 
+    def test_un_file_a_mano_con_la_forma_giusta_CONTA_ed_e_il_limite(self):
+        """Il caso che GPT-5.6 Sol chiede esplicitamente (#428, terzo giro).
+
+        Questo test NON prova che il controllo funziona: prova il contrario, e
+        lo fissa. Un file scritto a mano che riproduce la forma dell'API entra
+        nel totale, perché il modulo è puro e non può chiedere a GitHub se quel
+        commento esista. È il confine di fiducia dichiarato nella docstring.
+
+        Sta qui perché un limite scritto solo in un commento, prima o poi, viene
+        letto come se non ci fosse. Se un domani qualcuno rendesse lo script
+        capace di verificare davvero la fonte, questo test diventa rosso — ed è
+        il momento giusto perché diventi rosso."""
+        finto = {"user": {"login": "github-actions[bot]"},   # forma dell'API, contenuto inventato
+                 "body": review("Reviewer Inventato", "finto...finto", "99.9999")}
+        r = pcr.estrai_review([finto])
+        assert pcr.totale(r.review) == Decimal("99.9999")
+        assert r.non_verificate == []
+
+    def test_ma_nel_dump_vero_l_estraneo_resta_fuori(self):
+        """La garanzia che invece regge, ed è quella che serve: dentro un dump
+        dell'API, dove `user.login` lo scrive GitHub, un commento di chiunque
+        altro non entra nel totale."""
+        estraneo = {"user": {"login": "tizio-qualunque"},
+                    "body": review("Reviewer Inventato", "finto...finto", "99.9999")}
+        r = pcr.estrai_review([estraneo, dal_bot("Claude Fable 5", "a...b", "0.30")])
+        assert pcr.totale(r.review) == Decimal("0.30")
+        assert r.non_verificate == [("finto...finto", "Reviewer Inventato")]
+
     def test_il_falso_resta_contabile_solo_rinunciando(self):
         """Non sparisce: con la rinuncia esplicita si conta, ma dichiarata."""
         finto = {"author": "github-actions[bot]",
