@@ -1276,6 +1276,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "r3_proxy_percorso_config": {
+      "description": "R3 di #374, primo passo: togliere il percorso assoluto del VPS da betfair_client.py. Il proxy veniva cercato a /home/ubuntu/Pickfair-nogui/config.json, una macchina dismessa, quindi os.path.exists era sempre False e IL PROXY NON VENIVA MAI APPLICATO; l'unico except Exception registrava e proseguiva, quindi il guasto era invisibile. Secondo difetto trovato leggendo: le credenziali venivano interpolate sempre, quindi un proxy senza utente produceva socks5://None:None@host:porta. La PR: catena di risoluzione (variabile d'ambiente PICKFAIR_CONFIG_PATH, poi core.config_store.config_path(), poi la cartella del programma), costruzione dell'URL estratta in funzione pura, credenziali opzionali, e fallimento RUMOROSO quando il proxy e' richiesto ma non applicabile. NON sostituisce ancora il client con quello di Pickfair-MarketAPI: quello resta il resto di R3. Il contratto pubblico cambia in modo COMPATIBILE: `proxy_config` e' keyword-only con default None, quindi ogni chiamante esistente continua a funzionare identico. guardrails/public_api_snapshot.json viene aggiornato di conseguenza — il guardrail ha fatto il suo lavoro segnalando la modifica, e la si dichiara invece di aggirarla.",
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "tests/unit/test_betfair_client_proxy.py",
+        "guardrails/public_api_snapshot.json",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }

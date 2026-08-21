@@ -19,6 +19,74 @@ from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
 
+#: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
+#: in un percorso non standard, e ai test.
+ENV_PERCORSO_CONFIG = "PICKFAIR_CONFIG_PATH"
+
+
+def percorsi_config_candidati() -> List[str]:
+    """Dove cercare la configurazione, in ordine di precedenza.
+
+    Qui c'era un percorso assoluto scritto nel codice
+    (``/home/ubuntu/Pickfair-nogui/config.json``) che puntava a un VPS
+    dismesso. Conseguenza misurata, non ipotizzata: ``os.path.exists`` era
+    sempre ``False``, quindi **il proxy non veniva mai configurato** — e
+    nessuno poteva accorgersene, perche' l'unico ``except`` registrava e
+    proseguiva. Una funzione che si crede attiva e non lo e'.
+
+    Nessun percorso assoluto: si parte da cio' che l'ambiente dichiara, poi
+    dalla config di runtime vera (``%APPDATA%/XTraderBridge`` su Windows), poi
+    dalla cartella del programma.
+    """
+    candidati: List[str] = []
+    da_ambiente = os.environ.get(ENV_PERCORSO_CONFIG, "").strip()
+    if da_ambiente:
+        candidati.append(da_ambiente)
+    try:
+        # Import locale: `core.config_store` importa a sua volta parti del
+        # progetto, e un import in testa creerebbe un ciclo.
+        from core.config_store import config_path as _config_path
+
+        candidati.append(_config_path())
+    except Exception:  # pragma: no cover - dipende dall'ambiente
+        logger.debug("BetfairClient: config_store non disponibile per il proxy")
+    candidati.append(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    )
+    return candidati
+
+
+def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
+    """URL del proxy da una configurazione, oppure ``None`` se non e' richiesto.
+
+    Solleva ``ValueError`` se il proxy e' RICHIESTO (``enabled``) ma la
+    configurazione non basta a costruirlo. E' deliberato: un proxy che non si
+    applica non e' un dettaglio estetico — il traffico verso Betfair esce
+    dall'indirizzo sbagliato, che e' esattamente cio' che il proxy esisteva per
+    evitare. Meglio non partire che partire diversamente da come si crede.
+
+    Le credenziali sono opzionali. Prima venivano interpolate sempre, quindi un
+    proxy senza utente produceva ``socks5://None:None@host:porta`` — una stringa
+    che sembra un URL valido e non lo e'.
+    """
+    if not isinstance(proxy_cfg, dict) or not proxy_cfg.get("enabled"):
+        return None
+
+    host = str(proxy_cfg.get("host") or "").strip()
+    porta = proxy_cfg.get("port")
+    if not host or porta in (None, ""):
+        raise ValueError(
+            "proxy.enabled e' attivo ma host o port mancano: il traffico "
+            "uscirebbe senza proxy senza che nessuno se ne accorga"
+        )
+
+    tipo = str(proxy_cfg.get("type") or "").strip() or "socks5"
+    utente = str(proxy_cfg.get("username") or "").strip()
+    password = str(proxy_cfg.get("password") or "").strip()
+    credenziali = f"{utente}:{password}@" if utente and password else ""
+    return f"{tipo}://{credenziali}{host}:{porta}"
+
+
 
 class BetfairClient:
     # certlogin (login non-interattivo mutual-TLS): host DEDICATO con `-cert`
@@ -36,6 +104,61 @@ class BetfairClient:
     # =========================================================
     # INIT
     # =========================================================
+    def _configura_proxy(self, proxy_config: Optional[Dict[str, Any]] = None) -> None:
+        """Applica il proxy alla sessione, se ne e' stato chiesto uno.
+
+        Tre esiti, tutti espliciti:
+
+        - nessuna configurazione trovata, o `enabled` falso -> non si fa nulla;
+        - configurazione valida -> il proxy si applica e viene registrato
+          (host e porta, MAI le credenziali);
+        - `enabled` attivo ma configurazione insufficiente -> eccezione.
+
+        Il terzo caso e' il motivo di questo metodo. Prima l'intero blocco stava
+        dentro un `try/except Exception` che registrava e proseguiva, quindi
+        qualunque errore — percorso inesistente compreso — diventava silenzio.
+        """
+        cfg = proxy_config
+        if cfg is None:
+            cfg = self._proxy_da_disco()
+        if cfg is None:
+            return
+
+        url = costruisci_proxy_url(cfg)
+        if url is None:
+            return
+
+        self.session.proxies = {"http": url, "https": url}
+        logger.info(
+            "BetfairClient: proxy %s configurato su %s:%s",
+            str(cfg.get("type") or "socks5"), cfg.get("host"), cfg.get("port"),
+        )
+
+    @staticmethod
+    def _proxy_da_disco() -> Optional[Dict[str, Any]]:
+        """Blocco `proxy` dal primo file di configurazione leggibile.
+
+        Un file assente non e' un errore: significa "nessun proxy configurato".
+        Un file presente ma illeggibile lo e', e viene registrato come tale
+        invece di sparire.
+        """
+        for percorso in percorsi_config_candidati():
+            if not percorso or not os.path.exists(percorso):
+                continue
+            try:
+                with open(percorso, "r", encoding="utf-8") as fh:
+                    dati = json.load(fh)
+            except (OSError, ValueError) as exc:
+                logger.warning(
+                    "BetfairClient: configurazione illeggibile in %s (%s)", percorso, exc
+                )
+                continue
+            proxy = dati.get("proxy") if isinstance(dati, dict) else None
+            if isinstance(proxy, dict):
+                return proxy
+        return None
+
+    # =========================================================
     def __init__(
         self,
         *,
@@ -46,6 +169,7 @@ class BetfairClient:
         session: Optional[requests.Session] = None,
         timeout: float = 20.0,
         max_retries: int = 2,
+        proxy_config: Optional[Dict[str, Any]] = None,
     ):
         self.username = str(username or "").strip()
         self.app_key = str(app_key or "").strip()
@@ -56,32 +180,8 @@ class BetfairClient:
         self.max_retries = max(0, int(max_retries))
 
         self.session = session or requests.Session()
-        
-        # Carica proxy da config.json se presente
-        try:
-            import json
-            import os
-            config_path = "/home/ubuntu/Pickfair-nogui/config.json"
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    config = json.load(f)
-                    proxy_cfg = config.get("proxy", {})
-                    if proxy_cfg.get("enabled"):
-                        p_type = proxy_cfg.get("type", "socks5")
-                        p_host = proxy_cfg.get("host")
-                        p_port = proxy_cfg.get("port")
-                        p_user = proxy_cfg.get("username")
-                        p_pass = proxy_cfg.get("password")
-                        
-                        if p_host and p_port:
-                            proxy_url = f"{p_type}://{p_user}:{p_pass}@{p_host}:{p_port}"
-                            self.session.proxies = {
-                                "http": proxy_url,
-                                "https": proxy_url
-                            }
-                            logger.info(f"BetfairClient: Proxy {p_type} configurato su {p_host}:{p_port}")
-        except Exception as e:
-            logger.error(f"BetfairClient: Errore caricamento proxy: {e}")
+        self._configura_proxy(proxy_config)
+
 
         self.session_token = ""
         self.session_expiry = ""
