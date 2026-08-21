@@ -117,7 +117,7 @@ def test_socks_support_is_declared_for_the_betfair_proxy():
     fissa il fatto che la dipendenza sia DICHIARATA, cosi' che il messaggio
     resti un promemoria invece che l'unico modo di scoprirlo.
     """
-    radice = GEN_WF.parents[2]
+    radice = ROOT
     runtime = (radice / "requirements.txt").read_text(encoding="utf-8")
     lock_runtime = (radice / "requirements-lock.txt").read_text(encoding="utf-8")
     lock_build = (radice / "requirements-build-linux.lock").read_text(encoding="utf-8")
@@ -127,6 +127,93 @@ def test_socks_support_is_declared_for_the_betfair_proxy():
     # Nel lock hash-verificato il nome e' normalizzato in minuscolo da pip-compile.
     assert "\npysocks==" in lock_build, (
         "PySocks assente dal lock hash-verificato della toolchain di build"
+    )
+
+
+def test_aiohttp_resta_fuori_finche_nessuno_la_importa():
+    """`aiohttp` era dichiarata e non importata da nessuno (#374 follow-up 5).
+
+    Zero occorrenze in tutto il repo, codice e test; non richiesta da telethon
+    (`pyaes`, `rsa`) ne' da betfairlightweight (`requests`). Portava **35**
+    advisory `pip-audit` per zero funzionalita': superficie di supply-chain a
+    fondo perduto, quindi e' stata tolta.
+
+    Questo test non vieta di riusarla: vieta di ri-DICHIARARLA senza usarla.
+    Se un domani serve, si aggiunge l'import e il test smette di lamentarsi da
+    solo.
+    """
+    import re
+
+    radice = ROOT
+
+    # Si guarda la RIGA DI REQUISITO, non il testo del file: qui sopra c'e' un
+    # commento in requirements.txt che spiega la rimozione e contiene la parola
+    # `aiohttp`. Cercare la stringa faceva risultare la dipendenza "dichiarata"
+    # per colpa della propria spiegazione. (Seconda volta nello stesso test che
+    # un confronto testuale mente: vedi anche il commento sull'import.)
+    REQUISITO = re.compile(r"^\s*aiohttp\b", re.IGNORECASE)
+
+    def _dichiarata(nome):
+        f = radice / nome
+        if not f.exists():
+            return False
+        return any(
+            REQUISITO.match(riga)
+            for riga in f.read_text(encoding="utf-8").splitlines()
+            if riga.strip() and not riga.lstrip().startswith("#")
+        )
+
+    if not any(_dichiarata(n) for n in ("requirements.txt", "requirements-lock.txt")):
+        return
+
+    # Si cerca un IMPORT, non la stringa: questo file stesso contiene la parola
+    # `aiohttp` una dozzina di volte, e cercarla renderebbe il test sempre
+    # verde. (Prima versione: esattamente cosi'. Il sabotaggio di controllo —
+    # ri-dichiarare aiohttp senza usarla — non faceva scattare niente. E' la
+    # stessa trappola gia' vista su #430: un test che passa per il motivo
+    # sbagliato.)
+    IMPORT = re.compile(r"^\s*(?:import\s+aiohttp|from\s+aiohttp[\s.])", re.MULTILINE)
+    questo_file = Path(__file__).resolve()
+
+    usata = False
+    for sorgente in radice.rglob("*.py"):
+        if sorgente == questo_file or ".git" in sorgente.parts:
+            continue
+        try:
+            if IMPORT.search(sorgente.read_text(encoding="utf-8")):
+                usata = True
+                break
+        except (OSError, UnicodeDecodeError):  # pragma: no cover - file illeggibile
+            continue
+
+    assert usata, (
+        "aiohttp e' di nuovo dichiarata nei requirements ma nessun file .py la "
+        "importa: e' stata rimossa perche' portava 35 advisory per zero "
+        "funzionalita'. Se serve davvero, usala; altrimenti non dichiararla."
+    )
+
+
+def test_i_pin_del_lock_non_sono_sotto_le_versioni_note_vulnerabili():
+    """Fissa i minimi raggiunti dal follow-up 5, cosi' non si torna indietro.
+
+    Non e' un audit — quello richiede rete e non lo si fa in un test unitario.
+    E' un fermo sui numeri gia' verificati con `pip-audit`: 44 rilievi -> 1.
+
+    `pytest` e' pinnato a 9.1.1 e non al minimo 9.0.3: e' la versione con cui
+    la suite gira davvero qui, quindi il lock riflette una combinazione provata
+    invece del minimo teorico.
+
+    L'ULTIMO non e' chiudibile: `requests` ha un advisory che si risolve solo
+    in 2.33.0, e betfairlightweight impone `requests<2.33.0` in OGNI sua
+    versione, ultima compresa (2.23.2). 2.32.5 e' il massimo consentito.
+    """
+    lock = (ROOT / "requirements-lock.txt").read_text(encoding="utf-8")
+    for pin in ("urllib3==2.7.0", "pytest==9.1.1", "requests==2.32.5"):
+        assert pin in lock, f"{pin} non piu' nel lock: non scendere sotto (#374 follow-up 5)"
+    # pytest 9 esige pytest-asyncio >= 1.x: 0.24.0 dichiara `pytest<9`.
+    assert "pytest-asyncio==1." in lock, (
+        "pytest-asyncio deve restare 1.x: le 0.x dichiarano `pytest<9` e "
+        "romperebbero la risoluzione con pytest==9.0.3"
     )
 
 
