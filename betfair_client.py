@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import ipaddress
 import json
 import logging
 import math
@@ -162,29 +163,27 @@ def _host_valido(valore: str) -> str:
     if host.startswith("[") and host.endswith("]"):
         # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
         interno = host[1:-1]
-        if not interno or set(interno) - set("0123456789abcdefABCDEF:."):
-            # Dentro le parentesi i due punti sono la norma, non un separatore
-            # di credenziale: qui basta oscurare su `@`, altrimenti ogni errore
-            # IPv6 diventerebbe illeggibile e il messaggio inutile.
-            # Rilievo BLOCCANTE di Claude Fable 5 e xAI Grok 4.6 su #430,
-            # fondato: la versione precedente di questo ramo oscurava solo su
-            # `@`, quindi `[pippo:SuperSegreta]` — due punti ma nessuna
-            # chiocciola — stampava la password. Era un'eccezione che mi ero
-            # ritagliato io stesso nello stesso push in cui chiudevo il leak.
+        try:
+            ipaddress.IPv6Address(interno)
+        except ValueError:
+            # Rilievi BLOCCANTI in sequenza di Claude Fable 5 e xAI Grok 4.6
+            # su #430, tutti fondati, su due giri.
             #
-            # La regola giusta non e' "quali caratteri tolgo" ma "cosa posso
-            # mostrare": il valore si mostra SOLO se ha gia' la forma di un
-            # IPv6, che per costruzione non puo' contenere una credenziale.
-            # Tutto il resto e' oscurato, perche' se non e' un IPv6 non
-            # sappiamo cosa sia.
-            mostrabile = (
-                valore
-                if set(interno) <= set("0123456789abcdefABCDEF:.") and len(valore) <= 60
-                else "<oscurato: non ha la forma di un IPv6>"
-            )
+            # Primo giro: oscuravo solo su `@`, quindi `[pippo:SuperSegreta]`
+            # stampava la password. Secondo giro: passavo a una whitelist di
+            # caratteri esadecimali, ma un token esadecimale — la forma piu'
+            # comune per una API key — la supera, quindi `[deadbeef:cafe1234]`
+            # tornava in chiaro. Il leak si restringeva, non si chiudeva.
+            #
+            # La verita' e' piu' semplice di tutti i miei tentativi: qui dentro
+            # ci si arriva SOLO quando il valore NON e' un IPv6 valido. Se non
+            # lo e', non sappiamo cosa sia, quindi non si mostra. Punto. E la
+            # validita' la decide `ipaddress`, non un mio elenco di caratteri.
             raise ValueError(
-                f"proxy.host non e' un indirizzo IPv6 valido: {mostrabile!r}"
-            )
+                f"proxy.host non e' un indirizzo IPv6 valido "
+                f"({len(host)} caratteri). Il valore non viene riportato: "
+                f"se non e' un IPv6 non sappiamo cosa contenga"
+            ) from None
         return host
     dirottanti = sorted(set(host) & CARATTERI_CHE_DIROTTANO)
     if dirottanti:

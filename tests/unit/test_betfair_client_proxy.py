@@ -586,21 +586,49 @@ class TestNessunSegretoNeiMessaggi:
             bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
         assert self.SEGRETO not in str(info.value)
 
-    def test_si_mostra_solo_cio_che_ha_la_forma_di_un_ipv6(self):
-        """La regola non e' "quali caratteri tolgo" ma "cosa posso mostrare":
-        un valore fatto di soli caratteri da IPv6 non puo' essere una
-        credenziale, quindi si mostra; tutto il resto no."""
-        with pytest.raises(ValueError) as info:
-            bc.costruisci_proxy_url({"enabled": True, "host": "[]", "port": 1080})
-        assert "[]" in str(info.value)
+    @pytest.mark.parametrize("host", ["[deadbeef:cafe1234]", "[::gg]", "[]",
+                                      "[non-hex]", "[pippo:SuperSegreta123]"])
+    def test_un_ipv6_non_valido_non_riporta_mai_il_valore(self, host):
+        """Secondo rilievo BLOCCANTE di Claude Fable 5 sullo stesso punto.
 
-        with pytest.raises(ValueError) as info:
-            bc.costruisci_proxy_url({"enabled": True, "host": "[non-hex]", "port": 1080})
-        assert "non-hex" not in str(info.value)
+        Avevo sostituito l'oscuramento con una whitelist di caratteri
+        esadecimali. Ma un token esadecimale — la forma piu' comune per una
+        API key — la supera: `[deadbeef:cafe1234]` tornava in chiaro. Il leak
+        si restringeva, non si chiudeva.
 
-    @pytest.mark.parametrize("host", ["[:::::::::]", "[" + "a" * 80 + "]"])
-    def test_urlparse_che_solleva_da_solo_diventa_il_nostro_errore(self, host):
-        """Nessun messaggio di terze parti esce da questo modulo."""
-        with pytest.raises(ValueError, match="proxy"):
+        Qui dentro ci si arriva SOLO quando il valore non e' un IPv6 valido.
+        Se non lo e', non sappiamo cosa sia: non si mostra, e basta.
+        """
+        with pytest.raises(ValueError) as info:
             bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        messaggio = str(info.value)
+        assert "non viene riportato" in messaggio
+        interno = host.strip("[]")
+        if interno:  # con `[]` l'interno e' vuoto e il confronto sarebbe sempre falso
+            assert interno not in messaggio
+
+    @pytest.mark.parametrize("host", ["[::1]", "[2001:db8::1]", "[fe80::1]",
+                                      "[::ffff:192.168.1.1]"])
+    def test_gli_ipv6_veri_passano_ancora(self, host):
+        """La validita' la decide `ipaddress`, non un elenco di caratteri."""
+        url = bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        assert urlparse(url).port == 1080
+
+    def test_la_conversione_dell_errore_di_urlparse(self, monkeypatch):
+        """Rilievo di Claude Fable 5, accolto: la versione precedente di questo
+        test usava due host che `_host_valido` blocca PRIMA, quindi l'`except`
+        non veniva mai eseguito e il test passava per il messaggio sbagliato.
+
+        Con `ipaddress` a monte quel ramo e' irraggiungibile per costruzione:
+        resta come difesa se un domani il controllo a monte si allenta. Lo si
+        prova per quello che e' — una conversione — provocandolo.
+        """
+        def _esplode(_url):
+            raise ValueError("dettaglio interno di urlparse con dentro SuperSegreta123")
+
+        monkeypatch.setattr(bc, "urlparse", _esplode)
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": "h.example", "port": 1080})
+        assert "URL illeggibile" in str(info.value)
+        assert "SuperSegreta123" not in str(info.value)
 
