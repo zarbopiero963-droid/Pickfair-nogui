@@ -3,10 +3,6 @@
 # =========================
 requests>=2.31.0
 urllib3>=2.0.0
-# Supporto SOCKS per `requests` (equivalente di requests[socks]). Senza,
-# un proxy `socks5` configurato solleva InvalidSchema alla prima richiesta
-# verso Betfair: vedi betfair_client._supporto_socks_disponibile.
-PySocks>=1.7.1
 
 # =========================
 # BETFAIR API

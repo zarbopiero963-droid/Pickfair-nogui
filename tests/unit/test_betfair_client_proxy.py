@@ -366,3 +366,52 @@ class TestConfigStoreFraICandidati:
         c = _client()
         assert c.session.proxies["https"] == "socks5://da-config-store.example:1080"
 
+
+class TestSchemaDelProxy:
+    """`type` e' un contratto, non testo libero.
+
+    Rilievo BLOCCANTE di GPT-5.6 Sol su #430. Misurato prima della correzione:
+    `socks5x` superava il controllo PySocks (comincia per "socks") e `requests`
+    lo rifiutava solo alla prima richiesta con `Unable to determine SOCKS
+    version`. E qualunque altra parola — `ftp`, `javascript`, `pippo` —
+    passava identica.
+    """
+
+    @pytest.mark.parametrize("tipo", ["socks5x", "socks9", "sockshhh", "ftp",
+                                      "javascript", "pippo", "socks", "http://"])
+    def test_schema_sconosciuto_ferma_l_avvio(self, tipo):
+        with pytest.raises(ValueError, match="non e' uno schema supportato"):
+            bc.costruisci_proxy_url(
+                {"enabled": True, "type": tipo, "host": "h.example", "port": 1080}
+            )
+
+    @pytest.mark.parametrize("tipo", ["http", "https", "socks4", "socks4a",
+                                      "socks5", "socks5h"])
+    def test_schemi_supportati_passano(self, tipo):
+        assert bc.costruisci_proxy_url(
+            {"enabled": True, "type": tipo, "host": "h.example", "port": 1080}
+        ) == f"{tipo}://h.example:1080"
+
+    @pytest.mark.parametrize("scritto,atteso", [("SOCKS5", "socks5"), ("Http", "http"),
+                                                ("  socks5h  ", "socks5h")])
+    def test_lo_schema_e_normalizzato(self, scritto, atteso):
+        """Maiuscole e spazi non devono far fallire una configurazione valida."""
+        assert bc.costruisci_proxy_url(
+            {"enabled": True, "type": scritto, "host": "h.example", "port": 1080}
+        ) == f"{atteso}://h.example:1080"
+
+    def test_lo_schema_e_verificato_prima_di_pysocks(self, monkeypatch):
+        """Un `socks5x` senza PySocks deve fallire per lo SCHEMA, non per la
+        dipendenza: altrimenti installare PySocks nasconderebbe il difetto."""
+        monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: False)
+        with pytest.raises(ValueError, match="non e' uno schema supportato"):
+            bc.costruisci_proxy_url(
+                {"enabled": True, "type": "socks5x", "host": "h.example", "port": 1080}
+            )
+
+    def test_disabilitato_non_valida_lo_schema(self):
+        """`enabled` falso significa "nessun proxy": non c'e' schema da validare."""
+        assert bc.costruisci_proxy_url(
+            {"enabled": False, "type": "pippo", "host": "h", "port": 1}
+        ) is None
+

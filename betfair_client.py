@@ -92,10 +92,17 @@ def percorsi_config_candidati() -> List[str]:
 #   | `proxy` valido, `enabled` ma incompleto      | ECCEZIONE     |
 #   | `port` non intera o fuori da 1-65535         | ECCEZIONE     |
 #   | tipo `socks*` ma PySocks non installato      | ECCEZIONE     |
+#   | `type` non fra gli schemi supportati          | ECCEZIONE     |
 #
 # "Niente proxy" compare solo dove NESSUNO ne ha chiesto uno. Ovunque qualcuno
 # l'abbia chiesto e non si possa dargliela, si ferma.
 # ---------------------------------------------------------------------------
+
+
+#: Gli unici schemi che `requests` sa davvero parlare come proxy. Non e' un
+#: elenco difensivo: e' il contratto. `socks5h` e `socks4a` risolvono il DNS
+#: dal lato del proxy, `socks5` e `socks4` in locale.
+SCHEMI_PROXY_SUPPORTATI = ("http", "https", "socks4", "socks4a", "socks5", "socks5h")
 
 
 def _porta_valida(valore: Any) -> int:
@@ -160,7 +167,20 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
         )
     porta = _porta_valida(porta_grezza)
 
-    tipo = str(proxy_cfg.get("type") or "").strip() or "socks5"
+    tipo = (str(proxy_cfg.get("type") or "").strip() or "socks5").lower()
+
+    # Rilievo BLOCCANTE di GPT-5.6 Sol su #430, fondato e misurato: `type` non
+    # era validato affatto. `socks5x` superava il controllo PySocks qui sotto
+    # (comincia per "socks") e produceva un URL che `requests` rifiuta solo alla
+    # prima richiesta con `Unable to determine SOCKS version`. E non era il caso
+    # peggiore: `ftp`, `javascript` e qualunque altra parola passavano identici.
+    # Stessa classe degli altri: una configurazione inutilizzabile che il modulo
+    # dichiarava buona e che falliva sul percorso dei soldi invece che all'avvio.
+    if tipo not in SCHEMI_PROXY_SUPPORTATI:
+        raise ValueError(
+            f"proxy.type `{proxy_cfg.get('type')}` non e' uno schema supportato. "
+            f"Ammessi: {', '.join(SCHEMI_PROXY_SUPPORTATI)}"
+        )
 
     # Un proxy SOCKS senza PySocks non e' un proxy che funziona male: e' un bot
     # che non piazza piu' nulla. Misurato: `InvalidSchema: Missing dependencies
@@ -168,17 +188,17 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     # mai — il difetto che questa PR corregge — il guasto era invisibile, quindi
     # e' proprio questa correzione a renderlo raggiungibile (rilievo bloccante
     # di OpenRouter Fugu Ultra su #430, confermato da Claude Fable 5).
-    if tipo.lower().startswith("socks") and not _supporto_socks_disponibile():
+    if tipo.startswith("socks") and not _supporto_socks_disponibile():
         raise ValueError(
             f"proxy di tipo `{tipo}` richiesto, ma il supporto SOCKS non e' "
             f"installato: `requests` solleverebbe `InvalidSchema: Missing "
             f"dependencies for SOCKS support` alla prima chiamata verso "
             f"Betfair, non all'avvio. Installa la dipendenza con "
-            f"`pip install PySocks` (ora dichiarata in requirements.txt e "
-            f"requirements-lock.txt)"
+            f"`pip install PySocks`. La dichiarazione nei requirements e' "
+            f"un follow-up separato: vedi il triage su #430"
         )
 
-    if tipo.lower() == "socks5":
+    if tipo == "socks5":
         # Non riscriviamo il tipo dichiarato dall'operatore, ma non lo taciamo
         # nemmeno: con `socks5` la risoluzione DNS avviene in locale. Betfair
         # vede comunque solo l'IP del proxy; a vedere il nome risolto e' il
