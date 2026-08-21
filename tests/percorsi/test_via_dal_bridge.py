@@ -185,7 +185,7 @@ def test_una_vecchia_config_ILLEGGIBILE_ferma_l_avvio(monkeypatch, tmp_path):
 
 
 def test_una_vecchia_config_NON_LEGGIBILE_ferma_l_avvio(monkeypatch, tmp_path):
-    """Permessi negati, I/O, file sparito fra `exists()` e `open()`."""
+    """Permessi negati, I/O, il file sparito fra due istruzioni."""
     import betfair_client
 
     _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
@@ -211,13 +211,139 @@ def test_una_vecchia_config_NON_LEGGIBILE_ferma_l_avvio(monkeypatch, tmp_path):
     ('[1, 2, 3]', "incerto"),
     ('{ rotto', "incerto"),
 ])
-def test_i_tre_esiti_dell_ispezione(tmp_path, contenuto, atteso):
-    """«Non lo so» non e' «non c'e'»: sono tre esiti, non due."""
+def test_gli_esiti_dell_ispezione(tmp_path, contenuto, atteso):
+    """«Non lo so» non e' «non c'e'»: gli esiti sono quattro, non due."""
     import betfair_client
 
     f = tmp_path / "c.json"
     f.write_text(contenuto, encoding="utf-8")
     assert betfair_client._stato_proxy_altrove(str(f)) == atteso
+
+
+def test_il_file_che_non_c_e_e_un_esito_A_SE(tmp_path):
+    """Il quarto esito, ed e' l'unico che vale «non c'e'».
+
+    Serve distinto da `PROXY_ASSENTE`: quello dice *«l'ho letto e non
+    dichiara proxy»* e merita un avviso («hai un file da spostare»); questo
+    dice *«non esiste»* ed e' il caso di chiunque non abbia mai installato il
+    Bridge, dove non c'e' niente da segnalare a nessuno.
+    """
+    import betfair_client
+
+    assert betfair_client._stato_proxy_altrove(
+        str(tmp_path / "mai-esistito.json")) == "nessun_file"
+
+
+def test_l_assenza_si_ACCERTA_aprendo_non_la_si_deduce_da_exists(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di GPT-5.6 Sol su #434, terzo giro. Fondato.
+
+    *«`os.path.exists(vecchia)` puo' restituire `False` su errori di accesso,
+    soprattutto Windows. Il file legacy puo' quindi essere presente ma il
+    controllo termina fail-open, consentendo traffico Betfair diretto.»*
+
+    Qui si riproduce esattamente quello: il file **c'e' e dichiara un proxy
+    attivo**, ma `os.path.exists` risponde `False` — come fa quando la
+    cartella non e' attraversabile — mentre `open()` dice la verita' con un
+    `PermissionError`.
+
+    Col pre-controllo `if not os.path.exists(vecchia): return` questo test
+    passava senza sollevare nulla: **il proxy dell'owner era li' e Pickfair
+    partiva in chiaro.** Verificato togliendo il fix: il test fallisce con
+    `DID NOT RAISE`.
+    """
+    import betfair_client
+
+    _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
+
+    vero_exists = os.path.exists
+    vero_open = open
+
+    def exists_cieco(percorso, *a, **kw):
+        if "XTraderBridge" in str(percorso):
+            return False          # la bugia che Windows racconta davvero
+        return vero_exists(percorso, *a, **kw)
+
+    def open_onesto(percorso, *a, **kw):
+        if "XTraderBridge" in str(percorso):
+            raise PermissionError("cartella non attraversabile")
+        return vero_open(percorso, *a, **kw)
+
+    monkeypatch.setattr(os.path, "exists", exists_cieco)
+    monkeypatch.setattr("builtins.open", open_onesto)
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_nessun_os_path_exists_sul_percorso_del_bridge(monkeypatch, tmp_path):
+    """Il fix pinnato sulla struttura, non solo sul comportamento.
+
+    Il test qui sopra dimostra l'effetto; questo impedisce che il
+    pre-controllo rientri di soppiatto in una forma equivalente. Se qualcuno
+    riscrive `if os.path.exists(vecchia)` — o `os.path.isfile`, che ha lo
+    stesso difetto — questo fallisce.
+    """
+    import betfair_client
+
+    _vecchia_config(tmp_path, monkeypatch, PROXY_SPENTO)
+    guardati = []
+
+    vero_exists, vero_isfile = os.path.exists, os.path.isfile
+
+    def spia(vera, nome):
+        def _f(percorso, *a, **kw):
+            if "XTraderBridge" in str(percorso):
+                guardati.append((nome, str(percorso)))
+            return vera(percorso, *a, **kw)
+        return _f
+
+    monkeypatch.setattr(os.path, "exists", spia(vero_exists, "exists"))
+    monkeypatch.setattr(os.path, "isfile", spia(vero_isfile, "isfile"))
+
+    betfair_client._controlla_config_rimasta_nel_bridge(
+        [str(tmp_path / "assente.json")])
+
+    assert not guardati, (
+        "l'esistenza del file del Bridge e' stata dedotta invece che accertata "
+        f"aprendolo: {guardati}")
+
+
+def test_un_errore_nel_calcolo_dei_percorsi_NON_e_un_permesso(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di Claude Fable 5 su #434, terzo giro. Fondato.
+
+    *«l'`except Exception: return` esterno resta un fail-open residuo — se
+    `percorsi.cartella_dati_del_bridge()` o `os.path.exists` sollevano, il
+    controllo di sicurezza viene saltato in silenzio e il client parte senza
+    proxy. E' la stessa classe di difetto che la PR chiude altrove.»*
+
+    Aveva ragione, e la frase che quel `try` incarnava — *«se non so nemmeno
+    DOVE guardare, lascio correre»* — e' parola per parola quella che questa
+    PR cancella dagli altri due punti. Un errore imprevisto nel calcolo dei
+    percorsi non prova che il proxy non serva.
+
+    **Questo test prende il posto di uno mio che asseriva l'opposto**
+    (`test_il_rilevamento_non_puo_far_fallire_il_client`, *«fermarsi su
+    un'incertezza propria sarebbe rumore»*). E' la terza volta in questa PR
+    che il fail-open non stava scoperto ma **protetto da una mia verifica**:
+    ogni giro l'ho spostato di un livello — dal warning al file illeggibile,
+    dal file illeggibile al percorso non calcolabile — e ogni volta ho
+    scritto un test che lo difendeva. La regola del modulo non ammette il
+    livello: *nessuna* incertezza lascia proseguire.
+
+    Verificato rimettendo il `try/except Exception: return`: il test fallisce
+    con `DID NOT RAISE`.
+    """
+    import betfair_client
+
+    def non_lo_so():
+        raise RuntimeError("cartella utente non determinabile")
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", non_lo_so)
+
+    with pytest.raises(RuntimeError, match="non determinabile"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
 
 
 def test_l_eccezione_ARRIVA_fino_alla_COSTRUZIONE_del_client(monkeypatch, tmp_path):
@@ -241,6 +367,36 @@ def test_l_eccezione_ARRIVA_fino_alla_COSTRUZIONE_del_client(monkeypatch, tmp_pa
             username="u", app_key="k", cert_pem="c", key_pem="p")
 
 
+def test_su_una_macchina_SENZA_bridge_il_client_NASCE(monkeypatch, tmp_path, caplog):
+    """La controprova del fail-closed: chiudere non deve chiudere su tutti.
+
+    Il rischio di questo giro e' l'opposto di quello che chiude: alzare
+    l'asticella dell'incertezza fino a **fermare l'avvio a chi il Bridge non
+    l'ha mai avuto** — cioe' quasi tutti. E' il caso in cui il quarto stato
+    `PROXY_NESSUN_FILE` esiste: «non c'e'», accertato aprendo, non e'
+    un'incertezza e non blocca niente.
+
+    Qui non c'e' nessun `XTraderBridge/` sul disco e si costruisce un client
+    vero: deve nascere, in silenzio.
+    """
+    import betfair_client
+
+    monkeypatch.delenv(betfair_client.ENV_PERCORSO_CONFIG, raising=False)
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "mai-installato"))
+    monkeypatch.setattr(betfair_client, "percorsi_config_candidati",
+                        lambda: [str(tmp_path / "assente.json")])
+
+    with caplog.at_level("WARNING"):
+        client = betfair_client.BetfairClient(
+            username="u", app_key="k", cert_pem="c", key_pem="p")
+
+    assert client is not None
+    assert not client.session.proxies, "nessuna config = nessun proxy"
+    assert not [r for r in caplog.records if "XTraderBridge" in r.getMessage()], (
+        "chi non ha mai avuto il Bridge non deve nemmeno sentirselo nominare")
+
+
 def test_non_controlla_se_una_config_di_pickfair_esiste(monkeypatch, tmp_path, caplog):
     """Chi ha la sua configurazione non viene disturbato ne' bloccato."""
     import betfair_client
@@ -251,20 +407,6 @@ def test_non_controlla_se_una_config_di_pickfair_esiste(monkeypatch, tmp_path, c
     with caplog.at_level("WARNING"):
         betfair_client._controlla_config_rimasta_nel_bridge([str(mia)])
     assert not [r for r in caplog.records if "XTraderBridge" in r.getMessage()]
-
-
-def test_il_rilevamento_non_puo_far_fallire_il_client(monkeypatch):
-    """Un guasto NEL RILEVAMENTO non deve bloccare: e' diverso dal caso sopra.
-
-    Li' si blocca perche' si e' capito che c'e' un proxy dichiarato. Qui non
-    si e' capito niente, e fermarsi su un'incertezza propria sarebbe rumore.
-    """
-    import betfair_client
-
-    def esplode():
-        raise OSError("permesso negato")
-    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", esplode)
-    betfair_client._controlla_config_rimasta_nel_bridge(["/non/esiste"])
 
 
 # ---------------------------------------------------------------------------

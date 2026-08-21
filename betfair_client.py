@@ -82,10 +82,13 @@ def percorsi_config_candidati() -> List[str]:
 
 
 # Esiti dell'ispezione di una configurazione rimasta nella cartella del Bridge.
-# Sono tre e non due di proposito: «non lo so» non e' «non c'e'».
+# Sono quattro e non due di proposito. Le due distinzioni che costano:
+#   «non lo so»  non e'  «non c'e'»   (INCERTO vs NESSUN_FILE: la prima ferma)
+#   «non c'e'»   non e'  «c'e' e non dichiara niente» (la seconda avvisa)
 PROXY_DICHIARATO = "dichiarato"   # c'e' un proxy attivo
 PROXY_ASSENTE = "assente"         # letto, interpretato, nessun proxy attivo
 PROXY_INCERTO = "incerto"         # non si e' potuto stabilire
+PROXY_NESSUN_FILE = "nessun_file"  # il file non c'e', accertato aprendolo
 
 
 def _stato_proxy_altrove(percorso: str) -> str:
@@ -107,11 +110,25 @@ def _stato_proxy_altrove(percorso: str) -> str:
     fail-open non era una svista rimasta scoperta — **era codificato e
     protetto da una verifica.**
 
-    Ora gli esiti sono tre, e solo un'assenza **positivamente accertata**
-    lascia proseguire:
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, terzo giro.** L'esistenza del
+    file la decideva il chiamante con `os.path.exists()`, che **restituisce
+    `False` anche quando il file c'e' ma non si riesce a guardarlo** — cartella
+    senza permesso di attraversamento, unita' di rete caduta, path lungo su
+    Windows. Quel `False` diceva «non c'e' nessuna vecchia configurazione» e il
+    controllo terminava fail-open: il file legacy poteva essere li', col suo
+    proxy, e Betfair veniva raggiunta lo stesso in chiaro.
 
-    - proxy attivo                 -> `PROXY_DICHIARATO`
+    Adesso l'assenza non si deduce piu' da una domanda che sa solo dire di no:
+    **si accerta aprendo.** Solo `FileNotFoundError` (e `NotADirectoryError`,
+    che dice la stessa cosa di un pezzo di percorso) valgono «non c'e'».
+    Qualunque altro errore vale «non lo so», che qui pesa quanto un proxy
+    dichiarato.
+
+    Gli esiti sono quattro, e solo i primi due lasciano proseguire:
+
+    - il file non esiste           -> `PROXY_NESSUN_FILE`
     - letto e interpretato, niente -> `PROXY_ASSENTE`
+    - proxy attivo                 -> `PROXY_DICHIARATO`
     - illeggibile o non interpretabile -> `PROXY_INCERTO`
 
     Il file viene aperto **solo per rispondere a questa domanda**, mai per
@@ -122,9 +139,14 @@ def _stato_proxy_altrove(percorso: str) -> str:
     try:
         with open(percorso, "r", encoding="utf-8") as f:
             contenuto = f.read()
+    except (FileNotFoundError, NotADirectoryError):
+        # Assenza ACCERTATA: il sistema operativo non l'ha dedotta, ce l'ha
+        # detta provando ad aprire. E' l'unico modo di sapere che non c'e'.
+        return PROXY_NESSUN_FILE
     except Exception:
-        # Non si e' potuto leggere: permessi, I/O, il file sparito nel
-        # frattempo. Non sappiamo cosa contenga.
+        # Permessi, I/O, una directory al posto di un file, il file sparito
+        # fra due istruzioni. Non sappiamo cosa contenga: e non saperlo, qui,
+        # non e' un permesso di proseguire.
         return PROXY_INCERTO
     try:
         dati = json.loads(contenuto)
@@ -165,15 +187,34 @@ def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
     Al secondo giro restava un fail-open piu' sottile: un file **illeggibile**
     veniva trattato come «nessun proxy». Ora l'incertezza vale quanto la
     dichiarazione: si ferma. **Solo un'assenza accertata lascia proseguire.**
+
+    Al terzo giro ne restavano due, sollevati da GPT-5.6 Sol e Claude Fable 5:
+
+    1. l'esistenza del vecchio file la decideva `os.path.exists()`, che dice
+       `False` anche quando il file c'e' ma non e' raggiungibile. Ora la
+       decide `_stato_proxy_altrove` aprendolo davvero;
+    2. **restava un `except Exception: return` attorno a tutto.** Serviva a
+       dire «se non so nemmeno DOVE guardare, lascio correre» — che e' la
+       stessa frase, parola per parola, che questa PR esiste per cancellare
+       dagli altri due punti. Un errore imprevisto nel calcolo dei percorsi
+       non e' una prova che il proxy non serva: e' l'ennesimo «non lo so», e
+       qui si ferma come tutti gli altri. Se `percorsi` un giorno sollevasse,
+       l'avvio deve rompersi in modo rumoroso — non partire in chiaro.
+
+    Percio' qui non c'e' piu' nessun `try`.
     """
-    try:
-        if any(percorso and os.path.exists(percorso) for percorso in candidati):
-            return
-        vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
-        if not os.path.exists(vecchia):
-            return
-        stato = _stato_proxy_altrove(vecchia)
-    except Exception:  # pragma: no cover - non sapere DOVE guardare non e' un blocco
+    if any(percorso and os.path.exists(percorso) for percorso in candidati):
+        # Un `False` sbagliato qui e' innocuo, ed e' il motivo per cui
+        # `os.path.exists` va ancora bene su QUESTI percorsi e non sull'altro:
+        # se sbaglia, si finisce a controllare la cartella del Bridge, cioe' a
+        # guardare piu' a fondo. Sull'altro percorso sbagliare significava
+        # smettere di guardare.
+        return
+
+    vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
+    stato = _stato_proxy_altrove(vecchia)
+    if stato == PROXY_NESSUN_FILE:
+        # Il caso di chiunque non abbia mai avuto il Bridge installato.
         return
 
     dove_va = percorsi.percorso_config()
