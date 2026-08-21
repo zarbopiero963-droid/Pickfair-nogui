@@ -165,14 +165,80 @@ def test_una_vecchia_config_SENZA_proxy_avvisa_e_prosegue(monkeypatch, tmp_path,
         "il messaggio deve dire dove spostarla, non solo «spostala»")
 
 
-def test_una_vecchia_config_illeggibile_non_ferma_l_avvio(monkeypatch, tmp_path, caplog):
-    """Un JSON rotto non e' una dichiarazione di proxy."""
+def test_una_vecchia_config_ILLEGGIBILE_ferma_l_avvio(monkeypatch, tmp_path):
+    """Secondo rilievo di GPT-5.6 Sol e Fable, di nuovo entrambi.
+
+    **Questo test prima asseriva il contrario**, cioe' che un file
+    illeggibile lasciasse proseguire. Non era una svista rimasta scoperta:
+    il fail-open era codificato e protetto da una verifica mia.
+
+    Un JSON rotto **puo' contenere un proxy**. Dire «assente» sarebbe
+    inventare, e su questo percorso inventare significa scommettere sulla
+    connessione sbagliata.
+    """
     import betfair_client
 
     _vecchia_config(tmp_path, monkeypatch, "{ questo non e' json")
-    with caplog.at_level("WARNING"):
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
         betfair_client._controlla_config_rimasta_nel_bridge(
             [str(tmp_path / "assente.json")])
+
+
+def test_una_vecchia_config_NON_LEGGIBILE_ferma_l_avvio(monkeypatch, tmp_path):
+    """Permessi negati, I/O, file sparito fra `exists()` e `open()`."""
+    import betfair_client
+
+    _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
+
+    vero_open = open
+
+    def open_che_nega(percorso, *a, **kw):
+        if "XTraderBridge" in str(percorso):
+            raise PermissionError("permesso negato")
+        return vero_open(percorso, *a, **kw)
+
+    monkeypatch.setattr("builtins.open", open_che_nega)
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+@pytest.mark.parametrize("contenuto,atteso", [
+    (PROXY_ATTIVO, "dichiarato"),
+    (PROXY_SPENTO, "assente"),
+    ('{"altro": 1}', "assente"),
+    ('{"proxy": "non un dict"}', "incerto"),
+    ('[1, 2, 3]', "incerto"),
+    ('{ rotto', "incerto"),
+])
+def test_i_tre_esiti_dell_ispezione(tmp_path, contenuto, atteso):
+    """«Non lo so» non e' «non c'e'»: sono tre esiti, non due."""
+    import betfair_client
+
+    f = tmp_path / "c.json"
+    f.write_text(contenuto, encoding="utf-8")
+    assert betfair_client._stato_proxy_altrove(str(f)) == atteso
+
+
+def test_l_eccezione_ARRIVA_fino_alla_COSTRUZIONE_del_client(monkeypatch, tmp_path):
+    """Secondo rilievo di Fable: verificare la propagazione, non la funzione.
+
+    *«se un chiamante tratta le eccezioni come "nessun proxy", il blocco
+    diventa di nuovo un proseguimento silenzioso»*. Rilievo giusto: un
+    fail-closed che qualcuno assorbe piu' in alto e' un fail-open con piu'
+    passaggi. Qui si costruisce un `BetfairClient` vero e si verifica che
+    **non nasca**.
+    """
+    import betfair_client
+
+    monkeypatch.delenv(betfair_client.ENV_PERCORSO_CONFIG, raising=False)
+    _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
+    monkeypatch.setattr(betfair_client, "percorsi_config_candidati",
+                        lambda: [str(tmp_path / "assente.json")])
+
+    with pytest.raises(ValueError, match="proxy e' dichiarato e attivo"):
+        betfair_client.BetfairClient(
+            username="u", app_key="k", cert_pem="c", key_pem="p")
 
 
 def test_non_controlla_se_una_config_di_pickfair_esiste(monkeypatch, tmp_path, caplog):

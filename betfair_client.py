@@ -81,57 +81,90 @@ def percorsi_config_candidati() -> List[str]:
     return candidati
 
 
-def _proxy_dichiarato_altrove(percorso: str) -> bool:
-    """`True` se in `percorso` c'e' un proxy DICHIARATO e attivo.
+# Esiti dell'ispezione di una configurazione rimasta nella cartella del Bridge.
+# Sono tre e non due di proposito: «non lo so» non e' «non c'e'».
+PROXY_DICHIARATO = "dichiarato"   # c'e' un proxy attivo
+PROXY_ASSENTE = "assente"         # letto, interpretato, nessun proxy attivo
+PROXY_INCERTO = "incerto"         # non si e' potuto stabilire
 
-    Si legge **solo** per decidere se fermarsi, mai per configurare. La
-    differenza non e' formale: usare quel blocco significherebbe far uscire il
-    traffico verso Betfair da un host scelto in un altro programma e mai
-    riesaminato qui. Sapere che esiste, invece, e' l'unico modo per non
-    scommettere di nascosto dalla rete sbagliata.
 
-    Un file illeggibile o senza blocco `proxy` non e' una dichiarazione:
-    restituisce `False` e si prosegue con l'avviso.
+def _stato_proxy_altrove(percorso: str) -> str:
+    """Cosa dichiara la configurazione rimasta nella cartella del Bridge.
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, secondo giro,
+    sollevato di nuovo indipendentemente da entrambi.** Al giro precedente
+    questa funzione restituiva `False` su QUALUNQUE eccezione — permessi
+    negati, errore di I/O, JSON malformato, race fra `exists()` e `open()` —
+    e il chiamante proseguiva senza proxy.
+
+    Cioe': *«non riesco a leggere il file, quindi faccio come se non ci
+    fosse un proxy»*. Su una macchina dove il proxy c'e' davvero, questo
+    manda le scommesse sulla connessione diretta — **esattamente il difetto
+    che questa PR esiste per chiudere.**
+
+    Peggio: avevo scritto un test che asseriva quel comportamento
+    (*«una vecchia config illeggibile non ferma l'avvio»*), quindi il
+    fail-open non era una svista rimasta scoperta — **era codificato e
+    protetto da una verifica.**
+
+    Ora gli esiti sono tre, e solo un'assenza **positivamente accertata**
+    lascia proseguire:
+
+    - proxy attivo                 -> `PROXY_DICHIARATO`
+    - letto e interpretato, niente -> `PROXY_ASSENTE`
+    - illeggibile o non interpretabile -> `PROXY_INCERTO`
+
+    Il file viene aperto **solo per rispondere a questa domanda**, mai per
+    configurare: usarne il blocco significherebbe far uscire il traffico
+    verso Betfair da un host scelto in un altro programma e mai riesaminato
+    qui.
     """
     try:
         with open(percorso, "r", encoding="utf-8") as f:
-            dati = json.load(f)
+            contenuto = f.read()
     except Exception:
-        return False
+        # Non si e' potuto leggere: permessi, I/O, il file sparito nel
+        # frattempo. Non sappiamo cosa contenga.
+        return PROXY_INCERTO
+    try:
+        dati = json.loads(contenuto)
+    except Exception:
+        # Letto ma non interpretabile. Un JSON rotto puo' contenere un proxy:
+        # dire "assente" sarebbe inventare.
+        return PROXY_INCERTO
     if not isinstance(dati, dict):
-        return False
+        return PROXY_INCERTO
     blocco = dati.get("proxy")
+    if blocco is None:
+        return PROXY_ASSENTE
     if not isinstance(blocco, dict):
-        return False
-    return bool(blocco.get("enabled"))
+        return PROXY_INCERTO
+    return PROXY_DICHIARATO if blocco.get("enabled") else PROXY_ASSENTE
 
 
 def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
     """Se la configurazione e' rimasta nella cartella del Bridge, non si tira dritto.
 
-    **Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, sollevato
-    indipendentemente da entrambi.** Al primo giro qui c'era solo un
-    `logger.warning`, e il client proseguiva **senza proxy**.
+    Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, sollevato
+    indipendentemente da entrambi in due giri successivi.
 
-    Perche' era grave: se il proxy serviva a far uscire il traffico da una
-    rete precisa, un aggiornamento avrebbe mandato le scommesse sulla
-    connessione diretta — **in silenzio, con un avviso che nessuno legge in
-    tempo.** E' la stessa forma del difetto che #430 doveva chiudere: una
-    funzione che si crede attiva e non lo e'.
+    Al primo giro qui c'era solo un `logger.warning` e il client proseguiva
+    **senza proxy**: se il proxy serviva a far uscire il traffico da una rete
+    precisa, un aggiornamento avrebbe mandato le scommesse sulla connessione
+    diretta, in silenzio.
 
-    Peggio: contraddiceva la regola scritta in questo stesso modulo poche
-    righe piu' sotto —
+    Contraddiceva la regola scritta in questo stesso modulo poche righe piu'
+    sotto —
 
         Configurazione DICHIARATA ma inutilizzabile  ->  eccezione.
         Nessuna configurazione                        ->  nessun proxy, in silenzio.
 
-    Un proxy configurato nella vecchia cartella **e' dichiarato**. Che
-    Pickfair non sappia piu' leggerlo da li' lo rende inutilizzabile, non
-    inesistente. Quindi: **eccezione**, come dice la regola.
+    Un proxy nella vecchia cartella **e' dichiarato**: che Pickfair non sappia
+    piu' leggerlo da li' lo rende inutilizzabile, non inesistente.
 
-    Restano avviso e proseguimento per il caso in cui una vecchia
-    configurazione esista ma **non dichiari** alcun proxy: li' non c'e'
-    nessuna intenzione tradita, solo un file da spostare.
+    Al secondo giro restava un fail-open piu' sottile: un file **illeggibile**
+    veniva trattato come «nessun proxy». Ora l'incertezza vale quanto la
+    dichiarazione: si ferma. **Solo un'assenza accertata lascia proseguire.**
     """
     try:
         if any(percorso and os.path.exists(percorso) for percorso in candidati):
@@ -139,18 +172,27 @@ def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
         vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
         if not os.path.exists(vecchia):
             return
-        dichiarato = _proxy_dichiarato_altrove(vecchia)
-    except Exception:  # pragma: no cover - il rilevamento non deve mai rompere
+        stato = _stato_proxy_altrove(vecchia)
+    except Exception:  # pragma: no cover - non sapere DOVE guardare non e' un blocco
         return
 
     dove_va = percorsi.percorso_config()
-    if dichiarato:
+    if stato == PROXY_DICHIARATO:
         raise ValueError(
             f"un proxy e' dichiarato e attivo in {vecchia} (cartella di XTrader "
             f"Signal Bridge), ma Pickfair non legge da li'. Proseguire "
             f"manderebbe le scommesse sulla connessione diretta invece che sul "
             f"proxy configurato. Sposta il file in {dove_va}, oppure valorizza "
             f"{ENV_PERCORSO_CONFIG} con il suo percorso"
+        )
+    if stato == PROXY_INCERTO:
+        raise ValueError(
+            f"esiste una configurazione in {vecchia} (cartella di XTrader "
+            f"Signal Bridge) ma non e' stato possibile stabilire se dichiari un "
+            f"proxy: illeggibile o non interpretabile. Proseguire significherebbe "
+            f"scommettere sperando che un proxy non ci fosse. Rendi leggibile "
+            f"quel file, oppure spostalo in {dove_va}, oppure valorizza "
+            f"{ENV_PERCORSO_CONFIG}"
         )
     logger.warning(
         "Nessuna configurazione trovata nei percorsi di Pickfair, ma ne risulta "
