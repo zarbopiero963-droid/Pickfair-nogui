@@ -158,7 +158,7 @@ def test_estrazione_riuscita_traduce_nei_nomi_di_pickfair():
         "event_name": "Inter v Milan",
         "market_name": "Both Teams To Score",
         "selection_name": "Yes",
-        "price": "1,85",
+        "price": "1.85",   # virgola italiana normalizzata alla sorgente
         "action": "BACK",
     }
 
@@ -196,7 +196,7 @@ def test_il_percorso_vivo_arricchisce_davvero(monkeypatch):
     assert segnale["event_name"] == "Inter v Milan"
     assert segnale["market_name"] == "Both Teams To Score"
     assert segnale["action"] == "BACK"
-    assert segnale["price"] == "1,85"
+    assert segnale["price"] == "1.85"
 
 
 def test_l_arricchimento_non_sovrascrive_un_valore_gia_presente(monkeypatch):
@@ -341,3 +341,181 @@ def test_la_diagnostica_non_puo_far_fallire_il_caricamento(monkeypatch, tmp_path
         raise OSError("permesso negato")
     monkeypatch.setattr(motore, "cartella_parser_del_bridge", esplode)
     assert motore.carica_parser(str(tmp_path / "assente")) == []
+
+
+# ---------------------------------------------------------------------------
+# 6 · Rilievi dei reviewer su #433
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("grezzo,atteso", [
+    ("1,85", "1.85"), ("1.85", "1.85"), (" 2,50 ", "2.50"), ("3", "3"),
+    ("1.234,56", "1.234,56"),   # ambiguo: NON si indovina
+])
+def test_il_prezzo_esce_con_il_punto_decimale(grezzo, atteso):
+    """Rilievo Fable: `price` usciva come `"1,85"`.
+
+    `parse_price` a valle gestiva la virgola, ma il dict del segnale la
+    conservava: chi leggesse `signal["price"]` direttamente otterrebbe
+    `float("1,85")` → `ValueError`. Si normalizza alla sorgente.
+    """
+    assert motore._numero_decimale(grezzo) == atteso
+
+
+def test_handicap_zero_non_viene_sovrascritto(monkeypatch):
+    """Rilievo Fugu: `if not signal.get(k)` trattava `0` come "da riempire".
+
+    `handicap` vale `0` in quasi ogni mercato senza handicap. Un handicap
+    diverso e' una LINEA diversa: sarebbe un'altra scommessa.
+    """
+    defn = _parser_diretto()
+    defn.rules.append(FieldRule(target="Handicap", fixed_value="-1.5", required=False))
+    p = _processore_con(defn, monkeypatch)
+
+    for valore in (0, "0", 0.0, False):
+        segnale = {"raw_text": MESSAGGIO, "handicap": valore}
+        p.normalize_ingestion_signal(segnale)
+        assert segnale["handicap"] == valore, f"sovrascritto {valore!r}"
+
+
+def test_campo_stringa_vuota_invece_viene_riempito(monkeypatch):
+    """Il contrario del test sopra: "" e None SONO da riempire."""
+    p = _processore_con(_parser_diretto(), monkeypatch)
+    for vuoto in ("", "   ", None):
+        segnale = {"raw_text": MESSAGGIO, "event_name": vuoto}
+        p.normalize_ingestion_signal(segnale)
+        assert segnale["event_name"] == "Inter v Milan"
+
+
+def test_la_cache_non_e_mai_visibile_a_meta(monkeypatch, tmp_path):
+    """Rilievo Fugu + Fable: parser e value-map devono cambiare insieme.
+
+    Valorizzarli uno per uno lasciava una finestra in cui un altro thread
+    vedeva parser nuovi con value-map vecchie.
+
+    Non basta controllare la FORMA finale — un'assegnazione parziale seguita
+    da quella completa la supererebbe. Qui si guarda lo stato **durante** il
+    caricamento: fra l'inizio e la fine nessuno deve poter osservare una
+    cache diversa da quella di partenza.
+    """
+    monkeypatch.setenv(campi.ENV_CARTELLA_PARSER, str(tmp_path))
+    custom_parser.save_parser(_parser_diretto(), str(tmp_path))
+    p = TelegramSignalProcessor()
+    partenza = p._cache_parser
+    assert partenza is None
+
+    osservato = []
+    vero = motore.registro_value_map
+
+    def spia(*a, **kw):
+        # Siamo a meta' caricamento: i parser sono gia' letti dal disco.
+        osservato.append(p._cache_parser)
+        return vero(*a, **kw)
+
+    monkeypatch.setattr(motore, "registro_value_map", spia)
+    p._parser_personalizzati()
+
+    assert osservato, "il registro non e' stato costruito"
+    assert all(v is partenza for v in osservato), (
+        f"cache visibile a meta' caricamento: {osservato!r}")
+    assert isinstance(p._cache_parser, tuple) and len(p._cache_parser) == 3
+
+
+def test_la_ricarica_non_lascia_mai_la_cache_azzerata(monkeypatch, tmp_path):
+    """Fra azzeramento e ricarica un messaggio vedeva `None` e ricaricava da se'."""
+    monkeypatch.setenv(campi.ENV_CARTELLA_PARSER, str(tmp_path))
+    custom_parser.save_parser(_parser_diretto(), str(tmp_path))
+    p = TelegramSignalProcessor()
+    assert p.ricarica_parser() == 1
+    prima = p._cache_parser
+
+    def esplode():
+        raise OSError("disco")
+    monkeypatch.setattr(motore, "carica_parser", esplode)
+    assert p.ricarica_parser() == 1, "la ricarica fallita deve tenere lo stato buono"
+    assert p._cache_parser is prima, "la cache non deve essere azzerata da un errore"
+
+
+def test_avvisa_anche_se_la_cartella_esiste_ma_e_vuota(monkeypatch, tmp_path, caplog):
+    """Rilievo GPT-5.6 Sol: e' il caso PIU' probabile, non quello raro.
+
+    La cartella viene creata all'installazione o al primo salvataggio: restare
+    senza avviso proprio lì rendeva la diagnostica inutile dove serviva di più.
+    """
+    vecchia = tmp_path / "XTraderBridge" / "parsers"
+    vecchia.mkdir(parents=True)
+    (vecchia / "Mio.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(motore, "cartella_parser_del_bridge", lambda: str(vecchia))
+
+    vuota = tmp_path / "pickfair-parsers"
+    vuota.mkdir()
+    assert vuota.is_dir(), "la cartella deve ESISTERE ed essere vuota"
+
+    with caplog.at_level("WARNING"):
+        assert motore.carica_parser(str(vuota)) == []
+    assert any(str(vecchia) in r.getMessage() for r in caplog.records), caplog.text
+
+
+def test_il_mode_passato_al_cancello_e_sempre_una_stringa():
+    """Rilievo DeepSource: `getattr(defn, "mode", None)` passava `None`."""
+    visti = []
+
+    class Finto:
+        name = "senza mode"
+        rules = []
+
+    def spia(defn, testo, modo=None):
+        visti.append(modo)
+        return False
+
+    import core.custom_parser_engine as cpe
+    originale = cpe.matches_message
+    cpe.matches_message = spia
+    try:
+        motore.estrai(MESSAGGIO, parser=[Finto()])
+    finally:
+        cpe.matches_message = originale
+
+    assert visti, "il cancello di contenuto non e' stato chiamato"
+    assert all(isinstance(m, str) for m in visti), visti
+
+
+def test_end_to_end_il_segnale_esce_pronto_per_il_piazzamento(monkeypatch):
+    """Rilievo Fable: verificare il contratto delle chiavi fino a valle.
+
+    Il blocco sostituito (mai eseguito) emetteva `selection`/`odds`; il nuovo
+    emette `selection_name`/`price`. Se il consumatore a valle si aspettasse
+    le vecchie chiavi, l'arricchimento sarebbe un no-op silenzioso — cioe' H-08
+    di nuovo, con un'altra faccia.
+
+    Qui si parte dal testo grezzo e si arriva al segnale normalizzato,
+    controllando **tipi e valori** dei campi che servono per piazzare.
+    """
+    defn = CustomParserDef(
+        name="Completo", mode="NAME_ONLY",
+        rules=[
+            FieldRule(target="EventName", start_after="Match: ", end_before="\n", required=True),
+            FieldRule(target="MarketName", start_after="Mercato: ", end_before="\n", required=True),
+            FieldRule(target="SelectionName", start_after="Esito: ", end_before="\n", required=True),
+            FieldRule(target="Price", start_after="Quota: ", end_before="\n", required=True),
+            FieldRule(target="MarketId", start_after="MID: ", end_before="\n", required=True),
+            FieldRule(target="SelectionId", start_after="SID: ", end_before="\n", required=True),
+            FieldRule(target="BetType", fixed_value="PUNTA", required=True),
+        ])
+    p = _processore_con(defn, monkeypatch)
+
+    esito = p.normalize_ingestion_signal({"raw_text": (
+        "Match: Inter v Milan\nMercato: Match Odds\nEsito: Inter\n"
+        "Quota: 1,85\nMID: 1.234567890\nSID: 47999\n")})
+
+    assert esito["ok"] is True, esito.get("error_code")
+    ns = esito["normalized_signal"]
+
+    assert ns["market_id"] == "1.234567890"
+    assert ns["selection_id"] == 47999 and isinstance(ns["selection_id"], int)
+    assert ns["price"] == 1.85 and isinstance(ns["price"], float)
+    assert ns["action"] == "BACK" and ns["bet_type"] == "BACK"
+    assert ns["event_name"] == "Inter v Milan"
+    assert ns["selection"] == "Inter"
+
+    # Lo stake NON arriva dal messaggio: lo decide il money management.
+    assert "stake" not in ns and "size" not in ns

@@ -129,7 +129,15 @@ def carica_parser_con_scarti(cartella: Optional[str] = None):
 
     validi: List[Any] = []
     scartati: List[str] = []
-    for percorso in sorted(custom_parser.list_parser_files(radice)):
+    percorsi = sorted(custom_parser.list_parser_files(radice))
+    if not percorsi:
+        # Cartella che ESISTE ma e' vuota (rilievo GPT-5.6 Sol): e' il caso
+        # piu' probabile, non quello raro — la cartella viene creata al primo
+        # salvataggio o dall'installazione, e restare senza avviso proprio li'
+        # rendeva la diagnostica inutile dove serviva di piu'.
+        _avvisa_se_i_parser_sono_rimasti_nel_bridge(radice)
+        return [], []
+    for percorso in percorsi:
         try:
             defn = custom_parser.load_parser(percorso)
         except Exception:
@@ -165,20 +173,7 @@ def estrai(testo: str, parser: Optional[List[Any]] = None,
 
     mappe = registro if registro is not None else registro_value_map()[0]
 
-    candidati = []
-    for defn in definizioni:
-        try:
-            # Cancello di contenuto PRIMA dell'estrazione: un parser a soli
-            # valori fissi e' "pronto" su qualunque testo.
-            if not custom_parser_engine.matches_message(
-                    defn, messaggio, getattr(defn, "mode", None)):
-                continue
-            esito = custom_parser_engine.apply_parser(defn, messaggio, mappe)
-        except Exception:
-            # Un parser che esplode non e' un parser che rifiuta: non deve
-            # ne' passare, ne' zittire gli altri.
-            continue
-        candidati.append((defn, esito))
+    candidati = _candidati(definizioni, messaggio, mappe)
 
     if not candidati:
         return _rifiuta(NON_RICONOSCIUTO, valutati=len(definizioni))
@@ -201,6 +196,56 @@ def estrai(testo: str, parser: Optional[List[Any]] = None,
     return Estrazione(ok=True, parser=nome, campi=campi)
 
 
+def _candidati(definizioni: List[Any], messaggio: str,
+               mappe: Dict[str, Any]) -> List[Any]:
+    """I parser che riconoscono il messaggio e che hanno estratto qualcosa.
+
+    Il cancello di contenuto va interrogato PRIMA dell'estrazione: un parser
+    i cui obbligatori sono tutti `fixed_value` risulterebbe "pronto" su
+    qualunque testo, cioe' produrrebbe la stessa scommessa a ogni messaggio
+    del canale.
+    """
+    fuori = []
+    for defn in definizioni:
+        try:
+            # `mode` deve essere una stringa: `getattr(..., None)` passava
+            # `None` a una firma che dichiara `str` (rilievo DeepSource).
+            modo = str(getattr(defn, "mode", "") or "")
+            if not custom_parser_engine.matches_message(defn, messaggio, modo):
+                continue
+            esito = custom_parser_engine.apply_parser(defn, messaggio, mappe)
+        except Exception:
+            # Un parser che esplode non e' un parser che rifiuta: non deve
+            # ne' passare, ne' zittire gli altri.
+            continue
+        fuori.append((defn, esito))
+    return fuori
+
+
+def _numero_decimale(testo: str) -> str:
+    """`"1,85"` → `"1.85"`. Nient'altro.
+
+    Rilievo Fable: i parser estraggono il prezzo dal testo del canale, dove in
+    italiano si scrive `1,85`. `TelegramSignalProcessor.parse_price` fa gia'
+    `str(raw).replace(",", ".")`, quindi il valore normalizzato a valle era
+    corretto — ma il dict del segnale restava con la virgola, e ogni futuro
+    consumatore che leggesse `signal["price"]` direttamente avrebbe fatto
+    `float("1,85")` → `ValueError`. Si normalizza alla sorgente.
+
+    NON si converte in `float` qui: il valore resta testo perche' resta un
+    dato estratto, e la conversione (con la sua validazione e i suoi errori)
+    e' compito del percorso di normalizzazione, non del parser.
+
+    Il separatore delle migliaia non e' gestito di proposito: `"1.234,56"`
+    resterebbe ambiguo, e indovinare su un prezzo significa scommettere a una
+    quota diversa da quella scritta.
+    """
+    ripulito = testo.strip()
+    if "," in ripulito and "." not in ripulito:
+        return ripulito.replace(",", ".")
+    return ripulito
+
+
 def _verso_pickfair(valori: Dict[str, str]) -> Dict[str, Any]:
     """Traduce i campi del contratto nei nomi usati da Pickfair.
 
@@ -217,6 +262,8 @@ def _verso_pickfair(valori: Dict[str, str]) -> Dict[str, Any]:
         testo = str(valore or "").strip()
         if not testo:
             continue
+        if chiave == "price":
+            testo = _numero_decimale(testo)
         fuori[chiave] = testo
     if "action" in fuori:
         fuori["action"] = normalizza_azione(fuori["action"])
