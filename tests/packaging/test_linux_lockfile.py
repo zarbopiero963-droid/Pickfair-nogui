@@ -142,7 +142,6 @@ def test_aiohttp_resta_fuori_finche_nessuno_la_importa():
     Se un domani serve, si aggiunge l'import e il test smette di lamentarsi da
     solo.
     """
-    import re
 
     radice = ROOT
 
