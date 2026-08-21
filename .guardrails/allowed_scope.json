@@ -1253,6 +1253,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 8
+    },
+    "gate_consegna_pr": {
+      "description": "GATE DI CONSEGNA in CLAUDE.md — richiesta esplicita dell'owner dopo il merge di #427. Mette per iscritto il rituale di chiusura di una PR, cosi' non dipende dal fatto che l'agente se lo ricordi: (1) giro a label sul range completo PRIMA del verdetto, con la regola operativa per decidere se servono — si guarda la riga `Range:` delle review, e solo `Scope: current PR range` copre la PR intera; piu' di un push significa che i reviewer hanno visto solo i delta. Violato su #427 (tre push, verdetto dichiarato senza il giro completo, notato dall'owner e non dal processo). La sezione dichiara anche il limite noto: i workflow girano su pull_request_target quindi partono dal branch BASE, una PR non puo' alzare i propri tetti, e un file oltre MAX_PATCH_PER_FILE_CHARS_ESCALATED viene troncato DALLA FINE, dove sta il codice — se succede si dichiara quale parte non e' stata rivista. (2) verdetto esplicito, ma solo dopo il punto 1. (3) cosa e' stato fatto in italiano e dal lato dell'utente, incluse LE REGRESSIONI introdotte dalla PR, che si dichiarano invece di lasciarle scoprire. (4) screenshot REALE sotto Xvfb quando c'e' una superficie visibile (mini_gui, ui_panels/, core/*_gui.py, telegram_tab_ui), con la trappola d'ambiente documentata — tkinter e customtkinter non esistono sul python di default ma su /usr/bin/python3.12; nessuna superficie visibile => N/A motivato. (5) costo totale della PR. Il punto 5 diventa meccanico con scripts/pr_costo_review.py (nuovo): legge i commenti della PR, raggruppa per Range:, somma. Modulo puro + entrypoint argparse, nessun I/O di rete, testabile headless. Invariante centrale NIENTE CAP SILENZIOSI: una review riconosciuta ma priva della riga di costo finisce fra le `incomplete` ed e' SEGNALATA, e il totale si dichiara sottostima — un totale troppo basso perche' qualcosa non e' stato letto si legge come una buona notizia, che e' il modo in cui un errore del genere sopravvive. Contano anche le review fallite (429: il costo e' stato speso) e i doppioni sullo stesso range (un Re-run e' una chiamata pagata davvero). Il nome del reviewer si cattura dal pattern dell'intestazione invece di elencare i modelli, cosi' un reviewer nuovo entra nel totale da solo. Validato sui dati veri di #427: riproduce $2.58 su 14 review in 4 range. 17 test in tests/scripts/test_pr_costo_review.py, incluso un estratto verbatim di un commento reale come regressione sul formato. FUORI PERIMETRO, domanda aperta all'owner non decisa: la sezione AUTO-MERGE di CLAUDE.md permetterebbe all'agente di mergiare da solo mentre l'owner ha istruito a voce che il merge lo fa sempre lui — allineare il file o lasciarlo e' una regola di autorizzazione, non si cambia d'iniziativa.",
+      "allow_tests": true,
+      "files": [
+        "CLAUDE.md",
+        "scripts/pr_costo_review.py",
+        "tests/scripts/test_pr_costo_review.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }

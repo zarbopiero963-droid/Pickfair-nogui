@@ -619,6 +619,82 @@ UI/UX della mini GUI e non deve mai restare disallineata dall'app reale.
 - Micro-audit e hard verify includono il check "design handoff aggiornato:
   PASS/FAIL/N/A" (vedi template in AGENTS.md).
 
+## GATE DI CONSEGNA (OBBLIGATORIO PRIMA DI DICHIARARE PRONTA)
+
+Una PR non è consegnata quando il codice è verde: è consegnata quando l'owner
+ha in mano ciò che gli serve per decidere. Cinque passi, in quest'ordine.
+Nessuno saltabile in silenzio.
+
+### 1. Giro a label sul range completo — PRIMA del verdetto
+
+Se la PR ha PIÙ DI UN PUSH, le review automatiche hanno visto `push range`,
+cioè i singoli delta, non il diff assemblato. Si controlla la riga `Range:`
+nell'intestazione di ogni review: solo `Scope: current PR range` copre la PR
+intera.
+
+- più di un push => `final-fable-review` e `final-fugu-review`, e si attende
+  l'esito PRIMA di dichiarare qualsiasi verdetto;
+- un push solo, con `Range:` che copre `base...head` => le label sono una
+  fotocopia a pagamento: si dichiara, e non si lanciano;
+- le label costano: si chiedono all'owner, non si applicano d'iniziativa.
+
+Violato su #427: tre push, verdetto «PRONTA PER MERGE» dichiarato senza il
+giro a range completo. L'ha notato l'owner, non il processo.
+
+Limite noto, da mettere in conto: i workflow di review girano su
+`pull_request_target`, quindi partono dal branch BASE. Una PR non può alzare i
+propri tetti di budget, e un file con patch oltre
+`MAX_PATCH_PER_FILE_CHARS_ESCALATED` viene troncato dalla fine — dove di solito
+sta il codice. Se succede, si dichiara quale parte NON è stata rivista invece di
+lasciar credere che la review sia stata completa.
+
+### 2. Verdetto esplicito
+
+Come già prescritto in LAVORO IN BACKGROUND, con un vincolo in più: il verdetto
+arriva DOPO il punto 1, mai prima.
+
+### 3. Cosa è stato fatto — in italiano, per l'owner
+
+Non il changelog del diff: cosa cambia per chi usa il programma, quale problema
+concreto risolve ogni pezzo, e **cosa è peggiorato**. Le regressioni introdotte
+dalla PR si dichiarano; non si lasciano scoprire.
+
+### 4. Prova visiva sotto Xvfb — quando c'è una superficie visibile
+
+Se la PR tocca `mini_gui`, `ui_panels/`, `core/*_gui.py`, `telegram_tab_ui` o
+qualunque cosa l'utente veda, si consegna uno SCREENSHOT REALE, catturato
+facendo girare l'app sotto Xvfb. Non una descrizione, non un mockup. Vale anche
+— soprattutto — per mostrare un peggioramento.
+
+Ambiente verificato il 2026-08-20: Xvfb è presente, ma `tkinter` e
+`customtkinter` NON esistono sul python di default; stanno su
+`/usr/bin/python3.12`, dove si installano con
+`pip install --break-system-packages customtkinter pillow`.
+
+```bash
+Xvfb :99 -screen 0 1280x820x24 &
+DISPLAY=:99 /usr/bin/python3.12 apri_la_finestra.py &
+sleep 8 && DISPLAY=:99 import -window root schermata.png
+```
+
+Nessuna superficie visibile => si dichiara N/A con motivazione.
+
+### 5. Costo totale della PR
+
+```bash
+python3 scripts/pr_costo_review.py commenti_pr.json
+```
+
+Somma i costi di TUTTE le review raggruppandoli per `Range:`, e segnala le
+review che non riporta perché prive della riga di costo — un totale che tace su
+ciò che non ha saputo leggere si legge come una buona notizia.
+
+Serve a rendere visibile una cosa che altrimenti non si vede: **il numero di
+push si paga**. Su #427, $2.58 in 14 review su 4 range, di cui $1.67 spesi
+perché i push erano tre — $0.76 per i due giri sui delta, più $0.91 per il giro
+a label che ha dovuto rifare tutto da capo. Preparare e spingere insieme costa
+meno di correggere in pubblico.
+
 ## PRIORITÀ TECNICHE DEL REPOSITORY
 
 Preserva sempre:
