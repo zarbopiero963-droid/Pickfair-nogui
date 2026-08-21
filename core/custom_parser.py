@@ -9,7 +9,7 @@ Telegram, senza dipendere dal parser hardcoded (PR-09). Questo modulo contiene
 - `CustomParserDef`  — un parser con nome + elenco di regole.
 - (de)serializzazione JSON, validazione strutturale, skeleton di default,
   salvataggio/caricamento in `<cartella utente persistente>/parsers/<nome>.json`
-  (riusa `config_store.config_dir()`, non la cartella temporanea dell'EXE).
+  (riusa `parsers.campi.cartella_parser()`, non la cartella temporanea dell'EXE).
 
 NON è incluso (scope dei CP successivi):
 - il motore di estrazione a runtime (applicare le regole a un messaggio);
@@ -33,15 +33,17 @@ import json
 import os
 from dataclasses import dataclass, field
 
-from . import atomic_io, config_store, recognition, sports, transforms, validators
-from .csv_writer import CSV_HEADER
+from parsers.campi import CAMPI_SEGNALE as CSV_HEADER
+from parsers.campi import cartella_parser
+
+from . import atomic_io, recognition, sports, transforms, validators
 
 # Versione dello schema del file parser: serve a gestire migrazioni future
 # senza rompere i file salvati dagli utenti.
 SCHEMA_VERSION = 1
 
 # Le colonne ammesse come `target` di una regola sono esattamente quelle del
-# contratto CSV XTrader (fonte unica: csv_writer.CSV_HEADER), così il modello
+# contratto dei campi (fonte unica: parsers.campi.CAMPI_SEGNALE), così il modello
 # non può andare in drift rispetto al contratto.
 VALID_TARGETS = tuple(CSV_HEADER)
 
@@ -89,7 +91,7 @@ def _as_bool(v) -> bool:
 class FieldRule:
     """Regola di estrazione per UNA colonna del CSV XTrader."""
 
-    target: str                 # colonna CSV di destinazione (∈ CSV_HEADER)
+    target: str                 # campo di destinazione (∈ parsers.campi.CAMPI_SEGNALE)
     start_after: str = ""       # "Inizia dopo": delimitatore sinistro (testo/emoji)
     end_before: str = ""        # "Finisce prima di": delimitatore destro (testo/emoji)
     fixed_value: str = ""       # valore costante (alternativo all'estrazione)
@@ -532,12 +534,12 @@ def skeleton(name: str = "Nuovo parser") -> CustomParserDef:
 def default_parsers_dir() -> str:
     """Cartella persistente dei parser utente: `<config_dir>/parsers/`.
 
-    Riusa `config_store.config_dir()` (`%APPDATA%\\XTraderBridge` su Windows,
+    Delega a `parsers.campi.cartella_parser()` (`~/.pickfair/parsers`,
     `~/.config/XTraderBridge` altrove): è una posizione **scrivibile e
     persistente**, che sopravvive a riavvii/aggiornamenti dell'EXE. NON usiamo
     `sys._MEIPASS` (la cartella di estrazione PyInstaller è temporanea e di sola
     lettura): lì stanno solo i dati bundled read-only come il dizionario."""
-    return os.path.join(config_store.config_dir(), "parsers")
+    return cartella_parser()
 
 
 def _safe_filename(name: str) -> str:

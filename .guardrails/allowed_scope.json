@@ -1312,6 +1312,22 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "parser_personalizzati": {
+      "description": "X1 di #374 — i Parser Personalizzati girano sul percorso vivo di Pickfair. Chiude H-08 dell'audit #335. CONTESTO: nel repository convivono DUE prodotti. core/ contiene sia moduli Pickfair (trading_engine, risk_gate, session_recorder) sia moduli di XTrader Signal Bridge, un'applicazione diversa (Telegram -> CSV -> eseguito da un programma terzo) che main.py NON avvia: verificato, nessun file non-di-test importa core.app. IL DIFETTO: telegram_signal_processor.py importava `CustomParserEngine` da core.custom_parser_engine — una classe che non esiste in nessun punto del repo — e ingoiava l'ImportError con `except ImportError: pass`. I parser dell'owner non hanno MAI girato. Lo stesso blocco conteneva un fail-open sul percorso dei soldi: `parsed.get('action', 'BACK')`, cioe' un parser che non estraeva la direzione produceva comunque una PUNTA. COSA FA: (1) nuovo package parsers/ con campi.py, che definisce il contratto dei 14 campi e la cartella ~/.pickfair/parsers, sostituendo csv_writer.CSV_HEADER e config_store.config_dir(); erano DUE righe di import che trascinavano 7.407 righe di XTrader Bridge dentro il percorso segnali — la chiusura del motore scende a 2.475 righe con ZERO moduli del Bridge. (2) parsers/motore.py: adattatore fail-closed che carica i parser, applica il cancello di contenuto matches_message e traduce nei nomi di Pickfair. Rifiuta con motivo leggibile su nessun parser / non riconosciuto / parser ambigui / campi obbligatori mancanti / direzione assente. Points NON viene inoltrato: nel Bridge trasportava lo stake, in Pickfair lo stake lo decide il money management. (3) cablaggio in telegram_signal_processor con cache e ricarica_parser(); l'arricchimento NON sovrascrive valori gia' presenti. LIMITE DICHIARATO: data/dizionario_xtrader.csv non esiste nel repo, quindi le value-map derivate dal dizionario non sono disponibili e i parser che le usano restano non piazzabili (rifiuto pulito CAMPI_MANCANTI, nessun crash). I parser che estraggono direttamente dal testo funzionano: dimostrato end-to-end. Il dizionario e la GUI di costruzione sono X2. NON tocca ne' rimuove il Bridge: quella e' X3, deliberatamente dopo.",
+      "allow_tests": true,
+      "files": [
+        "parsers/__init__.py",
+        "parsers/campi.py",
+        "parsers/motore.py",
+        "core/custom_parser.py",
+        "core/custom_parser_engine.py",
+        "core/csv_writer.py",
+        "services/telegram_signal_processor.py",
+        "tests/parsers/test_parser_personalizzati.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 9
     }
   }
 }

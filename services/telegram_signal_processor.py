@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import logging
+import threading
+from typing import Any, Dict, List, Optional, Tuple
+
+from parsers import motore as parser_motore
+
+# (definizioni dei parser, registro delle value-map, dizionario disponibile)
+CacheParser = Tuple[List[Any], Dict[str, Any], bool]
 
 
 class TelegramSignalProcessor:
@@ -132,6 +139,174 @@ class TelegramSignalProcessor:
     # =========================================================
     # DIRECT PAYLOAD BUILD
     # =========================================================
+
+    # ------------------------------------------------------------------
+    # Parser Personalizzati (H-08)
+    # ------------------------------------------------------------------
+    # Qui prima c'era:
+    #
+    #     from core.custom_parser_engine import CustomParserEngine
+    #     ...
+    #     except ImportError:
+    #         pass
+    #
+    # `CustomParserEngine` non e' mai esistita in questo repository:
+    # l'`ImportError` scattava a ogni messaggio e veniva ingoiato, quindi i
+    # Parser Personalizzati non hanno MAI girato sul percorso vivo. Rilievo
+    # H-08 dell'audit #335.
+    #
+    # Il vecchio blocco conteneva anche un fail-open sul percorso dei soldi:
+    #
+    #     signal["action"] = parsed.get("action", "BACK")
+    #
+    # cioe' un parser che non estraeva la direzione produceva comunque una
+    # PUNTA. La direzione di una scommessa non e' un campo su cui mettere un
+    # default: `parsers.campi.normalizza_azione` restituisce "" e
+    # `parsers.motore` rifiuta con `DIREZIONE_ASSENTE`.
+
+    def __init__(self) -> None:
+        # Dichiarati qui e non al primo uso (rilievo DeepSource): chi legge la
+        # classe deve poter vedere lo stato che un'istanza puo' avere.
+        #
+        # `_cache_parser` e' UNA tupla, non tre attributi (rilievo Fugu +
+        # Fable): valorizzarli uno per uno lasciava una finestra in cui un
+        # altro thread vedeva parser nuovi con value-map vecchie. Una singola
+        # assegnazione di riferimento e' atomica sotto il GIL, quindi chi
+        # legge vede o tutto il vecchio o tutto il nuovo, mai un misto.
+        # Il tipo e' dichiarato (rilievo DeepSource): senza annotazione il
+        # type checker deduce `None` dal valore iniziale, quindi l'assegnazione
+        # della tupla e l'indicizzazione risultano entrambe errori. Non era
+        # rumore: significa che nessun controllo di tipo stava guardando
+        # davvero questa cache.
+        self._cache_parser: Optional[CacheParser] = None
+        # Serializza caricamento E assegnazione (rilievo GPT-5.6 Sol + Fable).
+        # L'assegnazione di una tupla e' atomica, ma atomica non vuol dire
+        # ORDINATA: un caricamento lento partito prima poteva concludersi DOPO
+        # una ricarica e sovrascriverla, lasciando i parser vecchi in memoria a
+        # tempo indeterminato — "last writer wins" sul percorso dei segnali.
+        # Il lock e' tenuto anche durante l'I/O: e' una lettura di pochi file
+        # che avviene una volta all'avvio e quando l'utente salva, non a ogni
+        # messaggio, quindi non e' sul cammino caldo.
+        self._lucchetto_cache = threading.Lock()
+
+    def _parser_personalizzati(self):
+        """Definizioni e value-map, caricate una volta sola.
+
+        Rileggere la cartella a ogni messaggio sarebbe I/O per messaggio su un
+        percorso che deve reggere una raffica. `ricarica_parser()` esiste per
+        quando l'utente ne salva uno nuovo dalla GUI.
+        """
+        cache = self._cache_parser
+        if cache is not None:
+            return cache[0], cache[1]
+
+        with self._lucchetto_cache:
+            # Ricontrollo dentro il lock: mentre aspettavamo, un altro thread
+            # (o una `ricarica_parser`) puo' aver gia' popolato la cache. Senza
+            # questo, ricaricheremmo sopra uno stato piu' fresco del nostro.
+            cache = self._cache_parser
+            if cache is not None:
+                return cache[0], cache[1]
+            try:
+                definizioni = parser_motore.carica_parser()
+                registro, dizionario_ok = parser_motore.registro_value_map()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Caricamento dei Parser Personalizzati fallito: nessun arricchimento")
+                definizioni, registro, dizionario_ok = [], {}, False
+            cache = (definizioni, registro, dizionario_ok)
+            self._cache_parser = cache
+        return cache[0], cache[1]
+
+    @property
+    def dizionario_disponibile(self) -> bool:
+        """True se le value-map derivate dal dizionario sono caricate.
+
+        Legge la cache UNA volta sola. Prima faceva `_parser_personalizzati()`
+        e poi rileggeva `self._cache_parser`: due letture separate di uno stato
+        che un'altra `ricarica_parser` puo' sostituire nel mezzo, quindi la
+        risposta poteva riferirsi a un caricamento diverso da quello appena
+        fatto.
+        """
+        self._parser_personalizzati()
+        cache = self._cache_parser
+        return bool(cache[2]) if cache else False
+
+    def ricarica_parser(self) -> int:
+        """Rilegge i parser dal disco e restituisce quanti ne ha caricati.
+
+        Da chiamare quando l'utente salva o cancella un parser, altrimenti la
+        modifica non avrebbe effetto fino al riavvio.
+
+        Non azzera la cache prima di ricaricare (rilievo Fugu + Fable): fra
+        l'azzeramento e la ricarica un messaggio in arrivo avrebbe visto
+        `None` e ricaricato per conto suo. Qui si costruisce lo stato nuovo e
+        poi lo si sostituisce in un colpo solo; chi sta leggendo continua a
+        vedere quello vecchio, che e' valido, fino allo scambio.
+        """
+        with self._lucchetto_cache:
+            try:
+                definizioni = parser_motore.carica_parser()
+                registro, dizionario_ok = parser_motore.registro_value_map()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Ricarica dei Parser Personalizzati fallita: resta lo stato precedente")
+                precedente = self._cache_parser
+                return len(precedente[0]) if precedente else 0
+            self._cache_parser = (definizioni, registro, dizionario_ok)
+            return len(definizioni)
+
+    @staticmethod
+    def _campo_da_riempire(signal: Dict[str, Any], chiave: str) -> bool:
+        """True se il campo e' assente o vuoto — NON semplicemente falsy.
+
+        Rilievo Fugu: `if not signal.get(chiave)` trattava come "da riempire"
+        anche valori Betfair legittimi che in Python sono falsy. `handicap`
+        vale `0` o `"0"` in quasi ogni mercato senza handicap: il parser lo
+        avrebbe sovrascritto, e un handicap diverso e' una LINEA diversa,
+        cioe' una scommessa diversa da quella che il segnale chiedeva.
+        """
+        if chiave not in signal:
+            return True
+        valore = signal[chiave]
+        if valore is None:
+            return True
+        return isinstance(valore, str) and not valore.strip()
+
+    def _arricchisci_con_parser_personalizzati(self, signal: Dict[str, Any], raw_text: str) -> None:
+        """Applica i parser dell'owner e riempie i campi assenti o vuoti.
+
+        **Non sovrascrive un valore gia' presente.** Se il segnale arriva con
+        un `market_id` suo, quello e' piu' autorevole di un'estrazione da
+        testo libero, e lasciare che il parser lo cambi significherebbe
+        spostare di nascosto la scommessa su un altro mercato.
+
+        Non solleva mai: un guasto qui deve valere "nessun arricchimento", non
+        "il bot non risponde". Ma a differenza di prima **viene registrato**,
+        perche' il silenzio e' cio' che ha tenuto H-08 nascosto.
+        """
+        log = logging.getLogger(__name__)
+        try:
+            definizioni, registro = self._parser_personalizzati()
+            if not definizioni:
+                return
+            esito = parser_motore.estrai(raw_text, parser=definizioni, registro=registro)
+        except Exception:
+            log.exception("Parser Personalizzati: errore, nessun arricchimento")
+            return
+
+        if not esito.ok:
+            log.debug("Parser Personalizzati: nessuna estrazione (%s)", esito.motivo)
+            return
+
+        riempiti = 0
+        for chiave, valore in esito.campi.items():
+            if self._campo_da_riempire(signal, chiave):
+                signal[chiave] = valore
+                riempiti += 1
+        log.info("Parser Personalizzati: '%s' ha riempito %d campi su %d estratti",
+                 esito.parser, riempiti, len(esito.campi))
+
     def normalize_ingestion_signal(self, signal: Any) -> Dict[str, Any]:
         """
         Telegram ingestion boundary.
@@ -153,23 +328,7 @@ class TelegramSignalProcessor:
             signal = {"text": raw_text}
 
         if raw_text:
-            try:
-                from core.custom_parser_engine import CustomParserEngine
-                engine = CustomParserEngine()
-                parsed = engine.parse(raw_text)
-                if parsed and parsed.get("match"):
-                    # Arricchisce il segnale con i dati del parser custom
-                    signal.update(parsed)
-                    signal["event_name"] = parsed.get("match")
-                    signal["market_name"] = parsed.get("market")
-                    signal["selection"] = parsed.get("selection")
-                    signal["price"] = parsed.get("odds")
-                    signal["action"] = parsed.get("action", "BACK")
-            except ImportError:
-                pass
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error(f"CustomParserEngine error: {e}")
+            self._arricchisci_con_parser_personalizzati(signal, raw_text)
 
         if not isinstance(signal, dict):
             return {
