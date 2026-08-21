@@ -1300,6 +1300,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 6
+    },
+    "dipendenze_vulnerabili": {
+      "description": "Follow-up 5 di #374. Misurato con pip-audit, non ipotizzato: requirements-lock.txt portava 44 advisory note. CORREZIONE DI ROTTA DICHIARATA: nella prima annotazione avevo scritto che quel file e' 'il lock del runtime che gira sul PC dell'owner' e che il lavoro veniva prima del resto di R3. FALSO: l'owner installa con `pip install -r requirements.txt` (README.md:32), cioe' dai FLOOR, e requirements-lock.txt e' consumato in UN solo posto, come CONSTRAINTS, da telegram-live-integration.yml (cron notturno + dispatch). Avevo dedotto l'impatto senza verificare chi consuma il file. L'urgenza e' stata ritirata; il lavoro resta perche' quei pin, quando fanno da constraints, tirano indietro quel workflow su versioni con advisory. COSA FA: (1) rimuove aiohttp, dichiarata in requirements.txt ma importata da NESSUNO — zero occorrenze in tutto il repo, e non richiesta da telethon (pyaes, rsa) ne' da betfairlightweight (requests). Portava 35 dei 44 advisory per zero funzionalita'. Scelta dell'owner fra rimuoverla e aggiornarla: ha scelto rimuoverla. (2) urllib3 2.2.2 -> 2.7.0 (6 advisory). (3) pytest 8.3.2 -> 9.1.1, che ESIGE pytest-asyncio 1.x perche' le 0.x dichiarano `pytest<9` (bump accoppiato, verificato su PyPI). (4) requests 2.32.3 -> 2.32.5. LIMITE DICHIARATO E NON SUPERABILE: resta 1 advisory su requests (PYSEC-2026-2275), che si chiude solo in 2.33.0, e betfairlightweight impone `requests<2.33.0` in OGNI sua versione, ultima compresa (2.23.2, verificato su PyPI). 2.32.5 e' il massimo consentito. 44 -> 1. requirements-build-linux.lock rigenerato: e' il PRIMO uso vero del seed mergiato in #431, e il risultato lo dimostra — 0 righe aggiunte, 634 rimosse, nessuna deriva (setuptools resta 83.0.0).",
+      "allow_tests": true,
+      "files": [
+        "requirements.txt",
+        "requirements-lock.txt",
+        "requirements-build-linux.lock",
+        "tests/packaging/test_linux_lockfile.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }

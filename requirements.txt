@@ -1,8 +1,9 @@
 # =========================
 # CORE SYSTEM
 # =========================
-requests>=2.31.0
-urllib3>=2.0.0
+requests>=2.32.5,<2.33.0
+# Il floor sale a 2.7.0: sotto ci sono advisory note (#374 follow-up 5).
+urllib3>=2.7.0
 # Supporto SOCKS per `requests` (equivalente di requests[socks]). Senza, un
 # proxy `socks5` configurato ferma l'avvio: vedi
 # betfair_client._supporto_socks_disponibile, introdotto in #430.
@@ -21,7 +22,12 @@ telethon>=1.34.0
 # =========================
 # ASYNC / PERFORMANCE
 # =========================
-aiohttp>=3.9.0
+# aiohttp RIMOSSA (#374 follow-up 5): era dichiarata qui ma non importata da
+# nessuna parte del repo — zero occorrenze in codice e test — e non richiesta
+# da telethon (pyaes, rsa) ne' da betfairlightweight (requests). Portava 35
+# advisory `pip-audit` per zero funzionalita': superficie di supply-chain a
+# fondo perduto. Se un domani serve davvero, si ri-dichiara con la versione
+# corrente e con un import che la usa.
 async-timeout>=4.0.3
 
 # =========================
