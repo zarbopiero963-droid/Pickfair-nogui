@@ -13,6 +13,7 @@ configurazione, come si costruisce l'URL, e cosa succede quando non si puo'.
 from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 
 import pytest
 
@@ -110,8 +111,48 @@ class TestClientApplicaIlProxy:
         monkeypatch.setenv(bc.ENV_PERCORSO_CONFIG, "/percorso/che/non/esiste.json")
         assert not _client().session.proxies
 
-    def test_file_illeggibile_non_interrompe_l_avvio(self, tmp_path, monkeypatch):
+    def test_percorso_dichiarato_ma_illeggibile_ferma_l_avvio(self, tmp_path, monkeypatch):
+        """Rilievo di GPT-5.6 Sol su #430, accolto: prima questo test asseriva
+        il contrario e **consolidava il bypass**.
+
+        Chi valorizza `PICKFAIR_CONFIG_PATH` dichiara dove sta il file. Se e'
+        illeggibile non sappiamo se voleva un proxy: partire in chiaro sarebbe
+        indovinare sul percorso dei soldi."""
         f = tmp_path / "config.json"
         f.write_text("{ questo non e' json", encoding="utf-8")
         monkeypatch.setenv(bc.ENV_PERCORSO_CONFIG, str(f))
+        with pytest.raises(ValueError):
+            _client()
+
+    def test_candidato_non_dichiarato_illeggibile_si_supera(self, tmp_path, monkeypatch):
+        """La distinzione che regge il caso sopra: un file trovato *cercando*,
+        e non *dichiarato*, puo' essere saltato. Qui l'ambiente punta a un file
+        valido, quindi la catena non deve inciampare su altro."""
+        buono = tmp_path / "buono.json"
+        buono.write_text(json.dumps({"proxy": {"enabled": False}}), encoding="utf-8")
+        monkeypatch.setenv(bc.ENV_PERCORSO_CONFIG, str(buono))
         assert not _client().session.proxies
+
+
+class TestCredenziali:
+    """Due difetti trovati da Claude Fable 5 e GPT-5.6 Sol su #430."""
+
+    def test_caratteri_speciali_vengono_codificati(self):
+        """Misurato prima della correzione: con password `pa@ss:word/x` l'URL
+        era `socks5://pippo:pa@ss:word/x@h.example:1080`, che un parser legge
+        come host `ss` e porta `word`. Non malformato: **diretto altrove**."""
+        url = bc.costruisci_proxy_url(
+            {"enabled": True, "host": "h.example", "port": 1080,
+             "username": "pippo", "password": "pa@ss:word/x"})
+        assert url == "socks5://pippo:pa%40ss%3Aword%2Fx@h.example:1080"
+        parsed = urlparse(url.replace("socks5://", "http://", 1))
+        assert parsed.hostname == "h.example" and parsed.port == 1080
+
+    @pytest.mark.parametrize("cfg", [
+        {"enabled": True, "host": "h", "port": 1, "username": "solo-utente"},
+        {"enabled": True, "host": "h", "port": 1, "password": "solo-password"},
+    ])
+    def test_credenziale_a_meta_solleva(self, cfg):
+        """Prima veniva scartata in silenzio e la connessione diventava anonima."""
+        with pytest.raises(ValueError):
+            bc.costruisci_proxy_url(cfg)

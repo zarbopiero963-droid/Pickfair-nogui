@@ -10,6 +10,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
@@ -22,6 +23,18 @@ logger = logging.getLogger(__name__)
 #: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
 #: in un percorso non standard, e ai test.
 ENV_PERCORSO_CONFIG = "PICKFAIR_CONFIG_PATH"
+
+
+def percorso_config_esplicito() -> Optional[str]:
+    """Il percorso dichiarato dall'ambiente, se c'e'.
+
+    Serve a distinguere due casi che non vanno confusi: **cercare** la
+    configurazione fra piu' candidati, e **puntarla**. Chi valorizza
+    `PICKFAIR_CONFIG_PATH` sta facendo una promessa su dove sta il file; se
+    quel file e' illeggibile, proseguire senza proxy sarebbe indovinare.
+    """
+    valore = os.environ.get(ENV_PERCORSO_CONFIG, "").strip()
+    return valore or None
 
 
 def percorsi_config_candidati() -> List[str]:
@@ -39,7 +52,7 @@ def percorsi_config_candidati() -> List[str]:
     dalla cartella del programma.
     """
     candidati: List[str] = []
-    da_ambiente = os.environ.get(ENV_PERCORSO_CONFIG, "").strip()
+    da_ambiente = percorso_config_esplicito()
     if da_ambiente:
         candidati.append(da_ambiente)
     try:
@@ -83,7 +96,24 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     tipo = str(proxy_cfg.get("type") or "").strip() or "socks5"
     utente = str(proxy_cfg.get("username") or "").strip()
     password = str(proxy_cfg.get("password") or "").strip()
-    credenziali = f"{utente}:{password}@" if utente and password else ""
+
+    # Meta' credenziale non e' una credenziale (rilievo di Claude Fable 5 e
+    # GPT-5.6 Sol su #430). Prima veniva scartata in silenzio e la connessione
+    # diventava anonima: un proxy che chiede autenticazione l'avrebbe rifiutata,
+    # oppure — peggio — l'avrebbe accettata come utente diverso.
+    if bool(utente) != bool(password):
+        raise ValueError(
+            "proxy: utente e password vanno insieme. Una sola delle due "
+            "produrrebbe una connessione anonima invece dell'errore"
+        )
+
+    # Le credenziali vanno CODIFICATE (rilievo di Claude Fable 5 e GPT-5.6 Sol
+    # su #430). Misurato prima della correzione: con password `pa@ss:word/x` il
+    # risultato era `socks5://pippo:pa@ss:word/x@h.example:1080`, che un parser
+    # legge come host `ss` e porta `word`. Non "malformato": diretto altrove.
+    credenziali = ""
+    if utente:
+        credenziali = f"{quote(utente, safe='')}:{quote(password, safe='')}@"
     return f"{tipo}://{credenziali}{host}:{porta}"
 
 
@@ -142,6 +172,7 @@ class BetfairClient:
         Un file presente ma illeggibile lo e', e viene registrato come tale
         invece di sparire.
         """
+        esplicito = percorso_config_esplicito()
         for percorso in percorsi_config_candidati():
             if not percorso or not os.path.exists(percorso):
                 continue
@@ -149,6 +180,16 @@ class BetfairClient:
                 with open(percorso, "r", encoding="utf-8") as fh:
                     dati = json.load(fh)
             except (OSError, ValueError) as exc:
+                if percorso == esplicito:
+                    # Rilievo di GPT-5.6 Sol su #430, fondato: la versione
+                    # precedente registrava un avviso e proseguiva senza proxy.
+                    # Ma qui l'operatore aveva DICHIARATO dove sta il file: se
+                    # e' illeggibile non sappiamo se voleva un proxy, e partire
+                    # in chiaro e' una supposizione sul percorso dei soldi.
+                    raise ValueError(
+                        f"configurazione illeggibile nel percorso dichiarato da "
+                        f"{ENV_PERCORSO_CONFIG} ({percorso}): {exc}"
+                    ) from exc
                 logger.warning(
                     "BetfairClient: configurazione illeggibile in %s (%s)", percorso, exc
                 )
