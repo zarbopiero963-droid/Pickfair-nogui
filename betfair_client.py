@@ -91,19 +91,32 @@ PROXY_INCERTO = "incerto"         # non si e' potuto stabilire
 PROXY_NESSUN_FILE = "nessun_file"  # il file non c'e', accertato aprendolo
 
 # Codici Windows che arrivano come `FileNotFoundError` ma NON dicono «non c'e'»:
-# dicono «non ci sono arrivato». Su Windows `OSError.winerror` conserva il
-# codice grezzo anche quando `errno` lo appiattisce su ENOENT; su Linux
-# l'attributo non esiste e `getattr` restituisce None, che non e' in questo
-# insieme — quindi li' non cambia niente.
+# dicono «non ci sono arrivato».
+#
+# **Rilievo BLOCCANTE di OpenRouter Fugu Ultra, arrivato in ritardo sul range
+# precedente, e fondato:** *«su CPython l'OSError concreto e' scelto da
+# `errno`, non da `winerror`»*. Verificato qui, senza dedurlo:
+#
+#     OSError(ENOENT)  -> FileNotFoundError      <- solo questi arrivano
+#     OSError(EACCES)  -> PermissionError
+#     OSError(EINVAL)  -> OSError
+#
+# `_non_raggiungibile` viene consultata **solo** dentro `except
+# FileNotFoundError`. Quindi elencare codici che Windows mappa su un errno
+# diverso non serviva a niente: quelle voci erano morte, e i test che le
+# esercitavano fabbricavano oggetti che il sistema operativo non produce mai
+# — copertura falsa, esattamente il difetto che continuo a cercare altrove.
+#
+# Restano i codici che CPython mappa su ENOENT e che significano
+# irraggiungibilita' invece di assenza. Gli altri (21, 55, 59, 64, 1231,
+# 1232) **erano gia' fail-closed** per un'altra strada: non essendo
+# `FileNotFoundError` finiscono nell'`except Exception`, che risponde
+# `PROXY_INCERTO`. Il comportamento non cambia; cambia che adesso il codice
+# non dichiara piu' una copertura che non aveva. C'e' un test che lo fissa.
 WINERROR_NON_RAGGIUNGIBILE = frozenset({
-    21,    # ERROR_NOT_READY          unita' presente ma non pronta
-    53,    # ERROR_BAD_NETPATH        percorso di rete non trovato
-    55,    # ERROR_DEV_NOT_EXIST      risorsa di rete non piu' disponibile
-    59,    # ERROR_UNEXP_NET_ERR      errore di rete imprevisto
-    64,    # ERROR_NETNAME_DELETED    il nome di rete non c'e' piu'
-    67,    # ERROR_BAD_NET_NAME       nome di rete non trovato
-    1231,  # ERROR_NETWORK_UNREACHABLE
-    1232,  # ERROR_HOST_UNREACHABLE
+    15,  # ERROR_INVALID_DRIVE   unita' non c'e' (mappato su ENOENT)
+    53,  # ERROR_BAD_NETPATH     percorso di rete non trovato
+    67,  # ERROR_BAD_NET_NAME    nome di rete non trovato
 })
 
 
@@ -308,7 +321,18 @@ def _ci_siamo_arrivati(cartella: str) -> str:
     """
     for _ in range(MAX_PASSI_RISALITA):
         try:
-            os.lstat(cartella)
+            # `stat`, non `lstat`. **Rilievo BLOCCANTE di GPT-5.6 Sol,
+            # ottavo giro:** *«`os.lstat(cartella)` non verifica che la
+            # directory sia realmente attraversabile. Su junction/symlink
+            # Windows verso share indisponibile puo' riuscire sul reparse
+            # point»*. Vero: `lstat` non segue, quindi su una junction verso
+            # una condivisione morta riesce guardando il puntatore invece
+            # della destinazione — e «ci sono arrivato» diventa falso.
+            #
+            # Le due domande sono diverse e vogliono due chiamate diverse:
+            #   sul FILE       «la voce esiste?»       -> `lstat`, non segue
+            #   sulla CARTELLA «ci sono arrivato?»     -> `stat`, segue
+            os.stat(cartella)
         except FileNotFoundError as errore:
             if _non_raggiungibile(errore):
                 return PROXY_INCERTO

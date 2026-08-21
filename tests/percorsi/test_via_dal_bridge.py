@@ -338,17 +338,26 @@ def test_una_voce_ANOMALA_nel_percorso_e_incertezza_non_assenza(monkeypatch, tmp
 
 
 @pytest.mark.parametrize("winerror,atteso", [
-    (53, "incerto"),      # ERROR_BAD_NETPATH      - condivisione irraggiungibile
-    (64, "incerto"),      # ERROR_NETNAME_DELETED  - profilo caduto
-    (67, "incerto"),      # ERROR_BAD_NET_NAME
-    (21, "incerto"),      # ERROR_NOT_READY        - unita' non pronta
-    (1231, "incerto"),    # ERROR_NETWORK_UNREACHABLE
-    (2, "nessun_file"),   # ERROR_FILE_NOT_FOUND   - il file davvero non c'e'
-    (3, "nessun_file"),   # ERROR_PATH_NOT_FOUND   - cartella intermedia assente
+    # Solo codici che CPython mappa su ENOENT: sono gli unici che possono
+    # arrivare come `FileNotFoundError`, e quindi gli unici per cui
+    # `_non_raggiungibile` viene mai consultata. Vedi
+    # `test_i_codici_NON_enoent_sono_gia_fail_closed_per_altra_strada`.
+    (53, "incerto"),        # ERROR_BAD_NETPATH    condivisione irraggiungibile
+    (67, "incerto"),        # ERROR_BAD_NET_NAME   nome di rete non trovato
+    (15, "incerto"),        # ERROR_INVALID_DRIVE  unita' non c'e'
+    (2, "nessun_file"),     # ERROR_FILE_NOT_FOUND il file davvero non c'e'
+    (3, "nessun_file"),     # ERROR_PATH_NOT_FOUND cartella intermedia assente
     (None, "nessun_file"),  # Linux: winerror non esiste
 ])
 def test_una_UNC_caduta_non_e_un_file_assente(monkeypatch, tmp_path, winerror, atteso):
     """Rilievo BLOCCANTE di GPT-5.6 Sol, quarto E sesto giro.
+
+    **La lista qui sopra e' stata potata dopo un rilievo di Fugu Ultra**: le
+    righe 21/55/59/64/1231/1232 fabbricavano un `FileNotFoundError` con quei
+    `winerror`, cioe' un oggetto che il sistema operativo non produce mai —
+    su CPython la sottoclasse di `OSError` la sceglie `errno`, non `winerror`.
+    Erano copertura falsa. Il comportamento per quei codici e' fissato dal
+    test qui sotto, che passa dalla strada che percorrono davvero.
 
     **Al quarto avevo risposto che non si poteva fare**, e l'ho scritto sia nel
     codice sia sulla PR: *«sono lo stesso fatto osservabile»*. Sbagliato.
@@ -398,6 +407,49 @@ def _lstat_finto(monkeypatch, per_percorso):
                 raise errore
         raise FileNotFoundError(2, "non trovato")
     monkeypatch.setattr(os, "lstat", finto)
+    # La cartella ora si interroga con `stat`, non `lstat` (rilievo di GPT-5.6
+    # Sol, ottavo giro): il finto deve rispondere a entrambe, altrimenti il
+    # test misurerebbe il filesystem vero invece della tabella.
+    monkeypatch.setattr(os, "stat", finto)
+
+
+@pytest.mark.parametrize("eccezione", [
+    PermissionError(13, "accesso negato"),      # ERROR_NOT_READY -> EACCES
+    OSError(22, "errore di rete"),              # ERROR_NETNAME_DELETED -> EINVAL
+    TimeoutError(110, "host irraggiungibile"),  # ERROR_HOST_UNREACHABLE
+])
+def test_i_codici_NON_enoent_sono_gia_fail_closed_per_altra_strada(
+        monkeypatch, tmp_path, eccezione):
+    """Rilievo BLOCCANTE di OpenRouter Fugu Ultra. Fondato, e ben trovato.
+
+    *«su CPython l'OSError concreto e' scelto da `errno`, non da `winerror`.
+    Codici come 21 (->EACCES/PermissionError), 55, 59, 64, 1231, 1232
+    (->EINVAL/OSError) non entrano nei rami `except FileNotFoundError`, quindi
+    `_non_raggiungibile` non viene mai chiamato per essi su Windows reale.»*
+
+    Verificato invece che dedotto:
+
+        OSError(ENOENT) -> FileNotFoundError
+        OSError(EACCES) -> PermissionError
+        OSError(EINVAL) -> OSError
+
+    Quei sei codici erano voci morte nel `frozenset`, e i test che li
+    esercitavano costruivano oggetti impossibili: **copertura falsa**, cioe'
+    la cosa che questa PR cerca di eliminare, comparsa nel rimedio.
+
+    Il comportamento pero' non cambia, e questo test lo dimostra passando
+    dalla strada che percorrono davvero: non essendo `FileNotFoundError`
+    finiscono nell'`except Exception`, che risponde `PROXY_INCERTO`. Erano
+    gia' fail-closed — solo, non per la ragione che avevo scritto.
+    """
+    import betfair_client
+
+    def lstat_che_esplode(percorso, *a, **kw):
+        raise eccezione
+
+    monkeypatch.setattr(os, "lstat", lstat_che_esplode)
+    monkeypatch.setattr(os, "stat", lstat_che_esplode)
+    assert betfair_client._stato_proxy_altrove(str(tmp_path / "c.json")) == "incerto"
 
 
 def test_winerror_3_con_la_cartella_RAGGIUNGIBILE_e_assenza(monkeypatch, tmp_path):
@@ -473,22 +525,36 @@ def test_la_risalita_NON_PUO_girare_a_vuoto(monkeypatch, tmp_path):
     tetto (`MAX_PASSI_RISALITA`), e la domanda «puo' girare a vuoto?» non e'
     piu' una questione di ragionamento.
 
-    Qui `lstat` non trova MAI niente: la risalita deve finire — per fixpoint o
-    per tetto — e in un numero di passi contato.
+    **E c'e' un terzo capitolo.** Passando la risalita da `lstat` a `stat`
+    (rilievo di GPT-5.6 Sol all'ottavo giro) questo test e' diventato
+    **vacuo senza che niente diventasse rosso**: pilotava solo `os.lstat`, e
+    la risalita interrogava il filesystem vero, che dopo un passo trova una
+    cartella esistente e si ferma. Rifatto il sabotaggio: **51 passed** con
+    la condizione d'uscita tolta. Un cambio di una riga nel codice aveva
+    disinnescato la verifica che lo sorvegliava, in silenzio.
+
+    Qui `stat` e `lstat` non trovano MAI niente: la risalita deve finire —
+    per fixpoint o per tetto — e in un numero di passi contato.
     """
     import betfair_client
 
     passi = []
 
-    def lstat_che_non_trova_mai(percorso, *a, **kw):
+    def non_trova_mai(percorso, *a, **kw):
         passi.append(str(percorso))
         raise FileNotFoundError(2, "non trovato")
 
-    monkeypatch.setattr(os, "lstat", lstat_che_non_trova_mai)
+    monkeypatch.setattr(os, "lstat", non_trova_mai)
+    monkeypatch.setattr(os, "stat", non_trova_mai)
     esito = betfair_client._stato_proxy_altrove(str(tmp_path / "a" / "b" / "c.json"))
 
-    assert esito in ("nessun_file", "incerto"), esito
-    assert len(passi) <= betfair_client.MAX_PASSI_RISALITA + 1, len(passi)
+    # Con la condizione d'uscita la risalita si ferma al fixpoint: pochi passi
+    # e «non c'e'». Senza, arriva al tetto e risponde «incerto» dopo 64+ passi.
+    # Accettare entrambi gli esiti rendeva il test cieco al sabotaggio: e' il
+    # tetto a evitare il blocco, ma non e' il tetto che si sta verificando qui.
+    assert esito == "nessun_file", esito
+    assert len(passi) < betfair_client.MAX_PASSI_RISALITA, (
+        f"la risalita non si e' fermata al fixpoint: {len(passi)} passi")
 
 
 def test_toccare_il_tetto_e_incertezza_non_assenza(monkeypatch, tmp_path):
@@ -504,10 +570,12 @@ def test_toccare_il_tetto_e_incertezza_non_assenza(monkeypatch, tmp_path):
     # `dirname` non accorcia mai: la risalita puo' finire solo per tetto.
     monkeypatch.setattr(os.path, "dirname", lambda p: str(p) + "/x")
 
-    def lstat_che_non_trova_mai(percorso, *a, **kw):
+    def non_trova_mai(percorso, *a, **kw):
         raise FileNotFoundError(2, "non trovato")
 
-    monkeypatch.setattr(os, "lstat", lstat_che_non_trova_mai)
+    # Entrambe: la risalita usa `stat`, l'ispezione del file `lstat`.
+    monkeypatch.setattr(os, "lstat", non_trova_mai)
+    monkeypatch.setattr(os, "stat", non_trova_mai)
     assert betfair_client._stato_proxy_altrove(
         str(tmp_path / "c.json")) == "incerto"
 
@@ -545,6 +613,61 @@ def test_la_risalita_si_ferma_alla_radice(monkeypatch, tmp_path):
     assert betfair_client._stato_proxy_altrove(
         str(tmp_path / "a" / "b" / "c.json")) == "nessun_file"
     assert len(passi) < 200, passi
+
+
+def test_una_JUNCTION_verso_una_share_morta_non_e_arrivarci(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di GPT-5.6 Sol, ottavo giro. Fondato.
+
+    *«`os.lstat(cartella)` non verifica che la directory sia realmente
+    attraversabile. Su junction/symlink Windows verso share indisponibile puo'
+    riuscire sul reparse point, classificando erroneamente
+    `PROXY_NESSUN_FILE`.»*
+
+    Esatto: `lstat` **non segue**, quindi su una junction verso una
+    condivisione morta riesce guardando il puntatore invece della
+    destinazione. «Ci sono arrivato» diventa falso, e il fail-open torna.
+
+    Le due domande sono diverse e vogliono due chiamate diverse:
+
+        sul FILE       «la voce esiste?»    -> `lstat`, che non segue
+        sulla CARTELLA «ci sono arrivato?»  -> `stat`,  che segue
+
+    **Questo test e' nato da un sabotaggio fallito.** Rimesso `lstat` sulla
+    cartella, la suite restava verde: il finto condiviso rispondeva identico
+    a `stat` e `lstat`, quindi la differenza fra le due — cioe' l'intero
+    rilievo — non era osservabile. Qui invece rispondono **diverso**, che e'
+    esattamente la situazione descritta.
+    """
+    import betfair_client
+
+    def lstat_vede_il_puntatore(percorso, *a, **kw):
+        # Sul FILE la voce non c'e' — altrimenti `_assenza_o_incertezza`
+        # risponderebbe «incerto» prima ancora di arrivare alla risalita, e
+        # il test passerebbe senza aver mai esercitato cio' che dichiara.
+        # (Ci sono cascato: la prima versione mockava `lstat` per qualunque
+        # percorso e il sabotaggio restava verde.)
+        if str(percorso).endswith("config.json"):
+            raise FileNotFoundError(2, "non trovato")
+        # Sulla CARTELLA riesce: e' il reparse point della junction.
+        return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+
+    def stat_segue_e_non_arriva(percorso, *a, **kw):
+        errore = FileNotFoundError(2, "share non raggiungibile")
+        errore.winerror = 53          # ERROR_BAD_NETPATH
+        raise errore
+
+    def open_non_trova(percorso, *a, **kw):
+        raise FileNotFoundError(2, "non trovato")
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+    monkeypatch.setattr("builtins.open", open_non_trova)
+    monkeypatch.setattr(os, "lstat", lstat_vede_il_puntatore)
+    monkeypatch.setattr(os, "stat", stat_segue_e_non_arriva)
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
 
 
 def test_su_un_symlink_VERO_il_mock_qui_sopra_dice_il_vero(monkeypatch, tmp_path):
