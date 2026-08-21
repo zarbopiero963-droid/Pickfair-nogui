@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Callable, Optional
 
+from parsers.campi import CAMPI_SEGNALE
+
 from . import atomic_io, mapping, numbers_re
 
 # Logger di modulo: un file esistente che NON è un CSV del bridge non viene ripulito;
@@ -25,11 +27,10 @@ logger = logging.getLogger(__name__)
 # race tra il thread del bot (write_csv) e il timer di auto-clear (init_csv).
 _write_lock = threading.Lock()
 
-CSV_HEADER = [
-    "Provider", "EventId", "EventName", "MarketId", "MarketName",
-    "MarketType", "SelectionId", "SelectionName", "Handicap", "Price",
-    "MinPrice", "MaxPrice", "BetType", "Points"
-]
+# Fonte unica: `parsers/campi.py`. Definito la' e non qui perche' i quattordici
+# nomi descrivono una scommessa, non un CSV: tenerli in questo modulo obbligava
+# chi voleva solo l'elenco a importarsi dietro tutto XTrader Signal Bridge.
+CSV_HEADER = list(CAMPI_SEGNALE)
 
 # Valori di default coerenti con gli esempi reali XTrader.
 DEFAULT_POINTS = ""      # Points lasciato vuoto: lo stake/moltiplicatore lo gestisce XTrader.

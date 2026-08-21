@@ -39,8 +39,9 @@ Semantica di una regola (`FieldRule`):
 import re
 from dataclasses import dataclass, field
 
+from parsers.campi import CAMPI_SEGNALE as CSV_HEADER
+
 from . import recognition, transforms, value_maps
-from .csv_writer import CSV_HEADER
 from .custom_parser import CustomParserDef, FieldRule
 from .dizionario import normalize
 
@@ -301,7 +302,7 @@ class ExtractionResult:
     def as_csv_row(self) -> "dict[str, str]":
         """Riga completa a 14 colonne: le colonne senza regola restano vuote.
 
-        Le colonne sono quelle del contratto (`csv_writer.CSV_HEADER`, fonte
+        Le colonne sono quelle del contratto (`parsers.campi.CAMPI_SEGNALE`, fonte
         unica) per evitare drift. NB: i valori riflettono l'output di
         `apply_parser` (value-map CP-03 già applicata; trasformazioni CP-05 no).
         Usare solo a parser `ready`."""

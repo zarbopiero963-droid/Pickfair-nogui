@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Any, Dict, Optional
+
+from parsers import motore as parser_motore
 
 
 class TelegramSignalProcessor:
@@ -132,6 +135,91 @@ class TelegramSignalProcessor:
     # =========================================================
     # DIRECT PAYLOAD BUILD
     # =========================================================
+
+    # ------------------------------------------------------------------
+    # Parser Personalizzati (H-08)
+    # ------------------------------------------------------------------
+    # Qui prima c'era:
+    #
+    #     from core.custom_parser_engine import CustomParserEngine
+    #     ...
+    #     except ImportError:
+    #         pass
+    #
+    # `CustomParserEngine` non e' mai esistita in questo repository:
+    # l'`ImportError` scattava a ogni messaggio e veniva ingoiato, quindi i
+    # Parser Personalizzati non hanno MAI girato sul percorso vivo. Rilievo
+    # H-08 dell'audit #335.
+    #
+    # Il vecchio blocco conteneva anche un fail-open sul percorso dei soldi:
+    #
+    #     signal["action"] = parsed.get("action", "BACK")
+    #
+    # cioe' un parser che non estraeva la direzione produceva comunque una
+    # PUNTA. La direzione di una scommessa non e' un campo su cui mettere un
+    # default: `parsers.campi.normalizza_azione` restituisce "" e
+    # `parsers.motore` rifiuta con `DIREZIONE_ASSENTE`.
+
+    def _parser_personalizzati(self):
+        """Definizioni e value-map, caricate una volta sola.
+
+        Rileggere la cartella a ogni messaggio sarebbe I/O per messaggio su un
+        percorso che deve reggere una raffica. `ricarica_parser()` esiste per
+        quando l'utente ne salva uno nuovo dalla GUI.
+        """
+        if getattr(self, "_parser_cache", None) is None:
+            try:
+                self._parser_cache = parser_motore.carica_parser()
+                self._registro_cache, self._dizionario_ok = parser_motore.registro_value_map()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Caricamento dei Parser Personalizzati fallito: nessun arricchimento")
+                self._parser_cache = []
+                self._registro_cache, self._dizionario_ok = {}, False
+        return self._parser_cache, self._registro_cache
+
+    def ricarica_parser(self) -> int:
+        """Scarta la cache: il prossimo messaggio rilegge dal disco.
+
+        Da chiamare quando l'utente salva o cancella un parser, altrimenti la
+        modifica non avrebbe effetto fino al riavvio.
+        """
+        self._parser_cache = None
+        definizioni, _ = self._parser_personalizzati()
+        return len(definizioni)
+
+    def _arricchisci_con_parser_personalizzati(self, signal: Dict[str, Any], raw_text: str) -> None:
+        """Applica i parser dell'owner e riempie i campi ANCORA VUOTI.
+
+        **Non sovrascrive un valore gia' presente.** Se il segnale arriva con
+        un `market_id` suo, quello e' piu' autorevole di un'estrazione da
+        testo libero, e lasciare che il parser lo cambi significherebbe
+        spostare di nascosto la scommessa su un altro mercato.
+
+        Non solleva mai: un guasto qui deve valere "nessun arricchimento", non
+        "il bot non risponde". Ma a differenza di prima **viene registrato**,
+        perche' il silenzio e' cio' che ha tenuto H-08 nascosto.
+        """
+        log = logging.getLogger(__name__)
+        try:
+            definizioni, registro = self._parser_personalizzati()
+            if not definizioni:
+                return
+            esito = parser_motore.estrai(raw_text, parser=definizioni, registro=registro)
+        except Exception:
+            log.exception("Parser Personalizzati: errore, nessun arricchimento")
+            return
+
+        if not esito.ok:
+            log.debug("Parser Personalizzati: nessuna estrazione (%s)", esito.motivo)
+            return
+
+        for chiave, valore in esito.campi.items():
+            if not signal.get(chiave):
+                signal[chiave] = valore
+        log.info("Parser Personalizzati: '%s' ha arricchito %d campi",
+                 esito.parser, len(esito.campi))
+
     def normalize_ingestion_signal(self, signal: Any) -> Dict[str, Any]:
         """
         Telegram ingestion boundary.
@@ -153,23 +241,7 @@ class TelegramSignalProcessor:
             signal = {"text": raw_text}
 
         if raw_text:
-            try:
-                from core.custom_parser_engine import CustomParserEngine
-                engine = CustomParserEngine()
-                parsed = engine.parse(raw_text)
-                if parsed and parsed.get("match"):
-                    # Arricchisce il segnale con i dati del parser custom
-                    signal.update(parsed)
-                    signal["event_name"] = parsed.get("match")
-                    signal["market_name"] = parsed.get("market")
-                    signal["selection"] = parsed.get("selection")
-                    signal["price"] = parsed.get("odds")
-                    signal["action"] = parsed.get("action", "BACK")
-            except ImportError:
-                pass
-            except Exception as e:
-                import logging
-                logging.getLogger(__name__).error(f"CustomParserEngine error: {e}")
+            self._arricchisci_con_parser_personalizzati(signal, raw_text)
 
         if not isinstance(signal, dict):
             return {
