@@ -632,3 +632,16 @@ class TestNessunSegretoNeiMessaggi:
         assert "URL illeggibile" in str(info.value)
         assert "SuperSegreta123" not in str(info.value)
 
+    @pytest.mark.parametrize("host", ["[fe80::1%eth0]", "[fe80::1%SuperSegreta123]",
+                                      "[fe80::1%25eth0]"])
+    def test_lo_scope_id_ipv6_non_e_un_host_di_proxy(self, host):
+        """Rilievo di GPT-5.6 Sol su #430: `ipaddress` accetta qualunque scope
+        ID. Per un indirizzo locale ha senso, per l'host di un proxy no —
+        e misurato: `%eth0` passava e finiva dentro l'URL del proxy.
+        """
+        with pytest.raises(ValueError, match="scope ID"):
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        assert self.SEGRETO not in str(info.value)
+

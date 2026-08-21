@@ -163,6 +163,19 @@ def _host_valido(valore: str) -> str:
     if host.startswith("[") and host.endswith("]"):
         # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
         interno = host[1:-1]
+        # Rilievo di GPT-5.6 Sol su #430: `ipaddress` accetta lo scope ID
+        # (`fe80::1%eth0`, ma anche `fe80::1%qualunque-cosa`). Per un indirizzo
+        # locale ha senso; per l'host di un PROXY no — non si instrada il
+        # traffico verso Betfair attraverso un link-local con scope. Verificato
+        # che senza questo controllo `%eth0` passava e finiva nell'URL, mentre
+        # altri scope venivano fermati piu' a valle per motivi che non so
+        # spiegare: un comportamento che non so spiegare, sul percorso dei
+        # soldi, e' una ragione per fermarsi, non per lasciar correre.
+        if "%" in interno:
+            raise ValueError(
+                "proxy.host: uno scope ID IPv6 (`%`) non e' utilizzabile come "
+                "host di un proxy. Il valore non viene riportato"
+            )
         try:
             ipaddress.IPv6Address(interno)
         except ValueError:
