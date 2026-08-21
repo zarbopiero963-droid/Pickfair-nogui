@@ -571,10 +571,36 @@ class TestNessunSegretoNeiMessaggi:
         assert self.SEGRETO not in mostrato
         assert str(len(lungo)) in mostrato
 
-    def test_l_ipv6_malformato_resta_leggibile(self):
-        """Dentro le parentesi i due punti sono la norma: oscurare anche quelli
-        renderebbe illeggibile ogni errore IPv6 senza proteggere niente."""
+    @pytest.mark.parametrize("host", ["[pippo:SuperSegreta123]",
+                                      "[SuperSegreta123@::1]",
+                                      "[SuperSegreta123]"])
+    def test_le_credenziali_fra_parentesi_non_si_stampano(self, host):
+        """Rilievo BLOCCANTE di Claude Fable 5 e xAI Grok 4.6 su #430.
+
+        Il push precedente si era ritagliato un'eccezione per il ramo IPv6 —
+        "li' i due punti sono normali" — e con quella aveva riaperto lo stesso
+        leak che stava chiudendo: `[pippo:SuperSegreta]` ha `:` ma non `@`, e
+        finiva stampato per intero.
+        """
         with pytest.raises(ValueError) as info:
-            bc.costruisci_proxy_url({"enabled": True, "host": "[::gg]", "port": 1080})
-        assert "[::gg]" in str(info.value)
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        assert self.SEGRETO not in str(info.value)
+
+    def test_si_mostra_solo_cio_che_ha_la_forma_di_un_ipv6(self):
+        """La regola non e' "quali caratteri tolgo" ma "cosa posso mostrare":
+        un valore fatto di soli caratteri da IPv6 non puo' essere una
+        credenziale, quindi si mostra; tutto il resto no."""
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": "[]", "port": 1080})
+        assert "[]" in str(info.value)
+
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": "[non-hex]", "port": 1080})
+        assert "non-hex" not in str(info.value)
+
+    @pytest.mark.parametrize("host", ["[:::::::::]", "[" + "a" * 80 + "]"])
+    def test_urlparse_che_solleva_da_solo_diventa_il_nostro_errore(self, host):
+        """Nessun messaggio di terze parti esce da questo modulo."""
+        with pytest.raises(ValueError, match="proxy"):
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
 

@@ -166,12 +166,22 @@ def _host_valido(valore: str) -> str:
             # Dentro le parentesi i due punti sono la norma, non un separatore
             # di credenziale: qui basta oscurare su `@`, altrimenti ogni errore
             # IPv6 diventerebbe illeggibile e il messaggio inutile.
-            if "@" in valore:
-                mostrabile = "<oscurato: contiene `@`>"
-            elif len(valore) > 60:
-                mostrabile = f"<oscurato: {len(valore)} caratteri>"
-            else:
-                mostrabile = valore
+            # Rilievo BLOCCANTE di Claude Fable 5 e xAI Grok 4.6 su #430,
+            # fondato: la versione precedente di questo ramo oscurava solo su
+            # `@`, quindi `[pippo:SuperSegreta]` — due punti ma nessuna
+            # chiocciola — stampava la password. Era un'eccezione che mi ero
+            # ritagliato io stesso nello stesso push in cui chiudevo il leak.
+            #
+            # La regola giusta non e' "quali caratteri tolgo" ma "cosa posso
+            # mostrare": il valore si mostra SOLO se ha gia' la forma di un
+            # IPv6, che per costruzione non puo' contenere una credenziale.
+            # Tutto il resto e' oscurato, perche' se non e' un IPv6 non
+            # sappiamo cosa sia.
+            mostrabile = (
+                valore
+                if set(interno) <= set("0123456789abcdefABCDEF:.") and len(valore) <= 60
+                else "<oscurato: non ha la forma di un IPv6>"
+            )
             raise ValueError(
                 f"proxy.host non e' un indirizzo IPv6 valido: {mostrabile!r}"
             )
@@ -318,11 +328,20 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     # Otto difetti su questa funzione sono stati tutti della stessa forma — una
     # parte dell'URL che finisce per significare un'altra — e una post-condizione
     # li prende anche quando l'elenco non li prevede.
-    riletto = urlparse(url)
-    if riletto.hostname != host.strip("[]").lower() or riletto.port != porta:
+    try:
+        riletto = urlparse(url)
+        hostname_riletto, porta_riletta = riletto.hostname, riletto.port
+    except ValueError as exc:
+        # `urlparse` solleva da solo su certi host malformati (per esempio un
+        # IPv6 fatto di soli due punti). Il suo messaggio non e' il nostro
+        # contratto e potrebbe riportare pezzi del valore: si converte.
+        raise ValueError(
+            f"la configurazione del proxy produce un URL illeggibile: {exc.__class__.__name__}"
+        ) from None
+    if hostname_riletto != host.strip("[]").lower() or porta_riletta != porta:
         raise ValueError(
             f"la configurazione del proxy produce un URL che non si rilegge "
-            f"come atteso: host {_senza_segreti(str(riletto.hostname))!r} "
+            f"come atteso: host {_senza_segreti(str(hostname_riletto))!r} "
             f"invece di {_senza_segreti(host)!r}"
         )
     return url
