@@ -119,43 +119,86 @@ def test_il_client_betfair_non_importa_config_store():
                     f"import di config_store a riga {nodo.lineno}"
 
 
-def test_avvisa_se_la_config_e_rimasta_nel_bridge(monkeypatch, tmp_path, caplog):
+def _vecchia_config(tmp_path, monkeypatch, contenuto: str):
+    """Prepara una config nella cartella del Bridge e la fa trovare."""
+    vecchia = tmp_path / "XTraderBridge"
+    vecchia.mkdir(exist_ok=True)
+    (vecchia / "config.json").write_text(contenuto, encoding="utf-8")
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
+    return vecchia
+
+
+PROXY_ATTIVO = '{"proxy": {"enabled": true, "type": "socks5", "host": "h", "port": 1080}}'
+PROXY_SPENTO = '{"proxy": {"enabled": false, "host": "h"}}'
+
+
+def test_un_proxy_dichiarato_nel_bridge_FERMA_l_avvio(monkeypatch, tmp_path):
+    """Rilievo bloccante di GPT-5.6 Sol e Fable, sollevato da entrambi.
+
+    Al primo giro qui c'era solo un warning e si proseguiva **senza proxy**:
+    le scommesse sarebbero uscite sulla connessione diretta invece che sul
+    proxy che l'owner aveva configurato. Un proxy nella vecchia cartella e'
+    **dichiarato**: la regola del modulo dice eccezione, non avviso.
+    """
     import betfair_client
 
-    vecchia = tmp_path / "XTraderBridge"
-    vecchia.mkdir()
-    (vecchia / "config.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
+    vecchia = _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
+    with pytest.raises(ValueError) as e:
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+    messaggio = str(e.value)
+    assert str(vecchia) in messaggio, "il messaggio deve dire DOVE sta il file"
+    assert percorsi.percorso_config() in messaggio, "e DOVE va spostato"
+    assert betfair_client.ENV_PERCORSO_CONFIG in messaggio, "e l'alternativa"
 
+
+def test_una_vecchia_config_SENZA_proxy_avvisa_e_prosegue(monkeypatch, tmp_path, caplog):
+    """Nessuna intenzione tradita: solo un file da spostare."""
+    import betfair_client
+
+    vecchia = _vecchia_config(tmp_path, monkeypatch, PROXY_SPENTO)
     with caplog.at_level("WARNING"):
-        betfair_client._avvisa_se_la_config_e_rimasta_nel_bridge(
+        betfair_client._controlla_config_rimasta_nel_bridge(
             [str(tmp_path / "assente.json")])
     assert any(str(vecchia) in r.getMessage() for r in caplog.records), caplog.text
+    assert any(percorsi.percorso_config() in r.getMessage() for r in caplog.records), (
+        "il messaggio deve dire dove spostarla, non solo «spostala»")
 
 
-def test_non_avvisa_se_una_config_di_pickfair_esiste(monkeypatch, tmp_path, caplog):
-    """L'avviso serve a chi non ha trovato niente, non a chi e' a posto."""
+def test_una_vecchia_config_illeggibile_non_ferma_l_avvio(monkeypatch, tmp_path, caplog):
+    """Un JSON rotto non e' una dichiarazione di proxy."""
     import betfair_client
 
-    vecchia = tmp_path / "XTraderBridge"
-    vecchia.mkdir()
-    (vecchia / "config.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
+    _vecchia_config(tmp_path, monkeypatch, "{ questo non e' json")
+    with caplog.at_level("WARNING"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
 
+
+def test_non_controlla_se_una_config_di_pickfair_esiste(monkeypatch, tmp_path, caplog):
+    """Chi ha la sua configurazione non viene disturbato ne' bloccato."""
+    import betfair_client
+
+    _vecchia_config(tmp_path, monkeypatch, PROXY_ATTIVO)
     mia = tmp_path / "config.json"
     mia.write_text("{}", encoding="utf-8")
     with caplog.at_level("WARNING"):
-        betfair_client._avvisa_se_la_config_e_rimasta_nel_bridge([str(mia)])
+        betfair_client._controlla_config_rimasta_nel_bridge([str(mia)])
     assert not [r for r in caplog.records if "XTraderBridge" in r.getMessage()]
 
 
-def test_la_diagnostica_non_puo_far_fallire_il_client(monkeypatch):
+def test_il_rilevamento_non_puo_far_fallire_il_client(monkeypatch):
+    """Un guasto NEL RILEVAMENTO non deve bloccare: e' diverso dal caso sopra.
+
+    Li' si blocca perche' si e' capito che c'e' un proxy dichiarato. Qui non
+    si e' capito niente, e fermarsi su un'incertezza propria sarebbe rumore.
+    """
     import betfair_client
 
     def esplode():
         raise OSError("permesso negato")
     monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", esplode)
-    betfair_client._avvisa_se_la_config_e_rimasta_nel_bridge(["/non/esiste"])
+    betfair_client._controlla_config_rimasta_nel_bridge(["/non/esiste"])
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +265,7 @@ def test_ogni_modulo_del_bridge_resta_fuori(modulo):
     assert modulo not in _grafo_vivo()
 
 
-def test_la_diagnostica_e_davvero_COLLEGATA(monkeypatch, tmp_path, caplog):
+def test_il_controllo_e_davvero_COLLEGATO(monkeypatch, tmp_path, caplog):
     """Che la funzione esista non basta: deve essere chiamata.
 
     Il primo giro di sabotaggi ha mostrato che sostituendo la chiamata con
@@ -238,7 +281,7 @@ def test_la_diagnostica_e_davvero_COLLEGATA(monkeypatch, tmp_path, caplog):
     # Ma nel Bridge una config c'e'.
     vecchia = tmp_path / "XTraderBridge"
     vecchia.mkdir()
-    (vecchia / "config.json").write_text("{}", encoding="utf-8")
+    (vecchia / "config.json").write_text(PROXY_SPENTO, encoding="utf-8")
     monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
     # Il candidato "accanto al programma" non deve esistere per questo test.
     monkeypatch.setattr(betfair_client, "percorsi_config_candidati",
@@ -249,4 +292,4 @@ def test_la_diagnostica_e_davvero_COLLEGATA(monkeypatch, tmp_path, caplog):
 
     assert esito is None, "nessuna config: nessun proxy"
     assert any(str(vecchia) in r.getMessage() for r in caplog.records), (
-        "la diagnostica non e' collegata al percorso reale: " + caplog.text)
+        "il controllo non e' collegato al percorso reale: " + caplog.text)

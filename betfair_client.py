@@ -81,31 +81,83 @@ def percorsi_config_candidati() -> List[str]:
     return candidati
 
 
-def _avvisa_se_la_config_e_rimasta_nel_bridge(candidati: List[str]) -> None:
-    """Se non c'e' config qui ma ce n'e' una nel Bridge, dillo.
+def _proxy_dichiarato_altrove(percorso: str) -> bool:
+    """`True` se in `percorso` c'e' un proxy DICHIARATO e attivo.
 
-    Cambiare cartella senza dire dove sono finiti i file trasforma un
-    problema risolvibile in un silenzio. Come per i parser: **si segnala
-    dove sono, non si legge da li'**. Leggere la configurazione di un altro
-    prodotto significherebbe far girare Pickfair — e il suo proxy, e quindi
-    le sue scommesse — su impostazioni scritte per un programma diverso.
+    Si legge **solo** per decidere se fermarsi, mai per configurare. La
+    differenza non e' formale: usare quel blocco significherebbe far uscire il
+    traffico verso Betfair da un host scelto in un altro programma e mai
+    riesaminato qui. Sapere che esiste, invece, e' l'unico modo per non
+    scommettere di nascosto dalla rete sbagliata.
 
-    Non solleva mai: una diagnostica che rompe l'avvio e' peggio del problema
-    che segnala.
+    Un file illeggibile o senza blocco `proxy` non e' una dichiarazione:
+    restituisce `False` e si prosegue con l'avviso.
     """
     try:
-        if any(os.path.exists(c) for c in candidati):
+        with open(percorso, "r", encoding="utf-8") as f:
+            dati = json.load(f)
+    except Exception:
+        return False
+    if not isinstance(dati, dict):
+        return False
+    blocco = dati.get("proxy")
+    if not isinstance(blocco, dict):
+        return False
+    return bool(blocco.get("enabled"))
+
+
+def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
+    """Se la configurazione e' rimasta nella cartella del Bridge, non si tira dritto.
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, sollevato
+    indipendentemente da entrambi.** Al primo giro qui c'era solo un
+    `logger.warning`, e il client proseguiva **senza proxy**.
+
+    Perche' era grave: se il proxy serviva a far uscire il traffico da una
+    rete precisa, un aggiornamento avrebbe mandato le scommesse sulla
+    connessione diretta — **in silenzio, con un avviso che nessuno legge in
+    tempo.** E' la stessa forma del difetto che #430 doveva chiudere: una
+    funzione che si crede attiva e non lo e'.
+
+    Peggio: contraddiceva la regola scritta in questo stesso modulo poche
+    righe piu' sotto —
+
+        Configurazione DICHIARATA ma inutilizzabile  ->  eccezione.
+        Nessuna configurazione                        ->  nessun proxy, in silenzio.
+
+    Un proxy configurato nella vecchia cartella **e' dichiarato**. Che
+    Pickfair non sappia piu' leggerlo da li' lo rende inutilizzabile, non
+    inesistente. Quindi: **eccezione**, come dice la regola.
+
+    Restano avviso e proseguimento per il caso in cui una vecchia
+    configurazione esista ma **non dichiari** alcun proxy: li' non c'e'
+    nessuna intenzione tradita, solo un file da spostare.
+    """
+    try:
+        if any(percorso and os.path.exists(percorso) for percorso in candidati):
             return
         vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
         if not os.path.exists(vecchia):
             return
-        logger.warning(
-            "Nessuna configurazione trovata nei percorsi di Pickfair, ma ne "
-            "risulta una in %s (cartella di XTrader Signal Bridge). Pickfair "
-            "non la legge: spostala o valorizza %s.",
-            vecchia, ENV_PERCORSO_CONFIG)
-    except Exception:  # pragma: no cover - diagnostica, mai fatale
-        pass
+        dichiarato = _proxy_dichiarato_altrove(vecchia)
+    except Exception:  # pragma: no cover - il rilevamento non deve mai rompere
+        return
+
+    dove_va = percorsi.percorso_config()
+    if dichiarato:
+        raise ValueError(
+            f"un proxy e' dichiarato e attivo in {vecchia} (cartella di XTrader "
+            f"Signal Bridge), ma Pickfair non legge da li'. Proseguire "
+            f"manderebbe le scommesse sulla connessione diretta invece che sul "
+            f"proxy configurato. Sposta il file in {dove_va}, oppure valorizza "
+            f"{ENV_PERCORSO_CONFIG} con il suo percorso"
+        )
+    logger.warning(
+        "Nessuna configurazione trovata nei percorsi di Pickfair, ma ne risulta "
+        "una in %s (cartella di XTrader Signal Bridge). Non dichiara alcun "
+        "proxy attivo, quindi si prosegue senza. Se ti serve, spostala in %s "
+        "oppure valorizza %s.",
+        vecchia, dove_va, ENV_PERCORSO_CONFIG)
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +505,7 @@ class BetfairClient:
         """
         esplicito = percorso_config_esplicito()
         candidati = percorsi_config_candidati()
-        _avvisa_se_la_config_e_rimasta_nel_bridge(candidati)
+        _controlla_config_rimasta_nel_bridge(candidati)
         for percorso in candidati:
             if not percorso or not os.path.exists(percorso):
                 if esplicito and percorso == esplicito:
