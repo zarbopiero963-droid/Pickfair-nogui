@@ -17,6 +17,7 @@ from urllib.parse import quote, urlparse
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
+import percorsi
 from circuit_breaker import CircuitBreaker
 from core.type_helpers import safe_float, safe_int, safe_side
 
@@ -50,25 +51,61 @@ def percorsi_config_candidati() -> List[str]:
     proseguiva. Una funzione che si crede attiva e non lo e'.
 
     Nessun percorso assoluto: si parte da cio' che l'ambiente dichiara, poi
-    dalla config di runtime vera (``%APPDATA%/XTraderBridge`` su Windows), poi
-    dalla cartella del programma.
+    dalla cartella dati di Pickfair, poi dalla cartella del programma.
+
+    **Qui c'era un secondo difetto, introdotto da me nella stessa #430 che
+    doveva chiudere il primo.** Il candidato intermedio non era la cartella di
+    Pickfair: era `core.config_store.config_path()`, cioe'
+    ``%APPDATA%/XTraderBridge/config.json`` — la cartella dati di **un altro
+    prodotto**, XTrader Signal Bridge. Chi non l'ha mai installato non ha quel
+    percorso, quindi il candidato non trovava nulla: lo stesso identico esito
+    del percorso assoluto che avevo appena tolto.
+
+    E importarlo trascinava nel grafo vivo sei moduli del Bridge
+    (`csv_writer`, `bridge_mode`, `confirmation_reader`, `token_store`,
+    `language_select`, `config_store`). Il commento che accompagnava quella
+    riga notava che `config_store` «importa a sua volta parti del progetto»:
+    il costo era stato visto e pagato lo stesso.
+
+    Ora il percorso lo dichiara `percorsi.py`, che non importa niente da
+    `core`.
     """
     candidati: List[str] = []
     da_ambiente = percorso_config_esplicito()
     if da_ambiente:
         candidati.append(da_ambiente)
-    try:
-        # Import locale: `core.config_store` importa a sua volta parti del
-        # progetto, e un import in testa creerebbe un ciclo.
-        from core.config_store import config_path as _config_path
-
-        candidati.append(_config_path())
-    except Exception:  # pragma: no cover - dipende dall'ambiente
-        logger.debug("BetfairClient: config_store non disponibile per il proxy")
+    candidati.append(percorsi.percorso_config())
     candidati.append(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     )
     return candidati
+
+
+def _avvisa_se_la_config_e_rimasta_nel_bridge(candidati: List[str]) -> None:
+    """Se non c'e' config qui ma ce n'e' una nel Bridge, dillo.
+
+    Cambiare cartella senza dire dove sono finiti i file trasforma un
+    problema risolvibile in un silenzio. Come per i parser: **si segnala
+    dove sono, non si legge da li'**. Leggere la configurazione di un altro
+    prodotto significherebbe far girare Pickfair — e il suo proxy, e quindi
+    le sue scommesse — su impostazioni scritte per un programma diverso.
+
+    Non solleva mai: una diagnostica che rompe l'avvio e' peggio del problema
+    che segnala.
+    """
+    try:
+        if any(os.path.exists(c) for c in candidati):
+            return
+        vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
+        if not os.path.exists(vecchia):
+            return
+        logger.warning(
+            "Nessuna configurazione trovata nei percorsi di Pickfair, ma ne "
+            "risulta una in %s (cartella di XTrader Signal Bridge). Pickfair "
+            "non la legge: spostala o valorizza %s.",
+            vecchia, ENV_PERCORSO_CONFIG)
+    except Exception:  # pragma: no cover - diagnostica, mai fatale
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +452,9 @@ class BetfairClient:
         invece di sparire.
         """
         esplicito = percorso_config_esplicito()
-        for percorso in percorsi_config_candidati():
+        candidati = percorsi_config_candidati()
+        _avvisa_se_la_config_e_rimasta_nel_bridge(candidati)
+        for percorso in candidati:
             if not percorso or not os.path.exists(percorso):
                 if esplicito and percorso == esplicito:
                     # `esplicito and ...` non e' ridondante: senza variabile

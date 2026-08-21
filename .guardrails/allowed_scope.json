@@ -1328,6 +1328,19 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 9
+    },
+    "via_config_del_bridge": {
+      "description": "X3a di #374 — togliere XTrader Signal Bridge dal percorso VIVO di Pickfair. IL DIFETTO, INTRODOTTO DA ME IN #430 (c39883a): betfair_client.py — il client Betfair, cioe' il percorso dei soldi — cercava la configurazione del proxy con `from core.config_store import config_path`, che restituisce %APPDATA%/XTraderBridge/config.json. Due difetti in una riga. (1) SEMANTICO: Pickfair cercava la propria configurazione nella cartella dati di un altro prodotto; chi non ha mai installato il Bridge non ha quel percorso, quindi il candidato non trova nulla — lo stesso esito del percorso assoluto del VPS dismesso che #430 aveva appena tolto. (2) STRUTTURALE: quell'import trascinava nel grafo vivo sei moduli del Bridge (config_store, csv_writer, bridge_mode, confirmation_reader, token_store, language_select). Il commento accanto a quella riga notava che config_store 'importa a sua volta parti del progetto': il costo era stato visto e pagato lo stesso. COSA FA: nuovo modulo `percorsi.py`, fonte unica dei percorsi di Pickfair (~/.pickfair, override PICKFAIR_DATA_DIR), senza alcuna dipendenza dal progetto — importa solo `os`, e c'e' un test sull'albero sintattico che lo impedisce in futuro. betfair_client usa quello; parsers/campi.py smette di duplicare la definizione di '.pickfair'. Aggiunta una DIAGNOSTICA non accoppiata: se non si trova config nei percorsi di Pickfair ma ce n'e' una nella cartella del Bridge, viene emesso un warning che dice dove — senza mai leggerla, perche' far girare Pickfair su impostazioni scritte per un altro programma significherebbe scommettere con una configurazione mai rivista. MISURA: moduli raggiungibili da main.py 115 -> 106; moduli del Bridge nel grafo vivo 6 -> 0; 6.285 righe fuori dal percorso vivo. RISCRITTI due test miei di #430 (TestConfigStoreFraICandidati) che asserivano la PRESENZA di config_store fra i candidati: fissavano il difetto invece del comportamento voluto. Il rilievo di Fugu che li aveva fatti nascere resta valido ed e' la ragione per cui il difetto e' emerso. NON tocca ne' rimuove il Bridge: quella e' X3b, file per file.",
+      "allow_tests": true,
+      "files": [
+        "percorsi.py",
+        "betfair_client.py",
+        "parsers/campi.py",
+        "tests/percorsi/test_via_dal_bridge.py",
+        "tests/unit/test_betfair_client_proxy.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
