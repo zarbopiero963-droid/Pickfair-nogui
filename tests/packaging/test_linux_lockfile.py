@@ -175,9 +175,18 @@ def test_aiohttp_resta_fuori_finche_nessuno_la_importa():
     IMPORT = re.compile(r"^\s*(?:import\s+aiohttp|from\s+aiohttp[\s.])", re.MULTILINE)
     questo_file = Path(__file__).resolve()
 
+    # Le cartelle da NON guardare: una virtualenv nel repo contiene
+    # `import aiohttp` dentro site-packages, e il test passerebbe per il motivo
+    # sbagliato — la stessa trappola che questo commento dichiarava di evitare.
+    # Rilievo di Claude Fable 5 su #432, fondato: ci ero cascato di nuovo.
+    IGNORA = {
+        ".git", ".venv", "venv", "env", "site-packages", "node_modules",
+        "build", "dist", ".tox", ".mypy_cache", ".pytest_cache", "__pycache__",
+    }
+
     usata = False
     for sorgente in radice.rglob("*.py"):
-        if sorgente == questo_file or ".git" in sorgente.parts:
+        if sorgente == questo_file or IGNORA & set(sorgente.parts):
             continue
         try:
             if IMPORT.search(sorgente.read_text(encoding="utf-8")):
@@ -213,7 +222,7 @@ def test_i_pin_del_lock_non_sono_sotto_le_versioni_note_vulnerabili():
     # pytest 9 esige pytest-asyncio >= 1.x: 0.24.0 dichiara `pytest<9`.
     assert "pytest-asyncio==1." in lock, (
         "pytest-asyncio deve restare 1.x: le 0.x dichiarano `pytest<9` e "
-        "romperebbero la risoluzione con pytest==9.0.3"
+        "romperebbero la risoluzione con il pytest 9.x pinnato qui"
     )
 
 
