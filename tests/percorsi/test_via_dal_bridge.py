@@ -376,6 +376,177 @@ def test_una_UNC_caduta_non_e_un_file_assente(monkeypatch, tmp_path, winerror, a
     assert betfair_client._stato_proxy_altrove(str(f)) == atteso
 
 
+class _RisalitaSenzaFine(BaseException):
+    """Non deriva da `Exception` di proposito: un `except Exception` nel codice
+    in prova non deve poterla assorbire. Vedi
+    `test_la_risalita_si_ferma_alla_radice`."""
+
+
+def _lstat_finto(monkeypatch, per_percorso):
+    """`os.lstat` che risponde secondo una tabella {frammento: winerror|None}.
+
+    `None` come valore = riesce. Frammento non elencato = FileNotFoundError
+    senza `winerror` (assenza normale, come Linux).
+    """
+    def finto(percorso, *a, **kw):
+        for frammento, winerror in per_percorso.items():
+            if frammento in str(percorso):
+                if winerror is None:
+                    return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+                errore = FileNotFoundError(2, "non trovato")
+                errore.winerror = winerror
+                raise errore
+        raise FileNotFoundError(2, "non trovato")
+    monkeypatch.setattr(os, "lstat", finto)
+
+
+def test_winerror_3_con_la_cartella_RAGGIUNGIBILE_e_assenza(monkeypatch, tmp_path):
+    """Rilievo di GPT-5.6 Sol, settimo giro — e la meta' che NON si puo' applicare.
+
+    GPT chiede di trattare `winerror` 3 (`ERROR_PATH_NOT_FOUND`) come
+    incertezza. **Applicato alla lettera romperebbe il caso principale**:
+    aprire `%APPDATA%` / `XTraderBridge` / `config.json` quando la cartella
+    `XTraderBridge` non esiste da' proprio 3, perche' manca un componente
+    *intermedio*. E' il codice che riceve chiunque non abbia mai installato il
+    Bridge — cioe' quasi tutti.
+
+    Questo test fissa quel caso: il file da' 3, ma la cartella che doveva
+    contenerlo **e' ispezionabile**, quindi il file davvero non c'e' e si
+    prosegue. E' la controprova che il rimedio del test qui sotto non si e'
+    trasformato in un blocco per tutti.
+    """
+    import betfair_client
+
+    _lstat_finto(monkeypatch, {
+        "config.json": 3,          # manca la cartella intermedia
+        "XTraderBridge": None,     # ...ma risalendo si arriva, e si guarda
+    })
+    assert betfair_client._stato_proxy_altrove(
+        str(tmp_path / "XTraderBridge" / "config.json")) == "nessun_file"
+
+
+def test_winerror_3_con_la_cartella_IRRAGGIUNGIBILE_e_incertezza(monkeypatch, tmp_path):
+    """L'altra meta' del rilievo, quella fondata, chiusa senza rompere la prima.
+
+    *«un profilo reindirizzato o percorso di rete temporaneamente
+    indisponibile puo' restituire `ERROR_PATH_NOT_FOUND`»*. Vero, e li' 3 non
+    significa piu' «non c'e'».
+
+    Distinguerlo **guardando il codice** e' impossibile: e' lo stesso 3 del
+    test qui sopra. Distinguerlo **andando a guardare** si puo': se risalendo
+    verso la cartella che doveva contenere il file si incontra un errore di
+    rete, non ci siamo arrivati, e allora vale incertezza.
+
+    Cosi' l'esito non dipende da quale codice Windows scelga in ogni
+    situazione — cosa che da qui non posso verificare, e che l'ultima volta
+    che ho dato per scontata mi ha dato torto.
+
+    Verificato per sabotaggio: senza la risalita, `DID NOT RAISE`.
+    """
+    import betfair_client
+
+    _lstat_finto(monkeypatch, {
+        "config.json": 3,           # stesso codice del test qui sopra...
+        "XTraderBridge": 53,        # ...ma la cartella e' su una rete caduta
+    })
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_la_risalita_NON_PUO_girare_a_vuoto(monkeypatch, tmp_path):
+    """Il ciclo va reso limitato, non argomentato tale.
+
+    La prima versione era un `while True` che si fidava di `dirname`. Sabotando
+    la condizione d'uscita per verificarla, la suite **non e' fallita: si e'
+    bloccata**, e l'ha uccisa un timeout esterno. Poi ho provato ad alzare una
+    `BaseException` dal mock per non farla assorbire dall'`except Exception`
+    del codice: si e' bloccata di nuovo, perche' un ALTRO test — quello sui
+    codici UNC — monkeypatcha `lstat` senza contatore, e li' non c'era niente
+    da alzare.
+
+    Due tentativi di rendere *osservabile* il difetto, e nessuno dei due
+    toccava la causa: un ciclo su un percorso che arriva da fuori. Ora c'e' un
+    tetto (`MAX_PASSI_RISALITA`), e la domanda «puo' girare a vuoto?» non e'
+    piu' una questione di ragionamento.
+
+    Qui `lstat` non trova MAI niente: la risalita deve finire — per fixpoint o
+    per tetto — e in un numero di passi contato.
+    """
+    import betfair_client
+
+    passi = []
+
+    def lstat_che_non_trova_mai(percorso, *a, **kw):
+        passi.append(str(percorso))
+        raise FileNotFoundError(2, "non trovato")
+
+    monkeypatch.setattr(os, "lstat", lstat_che_non_trova_mai)
+    esito = betfair_client._stato_proxy_altrove(str(tmp_path / "a" / "b" / "c.json"))
+
+    assert esito in ("nessun_file", "incerto"), esito
+    assert len(passi) <= betfair_client.MAX_PASSI_RISALITA + 1, len(passi)
+
+
+def test_toccare_il_tetto_e_incertezza_non_assenza(monkeypatch, tmp_path):
+    """E se il tetto lo si tocca davvero, cosa si risponde?
+
+    Non «non c'e'»: toccare il tetto vuol dire che non si e' stabilito niente,
+    e in questo modulo non stabilire niente vale quanto un proxy dichiarato.
+    Senza questo test il ramo del tetto potrebbe restituire assenza e nessuno
+    se ne accorgerebbe.
+    """
+    import betfair_client
+
+    # `dirname` non accorcia mai: la risalita puo' finire solo per tetto.
+    monkeypatch.setattr(os.path, "dirname", lambda p: str(p) + "/x")
+
+    def lstat_che_non_trova_mai(percorso, *a, **kw):
+        raise FileNotFoundError(2, "non trovato")
+
+    monkeypatch.setattr(os, "lstat", lstat_che_non_trova_mai)
+    assert betfair_client._stato_proxy_altrove(
+        str(tmp_path / "c.json")) == "incerto"
+
+
+def test_la_risalita_si_ferma_alla_radice(monkeypatch, tmp_path):
+    """Un `while True` su un percorso va dimostrato limitato, non affermato tale.
+
+    Se NIENTE del percorso esiste, `dirname` accorcia a ogni passo e alla
+    radice restituisce se stessa: la risalita finisce e dice «non c'e'».
+
+    **Il tetto sulle chiamate non alza `AssertionError`, e non e' un
+    dettaglio.** La prima versione di questo test lo faceva, e sabotando la
+    condizione d'uscita la suite **non falliva: si bloccava**, finche' non
+    l'ha uccisa un `timeout` esterno. Il motivo e' che l'assertion nasce
+    dentro `lstat`, cioe' dentro il `try` del codice in prova, e quel
+    `except Exception` se la mangia — il codice riprendeva a risalire come se
+    niente fosse. Una verifica che il codice in prova puo' assorbire non e'
+    una verifica.
+
+    `_RisalitaSenzaFine` eredita da `BaseException` proprio per non essere
+    catturabile da un `except Exception`. Rifatto il sabotaggio: ora fallisce
+    invece di appendersi.
+    """
+    import betfair_client
+
+    passi = []
+
+    def lstat_che_non_trova_mai(percorso, *a, **kw):
+        passi.append(str(percorso))
+        if len(passi) > 200:
+            raise _RisalitaSenzaFine(str(percorso))
+        raise FileNotFoundError(2, "non trovato")
+
+    monkeypatch.setattr(os, "lstat", lstat_che_non_trova_mai)
+    assert betfair_client._stato_proxy_altrove(
+        str(tmp_path / "a" / "b" / "c.json")) == "nessun_file"
+    assert len(passi) < 200, passi
+
+
 def test_su_un_symlink_VERO_il_mock_qui_sopra_dice_il_vero(monkeypatch, tmp_path):
     """La prova che il test a mock non sta descrivendo un sistema immaginario.
 

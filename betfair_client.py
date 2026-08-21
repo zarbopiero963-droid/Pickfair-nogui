@@ -107,6 +107,12 @@ WINERROR_NON_RAGGIUNGIBILE = frozenset({
 })
 
 
+# Tetto alla risalita verso la cartella che dovrebbe contenere il file. Un
+# percorso vero non ha 64 livelli; toccare il tetto significa che sta
+# succedendo qualcosa che non capiamo, e allora vale incertezza.
+MAX_PASSI_RISALITA = 64
+
+
 def _non_raggiungibile(errore: BaseException) -> bool:
     """L'errore dice «non ci sono arrivato», non «non c'e'».
 
@@ -258,10 +264,66 @@ def _assenza_o_incertezza(percorso: str) -> str:
     except FileNotFoundError as errore:
         if _non_raggiungibile(errore):
             return PROXY_INCERTO
-        # L'unica assenza accertata: non c'e' nemmeno la voce di directory.
-        return PROXY_NESSUN_FILE
+        # Non c'e' la voce. Ma ci siamo arrivati, dove doveva stare?
+        return _ci_siamo_arrivati(os.path.dirname(percorso))
     except Exception:
         return PROXY_INCERTO
+    return PROXY_INCERTO
+
+
+def _ci_siamo_arrivati(cartella: str) -> str:
+    """Il file non c'e'. Siamo riusciti a guardare nel posto dove doveva stare?
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, settimo giro:** `winerror` 3
+    (`ERROR_PATH_NOT_FOUND`) restava classificato come assenza, ma *«un profilo
+    reindirizzato o percorso di rete temporaneamente indisponibile puo'
+    restituire ERROR_PATH_NOT_FOUND»*.
+
+    **Il rimedio letterale — trattare 3 come incertezza — non si puo'
+    applicare**, e la ragione e' il caso principale, non un dettaglio: aprire
+    `%APPDATA%` + `XTraderBridge` + `config.json` quando la cartella `XTraderBridge`
+    non esiste da' proprio 3, perche' manca un componente *intermedio*. Cioe'
+    e' il codice che riceve **chiunque non abbia mai installato il Bridge**.
+    Trattarlo come incertezza avrebbe impedito l'avvio a tutti loro — il
+    difetto opposto, e piu' grave.
+
+    Il rilievo pero' e' fondato, e si chiude smettendo di **dedurre dal
+    codice** e andando a **guardare**: se la cartella che doveva contenere il
+    file e' ispezionabile, allora il file davvero non c'e'; se risalendo si
+    incontra un errore di rete, non ci siamo arrivati e vale incertezza.
+
+    Cosi' il risultato **non dipende da quale codice Windows scelga** in ogni
+    situazione — che e' bene, perche' quello non posso verificarlo da qui, e
+    l'ultima volta che ho dato per scontato un comportamento del sistema
+    operativo senza provarlo mi sbagliavo.
+
+    **La risalita ha un tetto, e non e' pignoleria.** La prima versione era un
+    `while True` che si fidava di `dirname`: accorcia a ogni passo e alla
+    radice restituisce se stessa, quindi «non puo' girare a vuoto». Sabotando
+    la condizione d'uscita per verificarlo, la suite **non e' fallita: si e'
+    bloccata**, due volte, finche' non l'ha uccisa un timeout esterno. Un
+    ciclo su un percorso che arriva da fuori non va argomentato limitato: va
+    reso limitato. Toccato il tetto non si inventa una risposta — non si e'
+    stabilito niente, quindi incertezza.
+    """
+    for _ in range(MAX_PASSI_RISALITA):
+        try:
+            os.lstat(cartella)
+        except FileNotFoundError as errore:
+            if _non_raggiungibile(errore):
+                return PROXY_INCERTO
+            genitore = os.path.dirname(cartella)
+            if not genitore or genitore == cartella:
+                # Risalito fino alla radice senza trovare niente: non c'e'
+                # nessun posto dove una vecchia configurazione possa stare.
+                return PROXY_NESSUN_FILE
+            cartella = genitore
+            continue
+        except Exception:
+            # La cartella c'e' ma non si e' potuto guardarci: permessi, I/O.
+            return PROXY_INCERTO
+        # Ci siamo arrivati, e il file non c'era: assenza accertata.
+        return PROXY_NESSUN_FILE
     return PROXY_INCERTO
 
 
