@@ -126,10 +126,18 @@ def _senza_segreti(valore: str) -> str:
     protegge niente. Si taglia da `@` in avanti — tutto cio' che sta prima e'
     esattamente la parte che puo' contenere utente e password.
     """
-    if "@" in valore:
-        return "<oscurato: contiene `@`, possibili credenziali>"
+    if "@" in valore or ":" in valore:
+        # Rilievo BLOCCANTE di GPT-5.6 Sol su #430, fondato: la prima versione
+        # oscurava solo su `@`, quindi un `utente:PasswordSegreta` incollato per
+        # sbaglio nel campo host — che ha `:` ma non `@` — finiva stampato
+        # intero. `:` e `@` sono ENTRAMBI separatori di credenziale in un URL:
+        # basta uno dei due perche' il valore non sia piu' mostrabile.
+        return "<oscurato: contiene un separatore di credenziale>"
     if len(valore) > 60:
-        return valore[:60] + "..."
+        # Stesso rilievo: troncare a 60 caratteri stampa comunque i primi 60,
+        # che possono essere il segreto. Della lunghezza non se ne fa niente
+        # nessuno tranne chi deve capire che il valore e' assurdo.
+        return f"<oscurato: {len(valore)} caratteri>"
     return valore
 
 
@@ -155,9 +163,17 @@ def _host_valido(valore: str) -> str:
         # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
         interno = host[1:-1]
         if not interno or set(interno) - set("0123456789abcdefABCDEF:."):
+            # Dentro le parentesi i due punti sono la norma, non un separatore
+            # di credenziale: qui basta oscurare su `@`, altrimenti ogni errore
+            # IPv6 diventerebbe illeggibile e il messaggio inutile.
+            if "@" in valore:
+                mostrabile = "<oscurato: contiene `@`>"
+            elif len(valore) > 60:
+                mostrabile = f"<oscurato: {len(valore)} caratteri>"
+            else:
+                mostrabile = valore
             raise ValueError(
-                f"proxy.host non e' un indirizzo IPv6 valido: "
-                f"{_senza_segreti(valore)!r}"
+                f"proxy.host non e' un indirizzo IPv6 valido: {mostrabile!r}"
             )
         return host
     dirottanti = sorted(set(host) & CARATTERI_CHE_DIROTTANO)

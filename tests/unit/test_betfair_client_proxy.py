@@ -520,6 +520,13 @@ class TestNessunSegretoNeiMessaggi:
         "socks5://pippo:SuperSegreta123@h.example:1080",
         "pippo:SuperSegreta123@h.example",
         "[SuperSegreta123@::1]",
+        # Senza `@`. Rilievo BLOCCANTE di GPT-5.6 Sol su #430: la prima
+        # correzione oscurava solo su `@`, quindi un `utente:password`
+        # incollato per sbaglio nel campo host restava stampato per intero.
+        # `:` e `@` sono entrambi separatori di credenziale in un URL.
+        "pippo:SuperSegreta123",
+        "SuperSegreta123:",
+        ":SuperSegreta123",
     ])
     def test_la_password_non_finisce_nel_messaggio(self, host):
         with pytest.raises(ValueError) as info:
@@ -555,4 +562,19 @@ class TestNessunSegretoNeiMessaggi:
                                   "username": "pippo", "password": self.SEGRETO})
         assert self.SEGRETO not in caplog.text
         assert "pippo" not in caplog.text
+
+    def test_il_troncamento_non_stampa_i_primi_caratteri(self):
+        """Stesso rilievo di GPT: troncare a 60 caratteri stampa comunque i
+        primi 60, che possono essere il segreto. Si dice solo la lunghezza."""
+        lungo = self.SEGRETO * 10
+        mostrato = bc._senza_segreti(lungo)
+        assert self.SEGRETO not in mostrato
+        assert str(len(lungo)) in mostrato
+
+    def test_l_ipv6_malformato_resta_leggibile(self):
+        """Dentro le parentesi i due punti sono la norma: oscurare anche quelli
+        renderebbe illeggibile ogni errore IPv6 senza proteggere niente."""
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": "[::gg]", "port": 1080})
+        assert "[::gg]" in str(info.value)
 
