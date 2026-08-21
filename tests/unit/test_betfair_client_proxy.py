@@ -415,3 +415,92 @@ class TestSchemaDelProxy:
             {"enabled": False, "type": "pippo", "host": "h", "port": 1}
         ) is None
 
+
+class TestHost:
+    """L'host deve restare l'host: nessun carattere che sposti i confini.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430. Misurato prima della
+    correzione — e il primo caso e' il grave, perche' non rompe niente:
+
+        host='evil.example@vero.example'
+          -> 'socks5://evil.example@vero.example:1080'
+          -> urlparse legge hostname 'vero.example'
+
+    Il traffico verso Betfair sarebbe uscito da un host diverso da quello
+    configurato, in silenzio. Stessa famiglia del difetto sulle credenziali non
+    codificate: una parte dell'URL che invade quella accanto.
+    """
+
+    @pytest.mark.parametrize("host", [
+        "evil.example@vero.example", "h.example/percorso", "h.example:9999",
+        "socks5://h.example", "h.example?x=1", "h.example#frag",
+        "spazio nel mezzo", "h.example\ttab",
+    ])
+    def test_host_che_dirotta_ferma_l_avvio(self, host):
+        # `match` sul messaggio di `_host_valido`, non su un generico "host":
+        # la post-condizione a valle prenderebbe quasi tutti questi casi
+        # comunque, e un test che si accontenta di quello non dimostra che il
+        # controllo a monte esista. Verificato togliendo `_host_valido`: senza
+        # questo vincolo il sabotaggio passava quasi inosservato.
+        with pytest.raises(ValueError, match="caratteri che cambiano"):
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+
+    def test_l_host_con_chiocciola_non_arriva_mai_all_url(self):
+        """Il caso peggiore, fissato da solo: non deve passare nemmeno con
+        credenziali valide, dove l'URL resterebbe sintatticamente corretto."""
+        with pytest.raises(ValueError, match="caratteri che cambiano"):
+            bc.costruisci_proxy_url({
+                "enabled": True, "host": "evil.example@vero.example", "port": 1080,
+                "username": "u", "password": "p",
+            })
+
+    @pytest.mark.parametrize("host", ["h.example", "192.168.1.10", "localhost",
+                                      "proxy-1.vpn.example.com", "[::1]",
+                                      "[2001:db8::1]"])
+    def test_host_validi_passano_e_si_rileggono(self, host):
+        url = bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        riletto = urlparse(url)
+        assert riletto.hostname == host.strip("[]").lower()
+        assert riletto.port == 1080
+
+    @pytest.mark.parametrize("host", ["[]", "[non-esadecimale]", "[::gg]"])
+    def test_ipv6_malformato_ferma_l_avvio(self, host):
+        with pytest.raises(ValueError, match="IPv6"):
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+
+
+class TestPostCondizione:
+    """L'URL costruito si rilegge come lo si e' inteso.
+
+    Otto difetti su `costruisci_proxy_url` hanno avuto tutti la stessa forma:
+    una parte dell'URL che finisce per significare un'altra. I controlli
+    elencano i modi di sbagliare che conosciamo; la post-condizione verifica il
+    risultato, che e' cio' che conta.
+    """
+
+    def test_ogni_url_prodotto_si_rilegge_correttamente(self):
+        combinazioni = [
+            {"host": "h.example", "port": 1080},
+            {"host": "h.example", "port": "1080", "type": "http"},
+            {"host": "[::1]", "port": 9050, "type": "socks5h"},
+            {"host": "h.example", "port": 3128, "username": "u", "password": "p"},
+            {"host": "h.example", "port": 3128, "username": "pi ppo",
+             "password": "pa@ss:word/x"},
+        ]
+        for extra in combinazioni:
+            cfg = {"enabled": True, **extra}
+            url = bc.costruisci_proxy_url(cfg)
+            riletto = urlparse(url)
+            atteso = str(extra["host"]).strip("[]").lower()
+            assert riletto.hostname == atteso, f"{cfg} -> {url}"
+            assert riletto.port == int(extra["port"]), f"{cfg} -> {url}"
+
+    def test_la_post_condizione_e_attiva(self, monkeypatch):
+        """Se un controllo a monte lasciasse passare un host che dirotta, la
+        post-condizione deve prenderlo comunque."""
+        monkeypatch.setattr(bc, "_host_valido", lambda v: v)
+        with pytest.raises(ValueError, match="non si rilegge"):
+            bc.costruisci_proxy_url(
+                {"enabled": True, "host": "evil.example@vero.example", "port": 1080}
+            )
+

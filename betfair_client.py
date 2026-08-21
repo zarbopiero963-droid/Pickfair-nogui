@@ -11,7 +11,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
@@ -93,6 +93,7 @@ def percorsi_config_candidati() -> List[str]:
 #   | `port` non intera o fuori da 1-65535         | ECCEZIONE     |
 #   | tipo `socks*` ma PySocks non installato      | ECCEZIONE     |
 #   | `type` non fra gli schemi supportati          | ECCEZIONE     |
+#   | `host` con caratteri che dirottano l'URL      | ECCEZIONE     |
 #
 # "Niente proxy" compare solo dove NESSUNO ne ha chiesto uno. Ovunque qualcuno
 # l'abbia chiesto e non si possa dargliela, si ferma.
@@ -103,6 +104,46 @@ def percorsi_config_candidati() -> List[str]:
 #: elenco difensivo: e' il contratto. `socks5h` e `socks4a` risolvono il DNS
 #: dal lato del proxy, `socks5` e `socks4` in locale.
 SCHEMI_PROXY_SUPPORTATI = ("http", "https", "socks4", "socks4a", "socks5", "socks5h")
+
+
+#: Caratteri che, dentro l'host, non restano nell'host: spostano il confine fra
+#: le parti dell'URL. Il piu' pericoloso e' `@`, perche' non rompe l'URL — lo
+#: fa puntare altrove.
+CARATTERI_CHE_DIROTTANO = set('@/\\?#: \t\n\r"\'')
+
+
+def _host_valido(valore: str) -> str:
+    """L'host, oppure ``ValueError``.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430, fondato e misurato.
+    Prima bastava che `host` non fosse vuoto, e l'interpolazione faceva il
+    resto:
+
+        host='evil.example@vero.example'  ->  socks5://evil.example@vero.example:1080
+                                              urlparse -> hostname 'vero.example'
+
+    Il traffico verso Betfair sarebbe uscito da un host **diverso** da quello
+    configurato, e senza nessun errore. `/`, `?` e `#` sono meno gravi ma della
+    stessa famiglia: fanno sparire la porta (`urlparse` la legge come `None`).
+
+    E' la stessa classe del difetto sulle credenziali non codificate, corretto
+    tre giri fa: una parte dell'URL che invade quella accanto.
+    """
+    host = valore.strip()
+    if host.startswith("[") and host.endswith("]"):
+        # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
+        interno = host[1:-1]
+        if not interno or set(interno) - set("0123456789abcdefABCDEF:."):
+            raise ValueError(f"proxy.host non e' un indirizzo IPv6 valido: {valore!r}")
+        return host
+    dirottanti = sorted(set(host) & CARATTERI_CHE_DIROTTANO)
+    if dirottanti:
+        raise ValueError(
+            f"proxy.host contiene caratteri che cambiano il significato "
+            f"dell'URL ({''.join(dirottanti)!r}): {valore!r}. Con `@` il "
+            f"traffico uscirebbe da un host diverso da quello configurato"
+        )
+    return host
 
 
 def _porta_valida(valore: Any) -> int:
@@ -158,13 +199,14 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     if not isinstance(proxy_cfg, dict) or not proxy_cfg.get("enabled"):
         return None
 
-    host = str(proxy_cfg.get("host") or "").strip()
+    host_grezzo = str(proxy_cfg.get("host") or "").strip()
     porta_grezza = proxy_cfg.get("port")
-    if not host or porta_grezza in (None, ""):
+    if not host_grezzo or porta_grezza in (None, ""):
         raise ValueError(
             "proxy.enabled e' attivo ma host o port mancano: il traffico "
             "uscirebbe senza proxy senza che nessuno se ne accorga"
         )
+    host = _host_valido(host_grezzo)
     porta = _porta_valida(porta_grezza)
 
     tipo = (str(proxy_cfg.get("type") or "").strip() or "socks5").lower()
@@ -228,7 +270,21 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     credenziali = ""
     if utente:
         credenziali = f"{quote(utente, safe='')}:{quote(password, safe='')}@"
-    return f"{tipo}://{credenziali}{host}:{porta}"
+    url = f"{tipo}://{credenziali}{host}:{porta}"
+
+    # Cintura oltre alle bretelle: l'URL appena costruito deve rileggersi come
+    # lo si e' inteso. I controlli qui sopra elencano i modi di sbagliare che
+    # CONOSCIAMO; questo verifica il risultato, che e' cio' che conta davvero.
+    # Otto difetti su questa funzione sono stati tutti della stessa forma — una
+    # parte dell'URL che finisce per significare un'altra — e una post-condizione
+    # li prende anche quando l'elenco non li prevede.
+    riletto = urlparse(url)
+    if riletto.hostname != host.strip("[]").lower() or riletto.port != porta:
+        raise ValueError(
+            f"la configurazione del proxy produce un URL che non si rilegge "
+            f"come atteso: host {riletto.hostname!r} invece di {host!r}"
+        )
+    return url
 
 
 
