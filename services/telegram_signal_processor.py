@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Any, Dict, Optional
 
 from parsers import motore as parser_motore
@@ -170,6 +171,15 @@ class TelegramSignalProcessor:
         # assegnazione di riferimento e' atomica sotto il GIL, quindi chi
         # legge vede o tutto il vecchio o tutto il nuovo, mai un misto.
         self._cache_parser = None   # None = da caricare | (definizioni, registro, dizionario_ok)
+        # Serializza caricamento E assegnazione (rilievo GPT-5.6 Sol + Fable).
+        # L'assegnazione di una tupla e' atomica, ma atomica non vuol dire
+        # ORDINATA: un caricamento lento partito prima poteva concludersi DOPO
+        # una ricarica e sovrascriverla, lasciando i parser vecchi in memoria a
+        # tempo indeterminato — "last writer wins" sul percorso dei segnali.
+        # Il lock e' tenuto anche durante l'I/O: e' una lettura di pochi file
+        # che avviene una volta all'avvio e quando l'utente salva, non a ogni
+        # messaggio, quindi non e' sul cammino caldo.
+        self._lucchetto_cache = threading.Lock()
 
     def _parser_personalizzati(self):
         """Definizioni e value-map, caricate una volta sola.
@@ -179,7 +189,16 @@ class TelegramSignalProcessor:
         quando l'utente ne salva uno nuovo dalla GUI.
         """
         cache = self._cache_parser
-        if cache is None:
+        if cache is not None:
+            return cache[0], cache[1]
+
+        with self._lucchetto_cache:
+            # Ricontrollo dentro il lock: mentre aspettavamo, un altro thread
+            # (o una `ricarica_parser`) puo' aver gia' popolato la cache. Senza
+            # questo, ricaricheremmo sopra uno stato piu' fresco del nostro.
+            cache = self._cache_parser
+            if cache is not None:
+                return cache[0], cache[1]
             try:
                 definizioni = parser_motore.carica_parser()
                 registro, dizionario_ok = parser_motore.registro_value_map()
@@ -187,7 +206,6 @@ class TelegramSignalProcessor:
                 logging.getLogger(__name__).exception(
                     "Caricamento dei Parser Personalizzati fallito: nessun arricchimento")
                 definizioni, registro, dizionario_ok = [], {}, False
-            # Una sola scrittura, a stato gia' completo.
             cache = (definizioni, registro, dizionario_ok)
             self._cache_parser = cache
         return cache[0], cache[1]
@@ -210,15 +228,17 @@ class TelegramSignalProcessor:
         poi lo si sostituisce in un colpo solo; chi sta leggendo continua a
         vedere quello vecchio, che e' valido, fino allo scambio.
         """
-        try:
-            definizioni = parser_motore.carica_parser()
-            registro, dizionario_ok = parser_motore.registro_value_map()
-        except Exception:
-            logging.getLogger(__name__).exception(
-                "Ricarica dei Parser Personalizzati fallita: resta lo stato precedente")
-            return len(self._parser_personalizzati()[0])
-        self._cache_parser = (definizioni, registro, dizionario_ok)
-        return len(definizioni)
+        with self._lucchetto_cache:
+            try:
+                definizioni = parser_motore.carica_parser()
+                registro, dizionario_ok = parser_motore.registro_value_map()
+            except Exception:
+                logging.getLogger(__name__).exception(
+                    "Ricarica dei Parser Personalizzati fallita: resta lo stato precedente")
+                precedente = self._cache_parser
+                return len(precedente[0]) if precedente else 0
+            self._cache_parser = (definizioni, registro, dizionario_ok)
+            return len(definizioni)
 
     @staticmethod
     def _campo_da_riempire(signal: Dict[str, Any], chiave: str) -> bool:

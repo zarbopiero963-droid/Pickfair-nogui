@@ -519,3 +519,55 @@ def test_end_to_end_il_segnale_esce_pronto_per_il_piazzamento(monkeypatch):
 
     # Lo stake NON arriva dal messaggio: lo decide il money management.
     assert "stake" not in ns and "size" not in ns
+
+
+def test_un_caricamento_lento_non_sovrascrive_una_ricarica(monkeypatch, tmp_path):
+    """Rilievo GPT-5.6 Sol + Fable: race «last writer wins». Test CONCORRENTE.
+
+    L'assegnazione di una tupla e' atomica, ma atomica non vuol dire ORDINATA.
+    Un caricamento lento partito prima puo' concludersi DOPO una ricarica e
+    sovrascriverla: da quel momento il bot lavora con i parser vecchi, a tempo
+    indeterminato e senza che nulla lo segnali.
+
+    Qui il caricamento pigro viene rallentato di proposito e una ricarica
+    parte nel mezzo. Lo stato finale deve essere quello della RICARICA.
+    """
+    import threading
+    import time
+
+    monkeypatch.setenv(campi.ENV_CARTELLA_PARSER, str(tmp_path))
+    p = TelegramSignalProcessor()
+
+    lento = _parser_diretto("LENTO")
+    fresco = _parser_diretto("FRESCO")
+    partito = threading.Event()
+    vero_registro = motore.registro_value_map
+
+    def carica_lenta():
+        partito.set()
+        time.sleep(0.30)          # l'I/O lungo del caricamento iniziale
+        return [lento]
+
+    monkeypatch.setattr(motore, "carica_parser", carica_lenta)
+    monkeypatch.setattr(motore, "registro_value_map", vero_registro)
+
+    esito = {}
+
+    def pigro():
+        esito["definizioni"] = p._parser_personalizzati()[0]
+
+    t = threading.Thread(target=pigro)
+    t.start()
+    assert partito.wait(2.0), "il caricamento pigro non e' partito"
+
+    # La ricarica arriva mentre il caricamento pigro e' ancora in corso.
+    monkeypatch.setattr(motore, "carica_parser", lambda *a, **k: [fresco])
+    p.ricarica_parser()
+
+    t.join(5.0)
+    assert not t.is_alive(), "il caricamento pigro non e' terminato"
+
+    finale = p._cache_parser[0]
+    assert [d.name for d in finale] == ["FRESCO"], (
+        f"la ricarica e' stata sovrascritta dal caricamento lento: "
+        f"{[d.name for d in finale]}")
