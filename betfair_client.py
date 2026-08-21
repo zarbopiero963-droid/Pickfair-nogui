@@ -69,6 +69,32 @@ def percorsi_config_candidati() -> List[str]:
     return candidati
 
 
+# ---------------------------------------------------------------------------
+# LA REGOLA, una sola, da cui discende tutto il resto di questo modulo.
+#
+#   Configurazione DICHIARATA ma inutilizzabile  ->  eccezione.
+#   Nessuna configurazione                        ->  nessun proxy, in silenzio.
+#
+# Cinque giri di review su #430 hanno trovato cinque punti in cui questo modulo
+# tradiva la propria stessa regola, uno per volta, perche' la regola era
+# applicata caso per caso invece che enunciata. Scritta qui, la tabella completa
+# non lascia buchi da scoprire a strati:
+#
+#   | situazione                                   | esito         |
+#   |----------------------------------------------|---------------|
+#   | nessun file, nessun percorso dichiarato      | niente proxy  |
+#   | percorso DICHIARATO assente o illeggibile    | ECCEZIONE     |
+#   | candidato non dichiarato illeggibile         | si supera     |
+#   | primo file leggibile, senza chiave `proxy`   | niente proxy  |
+#   | primo file leggibile, `proxy` malformato     | ECCEZIONE     |
+#   | `proxy` valido, `enabled` falso              | niente proxy  |
+#   | `proxy` valido, `enabled` ma incompleto      | ECCEZIONE     |
+#
+# "Niente proxy" compare solo dove NESSUNO ne ha chiesto uno. Ovunque qualcuno
+# l'abbia chiesto e non si possa dargliela, si ferma.
+# ---------------------------------------------------------------------------
+
+
 def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     """URL del proxy da una configurazione, oppure ``None`` se non e' richiesto.
 
@@ -223,17 +249,17 @@ class BetfairClient:
             # `proxy` significa "nessun proxy", non "guarda altrove".
             proxy = dati.get("proxy") if isinstance(dati, dict) else None
             if proxy is not None and not isinstance(proxy, dict):
-                # Rilievo di Claude Fable 5 su #430: l'ultima sacca di silenzio.
-                # Il file vince, quindi qui ci si ferma; ma un blocco `proxy`
-                # malformato significa che qualcuno UN PROXY LO VOLEVA, e
-                # restituire None senza dire niente lo manda in chiaro come se
-                # non l'avesse mai chiesto.
-                logger.warning(
-                    "BetfairClient: blocco `proxy` malformato in %s (atteso un "
-                    "oggetto, trovato %s): si procede SENZA proxy",
-                    percorso, type(proxy).__name__,
+                # Rilievo di Claude Fable 5 e GPT-5.6 Sol su #430, accolto: al
+                # giro precedente avevo scelto un warning, ragionando "non
+                # possiamo sapere se `enabled` era vero". Il ragionamento e'
+                # rovesciato: e' proprio il NON SAPERE la ragione per non tirare
+                # a indovinare. Un blocco `proxy` illeggibile significa che
+                # qualcuno un proxy lo voleva, e proseguire in chiaro decide al
+                # posto suo sul percorso dei soldi.
+                raise ValueError(
+                    f"blocco `proxy` malformato in {percorso}: atteso un "
+                    f"oggetto, trovato {type(proxy).__name__}"
                 )
-                return None
             return proxy if isinstance(proxy, dict) else None
         return None
 

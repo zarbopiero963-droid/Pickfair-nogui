@@ -140,21 +140,20 @@ class TestClientApplicaIlProxy:
         monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [None, ""])
         assert not _client().session.proxies
 
-    def test_blocco_proxy_malformato_viene_segnalato(self, tmp_path, monkeypatch, caplog):
-        """Rilievo di Claude Fable 5: l'ultima sacca di silenzio.
+    def test_blocco_proxy_malformato_ferma_l_avvio(self, tmp_path, monkeypatch):
+        """Rilievo di Claude Fable 5 e GPT-5.6 Sol: al giro precedente avevo
+        scelto un warning, e il test cristallizzava il fail-open.
 
         Un blocco `proxy` che non e' un oggetto significa che qualcuno un proxy
-        lo voleva. Restituire "nessun proxy" senza dire niente lo manda in
-        chiaro come se non l'avesse mai chiesto."""
+        lo voleva. Proseguire in chiaro decide al posto suo — ed e' il non
+        sapere se `enabled` fosse vero a rendere la decisione inaccettabile,
+        non il contrario."""
         f = tmp_path / "config.json"
         f.write_text(json.dumps({"proxy": "socks5://scritto-male"}), encoding="utf-8")
         monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
         monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [str(f)])
-        with caplog.at_level("WARNING"):
-            assert not _client().session.proxies
-        assert any("malformato" in r.message for r in caplog.records), (
-            "il blocco proxy malformato e' passato in silenzio"
-        )
+        with pytest.raises(ValueError, match="malformato"):
+            _client()
 
     def test_il_primo_file_leggibile_vince_anche_senza_proxy(self, tmp_path, monkeypatch):
         """Rilievo di OpenRouter Fugu Ultra su #430: precedenza pericolosa.
