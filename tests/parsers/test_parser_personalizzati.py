@@ -295,3 +295,49 @@ def test_l_import_rotto_di_h08_non_torna():
     righe = [r for r in sorgente.splitlines()
              if "import CustomParserEngine" in r and not r.lstrip().startswith("#")]
     assert not righe, f"import fantasma tornato: {righe}"
+
+
+# ---------------------------------------------------------------------------
+# 5 · Diagnostica di provenienza (rilievo GPT-5.6 Sol su #433)
+# ---------------------------------------------------------------------------
+
+def test_avvisa_se_i_parser_sono_rimasti_nella_cartella_del_bridge(
+        monkeypatch, tmp_path, caplog):
+    """Chi arriva dal Bridge deve leggere DOVE sono, non un silenzio."""
+    vecchia = tmp_path / "XTraderBridge" / "parsers"
+    vecchia.mkdir(parents=True)
+    (vecchia / "Mio.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(motore, "cartella_parser_del_bridge", lambda: str(vecchia))
+
+    nuova = tmp_path / "assente"
+    with caplog.at_level("WARNING"):
+        definizioni = motore.carica_parser(str(nuova))
+
+    assert definizioni == []
+    messaggi = [r.getMessage() for r in caplog.records]
+    assert any(str(vecchia) in m for m in messaggi), messaggi
+    assert any("Mio.json" in m or "1 in" in m or " 1 " in m for m in messaggi), messaggi
+
+
+def test_la_diagnostica_non_carica_dalla_cartella_del_bridge(monkeypatch, tmp_path):
+    """Avvisare non e' migrare.
+
+    Copiare in automatico farebbe girare in Pickfair — sul percorso che porta
+    alle scommesse — regole scritte per un altro programma, mai riviste.
+    """
+    vecchia = tmp_path / "XTraderBridge" / "parsers"
+    vecchia.mkdir(parents=True)
+    custom_parser.save_parser(_parser_diretto("Vecchio"), str(vecchia))
+    monkeypatch.setattr(motore, "cartella_parser_del_bridge", lambda: str(vecchia))
+
+    assert motore.carica_parser(str(tmp_path / "assente")) == []
+    esito = motore.estrai(MESSAGGIO, cartella=str(tmp_path / "assente"))
+    assert not esito.ok and esito.motivo == motore.NESSUN_PARSER
+
+
+def test_la_diagnostica_non_puo_far_fallire_il_caricamento(monkeypatch, tmp_path):
+    """Una diagnostica che solleva sarebbe peggio del problema che segnala."""
+    def esplode():
+        raise OSError("permesso negato")
+    monkeypatch.setattr(motore, "cartella_parser_del_bridge", esplode)
+    assert motore.carica_parser(str(tmp_path / "assente")) == []

@@ -124,6 +124,25 @@ def normalizza_azione(valore: object) -> str:
     return AZIONI.get(str(valore or "").strip().upper(), "")
 
 
+# Dove XTrader Signal Bridge teneva i suoi parser. Serve SOLO a diagnosticare:
+# se qualcuno arriva dal Bridge e non trova piu' i suoi file, deve leggere un
+# messaggio che dice dove sono, non un silenzioso "nessun parser".
+#
+# E' una stringa calcolata qui, NON un import di `core.config_store`: leggere
+# da quella cartella come fonte riattaccherebbe Pickfair al Bridge, che e'
+# esattamente cio' che questo modulo esiste per impedire. Non si carica mai
+# nulla da li'.
+NOME_CARTELLA_BRIDGE = "XTraderBridge"
+
+
+def cartella_parser_del_bridge() -> str:
+    """Percorso storico dei parser del Bridge. Solo per diagnostica."""
+    base = (os.environ.get("APPDATA")
+            or os.environ.get("XDG_CONFIG_HOME")
+            or os.path.join(os.path.expanduser("~"), ".config"))
+    return os.path.join(base, NOME_CARTELLA_BRIDGE, "parsers")
+
+
 def cartella_parser() -> str:
     """Dove Pickfair tiene i Parser Personalizzati.
 

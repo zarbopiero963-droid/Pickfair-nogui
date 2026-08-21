@@ -41,13 +41,14 @@ Va chiamato **sempre**, anche quando `apply_parser` dice `ready`.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 from core import custom_parser, custom_parser_engine, value_maps
 
-from .campi import VERSO_SEGNALE, cartella_parser, normalizza_azione
+from .campi import VERSO_SEGNALE, cartella_parser, cartella_parser_del_bridge, normalizza_azione
 
 # Motivi di rifiuto. Stringhe stabili: finiscono nei log e nei test.
 NESSUN_PARSER = "NESSUN_PARSER"
@@ -123,6 +124,7 @@ def carica_parser_con_scarti(cartella: Optional[str] = None):
     """
     radice = cartella or cartella_parser()
     if not os.path.isdir(radice):
+        _avvisa_se_i_parser_sono_rimasti_nel_bridge(radice)
         return [], []
 
     validi: List[Any] = []
@@ -221,3 +223,32 @@ def _verso_pickfair(valori: Dict[str, str]) -> Dict[str, Any]:
         if not fuori["action"]:
             del fuori["action"]
     return fuori
+
+
+def _avvisa_se_i_parser_sono_rimasti_nel_bridge(radice: str) -> None:
+    """Se non ci sono parser qui ma ce ne sono nella cartella del Bridge, dillo.
+
+    Rilievo di GPT-5.6 Sol su #433: cambiando cartella, chi arrivasse da
+    XTrader Signal Bridge si troverebbe i parser "invisibili".
+
+    Non e' una migrazione e non lo diventa: i file NON vengono letti, copiati
+    ne' spostati. Copiarli in automatico significherebbe far girare in
+    Pickfair — sul percorso che porta alle scommesse — regole scritte per un
+    altro programma, senza che nessuno le abbia riviste. Qui si dice soltanto
+    dove sono, e la decisione resta di chi li ha scritti.
+    """
+    try:
+        vecchia = cartella_parser_del_bridge()
+        if not os.path.isdir(vecchia):
+            return
+        rimasti = [f for f in os.listdir(vecchia) if f.lower().endswith(".json")]
+        if not rimasti:
+            return
+        logging.getLogger(__name__).warning(
+            "Nessun Parser Personalizzato in %s, ma ne risultano %d in %s "
+            "(cartella di XTrader Signal Bridge). Se sono tuoi, spostali o "
+            "ricreali: Pickfair non li carica da li'.",
+            radice, len(rimasti), vecchia)
+    except Exception:
+        # Una diagnostica non deve mai essere la causa di un guasto.
+        pass
