@@ -3,24 +3,59 @@
     "classes": {
       "Database": {
         "methods": {
-          "__init__": ["db_path"],
+          "__init__": [
+            "db_path"
+          ],
           "transaction": [],
-          "_execute": ["sql", "params", "fetch", "fetchone", "commit"],
+          "_execute": [
+            "sql",
+            "params",
+            "fetch",
+            "fetchone",
+            "commit"
+          ],
           "close_all_connections": [],
-          "save_settings": ["data"],
+          "save_settings": [
+            "data"
+          ],
           "get_settings": [],
-          "save_credentials": ["username", "app_key", "certificate", "private_key"],
-          "save_password": ["password"],
-          "save_session": ["session_token", "expiry"],
+          "save_credentials": [
+            "username",
+            "app_key",
+            "certificate",
+            "private_key"
+          ],
+          "save_password": [
+            "password"
+          ],
+          "save_session": [
+            "session_token",
+            "expiry"
+          ],
           "clear_session": [],
           "get_telegram_settings": [],
-          "save_telegram_settings": ["payload"],
+          "save_telegram_settings": [
+            "payload"
+          ],
           "get_telegram_chats": [],
-          "save_telegram_chat": ["chat_id", "title", "is_active"],
-          "replace_telegram_chats": ["chats"],
-          "save_received_signal": ["signal", "kwargs"],
-          "get_received_signals": ["limit"],
-          "get_signal_patterns": ["enabled_only"],
+          "save_telegram_chat": [
+            "chat_id",
+            "title",
+            "is_active"
+          ],
+          "replace_telegram_chats": [
+            "chats"
+          ],
+          "save_received_signal": [
+            "signal",
+            "kwargs"
+          ],
+          "get_received_signals": [
+            "limit"
+          ],
+          "get_signal_patterns": [
+            "enabled_only"
+          ],
           "save_signal_pattern": [
             "pattern",
             "label",
@@ -54,12 +89,25 @@
             "action",
             "extra"
           ],
-          "delete_signal_pattern": ["pattern_id"],
-          "toggle_signal_pattern": ["pattern_id"],
-          "save_simulation_state": ["state_key", "state"],
-          "get_simulation_state": ["state_key"],
-          "load_simulation_state": ["state_key"],
-          "save_simulation_bet": ["payload"],
+          "delete_signal_pattern": [
+            "pattern_id"
+          ],
+          "toggle_signal_pattern": [
+            "pattern_id"
+          ],
+          "save_simulation_state": [
+            "state_key",
+            "state"
+          ],
+          "get_simulation_state": [
+            "state_key"
+          ],
+          "load_simulation_state": [
+            "state_key"
+          ],
+          "save_simulation_bet": [
+            "payload"
+          ],
           "create_order_saga": [
             "customer_ref",
             "batch_id",
@@ -74,10 +122,23 @@
             "status",
             "logical_key"
           ],
-          "update_order_saga": ["customer_ref", "status", "bet_id", "error_text", "reason_code", "outcome", "matched_size", "avg_price_matched"],
-          "get_order_saga": ["customer_ref"],
+          "update_order_saga": [
+            "customer_ref",
+            "status",
+            "bet_id",
+            "error_text",
+            "reason_code",
+            "outcome",
+            "matched_size",
+            "avg_price_matched"
+          ],
+          "get_order_saga": [
+            "customer_ref"
+          ],
           "get_pending_sagas": [],
-          "get_batch_sagas": ["batch_id"]
+          "get_batch_sagas": [
+            "batch_id"
+          ]
         }
       }
     }
@@ -86,14 +147,35 @@
     "classes": {
       "ExecutorManager": {
         "methods": {
-          "__init__": ["max_workers", "default_timeout", "thread_name_prefix"],
-          "submit": ["args", "kwargs"],
-          "map": ["fn", "iterable", "timeout"],
-          "get_future": ["task_name"],
-          "cancel": ["task_name"],
+          "__init__": [
+            "max_workers",
+            "default_timeout",
+            "thread_name_prefix"
+          ],
+          "submit": [
+            "args",
+            "kwargs"
+          ],
+          "map": [
+            "fn",
+            "iterable",
+            "timeout"
+          ],
+          "get_future": [
+            "task_name"
+          ],
+          "cancel": [
+            "task_name"
+          ],
           "active_tasks": [],
-          "wait": ["task_name", "timeout"],
-          "shutdown": ["wait", "cancel_futures"],
+          "wait": [
+            "task_name",
+            "timeout"
+          ],
+          "shutdown": [
+            "wait",
+            "cancel_futures"
+          ],
           "status": []
         }
       }
@@ -103,13 +185,21 @@
     "classes": {
       "AutoThrottle": {
         "methods": {
-          "__init__": ["max_calls", "period", "base_backoff", "max_backoff"],
+          "__init__": [
+            "max_calls",
+            "period",
+            "base_backoff",
+            "max_backoff"
+          ],
           "acquire_delay": [],
           "allow_call": [],
           "record_call": [],
           "wait": [],
           "get_current_rate": [],
-          "update": ["args", "kwargs"],
+          "update": [
+            "args",
+            "kwargs"
+          ],
           "reset": [],
           "is_blocked": [],
           "get_state": []
@@ -128,13 +218,27 @@
             "key_pem",
             "session",
             "timeout",
-            "max_retries"
+            "max_retries",
+            "proxy_config"
           ],
-          "login": ["password"],
+          "login": [
+            "password"
+          ],
           "logout": [],
           "get_account_funds": [],
-          "calculate_cashout": ["original_stake", "original_odds", "current_odds", "side"],
-          "place_bet": ["market_id", "selection_id", "side", "price", "size"],
+          "calculate_cashout": [
+            "original_stake",
+            "original_odds",
+            "current_odds",
+            "side"
+          ],
+          "place_bet": [
+            "market_id",
+            "selection_id",
+            "side",
+            "price",
+            "size"
+          ],
           "status": []
         }
       }
@@ -157,7 +261,12 @@
         "side",
         "kwargs"
       ],
-      "calculate_cashout": ["original_stake", "original_odds", "current_odds", "side"]
+      "calculate_cashout": [
+        "original_stake",
+        "original_odds",
+        "current_odds",
+        "side"
+      ]
     }
   },
   "core.trading_engine": {
@@ -176,7 +285,9 @@
             "async_db_writer"
           ],
           "recover_after_restart": [],
-          "submit_quick_bet": ["payload"]
+          "submit_quick_bet": [
+            "payload"
+          ]
         }
       }
     }
@@ -185,10 +296,22 @@
     "classes": {
       "EventBus": {
         "methods": {
-          "__init__": ["workers", "debug"],
-          "subscribe": ["event_type", "callback"],
-          "unsubscribe": ["event_type", "callback"],
-          "publish": ["event_type", "data"],
+          "__init__": [
+            "workers",
+            "debug"
+          ],
+          "subscribe": [
+            "event_type",
+            "callback"
+          ],
+          "unsubscribe": [
+            "event_type",
+            "callback"
+          ],
+          "publish": [
+            "event_type",
+            "data"
+          ],
           "stop": [],
           "stats": []
         }

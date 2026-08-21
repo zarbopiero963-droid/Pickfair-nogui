@@ -1276,6 +1276,17 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 5
+    },
+    "r3_proxy_percorso_config": {
+      "description": "R3 di #374, primo passo: togliere il percorso assoluto del VPS da betfair_client.py. Il proxy veniva cercato a /home/ubuntu/Pickfair-nogui/config.json, una macchina dismessa, quindi os.path.exists era sempre False e IL PROXY NON VENIVA MAI APPLICATO; l'unico except Exception registrava e proseguiva, quindi il guasto era invisibile. Secondo difetto trovato leggendo: le credenziali venivano interpolate sempre, quindi un proxy senza utente produceva socks5://None:None@host:porta. La PR: catena di risoluzione (variabile d'ambiente PICKFAIR_CONFIG_PATH, poi core.config_store.config_path(), poi la cartella del programma), costruzione dell'URL estratta in funzione pura, credenziali opzionali, e fallimento RUMOROSO quando il proxy e' richiesto ma non applicabile. NON sostituisce ancora il client con quello di Pickfair-MarketAPI: quello resta il resto di R3. Il contratto pubblico cambia in modo COMPATIBILE: `proxy_config` e' keyword-only con default None, quindi ogni chiamante esistente continua a funzionare identico. guardrails/public_api_snapshot.json viene aggiornato di conseguenza — il guardrail ha fatto il suo lavoro segnalando la modifica, e la si dichiara invece di aggirarla. PUSH 6-8 — rilievi BLOCCANTI dei reviewer sul range completo, tutti riprodotti sul codice reale prima di correggerli. (1) Fugu: `port` non validata, quindi 'abc', 0 e 99999 passavano e producevano un URL che falliva solo alla PRIMA richiesta verso Betfair. (2) GPT-5.6 Sol: `type` non validato affatto, quindi 'socks5x' superava il controllo SOCKS e anche 'ftp' o 'pippo' passavano identici. (3) Fugu: un proxy socks5 richiede PySocks, assente dai requirements; misurato InvalidSchema: Missing dependencies for SOCKS support su ogni richiesta. Il terzo e' una REGRESSIONE resa raggiungibile da questa PR: finche' il proxy non si applicava mai, la dipendenza mancante non faceva danno. Corretto QUI con il controllo all'avvio (fallimento rumoroso e azionabile). La DICHIARAZIONE della dipendenza nei requirements e' stata provata e RITIRATA da questa PR: toccare requirements.txt attiva il gate anti-stale di generate-linux-lockfile.yaml, che confronta il lock committato con una risoluzione DA ZERO in /tmp e quindi pretende anche 11 bump di deriva accumulati da luglio (aiohttp, certifi, pyinstaller, setuptools...). Rilievo bloccante di Fugu e Grok, fondato: deriva non revisionata dentro un lock hash-verificato. Misurato che rigenerando IN PLACE la deriva sparisce e resta il solo pysocks: il difetto e' nel gate, non nelle dipendenze, e va corretto in una PR sua. Aggiunta anche la copertura di core.config_store.config_path(), unica tappa senza test (rilievo di Fugu).",
+      "allow_tests": true,
+      "files": [
+        "betfair_client.py",
+        "tests/unit/test_betfair_client_proxy.py",
+        "guardrails/public_api_snapshot.json",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4
     }
   }
 }

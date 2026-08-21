@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import ipaddress
 import json
 import logging
 import math
@@ -10,6 +12,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote, urlparse
 
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
@@ -18,6 +21,343 @@ from circuit_breaker import CircuitBreaker
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
+
+#: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
+#: in un percorso non standard, e ai test.
+ENV_PERCORSO_CONFIG = "PICKFAIR_CONFIG_PATH"
+
+
+def percorso_config_esplicito() -> Optional[str]:
+    """Il percorso dichiarato dall'ambiente, se c'e'.
+
+    Serve a distinguere due casi che non vanno confusi: **cercare** la
+    configurazione fra piu' candidati, e **puntarla**. Chi valorizza
+    `PICKFAIR_CONFIG_PATH` sta facendo una promessa su dove sta il file; se
+    quel file e' illeggibile, proseguire senza proxy sarebbe indovinare.
+    """
+    valore = os.environ.get(ENV_PERCORSO_CONFIG, "").strip()
+    return valore or None
+
+
+def percorsi_config_candidati() -> List[str]:
+    """Dove cercare la configurazione, in ordine di precedenza.
+
+    Qui c'era un percorso assoluto scritto nel codice
+    (``/home/ubuntu/Pickfair-nogui/config.json``) che puntava a un VPS
+    dismesso. Conseguenza misurata, non ipotizzata: ``os.path.exists`` era
+    sempre ``False``, quindi **il proxy non veniva mai configurato** — e
+    nessuno poteva accorgersene, perche' l'unico ``except`` registrava e
+    proseguiva. Una funzione che si crede attiva e non lo e'.
+
+    Nessun percorso assoluto: si parte da cio' che l'ambiente dichiara, poi
+    dalla config di runtime vera (``%APPDATA%/XTraderBridge`` su Windows), poi
+    dalla cartella del programma.
+    """
+    candidati: List[str] = []
+    da_ambiente = percorso_config_esplicito()
+    if da_ambiente:
+        candidati.append(da_ambiente)
+    try:
+        # Import locale: `core.config_store` importa a sua volta parti del
+        # progetto, e un import in testa creerebbe un ciclo.
+        from core.config_store import config_path as _config_path
+
+        candidati.append(_config_path())
+    except Exception:  # pragma: no cover - dipende dall'ambiente
+        logger.debug("BetfairClient: config_store non disponibile per il proxy")
+    candidati.append(
+        os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+    )
+    return candidati
+
+
+# ---------------------------------------------------------------------------
+# LA REGOLA, una sola, da cui discende tutto il resto di questo modulo.
+#
+#   Configurazione DICHIARATA ma inutilizzabile  ->  eccezione.
+#   Nessuna configurazione                        ->  nessun proxy, in silenzio.
+#
+# Cinque giri di review su #430 hanno trovato cinque punti in cui questo modulo
+# tradiva la propria stessa regola, uno per volta, perche' la regola era
+# applicata caso per caso invece che enunciata. Scritta qui, la tabella completa
+# non lascia buchi da scoprire a strati:
+#
+#   | situazione                                   | esito         |
+#   |----------------------------------------------|---------------|
+#   | nessun file, nessun percorso dichiarato      | niente proxy  |
+#   | percorso DICHIARATO assente o illeggibile    | ECCEZIONE     |
+#   | candidato non dichiarato illeggibile         | si supera     |
+#   | primo file leggibile, senza chiave `proxy`   | niente proxy  |
+#   | primo file leggibile, `proxy` malformato     | ECCEZIONE     |
+#   | `proxy` valido, `enabled` falso              | niente proxy  |
+#   | `proxy` valido, `enabled` ma incompleto      | ECCEZIONE     |
+#   | `port` non intera o fuori da 1-65535         | ECCEZIONE     |
+#   | tipo `socks*` ma PySocks non installato      | ECCEZIONE     |
+#   | `type` non fra gli schemi supportati          | ECCEZIONE     |
+#   | `host` con caratteri che dirottano l'URL      | ECCEZIONE     |
+#
+# "Niente proxy" compare solo dove NESSUNO ne ha chiesto uno. Ovunque qualcuno
+# l'abbia chiesto e non si possa dargliela, si ferma.
+# ---------------------------------------------------------------------------
+
+
+#: Gli unici schemi che `requests` sa davvero parlare come proxy. Non e' un
+#: elenco difensivo: e' il contratto. `socks5h` e `socks4a` risolvono il DNS
+#: dal lato del proxy, `socks5` e `socks4` in locale.
+SCHEMI_PROXY_SUPPORTATI = ("http", "https", "socks4", "socks4a", "socks5", "socks5h")
+
+
+#: Caratteri che, dentro l'host, non restano nell'host: spostano il confine fra
+#: le parti dell'URL. Il piu' pericoloso e' `@`, perche' non rompe l'URL — lo
+#: fa puntare altrove.
+CARATTERI_CHE_DIROTTANO = set('@/\\?#: \t\n\r"\'')
+
+
+def _senza_segreti(valore: str) -> str:
+    """Il valore reso mostrabile in un messaggio d'errore o in un log.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430, fondato e misurato. Il
+    caso: chi sbaglia e mette un URL intero dentro `proxy.host` — che e'
+    proprio l'errore che `_host_valido` esiste per prendere — si vedeva la
+    password stampata nel messaggio dell'eccezione, e da li' nei log d'avvio:
+
+        proxy.host contiene caratteri ... 'socks5://pippo:SuperSegreta123@h.example:1080'
+
+    Un controllo che protegge il traffico e intanto pubblica la credenziale non
+    protegge niente. Si taglia da `@` in avanti — tutto cio' che sta prima e'
+    esattamente la parte che puo' contenere utente e password.
+    """
+    if "@" in valore or ":" in valore:
+        # Rilievo BLOCCANTE di GPT-5.6 Sol su #430, fondato: la prima versione
+        # oscurava solo su `@`, quindi un `utente:PasswordSegreta` incollato per
+        # sbaglio nel campo host — che ha `:` ma non `@` — finiva stampato
+        # intero. `:` e `@` sono ENTRAMBI separatori di credenziale in un URL:
+        # basta uno dei due perche' il valore non sia piu' mostrabile.
+        return "<oscurato: contiene un separatore di credenziale>"
+    if len(valore) > 60:
+        # Stesso rilievo: troncare a 60 caratteri stampa comunque i primi 60,
+        # che possono essere il segreto. Della lunghezza non se ne fa niente
+        # nessuno tranne chi deve capire che il valore e' assurdo.
+        return f"<oscurato: {len(valore)} caratteri>"
+    return valore
+
+
+def _host_valido(valore: str) -> str:
+    """L'host, oppure ``ValueError``.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430, fondato e misurato.
+    Prima bastava che `host` non fosse vuoto, e l'interpolazione faceva il
+    resto:
+
+        host='evil.example@vero.example'  ->  socks5://evil.example@vero.example:1080
+                                              urlparse -> hostname 'vero.example'
+
+    Il traffico verso Betfair sarebbe uscito da un host **diverso** da quello
+    configurato, e senza nessun errore. `/`, `?` e `#` sono meno gravi ma della
+    stessa famiglia: fanno sparire la porta (`urlparse` la legge come `None`).
+
+    E' la stessa classe del difetto sulle credenziali non codificate, corretto
+    tre giri fa: una parte dell'URL che invade quella accanto.
+    """
+    host = valore.strip()
+    if host.startswith("[") and host.endswith("]"):
+        # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
+        interno = host[1:-1]
+        # Rilievo di GPT-5.6 Sol su #430: `ipaddress` accetta lo scope ID
+        # (`fe80::1%eth0`, ma anche `fe80::1%qualunque-cosa`). Per un indirizzo
+        # locale ha senso; per l'host di un PROXY no — non si instrada il
+        # traffico verso Betfair attraverso un link-local con scope. Verificato
+        # che senza questo controllo `%eth0` passava e finiva nell'URL, mentre
+        # altri scope venivano fermati piu' a valle per motivi che non so
+        # spiegare: un comportamento che non so spiegare, sul percorso dei
+        # soldi, e' una ragione per fermarsi, non per lasciar correre.
+        if "%" in interno:
+            raise ValueError(
+                "proxy.host: uno scope ID IPv6 (`%`) non e' utilizzabile come "
+                "host di un proxy. Il valore non viene riportato"
+            )
+        try:
+            ipaddress.IPv6Address(interno)
+        except ValueError:
+            # Rilievi BLOCCANTI in sequenza di Claude Fable 5 e xAI Grok 4.6
+            # su #430, tutti fondati, su due giri.
+            #
+            # Primo giro: oscuravo solo su `@`, quindi `[pippo:SuperSegreta]`
+            # stampava la password. Secondo giro: passavo a una whitelist di
+            # caratteri esadecimali, ma un token esadecimale — la forma piu'
+            # comune per una API key — la supera, quindi `[deadbeef:cafe1234]`
+            # tornava in chiaro. Il leak si restringeva, non si chiudeva.
+            #
+            # La verita' e' piu' semplice di tutti i miei tentativi: qui dentro
+            # ci si arriva SOLO quando il valore NON e' un IPv6 valido. Se non
+            # lo e', non sappiamo cosa sia, quindi non si mostra. Punto. E la
+            # validita' la decide `ipaddress`, non un mio elenco di caratteri.
+            raise ValueError(
+                f"proxy.host non e' un indirizzo IPv6 valido "
+                f"({len(host)} caratteri). Il valore non viene riportato: "
+                f"se non e' un IPv6 non sappiamo cosa contenga"
+            ) from None
+        return host
+    dirottanti = sorted(set(host) & CARATTERI_CHE_DIROTTANO)
+    if dirottanti:
+        raise ValueError(
+            f"proxy.host contiene caratteri che cambiano il significato "
+            f"dell'URL ({''.join(dirottanti)!r}): {_senza_segreti(valore)!r}. Con `@` il "
+            f"traffico uscirebbe da un host diverso da quello configurato"
+        )
+    return host
+
+
+def _porta_valida(valore: Any) -> int:
+    """La porta come intero fra 1 e 65535, oppure ``ValueError``.
+
+    Rilievo di OpenRouter Fugu Ultra e Claude Fable 5 su #430, fondato e
+    misurato: prima bastava che `port` non fosse vuota. Con ``port: "abc"`` il
+    risultato era ``socks5://h.example:abc`` — una stringa che passa ogni
+    controllo di questo modulo e fallisce alla PRIMA richiesta verso Betfair,
+    cioe' esattamente il fallimento tardivo e silenzioso che la regola qui
+    sopra esiste per impedire. Stesso discorso per ``port: 0`` e ``port:
+    99999``, che passavano entrambe.
+    """
+    try:
+        porta = int(str(valore).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"proxy.port non e' un numero intero: {valore!r}. Un valore non "
+            f"numerico produrrebbe un URL che fallisce alla prima richiesta "
+            f"verso Betfair, non all'avvio"
+        ) from None
+    if not 1 <= porta <= 65535:
+        raise ValueError(
+            f"proxy.port fuori dall'intervallo valido 1-65535: {porta}"
+        )
+    return porta
+
+
+def _supporto_socks_disponibile() -> bool:
+    """``True`` se `requests` sa parlare SOCKS, cioe' se PySocks e' installato.
+
+    `requests` non dichiara SOCKS fra le sue dipendenze: lo supporta solo con
+    l'extra `requests[socks]`, che installa PySocks. Senza, ogni richiesta con
+    un proxy `socks*` solleva ``InvalidSchema: Missing dependencies for SOCKS
+    support``.
+    """
+    return importlib.util.find_spec("socks") is not None
+
+
+def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
+    """URL del proxy da una configurazione, oppure ``None`` se non e' richiesto.
+
+    Solleva ``ValueError`` se il proxy e' RICHIESTO (``enabled``) ma la
+    configurazione non basta a costruirlo. E' deliberato: un proxy che non si
+    applica non e' un dettaglio estetico — il traffico verso Betfair esce
+    dall'indirizzo sbagliato, che e' esattamente cio' che il proxy esisteva per
+    evitare. Meglio non partire che partire diversamente da come si crede.
+
+    Le credenziali sono opzionali. Prima venivano interpolate sempre, quindi un
+    proxy senza utente produceva ``socks5://None:None@host:porta`` — una stringa
+    che sembra un URL valido e non lo e'.
+    """
+    if not isinstance(proxy_cfg, dict) or not proxy_cfg.get("enabled"):
+        return None
+
+    host_grezzo = str(proxy_cfg.get("host") or "").strip()
+    porta_grezza = proxy_cfg.get("port")
+    if not host_grezzo or porta_grezza in (None, ""):
+        raise ValueError(
+            "proxy.enabled e' attivo ma host o port mancano: il traffico "
+            "uscirebbe senza proxy senza che nessuno se ne accorga"
+        )
+    host = _host_valido(host_grezzo)
+    porta = _porta_valida(porta_grezza)
+
+    tipo = (str(proxy_cfg.get("type") or "").strip() or "socks5").lower()
+
+    # Rilievo BLOCCANTE di GPT-5.6 Sol su #430, fondato e misurato: `type` non
+    # era validato affatto. `socks5x` superava il controllo PySocks qui sotto
+    # (comincia per "socks") e produceva un URL che `requests` rifiuta solo alla
+    # prima richiesta con `Unable to determine SOCKS version`. E non era il caso
+    # peggiore: `ftp`, `javascript` e qualunque altra parola passavano identici.
+    # Stessa classe degli altri: una configurazione inutilizzabile che il modulo
+    # dichiarava buona e che falliva sul percorso dei soldi invece che all'avvio.
+    if tipo not in SCHEMI_PROXY_SUPPORTATI:
+        raise ValueError(
+            f"proxy.type `{proxy_cfg.get('type')}` non e' uno schema supportato. "
+            f"Ammessi: {', '.join(SCHEMI_PROXY_SUPPORTATI)}"
+        )
+
+    # Un proxy SOCKS senza PySocks non e' un proxy che funziona male: e' un bot
+    # che non piazza piu' nulla. Misurato: `InvalidSchema: Missing dependencies
+    # for SOCKS support` su OGNI richiesta. E finche' il proxy non si applicava
+    # mai — il difetto che questa PR corregge — il guasto era invisibile, quindi
+    # e' proprio questa correzione a renderlo raggiungibile (rilievo bloccante
+    # di OpenRouter Fugu Ultra su #430, confermato da Claude Fable 5).
+    if tipo.startswith("socks") and not _supporto_socks_disponibile():
+        raise ValueError(
+            f"proxy di tipo `{tipo}` richiesto, ma il supporto SOCKS non e' "
+            f"installato: `requests` solleverebbe `InvalidSchema: Missing "
+            f"dependencies for SOCKS support` alla prima chiamata verso "
+            f"Betfair, non all'avvio. Installa la dipendenza con "
+            f"`pip install PySocks`. La dichiarazione nei requirements e' "
+            f"un follow-up separato: vedi il triage su #430"
+        )
+
+    if tipo == "socks5":
+        # Non riscriviamo il tipo dichiarato dall'operatore, ma non lo taciamo
+        # nemmeno: con `socks5` la risoluzione DNS avviene in locale. Betfair
+        # vede comunque solo l'IP del proxy; a vedere il nome risolto e' il
+        # resolver di casa. Con `socks5h` risolve il proxy (rilievo di
+        # OpenRouter Fugu Ultra su #430).
+        logger.warning(
+            "BetfairClient: proxy `socks5`: il DNS viene risolto in locale. "
+            "Usa `socks5h` se vuoi che anche la risoluzione passi dal proxy"
+        )
+    utente = str(proxy_cfg.get("username") or "").strip()
+    password = str(proxy_cfg.get("password") or "").strip()
+
+    # Meta' credenziale non e' una credenziale (rilievo di Claude Fable 5 e
+    # GPT-5.6 Sol su #430). Prima veniva scartata in silenzio e la connessione
+    # diventava anonima: un proxy che chiede autenticazione l'avrebbe rifiutata,
+    # oppure — peggio — l'avrebbe accettata come utente diverso.
+    if bool(utente) != bool(password):
+        raise ValueError(
+            "proxy: utente e password vanno insieme. Una sola delle due "
+            "produrrebbe una connessione anonima invece dell'errore"
+        )
+
+    # Le credenziali vanno CODIFICATE (rilievo di Claude Fable 5 e GPT-5.6 Sol
+    # su #430). Misurato prima della correzione: con password `pa@ss:word/x` il
+    # risultato era `socks5://pippo:pa@ss:word/x@h.example:1080`, che un parser
+    # legge come host `ss` e porta `word`. Non "malformato": diretto altrove.
+    credenziali = ""
+    if utente:
+        credenziali = f"{quote(utente, safe='')}:{quote(password, safe='')}@"
+    url = f"{tipo}://{credenziali}{host}:{porta}"
+
+    # Cintura oltre alle bretelle: l'URL appena costruito deve rileggersi come
+    # lo si e' inteso. I controlli qui sopra elencano i modi di sbagliare che
+    # CONOSCIAMO; questo verifica il risultato, che e' cio' che conta davvero.
+    # Otto difetti su questa funzione sono stati tutti della stessa forma — una
+    # parte dell'URL che finisce per significare un'altra — e una post-condizione
+    # li prende anche quando l'elenco non li prevede.
+    try:
+        riletto = urlparse(url)
+        hostname_riletto, porta_riletta = riletto.hostname, riletto.port
+    except ValueError as exc:
+        # `urlparse` solleva da solo su certi host malformati (per esempio un
+        # IPv6 fatto di soli due punti). Il suo messaggio non e' il nostro
+        # contratto e potrebbe riportare pezzi del valore: si converte.
+        raise ValueError(
+            f"la configurazione del proxy produce un URL illeggibile: {exc.__class__.__name__}"
+        ) from None
+    if hostname_riletto != host.strip("[]").lower() or porta_riletta != porta:
+        raise ValueError(
+            f"la configurazione del proxy produce un URL che non si rilegge "
+            f"come atteso: host {_senza_segreti(str(hostname_riletto))!r} "
+            f"invece di {_senza_segreti(host)!r}"
+        )
+    return url
+
 
 
 class BetfairClient:
@@ -36,6 +376,110 @@ class BetfairClient:
     # =========================================================
     # INIT
     # =========================================================
+    def _configura_proxy(self, proxy_config: Optional[Dict[str, Any]] = None) -> None:
+        """Applica il proxy alla sessione, se ne e' stato chiesto uno.
+
+        Tre esiti, tutti espliciti:
+
+        - nessuna configurazione trovata, o `enabled` falso -> non si fa nulla;
+        - configurazione valida -> il proxy si applica e viene registrato
+          (host e porta, MAI le credenziali);
+        - `enabled` attivo ma configurazione insufficiente -> eccezione.
+
+        Il terzo caso e' il motivo di questo metodo. Prima l'intero blocco stava
+        dentro un `try/except Exception` che registrava e proseguiva, quindi
+        qualunque errore — percorso inesistente compreso — diventava silenzio.
+        """
+        cfg = proxy_config
+        if cfg is None:
+            cfg = self._proxy_da_disco()
+        if cfg is None:
+            return
+
+        url = costruisci_proxy_url(cfg)
+        if url is None:
+            return
+
+        self.session.proxies = {"http": url, "https": url}
+        logger.info(
+            "BetfairClient: proxy %s configurato su %s:%s",
+            str(cfg.get("type") or "socks5"), cfg.get("host"), cfg.get("port"),
+        )
+
+    @staticmethod
+    def _proxy_da_disco() -> Optional[Dict[str, Any]]:
+        """Blocco `proxy` dal primo file di configurazione leggibile.
+
+        Un file assente non e' un errore: significa "nessun proxy configurato".
+        Un file presente ma illeggibile lo e', e viene registrato come tale
+        invece di sparire.
+        """
+        esplicito = percorso_config_esplicito()
+        for percorso in percorsi_config_candidati():
+            if not percorso or not os.path.exists(percorso):
+                if esplicito and percorso == esplicito:
+                    # `esplicito and ...` non e' ridondante: senza variabile
+                    # d'ambiente `esplicito` e' None, e un candidato falsy —
+                    # caso che il `not percorso` qui sopra prevede — renderebbe
+                    # vero `None == None`, sollevando all'avvio senza che
+                    # nessuno abbia dichiarato niente. Regressione introdotta
+                    # da me al giro precedente, trovata da GPT-5.6 Sol e Claude
+                    # Fable 5 indipendentemente.
+                    #
+                    # Rilievo di GPT-5.6 Sol su #430, secondo giro: avevo
+                    # tracciato la linea fra "dichiarato ma illeggibile"
+                    # (eccezione) e "dichiarato ma assente" (si prosegue). E'
+                    # una linea incoerente — in entrambi i casi l'operatore ha
+                    # detto dove sta il file e il file non e' utilizzabile.
+                    # Vale anche per un symlink rotto, che `exists` segnala
+                    # come assente.
+                    raise ValueError(
+                        f"il percorso dichiarato da {ENV_PERCORSO_CONFIG} non "
+                        f"esiste o non e' raggiungibile: {percorso}"
+                    )
+                continue
+            try:
+                with open(percorso, "r", encoding="utf-8") as fh:
+                    dati = json.load(fh)
+            except (OSError, ValueError) as exc:
+                if esplicito and percorso == esplicito:
+                    # Rilievo di GPT-5.6 Sol su #430, fondato: la versione
+                    # precedente registrava un avviso e proseguiva senza proxy.
+                    # Ma qui l'operatore aveva DICHIARATO dove sta il file: se
+                    # e' illeggibile non sappiamo se voleva un proxy, e partire
+                    # in chiaro e' una supposizione sul percorso dei soldi.
+                    raise ValueError(
+                        f"configurazione illeggibile nel percorso dichiarato da "
+                        f"{ENV_PERCORSO_CONFIG} ({percorso}): {exc}"
+                    ) from exc
+                logger.warning(
+                    "BetfairClient: configurazione illeggibile in %s (%s)", percorso, exc
+                )
+                continue
+            # Il PRIMO file leggibile vince, punto (rilievo di OpenRouter Fugu
+            # Ultra su #430). Prima si proseguiva quando il file non conteneva
+            # la chiave `proxy`, e si finiva per applicare il proxy di un file
+            # a precedenza PIU' BASSA — magari vecchio, magari scrivibile da
+            # altri. Il traffico Betfair sarebbe uscito da un proxy che nessuno
+            # aveva scelto, e questo e' il punto: un `config.json` senza blocco
+            # `proxy` significa "nessun proxy", non "guarda altrove".
+            proxy = dati.get("proxy") if isinstance(dati, dict) else None
+            if proxy is not None and not isinstance(proxy, dict):
+                # Rilievo di Claude Fable 5 e GPT-5.6 Sol su #430, accolto: al
+                # giro precedente avevo scelto un warning, ragionando "non
+                # possiamo sapere se `enabled` era vero". Il ragionamento e'
+                # rovesciato: e' proprio il NON SAPERE la ragione per non tirare
+                # a indovinare. Un blocco `proxy` illeggibile significa che
+                # qualcuno un proxy lo voleva, e proseguire in chiaro decide al
+                # posto suo sul percorso dei soldi.
+                raise ValueError(
+                    f"blocco `proxy` malformato in {percorso}: atteso un "
+                    f"oggetto, trovato {type(proxy).__name__}"
+                )
+            return proxy if isinstance(proxy, dict) else None
+        return None
+
+    # =========================================================
     def __init__(
         self,
         *,
@@ -46,6 +490,7 @@ class BetfairClient:
         session: Optional[requests.Session] = None,
         timeout: float = 20.0,
         max_retries: int = 2,
+        proxy_config: Optional[Dict[str, Any]] = None,
     ):
         self.username = str(username or "").strip()
         self.app_key = str(app_key or "").strip()
@@ -56,32 +501,8 @@ class BetfairClient:
         self.max_retries = max(0, int(max_retries))
 
         self.session = session or requests.Session()
-        
-        # Carica proxy da config.json se presente
-        try:
-            import json
-            import os
-            config_path = "/home/ubuntu/Pickfair-nogui/config.json"
-            if os.path.exists(config_path):
-                with open(config_path, "r") as f:
-                    config = json.load(f)
-                    proxy_cfg = config.get("proxy", {})
-                    if proxy_cfg.get("enabled"):
-                        p_type = proxy_cfg.get("type", "socks5")
-                        p_host = proxy_cfg.get("host")
-                        p_port = proxy_cfg.get("port")
-                        p_user = proxy_cfg.get("username")
-                        p_pass = proxy_cfg.get("password")
-                        
-                        if p_host and p_port:
-                            proxy_url = f"{p_type}://{p_user}:{p_pass}@{p_host}:{p_port}"
-                            self.session.proxies = {
-                                "http": proxy_url,
-                                "https": proxy_url
-                            }
-                            logger.info(f"BetfairClient: Proxy {p_type} configurato su {p_host}:{p_port}")
-        except Exception as e:
-            logger.error(f"BetfairClient: Errore caricamento proxy: {e}")
+        self._configura_proxy(proxy_config)
+
 
         self.session_token = ""
         self.session_expiry = ""
