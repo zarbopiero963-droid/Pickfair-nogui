@@ -234,20 +234,124 @@ def test_il_file_che_non_c_e_e_un_esito_A_SE(tmp_path):
         str(tmp_path / "mai-esistito.json")) == "nessun_file"
 
 
-def test_un_symlink_ROTTO_non_e_un_file_assente(monkeypatch, tmp_path):
+def _symlink_utilizzabili(tmp_path) -> bool:
+    """Su Windows senza Developer Mode `symlink_to` alza: si prova, non si indovina."""
+    try:
+        (tmp_path / "_prova_link").symlink_to(tmp_path / "_prova_assente")
+    except (OSError, NotImplementedError, AttributeError):
+        return False
+    return True
+
+
+@pytest.mark.parametrize("errore_di_open", [FileNotFoundError, NotADirectoryError])
+def test_una_VOCE_che_non_si_apre_non_e_un_file_assente(
+        monkeypatch, tmp_path, errore_di_open):
     """Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto giro. Fondato.
 
     *«`FileNotFoundError` non prova l'assenza. Link/junction spezzati …
     Va distinto almeno il path legacy esistente tramite `lstat`.»*
 
-    `open()` segue il link, non trova il bersaglio e alza ENOENT — identico a
-    un file mai esistito. Ma la voce di directory **c'e'**, e ce l'ha messa
-    qualcuno: e' un proxy indicato e non raggiungibile, cioe' «dichiarato ma
-    inutilizzabile», che in questo modulo vale eccezione. Il repo lo dice gia'
-    per il percorso di `PICKFAIR_CONFIG_PATH`; qui era incoerente.
+    Un symlink rotto: `open()` segue il link, non trova il bersaglio e alza
+    ENOENT — identico a un file mai esistito. Ma la voce di directory **c'e'**,
+    e ce l'ha messa qualcuno: e' un proxy *indicato* e non raggiungibile, cioe'
+    «dichiarato ma inutilizzabile», che in questo modulo vale eccezione. Il
+    repo lo dice gia' per il percorso di `PICKFAIR_CONFIG_PATH`; qui era
+    incoerente.
 
-    Verificato togliendo `lstat`: il test fallisce con `DID NOT RAISE`.
+    **Questo test e' a mock di proposito** (rilievo di GPT-5.6 Sol, Claude
+    Fable 5 e Fugu Ultra al quinto giro, tutti e tre sullo stesso punto): la
+    versione precedente creava un symlink vero, e su Windows senza Developer
+    Mode `symlink_to` alza — il test sarebbe morto in `error`, non in `skip`,
+    proprio sul sistema operativo su cui Pickfair gira davvero. Qui la
+    condizione e' riprodotta senza toccare il filesystem, quindi **vale su
+    ogni piattaforma**. Che i mock corrispondano alla realta' lo dimostra il
+    test subito sotto, dove i symlink funzionano.
+
+    Parametrizzato anche su `NotADirectoryError` per il secondo rilievo di
+    Fable: una voce anomala nel mezzo del percorso e' incertezza, non assenza.
     """
+    import betfair_client
+
+    vero_open = open
+
+    def open_che_non_trova(percorso, *a, **kw):
+        if "XTraderBridge" in str(percorso):
+            raise errore_di_open("come un link rotto")
+        return vero_open(percorso, *a, **kw)
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+    monkeypatch.setattr("builtins.open", open_che_non_trova)
+    # `lstat` riesce: la VOCE c'e', e' il bersaglio che manca.
+    monkeypatch.setattr(os, "lstat", lambda p, *a, **kw: os.stat_result(
+        (0o120777, 0, 0, 1, 0, 0, 0, 0, 0, 0)))
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_una_voce_ANOMALA_nel_percorso_e_incertezza_non_assenza(monkeypatch, tmp_path):
+    """Secondo rilievo di Claude Fable 5 su #434, quinto giro. Fondato.
+
+    *«se un componente intermedio del path e' un file regolare, `lstat` alza
+    `NotADirectoryError` -> `PROXY_NESSUN_FILE` -> traffico Betfair diretto.
+    Ma quella voce esiste ed e' anomala: e' piu' vicina a "dichiarato ma
+    inutilizzabile" che ad assenza accertata.»*
+
+    Avevo messo `NotADirectoryError` insieme a `FileNotFoundError`
+    ragionando cosi': dentro un file non ci puo' stare un `config.json`,
+    quindi non c'e'. Ma e' di nuovo una **deduzione** — vale se il percorso e'
+    quello che sembra, e una junction o un mount possono averci messo altro in
+    mezzo. Su questo percorso la deduzione non basta.
+
+    Il costo del contrario e' trascurabile: perche' l'avvio si fermi serve un
+    **file** chiamato `XTraderBridge` dentro `%APPDATA%`, e il messaggio dice
+    cosa fare.
+
+    **Questo test nasce da un sabotaggio riuscito**: rimettendo
+    `NotADirectoryError` fra le assenze, la suite restava tutta verde. Il
+    caso parametrizzato qui sopra non lo copriva, perche' li' `lstat` e'
+    finto e *riesce* — l'errore non arrivava mai al ramo che avevo cambiato.
+    Senza questo, avrei consegnato la correzione di Fable senza una verifica.
+    """
+    import betfair_client
+
+    vero_open = open
+
+    def esplode(percorso, *a, **kw):
+        if "XTraderBridge" in str(percorso):
+            raise NotADirectoryError("un pezzo del percorso e' un file")
+        return vero_open(percorso, *a, **kw)
+
+    def lstat_che_esplode(percorso, *a, **kw):
+        raise NotADirectoryError("un pezzo del percorso e' un file")
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+    monkeypatch.setattr("builtins.open", esplode)
+    monkeypatch.setattr(os, "lstat", lstat_che_esplode)
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_su_un_symlink_VERO_il_mock_qui_sopra_dice_il_vero(monkeypatch, tmp_path):
+    """La prova che il test a mock non sta descrivendo un sistema immaginario.
+
+    Un test interamente a mock puo' codificare una convinzione sbagliata su
+    cosa faccia il sistema operativo e passare lo stesso. Qui si costruisce un
+    symlink **vero** e si verifica che si comporti come il mock assume:
+    `exists` dice di no, `lexists` dice di si', e l'avvio si ferma.
+
+    Salta dove i symlink non si possono creare (Windows senza Developer Mode),
+    ma **il comportamento resta coperto li' dal test a mock** — che e' il punto
+    della coppia: nessuna piattaforma resta senza verifica.
+    """
+    if not _symlink_utilizzabili(tmp_path):
+        pytest.skip("symlink non creabili qui; il test a mock copre comunque il caso")
+
     import betfair_client
 
     vecchia = tmp_path / "XTraderBridge"
@@ -256,9 +360,9 @@ def test_un_symlink_ROTTO_non_e_un_file_assente(monkeypatch, tmp_path):
     monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
 
     assert not os.path.exists(vecchia / "config.json"), \
-        "il presupposto del test: per `exists` il link rotto non c'e'"
+        "presupposto del mock: per `exists` il link rotto non c'e'"
     assert os.path.lexists(vecchia / "config.json"), \
-        "ma la voce di directory c'e' davvero"
+        "presupposto del mock: ma la voce di directory c'e' davvero"
 
     with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
         betfair_client._controlla_config_rimasta_nel_bridge(

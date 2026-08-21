@@ -189,6 +189,17 @@ def _assenza_o_incertezza(percorso: str) -> str:
     - la voce c'e' ma non si apre     -> `PROXY_INCERTO` (si ferma)
     - non si riesce nemmeno a guardare -> `PROXY_INCERTO` (si ferma)
 
+    **Secondo rilievo di Claude Fable 5, quinto giro.** `NotADirectoryError`
+    stava con la prima riga: se un pezzo intermedio del percorso e' un file
+    normale, dentro non ci puo' essere niente, quindi «assente». Ma quella e'
+    di nuovo una **deduzione**, non un accertamento: mi dice che un
+    `config.json` non ci puo' stare *se il percorso e' quello che sembra*, e
+    non ho modo di escludere che una junction o un mount ci abbiano messo
+    altro in mezzo. Su un percorso da cui dipendono i soldi la deduzione non
+    basta, e il costo del contrario e' trascurabile — perche' l'avvio si
+    fermi serve un **file** chiamato `XTraderBridge` dentro `%APPDATA%`, e il
+    messaggio dice cosa fare. Quindi anche questa e' incertezza.
+
     **Cosa questo NON chiude, e non fingo che lo chiuda.** L'altra meta' del
     rilievo — un profilo o una UNC momentaneamente irraggiungibili — su
     Windows arriva come `ERROR_PATH_NOT_FOUND`, cioe' lo stesso ENOENT di un
@@ -202,7 +213,8 @@ def _assenza_o_incertezza(percorso: str) -> str:
     """
     try:
         os.lstat(percorso)
-    except (FileNotFoundError, NotADirectoryError):
+    except FileNotFoundError:
+        # L'unica assenza accertata: non c'e' nemmeno la voce di directory.
         return PROXY_NESSUN_FILE
     except Exception:
         return PROXY_INCERTO
