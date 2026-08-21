@@ -90,6 +90,41 @@ PROXY_ASSENTE = "assente"         # letto, interpretato, nessun proxy attivo
 PROXY_INCERTO = "incerto"         # non si e' potuto stabilire
 PROXY_NESSUN_FILE = "nessun_file"  # il file non c'e', accertato aprendolo
 
+# Codici Windows che arrivano come `FileNotFoundError` ma NON dicono «non c'e'»:
+# dicono «non ci sono arrivato». Su Windows `OSError.winerror` conserva il
+# codice grezzo anche quando `errno` lo appiattisce su ENOENT; su Linux
+# l'attributo non esiste e `getattr` restituisce None, che non e' in questo
+# insieme — quindi li' non cambia niente.
+WINERROR_NON_RAGGIUNGIBILE = frozenset({
+    21,    # ERROR_NOT_READY          unita' presente ma non pronta
+    53,    # ERROR_BAD_NETPATH        percorso di rete non trovato
+    55,    # ERROR_DEV_NOT_EXIST      risorsa di rete non piu' disponibile
+    59,    # ERROR_UNEXP_NET_ERR      errore di rete imprevisto
+    64,    # ERROR_NETNAME_DELETED    il nome di rete non c'e' piu'
+    67,    # ERROR_BAD_NET_NAME       nome di rete non trovato
+    1231,  # ERROR_NETWORK_UNREACHABLE
+    1232,  # ERROR_HOST_UNREACHABLE
+})
+
+
+def _non_raggiungibile(errore: BaseException) -> bool:
+    """L'errore dice «non ci sono arrivato», non «non c'e'».
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto e sesto giro — e al
+    quarto avevo risposto che non si poteva fare. Mi sbagliavo.**
+
+    Avevo scritto, qui sotto e sulla PR, che una UNC caduta e un file mai
+    esistito *«sono lo stesso fatto osservabile»*. E' vero guardando `errno`,
+    che appiattisce tutto su ENOENT — e falso guardando `winerror`, che su
+    Windows sopravvive dentro l'eccezione. Una condivisione irraggiungibile
+    da' 53 o 67, un profilo caduto 64: un file che non esiste da' 2. Sono
+    numeri diversi, e stavano nell'eccezione tutto il tempo.
+
+    Avevo dichiarato un limite **senza verificarlo**, e per due giri quella
+    frase e' rimasta nel codice a giustificare il fail-open che descriveva.
+    """
+    return getattr(errore, "winerror", None) in WINERROR_NON_RAGGIUNGIBILE
+
 
 def _stato_proxy_altrove(percorso: str) -> str:
     """Cosa dichiara la configurazione rimasta nella cartella del Bridge.
@@ -139,7 +174,9 @@ def _stato_proxy_altrove(percorso: str) -> str:
     try:
         with open(percorso, "r", encoding="utf-8") as f:
             contenuto = f.read()
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError) as errore:
+        if _non_raggiungibile(errore):
+            return PROXY_INCERTO
         # Nemmeno questo prova l'assenza da solo: lo si chiede a `lstat`.
         return _assenza_o_incertezza(percorso)
     except Exception:
@@ -200,20 +237,27 @@ def _assenza_o_incertezza(percorso: str) -> str:
     fermi serve un **file** chiamato `XTraderBridge` dentro `%APPDATA%`, e il
     messaggio dice cosa fare. Quindi anche questa e' incertezza.
 
-    **Cosa questo NON chiude, e non fingo che lo chiuda.** L'altra meta' del
-    rilievo — un profilo o una UNC momentaneamente irraggiungibili — su
-    Windows arriva come `ERROR_PATH_NOT_FOUND`, cioe' lo stesso ENOENT di un
-    file che non e' mai esistito, e `lstat` risponde identico. Dal processo
-    non c'e' modo di distinguerli: sono lo stesso fatto osservabile.
-    Guardare la cartella superiore non aiuta, perche' una UNC caduta la fa
-    sparire allo stesso modo — e su Linux `~/.config` puo' legittimamente non
-    esistere, quindi leggerne l'assenza come incertezza fermerebbe l'avvio a
-    chiunque. La linea sta qui: si chiude tutto cio' che il sistema operativo
-    permette di distinguere, e si dice quale pezzo non lo permette.
+    **Qui al quarto giro avevo scritto che l'altra meta' del rilievo — UNC o
+    profilo irraggiungibili — non era chiudibile, perche' *«sono lo stesso
+    fatto osservabile»*. Era sbagliato**, e GPT-5.6 Sol l'ha ri-sollevato al
+    sesto. Guardando `errno` sono davvero lo stesso fatto: ENOENT per
+    entrambi. Guardando `winerror`, che su Windows sopravvive dentro
+    l'eccezione, no: 53 / 64 / 67 per la rete, 2 per un file che non c'e'.
+    Il discriminante stava nell'eccezione da sempre; l'ho dichiarato
+    impossibile senza provarci. Ora lo fa `_non_raggiungibile`.
+
+    Resta indistinguibile solo `ERROR_PATH_NOT_FOUND` (3) da una cartella
+    intermedia che davvero non esiste — ma li' i due casi coincidono anche
+    nella sostanza: se la cartella del Bridge non c'e', non c'e' nemmeno una
+    configurazione arenata dentro. **Questa volta l'ho verificato**, invece di
+    dedurlo: `getattr(errore, "winerror", None)` e' `None` su Linux, quindi
+    quel ramo non tocca nessuna piattaforma dove il codice non esiste.
     """
     try:
         os.lstat(percorso)
-    except FileNotFoundError:
+    except FileNotFoundError as errore:
+        if _non_raggiungibile(errore):
+            return PROXY_INCERTO
         # L'unica assenza accertata: non c'e' nemmeno la voce di directory.
         return PROXY_NESSUN_FILE
     except Exception:

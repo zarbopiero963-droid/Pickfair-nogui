@@ -337,6 +337,45 @@ def test_una_voce_ANOMALA_nel_percorso_e_incertezza_non_assenza(monkeypatch, tmp
             [str(tmp_path / "assente.json")])
 
 
+@pytest.mark.parametrize("winerror,atteso", [
+    (53, "incerto"),      # ERROR_BAD_NETPATH      - condivisione irraggiungibile
+    (64, "incerto"),      # ERROR_NETNAME_DELETED  - profilo caduto
+    (67, "incerto"),      # ERROR_BAD_NET_NAME
+    (21, "incerto"),      # ERROR_NOT_READY        - unita' non pronta
+    (1231, "incerto"),    # ERROR_NETWORK_UNREACHABLE
+    (2, "nessun_file"),   # ERROR_FILE_NOT_FOUND   - il file davvero non c'e'
+    (3, "nessun_file"),   # ERROR_PATH_NOT_FOUND   - cartella intermedia assente
+    (None, "nessun_file"),  # Linux: winerror non esiste
+])
+def test_una_UNC_caduta_non_e_un_file_assente(monkeypatch, tmp_path, winerror, atteso):
+    """Rilievo BLOCCANTE di GPT-5.6 Sol, quarto E sesto giro.
+
+    **Al quarto avevo risposto che non si poteva fare**, e l'ho scritto sia nel
+    codice sia sulla PR: *«sono lo stesso fatto osservabile»*. Sbagliato.
+    E' vero guardando `errno`, che appiattisce tutto su ENOENT; falso
+    guardando `winerror`, che su Windows sopravvive dentro l'eccezione — 53 o
+    67 per una condivisione irraggiungibile, 64 per un profilo caduto, 2 per
+    un file che non c'e'. Il discriminante stava nell'eccezione da sempre:
+    avevo dichiarato un limite senza provarci, e per due giri quella frase e'
+    rimasta nel codice a giustificare il fail-open che descriveva.
+
+    Le ultime tre righe sono la controprova che il rimedio non allarga il
+    blocco: un ENOENT normale (2 e 3) e Linux (`winerror` assente, `None`)
+    restano assenza e lasciano proseguire.
+    """
+    import betfair_client
+
+    def lstat_che_non_arriva(percorso, *a, **kw):
+        errore = FileNotFoundError(2, "non trovato")
+        if winerror is not None:
+            errore.winerror = winerror
+        raise errore
+
+    f = tmp_path / "c.json"
+    monkeypatch.setattr(os, "lstat", lstat_che_non_arriva)
+    assert betfair_client._stato_proxy_altrove(str(f)) == atteso
+
+
 def test_su_un_symlink_VERO_il_mock_qui_sopra_dice_il_vero(monkeypatch, tmp_path):
     """La prova che il test a mock non sta descrivendo un sistema immaginario.
 
