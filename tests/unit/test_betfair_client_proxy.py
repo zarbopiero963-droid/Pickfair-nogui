@@ -128,6 +128,34 @@ class TestClientApplicaIlProxy:
                             lambda: [str(tmp_path / "niente.json")])
         assert not _client().session.proxies
 
+    def test_candidato_falsy_senza_ambiente_non_solleva(self, monkeypatch):
+        """Regressione che ho introdotto io al giro precedente, trovata da
+        GPT-5.6 Sol e Claude Fable 5 **indipendentemente**.
+
+        La guardia era `if percorso == esplicito`. Senza variabile d'ambiente
+        `esplicito` e' `None`, quindi un candidato falsy — caso che il codice
+        stesso prevede con `if not percorso` — rendeva vero `None == None` e
+        sollevava all'avvio **senza che nessuno avesse dichiarato niente**."""
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [None, ""])
+        assert not _client().session.proxies
+
+    def test_blocco_proxy_malformato_viene_segnalato(self, tmp_path, monkeypatch, caplog):
+        """Rilievo di Claude Fable 5: l'ultima sacca di silenzio.
+
+        Un blocco `proxy` che non e' un oggetto significa che qualcuno un proxy
+        lo voleva. Restituire "nessun proxy" senza dire niente lo manda in
+        chiaro come se non l'avesse mai chiesto."""
+        f = tmp_path / "config.json"
+        f.write_text(json.dumps({"proxy": "socks5://scritto-male"}), encoding="utf-8")
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [str(f)])
+        with caplog.at_level("WARNING"):
+            assert not _client().session.proxies
+        assert any("malformato" in r.message for r in caplog.records), (
+            "il blocco proxy malformato e' passato in silenzio"
+        )
+
     def test_il_primo_file_leggibile_vince_anche_senza_proxy(self, tmp_path, monkeypatch):
         """Rilievo di OpenRouter Fugu Ultra su #430: precedenza pericolosa.
 

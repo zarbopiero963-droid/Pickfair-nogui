@@ -175,7 +175,15 @@ class BetfairClient:
         esplicito = percorso_config_esplicito()
         for percorso in percorsi_config_candidati():
             if not percorso or not os.path.exists(percorso):
-                if percorso == esplicito:
+                if esplicito and percorso == esplicito:
+                    # `esplicito and ...` non e' ridondante: senza variabile
+                    # d'ambiente `esplicito` e' None, e un candidato falsy —
+                    # caso che il `not percorso` qui sopra prevede — renderebbe
+                    # vero `None == None`, sollevando all'avvio senza che
+                    # nessuno abbia dichiarato niente. Regressione introdotta
+                    # da me al giro precedente, trovata da GPT-5.6 Sol e Claude
+                    # Fable 5 indipendentemente.
+                    #
                     # Rilievo di GPT-5.6 Sol su #430, secondo giro: avevo
                     # tracciato la linea fra "dichiarato ma illeggibile"
                     # (eccezione) e "dichiarato ma assente" (si prosegue). E'
@@ -192,7 +200,7 @@ class BetfairClient:
                 with open(percorso, "r", encoding="utf-8") as fh:
                     dati = json.load(fh)
             except (OSError, ValueError) as exc:
-                if percorso == esplicito:
+                if esplicito and percorso == esplicito:
                     # Rilievo di GPT-5.6 Sol su #430, fondato: la versione
                     # precedente registrava un avviso e proseguiva senza proxy.
                     # Ma qui l'operatore aveva DICHIARATO dove sta il file: se
@@ -214,6 +222,18 @@ class BetfairClient:
             # aveva scelto, e questo e' il punto: un `config.json` senza blocco
             # `proxy` significa "nessun proxy", non "guarda altrove".
             proxy = dati.get("proxy") if isinstance(dati, dict) else None
+            if proxy is not None and not isinstance(proxy, dict):
+                # Rilievo di Claude Fable 5 su #430: l'ultima sacca di silenzio.
+                # Il file vince, quindi qui ci si ferma; ma un blocco `proxy`
+                # malformato significa che qualcuno UN PROXY LO VOLEVA, e
+                # restituire None senza dire niente lo manda in chiaro come se
+                # non l'avesse mai chiesto.
+                logger.warning(
+                    "BetfairClient: blocco `proxy` malformato in %s (atteso un "
+                    "oggetto, trovato %s): si procede SENZA proxy",
+                    percorso, type(proxy).__name__,
+                )
+                return None
             return proxy if isinstance(proxy, dict) else None
         return None
 
