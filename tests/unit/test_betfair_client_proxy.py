@@ -504,3 +504,55 @@ class TestPostCondizione:
                 {"enabled": True, "host": "evil.example@vero.example", "port": 1080}
             )
 
+
+class TestNessunSegretoNeiMessaggi:
+    """Un controllo che protegge il traffico non deve pubblicare la credenziale.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430, fondato e misurato. Chi
+    sbaglia e incolla un URL intero dentro `proxy.host` — l'errore che
+    `_host_valido` esiste per prendere — si vedeva la password nel messaggio
+    dell'eccezione, e da li' nei log d'avvio.
+    """
+
+    SEGRETO = "SuperSegreta123"
+
+    @pytest.mark.parametrize("host", [
+        "socks5://pippo:SuperSegreta123@h.example:1080",
+        "pippo:SuperSegreta123@h.example",
+        "[SuperSegreta123@::1]",
+    ])
+    def test_la_password_non_finisce_nel_messaggio(self, host):
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({"enabled": True, "host": host, "port": 1080})
+        assert self.SEGRETO not in str(info.value)
+
+    def test_la_password_non_finisce_nemmeno_nella_post_condizione(self, monkeypatch):
+        """Anche scavalcando il controllo a monte, il messaggio resta pulito."""
+        monkeypatch.setattr(bc, "_host_valido", lambda v: v)
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url({
+                "enabled": True, "port": 1080,
+                "host": f"pippo:{self.SEGRETO}@vero.example",
+            })
+        assert self.SEGRETO not in str(info.value)
+
+    def test_un_host_senza_chiocciola_resta_leggibile(self):
+        """Oscurare tutto renderebbe il messaggio inutile: si oscura solo dove
+        puo' esserci una credenziale."""
+        with pytest.raises(ValueError) as info:
+            bc.costruisci_proxy_url(
+                {"enabled": True, "host": "h.example/percorso", "port": 1080}
+            )
+        assert "h.example/percorso" in str(info.value)
+
+    def test_le_credenziali_valide_non_compaiono_mai_nei_log(self, caplog):
+        """Il caso normale: proxy corretto, log dell'avvio senza segreti."""
+        import logging
+
+        with caplog.at_level(logging.DEBUG):
+            _client(proxy_config={"enabled": True, "type": "socks5",
+                                  "host": "h.example", "port": 1080,
+                                  "username": "pippo", "password": self.SEGRETO})
+        assert self.SEGRETO not in caplog.text
+        assert "pippo" not in caplog.text
+

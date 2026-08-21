@@ -112,6 +112,27 @@ SCHEMI_PROXY_SUPPORTATI = ("http", "https", "socks4", "socks4a", "socks5", "sock
 CARATTERI_CHE_DIROTTANO = set('@/\\?#: \t\n\r"\'')
 
 
+def _senza_segreti(valore: str) -> str:
+    """Il valore reso mostrabile in un messaggio d'errore o in un log.
+
+    Rilievo BLOCCANTE di OpenRouter Fugu Ultra su #430, fondato e misurato. Il
+    caso: chi sbaglia e mette un URL intero dentro `proxy.host` — che e'
+    proprio l'errore che `_host_valido` esiste per prendere — si vedeva la
+    password stampata nel messaggio dell'eccezione, e da li' nei log d'avvio:
+
+        proxy.host contiene caratteri ... 'socks5://pippo:SuperSegreta123@h.example:1080'
+
+    Un controllo che protegge il traffico e intanto pubblica la credenziale non
+    protegge niente. Si taglia da `@` in avanti — tutto cio' che sta prima e'
+    esattamente la parte che puo' contenere utente e password.
+    """
+    if "@" in valore:
+        return "<oscurato: contiene `@`, possibili credenziali>"
+    if len(valore) > 60:
+        return valore[:60] + "..."
+    return valore
+
+
 def _host_valido(valore: str) -> str:
     """L'host, oppure ``ValueError``.
 
@@ -134,13 +155,16 @@ def _host_valido(valore: str) -> str:
         # IPv6 letterale: i due punti sono legittimi solo dentro le parentesi.
         interno = host[1:-1]
         if not interno or set(interno) - set("0123456789abcdefABCDEF:."):
-            raise ValueError(f"proxy.host non e' un indirizzo IPv6 valido: {valore!r}")
+            raise ValueError(
+                f"proxy.host non e' un indirizzo IPv6 valido: "
+                f"{_senza_segreti(valore)!r}"
+            )
         return host
     dirottanti = sorted(set(host) & CARATTERI_CHE_DIROTTANO)
     if dirottanti:
         raise ValueError(
             f"proxy.host contiene caratteri che cambiano il significato "
-            f"dell'URL ({''.join(dirottanti)!r}): {valore!r}. Con `@` il "
+            f"dell'URL ({''.join(dirottanti)!r}): {_senza_segreti(valore)!r}. Con `@` il "
             f"traffico uscirebbe da un host diverso da quello configurato"
         )
     return host
@@ -282,7 +306,8 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
     if riletto.hostname != host.strip("[]").lower() or riletto.port != porta:
         raise ValueError(
             f"la configurazione del proxy produce un URL che non si rilegge "
-            f"come atteso: host {riletto.hostname!r} invece di {host!r}"
+            f"come atteso: host {_senza_segreti(str(riletto.hostname))!r} "
+            f"invece di {_senza_segreti(host)!r}"
         )
     return url
 
