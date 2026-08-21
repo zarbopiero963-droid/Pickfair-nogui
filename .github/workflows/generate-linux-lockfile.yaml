@@ -56,10 +56,31 @@ jobs:
       # assoluto del checkout, diverso tra runner e locale => lock non
       # riproducibile). CUSTOM_COMPILE_COMMAND fissa l'header senza path. Insieme
       # rendono il lock indipendente dalla macchina.
+      #
+      # SEED: il file di destinazione parte dal lock COMMITTATO, non vuoto.
+      # `pip-compile` tratta i pin gia' presenti nell'output come vincoli e
+      # cambia solo cio' che il `.in` impone: senza seed non ha niente da
+      # preservare e risolve TUTTO all'ultima versione disponibile.
+      #
+      # Misurato su #430, aggiungendo una sola dipendenza (PySocks):
+      #   compilazione da zero in /tmp    -> pysocks + 11 bump non richiesti
+      #   compilazione sul lock committato -> pysocks, e nient'altro
+      #
+      # Senza il seed, ogni PR che tocca un requirements* era OBBLIGATA a
+      # inghiottire qualunque cosa gli upstream avessero rilasciato nel
+      # frattempo, dentro un file hash-verificato che esiste apposta per
+      # impedire i cambiamenti non voluti. Il gate rendeva gli aggiornamenti
+      # obbligatori e invisibili, mentre un lock serve a renderli deliberati.
+      #
+      # Gli aggiornamenti restano possibili e restano una SCELTA: si fanno
+      # con `pip-compile --upgrade` quando li si vuole, non di straforo.
       - name: Compile lock (hashes)
         env:
           CUSTOM_COMPILE_COMMAND: "pip-compile --generate-hashes --allow-unsafe --no-annotate --output-file requirements-build-linux.lock requirements-build-linux.in"
         run: |
+          if [ -f requirements-build-linux.lock ]; then
+            cp requirements-build-linux.lock /tmp/fresh-linux.lock
+          fi
           pip-compile --generate-hashes --allow-unsafe --no-annotate \
             --output-file /tmp/fresh-linux.lock \
             requirements-build-linux.in
