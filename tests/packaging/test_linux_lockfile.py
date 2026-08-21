@@ -65,6 +65,71 @@ def test_generate_workflow_is_deterministic_and_reproducible():
     assert "base.sha" in wf, "manca la guardia anti-deletion vs base ref"
 
 
+def test_generate_workflow_seeds_from_committed_lock():
+    """Il gate anti-stale deve confrontare col lock, non con l'ultima versione.
+
+    `pip-compile` tratta i pin gia' presenti nel file di output come vincoli e
+    cambia solo cio' che il `.in` impone. Se il file di destinazione parte
+    VUOTO non ha niente da preservare e risolve tutto all'ultima versione
+    disponibile: il gate pretende allora che il lock committato le combaci,
+    cioe' obbliga ogni PR che tocca un requirements* a inghiottire la deriva
+    accumulata dagli upstream.
+
+    Misurato su #430 aggiungendo la sola PySocks:
+        da zero in /tmp     -> pysocks + 11 bump non richiesti
+        sul lock committato -> pysocks, e nient'altro
+
+    Un lock hash-verificato serve a rendere gli aggiornamenti DELIBERATI. Senza
+    il seed li rendeva obbligatori e invisibili, che e' il contrario.
+    """
+    wf = _read(GEN_WF)
+    assert "cp requirements-build-linux.lock /tmp/fresh-linux.lock" in wf, (
+        "il file di destinazione non parte dal lock committato: senza seed "
+        "pip-compile risolve tutto all'ultima versione e il gate anti-stale "
+        "pretende la deriva"
+    )
+
+    # L'ordine va verificato DENTRO lo script dello step, non sul file intero:
+    # `pip-compile --generate-hashes` compare anche nella stringa
+    # CUSTOM_COMPILE_COMMAND, che sta dentro il blocco `env:` dello stesso step
+    # e non e' un'invocazione: va escluso restringendosi al `run:`.
+    # (La prima versione di questo test cadeva proprio li' — e un test che
+    # fallisce per il motivo sbagliato non dimostra niente.)
+    step = wf.split("- name: Compile lock (hashes)", 1)[1].split("- name:", 1)[0]
+    script = step.split("run: |", 1)[1]
+    invocazione = script.index("pip-compile --generate-hashes --allow-unsafe")
+    assert script.index("cp requirements-build-linux.lock") < invocazione, (
+        "il seed avviene dopo la compilazione: sovrascriverebbe il risultato"
+    )
+    # Il seed e' condizionale: al primo giro il lock non esiste ancora e
+    # `cp` fallirebbe con `set -euo pipefail` non ancora attivo qui.
+    assert "if [ -f requirements-build-linux.lock ]" in wf, (
+        "il seed non e' condizionale: fallirebbe quando il lock non esiste ancora"
+    )
+
+
+def test_socks_support_is_declared_for_the_betfair_proxy():
+    """Un proxy `socks5` senza PySocks ferma l'avvio (#430).
+
+    `requests` non dichiara SOCKS fra le sue dipendenze: lo supporta solo con
+    l'extra `requests[socks]`, che installa PySocks. `betfair_client` lo
+    verifica all'avvio e si ferma con un messaggio azionabile; questo test
+    fissa il fatto che la dipendenza sia DICHIARATA, cosi' che il messaggio
+    resti un promemoria invece che l'unico modo di scoprirlo.
+    """
+    radice = GEN_WF.parents[2]
+    runtime = (radice / "requirements.txt").read_text(encoding="utf-8")
+    lock_runtime = (radice / "requirements-lock.txt").read_text(encoding="utf-8")
+    lock_build = (radice / "requirements-build-linux.lock").read_text(encoding="utf-8")
+
+    assert "PySocks" in runtime, "PySocks non dichiarata in requirements.txt"
+    assert "PySocks==" in lock_runtime, "PySocks non pinnata in requirements-lock.txt"
+    # Nel lock hash-verificato il nome e' normalizzato in minuscolo da pip-compile.
+    assert "\npysocks==" in lock_build, (
+        "PySocks assente dal lock hash-verificato della toolchain di build"
+    )
+
+
 def test_generate_workflow_triggers_on_transitive_requirements():
     # Il .in include transitivamente requirements.txt/dev/test: un bump la' deve
     # ri-triggerare l'anti-stale, altrimenti il lock diventa silenziosamente

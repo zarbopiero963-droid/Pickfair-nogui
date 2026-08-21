@@ -1287,6 +1287,19 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 4
+    },
+    "gate_lockfile_e_pysocks": {
+      "description": "Follow-up 1 e 2 di #374, insieme perche' il primo da solo non si puo' dimostrare corretto. IL DIFETTO: il gate anti-stale di generate-linux-lockfile.yaml compila in /tmp/fresh-linux.lock, un file VUOTO. pip-compile tratta i pin gia' presenti nell'output come vincoli e cambia solo cio' che il .in impone; senza niente da preservare risolve TUTTO all'ultima versione disponibile, e poi il gate pretende che il lock committato le combaci. Conseguenza: ogni PR che tocca un requirements* era OBBLIGATA a inghiottire la deriva accumulata dagli upstream, dentro un file hash-verificato che esiste apposta per impedire i cambiamenti non voluti. Un lock serve a rendere gli aggiornamenti DELIBERATI; questo gate li rendeva obbligatori e invisibili. Misurato su #430 aggiungendo la sola PySocks: da zero 12 bump, sul lock committato 1. LA CORREZIONE: il file di destinazione parte dal lock committato (cp condizionale prima della compilazione). Gli upgrade restano possibili e restano una scelta, con pip-compile --upgrade quando li si vuole. PERCHE' INSIEME A PYSOCKS: la correttezza del seed si VEDE solo aggiungendo una dipendenza e osservando che il lock cambia di una riga invece di dodici — il secondo e' il test del primo, e il gate da solo sarebbe infrastruttura non provata che per l'owner non fa niente di visibile. PySocks chiude inoltre un buco operativo aperto su main da #430: requests non dichiara SOCKS fra le sue dipendenze (serve l'extra requests[socks]), quindi con proxy.enabled e tipo socks5 il client si ferma all'avvio finche' l'owner non fa pip install PySocks a mano.",
+      "allow_tests": true,
+      "files": [
+        ".github/workflows/generate-linux-lockfile.yaml",
+        "tests/packaging/test_linux_lockfile.py",
+        "requirements.txt",
+        "requirements-lock.txt",
+        "requirements-build-linux.lock",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6
     }
   }
 }
