@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from parsers import motore as parser_motore
+
+# (definizioni dei parser, registro delle value-map, dizionario disponibile)
+CacheParser = Tuple[List[Any], Dict[str, Any], bool]
 
 
 class TelegramSignalProcessor:
@@ -170,7 +173,12 @@ class TelegramSignalProcessor:
         # altro thread vedeva parser nuovi con value-map vecchie. Una singola
         # assegnazione di riferimento e' atomica sotto il GIL, quindi chi
         # legge vede o tutto il vecchio o tutto il nuovo, mai un misto.
-        self._cache_parser = None   # None = da caricare | (definizioni, registro, dizionario_ok)
+        # Il tipo e' dichiarato (rilievo DeepSource): senza annotazione il
+        # type checker deduce `None` dal valore iniziale, quindi l'assegnazione
+        # della tupla e l'indicizzazione risultano entrambe errori. Non era
+        # rumore: significa che nessun controllo di tipo stava guardando
+        # davvero questa cache.
+        self._cache_parser: Optional[CacheParser] = None
         # Serializza caricamento E assegnazione (rilievo GPT-5.6 Sol + Fable).
         # L'assegnazione di una tupla e' atomica, ma atomica non vuol dire
         # ORDINATA: un caricamento lento partito prima poteva concludersi DOPO
@@ -212,9 +220,17 @@ class TelegramSignalProcessor:
 
     @property
     def dizionario_disponibile(self) -> bool:
-        """True se le value-map derivate dal dizionario sono caricate."""
+        """True se le value-map derivate dal dizionario sono caricate.
+
+        Legge la cache UNA volta sola. Prima faceva `_parser_personalizzati()`
+        e poi rileggeva `self._cache_parser`: due letture separate di uno stato
+        che un'altra `ricarica_parser` puo' sostituire nel mezzo, quindi la
+        risposta poteva riferirsi a un caricamento diverso da quello appena
+        fatto.
+        """
         self._parser_personalizzati()
-        return bool(self._cache_parser[2])
+        cache = self._cache_parser
+        return bool(cache[2]) if cache else False
 
     def ricarica_parser(self) -> int:
         """Rilegge i parser dal disco e restituisce quanti ne ha caricati.
