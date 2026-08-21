@@ -1264,6 +1264,18 @@
         ".guardrails/allowed_scope.json"
       ],
       "max_files": 4
+    },
+    "r1_config_fuori_dal_tracking": {
+      "description": "R1 di #374 — togliere `config.json` dal controllo di versione. Il file tracciato porta credenziali VERE (username, password e app key Betfair; host, utente e password del proxy) ed e' rimasto committato mentre il repository diventava PUBBLICO. Verificato che nessuno lo legge: l'unico lettore e' betfair_client.py:64, inchiodato al percorso assoluto /home/ubuntu/Pickfair-nogui/config.json di un VPS che non esiste piu' (R3), quindi os.path.exists e' False e il blocco proxy non fa nulla; la config di runtime vive in %APPDATA%/XTraderBridge via core/config_store.py. La PR toglie il file dall'indice, lo ignora ancorato alla radice, aggiunge config.example.json coi segnaposto, e mette in CI i guardrail che impediscono il ritorno silenzioso. NON rende sicure le credenziali gia' pubblicate: quello lo fa solo la ROTAZIONE, che e' dell'owner (#426).",
+      "allow_tests": true,
+      "files": [
+        ".gitignore",
+        "config.json",
+        "config.example.json",
+        "tests/guardrails/test_config_fuori_dal_tracking.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 5
     }
   }
 }
