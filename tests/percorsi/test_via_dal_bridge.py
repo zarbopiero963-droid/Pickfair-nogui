@@ -234,6 +234,37 @@ def test_il_file_che_non_c_e_e_un_esito_A_SE(tmp_path):
         str(tmp_path / "mai-esistito.json")) == "nessun_file"
 
 
+def test_un_symlink_ROTTO_non_e_un_file_assente(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto giro. Fondato.
+
+    *«`FileNotFoundError` non prova l'assenza. Link/junction spezzati …
+    Va distinto almeno il path legacy esistente tramite `lstat`.»*
+
+    `open()` segue il link, non trova il bersaglio e alza ENOENT — identico a
+    un file mai esistito. Ma la voce di directory **c'e'**, e ce l'ha messa
+    qualcuno: e' un proxy indicato e non raggiungibile, cioe' «dichiarato ma
+    inutilizzabile», che in questo modulo vale eccezione. Il repo lo dice gia'
+    per il percorso di `PICKFAIR_CONFIG_PATH`; qui era incoerente.
+
+    Verificato togliendo `lstat`: il test fallisce con `DID NOT RAISE`.
+    """
+    import betfair_client
+
+    vecchia = tmp_path / "XTraderBridge"
+    vecchia.mkdir()
+    (vecchia / "config.json").symlink_to(tmp_path / "bersaglio-sparito.json")
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge", lambda: str(vecchia))
+
+    assert not os.path.exists(vecchia / "config.json"), \
+        "il presupposto del test: per `exists` il link rotto non c'e'"
+    assert os.path.lexists(vecchia / "config.json"), \
+        "ma la voce di directory c'e' davvero"
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
 def test_l_assenza_si_ACCERTA_aprendo_non_la_si_deduce_da_exists(monkeypatch, tmp_path):
     """Rilievo BLOCCANTE di GPT-5.6 Sol su #434, terzo giro. Fondato.
 

@@ -140,9 +140,8 @@ def _stato_proxy_altrove(percorso: str) -> str:
         with open(percorso, "r", encoding="utf-8") as f:
             contenuto = f.read()
     except (FileNotFoundError, NotADirectoryError):
-        # Assenza ACCERTATA: il sistema operativo non l'ha dedotta, ce l'ha
-        # detta provando ad aprire. E' l'unico modo di sapere che non c'e'.
-        return PROXY_NESSUN_FILE
+        # Nemmeno questo prova l'assenza da solo: lo si chiede a `lstat`.
+        return _assenza_o_incertezza(percorso)
     except Exception:
         # Permessi, I/O, una directory al posto di un file, il file sparito
         # fra due istruzioni. Non sappiamo cosa contenga: e non saperlo, qui,
@@ -162,6 +161,52 @@ def _stato_proxy_altrove(percorso: str) -> str:
     if not isinstance(blocco, dict):
         return PROXY_INCERTO
     return PROXY_DICHIARATO if blocco.get("enabled") else PROXY_ASSENTE
+
+
+def _assenza_o_incertezza(percorso: str) -> str:
+    """`open()` ha detto ENOENT. Ma «non trovato» non e' ancora «non c'e'».
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto giro.** Fondato, e sul
+    caso che il giro prima aveva risolto solo a meta':
+
+    > *«`FileNotFoundError` non prova l'assenza. Link/junction spezzati o
+    > profili/UNC temporaneamente irraggiungibili possono produrlo,
+    > classificando `PROXY_NESSUN_FILE` e consentendo traffico Betfair
+    > diretto. Va distinto almeno il path legacy esistente tramite `lstat`.»*
+
+    Un **symlink rotto** e' il caso pulito: `open()` segue il link, non trova
+    il bersaglio e alza ENOENT — ma **la voce di directory c'e'**, e ce l'ha
+    messa qualcuno. E' un proxy *indicato* e non raggiungibile: esattamente
+    «dichiarato ma inutilizzabile», che in questo modulo vale eccezione.
+    Questo stesso repository lo dice gia' per il percorso di
+    `PICKFAIR_CONFIG_PATH` (*«vale anche per un symlink rotto, che `exists`
+    segnala come assente»*, rilievo di GPT su #430): trattarlo diversamente
+    qui era un'incoerenza, non una scelta.
+
+    `os.lstat` non segue il link, quindi separa le due cose:
+
+    - la voce non esiste proprio      -> `PROXY_NESSUN_FILE` (si prosegue)
+    - la voce c'e' ma non si apre     -> `PROXY_INCERTO` (si ferma)
+    - non si riesce nemmeno a guardare -> `PROXY_INCERTO` (si ferma)
+
+    **Cosa questo NON chiude, e non fingo che lo chiuda.** L'altra meta' del
+    rilievo — un profilo o una UNC momentaneamente irraggiungibili — su
+    Windows arriva come `ERROR_PATH_NOT_FOUND`, cioe' lo stesso ENOENT di un
+    file che non e' mai esistito, e `lstat` risponde identico. Dal processo
+    non c'e' modo di distinguerli: sono lo stesso fatto osservabile.
+    Guardare la cartella superiore non aiuta, perche' una UNC caduta la fa
+    sparire allo stesso modo — e su Linux `~/.config` puo' legittimamente non
+    esistere, quindi leggerne l'assenza come incertezza fermerebbe l'avvio a
+    chiunque. La linea sta qui: si chiude tutto cio' che il sistema operativo
+    permette di distinguere, e si dice quale pezzo non lo permette.
+    """
+    try:
+        os.lstat(percorso)
+    except (FileNotFoundError, NotADirectoryError):
+        return PROXY_NESSUN_FILE
+    except Exception:
+        return PROXY_INCERTO
+    return PROXY_INCERTO
 
 
 def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
