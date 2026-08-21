@@ -106,10 +106,49 @@ class TestClientApplicaIlProxy:
         c = _client()
         assert c.session.proxies["https"] == "http://p.example:3128"
 
-    def test_file_assente_non_e_un_errore(self, monkeypatch):
-        """Nessuna configurazione significa "nessun proxy", non un guasto."""
+    def test_percorso_dichiarato_ma_assente_ferma_l_avvio(self, monkeypatch):
+        """Secondo rilievo di GPT-5.6 Sol su #430, accolto — e di nuovo il mio
+        test consolidava il bypass.
+
+        Al giro precedente avevo tracciato la linea fra "dichiarato ma
+        illeggibile" (eccezione) e "dichiarato ma assente" (si prosegue). E'
+        una linea incoerente: in entrambi i casi l'operatore ha detto dove sta
+        il file e il file non e' utilizzabile. Vale anche per un symlink rotto,
+        che `os.path.exists` segnala come assente."""
         monkeypatch.setenv(bc.ENV_PERCORSO_CONFIG, "/percorso/che/non/esiste.json")
+        with pytest.raises(ValueError):
+            _client()
+
+    def test_nessuna_configurazione_non_e_un_errore(self, monkeypatch, tmp_path):
+        """L'altro lato: senza percorso DICHIARATO, non trovare configurazione
+        significa "nessun proxy", non un guasto. E' il caso di chi non usa
+        proxy affatto, che deve continuare a partire."""
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        monkeypatch.setattr(bc, "percorsi_config_candidati",
+                            lambda: [str(tmp_path / "niente.json")])
         assert not _client().session.proxies
+
+    def test_il_primo_file_leggibile_vince_anche_senza_proxy(self, tmp_path, monkeypatch):
+        """Rilievo di OpenRouter Fugu Ultra su #430: precedenza pericolosa.
+
+        Prima, se il file a precedenza piu' alta non conteneva la chiave
+        `proxy`, la ricerca proseguiva e applicava il proxy di un file a
+        precedenza PIU' BASSA — magari vecchio, magari scrivibile da altri. Il
+        traffico Betfair sarebbe uscito da un proxy che nessuno aveva scelto.
+
+        Un `config.json` senza blocco `proxy` significa "nessun proxy", non
+        "guarda altrove"."""
+        alto = tmp_path / "alto.json"
+        alto.write_text(json.dumps({"betfair": {"username": "x"}}), encoding="utf-8")
+        basso = tmp_path / "basso.json"
+        basso.write_text(json.dumps({"proxy": {"enabled": True, "host": "inatteso.example",
+                                               "port": 9999}}), encoding="utf-8")
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        monkeypatch.setattr(bc, "percorsi_config_candidati",
+                            lambda: [str(alto), str(basso)])
+        assert not _client().session.proxies, (
+            "ha applicato il proxy di un file a precedenza piu' bassa"
+        )
 
     def test_percorso_dichiarato_ma_illeggibile_ferma_l_avvio(self, tmp_path, monkeypatch):
         """Rilievo di GPT-5.6 Sol su #430, accolto: prima questo test asseriva
@@ -125,13 +164,23 @@ class TestClientApplicaIlProxy:
             _client()
 
     def test_candidato_non_dichiarato_illeggibile_si_supera(self, tmp_path, monkeypatch):
-        """La distinzione che regge il caso sopra: un file trovato *cercando*,
-        e non *dichiarato*, puo' essere saltato. Qui l'ambiente punta a un file
-        valido, quindi la catena non deve inciampare su altro."""
+        """La distinzione che regge i casi sopra: un file trovato *cercando*,
+        e non *dichiarato*, si puo' saltare.
+
+        Rilievo non bloccante di Claude Fable 5: la versione precedente di
+        questo test portava questo nome ma esercitava solo un file valido —
+        non c'era nessun candidato illeggibile. Ora ce n'e' uno davvero, PRIMA
+        di quello buono, e senza percorso dichiarato."""
+        rotto = tmp_path / "rotto.json"
+        rotto.write_text("{ non e' json", encoding="utf-8")
         buono = tmp_path / "buono.json"
-        buono.write_text(json.dumps({"proxy": {"enabled": False}}), encoding="utf-8")
-        monkeypatch.setenv(bc.ENV_PERCORSO_CONFIG, str(buono))
-        assert not _client().session.proxies
+        buono.write_text(json.dumps({"proxy": {"enabled": True, "type": "http",
+                                               "host": "ok.example", "port": 8080}}),
+                         encoding="utf-8")
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        monkeypatch.setattr(bc, "percorsi_config_candidati",
+                            lambda: [str(rotto), str(buono)])
+        assert _client().session.proxies["https"] == "http://ok.example:8080"
 
 
 class TestCredenziali:

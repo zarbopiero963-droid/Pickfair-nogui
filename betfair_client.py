@@ -175,6 +175,18 @@ class BetfairClient:
         esplicito = percorso_config_esplicito()
         for percorso in percorsi_config_candidati():
             if not percorso or not os.path.exists(percorso):
+                if percorso == esplicito:
+                    # Rilievo di GPT-5.6 Sol su #430, secondo giro: avevo
+                    # tracciato la linea fra "dichiarato ma illeggibile"
+                    # (eccezione) e "dichiarato ma assente" (si prosegue). E'
+                    # una linea incoerente — in entrambi i casi l'operatore ha
+                    # detto dove sta il file e il file non e' utilizzabile.
+                    # Vale anche per un symlink rotto, che `exists` segnala
+                    # come assente.
+                    raise ValueError(
+                        f"il percorso dichiarato da {ENV_PERCORSO_CONFIG} non "
+                        f"esiste o non e' raggiungibile: {percorso}"
+                    )
                 continue
             try:
                 with open(percorso, "r", encoding="utf-8") as fh:
@@ -194,9 +206,15 @@ class BetfairClient:
                     "BetfairClient: configurazione illeggibile in %s (%s)", percorso, exc
                 )
                 continue
+            # Il PRIMO file leggibile vince, punto (rilievo di OpenRouter Fugu
+            # Ultra su #430). Prima si proseguiva quando il file non conteneva
+            # la chiave `proxy`, e si finiva per applicare il proxy di un file
+            # a precedenza PIU' BASSA — magari vecchio, magari scrivibile da
+            # altri. Il traffico Betfair sarebbe uscito da un proxy che nessuno
+            # aveva scelto, e questo e' il punto: un `config.json` senza blocco
+            # `proxy` significa "nessun proxy", non "guarda altrove".
             proxy = dati.get("proxy") if isinstance(dati, dict) else None
-            if isinstance(proxy, dict):
-                return proxy
+            return proxy if isinstance(proxy, dict) else None
         return None
 
     # =========================================================
