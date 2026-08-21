@@ -1,15 +1,15 @@
 {
   "betfair": {
-    "username": "heroin93",
-    "password": "camastra11@",
-    "app_key": "vS26v8lXv8Vf2v6L",
-    "certificate": "/home/ubuntu/Pickfair-nogui/client.crt",
-    "private_key": "/home/ubuntu/Pickfair-nogui/client.key"
+    "username": "<USERNAME>",
+    "password": "<PASSWORD>",
+    "app_key": "<APP_KEY>",
+    "certificate": "<PERCORSO ASSOLUTO DEL FILE CERTIFICATE>",
+    "private_key": "<PERCORSO ASSOLUTO DEL FILE PRIVATE_KEY>"
   },
   "telegram": {
     "api_id": 0,
-    "api_hash": "",
-    "session_string": "",
+    "api_hash": "<API_HASH>",
+    "session_string": "<SESSION_STRING>",
     "enabled": true,
     "auto_bet": true,
     "require_confirmation": false,
@@ -22,7 +22,7 @@
     "max_total_exposure_pct": 35.0,
     "max_event_exposure_pct": 18.0,
     "max_daily_loss": 50.0,
-    "min_stake": 0.10,
+    "min_stake": 0.1,
     "risk_profile": "BALANCED",
     "allow_recovery": true
   },
@@ -31,9 +31,9 @@
   "proxy": {
     "enabled": true,
     "type": "socks5",
-    "host": "82.47.252.232",
+    "host": "<HOST>",
     "port": 50101,
-    "username": "pierzar69",
-    "password": "MJLur7WySa"
+    "username": "<USERNAME>",
+    "password": "<PASSWORD>"
   }
 }

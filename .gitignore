@@ -109,3 +109,12 @@ desktop.ini
 .AppleDouble
 .LSOverride
 ehthumbs.db
+
+# =============================================================
+# SEGRETI — non tornano nel repo (R1 di #374)
+# =============================================================
+# `/config.json` porta credenziali VERE: username, password e app key
+# Betfair piu' host, utente e password del proxy. Ancorato alla radice apposta:
+# un `config.json` dentro una sottocartella di test deve restare versionabile.
+# Il modello senza segreti e' `config.example.json`.
+/config.json
