@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import logging
 import math
@@ -89,10 +90,49 @@ def percorsi_config_candidati() -> List[str]:
 #   | primo file leggibile, `proxy` malformato     | ECCEZIONE     |
 #   | `proxy` valido, `enabled` falso              | niente proxy  |
 #   | `proxy` valido, `enabled` ma incompleto      | ECCEZIONE     |
+#   | `port` non intera o fuori da 1-65535         | ECCEZIONE     |
+#   | tipo `socks*` ma PySocks non installato      | ECCEZIONE     |
 #
 # "Niente proxy" compare solo dove NESSUNO ne ha chiesto uno. Ovunque qualcuno
 # l'abbia chiesto e non si possa dargliela, si ferma.
 # ---------------------------------------------------------------------------
+
+
+def _porta_valida(valore: Any) -> int:
+    """La porta come intero fra 1 e 65535, oppure ``ValueError``.
+
+    Rilievo di OpenRouter Fugu Ultra e Claude Fable 5 su #430, fondato e
+    misurato: prima bastava che `port` non fosse vuota. Con ``port: "abc"`` il
+    risultato era ``socks5://h.example:abc`` — una stringa che passa ogni
+    controllo di questo modulo e fallisce alla PRIMA richiesta verso Betfair,
+    cioe' esattamente il fallimento tardivo e silenzioso che la regola qui
+    sopra esiste per impedire. Stesso discorso per ``port: 0`` e ``port:
+    99999``, che passavano entrambe.
+    """
+    try:
+        porta = int(str(valore).strip())
+    except (TypeError, ValueError):
+        raise ValueError(
+            f"proxy.port non e' un numero intero: {valore!r}. Un valore non "
+            f"numerico produrrebbe un URL che fallisce alla prima richiesta "
+            f"verso Betfair, non all'avvio"
+        ) from None
+    if not 1 <= porta <= 65535:
+        raise ValueError(
+            f"proxy.port fuori dall'intervallo valido 1-65535: {porta}"
+        )
+    return porta
+
+
+def _supporto_socks_disponibile() -> bool:
+    """``True`` se `requests` sa parlare SOCKS, cioe' se PySocks e' installato.
+
+    `requests` non dichiara SOCKS fra le sue dipendenze: lo supporta solo con
+    l'extra `requests[socks]`, che installa PySocks. Senza, ogni richiesta con
+    un proxy `socks*` solleva ``InvalidSchema: Missing dependencies for SOCKS
+    support``.
+    """
+    return importlib.util.find_spec("socks") is not None
 
 
 def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
@@ -112,14 +152,42 @@ def costruisci_proxy_url(proxy_cfg: Any) -> Optional[str]:
         return None
 
     host = str(proxy_cfg.get("host") or "").strip()
-    porta = proxy_cfg.get("port")
-    if not host or porta in (None, ""):
+    porta_grezza = proxy_cfg.get("port")
+    if not host or porta_grezza in (None, ""):
         raise ValueError(
             "proxy.enabled e' attivo ma host o port mancano: il traffico "
             "uscirebbe senza proxy senza che nessuno se ne accorga"
         )
+    porta = _porta_valida(porta_grezza)
 
     tipo = str(proxy_cfg.get("type") or "").strip() or "socks5"
+
+    # Un proxy SOCKS senza PySocks non e' un proxy che funziona male: e' un bot
+    # che non piazza piu' nulla. Misurato: `InvalidSchema: Missing dependencies
+    # for SOCKS support` su OGNI richiesta. E finche' il proxy non si applicava
+    # mai — il difetto che questa PR corregge — il guasto era invisibile, quindi
+    # e' proprio questa correzione a renderlo raggiungibile (rilievo bloccante
+    # di OpenRouter Fugu Ultra su #430, confermato da Claude Fable 5).
+    if tipo.lower().startswith("socks") and not _supporto_socks_disponibile():
+        raise ValueError(
+            f"proxy di tipo `{tipo}` richiesto, ma il supporto SOCKS non e' "
+            f"installato: `requests` solleverebbe `InvalidSchema: Missing "
+            f"dependencies for SOCKS support` alla prima chiamata verso "
+            f"Betfair, non all'avvio. Installa la dipendenza con "
+            f"`pip install PySocks` (ora dichiarata in requirements.txt e "
+            f"requirements-lock.txt)"
+        )
+
+    if tipo.lower() == "socks5":
+        # Non riscriviamo il tipo dichiarato dall'operatore, ma non lo taciamo
+        # nemmeno: con `socks5` la risoluzione DNS avviene in locale. Betfair
+        # vede comunque solo l'IP del proxy; a vedere il nome risolto e' il
+        # resolver di casa. Con `socks5h` risolve il proxy (rilievo di
+        # OpenRouter Fugu Ultra su #430).
+        logger.warning(
+            "BetfairClient: proxy `socks5`: il DNS viene risolto in locale. "
+            "Usa `socks5h` se vuoi che anche la risoluzione passi dal proxy"
+        )
     utente = str(proxy_cfg.get("username") or "").strip()
     password = str(proxy_cfg.get("password") or "").strip()
 

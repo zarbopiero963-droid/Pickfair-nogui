@@ -19,10 +19,26 @@ import pytest
 
 import betfair_client as bc
 
+#: La funzione vera, presa PRIMA che la fixture autouse la sostituisca: serve
+#: al test che verifica che il controllo guardi davvero PySocks.
+_SUPPORTO_SOCKS_ORIGINALE = bc._supporto_socks_disponibile
+
 
 def _client(**kwargs):
     """Client minimo: il costruttore non fa rete, solo assegnazioni."""
     return bc.BetfairClient(username="u", app_key="k", cert_pem="c", key_pem="p", **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _socks_disponibile(monkeypatch):
+    """PySocks presente, per default, in tutti i test di questo file.
+
+    Serve a tenere separate due cose: cosa fa il modulo con una configurazione
+    di proxy, e cosa fa quando la dipendenza SOCKS manca. Senza questo fissaggio
+    ogni test con `type: socks5` misurerebbe l'ambiente della macchina invece
+    del codice. I test che vogliono davvero l'assenza la dichiarano.
+    """
+    monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: True)
 
 
 class TestCostruzioneUrl:
@@ -232,3 +248,121 @@ class TestCredenziali:
         """Prima veniva scartata in silenzio e la connessione diventava anonima."""
         with pytest.raises(ValueError):
             bc.costruisci_proxy_url(cfg)
+
+
+class TestPorta:
+    """La porta e' un numero, e va verificato PRIMA di costruire l'URL.
+
+    Rilievo bloccante di OpenRouter Fugu Ultra su #430, confermato non
+    bloccante da Claude Fable 5 e verificato a mano sul codice reale: con
+    ``port: "abc"`` la funzione restituiva ``socks5://h.example:abc``, un URL
+    che questo modulo considerava valido e che falliva solo alla prima
+    richiesta verso Betfair.
+    """
+
+    @pytest.mark.parametrize("porta", ["non-un-numero", "8o80", "1080 e mezzo", 1080.5, True])
+    def test_porta_non_intera_ferma_l_avvio(self, porta):
+        with pytest.raises(ValueError, match="port"):
+            bc.costruisci_proxy_url({"enabled": True, "host": "h.example", "port": porta})
+
+    @pytest.mark.parametrize("porta", [0, -1, 65536, 99999])
+    def test_porta_fuori_intervallo_ferma_l_avvio(self, porta):
+        with pytest.raises(ValueError, match="1-65535"):
+            bc.costruisci_proxy_url({"enabled": True, "host": "h.example", "port": porta})
+
+    @pytest.mark.parametrize("porta,atteso", [(1080, 1080), ("1080", 1080), (" 1080 ", 1080),
+                                              (1, 1), (65535, 65535)])
+    def test_porta_valida_passa(self, porta, atteso):
+        url = bc.costruisci_proxy_url({"enabled": True, "host": "h.example", "port": porta})
+        assert url == f"socks5://h.example:{atteso}"
+        assert urlparse(url).port == atteso
+
+    def test_la_porta_normalizzata_finisce_nell_url(self):
+        """Una porta scritta come stringa non deve restare stringa nell'URL."""
+        assert bc.costruisci_proxy_url(
+            {"enabled": True, "host": "h.example", "port": "01080"}
+        ) == "socks5://h.example:1080"
+
+
+class TestSupportoSocks:
+    """Un proxy SOCKS senza PySocks non e' degradato: e' un bot fermo.
+
+    Misurato con `requests` 2.32.3 e `trust_env=False`:
+    ``InvalidSchema: Missing dependencies for SOCKS support`` su ogni richiesta.
+    Finche' il proxy non si applicava mai — il difetto che questa PR corregge —
+    il guasto era irraggiungibile: e' questa correzione a renderlo possibile.
+    """
+
+    @pytest.mark.parametrize("tipo", ["socks5", "socks5h", "socks4", "SOCKS5"])
+    def test_socks_senza_pysocks_ferma_l_avvio(self, tipo, monkeypatch):
+        monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: False)
+        with pytest.raises(ValueError, match="SOCKS"):
+            bc.costruisci_proxy_url(
+                {"enabled": True, "type": tipo, "host": "h.example", "port": 1080}
+            )
+
+    def test_il_tipo_predefinito_e_socks_quindi_richiede_pysocks(self, monkeypatch):
+        """Senza `type` il default e' `socks5`: il controllo deve valere anche li'."""
+        monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: False)
+        with pytest.raises(ValueError, match="SOCKS"):
+            bc.costruisci_proxy_url({"enabled": True, "host": "h.example", "port": 1080})
+
+    def test_http_non_richiede_pysocks(self, monkeypatch):
+        monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: False)
+        assert bc.costruisci_proxy_url(
+            {"enabled": True, "type": "http", "host": "h.example", "port": 8080}
+        ) == "http://h.example:8080"
+
+    def test_proxy_disabilitato_non_richiede_pysocks(self, monkeypatch):
+        """`enabled` falso significa "nessun proxy": nessuna dipendenza serve."""
+        monkeypatch.setattr(bc, "_supporto_socks_disponibile", lambda: False)
+        assert bc.costruisci_proxy_url(
+            {"enabled": False, "type": "socks5", "host": "h.example", "port": 1080}
+        ) is None
+
+    def test_il_controllo_guarda_davvero_pysocks(self, monkeypatch):
+        """Non e' una costante: interroga `importlib.util.find_spec`."""
+        import importlib.util
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda nome: None)
+        assert _SUPPORTO_SOCKS_ORIGINALE() is False
+
+        monkeypatch.setattr(importlib.util, "find_spec", lambda nome: object())
+        assert _SUPPORTO_SOCKS_ORIGINALE() is True
+
+
+class TestConfigStoreFraICandidati:
+    """`core.config_store.config_path()` era la sola tappa senza copertura.
+
+    Rilievo di OpenRouter Fugu Ultra su #430: *«verificare la copertura reale
+    di core.config_store.config_path()»*. E' la tappa che conta di piu' sulla
+    macchina dell'owner — su Windows e' `%APPDATA%\\XTraderBridge` — perche' e'
+    la config di runtime vera, quella che l'installazione usa davvero.
+    """
+
+    def test_config_store_e_fra_i_candidati(self, monkeypatch):
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        from core.config_store import config_path
+
+        assert config_path() in bc.percorsi_config_candidati()
+
+    def test_viene_prima_della_cartella_del_programma(self, monkeypatch):
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        from core.config_store import config_path
+
+        candidati = bc.percorsi_config_candidati()
+        accanto_al_programma = candidati[-1]
+        assert candidati.index(config_path()) < candidati.index(accanto_al_programma)
+
+    def test_il_proxy_di_config_store_viene_applicato(self, tmp_path, monkeypatch):
+        """La tappa e' percorsa davvero, non solo elencata."""
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        finto = tmp_path / "config.json"
+        finto.write_text(json.dumps(
+            {"proxy": {"enabled": True, "type": "socks5",
+                       "host": "da-config-store.example", "port": 1080}}
+        ), encoding="utf-8")
+        monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [str(finto)])
+        c = _client()
+        assert c.session.proxies["https"] == "socks5://da-config-store.example:1080"
+
