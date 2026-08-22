@@ -35,12 +35,17 @@ from __future__ import annotations
 import os
 from typing import Dict, Tuple
 
-# Nome della cartella dati di Pickfair. Coerente con `~/.pickfair/db.key`
-# gia' usato da `config_registry`.
-NOME_CARTELLA_DATI = ".pickfair"
+import percorsi
 
-# Variabile d'ambiente per spostare la cartella dei parser (test, piu'
-# installazioni sulla stessa macchina, percorsi non standard).
+# La cartella dati di Pickfair e' dichiarata in `percorsi.py`, che e' la fonte
+# unica: qui c'era una seconda definizione di `.pickfair`, e due definizioni
+# della stessa cosa sono una che prima o poi resta indietro.
+NOME_CARTELLA_DATI = percorsi.NOME_CARTELLA_DATI
+
+# Variabile d'ambiente per spostare la SOLA cartella dei parser (test, piu'
+# installazioni sulla stessa macchina, percorsi non standard). Resta distinta
+# da `PICKFAIR_DATA_DIR`, che sposta tutto: chi vuole muovere solo i parser
+# non deve essere costretto a muovere anche la configurazione.
 ENV_CARTELLA_PARSER = "PICKFAIR_PARSERS_DIR"
 
 # ---------------------------------------------------------------------------
@@ -124,23 +129,18 @@ def normalizza_azione(valore: object) -> str:
     return AZIONI.get(str(valore or "").strip().upper(), "")
 
 
-# Dove XTrader Signal Bridge teneva i suoi parser. Serve SOLO a diagnosticare:
-# se qualcuno arriva dal Bridge e non trova piu' i suoi file, deve leggere un
-# messaggio che dice dove sono, non un silenzioso "nessun parser".
-#
-# E' una stringa calcolata qui, NON un import di `core.config_store`: leggere
-# da quella cartella come fonte riattaccherebbe Pickfair al Bridge, che e'
-# esattamente cio' che questo modulo esiste per impedire. Non si carica mai
-# nulla da li'.
-NOME_CARTELLA_BRIDGE = "XTraderBridge"
+# Anche il percorso storico del Bridge e' dichiarato in `percorsi.py`, per la
+# stessa ragione. Resta esposto qui perche' i test lo usano per nome.
+NOME_CARTELLA_BRIDGE = percorsi.NOME_CARTELLA_BRIDGE
 
 
 def cartella_parser_del_bridge() -> str:
-    """Percorso storico dei parser del Bridge. Solo per diagnostica."""
-    base = (os.environ.get("APPDATA")
-            or os.environ.get("XDG_CONFIG_HOME")
-            or os.path.join(os.path.expanduser("~"), ".config"))
-    return os.path.join(base, NOME_CARTELLA_BRIDGE, "parsers")
+    """Percorso storico dei parser del Bridge. **Solo diagnostica.**
+
+    Non si carica mai nulla da qui: leggerlo come fonte riattaccherebbe
+    Pickfair al Bridge, che e' cio' che questo modulo esiste per impedire.
+    """
+    return os.path.join(percorsi.cartella_dati_del_bridge(), "parsers")
 
 
 def cartella_parser() -> str:
@@ -156,4 +156,4 @@ def cartella_parser() -> str:
     esplicito = (os.environ.get(ENV_CARTELLA_PARSER) or "").strip()
     if esplicito:
         return esplicito
-    return os.path.join(os.path.expanduser("~"), NOME_CARTELLA_DATI, "parsers")
+    return percorsi.dentro("parsers")

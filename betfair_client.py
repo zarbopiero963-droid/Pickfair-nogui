@@ -17,6 +17,7 @@ from urllib.parse import quote, urlparse
 import requests
 from requests.exceptions import HTTPError, RequestException, Timeout
 
+import percorsi
 from circuit_breaker import CircuitBreaker
 from core.type_helpers import safe_float, safe_int, safe_side
 
@@ -50,25 +51,447 @@ def percorsi_config_candidati() -> List[str]:
     proseguiva. Una funzione che si crede attiva e non lo e'.
 
     Nessun percorso assoluto: si parte da cio' che l'ambiente dichiara, poi
-    dalla config di runtime vera (``%APPDATA%/XTraderBridge`` su Windows), poi
-    dalla cartella del programma.
+    dalla cartella dati di Pickfair, poi dalla cartella del programma.
+
+    **Qui c'era un secondo difetto, introdotto da me nella stessa #430 che
+    doveva chiudere il primo.** Il candidato intermedio non era la cartella di
+    Pickfair: era `core.config_store.config_path()`, cioe'
+    ``%APPDATA%/XTraderBridge/config.json`` — la cartella dati di **un altro
+    prodotto**, XTrader Signal Bridge. Chi non l'ha mai installato non ha quel
+    percorso, quindi il candidato non trovava nulla: lo stesso identico esito
+    del percorso assoluto che avevo appena tolto.
+
+    E importarlo trascinava nel grafo vivo sei moduli del Bridge
+    (`csv_writer`, `bridge_mode`, `confirmation_reader`, `token_store`,
+    `language_select`, `config_store`). Il commento che accompagnava quella
+    riga notava che `config_store` «importa a sua volta parti del progetto»:
+    il costo era stato visto e pagato lo stesso.
+
+    Ora il percorso lo dichiara `percorsi.py`, che non importa niente da
+    `core`.
     """
     candidati: List[str] = []
     da_ambiente = percorso_config_esplicito()
     if da_ambiente:
         candidati.append(da_ambiente)
-    try:
-        # Import locale: `core.config_store` importa a sua volta parti del
-        # progetto, e un import in testa creerebbe un ciclo.
-        from core.config_store import config_path as _config_path
-
-        candidati.append(_config_path())
-    except Exception:  # pragma: no cover - dipende dall'ambiente
-        logger.debug("BetfairClient: config_store non disponibile per il proxy")
+    candidati.append(percorsi.percorso_config())
     candidati.append(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
     )
     return candidati
+
+
+# Esiti dell'ispezione di una configurazione rimasta nella cartella del Bridge.
+# Sono quattro e non due di proposito. Le due distinzioni che costano:
+#   «non lo so»  non e'  «non c'e'»   (INCERTO vs NESSUN_FILE: la prima ferma)
+#   «non c'e'»   non e'  «c'e' e non dichiara niente» (la seconda avvisa)
+PROXY_DICHIARATO = "dichiarato"   # c'e' un proxy attivo
+PROXY_ASSENTE = "assente"         # letto, interpretato, nessun proxy attivo
+PROXY_INCERTO = "incerto"         # non si e' potuto stabilire
+PROXY_NESSUN_FILE = "nessun_file"  # il file non c'e', accertato aprendolo
+
+# Codici Windows che arrivano come `FileNotFoundError` ma NON dicono «non c'e'»:
+# dicono «non ci sono arrivato».
+#
+# **Rilievo BLOCCANTE di OpenRouter Fugu Ultra, arrivato in ritardo sul range
+# precedente, e fondato:** *«su CPython l'OSError concreto e' scelto da
+# `errno`, non da `winerror`»*. Verificato qui, senza dedurlo:
+#
+#     OSError(ENOENT)  -> FileNotFoundError      <- solo questi arrivano
+#     OSError(EACCES)  -> PermissionError
+#     OSError(EINVAL)  -> OSError
+#
+# `_non_raggiungibile` viene consultata **solo** dentro `except
+# FileNotFoundError`. Quindi elencare codici che Windows mappa su un errno
+# diverso non serviva a niente: quelle voci erano morte, e i test che le
+# esercitavano fabbricavano oggetti che il sistema operativo non produce mai
+# — copertura falsa, esattamente il difetto che continuo a cercare altrove.
+#
+# Restano i codici che CPython mappa su ENOENT e che significano
+# irraggiungibilita' invece di assenza. Gli altri (21, 55, 59, 64, 1231,
+# 1232) **erano gia' fail-closed** per un'altra strada: non essendo
+# `FileNotFoundError` finiscono nell'`except Exception`, che risponde
+# `PROXY_INCERTO`. Il comportamento non cambia; cambia che adesso il codice
+# non dichiara piu' una copertura che non aveva. C'e' un test che lo fissa.
+WINERROR_NON_RAGGIUNGIBILE = frozenset({
+    15,  # ERROR_INVALID_DRIVE   unita' non c'e' (mappato su ENOENT)
+    53,  # ERROR_BAD_NETPATH     percorso di rete non trovato
+    67,  # ERROR_BAD_NET_NAME    nome di rete non trovato
+})
+
+
+# Tetto alla risalita verso la cartella che dovrebbe contenere il file. Un
+# percorso vero non ha 64 livelli; toccare il tetto significa che sta
+# succedendo qualcosa che non capiamo, e allora vale incertezza.
+MAX_PASSI_RISALITA = 64
+
+
+def _non_raggiungibile(errore: BaseException) -> bool:
+    """L'errore dice «non ci sono arrivato», non «non c'e'».
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto e sesto giro — e al
+    quarto avevo risposto che non si poteva fare. Mi sbagliavo.**
+
+    Avevo scritto, qui sotto e sulla PR, che una UNC caduta e un file mai
+    esistito *«sono lo stesso fatto osservabile»*. E' vero guardando `errno`,
+    che appiattisce tutto su ENOENT — e falso guardando `winerror`, che su
+    Windows sopravvive dentro l'eccezione. Una condivisione irraggiungibile
+    da' 53 o 67, un profilo caduto 64: un file che non esiste da' 2. Sono
+    numeri diversi, e stavano nell'eccezione tutto il tempo.
+
+    Avevo dichiarato un limite **senza verificarlo**, e per due giri quella
+    frase e' rimasta nel codice a giustificare il fail-open che descriveva.
+    """
+    return getattr(errore, "winerror", None) in WINERROR_NON_RAGGIUNGIBILE
+
+
+def _stato_proxy_altrove(percorso: str) -> str:
+    """Cosa dichiara la configurazione rimasta nella cartella del Bridge.
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, secondo giro,
+    sollevato di nuovo indipendentemente da entrambi.** Al giro precedente
+    questa funzione restituiva `False` su QUALUNQUE eccezione — permessi
+    negati, errore di I/O, JSON malformato, race fra `exists()` e `open()` —
+    e il chiamante proseguiva senza proxy.
+
+    Cioe': *«non riesco a leggere il file, quindi faccio come se non ci
+    fosse un proxy»*. Su una macchina dove il proxy c'e' davvero, questo
+    manda le scommesse sulla connessione diretta — **esattamente il difetto
+    che questa PR esiste per chiudere.**
+
+    Peggio: avevo scritto un test che asseriva quel comportamento
+    (*«una vecchia config illeggibile non ferma l'avvio»*), quindi il
+    fail-open non era una svista rimasta scoperta — **era codificato e
+    protetto da una verifica.**
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, terzo giro.** L'esistenza del
+    file la decideva il chiamante con `os.path.exists()`, che **restituisce
+    `False` anche quando il file c'e' ma non si riesce a guardarlo** — cartella
+    senza permesso di attraversamento, unita' di rete caduta, path lungo su
+    Windows. Quel `False` diceva «non c'e' nessuna vecchia configurazione» e il
+    controllo terminava fail-open: il file legacy poteva essere li', col suo
+    proxy, e Betfair veniva raggiunta lo stesso in chiaro.
+
+    Adesso l'assenza non si deduce piu' da una domanda che sa solo dire di no:
+    **si accerta aprendo.** Solo `FileNotFoundError` (e `NotADirectoryError`,
+    che dice la stessa cosa di un pezzo di percorso) valgono «non c'e'».
+    Qualunque altro errore vale «non lo so», che qui pesa quanto un proxy
+    dichiarato.
+
+    Gli esiti sono quattro, e solo i primi due lasciano proseguire:
+
+    - il file non esiste           -> `PROXY_NESSUN_FILE`
+    - letto e interpretato, niente -> `PROXY_ASSENTE`
+    - proxy attivo                 -> `PROXY_DICHIARATO`
+    - illeggibile o non interpretabile -> `PROXY_INCERTO`
+
+    Il file viene aperto **solo per rispondere a questa domanda**, mai per
+    configurare: usarne il blocco significherebbe far uscire il traffico
+    verso Betfair da un host scelto in un altro programma e mai riesaminato
+    qui.
+    """
+    try:
+        with open(percorso, "r", encoding="utf-8") as f:
+            contenuto = f.read()
+    except (FileNotFoundError, NotADirectoryError) as errore:
+        if _non_raggiungibile(errore):
+            return PROXY_INCERTO
+        # Nemmeno questo prova l'assenza da solo: lo si chiede a `lstat`.
+        return _assenza_o_incertezza(percorso)
+    except Exception:
+        # Permessi, I/O, una directory al posto di un file, il file sparito
+        # fra due istruzioni. Non sappiamo cosa contenga: e non saperlo, qui,
+        # non e' un permesso di proseguire.
+        return PROXY_INCERTO
+    try:
+        dati = json.loads(contenuto)
+    except Exception:
+        # Letto ma non interpretabile. Un JSON rotto puo' contenere un proxy:
+        # dire "assente" sarebbe inventare.
+        return PROXY_INCERTO
+    if not isinstance(dati, dict):
+        return PROXY_INCERTO
+    blocco = dati.get("proxy")
+    if blocco is None:
+        return PROXY_ASSENTE
+    if not isinstance(blocco, dict):
+        return PROXY_INCERTO
+    return PROXY_DICHIARATO if blocco.get("enabled") else PROXY_ASSENTE
+
+
+def _assenza_o_incertezza(percorso: str) -> str:
+    """`open()` ha detto ENOENT. Ma «non trovato» non e' ancora «non c'e'».
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, quarto giro.** Fondato, e sul
+    caso che il giro prima aveva risolto solo a meta':
+
+    > *«`FileNotFoundError` non prova l'assenza. Link/junction spezzati o
+    > profili/UNC temporaneamente irraggiungibili possono produrlo,
+    > classificando `PROXY_NESSUN_FILE` e consentendo traffico Betfair
+    > diretto. Va distinto almeno il path legacy esistente tramite `lstat`.»*
+
+    Un **symlink rotto** e' il caso pulito: `open()` segue il link, non trova
+    il bersaglio e alza ENOENT — ma **la voce di directory c'e'**, e ce l'ha
+    messa qualcuno. E' un proxy *indicato* e non raggiungibile: esattamente
+    «dichiarato ma inutilizzabile», che in questo modulo vale eccezione.
+    Questo stesso repository lo dice gia' per il percorso di
+    `PICKFAIR_CONFIG_PATH` (*«vale anche per un symlink rotto, che `exists`
+    segnala come assente»*, rilievo di GPT su #430): trattarlo diversamente
+    qui era un'incoerenza, non una scelta.
+
+    `os.lstat` non segue il link, quindi separa le due cose:
+
+    - la voce non esiste proprio      -> `PROXY_NESSUN_FILE` (si prosegue)
+    - la voce c'e' ma non si apre     -> `PROXY_INCERTO` (si ferma)
+    - non si riesce nemmeno a guardare -> `PROXY_INCERTO` (si ferma)
+
+    **Secondo rilievo di Claude Fable 5, quinto giro.** `NotADirectoryError`
+    stava con la prima riga: se un pezzo intermedio del percorso e' un file
+    normale, dentro non ci puo' essere niente, quindi «assente». Ma quella e'
+    di nuovo una **deduzione**, non un accertamento: mi dice che un
+    `config.json` non ci puo' stare *se il percorso e' quello che sembra*, e
+    non ho modo di escludere che una junction o un mount ci abbiano messo
+    altro in mezzo. Su un percorso da cui dipendono i soldi la deduzione non
+    basta, e il costo del contrario e' trascurabile — perche' l'avvio si
+    fermi serve un **file** chiamato `XTraderBridge` dentro `%APPDATA%`, e il
+    messaggio dice cosa fare. Quindi anche questa e' incertezza.
+
+    **Qui al quarto giro avevo scritto che l'altra meta' del rilievo — UNC o
+    profilo irraggiungibili — non era chiudibile, perche' *«sono lo stesso
+    fatto osservabile»*. Era sbagliato**, e GPT-5.6 Sol l'ha ri-sollevato al
+    sesto. Guardando `errno` sono davvero lo stesso fatto: ENOENT per
+    entrambi. Guardando `winerror`, che su Windows sopravvive dentro
+    l'eccezione, no: 53 / 64 / 67 per la rete, 2 per un file che non c'e'.
+    Il discriminante stava nell'eccezione da sempre; l'ho dichiarato
+    impossibile senza provarci. Ora lo fa `_non_raggiungibile`.
+
+    Resta indistinguibile solo `ERROR_PATH_NOT_FOUND` (3) da una cartella
+    intermedia che davvero non esiste — ma li' i due casi coincidono anche
+    nella sostanza: se la cartella del Bridge non c'e', non c'e' nemmeno una
+    configurazione arenata dentro. **Questa volta l'ho verificato**, invece di
+    dedurlo: `getattr(errore, "winerror", None)` e' `None` su Linux, quindi
+    quel ramo non tocca nessuna piattaforma dove il codice non esiste.
+    """
+    try:
+        os.lstat(percorso)
+    except FileNotFoundError as errore:
+        if _non_raggiungibile(errore):
+            return PROXY_INCERTO
+        # Non c'e' la voce. Ma ci siamo arrivati, dove doveva stare?
+        return _ci_siamo_arrivati(os.path.dirname(percorso))
+    except Exception:
+        return PROXY_INCERTO
+    return PROXY_INCERTO
+
+
+def _la_voce_e_ASSENTE(percorso: str) -> bool:
+    """La voce di directory manca — **accertato**, non dedotto.
+
+    `stat` segue, `lstat` no. Se `lstat` riesce dove `stat` ha fallito, allora
+    qualcosa **c'e'** — una junction, un symlink, un mount — e il bersaglio non
+    e' raggiungibile. Non e' assenza: e' non esserci arrivati. E' lo stesso
+    discriminante usato sul file, applicato al nodo intermedio.
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol, Claude Fable 5 e OpenRouter Fugu
+    Ultra su #434, decimo giro. Tutti e tre, indipendentemente, sulla stessa
+    riga.** La prima versione di questa funzione si chiamava
+    `_la_voce_esiste_comunque` e finiva con:
+
+        except Exception:
+            return False        # -> il chiamante conclude «assente»
+
+    Cioe' un `PermissionError` su `lstat` — la voce **c'e'** ma non si puo'
+    guardare — diventava assenza, il chiamante risaliva a un genitore
+    accessibile e rispondeva `PROXY_NESSUN_FILE`. **La stessa falsa assenza
+    che questa funzione era stata scritta per chiudere, riaperta dentro il
+    rimedio, una riga dopo.**
+
+    E' il difetto che questa PR ha inseguito per dieci giri — `except
+    Exception` con un default benigno — riprodotto da me nella correzione. Non
+    e' una svista isolata: e' la prova che il pattern e' un riflesso, e che
+    l'unico modo di non ripeterlo e' che il nome della funzione dica cosa deve
+    essere **accertato**, non cosa si spera.
+
+    Percio' adesso la domanda e' rovesciata, e una sola risposta lascia
+    proseguire:
+
+    - `FileNotFoundError`  -> assenza accertata  -> `True`  (si risale)
+    - qualunque altro errore -> non si sa       -> `False` (il chiamante ferma)
+    - `lstat` riesce         -> la voce c'e'    -> `False` (il chiamante ferma)
+    """
+    try:
+        os.lstat(percorso)
+    except FileNotFoundError:
+        return True
+    except Exception:
+        # Permessi, I/O, rete: la voce potrebbe esserci benissimo. Non
+        # saperlo non e' un permesso di concludere che non c'e'.
+        return False
+    return False
+
+
+def _ci_siamo_arrivati(cartella: str) -> str:
+    """Il file non c'e'. Siamo riusciti a guardare nel posto dove doveva stare?
+
+    **Rilievo BLOCCANTE di GPT-5.6 Sol su #434, settimo giro:** `winerror` 3
+    (`ERROR_PATH_NOT_FOUND`) restava classificato come assenza, ma *«un profilo
+    reindirizzato o percorso di rete temporaneamente indisponibile puo'
+    restituire ERROR_PATH_NOT_FOUND»*.
+
+    **Il rimedio letterale — trattare 3 come incertezza — non si puo'
+    applicare**, e la ragione e' il caso principale, non un dettaglio: aprire
+    `%APPDATA%` + `XTraderBridge` + `config.json` quando la cartella `XTraderBridge`
+    non esiste da' proprio 3, perche' manca un componente *intermedio*. Cioe'
+    e' il codice che riceve **chiunque non abbia mai installato il Bridge**.
+    Trattarlo come incertezza avrebbe impedito l'avvio a tutti loro — il
+    difetto opposto, e piu' grave.
+
+    Il rilievo pero' e' fondato, e si chiude smettendo di **dedurre dal
+    codice** e andando a **guardare**: se la cartella che doveva contenere il
+    file e' ispezionabile, allora il file davvero non c'e'; se risalendo si
+    incontra un errore di rete, non ci siamo arrivati e vale incertezza.
+
+    Cosi' il risultato **non dipende da quale codice Windows scelga** in ogni
+    situazione — che e' bene, perche' quello non posso verificarlo da qui, e
+    l'ultima volta che ho dato per scontato un comportamento del sistema
+    operativo senza provarlo mi sbagliavo.
+
+    **La risalita ha un tetto, e non e' pignoleria.** La prima versione era un
+    `while True` che si fidava di `dirname`: accorcia a ogni passo e alla
+    radice restituisce se stessa, quindi «non puo' girare a vuoto». Sabotando
+    la condizione d'uscita per verificarlo, la suite **non e' fallita: si e'
+    bloccata**, due volte, finche' non l'ha uccisa un timeout esterno. Un
+    ciclo su un percorso che arriva da fuori non va argomentato limitato: va
+    reso limitato. Toccato il tetto non si inventa una risposta — non si e'
+    stabilito niente, quindi incertezza.
+    """
+    for _ in range(MAX_PASSI_RISALITA):
+        try:
+            # `stat`, non `lstat`. **Rilievo BLOCCANTE di GPT-5.6 Sol,
+            # ottavo giro:** *«`os.lstat(cartella)` non verifica che la
+            # directory sia realmente attraversabile. Su junction/symlink
+            # Windows verso share indisponibile puo' riuscire sul reparse
+            # point»*. Vero: `lstat` non segue, quindi su una junction verso
+            # una condivisione morta riesce guardando il puntatore invece
+            # della destinazione — e «ci sono arrivato» diventa falso.
+            #
+            # Le due domande sono diverse e vogliono due chiamate diverse:
+            #   sul FILE       «la voce esiste?»       -> `lstat`, non segue
+            #   sulla CARTELLA «ci sono arrivato?»     -> `stat`, segue
+            os.stat(cartella)
+        except FileNotFoundError as errore:
+            if _non_raggiungibile(errore):
+                return PROXY_INCERTO
+            if not _la_voce_e_ASSENTE(cartella):
+                # **Rilievo BLOCCANTE di OpenRouter Fugu Ultra, nono giro.**
+                # *«se un nodo INTERMEDIO restituisce 3 e `_non_raggiungibile`
+                # non lo intercetta, il loop sale al genitore locale, riesce, e
+                # ritorna `PROXY_NESSUN_FILE`. Falsa assenza.»* Fondato: la
+                # strada c'era.
+                #
+                # Il rimedio chiesto — mettere 3 fra i codici di
+                # irraggiungibilita' — **non si puo' applicare**, per la stessa
+                # ragione del giro scorso: 3 e' il codice che riceve chi non ha
+                # mai installato il Bridge, e bloccherebbe tutti loro.
+                #
+                # Ma la distinzione non ha bisogno di indovinare il codice, ed
+                # e' la stessa gia' usata un livello piu' sotto: se la voce
+                # ESISTE (`lstat` riesce) ma non ci si passa (`stat` no), e'
+                # una junction verso qualcosa di morto. Se non esiste
+                # nemmeno la voce, e' assenza e si risale.
+                return PROXY_INCERTO
+            genitore = os.path.dirname(cartella)
+            if not genitore or genitore == cartella:
+                # Risalito fino alla radice senza trovare niente: non c'e'
+                # nessun posto dove una vecchia configurazione possa stare.
+                return PROXY_NESSUN_FILE
+            cartella = genitore
+            continue
+        except Exception:
+            # La cartella c'e' ma non si e' potuto guardarci: permessi, I/O.
+            return PROXY_INCERTO
+        # Ci siamo arrivati, e il file non c'era: assenza accertata.
+        return PROXY_NESSUN_FILE
+    return PROXY_INCERTO
+
+
+def _controlla_config_rimasta_nel_bridge(candidati: List[str]) -> None:
+    """Se la configurazione e' rimasta nella cartella del Bridge, non si tira dritto.
+
+    Rilievo BLOCCANTE di GPT-5.6 Sol e Claude Fable 5 su #434, sollevato
+    indipendentemente da entrambi in due giri successivi.
+
+    Al primo giro qui c'era solo un `logger.warning` e il client proseguiva
+    **senza proxy**: se il proxy serviva a far uscire il traffico da una rete
+    precisa, un aggiornamento avrebbe mandato le scommesse sulla connessione
+    diretta, in silenzio.
+
+    Contraddiceva la regola scritta in questo stesso modulo poche righe piu'
+    sotto —
+
+        Configurazione DICHIARATA ma inutilizzabile  ->  eccezione.
+        Nessuna configurazione                        ->  nessun proxy, in silenzio.
+
+    Un proxy nella vecchia cartella **e' dichiarato**: che Pickfair non sappia
+    piu' leggerlo da li' lo rende inutilizzabile, non inesistente.
+
+    Al secondo giro restava un fail-open piu' sottile: un file **illeggibile**
+    veniva trattato come «nessun proxy». Ora l'incertezza vale quanto la
+    dichiarazione: si ferma. **Solo un'assenza accertata lascia proseguire.**
+
+    Al terzo giro ne restavano due, sollevati da GPT-5.6 Sol e Claude Fable 5:
+
+    1. l'esistenza del vecchio file la decideva `os.path.exists()`, che dice
+       `False` anche quando il file c'e' ma non e' raggiungibile. Ora la
+       decide `_stato_proxy_altrove` aprendolo davvero;
+    2. **restava un `except Exception: return` attorno a tutto.** Serviva a
+       dire «se non so nemmeno DOVE guardare, lascio correre» — che e' la
+       stessa frase, parola per parola, che questa PR esiste per cancellare
+       dagli altri due punti. Un errore imprevisto nel calcolo dei percorsi
+       non e' una prova che il proxy non serva: e' l'ennesimo «non lo so», e
+       qui si ferma come tutti gli altri. Se `percorsi` un giorno sollevasse,
+       l'avvio deve rompersi in modo rumoroso — non partire in chiaro.
+
+    Percio' qui non c'e' piu' nessun `try`.
+    """
+    if any(percorso and os.path.exists(percorso) for percorso in candidati):
+        # Un `False` sbagliato qui e' innocuo, ed e' il motivo per cui
+        # `os.path.exists` va ancora bene su QUESTI percorsi e non sull'altro:
+        # se sbaglia, si finisce a controllare la cartella del Bridge, cioe' a
+        # guardare piu' a fondo. Sull'altro percorso sbagliare significava
+        # smettere di guardare.
+        return
+
+    vecchia = os.path.join(percorsi.cartella_dati_del_bridge(), percorsi.NOME_CONFIG)
+    stato = _stato_proxy_altrove(vecchia)
+    if stato == PROXY_NESSUN_FILE:
+        # Il caso di chiunque non abbia mai avuto il Bridge installato.
+        return
+
+    dove_va = percorsi.percorso_config()
+    if stato == PROXY_DICHIARATO:
+        raise ValueError(
+            f"un proxy e' dichiarato e attivo in {vecchia} (cartella di XTrader "
+            f"Signal Bridge), ma Pickfair non legge da li'. Proseguire "
+            f"manderebbe le scommesse sulla connessione diretta invece che sul "
+            f"proxy configurato. Sposta il file in {dove_va}, oppure valorizza "
+            f"{ENV_PERCORSO_CONFIG} con il suo percorso"
+        )
+    if stato == PROXY_INCERTO:
+        raise ValueError(
+            f"esiste una configurazione in {vecchia} (cartella di XTrader "
+            f"Signal Bridge) ma non e' stato possibile stabilire se dichiari un "
+            f"proxy: illeggibile o non interpretabile. Proseguire significherebbe "
+            f"scommettere sperando che un proxy non ci fosse. Rendi leggibile "
+            f"quel file, oppure spostalo in {dove_va}, oppure valorizza "
+            f"{ENV_PERCORSO_CONFIG}"
+        )
+    logger.warning(
+        "Nessuna configurazione trovata nei percorsi di Pickfair, ma ne risulta "
+        "una in %s (cartella di XTrader Signal Bridge). Non dichiara alcun "
+        "proxy attivo, quindi si prosegue senza. Se ti serve, spostala in %s "
+        "oppure valorizza %s.",
+        vecchia, dove_va, ENV_PERCORSO_CONFIG)
 
 
 # ---------------------------------------------------------------------------
@@ -415,7 +838,9 @@ class BetfairClient:
         invece di sparire.
         """
         esplicito = percorso_config_esplicito()
-        for percorso in percorsi_config_candidati():
+        candidati = percorsi_config_candidati()
+        _controlla_config_rimasta_nel_bridge(candidati)
+        for percorso in candidati:
             if not percorso or not os.path.exists(percorso):
                 if esplicito and percorso == esplicito:
                     # `esplicito and ...` non e' ridondante: senza variabile

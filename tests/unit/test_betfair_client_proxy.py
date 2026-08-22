@@ -18,6 +18,7 @@ from urllib.parse import urlparse
 import pytest
 
 import betfair_client as bc
+import percorsi
 
 #: La funzione vera, presa PRIMA che la fixture autouse la sostituisca: serve
 #: al test che verifica che il controllo guardi davvero PySocks.
@@ -331,40 +332,48 @@ class TestSupportoSocks:
         assert _SUPPORTO_SOCKS_ORIGINALE() is True
 
 
-class TestConfigStoreFraICandidati:
-    """`core.config_store.config_path()` era la sola tappa senza copertura.
+class TestCartellaDatiFraICandidati:
+    """La tappa intermedia era senza copertura, e per giunta era sbagliata.
 
     Rilievo di OpenRouter Fugu Ultra su #430: *«verificare la copertura reale
-    di core.config_store.config_path()»*. E' la tappa che conta di piu' sulla
-    macchina dell'owner — su Windows e' `%APPDATA%\\XTraderBridge` — perche' e'
-    la config di runtime vera, quella che l'installazione usa davvero.
+    della tappa intermedia»*. **Il rilievo era giusto e resta valido** — e la
+    copertura che ha fatto aggiungere ha poi rivelato che quella tappa non era
+    la cartella di Pickfair ma `%APPDATA%/XTraderBridge`, cioe' la cartella
+    dati di **un altro prodotto**.
+
+    Questa classe prima asseriva la presenza di `core.config_store.config_path()`
+    fra i candidati: **fissava il difetto invece del comportamento voluto.**
+    Ora verifica cio' che serve davvero — che la cartella dati di Pickfair sia
+    consultata, e prima di quella del programma.
     """
 
-    def test_config_store_e_fra_i_candidati(self, monkeypatch):
+    def test_la_cartella_dati_di_pickfair_e_fra_i_candidati(self, monkeypatch):
         monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
-        from core.config_store import config_path
+        assert percorsi.percorso_config() in bc.percorsi_config_candidati()
 
-        assert config_path() in bc.percorsi_config_candidati()
+    def test_nessun_candidato_punta_al_bridge(self, monkeypatch):
+        monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
+        for c in bc.percorsi_config_candidati():
+            assert "XTraderBridge" not in c, f"candidato dentro il Bridge: {c}"
 
     def test_viene_prima_della_cartella_del_programma(self, monkeypatch):
         monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
-        from core.config_store import config_path
-
         candidati = bc.percorsi_config_candidati()
         accanto_al_programma = candidati[-1]
-        assert candidati.index(config_path()) < candidati.index(accanto_al_programma)
+        assert candidati.index(percorsi.percorso_config()) < candidati.index(
+            accanto_al_programma)
 
-    def test_il_proxy_di_config_store_viene_applicato(self, tmp_path, monkeypatch):
+    def test_il_proxy_della_cartella_dati_viene_applicato(self, tmp_path, monkeypatch):
         """La tappa e' percorsa davvero, non solo elencata."""
         monkeypatch.delenv(bc.ENV_PERCORSO_CONFIG, raising=False)
         finto = tmp_path / "config.json"
         finto.write_text(json.dumps(
             {"proxy": {"enabled": True, "type": "socks5",
-                       "host": "da-config-store.example", "port": 1080}}
+                       "host": "da-cartella-dati.example", "port": 1080}}
         ), encoding="utf-8")
         monkeypatch.setattr(bc, "percorsi_config_candidati", lambda: [str(finto)])
         c = _client()
-        assert c.session.proxies["https"] == "socks5://da-config-store.example:1080"
+        assert c.session.proxies["https"] == "socks5://da-cartella-dati.example:1080"
 
 
 class TestSchemaDelProxy:
