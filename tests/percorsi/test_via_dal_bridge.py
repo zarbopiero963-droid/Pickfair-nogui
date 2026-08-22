@@ -385,6 +385,15 @@ def test_una_UNC_caduta_non_e_un_file_assente(monkeypatch, tmp_path, winerror, a
     assert betfair_client._stato_proxy_altrove(str(f)) == atteso
 
 
+# Riferimenti VERI catturati a import-time: i finti dei test qui sotto valgono
+# solo sotto `tmp_path`, e per tutto il resto devono poter rispondere il
+# filesystem vero — altrimenti pytest stesso, che tocca il disco mentre il
+# monkeypatch e' attivo, fallisce per motivi estranei al test.
+_vero_stat = os.stat
+_vero_lstat = os.lstat
+_vero_open = open
+
+
 class _RisalitaSenzaFine(BaseException):
     """Non deriva da `Exception` di proposito: un `except Exception` nel codice
     in prova non deve poterla assorbire. Vedi
@@ -699,24 +708,47 @@ def test_un_NODO_INTERMEDIO_morto_non_e_assenza(monkeypatch, tmp_path):
     """
     import betfair_client
 
-    dentro_al_bridge = lambda p: "XTraderBridge" in str(p)  # noqa: E731
+    sotto_prova = str(tmp_path)
+
+    def dentro_al_bridge(p):
+        # **Rilievo di Claude Fable 5, decimo giro:** *«monkeypatch globale di
+        # `os.stat`, `os.lstat` e `builtins.open` senza whitelist per i
+        # percorsi interni di pytest/importlib; se `pytest.raises` o
+        # l'assertion rewriting toccano il filesystem durante il blocco, il
+        # test fallisce per motivi estranei»*. Fondato, e non teorico: al giro
+        # scorso un finto troppo largo su `os.stat` aveva gia' fatto uscire il
+        # controllo alla prima riga. Ora i finti valgono **solo sotto
+        # `tmp_path`**; fuori risponde il filesystem vero.
+        return str(p).startswith(sotto_prova) and "XTraderBridge" in str(p)
 
     def stat_non_ci_passa(percorso, *a, **kw):
         # `.json` esclusi: `os.path.exists` passa da `os.stat`, e far
         # sembrare esistente il candidato di Pickfair faceva uscire il
         # controllo alla prima riga — il test falliva con DID NOT RAISE
         # senza aver mai raggiunto il codice che voleva esercitare.
-        if dentro_al_bridge(percorso) or str(percorso).endswith(".json"):
+        if dentro_al_bridge(percorso) or (
+                str(percorso).startswith(sotto_prova)
+                and str(percorso).endswith(".json")):
+            # `.json` esclusi: `os.path.exists` passa da `os.stat`, e far
+            # sembrare esistente il candidato di Pickfair faceva uscire il
+            # controllo alla prima riga — il test falliva con DID NOT RAISE
+            # senza aver mai raggiunto il codice che voleva esercitare.
             raise FileNotFoundError(2, "non trovato")   # nessun winerror di rete
+        if not str(percorso).startswith(sotto_prova):
+            return _vero_stat(percorso, *a, **kw)
         return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
 
     def lstat_vede_la_voce(percorso, *a, **kw):
+        if not str(percorso).startswith(sotto_prova):
+            return _vero_lstat(percorso, *a, **kw)
         if str(percorso).endswith("config.json"):
             raise FileNotFoundError(2, "non trovato")
         # La CARTELLA c'e' come voce: e' il reparse point.
         return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
 
     def open_non_trova(percorso, *a, **kw):
+        if not str(percorso).startswith(sotto_prova):
+            return _vero_open(percorso, *a, **kw)
         raise FileNotFoundError(2, "non trovato")
 
     monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
@@ -724,6 +756,75 @@ def test_un_NODO_INTERMEDIO_morto_non_e_assenza(monkeypatch, tmp_path):
     monkeypatch.setattr("builtins.open", open_non_trova)
     monkeypatch.setattr(os, "stat", stat_non_ci_passa)
     monkeypatch.setattr(os, "lstat", lstat_vede_la_voce)
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_una_cartella_ILLEGGIBILE_non_e_una_cartella_assente(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di GPT-5.6 Sol, Fable e Fugu Ultra — tutti e tre,
+    indipendentemente, sulla stessa riga scritta al giro precedente.
+
+    *«l'`except Exception` che ritorna `False` tratta un `PermissionError` su
+    `lstat` come assenza. Ma se `lstat` fallisce per permessi la voce
+    **esiste** ed e' inaccessibile: si risale al genitore e si puo' ancora
+    produrre `PROXY_NESSUN_FILE` — la stessa falsa assenza che la PR vuole
+    chiudere.»*
+
+    Avevano ragione tutti e tre. Il rimedio al rilievo di Fugu del nono giro
+    conteneva, **una riga piu' sotto**, lo stesso `except Exception` con
+    default benigno che questa PR insegue da dieci giri. Non l'ho scritto per
+    distrazione: l'ho scritto perche' e' un riflesso.
+
+    Qui la cartella del Bridge non e' guardabile (`PermissionError` sia su
+    `stat` che su `lstat`) e il genitore e' sanissimo. Prima si risaliva, lo
+    si trovava, e si concludeva «non c'e' nessuna vecchia configurazione».
+    """
+    import betfair_client
+
+    sotto_prova = str(tmp_path)
+
+    def nel_bridge(percorso):
+        return (str(percorso).startswith(sotto_prova)
+                and "XTraderBridge" in str(percorso))
+
+    def stat_non_trova(percorso, *a, **kw):
+        # `stat` segue e dice «non trovato», SENZA codice di rete: e' la
+        # risposta che manda la risalita a chiedere se la voce ci sia.
+        #
+        # **Solo il nodo del Bridge e' anomalo.** La cartella superiore deve
+        # essere sanissima, altrimenti il sabotaggio sfugge: con il difetto
+        # rimesso la risalita si fermerebbe LI', rispondendo «incerto» per il
+        # genitore invece che per il Bridge, e il test passerebbe senza aver
+        # misurato niente. Verificato tracciando le chiamate, non a occhio.
+        if nel_bridge(percorso) or (
+                str(percorso).startswith(sotto_prova)
+                and str(percorso).endswith(".json")):
+            raise FileNotFoundError(2, "non trovato")
+        return _vero_stat(percorso, *a, **kw)
+
+    def lstat_nega_la_voce(percorso, *a, **kw):
+        # `lstat` sul FILE: non c'e' davvero, cosi' si arriva alla risalita.
+        if str(percorso).endswith("config.json"):
+            raise FileNotFoundError(2, "non trovato")
+        # `lstat` sulla CARTELLA: permesso negato. La voce c'e' — e' il
+        # sistema che non lascia guardare. Questa e' la riga che i tre
+        # reviewer hanno segnalato: prima diventava «assente».
+        if nel_bridge(percorso):
+            raise PermissionError(13, "accesso negato")
+        return _vero_lstat(percorso, *a, **kw)
+
+    def open_non_trova(percorso, *a, **kw):
+        if str(percorso).startswith(sotto_prova):
+            raise FileNotFoundError(2, "non trovato")
+        return _vero_open(percorso, *a, **kw)
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+    monkeypatch.setattr("builtins.open", open_non_trova)
+    monkeypatch.setattr(os, "stat", stat_non_trova)
+    monkeypatch.setattr(os, "lstat", lstat_nega_la_voce)
 
     with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
         betfair_client._controlla_config_rimasta_nel_bridge(

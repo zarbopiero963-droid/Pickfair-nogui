@@ -284,23 +284,50 @@ def _assenza_o_incertezza(percorso: str) -> str:
     return PROXY_INCERTO
 
 
-def _la_voce_esiste_comunque(percorso: str) -> bool:
-    """`stat` non ci e' arrivato: ma la voce di directory c'e' lo stesso?
+def _la_voce_e_ASSENTE(percorso: str) -> bool:
+    """La voce di directory manca — **accertato**, non dedotto.
 
     `stat` segue, `lstat` no. Se `lstat` riesce dove `stat` ha fallito, allora
     qualcosa **c'e'** — una junction, un symlink, un mount — e il bersaglio non
-    e' raggiungibile. Non e' assenza: e' non esserci arrivati.
+    e' raggiungibile. Non e' assenza: e' non esserci arrivati. E' lo stesso
+    discriminante usato sul file, applicato al nodo intermedio.
 
-    E' lo stesso discriminante usato sul file, applicato al nodo intermedio, e
-    risponde al rilievo di Fugu **senza** dover indovinare quale `winerror`
-    produca Windows in ogni situazione — cosa che da qui non posso verificare
-    e che non voglio mettere in un `if`.
+    **Rilievo BLOCCANTE di GPT-5.6 Sol, Claude Fable 5 e OpenRouter Fugu
+    Ultra su #434, decimo giro. Tutti e tre, indipendentemente, sulla stessa
+    riga.** La prima versione di questa funzione si chiamava
+    `_la_voce_esiste_comunque` e finiva con:
+
+        except Exception:
+            return False        # -> il chiamante conclude «assente»
+
+    Cioe' un `PermissionError` su `lstat` — la voce **c'e'** ma non si puo'
+    guardare — diventava assenza, il chiamante risaliva a un genitore
+    accessibile e rispondeva `PROXY_NESSUN_FILE`. **La stessa falsa assenza
+    che questa funzione era stata scritta per chiudere, riaperta dentro il
+    rimedio, una riga dopo.**
+
+    E' il difetto che questa PR ha inseguito per dieci giri — `except
+    Exception` con un default benigno — riprodotto da me nella correzione. Non
+    e' una svista isolata: e' la prova che il pattern e' un riflesso, e che
+    l'unico modo di non ripeterlo e' che il nome della funzione dica cosa deve
+    essere **accertato**, non cosa si spera.
+
+    Percio' adesso la domanda e' rovesciata, e una sola risposta lascia
+    proseguire:
+
+    - `FileNotFoundError`  -> assenza accertata  -> `True`  (si risale)
+    - qualunque altro errore -> non si sa       -> `False` (il chiamante ferma)
+    - `lstat` riesce         -> la voce c'e'    -> `False` (il chiamante ferma)
     """
     try:
         os.lstat(percorso)
+    except FileNotFoundError:
+        return True
     except Exception:
+        # Permessi, I/O, rete: la voce potrebbe esserci benissimo. Non
+        # saperlo non e' un permesso di concludere che non c'e'.
         return False
-    return True
+    return False
 
 
 def _ci_siamo_arrivati(cartella: str) -> str:
@@ -355,7 +382,7 @@ def _ci_siamo_arrivati(cartella: str) -> str:
         except FileNotFoundError as errore:
             if _non_raggiungibile(errore):
                 return PROXY_INCERTO
-            if _la_voce_esiste_comunque(cartella):
+            if not _la_voce_e_ASSENTE(cartella):
                 # **Rilievo BLOCCANTE di OpenRouter Fugu Ultra, nono giro.**
                 # *«se un nodo INTERMEDIO restituisce 3 e `_non_raggiungibile`
                 # non lo intercetta, il loop sale al genitore locale, riesce, e
