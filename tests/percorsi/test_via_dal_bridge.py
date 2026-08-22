@@ -670,6 +670,84 @@ def test_una_JUNCTION_verso_una_share_morta_non_e_arrivarci(monkeypatch, tmp_pat
             [str(tmp_path / "assente.json")])
 
 
+def test_un_NODO_INTERMEDIO_morto_non_e_assenza(monkeypatch, tmp_path):
+    """Rilievo BLOCCANTE di OpenRouter Fugu Ultra, nono giro. Fondato.
+
+    *«se un nodo INTERMEDIO (es. `XTraderBridge` reindirizzato o di rete
+    temporaneamente giu') restituisce 3 e `_non_raggiungibile` non lo
+    intercetta, il loop sale al genitore locale, riesce, e ritorna
+    `PROXY_NESSUN_FILE`. Falsa assenza → il controllo viene bypassato.»*
+
+    La strada c'era davvero: verificato sabotando: senza il rimedio questo
+    test non falliva, **non esisteva**.
+
+    **Il rimedio chiesto pero' non si puo' applicare.** Fugu chiede di far
+    coprire a `_non_raggiungibile` anche il `winerror` 3: ma 3 e' il codice
+    che riceve chi non ha mai installato il Bridge, e bloccherebbe tutti loro
+    — lo stesso motivo per cui avevo gia' rifiutato la stessa richiesta di
+    GPT al settimo giro.
+
+    La distinzione si fa senza indovinare il codice, con lo stesso
+    discriminante gia' usato un livello piu' sotto sul file: **`stat` segue,
+    `lstat` no.** Se la voce esiste ma non ci si passa, e' una junction verso
+    qualcosa di morto — non e' assenza, e' non esserci arrivati.
+
+    Qui: `XTraderBridge` esiste come voce (`lstat` riesce) ma non e'
+    attraversabile (`stat` da' un banale ENOENT, senza codice di rete), e la
+    cartella superiore e' sanissima. Prima si risaliva a `%APPDATA%`, lo si
+    trovava, e si concludeva «non c'e' nessuna vecchia configurazione».
+    """
+    import betfair_client
+
+    dentro_al_bridge = lambda p: "XTraderBridge" in str(p)  # noqa: E731
+
+    def stat_non_ci_passa(percorso, *a, **kw):
+        # `.json` esclusi: `os.path.exists` passa da `os.stat`, e far
+        # sembrare esistente il candidato di Pickfair faceva uscire il
+        # controllo alla prima riga — il test falliva con DID NOT RAISE
+        # senza aver mai raggiunto il codice che voleva esercitare.
+        if dentro_al_bridge(percorso) or str(percorso).endswith(".json"):
+            raise FileNotFoundError(2, "non trovato")   # nessun winerror di rete
+        return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+
+    def lstat_vede_la_voce(percorso, *a, **kw):
+        if str(percorso).endswith("config.json"):
+            raise FileNotFoundError(2, "non trovato")
+        # La CARTELLA c'e' come voce: e' il reparse point.
+        return os.stat_result((0o40755, 0, 0, 1, 0, 0, 0, 0, 0, 0))
+
+    def open_non_trova(percorso, *a, **kw):
+        raise FileNotFoundError(2, "non trovato")
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "XTraderBridge"))
+    monkeypatch.setattr("builtins.open", open_non_trova)
+    monkeypatch.setattr(os, "stat", stat_non_ci_passa)
+    monkeypatch.setattr(os, "lstat", lstat_vede_la_voce)
+
+    with pytest.raises(ValueError, match="non e' stato possibile stabilire"):
+        betfair_client._controlla_config_rimasta_nel_bridge(
+            [str(tmp_path / "assente.json")])
+
+
+def test_una_cartella_che_non_c_e_resta_assenza(monkeypatch, tmp_path):
+    """La controprova del test qui sopra: il rimedio non blocca chi non ha nulla.
+
+    Stessa forma, un'unica differenza: la voce `XTraderBridge` **non esiste**,
+    quindi nemmeno `lstat` la trova. E' il caso di chiunque non abbia mai
+    installato il Bridge, e deve restare assenza — altrimenti il rimedio al
+    rilievo di Fugu sarebbe il blocco per tutti che ho rifiutato due volte.
+
+    Niente mock qui: filesystem vero, cartella davvero assente.
+    """
+    import betfair_client
+
+    monkeypatch.setattr(percorsi, "cartella_dati_del_bridge",
+                        lambda: str(tmp_path / "mai-installato"))
+    assert betfair_client._stato_proxy_altrove(
+        str(tmp_path / "mai-installato" / "config.json")) == "nessun_file"
+
+
 def test_su_un_symlink_VERO_il_mock_qui_sopra_dice_il_vero(monkeypatch, tmp_path):
     """La prova che il test a mock non sta descrivendo un sistema immaginario.
 

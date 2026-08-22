@@ -284,6 +284,25 @@ def _assenza_o_incertezza(percorso: str) -> str:
     return PROXY_INCERTO
 
 
+def _la_voce_esiste_comunque(percorso: str) -> bool:
+    """`stat` non ci e' arrivato: ma la voce di directory c'e' lo stesso?
+
+    `stat` segue, `lstat` no. Se `lstat` riesce dove `stat` ha fallito, allora
+    qualcosa **c'e'** — una junction, un symlink, un mount — e il bersaglio non
+    e' raggiungibile. Non e' assenza: e' non esserci arrivati.
+
+    E' lo stesso discriminante usato sul file, applicato al nodo intermedio, e
+    risponde al rilievo di Fugu **senza** dover indovinare quale `winerror`
+    produca Windows in ogni situazione — cosa che da qui non posso verificare
+    e che non voglio mettere in un `if`.
+    """
+    try:
+        os.lstat(percorso)
+    except Exception:
+        return False
+    return True
+
+
 def _ci_siamo_arrivati(cartella: str) -> str:
     """Il file non c'e'. Siamo riusciti a guardare nel posto dove doveva stare?
 
@@ -335,6 +354,24 @@ def _ci_siamo_arrivati(cartella: str) -> str:
             os.stat(cartella)
         except FileNotFoundError as errore:
             if _non_raggiungibile(errore):
+                return PROXY_INCERTO
+            if _la_voce_esiste_comunque(cartella):
+                # **Rilievo BLOCCANTE di OpenRouter Fugu Ultra, nono giro.**
+                # *«se un nodo INTERMEDIO restituisce 3 e `_non_raggiungibile`
+                # non lo intercetta, il loop sale al genitore locale, riesce, e
+                # ritorna `PROXY_NESSUN_FILE`. Falsa assenza.»* Fondato: la
+                # strada c'era.
+                #
+                # Il rimedio chiesto — mettere 3 fra i codici di
+                # irraggiungibilita' — **non si puo' applicare**, per la stessa
+                # ragione del giro scorso: 3 e' il codice che riceve chi non ha
+                # mai installato il Bridge, e bloccherebbe tutti loro.
+                #
+                # Ma la distinzione non ha bisogno di indovinare il codice, ed
+                # e' la stessa gia' usata un livello piu' sotto: se la voce
+                # ESISTE (`lstat` riesce) ma non ci si passa (`stat` no), e'
+                # una junction verso qualcosa di morto. Se non esiste
+                # nemmeno la voce, e' assenza e si risale.
                 return PROXY_INCERTO
             genitore = os.path.dirname(cartella)
             if not genitore or genitore == cartella:
