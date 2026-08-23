@@ -1409,6 +1409,15 @@
         "user_setup_parser.py"
       ],
       "max_files": 5
+    },
+    "test_cablaggio_runtime": {
+      "description": "PR 1 del piano di cablaggio (owner, 2026-08-23). La suite prova ogni pezzo ma nessun test montava l'applicazione VERA per chiedere se i pezzi sono COLLEGATI: l'audit del 2026-08-23 ha trovato funzionalita' complete e testate ma inerti a runtime perche' mai istanziate (PnLEngine unico publisher di RUNTIME_CLOSE_POSITION, DutchingController consumatore di CMD_PLACE_DUTCHING, RiskGate che legge trading_config invece della config Roserpina salvata dalla GUI, betfair_client congelato a None a build-time, _NullReconciliationEngine nel TradingEngine, SafetyLayer mai passato al CashoutExecutor, GUI senza watchdog/alert/catena cashout, chiave direct_unmatched_ttl_enabled inesistente). Questo guardrail monta HeadlessApp.build() e MiniPickfairGUI(test_mode=True) con componenti REALI (Database su tmp via chdir, EventBus vero, servizi veri) e tiene DUE registri: CABLATO (i fili che esistono e non devono staccarsi: sottoscrittori del percorso ordine/cashout, stack osservabilita', RiskGate reale, ReconciliationEngine reale, probe readiness gate armato) e GAP_NOTI (i fili assenti, voce per voce, ognuna con la PR del piano che la chiudera'). I test dei gap affermano che il gap C'E' ANCORA: quando una PR lo chiude, il test fallisce APPOSTA e obbliga a promuovere la voce in CABLATO nello stesso PR — un gap non puo' chiudersi in silenzio, un filo non puo' staccarsi in silenzio. Sabotaggi verificati (4/4 rossi sul codice sabotato, poi ripristinato): (A) wire() del CashoutRequestBridge a no-op => cade test_headless_ha_il_sottoscrittore[REQ_EXECUTE_CASHOUT]; (B) risk_middleware=None in headless_main => cade test_risk_gate_reale_sul_percorso_ordine; (C) PnLEngine(bus) istanziato di nascosto => cade test_gap_pnl_engine_mai_istanziato; (D) watchdog_service finto sulla GUI => cade test_gap_gui_senza_osservabilita_ne_cashout. Precisione emersa scrivendo il test: il MODULO core.pnl_engine E' nel grafo vivo (simulation_broker importa l'aggregatore di settlement) — il gap si misura sull'istanziazione della CLASSE e su MARKET_BOOK_UPDATE senza sottoscrittori, non sull'import. I helper di grafo NON sono una terza copia: caricati via importlib da tests/percorsi/test_albero_del_bridge_resta_fuori.py, la copia corretta post-#435 (follow-up dedupe onorato, non peggiorato). Decisioni owner registrate nel piano: dutching DA AGGANCIARE, GUI parity COMPLETA — i due gap relativi citano la decisione.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "tests/guardrails/test_cablaggio_runtime.py"
+      ],
+      "max_files": 2
     }
   }
 }
