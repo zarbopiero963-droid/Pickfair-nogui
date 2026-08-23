@@ -64,12 +64,23 @@ LOTTO_2 = frozenset({
     # che la FASE 8 di #305 elimina: morto due volte.
     "check_patterns",
     "user_setup_parser",
-    # verifiche di lavori gia' chiusi, tenute come script a mano
-    "hard_verify_issue_320",
-    "hard_verify_parser_v2",
     # «Token di generazione per l'auto-clear del CSV»: il CSV e' del Bridge
     "core.signal_gate",
 })
+
+# NON in LOTTO_2, e la ragione va conservata perche' e' costata una review.
+# hard_verify_issue_320.py e hard_verify_parser_v2.py erano nel primo taglio come
+# «verifiche di lavori gia' chiusi». GPT-5.6 Sol li ha fermati sulla #436, e aveva
+# ragione: non sono scarti, sono l'unica copertura di alcune cose. Misurato in
+# tests/ prima di decidere:
+#     max_recovery_tables_reached   0 file      add_risk_position_history  0 file
+#     DelimiterParser               0 file      DeterministicResolver      0 file
+#     DutchingCalculator            0 file
+# Il primo e' una unittest.TestCase su MIN_STAKE, drawdown hard-stop, esposizione
+# massima, recovery tables, SL/TP e persistenza dello storico rischio; il secondo
+# e' l'UNICO esercizio end-to-end del parser a delimitatori di #301
+# (messaggio -> evento -> mercato -> selection_id -> stake dutching). Restano
+# finche' quei controlli non diventano test veri sotto tests/ (follow-up su #374).
 
 TOLTI = ALBERO_DEL_BRIDGE | LOTTO_2
 
