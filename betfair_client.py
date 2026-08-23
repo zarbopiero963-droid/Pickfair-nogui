@@ -1835,9 +1835,56 @@ class BetfairClient:
     _CLEARED_BET_STATUSES = frozenset(
         {"SETTLED", "VOIDED", "LAPSED", "CANCELLED"}
     )
+    # Enum GroupBy NORMATIVO (Betting Enums): niente "EXCHANGE" — compare solo
+    # nella pagina roll-up come retaggio dell'era doppio-exchange; fuori
+    # dall'enum si sta fail-closed (verifica del 2026-08-23 sui docs Betfair).
     _CLEARED_GROUP_BY = frozenset(
-        {"EXCHANGE", "EVENT_TYPE", "EVENT", "MARKET", "SIDE", "BET"}
+        {"EVENT_TYPE", "EVENT", "MARKET", "SIDE", "BET"}
     )
+    # Limite documentato listClearedOrders: max 1000 betId per richiesta.
+    _CLEARED_MAX_BET_IDS = 1000
+
+    @staticmethod
+    def _cleared_id_list(raw: Any, name: str) -> List[str]:
+        """Filtro id fail-closed: solo una LISTA di stringhe e' un filtro.
+
+        `str(x)` indiscriminato trasformava una stringa passata al posto della
+        lista nei suoi caratteri e un `None` nell'id "None": filtri spazzatura
+        che l'exchange non matcha, cioe' il report vuoto che sembra «nessun
+        settlement». Qui: container str/bytes o elemento non-str => raise.
+        """
+        if raw is None:
+            return []
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, (list, tuple, set, frozenset)):
+            raise RuntimeError(f"INVALID_{name}: expected list of str, got {type(raw).__name__}")
+        cleaned: List[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                raise RuntimeError(f"INVALID_{name}: non-str element {item!r}")
+            value = item.strip()
+            if value:
+                cleaned.append(value)
+        return cleaned
+
+    @staticmethod
+    def _cleared_range_bound(raw: Any, key: str) -> "tuple[str, datetime]":
+        """Estremo di settledDateRange: ISO-8601 parsabile, mai ignorato.
+
+        Fornito ma vuoto/non-str/non-ISO => raise: un estremo droppato in
+        silenzio allargherebbe la finestra di settlement del daily-loss.
+        Ritorna (valore_wire, datetime_parsato); i naive sono ancorati a UTC
+        cosi' i due estremi restano sempre confrontabili tra loro.
+        """
+        value = raw.strip() if isinstance(raw, str) else ""
+        if not value:
+            raise RuntimeError(f"INVALID_SETTLED_RANGE: {key}={raw!r}")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise RuntimeError(f"INVALID_SETTLED_RANGE: {key} not ISO-8601: {raw!r}")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return value, parsed
 
     def list_cleared_orders(
         self,
@@ -1865,11 +1912,22 @@ class BetfairClient:
           invece di restituire un report parziale;
         - ``bet_status``/``group_by`` fuori dall'enum Betfair SOLLEVANO senza
           toccare la rete: un filtro sbagliato non deve degradare in un
-          report vuoto che sembra «nessun settlement».
+          report vuoto che sembra «nessun settlement». Stessa sorte per ogni
+          combinazione/forma che i docs Betfair documentano come
+          report-vuoto-per-contratto: ``group_by`` con status non-SETTLED,
+          ``market_ids``/``bet_ids`` non lista-di-stringhe, piu' di 1000
+          ``bet_ids``, range settled invertito (``from`` dopo ``to``);
+        - una risposta senza i campi obbligatori del report
+          (``clearedOrders``/``moreAvailable``) SOLLEVA
+          ``CLEARED_ORDERS_MALFORMED_RESPONSE`` invece di degradare in
+          lista vuota.
 
         ``settled_after``/``settled_before`` (ISO-8601, es.
         ``2026-08-23T00:00:00Z``) delimitano ``settledDateRange``; forniti ma
-        vuoti/non stringa => errore, mai ignorati in silenzio.
+        vuoti/non stringa/non parsabili ISO => errore, mai ignorati in
+        silenzio. (Contratto irrobustito dal giro di verifica avversariale
+        pre-PR del 2026-08-23: ogni ramo qui sopra nasce da un rilievo con
+        mutazione dimostrata.)
         """
         status = str(bet_status or "").strip().upper()
         if status not in self._CLEARED_BET_STATUSES:
@@ -1877,21 +1935,33 @@ class BetfairClient:
 
         base_params: Dict[str, Any] = {"betStatus": status}
 
-        wanted_markets = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
+        wanted_markets = self._cleared_id_list(market_ids, "MARKET_IDS")
         if wanted_markets:
             base_params["marketIds"] = wanted_markets
-        wanted_bets = [str(b).strip() for b in (bet_ids or []) if str(b).strip()]
+        wanted_bets = self._cleared_id_list(bet_ids, "BET_IDS")
+        if len(wanted_bets) > self._CLEARED_MAX_BET_IDS:
+            # Limite documentato dell'API: oltre 1000 betId la richiesta e'
+            # invalida — si rifiuta qui, senza toccare la rete.
+            raise RuntimeError(f"TOO_MANY_BET_IDS: {len(wanted_bets)}")
         if wanted_bets:
             base_params["betIds"] = wanted_bets
 
         date_range: Dict[str, str] = {}
+        parsed_bounds: Dict[str, datetime] = {}
         for key, raw in (("from", settled_after), ("to", settled_before)):
             if raw is None:
                 continue
-            value = str(raw).strip() if isinstance(raw, str) else ""
-            if not value:
-                raise RuntimeError(f"INVALID_SETTLED_RANGE: {key}={raw!r}")
+            value, parsed = self._cleared_range_bound(raw, key)
             date_range[key] = value
+            parsed_bounds[key] = parsed
+        if len(parsed_bounds) == 2 and parsed_bounds["from"] > parsed_bounds["to"]:
+            # Betfair documenta che from > to restituisce ZERO risultati: un
+            # range invertito diventerebbe un report vuoto che sembra
+            # «nessun settlement». Fail-closed qui.
+            raise RuntimeError(
+                f"INVALID_SETTLED_RANGE: from {date_range['from']!r} "
+                f"is after to {date_range['to']!r}"
+            )
         if date_range:
             base_params["settledDateRange"] = date_range
 
@@ -1899,6 +1969,16 @@ class BetfairClient:
             grouping = str(group_by or "").strip().upper()
             if grouping not in self._CLEARED_GROUP_BY:
                 raise RuntimeError(f"INVALID_GROUP_BY: {group_by!r}")
+            if status != "SETTLED":
+                # Doc Betfair: groupBy «is only applicable to SETTLED
+                # BetStatus» — con LAPSED/CANCELLED e rollup non-BET il report
+                # torna vuoto per contratto. Un report vuoto da filtro
+                # incompatibile e' indistinguibile da «nessun settlement»:
+                # si rifiuta la combinazione, senza toccare la rete.
+                raise RuntimeError(
+                    f"INVALID_GROUP_BY_FOR_STATUS: groupBy={grouping} "
+                    f"requires betStatus=SETTLED, got {status}"
+                )
             base_params["groupBy"] = grouping
 
         all_cleared: List[Dict[str, Any]] = []
@@ -1913,6 +1993,20 @@ class BetfairClient:
                 "SportsAPING/v1.0/listClearedOrders",
                 params,
             )
+
+            # ClearedOrderSummaryReport ha ENTRAMBI i campi obbligatori: un
+            # envelope senza `result` degrada in {} dentro _post_jsonrpc, e
+            # senza questo check diventerebbe una lista vuota con breaker
+            # success — il fetch fallito invisibile. Fail-closed sul contratto.
+            if (
+                not isinstance(result, dict)
+                or "clearedOrders" not in result
+                or "moreAvailable" not in result
+            ):
+                raise RuntimeError(
+                    "CLEARED_ORDERS_MALFORMED_RESPONSE: missing "
+                    "clearedOrders/moreAvailable"
+                )
 
             page_orders = result.get("clearedOrders") or []
             all_cleared.extend(page_orders)

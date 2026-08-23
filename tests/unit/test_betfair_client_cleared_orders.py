@@ -101,7 +101,7 @@ def test_filtri_e_group_by_arrivano_al_wire(client):
     client.session.post = _post
 
     out = client.list_cleared_orders(
-        bet_status="voided",
+        bet_status="settled",
         market_ids=["1.100", " ", "1.200"],
         bet_ids=["77"],
         settled_after="2026-08-23T00:00:00Z",
@@ -111,7 +111,7 @@ def test_filtri_e_group_by_arrivano_al_wire(client):
 
     assert out == []
     params = captured["body"][0]["params"]
-    assert params["betStatus"] == "VOIDED"
+    assert params["betStatus"] == "SETTLED"
     assert params["marketIds"] == ["1.100", "1.200"]
     assert params["betIds"] == ["77"]
     assert params["settledDateRange"] == {
@@ -179,14 +179,21 @@ def test_range_settled_fornito_ma_vuoto_solleva(client):
 
 
 @pytest.mark.unit
-def test_more_available_con_pagina_vuota_solleva(client):
+def test_more_available_con_pagina_vuota_solleva_alla_prima_chiamata(client):
+    """Match sul messaggio DISTINTIVO e conteggio POST: la mutazione che
+    rimuove il guard empty-page degrada nel cap (stesso prefisso, 20 chiamate
+    di rete) — questo test la becca, il match sul solo prefisso no."""
+    calls = []
+
     def _post(url, headers=None, data=None, timeout=None, **kw):
+        calls.append(url)
         return _rpc_result({"clearedOrders": [], "moreAvailable": True})
 
     client.session.post = _post
 
-    with pytest.raises(RuntimeError, match="CLEARED_ORDERS_TRUNCATED"):
+    with pytest.raises(RuntimeError, match="moreAvailable with empty page"):
         client.list_cleared_orders()
+    assert len(calls) == 1
 
 
 @pytest.mark.unit
@@ -233,6 +240,116 @@ def test_breaker_aperto_rifiuta_subito(client):
         client._api_breaker.record_failure(RuntimeError("x"))
 
     with pytest.raises(RuntimeError, match="CIRCUIT_BREAKER_OPEN"):
+        client.list_cleared_orders()
+
+
+@pytest.mark.unit
+def test_settled_before_vuoto_solleva(client):
+    """Mutazione dimostrata dal giro di verifica: un'implementazione che
+    DROPPA in silenzio il lato 'to' passava tutti i test — un settled_before
+    ignorato allarga la finestra di settlement del daily-loss."""
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="INVALID_SETTLED_RANGE"):
+        client.list_cleared_orders(settled_before="   ")
+
+
+@pytest.mark.unit
+def test_range_non_stringa_o_non_iso_solleva(client):
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="INVALID_SETTLED_RANGE"):
+        client.list_cleared_orders(settled_after=123)
+    with pytest.raises(RuntimeError, match="not ISO-8601"):
+        client.list_cleared_orders(settled_after="ieri sera")
+
+
+@pytest.mark.unit
+def test_range_invertito_solleva(client):
+    """Betfair documenta che from > to restituisce zero risultati: il range
+    invertito deve sollevare, non produrre un report vuoto silenzioso."""
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="is after to"):
+        client.list_cleared_orders(
+            settled_after="2026-08-24T00:00:00Z",
+            settled_before="2026-08-23T00:00:00Z",
+        )
+
+
+@pytest.mark.unit
+def test_market_ids_stringa_o_elementi_non_str_sollevano(client):
+    """`str(x)` indiscriminato trasformava market_ids="1.100" nei suoi
+    caratteri e [None] nell'id "None": filtri spazzatura => report vuoto che
+    sembra 'nessun settlement'."""
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="INVALID_MARKET_IDS"):
+        client.list_cleared_orders(market_ids="1.100")
+    with pytest.raises(RuntimeError, match="INVALID_BET_IDS"):
+        client.list_cleared_orders(bet_ids=[None])
+
+
+@pytest.mark.unit
+def test_piu_di_mille_bet_ids_solleva(client):
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="TOO_MANY_BET_IDS"):
+        client.list_cleared_orders(bet_ids=[str(i) for i in range(1001)])
+
+
+@pytest.mark.unit
+def test_group_by_con_status_non_settled_solleva(client):
+    """Doc Betfair: groupBy «is only applicable to SETTLED BetStatus» — con
+    LAPSED/CANCELLED e rollup non-BET il report torna vuoto per contratto."""
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="INVALID_GROUP_BY_FOR_STATUS"):
+        client.list_cleared_orders(bet_status="VOIDED", group_by="MARKET")
+
+
+@pytest.mark.unit
+def test_exchange_non_e_un_group_by_valido(client):
+    """L'enum GroupBy normativo non contiene EXCHANGE (retaggio della pagina
+    roll-up): fuori enum si sta fail-closed."""
+    def _post(*a, **kw):
+        raise AssertionError("nessuna chiamata di rete attesa")
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="INVALID_GROUP_BY"):
+        client.list_cleared_orders(group_by="EXCHANGE")
+
+
+@pytest.mark.unit
+def test_risposta_senza_campi_obbligatori_solleva(client):
+    """Un envelope senza `result` degrada in {} dentro _post_jsonrpc (con
+    breaker success): senza il check dei campi obbligatori del report
+    diventerebbe una lista vuota silenziosa — il fetch fallito invisibile."""
+    def _post(url, headers=None, data=None, timeout=None, **kw):
+        return _RPCResp([{"jsonrpc": "2.0", "id": 1}])
+
+    client.session.post = _post
+
+    with pytest.raises(RuntimeError, match="CLEARED_ORDERS_MALFORMED_RESPONSE"):
         client.list_cleared_orders()
 
 
