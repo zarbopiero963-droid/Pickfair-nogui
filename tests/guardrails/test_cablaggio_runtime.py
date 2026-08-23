@@ -1,0 +1,374 @@
+"""Cablaggio runtime — il guardrail che monta l'applicazione VERA e verifica i fili.
+
+## Perche' questo file esiste
+
+La suite (5000+ verdi) prova che ogni pezzo funziona, ma nessun test montava il
+programma che si avvia davvero per chiedere: i pezzi sono COLLEGATI? L'audit di
+cablaggio del 2026-08-23 ha trovato funzionalita' complete, testate e verdi che
+a runtime sono inerti perche' nessuno le istanzia: il `core/pnl_engine` (unico
+publisher di `RUNTIME_CLOSE_POSITION`), il `DutchingController` (consumatore di
+`CMD_PLACE_DUTCHING`), il `RiskGate` che legge le costanti di `trading_config`
+invece della config Roserpina salvata dalla GUI. Tutti con test propri verdi:
+il verde dei pezzi non dice niente sul montaggio.
+
+Qui l'applicazione viene costruita DAVVERO — `HeadlessApp.build()` e
+`MiniPickfairGUI(test_mode=True)` con Database/EventBus/servizi/runtime REALI,
+niente Fake* — e si afferma lo stato dei fili. Due registri:
+
+- **CABLATO** — cio' che oggi e' collegato e non deve scollegarsi mai:
+  sottoscrittori del percorso ordine e cashout, stack di osservabilita',
+  RiskGate reale, ReconciliationEngine reale nel runtime. Se una modifica
+  stacca un filo, il test lo nomina.
+
+- **GAP_NOTI** — cio' che oggi NON e' collegato, voce per voce, con la PR del
+  piano che lo colleghera'. Ogni test di gap afferma che il gap C'E' ANCORA:
+  quando una PR lo chiude, il suo test FALLISCE apposta e obbliga a spostare
+  la voce da GAP_NOTI alle asserzioni CABLATO nello stesso PR. Cosi' il
+  registro non puo' mentire in nessuna direzione: un gap non puo' chiudersi
+  in silenzio, un filo non puo' staccarsi in silenzio.
+
+## Nota sul riuso del grafo
+
+Le funzioni di grafo (`_moduli`/`_importati`/`_grafo_vivo`) NON sono copiate:
+vengono caricate da `tests/percorsi/test_albero_del_bridge_resta_fuori.py`,
+che dopo #435 e' la copia CORRETTA (import relativi con livello > 1 risolti da
+`importlib`, file non analizzabile => errore, mai `set()` silenzioso). Una
+terza copia avrebbe ripropagato il difetto che #435 ha appena chiuso.
+"""
+from __future__ import annotations
+
+import importlib.util
+import os
+import pathlib
+import re
+
+import pytest
+
+import trading_config
+from core.reconciliation_engine import ReconciliationEngine
+from core.risk_gate import RiskGate
+
+RADICE = pathlib.Path(__file__).resolve().parents[2]
+
+
+# =========================================================================
+# Helper di grafo: caricati dal guard autorevole, non ricopiati.
+# =========================================================================
+def _carica_guard_percorsi():
+    percorso = RADICE / "tests" / "percorsi" / "test_albero_del_bridge_resta_fuori.py"
+    spec = importlib.util.spec_from_file_location("_guard_percorsi_bridge", percorso)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo
+
+
+_GUARD = _carica_guard_percorsi()
+
+
+def _grafo_vivo() -> set[str]:
+    moduli = _GUARD._moduli()
+    return _GUARD._grafo_vivo(moduli)
+
+
+def _sorgenti_vive() -> dict[str, str]:
+    """Testo sorgente dei soli moduli raggiungibili dagli entrypoint."""
+    moduli = _GUARD._moduli()
+    vivi = _GUARD._grafo_vivo(moduli)
+    return {
+        nome: moduli[nome].read_text(encoding="utf-8", errors="replace")
+        for nome in vivi
+        if nome in moduli
+    }
+
+
+def _sottoscrittori(bus) -> dict[str, int]:
+    registro = getattr(bus, "_subscribers", None)
+    assert registro is not None, (
+        "EventBus senza registro _subscribers: o non e' l'EventBus reale, "
+        "o la sua struttura interna e' cambiata e questo guard va aggiornato."
+    )
+    return {topic: len(callbacks) for topic, callbacks in registro.items() if callbacks}
+
+
+# =========================================================================
+# Fixture: l'applicazione VERA, montata una volta per modulo.
+# Ogni build lavora in una cartella temporanea propria (Database() scrive
+# `pickfair.db` nella cwd), cosi' il test resta deterministico e offline.
+# =========================================================================
+@pytest.fixture(scope="module")
+def app_headless(tmp_path_factory):
+    cwd = os.getcwd()
+    os.chdir(tmp_path_factory.mktemp("cablaggio-headless"))
+    try:
+        import headless_main
+
+        app = headless_main.HeadlessApp()
+        # start_services=False: si verifica il MONTAGGIO, non si avviano i
+        # thread di watchdog/cleanup — il cablaggio e' gia' tutto in build().
+        app.build(start_services=False)
+        yield app
+        app.stop()
+    finally:
+        os.chdir(cwd)
+
+
+@pytest.fixture(scope="module")
+def app_gui(tmp_path_factory):
+    cwd = os.getcwd()
+    os.chdir(tmp_path_factory.mktemp("cablaggio-gui"))
+    try:
+        import mini_gui
+
+        gui = mini_gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
+        yield gui
+        gui.shutdown.shutdown()
+    finally:
+        os.chdir(cwd)
+
+
+# =========================================================================
+# PARTE 1 — CABLATO: i fili che esistono e non devono staccarsi.
+# Fotografia verificata su build reale il 2026-08-23; ogni topic qui sotto
+# aveva almeno un sottoscrittore vero sul bus dell'app montata.
+# =========================================================================
+TOPIC_CABLATI_HEADLESS = (
+    # ingresso segnali: TelegramService pubblica, RuntimeController consuma
+    "SIGNAL_RECEIVED",
+    "SIGNAL_APPROVED",
+    "SIGNAL_REJECTED",
+    # percorso ordine: RuntimeController pubblica, TradingEngine consuma
+    "CMD_QUICK_BET",
+    # catena cashout (Fase 2.1): router -> bridge -> executor -> residuo
+    "REQ_EXECUTE_CASHOUT",
+    "CMD_EXECUTE_CASHOUT",
+    "CASHOUT_FAILED",
+    # ciclo finanziario: il consumatore c'e' (RuntimeController); il publisher
+    # e' il GAP `pnl_engine_mai_istanziato` qui sotto.
+    "RUNTIME_CLOSE_POSITION",
+    # ciclo di vita runtime, consumato dal logger headless
+    "RUNTIME_STARTED",
+    "RUNTIME_STOPPED",
+    "RUNTIME_PAUSED",
+    "RUNTIME_RESUMED",
+    "RUNTIME_LOCKDOWN",
+    "TELEGRAM_STATUS",
+)
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("topic", TOPIC_CABLATI_HEADLESS)
+def test_headless_ha_il_sottoscrittore(topic, app_headless):
+    presenti = _sottoscrittori(app_headless.bus)
+    assert presenti.get(topic, 0) >= 1, (
+        f"FILO STACCATO: '{topic}' non ha piu' sottoscrittori sul bus "
+        f"dell'app headless reale. Un evento pubblicato li' cade nel vuoto."
+    )
+
+
+COMPONENTI_HEADLESS = (
+    # osservabilita' (headless_main.build)
+    "watchdog_service",
+    "alerts_manager",
+    "incidents_manager",
+    "health_registry",
+    "metrics_registry",
+    "snapshot_service",
+    "diagnostics_service",
+    "cleanup_service",
+    "retention_manager",
+    "runtime_probe",
+    # catena di esecuzione cashout (_wire_cashout_execution_chain)
+    "order_router",
+    "cashout_executor",
+    "cashout_request_bridge",
+    "cashout_residual_handler",
+)
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("nome", COMPONENTI_HEADLESS)
+def test_headless_costruisce_il_componente(nome, app_headless):
+    componente = getattr(app_headless, nome, None)
+    assert componente is not None, (
+        f"COMPONENTE NON COSTRUITO: HeadlessApp.build() non produce piu' "
+        f"'{nome}'. Le impostazioni/tab che lo governano tornano scatole vuote."
+    )
+
+
+@pytest.mark.guardrail
+def test_risk_gate_reale_sul_percorso_ordine(app_headless, app_gui):
+    """H-04: senza RiskGate esplicito l'engine ripiega sul segnaposto che
+    approva tutto. Vale per ENTRAMBI gli entrypoint."""
+    for nome, app in (("headless", app_headless), ("gui", app_gui)):
+        engine = app.trading_engine if nome == "headless" else app_gui.trading_engine
+        assert engine.risk_gate_wired is True, f"{nome}: risk gate NON cablato (segnaposto fail-open)"
+        assert isinstance(engine.risk_middleware, RiskGate), (
+            f"{nome}: risk_middleware non e' il RiskGate reale: "
+            f"{type(engine.risk_middleware).__name__}"
+        )
+
+
+@pytest.mark.guardrail
+def test_reconciliation_engine_reale_nel_runtime(app_headless):
+    assert isinstance(app_headless.runtime.reconciliation_engine, ReconciliationEngine), (
+        "Il RuntimeController non costruisce piu' il ReconciliationEngine reale: "
+        "la riconciliazione all'avvio sparirebbe in silenzio."
+    )
+
+
+@pytest.mark.guardrail
+def test_probe_readiness_gate_armato(app_headless, app_gui):
+    """Entrambi gli entrypoint agganciano la RuntimeProbe al runtime e armano
+    il gate di readiness: e' un filo di safety, non un dettaglio."""
+    assert app_headless.runtime.runtime_probe is app_headless.runtime_probe
+    assert app_headless.runtime.enforce_probe_readiness_gate is True
+    assert app_gui.runtime.runtime_probe is app_gui.runtime_probe
+    assert app_gui.runtime.enforce_probe_readiness_gate is True
+
+
+# =========================================================================
+# PARTE 2 — GAP_NOTI: i fili che oggi NON esistono, voce per voce.
+#
+# OGNI TEST QUI AFFERMA CHE IL GAP E' ANCORA APERTO. Quando la PR indicata
+# lo chiude, il test FALLISCE APPOSTA: e' il segnale che la voce va promossa
+# nella PARTE 1 (CABLATO) nello stesso PR che chiude il gap. Non cancellare
+# la voce: promuoverla. Un gap chiuso senza promozione e' un filo nuovo che
+# nessun guardrail sorveglia.
+# =========================================================================
+
+
+@pytest.mark.guardrail
+def test_gap_pnl_engine_mai_istanziato(app_headless):
+    """GAP (piano: PR «ciclo chiusura posizioni»). La CLASSE
+    `core.pnl_engine.PnLEngine` — unico publisher di RUNTIME_CLOSE_POSITION —
+    non e' mai costruita da nessun modulo vivo: il PnL realizzato non entra
+    mai, e il monitor daily-loss confronta un valore fermo a zero.
+
+    Precisione imparata scrivendo questo test: il MODULO `core.pnl_engine` E'
+    nel grafo vivo (simulation_broker ne importa l'aggregatore di settlement),
+    quindi il gap non si misura sull'import ma sull'istanziazione della classe
+    e sull'effetto osservabile: il costruttore di PnLEngine sottoscriverebbe
+    MARKET_BOOK_UPDATE, che sull'app reale non ha nessun sottoscrittore."""
+    istanziatori = [
+        nome
+        for nome, sorgente in _sorgenti_vive().items()
+        if nome != "core.pnl_engine"
+        and re.search(r"(?<![A-Za-z_])PnLEngine\s*\(", sorgente)
+    ]
+    assert istanziatori == [], (
+        f"GAP CHIUSO: {istanziatori} istanzia PnLEngine. Promuovi la voce in "
+        "CABLATO: asserisci il publisher di RUNTIME_CLOSE_POSITION e il "
+        "sottoscrittore di MARKET_BOOK_UPDATE sull'app montata."
+    )
+    presenti = _sottoscrittori(app_headless.bus)
+    assert presenti.get("MARKET_BOOK_UPDATE", 0) == 0, (
+        "GAP CHIUSO: MARKET_BOOK_UPDATE ha un sottoscrittore sull'app "
+        "headless reale (il PnLEngine — o qualcos'altro — e' stato cablato). "
+        "Promuovi la voce in CABLATO."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_dutching_senza_esecutore(app_headless):
+    """GAP (piano: PR «dutching agganciato», decisione owner 2026-08-23:
+    agganciare). DutchingController e RiskMiddleware non sono mai costruiti:
+    CMD_PLACE_DUTCHING non ha consumatori sul bus reale."""
+    vivo = _grafo_vivo()
+    assert "controllers.dutching_controller" not in vivo, (
+        "GAP CHIUSO: dutching_controller nel grafo vivo. Promuovi in CABLATO."
+    )
+    assert "core.risk_middleware" not in vivo, (
+        "GAP CHIUSO: risk_middleware nel grafo vivo. Promuovi in CABLATO."
+    )
+    presenti = _sottoscrittori(app_headless.bus)
+    assert presenti.get("CMD_PLACE_DUTCHING", 0) == 0, (
+        "GAP CHIUSO: CMD_PLACE_DUTCHING ha un sottoscrittore. Promuovi in CABLATO."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_risk_gate_legge_trading_config_non_roserpina(app_headless, app_gui):
+    """GAP (piano: PR «RiskGate ↔ config Roserpina»). Il gate applica i limiti
+    delle COSTANTI (MAX_WIN 10000, MIN_PRICE 1.02, BOOK_BLOCK 110): quello che
+    l'owner salva nella tab Roserpina non arriva al gate."""
+    for nome, app in (("headless", app_headless), ("gui", app_gui)):
+        gate = app.trading_engine.risk_middleware
+        assert getattr(gate, "config", None) is trading_config, (
+            f"GAP CHIUSO ({nome}): il RiskGate non legge piu' il modulo "
+            "trading_config. Promuovi in CABLATO asserendo la sorgente nuova "
+            "(config Roserpina) e il fail-closed sui campi mancanti."
+        )
+
+
+@pytest.mark.guardrail
+def test_gap_betfair_client_congelato_a_build_time(app_headless):
+    """GAP (piano: PR «betfair_client lazy»). Assegnato una volta in build(),
+    prima della connessione: in LIVE il ramo col breaker di submission e la
+    gestione sessione scaduta resta scavalcato."""
+    assert app_headless.trading_engine.betfair_client is None, (
+        "GAP CHIUSO: trading_engine.betfair_client non e' piu' congelato a "
+        "None. Promuovi in CABLATO asserendo la risoluzione lazy."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_trading_engine_con_reconciliation_segnaposto(app_headless):
+    """GAP (piano: PR «iniezione ReconciliationEngine»). L'engine gira col
+    _NullReconciliationEngine: una submission ambigua (timeout, risposta
+    persa) chiama enqueue() sul vuoto. Il motore vero esiste — e' quello del
+    runtime (asserito in PARTE 1) — ma l'engine non lo riceve."""
+    assert type(app_headless.trading_engine.reconciliation_engine).__name__ == (
+        "_NullReconciliationEngine"
+    ), (
+        "GAP CHIUSO: il TradingEngine riceve un reconciliation engine reale. "
+        "Promuovi in CABLATO asserendo l'identita' col motore del runtime."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_safety_layer_non_passato_al_cashout_executor(app_headless):
+    """GAP (piano: PR «SafetyLayer al CashoutExecutor»). Il parametro esiste
+    gia' nel costruttore; headless_main non lo passa, quindi
+    validate_cashout_request() non gira mai."""
+    assert app_headless.cashout_executor.safety_layer is None, (
+        "GAP CHIUSO: il CashoutExecutor riceve un safety_layer. "
+        "Promuovi in CABLATO."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_gui_senza_osservabilita_ne_cashout(app_gui):
+    """GAP (piano: PR «GUI parity», decisione owner 2026-08-23: parity
+    completa). La GUI monta il runtime ma NON watchdog/alert ne' la catena
+    cashout: le tab Watchdog e Alert salvano su servizi che nel processo GUI
+    non esistono, e un REQ_EXECUTE_CASHOUT cade su un bus senza ascoltatori."""
+    mancanti = [
+        nome
+        for nome in ("watchdog_service", "alerts_manager", "incidents_manager",
+                     "order_router", "cashout_executor", "cashout_request_bridge",
+                     "cashout_residual_handler")
+        if not hasattr(app_gui, nome)
+    ]
+    assert len(mancanti) == 7, (
+        f"GAP IN CHIUSURA: la GUI ora costruisce {7 - len(mancanti)} dei 7 "
+        "componenti attesi dalla parity. Completa la parity e promuovi la "
+        f"voce in CABLATO (mancano ancora: {mancanti})."
+    )
+    presenti = _sottoscrittori(app_gui.bus)
+    assert presenti.get("REQ_EXECUTE_CASHOUT", 0) == 0, (
+        "GAP CHIUSO: la GUI ha un sottoscrittore per REQ_EXECUTE_CASHOUT. "
+        "Promuovi in CABLATO."
+    )
+
+
+@pytest.mark.guardrail
+def test_gap_ttl_unmatched_senza_interruttore(app_headless):
+    """GAP (piano: PR «interruttore TTL unmatched»). Il poller legge
+    `config.direct_unmatched_ttl_enabled` via getattr con default False, ma la
+    chiave non esiste in RoserpinaConfig ne' nel setting service: la funzione
+    e' dormiente senza nessun modo di accenderla."""
+    assert not hasattr(app_headless.runtime.config, "direct_unmatched_ttl_enabled"), (
+        "GAP CHIUSO: la chiave direct_unmatched_ttl_enabled esiste nella "
+        "config. Promuovi in CABLATO asserendo default sicuro (False) e "
+        "lettura dal registro impostazioni."
+    )
