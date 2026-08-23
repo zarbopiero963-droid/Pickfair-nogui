@@ -92,16 +92,42 @@ def _sottoscrittori(bus) -> dict[str, int]:
 
 # =========================================================================
 # Fixture: l'applicazione VERA, montata una volta per modulo.
-# Ogni build lavora in una cartella temporanea propria (Database() scrive
-# `pickfair.db` nella cwd), cosi' il test resta deterministico e offline.
+#
+# Isolamento (rilievo Fable 5 sulla #438, accolto): il primo taglio faceva
+# `os.chdir` in DUE fixture module-scoped che convivono — e siccome
+# `Database("pickfair.db")` risolve il path relativo a CONNECT-time (le
+# connessioni sono thread-local e lazy), una connessione aperta dopo il
+# secondo chdir sarebbe finita nella cartella dell'altra app. Ora:
+#   1. la cwd cambia UNA volta sola, in una fixture condivisa, e resta
+#      COSTANTE per tutta la vita di entrambe le app (teardown LIFO di
+#      pytest: si ripristina dopo che entrambe sono state smontate);
+#   2. ogni app riceve comunque il SUO Database con path ASSOLUTO in una
+#      sottocartella propria, cosi' nessuna connessione dipende dalla cwd.
+# Il Database resta quello REALE: cambia solo dove scrive.
 # =========================================================================
 @pytest.fixture(scope="module")
-def app_headless(tmp_path_factory):
+def _cartella_modulo(tmp_path_factory):
     cwd = os.getcwd()
-    os.chdir(tmp_path_factory.mktemp("cablaggio-headless"))
+    base = tmp_path_factory.mktemp("cablaggio-runtime")
+    os.chdir(base)
     try:
-        import headless_main
+        yield base
+    finally:
+        os.chdir(cwd)
 
+
+@pytest.fixture(scope="module")
+def app_headless(_cartella_modulo):
+    import headless_main
+    from database import Database
+
+    cartella = _cartella_modulo / "headless"
+    cartella.mkdir()
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        headless_main, "Database", lambda: Database(str(cartella / "pickfair.db"))
+    )
+    try:
         app = headless_main.HeadlessApp()
         # start_services=False: si verifica il MONTAGGIO, non si avviano i
         # thread di watchdog/cleanup — il cablaggio e' gia' tutto in build().
@@ -109,21 +135,26 @@ def app_headless(tmp_path_factory):
         yield app
         app.stop()
     finally:
-        os.chdir(cwd)
+        mp.undo()
 
 
 @pytest.fixture(scope="module")
-def app_gui(tmp_path_factory):
-    cwd = os.getcwd()
-    os.chdir(tmp_path_factory.mktemp("cablaggio-gui"))
-    try:
-        import mini_gui
+def app_gui(_cartella_modulo):
+    import mini_gui
+    from database import Database
 
+    cartella = _cartella_modulo / "gui"
+    cartella.mkdir()
+    mp = pytest.MonkeyPatch()
+    mp.setattr(
+        mini_gui, "Database", lambda: Database(str(cartella / "pickfair.db"))
+    )
+    try:
         gui = mini_gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
         yield gui
         gui.shutdown.shutdown()
     finally:
-        os.chdir(cwd)
+        mp.undo()
 
 
 # =========================================================================
