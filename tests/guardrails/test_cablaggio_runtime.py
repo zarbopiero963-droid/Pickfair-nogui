@@ -138,6 +138,24 @@ def app_headless(_cartella_modulo):
         mp.undo()
 
 
+class _TelegramTabUISenzaWidget:
+    """Stub widget-only della tab Telegram, come in tutti i test GUI del repo.
+
+    Perche' serve (rosso CI su 36221b9, riprodotto in locale con tkinter
+    installato): in CI `tkinter` esiste ma `customtkinter` no, quindi il
+    fallback `TelegramTabUI` di mini_gui costruisce un `tk.Frame` REALE sopra
+    i tab `object()` del test_mode => `AttributeError: 'object' object has no
+    attribute 'tk'`. Nel venv senza tkinter degradava a dummy puri e passava:
+    un falso verde d'ambiente. La tab e' SOLO widget — zero cablaggio bus/
+    servizi — quindi stubbarla non toglie nulla a cio' che questo guardrail
+    afferma: il core (Database, bus, servizi, runtime, engine) resta reale.
+    """
+
+    def __init__(self, parent_frame, app):
+        self.parent = parent_frame
+        self.app = app
+
+
 @pytest.fixture(scope="module")
 def app_gui(_cartella_modulo):
     import mini_gui
@@ -149,6 +167,7 @@ def app_gui(_cartella_modulo):
     mp.setattr(
         mini_gui, "Database", lambda: Database(str(cartella / "pickfair.db"))
     )
+    mp.setattr(mini_gui, "TelegramTabUI", _TelegramTabUISenzaWidget)
     try:
         gui = mini_gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
         yield gui
