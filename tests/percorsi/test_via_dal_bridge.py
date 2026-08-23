@@ -1113,10 +1113,12 @@ def _grafo_vivo():
                 base = nodo.module or ""
                 if nodo.level:
                     risalita = nodo.level - 1
-                    if risalita > len(parti_pacchetto):
+                    if risalita >= len(parti_pacchetto):
                         raise AssertionError(
-                            f"{percorso}: import relativo di livello {nodo.level} "
-                            "oltre la radice del repository, non risolvibile")
+                            f"{percorso}: import relativo di livello {nodo.level} da "
+                            f"un package profondo {len(parti_pacchetto)} — Python lo "
+                            "rifiuta con «attempted relative import beyond top-level "
+                            "package». Non e' una dipendenza da risolvere.")
                     radice_rel = ".".join(
                         parti_pacchetto[:len(parti_pacchetto) - risalita])
                     base = (f"{radice_rel}.{base}" if (radice_rel and base)

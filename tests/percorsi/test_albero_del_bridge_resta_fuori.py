@@ -103,11 +103,13 @@ def _pacchetto_risalito(percorso: pathlib.Path, livello: int) -> str:
     """
     parti = percorso.relative_to(RADICE).parts[:-1]
     risalita = livello - 1
-    if risalita > len(parti):
+    if risalita >= len(parti):
         raise AssertionError(
-            f"{percorso}: import relativo di livello {livello} oltre la radice del "
-            "repository — non risolvibile, e un grafo che tira a indovinare qui "
-            "autorizzerebbe una cancellazione sbagliata")
+            f"{percorso}: import relativo di livello {livello} da un package "
+            f"profondo {len(parti)} — Python lo rifiuta con «attempted relative "
+            "import beyond top-level package», quindi non e' una dipendenza da "
+            "risolvere ma un file rotto. Un grafo che qui tira a indovinare "
+            "autorizzerebbe una cancellazione sbagliata.")
     return ".".join(parti[:len(parti) - risalita])
 
 
@@ -240,13 +242,30 @@ def test_la_risalita_degli_import_relativi_e_corretta(tmp_path, monkeypatch):
     modulo = tmp_path / "a" / "b" / "mod.py"
     modulo.write_text(
         "from . import vicino\n"
-        "from ..core import app\n"
-        "from ...radice import cosa\n",
+        "from ..core import app\n",
         encoding="utf-8")
     trovati = _importati(modulo)
     assert "a.b.vicino" in trovati, f"livello 1 sbagliato: {sorted(trovati)}"
     assert "a.core.app" in trovati, f"livello 2 sbagliato: {sorted(trovati)}"
-    assert "radice.cosa" in trovati, f"livello 3 sbagliato: {sorted(trovati)}"
+
+
+def test_una_risalita_oltre_il_top_level_fa_fallire(tmp_path, monkeypatch):
+    """Da `a/b/mod.py`, `from ...` esce dal package: Python lo rifiuta, e noi pure.
+
+    Verificato sull'interprete, non dedotto:
+        $ python3 -c "import a.b.mod"
+        ImportError: attempted relative import beyond top-level package
+
+    La prima correzione usava `risalita > len(parti)` e lasciava passare
+    l'uguaglianza, cioe' trattava come dipendenza valida un import che non puo'
+    esistere. Rilievo di GPT-5.6 Sol sulla #435, accolto.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "RADICE", tmp_path)
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    modulo = tmp_path / "a" / "b" / "mod.py"
+    modulo.write_text("from ...radice import cosa\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="beyond top-level"):
+        _importati(modulo)
 
 
 def test_un_file_non_analizzabile_fa_fallire_invece_di_valere_zero_import(tmp_path, monkeypatch):
