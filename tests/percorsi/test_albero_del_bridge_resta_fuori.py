@@ -28,6 +28,7 @@ from __future__ import annotations
 import ast
 import pathlib
 import sys
+from importlib.util import resolve_name
 
 import pytest
 
@@ -89,32 +90,17 @@ def _moduli() -> dict[str, pathlib.Path]:
     return trovati
 
 
-def _pacchetto_risalito(percorso: pathlib.Path, livello: int) -> str:
-    """Package di partenza di un import relativo, risalito di `livello`-1 gradini.
-
-    `from . import x` (livello 1) parte dal package del file; `from .. import x`
-    (livello 2) da quello sopra, e cosi' via. Rilievo di GPT-5.6 Sol sulla #435,
-    accolto: la versione precedente incollava il package davanti al modulo senza
-    risalire, quindi da `a/b/mod.py` un `from ..core import app` diventava
-    `a.b.core.app` invece di `a.core.app` — una dipendenza viva che il grafo NON
-    vedeva. Oggi nel repository non esiste nessun import con livello > 1, quindi il
-    difetto e' latente e non ha influito su nessuna decisione; resta un fail-open su
-    un controllo di sicurezza, e i fail-open qui si chiudono anche da latenti.
-    """
-    parti = percorso.relative_to(RADICE).parts[:-1]
-    risalita = livello - 1
-    if risalita >= len(parti):
-        raise AssertionError(
-            f"{percorso}: import relativo di livello {livello} da un package "
-            f"profondo {len(parti)} — Python lo rifiuta con «attempted relative "
-            "import beyond top-level package», quindi non e' una dipendenza da "
-            "risolvere ma un file rotto. Un grafo che qui tira a indovinare "
-            "autorizzerebbe una cancellazione sbagliata.")
-    return ".".join(parti[:len(parti) - risalita])
-
-
 def _importati(percorso: pathlib.Path) -> set[str]:
     """Nomi importati da un file, relativi risolti. `ast`, non `grep`.
+
+    La risoluzione degli import relativi non e' fatta a mano: la fa
+    `importlib.util.resolve_name`, cioe' l'implementazione di CPython. GPT-5.6 Sol
+    ha trovato tre difetti in tre round nella versione aritmetica che avevo scritto
+    io — la risalita che non risaliva, e poi il confine `>` invece di `>=` che
+    lasciava passare un import oltre il top-level. Tre round sullo stesso pezzo
+    dicono che il pezzo non andava rattoppato ma delegato: `resolve_name` risponde
+    'a.core.app' a `('..core.app', 'a.b')` e solleva su `('...radice', 'a.b')`, che
+    e' esattamente il comportamento dell'interprete perche' **e'** l'interprete.
 
     Un file che non si analizza **non** vale «nessun import»: secondo rilievo di
     GPT-5.6 Sol, accolto. Prima `except (OSError, SyntaxError): return set()`
@@ -135,15 +121,24 @@ def _importati(percorso: pathlib.Path) -> set[str]:
             f"{percorso}: non analizzabile ({errore}). Un file che non si analizza "
             "non e' un file senza import: il grafo non e' attendibile.") from errore
 
+    pacchetto = ".".join(percorso.relative_to(RADICE).parts[:-1])
     fuori: set[str] = set()
     for nodo in ast.walk(albero):
         if isinstance(nodo, ast.Import):
             fuori.update(alias.name for alias in nodo.names)
         elif isinstance(nodo, ast.ImportFrom):
-            base = nodo.module or ""
             if nodo.level:
-                radice_rel = _pacchetto_risalito(percorso, nodo.level)
-                base = f"{radice_rel}.{base}" if (radice_rel and base) else (radice_rel or base)
+                relativo = "." * nodo.level + (nodo.module or "")
+                try:
+                    base = resolve_name(relativo, pacchetto)
+                except (ImportError, ValueError) as errore:
+                    raise AssertionError(
+                        f"{percorso}: '{relativo}' da package '{pacchetto}' non e' "
+                        f"risolvibile ({errore}). Non e' una dipendenza da mappare, "
+                        "e' un import che Python rifiuta: il grafo non deve "
+                        "indovinare, deve dirlo.") from errore
+            else:
+                base = nodo.module or ""
             if base:
                 fuori.add(base)
                 fuori.update(f"{base}.{alias.name}" for alias in nodo.names)

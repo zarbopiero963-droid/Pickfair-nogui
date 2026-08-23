@@ -21,6 +21,7 @@ import ast
 import os
 import pathlib
 from collections import deque
+from importlib.util import resolve_name
 
 import pytest
 
@@ -1083,7 +1084,9 @@ def _grafo_vivo():
         1. `except Exception: return set()` trasformava un file illeggibile o non
            analizzabile in un file *senza import*. Un file saltato in silenzio
            dentro un controllo di raggiungibilita' e' un falso verde.
-        2. Gli import relativi con livello > 1 non risalivano: da `a/b/mod.py` un
+        2. Gli import relativi non erano risolti dall'implementazione di CPython
+           ma a mano, e sbagliavano. Ora li risolve `importlib.util.resolve_name`.
+           Prima: gli import con livello > 1 non risalivano: da `a/b/mod.py` un
            `from ..core import app` diventava `a.b.core.app` invece di
            `a.core.app`, cioe' una dipendenza viva che il grafo non vedeva.
 
@@ -1105,24 +1108,21 @@ def _grafo_vivo():
                 "attendibile se un file viene saltato.") from errore
 
         fuori = set()
-        parti_pacchetto = percorso.relative_to(RADICE).parts[:-1]
+        pacchetto = ".".join(percorso.relative_to(RADICE).parts[:-1])
         for nodo in ast.walk(albero):
             if isinstance(nodo, ast.Import):
                 fuori.update(a.name for a in nodo.names)
             elif isinstance(nodo, ast.ImportFrom):
-                base = nodo.module or ""
                 if nodo.level:
-                    risalita = nodo.level - 1
-                    if risalita >= len(parti_pacchetto):
+                    relativo = "." * nodo.level + (nodo.module or "")
+                    try:
+                        base = resolve_name(relativo, pacchetto)
+                    except (ImportError, ValueError) as errore:
                         raise AssertionError(
-                            f"{percorso}: import relativo di livello {nodo.level} da "
-                            f"un package profondo {len(parti_pacchetto)} — Python lo "
-                            "rifiuta con «attempted relative import beyond top-level "
-                            "package». Non e' una dipendenza da risolvere.")
-                    radice_rel = ".".join(
-                        parti_pacchetto[:len(parti_pacchetto) - risalita])
-                    base = (f"{radice_rel}.{base}" if (radice_rel and base)
-                            else (radice_rel or base))
+                            f"{percorso}: '{relativo}' da package '{pacchetto}' non "
+                            f"e' risolvibile ({errore}).") from errore
+                else:
+                    base = nodo.module or ""
                 if base:
                     fuori.add(base)
                     fuori.update(f"{base}.{a.name}" for a in nodo.names)
