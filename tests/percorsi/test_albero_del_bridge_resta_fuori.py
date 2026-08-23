@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import ast
 import pathlib
+import sys
 
 import pytest
 
@@ -88,21 +89,59 @@ def _moduli() -> dict[str, pathlib.Path]:
     return trovati
 
 
+def _pacchetto_risalito(percorso: pathlib.Path, livello: int) -> str:
+    """Package di partenza di un import relativo, risalito di `livello`-1 gradini.
+
+    `from . import x` (livello 1) parte dal package del file; `from .. import x`
+    (livello 2) da quello sopra, e cosi' via. Rilievo di GPT-5.6 Sol sulla #435,
+    accolto: la versione precedente incollava il package davanti al modulo senza
+    risalire, quindi da `a/b/mod.py` un `from ..core import app` diventava
+    `a.b.core.app` invece di `a.core.app` — una dipendenza viva che il grafo NON
+    vedeva. Oggi nel repository non esiste nessun import con livello > 1, quindi il
+    difetto e' latente e non ha influito su nessuna decisione; resta un fail-open su
+    un controllo di sicurezza, e i fail-open qui si chiudono anche da latenti.
+    """
+    parti = percorso.relative_to(RADICE).parts[:-1]
+    risalita = livello - 1
+    if risalita > len(parti):
+        raise AssertionError(
+            f"{percorso}: import relativo di livello {livello} oltre la radice del "
+            "repository — non risolvibile, e un grafo che tira a indovinare qui "
+            "autorizzerebbe una cancellazione sbagliata")
+    return ".".join(parti[:len(parti) - risalita])
+
+
 def _importati(percorso: pathlib.Path) -> set[str]:
-    """Nomi importati da un file, relativi risolti. `ast`, non `grep`."""
+    """Nomi importati da un file, relativi risolti. `ast`, non `grep`.
+
+    Un file che non si analizza **non** vale «nessun import»: secondo rilievo di
+    GPT-5.6 Sol, accolto. Prima `except (OSError, SyntaxError): return set()`
+    trasformava un file illeggibile in un file innocuo — cioe' proprio il falso
+    verde che questo controllo esiste per impedire. Ora salta fuori, e dice quale.
+    """
     try:
-        albero = ast.parse(percorso.read_text(encoding="utf-8"))
-    except (OSError, SyntaxError):
-        return set()
+        sorgente = percorso.read_text(encoding="utf-8")
+    except OSError as errore:
+        raise AssertionError(
+            f"{percorso}: non leggibile ({errore.__class__.__name__}). Un file che "
+            "non si legge non e' un file senza import: il grafo non e' attendibile."
+        ) from errore
+    try:
+        albero = ast.parse(sorgente)
+    except SyntaxError as errore:
+        raise AssertionError(
+            f"{percorso}: non analizzabile ({errore}). Un file che non si analizza "
+            "non e' un file senza import: il grafo non e' attendibile.") from errore
+
     fuori: set[str] = set()
-    pacchetto = ".".join(percorso.relative_to(RADICE).parts[:-1])
     for nodo in ast.walk(albero):
         if isinstance(nodo, ast.Import):
             fuori.update(alias.name for alias in nodo.names)
         elif isinstance(nodo, ast.ImportFrom):
             base = nodo.module or ""
             if nodo.level:
-                base = f"{pacchetto}.{base}" if base else pacchetto
+                radice_rel = _pacchetto_risalito(percorso, nodo.level)
+                base = f"{radice_rel}.{base}" if (radice_rel and base) else (radice_rel or base)
             if base:
                 fuori.add(base)
                 fuori.update(f"{base}.{alias.name}" for alias in nodo.names)
@@ -176,3 +215,44 @@ def test_la_capacita_e_ancora_nel_percorso_vivo(capacita, modulo, simbolo):
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     assert simbolo in definiti, f"{capacita}: {modulo} non definisce piu' {simbolo}"
+
+
+def test_ogni_file_del_repository_e_analizzabile():
+    """Il grafo vale solo se ha letto tutto: nessun file puo' essere saltato.
+
+    `_importati` solleva su file illeggibili o non analizzabili invece di
+    restituire un insieme vuoto; questo test lo esercita su TUTTO il repository,
+    cosi' il fallimento arriva qui, con il nome del file, e non nascosto dentro
+    un controllo di raggiungibilita' che sembrerebbe verde.
+    """
+    for nome, percorso in sorted(_moduli().items()):
+        _importati(percorso)
+
+
+def test_la_risalita_degli_import_relativi_e_corretta(tmp_path, monkeypatch):
+    """`from ..core import app` deve risolvere fuori dal package del file.
+
+    Senza questo, il difetto segnalato da GPT-5.6 Sol tornerebbe silenzioso il
+    giorno che qualcuno scrive il primo import di livello 2 del repository.
+    """
+    monkeypatch.setattr(sys.modules[__name__], "RADICE", tmp_path)
+    (tmp_path / "a" / "b").mkdir(parents=True)
+    modulo = tmp_path / "a" / "b" / "mod.py"
+    modulo.write_text(
+        "from . import vicino\n"
+        "from ..core import app\n"
+        "from ...radice import cosa\n",
+        encoding="utf-8")
+    trovati = _importati(modulo)
+    assert "a.b.vicino" in trovati, f"livello 1 sbagliato: {sorted(trovati)}"
+    assert "a.core.app" in trovati, f"livello 2 sbagliato: {sorted(trovati)}"
+    assert "radice.cosa" in trovati, f"livello 3 sbagliato: {sorted(trovati)}"
+
+
+def test_un_file_non_analizzabile_fa_fallire_invece_di_valere_zero_import(tmp_path, monkeypatch):
+    """Il fail-open chiuso, verificato: prima questo caso tornava `set()`."""
+    monkeypatch.setattr(sys.modules[__name__], "RADICE", tmp_path)
+    rotto = tmp_path / "rotto.py"
+    rotto.write_text("def (: questo non e' Python\n", encoding="utf-8")
+    with pytest.raises(AssertionError, match="non analizzabile"):
+        _importati(rotto)

@@ -1075,19 +1075,52 @@ def _grafo_vivo():
         moduli[nome] = percorso
 
     def importati(percorso):
+        """Due fail-open chiusi qui, segnalati da GPT-5.6 Sol sulla PR #435.
+
+        Questa funzione e' il grafo che decide chi e' vivo: se sbaglia, autorizza
+        una cancellazione sbagliata. Aveva gli stessi due difetti del guard nuovo:
+
+        1. `except Exception: return set()` trasformava un file illeggibile o non
+           analizzabile in un file *senza import*. Un file saltato in silenzio
+           dentro un controllo di raggiungibilita' e' un falso verde.
+        2. Gli import relativi con livello > 1 non risalivano: da `a/b/mod.py` un
+           `from ..core import app` diventava `a.b.core.app` invece di
+           `a.core.app`, cioe' una dipendenza viva che il grafo non vedeva.
+
+        Nessuno dei due ha influito su una decisione presa finora — oggi nel
+        repository ogni file si analizza e non esiste nessun import di livello > 1
+        (verificato) — ma restano fail-open su un controllo di sicurezza.
+        """
         try:
-            albero = ast.parse(percorso.read_text(encoding="utf-8"))
-        except Exception:
-            return set()
+            sorgente = percorso.read_text(encoding="utf-8")
+        except OSError as errore:
+            raise AssertionError(
+                f"{percorso}: non leggibile ({errore.__class__.__name__}). Il grafo "
+                "vivo non e' attendibile se un file viene saltato.") from errore
+        try:
+            albero = ast.parse(sorgente)
+        except SyntaxError as errore:
+            raise AssertionError(
+                f"{percorso}: non analizzabile ({errore}). Il grafo vivo non e' "
+                "attendibile se un file viene saltato.") from errore
+
         fuori = set()
-        pacchetto = ".".join(percorso.relative_to(RADICE).parts[:-1])
+        parti_pacchetto = percorso.relative_to(RADICE).parts[:-1]
         for nodo in ast.walk(albero):
             if isinstance(nodo, ast.Import):
                 fuori.update(a.name for a in nodo.names)
             elif isinstance(nodo, ast.ImportFrom):
                 base = nodo.module or ""
                 if nodo.level:
-                    base = f"{pacchetto}.{base}" if base else pacchetto
+                    risalita = nodo.level - 1
+                    if risalita > len(parti_pacchetto):
+                        raise AssertionError(
+                            f"{percorso}: import relativo di livello {nodo.level} "
+                            "oltre la radice del repository, non risolvibile")
+                    radice_rel = ".".join(
+                        parti_pacchetto[:len(parti_pacchetto) - risalita])
+                    base = (f"{radice_rel}.{base}" if (radice_rel and base)
+                            else (radice_rel or base))
                 if base:
                     fuori.add(base)
                     fuori.update(f"{base}.{a.name}" for a in nodo.names)
