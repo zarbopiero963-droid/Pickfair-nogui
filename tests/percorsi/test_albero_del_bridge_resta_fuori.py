@@ -56,6 +56,23 @@ ALBERO_DEL_BRIDGE = frozenset({
     "core.write_path",
 })
 
+# Secondo lotto (#436). Non fanno parte dell'albero di `core/app.py`: sono orfani
+# a se stanti, tolti uno per uno con una ragione ciascuno.
+LOTTO_2 = frozenset({
+    # script one-shot che leggono il DB su /home/ubuntu/Pickfair-nogui — il VPS
+    # dismesso (D-5). check_patterns interroga anche `signal_patterns`, la tabella
+    # che la FASE 8 di #305 elimina: morto due volte.
+    "check_patterns",
+    "user_setup_parser",
+    # verifiche di lavori gia' chiusi, tenute come script a mano
+    "hard_verify_issue_320",
+    "hard_verify_parser_v2",
+    # «Token di generazione per l'auto-clear del CSV»: il CSV e' del Bridge
+    "core.signal_gate",
+})
+
+TOLTI = ALBERO_DEL_BRIDGE | LOTTO_2
+
 # Le capacita' che i reviewer temevano di perdere, e il modulo VIVO che le tiene.
 # Non basta che il file esista: deve stare nel grafo vivo e definire quel nome.
 # NOTA, scritta perche' questo test l'ha scoperto e non va persa: `core.event_log`
@@ -159,7 +176,7 @@ def _grafo_vivo(moduli: dict[str, pathlib.Path]) -> set[str]:
     return vivi
 
 
-@pytest.mark.parametrize("modulo", sorted(ALBERO_DEL_BRIDGE))
+@pytest.mark.parametrize("modulo", sorted(TOLTI))
 def test_il_file_non_e_tornato(modulo):
     """Uno per uno, cosi' il fallimento dice QUALE e' rientrato."""
     assert modulo not in _moduli(), (
@@ -175,11 +192,11 @@ def test_nessun_modulo_del_repository_importa_l_albero():
     """
     moduli = _moduli()
     colpevoli = sorted(
-        (nome, sorted(_importati(percorso) & ALBERO_DEL_BRIDGE))
+        (nome, sorted(_importati(percorso) & TOLTI))
         for nome, percorso in moduli.items()
-        if _importati(percorso) & ALBERO_DEL_BRIDGE
+        if _importati(percorso) & TOLTI
     )
-    assert not colpevoli, f"moduli che importano l'albero cancellato: {colpevoli}"
+    assert not colpevoli, f"moduli che importano codice cancellato: {colpevoli}"
 
 
 def test_gli_entrypoint_di_pickfair_stanno_in_piedi():
@@ -189,7 +206,7 @@ def test_gli_entrypoint_di_pickfair_stanno_in_piedi():
         assert nome in moduli, f"entrypoint mancante: {nome}"
     vivi = _grafo_vivo(moduli)
     assert vivi >= set(ENTRYPOINT)
-    assert not (vivi & ALBERO_DEL_BRIDGE)
+    assert not (vivi & TOLTI)
     # Un grafo vuoto o quasi passerebbe le due righe sopra senza dire nulla.
     assert len(vivi) > 50, f"grafo vivo sospettosamente piccolo: {len(vivi)} moduli"
 
