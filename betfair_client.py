@@ -1994,24 +1994,25 @@ class BetfairClient:
                 params,
             )
 
-            # ClearedOrderSummaryReport ha ENTRAMBI i campi obbligatori: un
-            # envelope senza `result` degrada in {} dentro _post_jsonrpc, e
-            # senza questo check diventerebbe una lista vuota con breaker
-            # success — il fetch fallito invisibile. Fail-closed sul contratto.
-            if (
-                not isinstance(result, dict)
-                or "clearedOrders" not in result
-                or "moreAvailable" not in result
-            ):
+            # ClearedOrderSummaryReport ha ENTRAMBI i campi obbligatori, DEI
+            # TIPI GIUSTI: un envelope senza `result` degrada in {} dentro
+            # _post_jsonrpc (lista vuota con breaker success — il fetch
+            # fallito invisibile), e un `clearedOrders` non-lista finirebbe
+            # in extend() che itera contenuto arbitrario verso il PnL
+            # (rilievo Fable sulla #439). isinstance copre anche l'assenza:
+            # chiave mancante => None => non e' il tipo => raise.
+            raw_orders = result.get("clearedOrders") if isinstance(result, dict) else None
+            more_available = result.get("moreAvailable") if isinstance(result, dict) else None
+            if not isinstance(raw_orders, list) or not isinstance(more_available, bool):
                 raise RuntimeError(
-                    "CLEARED_ORDERS_MALFORMED_RESPONSE: missing "
-                    "clearedOrders/moreAvailable"
+                    "CLEARED_ORDERS_MALFORMED_RESPONSE: clearedOrders/"
+                    "moreAvailable missing or wrong type"
                 )
 
-            page_orders = result.get("clearedOrders") or []
+            page_orders = raw_orders
             all_cleared.extend(page_orders)
 
-            if not result.get("moreAvailable"):
+            if not more_available:
                 return all_cleared
 
             # moreAvailable con pagina vuota/mancante = snapshot paginato

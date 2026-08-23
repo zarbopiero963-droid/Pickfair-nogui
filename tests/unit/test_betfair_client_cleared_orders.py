@@ -354,6 +354,26 @@ def test_risposta_senza_campi_obbligatori_solleva(client):
 
 
 @pytest.mark.unit
+def test_cleared_orders_non_lista_o_more_available_non_bool_sollevano(client):
+    """Rilievo Fable sulla #439: `or []` accettava qualunque truthy — un
+    clearedOrders dict/stringa finiva in extend() che itera contenuto
+    arbitrario (chiavi, caratteri) verso il PnL. Ora il tipo e' contratto."""
+    risposte = [
+        {"clearedOrders": {"betId": "1"}, "moreAvailable": False},
+        {"clearedOrders": "non-una-lista", "moreAvailable": False},
+        {"clearedOrders": [], "moreAvailable": "false"},
+    ]
+
+    for r in risposte:
+        client.session.post = (
+            lambda url, headers=None, data=None, timeout=None, _r=r, **kw:
+            _rpc_result(_r)
+        )
+        with pytest.raises(RuntimeError, match="CLEARED_ORDERS_MALFORMED_RESPONSE"):
+            client.list_cleared_orders()
+
+
+@pytest.mark.unit
 def test_errore_api_propaga_mai_lista_vuota(client):
     """Il contratto che protegge il daily-loss: un errore API deve SOLLEVARE.
     Un ramo che degradasse in `return []` farebbe sembrare «niente da
