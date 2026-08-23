@@ -1418,6 +1418,16 @@
         "tests/guardrails/test_cablaggio_runtime.py"
       ],
       "max_files": 2
+    },
+    "betfair_cleared_orders": {
+      "description": "PR 2 del piano di cablaggio (owner: «vai pr 2», 2026-08-23). BetfairClient.list_cleared_orders() — SportsAPING/listClearedOrders, la sorgente del SETTLEMENT reale da cui la PR 3 (ciclo chiusura posizioni) ricavera' il PnL realizzato: con group_by=MARKET il report porta profit+commission per mercato, coerente con l'aggregazione market-net del motore PnL. Specchio fedele di get_current_orders (B3/UFA-005): stessa paginazione fail-closed (moreAvailable percorso per intero; pagina vuota con moreAvailable => CLEARED_ORDERS_TRUNCATED; cap 20 pagine => raise), stessi errori propagati via _post_jsonrpc (NOT_AUTHENTICATED, CIRCUIT_BREAKER_OPEN, SESSION_EXPIRED con clear della sessione, API_ERROR, REQUEST_FAILED con retry idempotente) — MAI una lista vuota silenziosa: un fetch fallito che sembra 'niente da regolare' lascerebbe il daily-loss cieco. Validazione fail-closed senza rete: bet_status fuori enum {SETTLED,VOIDED,LAPSED,CANCELLED} => INVALID_BET_STATUS; group_by fuori enum {EXCHANGE,EVENT_TYPE,EVENT,MARKET,SIDE,BET} => INVALID_GROUP_BY; settled_after/before forniti ma vuoti => INVALID_SETTLED_RANGE (mai ignorati in silenzio). NESSUN cablaggio runtime in questa PR (il consumer e' la PR 3); nessun tocco a simulation_broker (la parity SIM nasce col consumer, che ne detta la forma). Test: 12 (3 PASS wire-level su fake session.post + 9 BLOCK: status/group_by/range invalidi senza rete, pagina vuota, cap paginazione, SESSION_EXPIRED con clear, NOT_AUTHENTICATED, breaker aperto, API_ERROR). Sabotaggi eseguiti sul codice committato: (A) fail-open del report parziale al posto dei raise => cadono i 2 test di troncamento; (B) validazione bet_status rimossa => cade il suo test. Snapshot public_api NON toccato: congela i metodi storici e tollera aggiunte (get_current_orders gia' assente dallo snapshot).",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "betfair_client.py",
+        "tests/unit/test_betfair_client_cleared_orders.py"
+      ],
+      "max_files": 3
     }
   }
 }

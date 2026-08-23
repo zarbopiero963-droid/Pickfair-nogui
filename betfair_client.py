@@ -1826,6 +1826,112 @@ class BetfairClient:
         # Cap exceeded with moreAvailable still set: fail closed.
         raise RuntimeError("CURRENT_ORDERS_TRUNCATED: pagination cap exceeded")
 
+    # listClearedOrders shares the same exchange-side page limit as
+    # listCurrentOrders (1000 records per page); the cap mirrors
+    # CURRENT_ORDERS_MAX_PAGES for the same reason (bounded, fail-closed).
+    CLEARED_ORDERS_PAGE_SIZE = 1000
+    CLEARED_ORDERS_MAX_PAGES = 20
+
+    _CLEARED_BET_STATUSES = frozenset(
+        {"SETTLED", "VOIDED", "LAPSED", "CANCELLED"}
+    )
+    _CLEARED_GROUP_BY = frozenset(
+        {"EXCHANGE", "EVENT_TYPE", "EVENT", "MARKET", "SIDE", "BET"}
+    )
+
+    def list_cleared_orders(
+        self,
+        *,
+        bet_status: str = "SETTLED",
+        market_ids: Optional[List[str]] = None,
+        bet_ids: Optional[List[str]] = None,
+        settled_after: Optional[str] = None,
+        settled_before: Optional[str] = None,
+        group_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch cleared (settled/voided/lapsed/cancelled) orders via
+        listClearedOrders — la sorgente del SETTLEMENT reale.
+
+        Questo e' il dato da cui il ciclo di chiusura posizioni ricava il PnL
+        realizzato (con ``group_by="MARKET"`` il report porta profit e
+        commission per mercato, coerente con l'aggregazione market-net del
+        motore PnL). Contratto fail-closed, identico a ``get_current_orders``:
+
+        - qualsiasi errore API/sessione/rete PROPAGA (mai una lista vuota
+          silenziosa: un fetch fallito che sembra «niente da regolare»
+          lascerebbe il daily-loss cieco su perdite gia' avvenute);
+        - la paginazione (``moreAvailable``) viene percorsa per intero; una
+          pagina vuota con ``moreAvailable`` o il cap superato SOLLEVANO
+          invece di restituire un report parziale;
+        - ``bet_status``/``group_by`` fuori dall'enum Betfair SOLLEVANO senza
+          toccare la rete: un filtro sbagliato non deve degradare in un
+          report vuoto che sembra «nessun settlement».
+
+        ``settled_after``/``settled_before`` (ISO-8601, es.
+        ``2026-08-23T00:00:00Z``) delimitano ``settledDateRange``; forniti ma
+        vuoti/non stringa => errore, mai ignorati in silenzio.
+        """
+        status = str(bet_status or "").strip().upper()
+        if status not in self._CLEARED_BET_STATUSES:
+            raise RuntimeError(f"INVALID_BET_STATUS: {bet_status!r}")
+
+        base_params: Dict[str, Any] = {"betStatus": status}
+
+        wanted_markets = [str(m).strip() for m in (market_ids or []) if str(m).strip()]
+        if wanted_markets:
+            base_params["marketIds"] = wanted_markets
+        wanted_bets = [str(b).strip() for b in (bet_ids or []) if str(b).strip()]
+        if wanted_bets:
+            base_params["betIds"] = wanted_bets
+
+        date_range: Dict[str, str] = {}
+        for key, raw in (("from", settled_after), ("to", settled_before)):
+            if raw is None:
+                continue
+            value = str(raw).strip() if isinstance(raw, str) else ""
+            if not value:
+                raise RuntimeError(f"INVALID_SETTLED_RANGE: {key}={raw!r}")
+            date_range[key] = value
+        if date_range:
+            base_params["settledDateRange"] = date_range
+
+        if group_by is not None:
+            grouping = str(group_by or "").strip().upper()
+            if grouping not in self._CLEARED_GROUP_BY:
+                raise RuntimeError(f"INVALID_GROUP_BY: {group_by!r}")
+            base_params["groupBy"] = grouping
+
+        all_cleared: List[Dict[str, Any]] = []
+        from_record = 0
+        for _page in range(self.CLEARED_ORDERS_MAX_PAGES):
+            params = dict(base_params)
+            params["fromRecord"] = from_record
+            params["recordCount"] = self.CLEARED_ORDERS_PAGE_SIZE
+
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/listClearedOrders",
+                params,
+            )
+
+            page_orders = result.get("clearedOrders") or []
+            all_cleared.extend(page_orders)
+
+            if not result.get("moreAvailable"):
+                return all_cleared
+
+            # moreAvailable con pagina vuota/mancante = snapshot paginato
+            # incoerente: fail-closed, mai un report parziale spacciato per
+            # completo (e niente loop che non avanza).
+            if not page_orders:
+                raise RuntimeError(
+                    "CLEARED_ORDERS_TRUNCATED: moreAvailable with empty page"
+                )
+
+            from_record += len(page_orders)
+
+        raise RuntimeError("CLEARED_ORDERS_TRUNCATED: pagination cap exceeded")
+
     def cancel_order(
         self,
         *,
