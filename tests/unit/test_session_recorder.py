@@ -368,53 +368,59 @@ class TestIdentitaDiSessione:
         assert [e["sess"] for e in leggi(path)] == ["s1", "s2"]
 
 
-class TestCablaggioInApp:
-    """Il recorder deve essere DAVVERO collegato al diario dell'app.
+class TestCablaggioInPickfair:
+    """Il recorder deve essere DAVVERO collegato al diario di **Pickfair**.
 
-    Senza questi due test, rimuovere il cablaggio da `app.py` lascerebbe la suite
-    verde: gli eventi continuerebbero a scriversi, solo senza sessione, progressivo
-    e catena — cioe' il diario tornerebbe a essere scritto ma non analizzabile, in
-    silenzio. Si legge il sorgente con `ast` invece di importare `core.app`, che
-    tirerebbe dentro tkinter/customtkinter e non e' importabile headless.
+    Storia di questi test. Nati con #427 (Recorder fase A), leggevano `core/app.py`
+    e verificavano che quel file costruisse un `SessionRecorder` e che il suo
+    `_journal` passasse dal recorder. Il controllo era giusto, il bersaglio no:
+    `core/app.py` e' la GUI di **XTrader Signal Bridge**, un'applicazione diversa
+    che `main.py` non avvia mai. Il recorder registrava quindi la sessione di un
+    programma che non gira — e uno dei suoi emettitori si chiamava
+    `_journal_csv_cleared_if_had_row`, cioe' parlava del CSV del Bridge.
+
+    Rimosso l'albero morto di `core/app.py` (45 moduli), il cablaggio e' sparito con
+    lui: oggi `SessionRecorder` non e' costruito da nessuna parte. Il test resta,
+    puntato sui veri entrypoint di Pickfair, e resta **rosso per costruzione**
+    (`xfail(strict=True)`) finche' la fase A2 non lo collega davvero. Strict: il
+    giorno che A2 lo collega questo test diventa XPASS e **rompe la suite**,
+    costringendo a togliere il marcatore invece di lasciarlo a mentire.
     """
 
+    ENTRYPOINT = ("mini_gui.py", "headless_main.py")
+
     @staticmethod
-    def _albero():
-        sorgente = pathlib.Path(__file__).resolve().parents[2] / "core" / "app.py"
-        return ast.parse(sorgente.read_text(encoding="utf-8"))
+    def _alberi():
+        radice = pathlib.Path(__file__).resolve().parents[2]
+        for nome in TestCablaggioInPickfair.ENTRYPOINT:
+            sorgente = radice / nome
+            if sorgente.exists():
+                yield nome, ast.parse(sorgente.read_text(encoding="utf-8"))
 
-    def test_app_costruisce_un_session_recorder(self):
-        albero = self._albero()
-        costruzioni = [
-            n for n in ast.walk(albero)
+    @pytest.mark.xfail(strict=True, reason="Recorder A2: il cablaggio in Pickfair non esiste ancora")
+    def test_un_entrypoint_di_pickfair_costruisce_un_session_recorder(self):
+        costruito = [
+            nome for nome, albero in self._alberi()
+            for n in ast.walk(albero)
             if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Attribute)
-            and n.func.attr == "SessionRecorder"
+            and ((isinstance(n.func, ast.Attribute) and n.func.attr == "SessionRecorder")
+                 or (isinstance(n.func, ast.Name) and n.func.id == "SessionRecorder"))
         ]
-        assert costruzioni, "core/app.py non costruisce piu' un SessionRecorder"
-
-    def test_journal_passa_dal_recorder(self):
-        albero = self._albero()
-        funzioni = [n for n in ast.walk(albero)
-                    if isinstance(n, ast.FunctionDef) and n.name == "_journal"]
-        assert funzioni, "core/app.py non definisce piu' _journal"
-        corpo = ast.dump(funzioni[0])
-        assert "_recorder" in corpo, "_journal non passa piu' dal recorder"
-        assert "record" in corpo, "_journal non chiama piu' recorder.record"
+        assert costruito, (
+            "nessun entrypoint di Pickfair costruisce un SessionRecorder: "
+            f"cercato in {list(self.ENTRYPOINT)}")
 
     def test_nessun_emettitore_usa_un_nome_riservato_di_record(self):
-        """Rilievo di Fable su #427, accolto.
+        """Rilievo di Fable su #427, accolto — vale su qualunque bersaglio.
 
         `record(event_type, *, level, corr, root, ...)` raccoglie il payload con
         `**data`: un emettitore che passasse `level=...` come CAMPO del payload lo
         vedrebbe interpretato come PARAMETRO, e il campo sparirebbe dal diario **senza
-        errore**. Oggi non succede, ma la fase A2 aggiunge decine di emettitori
-        (`TG_*`, `ORDER_*`, `RISK_*`) ed e' esattamente il momento in cui una
-        collisione entrerebbe inosservata.
+        errore**. La fase A2 aggiunge decine di emettitori (`TG_*`, `ORDER_*`,
+        `RISK_*`) ed e' esattamente il momento in cui una collisione entrerebbe
+        inosservata.
 
-        I nomi riservati si leggono dalla FIRMA, non da un elenco ricopiato: aggiungerne
-        uno a `record` estende automaticamente il controllo, invece di lasciare il test
-        a proteggere una versione vecchia della firma."""
+        I nomi riservati si leggono dalla FIRMA, non da un elenco ricopiato."""
         import inspect
 
         riservati = {
@@ -424,13 +430,14 @@ class TestCablaggioInApp:
         assert riservati, "la firma di record() non ha piu' parametri keyword-only"
 
         collisioni = []
-        for nodo in ast.walk(self._albero()):
-            if (isinstance(nodo, ast.Call)
-                    and isinstance(nodo.func, ast.Attribute)
-                    and nodo.func.attr in ("_journal", "_journal_csv_cleared_if_had_row")):
-                tipo = (nodo.args[0].value
-                        if nodo.args and isinstance(nodo.args[0], ast.Constant) else "?")
-                collisioni += [(tipo, k.arg) for k in nodo.keywords
-                               if k.arg in riservati]
+        for _nome, albero in self._alberi():
+            for nodo in ast.walk(albero):
+                if (isinstance(nodo, ast.Call)
+                        and isinstance(nodo.func, ast.Attribute)
+                        and nodo.func.attr.startswith("_journal")):
+                    tipo = (nodo.args[0].value
+                            if nodo.args and isinstance(nodo.args[0], ast.Constant) else "?")
+                    collisioni += [(tipo, k.arg) for k in nodo.keywords
+                                   if k.arg in riservati]
         assert not collisioni, (
             f"kwarg di payload che collidono coi parametri di record(): {collisioni}")
