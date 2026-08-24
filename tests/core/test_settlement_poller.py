@@ -451,24 +451,33 @@ def test_settlement_emesso_arriva_al_daily_loss_fino_al_breach():
 # BLOCK — fail-closed su ogni ramo
 # ===========================================================================
 
+class _SettingsLimite50(_Settings):
+    def load_roserpina_config(self):
+        cfg = super().load_roserpina_config()
+        cfg.max_daily_loss = 50.0
+        return cfg
+
+
 @pytest.mark.integration
 def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
-    """Rilievo GPT-5.6 su #440 (terzo giro): con piu' gambe per mercato
-    (dutching), processare i perdenti prima della vincente farebbe sfondare
+    """Rilievi GPT-5.6/Fable su #440 (giri 3-5): con piu' gambe per mercato
+    (dutching), processare i perdenti prima della vincente sfonderebbe
     TRANSITORIAMENTE il daily-loss e scatterebbe l'emergency stop su un
-    mercato che netta positivo. Con l'ordine winners-first per mercato il
-    minimo dei prefissi coincide col market-net vero: il cumulato non scende
-    mai sotto il totale. Scenario: gambe -80 e +100 (market-net +20, limite
-    giornaliero 100): nessun breach, realized finale 19.10 (20 - 0.90 di
-    commissione market-net)."""
-    righe_loser_first = [
+    mercato che netta positivo. Il mercato e' un gruppo ATOMICO winners-first
+    ANCHE con settledDate divergenti tra le gambe (settlement parziali,
+    millisecondi diversi). Counterfactual REALE: limite giornaliero 50 e
+    gamba perdente -80 — processata per prima avrebbe sfondato il limite da
+    sola e attivato l'emergency stop; winners-first il cumulato non scende
+    mai sotto il market-net +20 (realized finale 19.10)."""
+    righe_loser_first_date_divergenti = [
         {"betId": "201", "marketId": "1.600", "profit": -80.0,
-         "settledDate": "2026-08-24T09:00:00Z"},
+         "settledDate": "2026-08-24T09:00:00.001Z"},  # la perdente ha data ANTERIORE
         {"betId": "202", "marketId": "1.600", "profit": 100.0,
-         "settledDate": "2026-08-24T09:00:00Z"},
+         "settledDate": "2026-08-24T09:00:00.500Z"},
     ]
     rc = _controller(
-        results=[righe_loser_first],
+        results=[righe_loser_first_date_divergenti],
+        settings=_SettingsLimite50(),
         bot_orders=[
             {"bet_id": "201", "market_id": "1.600", "event_name": "E"},
             {"bet_id": "202", "market_id": "1.600", "event_name": "E"},
@@ -479,14 +488,14 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
 
     closes = _closes(rc)
     assert [p["event_key"] for p in closes] == [
-        "cleared:1.600:202",  # la vincente PRIMA
+        "cleared:1.600:202",  # la vincente PRIMA, anche con data posteriore
         "cleared:1.600:201",
     ]
 
-    # Consegna nello stesso ordine di emissione al consumer VERO: il
-    # cumulato non scende mai sotto il market-net e il kill-switch non
-    # scatta mai (con l'ordine invertito la prima gamba -80 avvicinerebbe
-    # da sola il limite e in scenari piu' larghi lo sfonderebbe).
+    # Consegna nello stesso ordine di emissione al consumer VERO: la -80
+    # da sola sfonderebbe il limite 50 (emergency stop); winners-first il
+    # cumulato tocca al minimo il market-net finale e il kill-switch non
+    # scatta mai.
     for payload in closes:
         rc._on_close_position(payload)
         assert rc._emergency_stopped is False
@@ -494,6 +503,33 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
     assert rc.risk_desk.realized_pnl == pytest.approx(19.10)
     stato = dict(rc._daily_loss_monitor_state)
     assert bool(stato["breached"]) is False
+
+
+@pytest.mark.integration
+def test_gruppo_senza_data_in_coda_non_maschera_un_dip_storico():
+    """Rilievi GPT-5.6/Fable su #440 (quinto giro): una riga vincente SENZA
+    settledDate non deve essere anteposta a una perdita storica datata —
+    anteporla attenuerebbe il dip reale (fail-open). I gruppi non databili
+    vanno in coda."""
+    righe = [
+        {"betId": "402", "marketId": "1.050", "profit": 90.0},  # senza data
+        {"betId": "401", "marketId": "1.900", "profit": -60.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "401", "market_id": "1.900", "event_name": "E"},
+            {"bet_id": "402", "market_id": "1.050", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    assert [p["event_key"] for p in _closes(rc)] == [
+        "cleared:1.900:401",  # la perdita datata PRIMA
+        "cleared:1.050:402",  # il profitto non databile in coda
+    ]
 
 
 @pytest.mark.integration

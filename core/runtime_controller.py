@@ -650,34 +650,50 @@ class RuntimeController:
                 continue
             valid_rows.append(row)
 
-        # Ordine di lavorazione: CRONOLOGICO tra mercati (settledDate — la
-        # verita' economica: un dip storico reale va rigiocato fedelmente,
-        # mai nascosto anteponendo un vincente successivo: sarebbe fail-open
-        # sul kill-switch), e winners-first DENTRO il mercato: le gambe di un
-        # mercato settlano nello stesso istante e in una sequenza ordinata
-        # per profit DECRESCENTE il minimo dei prefissi coincide col totale,
-        # quindi il cumulato non scende mai sotto il vero market-net del
-        # mercato in lavorazione (le gambe perdenti di un dutching non
-        # possono far scattare l'emergency stop su un mercato che netta
-        # positivo). Rilievi GPT-5.6/Fable/Fugu su #440.
-        def _ordine_cronologico_winners_first(row: dict):
+        # Ordine di lavorazione (rilievi GPT-5.6/Fable/Fugu su #440, giri
+        # 3-5): il MERCATO e' il gruppo ATOMICO.
+        #
+        # - DENTRO il gruppo: profit DECRESCENTE, qualunque siano i
+        #   settledDate delle gambe (settlement parziali o timestamp
+        #   divergenti al millisecondo inclusi). In una sequenza decrescente
+        #   il minimo dei prefissi coincide col totale, quindi il cumulato
+        #   non scende mai sotto il vero market-net del mercato in
+        #   lavorazione: le gambe perdenti di un dutching non possono far
+        #   scattare l'emergency stop su un mercato che netta positivo.
+        # - TRA i gruppi: CRONOLOGICO per la PRIMA settledDate del gruppo
+        #   (verita' storica a granularita' di mercato: un dip reale si
+        #   rigioca fedelmente, mai nascosto anteponendo un vincente
+        #   successivo). Gruppi senza alcuna data in CODA: un profitto non
+        #   databile non puo' mascherare un dip storico precedente.
+        def _profit_sicuro(row: dict) -> float:
             profit = row.get("profit")
-            profit_f = (
-                float(profit)
-                if (
-                    isinstance(profit, (int, float))
-                    and not isinstance(profit, bool)
-                    and math.isfinite(float(profit))
-                )
-                else 0.0
-            )
-            return (
-                str(row.get("settledDate") or ""),
-                str(row.get("marketId") or ""),
-                -profit_f,
-            )
+            if (
+                isinstance(profit, (int, float))
+                and not isinstance(profit, bool)
+                and math.isfinite(float(profit))
+            ):
+                return float(profit)
+            return 0.0
 
-        valid_rows.sort(key=_ordine_cronologico_winners_first)
+        gruppi: dict[str, list[dict]] = {}
+        for row in valid_rows:
+            gruppi.setdefault(str(row.get("marketId") or ""), []).append(row)
+
+        def _ordine_gruppo(item):
+            market_id, righe_gruppo = item
+            date = [
+                str(r.get("settledDate") or "")
+                for r in righe_gruppo
+                if str(r.get("settledDate") or "")
+            ]
+            if date:
+                return (0, min(date), market_id)
+            return (1, "", market_id)
+
+        valid_rows = []
+        for _market_id, righe_gruppo in sorted(gruppi.items(), key=_ordine_gruppo):
+            righe_gruppo.sort(key=lambda r: -_profit_sicuro(r))
+            valid_rows.extend(righe_gruppo)
 
         emission_failures = 0
         for row in valid_rows:
