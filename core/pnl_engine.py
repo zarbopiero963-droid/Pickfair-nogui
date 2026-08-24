@@ -376,9 +376,11 @@ class PnLEngine:
         lo stesso mercato non si realizza due volte
         (``CLEARED_SETTLEMENT_DUPLICATE``), qualunque sia il chiamante.
         Thread-safe: mutazioni serializzate con i fill/market update del bus
-        (``_state_lock``). Identità deterministica:
-        ``event_key = "cleared:<market_id>"`` (stessa chiave che il consumer
-        usa per il checkpoint durevole => dedupe ricostruibile al riavvio).
+        (``_state_lock``). Identità deterministica PER-BET:
+        ``event_key = "cleared:<market_id>:<settlement_ref>"`` (con ref =
+        betId; senza ref degrada a ``cleared:<market_id>``) — stessa chiave
+        che il consumer usa per il checkpoint durevole => dedupe
+        ricostruibile al riavvio.
         Le posizioni tracked del mercato vengono rimosse dal tracking
         (il mercato non esiste più); non essendoci table_id, il rilascio
         tavoli resta al percorso cashout/reset come oggi.

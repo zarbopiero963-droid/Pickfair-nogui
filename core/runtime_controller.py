@@ -125,7 +125,10 @@ class RuntimeController:
         )
         # Dedupe emissione settlement: in-memory per il processo vivo; il
         # riavvio è coperto dal pre-check durevole sul cycle recovery state
-        # (stessa settlement_key del consumer: "cleared:<market_id>").
+        # (stessa settlement_key PER-BET del consumer:
+        # "cleared:<market_id>:<bet_id>" — il payload cleared non ha
+        # batch/table/bet top-level, quindi _build_bankroll_sync_key
+        # collassa sull'event_key).
         self._settlement_emitted_keys: set[str] = set()
         self._settlement_poll_thread: Optional[threading.Thread] = None
         self._settlement_poll_stop = threading.Event()
