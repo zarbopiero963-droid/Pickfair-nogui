@@ -509,3 +509,52 @@ def test_lazy_client_failure_ripetute_aprono_il_breaker():
             pass
 
     assert engine._order_submission_breaker.is_open()
+
+
+@pytest.mark.unit
+def test_lazy_client_risoluzione_unica_niente_toctou_sul_fallback_raw():
+    """Bloccante convergente GPT-5.6 Sol + Fable 5 su #443: il getter va
+    invocato UNA SOLA volta per submission. Se la risoluzione LIVE vede None
+    (pre-connessione) e la connessione arriva SUBITO DOPO, il fallback raw
+    in coda NON deve ri-invocare il getter e piazzare l'ordine senza breaker
+    ne' gestione sessione: la submission chiude NO_VALID_EXECUTION_PATH e
+    l'ordine parte — protetto — alla submission successiva."""
+    engine = _make_engine()
+    engine.runtime_controller = _runtime_live()
+    engine.betfair_client = None
+
+    fake_client = MagicMock()
+    fake_client.place_order.return_value = {"ok": True, "bet_id": "B-LAZY"}
+    fake_client.place_bet.return_value = {"ok": True, "bet_id": "B-RAW"}
+
+    chiamate = {"n": 0}
+
+    def getter_con_race():
+        # 1a chiamata (risoluzione nel ramo LIVE): non ancora connesso.
+        # Chiamate successive: la connessione e' arrivata nel frattempo.
+        chiamate["n"] += 1
+        return None if chiamate["n"] == 1 else fake_client
+
+    engine.client_getter = getter_con_race
+
+    with pytest.raises(RuntimeError, match="NO_VALID_EXECUTION_PATH"):
+        engine._submit_to_order_path(
+            _make_ctx(engine),
+            {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+        )
+    assert chiamate["n"] == 1, (
+        "il fallback raw ha ri-invocato il getter: finestra TOCTOU aperta "
+        "(ordine LIVE possibile senza breaker ne' gestione sessione)"
+    )
+    fake_client.place_bet.assert_not_called()
+    fake_client.place_order.assert_not_called()
+
+    # La submission SUCCESSIVA risolve il client ormai connesso e passa dal
+    # ramo protetto (place_order del client risolto, non place_bet raw).
+    result = engine._submit_to_order_path(
+        _make_ctx(engine),
+        {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+    )
+    assert result == {"ok": True, "bet_id": "B-LAZY"}
+    fake_client.place_order.assert_called_once()
+    fake_client.place_bet.assert_not_called()

@@ -1443,6 +1443,13 @@ class TradingEngine:
         payload["correlation_id"] = ctx.correlation_id
 
         runtime = self.runtime_controller
+        # Risoluzione UNICA per submission (anti-TOCTOU): quando il ramo LIVE
+        # ha gia' risolto il client, il fallback raw in coda NON deve
+        # ri-interrogare il getter — un client comparso tra le due letture
+        # (connessione appena stabilita) piazzerebbe l'ordine SENZA breaker
+        # ne' gestione sessione. Meglio nessun ordine ora e un ordine
+        # protetto alla submission successiva.
+        live_client_risolto = False
         # Hard block d'emergenza al chokepoint di submission: vale per OGNI
         # modalita' e percorso (manuale, dutching, copy, fallback). La sola
         # demotion a SIMULATION non basta: senza sim broker configurato il
@@ -1475,6 +1482,7 @@ class TradingEngine:
                     raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
 
                 live_client = self._resolve_live_client()
+                live_client_risolto = True
                 if live_client is not None:
                     if self._order_submission_breaker.is_open():
                         raise RuntimeError("ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN")
@@ -1526,7 +1534,7 @@ class TradingEngine:
                 if callable(fn):
                     return fn(payload)
 
-        if callable(self.client_getter):
+        if callable(self.client_getter) and not live_client_risolto:
             client = self.client_getter()
             if client is not None:
                 place = getattr(client, "place_bet", None)

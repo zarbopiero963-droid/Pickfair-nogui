@@ -105,7 +105,9 @@ def test_headless_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
     # client (a build-time la connessione non esiste); l'engine lo risolve
     # a ogni submission tramite il getter del BetfairService.
     assert app.trading_engine.betfair_client is None
-    assert app.trading_engine.client_getter == app.betfair_service.get_client
+    assert getattr(app.trading_engine.client_getter, "__self__", None) is (
+        app.betfair_service
+    )
     assert app.trading_engine.client_getter() is app.betfair_service.client
 
 
@@ -194,5 +196,7 @@ def test_mini_gui_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
     # client (a build-time la connessione non esiste); l'engine lo risolve
     # a ogni submission tramite il getter del BetfairService.
     assert app.trading_engine.betfair_client is None
-    assert app.trading_engine.client_getter == app.betfair_service.get_client
+    assert getattr(app.trading_engine.client_getter, "__self__", None) is (
+        app.betfair_service
+    )
     assert app.trading_engine.client_getter() is app.betfair_service.client
