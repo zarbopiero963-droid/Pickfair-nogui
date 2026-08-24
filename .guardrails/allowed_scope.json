@@ -1446,6 +1446,20 @@
       ],
       "max_files": 11,
       "allow_tests": true
+    },
+    "risk_gate_roserpina_config": {
+      "description": "PR 4 del piano di cablaggio (owner: «Vai prossima pr», 2026-08-24). RiskGate ↔ config Roserpina: il gate del percorso ordine legge i limiti SALVATI dall'owner (vista core/risk_gate.RoserpinaRiskLimits sulla RoserpinaConfig, snapshot fresco a ogni check via refresh() — un salvataggio dalla tab morde al check successivo senza riavvio) invece delle costanti congelate di trading_config; default vergini IDENTICI alle costanti (zero delta). Fail-closed: refresh illeggibile / snapshot None / campo mancante / valore non finito / flag non-bool => DENY RISK_CONFIG_MISSING, mai default silenziosi (la validazione resta nel gate). Semantica dichiarata: max_win sul gate resta BLOCCO hard (H-14), max_win_warning_only governa solo il precheck dutching. Promozione guardrail: test_gap_risk_gate_legge_trading_config_non_roserpina => CABLATO comportamentale (min_price salvato NEGA sotto soglia, entrambi gli entrypoint, con ripristino). Test hard red-first: 10 unit (tests/core/test_risk_gate.py, sezione RoserpinaRiskLimits) + guardrail.",
+      "files": [
+        "core/risk_gate.py",
+        "core/system_state.py",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/core/test_risk_gate.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 7,
+      "allow_tests": true
     }
   }
 }

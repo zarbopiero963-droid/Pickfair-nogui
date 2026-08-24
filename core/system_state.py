@@ -76,14 +76,17 @@ class RoserpinaConfig:
     max_stake_abs: float = 10000.0
 
     # Book % (over-round) thresholds — editabili da GUI, applicati come gate reale
-    # al submit dutching (controllers/dutching_controller.precheck). Default
+    # al submit dutching (controllers/dutching_controller.precheck) e — book_block —
+    # al RiskGate del percorso ordine (core/risk_gate.RoserpinaRiskLimits). Default
     # allineati a trading_config.BOOK_WARNING/BOOK_BLOCK (fonte-dato del fallback
     # fail-safe lato loader/enforcement).
     book_warning: float = 105.0
     book_block: float = 110.0
 
     # Liquidity guard — editabile da GUI, applicato come gate reale al submit
-    # dutching. Default allineati a trading_config.LIQUIDITY_*. Semantica
+    # dutching E al RiskGate del percorso ordine (vista RoserpinaRiskLimits;
+    # li' il dato illeggibile NEGA sempre, anche in warning_only).
+    # Default allineati a trading_config.LIQUIDITY_*. Semantica
     # (controllers/dutching_controller): guard_enabled=False disattiva il gate;
     # required = stake * multiplier; blocca se available < max(min_absolute,
     # required); warning_only=True => avvisa invece di bloccare; FAIL-OPEN se la
@@ -95,8 +98,9 @@ class RoserpinaConfig:
     # a blocco reale mettendo False dalla GUI.
     liquidity_warning_only: bool = True
 
-    # Quota minima di strategia (floor editabile) applicata al submit dutching,
-    # SOPRA il minimo Betfair inviolabile 1.01. Default = trading_config.MIN_PRICE.
+    # Quota minima di strategia (floor editabile) applicata al submit dutching
+    # e al RiskGate del percorso ordine (vista RoserpinaRiskLimits), SOPRA il
+    # minimo Betfair inviolabile 1.01. Default = trading_config.MIN_PRICE.
     min_price: float = 1.02
 
     # Cap importo potenziale PER GAMBA (G5), editabile da GUI, applicato al submit
@@ -107,6 +111,8 @@ class RoserpinaConfig:
     # Default OPT-IN (#383-style): max_win_warning_only=True => il cap parte in
     # AVVISO; l'owner lo arma a BLOCCO reale mettendo False dalla GUI. FAIL-SAFE:
     # config assente/corrotta ricade su trading_config.MAX_WIN (mai disattiva il cap).
+    # NOTA: il flag governa SOLO il precheck dutching — sul RiskGate del percorso
+    # ordine (vista RoserpinaRiskLimits) max_win resta un BLOCCO hard (H-14).
     max_win: float = 10000.0
     max_win_warning_only: bool = True
 
