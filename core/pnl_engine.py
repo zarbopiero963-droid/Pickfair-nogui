@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+import math
+import threading
+from typing import Any, Dict, Optional
 
 from trading_config import enforce_betfair_italy_commission_pct
 from core.position_ledger import PositionLedger
@@ -62,14 +64,40 @@ class PnLEngine:
     """
     PnL Engine completo.
 
-    - tracking posizioni
-    - mark-to-market
-    - chiusura automatica
-    - publish RUNTIME_CLOSE_POSITION
+    - tracking posizioni (QUICK_BET_FILLED / QUICK_BET_PARTIAL)
+    - mark-to-market su MARKET_BOOK_UPDATE
+    - settlement realizzato da report cleared orders
+      (``apply_cleared_market_settlement``)
+    - publisher unico di RUNTIME_CLOSE_POSITION
+
+    Auto-close mark-to-market (soglie ±% su stima di prezzo): **disattivo di
+    default** (``auto_close_enabled=False``). La chiusura a soglia NON piazza
+    alcun ordine reale: realizzerebbe PnL contabile su una posizione ancora
+    viva su Betfair. Va armata esplicitamente e consapevolmente — coerente col
+    contratto del RuntimeController («NON chiude automaticamente le
+    posizioni»). Il percorso di settlement REALE (cleared orders) non passa da
+    questo flag: un mercato settlato da Betfair è realizzato per definizione.
     """
 
-    def __init__(self, bus=None, commission_pct: float = 4.5):
+    def __init__(
+        self,
+        bus=None,
+        commission_pct: float = 4.5,
+        auto_close_enabled: bool = False,
+    ):
         self.bus = bus
+        self.auto_close_enabled = bool(auto_close_enabled)
+        # Serializza OGNI mutazione dello stato condiviso (_positions,
+        # _position_ledgers, aggregatore market-net): i fill/market update
+        # arrivano dai worker dell'EventBus, i settlement cleared dal thread
+        # del poller — senza lock due thread corromperebbero i ledger.
+        # RLock perche' _on_market (sotto lock) chiama _close.
+        self._state_lock = threading.RLock()
+        # Idempotenza interna del settlement cleared: un mercato realizzato
+        # via cleared orders non puo' essere ri-applicato dal motore, quale
+        # che sia il chiamante (difesa in profondita' oltre il dedupe del
+        # poller e il checkpoint durevole del consumer).
+        self._applied_cleared_markets: set[str] = set()
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._position_ledgers: Dict[str, PositionLedger] = {}
         self.commission = float(commission_pct) / 100.0
@@ -108,52 +136,60 @@ class PnLEngine:
         if not market_id or selection_id < 0 or price <= 1.0 or size <= 0.0:
             return
 
-        ledger = self._position_ledgers.get(event_key)
-        if ledger is None:
-            ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
-            self._position_ledgers[event_key] = ledger
+        with self._state_lock:
+            ledger = self._position_ledgers.get(event_key)
+            if ledger is None:
+                ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
+                self._position_ledgers[event_key] = ledger
 
-        fill_id = str(
-            payload.get("fill_id")
-            or payload.get("match_id")
-            or payload.get("bet_id")
-            or payload.get("customer_ref")
-            or event_key
-        )
-        applied = ledger.apply_fill(
-            fill_id=fill_id,
-            side=side,
-            price=price,
-            size=size,
-        )
-        snap = applied["snapshot"]
-        self._positions[event_key] = {
-            "event_key": event_key,
-            "market_id": market_id,
-            "selection_id": selection_id,
-            "side": str(snap.open_side or side),
-            "price": float(snap.avg_entry_price or price),
-            "stake": float(snap.open_size or 0.0),
-            "table_id": payload.get("table_id"),
-            "batch_id": payload.get("batch_id"),
-        }
+            fill_id = str(
+                payload.get("fill_id")
+                or payload.get("match_id")
+                or payload.get("bet_id")
+                or payload.get("customer_ref")
+                or event_key
+            )
+            applied = ledger.apply_fill(
+                fill_id=fill_id,
+                side=side,
+                price=price,
+                size=size,
+            )
+            snap = applied["snapshot"]
+            self._positions[event_key] = {
+                "event_key": event_key,
+                "market_id": market_id,
+                "selection_id": selection_id,
+                "side": str(snap.open_side or side),
+                "price": float(snap.avg_entry_price or price),
+                "stake": float(snap.open_size or 0.0),
+                "table_id": payload.get("table_id"),
+                "batch_id": payload.get("batch_id"),
+            }
 
     # =========================================================
     # MARKET UPDATE
     # =========================================================
     def _on_market(self, market_book):
+        # Gate di sicurezza: la chiusura a soglia su stima mark-to-market NON
+        # piazza ordini reali => realizzerebbe PnL contabile fantasma su una
+        # posizione ancora aperta su Betfair. Dormiente salvo arming esplicito.
+        if not self.auto_close_enabled:
+            return
+
         market_id = str(market_book.get("marketId") or "")
 
-        for pos in list(self._positions.values()):
-            if pos["market_id"] != market_id:
-                continue
+        with self._state_lock:
+            for pos in list(self._positions.values()):
+                if pos["market_id"] != market_id:
+                    continue
 
-            settlement = self._calc_settlement(pos, market_book)
-            pnl = float(settlement["net_pnl"])
+                settlement = self._calc_settlement(pos, market_book)
+                pnl = float(settlement["net_pnl"])
 
-            # 🎯 LOGICA USCITA
-            if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
-                self._close(pos, settlement)
+                # 🎯 LOGICA USCITA
+                if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
+                    self._close(pos, settlement)
 
     # =========================================================
     # PNL CALC
@@ -247,6 +283,10 @@ class PnLEngine:
     # CLOSE
     # =========================================================
     def _close(self, pos, settlement):
+        with self._state_lock:
+            self._close_locked(pos, settlement)
+
+    def _close_locked(self, pos, settlement):
         settlement = dict(settlement or {})
         event_key = str(pos.get("event_key") or "")
         market_id = str(pos.get("market_id") or "").strip()
@@ -301,9 +341,163 @@ class PnLEngine:
         self._position_ledgers.pop(event_key, None)
 
     # =========================================================
+    # SETTLEMENT REALE (cleared orders)
+    # =========================================================
+    def apply_cleared_market_settlement(
+        self,
+        *,
+        market_id: str,
+        gross_pnl: float,
+        source: str = "betfair_cleared_orders",
+        settled_date: str = "",
+        reported_commission: Optional[float] = None,
+        settlement_ref: str = "",
+    ) -> Dict[str, Any]:
+        """Realizza un settlement reale di Betfair sul mercato indicato.
+
+        Ingresso del ciclo di chiusura reale (poller listClearedOrders).
+        Granularita' PER-BET quando ``settlement_ref`` (il betId del bot) e'
+        valorizzato: piu' bet dello stesso mercato si applicano in sequenza e
+        l'aggregatore ricalcola il market-net a ogni passo (stessa meccanica
+        dei close multi-leg); l'idempotenza e' per (mercato, ref). Senza ref
+        la granularita' resta il mercato intero. ``gross_pnl`` è il ``profit``
+        GROSS del report (pre-commissione — la commissione Betfair è
+        riportata a parte). La
+        commissione applicata qui è quella di POLICY (market-net, aliquota
+        Italia) via aggregatore: è l'unica forma che il contratto settlement
+        del RuntimeController accetta (``COMMISSION_AMOUNT_POLICY_MISMATCH``
+        altrimenti); l'eventuale commissione riportata da Betfair viaggia nel
+        payload come campo osservabilità (``betfair_reported_commission``),
+        mai come base contabile. Il saldo VERO resta il bankroll sync
+        post-settlement (get_account_funds).
+
+        Fail-closed: ``market_id`` vuoto o ``gross_pnl`` non finito/non
+        numerico => raise, nessun payload parziale. Idempotente NEL MOTORE:
+        lo stesso mercato non si realizza due volte
+        (``CLEARED_SETTLEMENT_DUPLICATE``), qualunque sia il chiamante.
+        Thread-safe: mutazioni serializzate con i fill/market update del bus
+        (``_state_lock``). Identità deterministica PER-BET:
+        ``event_key = "cleared:<market_id>:<settlement_ref>"`` (con ref =
+        betId; senza ref degrada a ``cleared:<market_id>``) — stessa chiave
+        che il consumer usa per il checkpoint durevole => dedupe
+        ricostruibile al riavvio.
+        Le posizioni tracked del mercato vengono rimosse dal tracking
+        (il mercato non esiste più); non essendoci table_id, il rilascio
+        tavoli resta al percorso cashout/reset come oggi.
+        """
+        market_key = str(market_id or "").strip()
+        if not market_key:
+            raise ValueError(
+                "CLEARED_SETTLEMENT_INVALID_MARKET: market_id is required"
+            )
+        try:
+            gross = float(gross_pnl)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"CLEARED_SETTLEMENT_INVALID_GROSS: profit non numerico per "
+                f"market {market_key}: {gross_pnl!r}"
+            ) from exc
+        if not math.isfinite(gross):
+            raise ValueError(
+                f"CLEARED_SETTLEMENT_INVALID_GROSS: profit non finito per "
+                f"market {market_key}: {gross_pnl!r}"
+            )
+        reported_commission_f: Optional[float] = None
+        if reported_commission is not None:
+            # Convertita PRIMA di mutare l'aggregatore: un valore malformato
+            # deve fallire senza lasciare stato parziale nel ledger.
+            try:
+                reported_commission_f = float(reported_commission)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"CLEARED_SETTLEMENT_INVALID_COMMISSION: commissione "
+                    f"riportata non numerica per market {market_key}: "
+                    f"{reported_commission!r}"
+                ) from exc
+
+        ref = str(settlement_ref or "").strip()
+        dedupe_key = f"{market_key}:{ref}" if ref else market_key
+        with self._state_lock:
+            # Idempotenza nel MOTORE (non solo nel poller): lo stesso
+            # settlement (mercato, o singola bet del mercato quando ref e'
+            # valorizzato) non si ri-applica MAI — un secondo apply
+            # raddoppierebbe realized e commissione nel daily-loss. Il guard
+            # precede la mutazione dell'aggregatore: il raise non lascia
+            # stato parziale.
+            if dedupe_key in self._applied_cleared_markets:
+                raise ValueError(
+                    f"CLEARED_SETTLEMENT_DUPLICATE: settlement {dedupe_key} "
+                    "gia' realizzato da cleared orders"
+                )
+
+            realized = self._apply_realized_market_net_commission(
+                market_id=market_key, gross_pnl=gross
+            )
+            self._applied_cleared_markets.add(dedupe_key)
+            net_pnl = float(realized["net_pnl"])
+            event_key = (
+                f"cleared:{market_key}:{ref}" if ref else f"cleared:{market_key}"
+            )
+
+            cleared_positions = [
+                key
+                for key, pos in list(self._positions.items())
+                if str(pos.get("market_id") or "") == market_key
+            ]
+            for key in cleared_positions:
+                self._positions.pop(key, None)
+                self._position_ledgers.pop(key, None)
+
+            payload: Dict[str, Any] = {
+                "event_key": event_key,
+                "market_id": market_key,
+                "table_id": None,
+                "batch_id": "",
+                # legacy alias (net pnl) kept for compatibility
+                "pnl": net_pnl,
+                "gross_pnl": gross,
+                "commission_amount": float(realized["commission_amount"]),
+                "net_pnl": net_pnl,
+                "commission_pct": float(realized["commission_pct"]),
+                "market_net_gross": float(realized["market_net_gross"]),
+                "market_commission_amount_total": float(
+                    realized["market_commission_amount_total"]
+                ),
+                "settlement_basis": str(realized["settlement_basis"]),
+                "settlement_source": str(source or "betfair_cleared_orders"),
+                "settlement_kind": "realized_settlement",
+                "settled_date": str(settled_date or ""),
+                "settlement_ref": ref,
+                "cleared_positions": list(cleared_positions),
+            }
+            if reported_commission_f is not None:
+                payload["betfair_reported_commission"] = reported_commission_f
+
+            logger.info(
+                "[PnL] Cleared settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
+                market_key,
+                ref or "-",
+                gross,
+                net_pnl,
+                len(cleared_positions),
+            )
+
+        # Publish FUORI dalla sezione critica: il bus e' enqueue-only, ma un
+        # subscriber sincrono (bus di test / futuri wiring) non deve mai
+        # rientrare nel motore con il lock ancora tenuto (lock-ordering).
+        if self.bus:
+            self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+
+        return payload
+
+    # =========================================================
     # STATUS
     # =========================================================
     def snapshot(self):
+        with self._state_lock:
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self):
         return {
             "open_positions": len(self._positions),
             "positions": [

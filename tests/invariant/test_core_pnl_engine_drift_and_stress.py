@@ -248,7 +248,7 @@ def test_event_driven_close_payload_exposes_explicit_settlement_contract():
             self.events.append((topic, dict(payload or {})))
 
     bus = _Bus()
-    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5, auto_close_enabled=True)
 
     fill = {
         "event_key": "E-SC",
@@ -302,7 +302,7 @@ def test_event_driven_realized_settlement_uses_market_net_commission_for_same_ma
             self.events.append((topic, dict(payload or {})))
 
     bus = _Bus()
-    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5, auto_close_enabled=True)
 
     base_fill = {
         "market_id": "1.452",
@@ -379,7 +379,7 @@ def test_event_driven_realized_settlement_overcharge_detector_differs_from_per_l
             self.events.append((topic, dict(payload or {})))
 
     bus = _Bus()
-    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5)
+    engine = EventDrivenPnLEngine(bus=bus, commission_pct=4.5, auto_close_enabled=True)
     base_fill = {
         "market_id": "1.453",
         "selection_id": 89,

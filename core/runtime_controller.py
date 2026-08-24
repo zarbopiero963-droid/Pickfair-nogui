@@ -6,13 +6,14 @@ import logging
 import math
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
+from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
@@ -28,7 +29,12 @@ from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
-from trading_config import AUTO_GREEN_DELAY_SEC, STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
+from trading_config import (
+    AUTO_GREEN_DELAY_SEC,
+    BETFAIR_ITALY_COMMISSION_PCT,
+    STRICT_LIVE_KEY_SOURCE_REQUIRED,
+    enforce_betfair_italy_commission_pct,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +113,38 @@ class RuntimeController:
         self.streaming_feed: Optional[StreamingFeed] = None
         self._market_data_cfg: dict[str, Any] = {}
         self._last_fallback_snapshot_at: float = 0.0
+        # PR3 (runtime_settlement_wiring): motore PnL cablato — publisher unico
+        # di RUNTIME_CLOSE_POSITION. Auto-close mark-to-market OFF: il
+        # controller NON chiude posizioni da solo; il settlement REALE arriva
+        # dal poller cleared orders (default OFF, LIVE-only). Commissione =
+        # costante di policy: il contratto settlement accetta solo quella.
+        self.pnl_engine = PnLEngine(
+            bus=self.bus,
+            commission_pct=BETFAIR_ITALY_COMMISSION_PCT,
+            auto_close_enabled=False,
+        )
+        # Dedupe emissione settlement: in-memory per il processo vivo; il
+        # riavvio è coperto dal pre-check durevole sul cycle recovery state
+        # (stessa settlement_key PER-BET del consumer:
+        # "cleared:<market_id>:<bet_id>" — il payload cleared non ha
+        # batch/table/bet top-level, quindi _build_bankroll_sync_key
+        # collassa sull'event_key).
+        self._settlement_emitted_keys: set[str] = set()
+        self._settlement_poll_thread: Optional[threading.Thread] = None
+        self._settlement_poll_stop = threading.Event()
+        self._settlement_poll_cfg: dict[str, Any] = {}
+        # Serializza i GIRI di poll: se un vecchio thread sta finendo un giro
+        # (join scaduto su una chiamata di rete lenta) e uno nuovo parte, i
+        # due giri non possono mai sovrapporsi (doppia emissione impossibile).
+        self._settlement_poll_round_lock = threading.Lock()
+        # Primo giro di OGNI generazione del poller: sweep COMPLETO (senza
+        # settled_after, orizzonte Betfair ~90gg) per recuperare i settlement
+        # maturati durante il downtime; il dedupe filtra il gia' consegnato.
+        # La generazione e' legata al THREAD (passata come argomento): un
+        # thread vecchio sopravvissuto al join puo' stampare solo la SUA
+        # generazione, mai bruciare lo sweep di quella nuova.
+        self._settlement_poll_generation = 0
+        self._settlement_sweep_done_generation = -1
         # Registry DIRECT (B6.3.2a): customer_ref → bet_id degli ordini DIRECT
         # vivi. In-memory, riparte vuoto al restart (fail-safe).
         self._direct_order_bet_ids: dict[str, str] = {}
@@ -384,6 +422,467 @@ class RuntimeController:
             logger.exception("Errore stop streaming_feed")
         finally:
             self.streaming_feed = None
+
+    # =========================================================
+    # Settlement poller (PR3, runtime_settlement_wiring) — il ciclo di
+    # chiusura reale: listClearedOrders(SETTLED, group_by=MARKET) =>
+    # PnLEngine.apply_cleared_market_settlement => RUNTIME_CLOSE_POSITION
+    # => daily-loss/bankroll sync. Default OFF, LIVE-only, fail-closed.
+    # =========================================================
+    def _load_settlement_poll_config(self) -> dict:
+        """Config del poller settlement, letta dalle settings (pattern
+        market-data). Chiavi: ``settlement.poll_enabled`` (default False —
+        dormiente, decisione owner), ``settlement.poll_sec`` (default 60,
+        min 5), ``settlement.lookback_hours`` (default 24, clamp 1..168).
+        Qualsiasi errore di lettura/parse => default DISABLED (fail-closed).
+        """
+        defaults = {"enabled": False, "poll_sec": 60.0, "lookback_hours": 24.0}
+        try:
+            data = (
+                self.settings_service.get_all_settings()
+                if hasattr(self.settings_service, "get_all_settings")
+                else {}
+            )
+            if not isinstance(data, dict):
+                return dict(defaults)
+            enabled = self._safe_bool(
+                data.get("settlement.poll_enabled"), default=False
+            )
+            poll_sec = float(
+                data.get("settlement.poll_sec", defaults["poll_sec"])
+                or defaults["poll_sec"]
+            )
+            lookback = float(
+                data.get("settlement.lookback_hours", defaults["lookback_hours"])
+                or defaults["lookback_hours"]
+            )
+            if not math.isfinite(poll_sec) or not math.isfinite(lookback):
+                return dict(defaults)
+            return {
+                "enabled": bool(enabled),
+                "poll_sec": max(5.0, poll_sec),
+                "lookback_hours": min(168.0, max(1.0, lookback)),
+            }
+        except Exception:
+            logger.exception("Errore load settlement poll config (default: disabled)")
+            return dict(defaults)
+
+    def _start_settlement_poller(self) -> None:
+        self._settlement_poll_cfg = self._load_settlement_poll_config()
+        if not bool(self._settlement_poll_cfg.get("enabled", False)):
+            return
+        if self.simulation_mode:
+            # Parity SIM non ancora cablata (record_realized_settlement del
+            # broker simulato resta senza consumer): nessun poll in SIM.
+            return
+        if (
+            self._settlement_poll_thread is not None
+            and self._settlement_poll_thread.is_alive()
+        ):
+            return
+        self._settlement_poll_generation += 1
+        generation = self._settlement_poll_generation
+        stop_event = threading.Event()
+        self._settlement_poll_stop = stop_event
+        # Event e GENERAZIONE vengono passati AL thread: il loop usa SEMPRE i
+        # propri (mai gli attributi, che un restart puo' rimpiazzare). Un
+        # thread vecchio sopravvissuto al join resta fermabile dal SUO event
+        # gia' settato, non puo' "adottare" l'event nuovo e non puo' armare
+        # lo sweep della generazione nuova (rilievi GPT-5.6 su #440).
+        self._settlement_poll_thread = threading.Thread(
+            target=self._settlement_poll_loop,
+            args=(stop_event, generation),
+            name="settlement-poller",
+            daemon=True,
+        )
+        self._settlement_poll_thread.start()
+        logger.info(
+            "Settlement poller avviato (poll_sec=%.0f lookback_hours=%.0f)",
+            float(self._settlement_poll_cfg.get("poll_sec", 60.0)),
+            float(self._settlement_poll_cfg.get("lookback_hours", 24.0)),
+        )
+
+    def _stop_settlement_poller(self) -> None:
+        thread = self._settlement_poll_thread
+        if thread is None:
+            return
+        self._settlement_poll_stop.set()
+        try:
+            thread.join(timeout=5.0)
+            if thread.is_alive():
+                logger.warning(
+                    "Settlement poller ancora vivo dopo il join: uscira' al "
+                    "prossimo check del suo stop event (gia' settato); il "
+                    "round lock impedisce comunque giri sovrapposti."
+                )
+        except Exception:
+            logger.exception("Errore join settlement poller")
+        finally:
+            self._settlement_poll_thread = None
+
+    def _settlement_poll_loop(
+        self, stop_event: threading.Event, generation: Optional[int] = None
+    ) -> None:
+        interval = max(
+            5.0, float(self._settlement_poll_cfg.get("poll_sec", 60.0) or 60.0)
+        )
+        while not stop_event.is_set():
+            try:
+                self._poll_cleared_settlements(generation=generation)
+            except Exception:
+                logger.exception("Errore poll cleared settlements (round abortito)")
+            stop_event.wait(interval)
+
+    def _poll_cleared_settlements(self, generation: Optional[int] = None) -> None:
+        """Un giro di poll dei settlement reali. Fail-closed su ogni ramo:
+
+        - SIM o runtime non ACTIVE => nessuna chiamata;
+        - **identita' del bot PER-BET (I1)**: si interrogano SOLO i ``betId``
+          registrati dal bot (``db.get_bot_active_orders`` — ledger a
+          denylist SIM+LIVE: le bet settlate RESTANO nel ledger, si escludono
+          solo CANCELLED/INFLIGHT). Granularita' per-bet: le scommesse
+          MANUALI dell'account — anche sullo stesso mercato del bot — non
+          entrano MAI nel daily-loss (un profitto esterno maschererebbe le
+          perdite del bot: fail-open sul kill-switch). Gli id non-numerici
+          (ledger SIM, ``SIMBET-*``) sono esclusi dal poll LIVE. Identita'
+          illeggibile o vuota => nessuna chiamata;
+        - **primo giro di ogni generazione = sweep completo** (senza
+          ``settled_after``, orizzonte Betfair ~90gg): recupera i settlement
+          maturati durante il downtime oltre il lookback; i giri successivi
+          usano la finestra mobile. Lo sweep si dichiara fatto SOLO se il
+          fetch e' riuscito E nessuna emissione e' fallita, e vale per la
+          SOLA generazione del thread che l'ha eseguito;
+        - fetch fallito => round abortito (mai una lista vuota spacciata per
+          "nessun settlement" — il client/service propagano, qui si logga e
+          si ritenta al giro dopo);
+        - riga malformata (betId/marketId/profit assenti o non numerici) o
+          con betId fuori dall'allowlist => scartata con log, MAI inventare
+          un profit;
+        - dedupe per-bet: guardia idempotente NEL MOTORE (mercato, ref) +
+          in-memory per il processo + pre-check durevole sul cycle recovery
+          state (il consumer persiste il checkpoint alla PRIMA consegna con
+          la stessa chiave "cleared:<market_id>:<bet_id>"); stato db in
+          errore => la riga NON viene emessa e NON viene marcata vista;
+        - giri serializzati da ``_settlement_poll_round_lock``: un giro in
+          corso (anche di un thread vecchio) esclude il successivo.
+        """
+        if not self._settlement_poll_round_lock.acquire(blocking=False):
+            return
+        try:
+            self._poll_cleared_settlements_locked(
+                generation=(
+                    self._settlement_poll_generation
+                    if generation is None
+                    else int(generation)
+                )
+            )
+        finally:
+            self._settlement_poll_round_lock.release()
+
+    @staticmethod
+    def _ordina_righe_cleared(valid_rows: list[dict]) -> list[dict]:
+        """Ordine di lavorazione dei settlement (rilievi GPT-5.6/Fable/Fugu
+        su #440, giri 3-7): l'unita' atomica e' il CLUSTER TEMPORALE di
+        mercato.
+
+        - Le gambe dello STESSO mercato settlate entro 2s dall'ANCORA (la
+          prima gamba del cluster) sono lo stesso evento di settlement (il
+          jitter dei timestamp non e' un ordine reale): dentro il cluster
+          profit DECRESCENTE — in una sequenza decrescente il minimo dei
+          prefissi coincide col totale, quindi il cumulato non scende mai
+          sotto il netto del cluster e le gambe perdenti di un dutching non
+          possono far scattare l'emergency stop su un settlement che netta
+          positivo. La finestra si misura dall'ancora e NON dal
+          predecessore: il confronto con la sola gamba precedente creerebbe
+          cluster transitivi di durata illimitata (t=0, 1.9, 3.8, ...) che
+          fondono eventi economici distinti e mascherano un dip storico
+          (fail-open sul kill-switch, rilievo R7).
+        - Gambe dello stesso mercato OLTRE la finestra (settlement
+          parziali) sono eventi economici DISTINTI: cluster separati,
+          rigiocati in ordine cronologico — un dip storico reale (anche
+          intrecciato con altri mercati) non viene MAI attenuato da una
+          vincita successiva.
+        - Le date sono confrontate come datetime REALI (Z normalizzata,
+          offset/frazioni gestiti da ``fromisoformat``): il confronto
+          lessicografico tra formati ISO misti non e' cronologico
+          ('.' < 'Z').
+        - Gambe NON databili: worst-case PER GAMBA, senza netting (una
+          coppia +100/-80 senza date non e' provabilmente un evento unico:
+          piazzarla in coda in base al netto avrebbe potuto occultare un
+          breach storico, rilievo R7). Perdite non databili in TESTA (il
+          dip si assume al peggio, a costo di uno stop spurio fail-closed),
+          profitti non databili in coda (mai a mascherare un dip datato).
+        """
+
+        def _profit_sicuro(row: dict) -> float:
+            profit = row.get("profit")
+            if (
+                isinstance(profit, (int, float))
+                and not isinstance(profit, bool)
+                and math.isfinite(float(profit))
+            ):
+                return float(profit)
+            return 0.0
+
+        def _data_settlement(row: dict) -> Optional[datetime]:
+            testo = str(row.get("settledDate") or "").strip()
+            if not testo:
+                return None
+            candidato = testo[:-1] + "+00:00" if testo.endswith("Z") else testo
+            try:
+                parsed = datetime.fromisoformat(candidato)
+            except ValueError:
+                # Data illeggibile => gamba "non databile": degradazione
+                # CONSERVATIVA per costruzione (perdita in testa, profitto
+                # in coda), mai fail-open. Il floor supportato (Python 3.11
+                # su CI, EXE Windows e venv) parsa nativamente offset senza
+                # ':', frazioni lunghe e virgola decimale.
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+        _CLUSTER_GAP_SEC = 2.0
+        gruppi: dict[str, list[dict]] = {}
+        for row in valid_rows:
+            gruppi.setdefault(str(row.get("marketId") or ""), []).append(row)
+
+        clusters: list[tuple[tuple, list[dict]]] = []
+
+        def _chiudi_cluster(
+            corrente: list[tuple[dict, datetime]], market_id: str
+        ) -> None:
+            ancora = corrente[0][1]
+            righe = sorted(
+                (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
+            )
+            clusters.append(((0, ancora, market_id), righe))
+
+        for market_id, righe_gruppo in gruppi.items():
+            datate = [(r, _data_settlement(r)) for r in righe_gruppo]
+            senza_data = [r for r, dt in datate if dt is None]
+            con_data = sorted(
+                ((r, dt) for r, dt in datate if dt is not None),
+                key=lambda item: item[1],
+            )
+            corrente: list[tuple[dict, datetime]] = []
+            for r, dt in con_data:
+                if (
+                    corrente
+                    and (dt - corrente[0][1]).total_seconds() > _CLUSTER_GAP_SEC
+                ):
+                    _chiudi_cluster(corrente, market_id)
+                    corrente = []
+                corrente.append((r, dt))
+            if corrente:
+                _chiudi_cluster(corrente, market_id)
+            perdite = [r for r in senza_data if _profit_sicuro(r) < 0.0]
+            profitti = [r for r in senza_data if _profit_sicuro(r) >= 0.0]
+            if perdite:
+                clusters.append(
+                    ((-1, None, market_id), sorted(perdite, key=_profit_sicuro))
+                )
+            if profitti:
+                clusters.append(
+                    (
+                        (1, None, market_id),
+                        sorted(profitti, key=lambda x: -_profit_sicuro(x)),
+                    )
+                )
+
+        def _ordine_cluster(item):
+            (posizione, ancora, market_id), _righe = item
+            if posizione == 0:
+                return (0, ancora, market_id)
+            # I non databili usano un datetime sentinella per confronto
+            # omogeneo: perdite prima di tutto, profitti dopo tutto.
+            return (
+                posizione,
+                datetime.min.replace(tzinfo=timezone.utc),
+                market_id,
+            )
+
+        clusters.sort(key=_ordine_cluster)
+        return [row for _chiave, righe in clusters for row in righe]
+
+    def _poll_cleared_settlements_locked(self, *, generation: int) -> None:
+        if self.simulation_mode:
+            return
+        if self.mode is not RuntimeMode.ACTIVE:
+            return
+
+        identity_getter = getattr(self.db, "get_bot_active_orders", None)
+        if not callable(identity_getter):
+            logger.warning(
+                "Settlement poll: db senza get_bot_active_orders — nessun "
+                "filtro identita' possibile, round abortito (fail-closed)."
+            )
+            return
+        try:
+            bot_orders = identity_getter() or []
+        except Exception as exc:
+            logger.warning(
+                "Settlement poll: identita' bot illeggibile (%s), round "
+                "abortito (fail-closed).",
+                exc,
+            )
+            return
+        bet_to_market: dict[str, str] = {}
+        for order in bot_orders:
+            if not isinstance(order, dict):
+                continue
+            bet_id = str(order.get("bet_id") or "").strip()
+            market_id = str(order.get("market_id") or "").strip()
+            # Solo id numerici: i betId reali di Betfair sono cifre; il
+            # ledger SIM usa "SIMBET-*" e non esiste sull'exchange.
+            if bet_id.isdigit() and market_id:
+                bet_to_market[bet_id] = market_id
+        bot_bet_ids = sorted(bet_to_market)
+        if not bot_bet_ids:
+            return
+
+        sweep_done = self._settlement_sweep_done_generation == generation
+        settled_after: Optional[str] = None
+        if sweep_done:
+            lookback_hours = float(
+                self._settlement_poll_cfg.get("lookback_hours", 24.0) or 24.0
+            )
+            settled_after = (
+                datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+            ).isoformat()
+
+        rows: list[dict] = []
+        try:
+            for chunk_start in range(0, len(bot_bet_ids), 1000):
+                chunk = bot_bet_ids[chunk_start:chunk_start + 1000]
+                rows.extend(
+                    self.betfair_service.list_cleared_orders(
+                        bet_status="SETTLED",
+                        settled_after=settled_after,
+                        bet_ids=chunk,
+                    )
+                )
+        except Exception as exc:
+            logger.warning(
+                "Settlement poll: fetch cleared orders fallito, round abortito "
+                "(fail-closed): %s",
+                exc,
+            )
+            return
+
+        valid_rows: list[dict] = []
+        for row in rows or []:
+            if not isinstance(row, dict):
+                logger.warning(
+                    "Settlement poll: riga cleared non-dict scartata: %r", row
+                )
+                continue
+            valid_rows.append(row)
+
+        # Ordine di lavorazione: cluster temporali di mercato con finestra
+        # dall'ancora, worst-case per-gamba sui non databili — razionale e
+        # invarianti nel docstring di _ordina_righe_cleared.
+        valid_rows = self._ordina_righe_cleared(valid_rows)
+
+        emission_failures = 0
+        for row in valid_rows:
+            market_id = str(row.get("marketId") or "").strip()
+            bet_id = str(row.get("betId") or row.get("bet_id") or "").strip()
+            profit_raw = row.get("profit")
+            profit_valid = (
+                not isinstance(profit_raw, bool)
+                and isinstance(profit_raw, (int, float))
+                and math.isfinite(float(profit_raw))
+            )
+            if not market_id or not bet_id or not profit_valid:
+                logger.warning(
+                    "Settlement poll: riga cleared malformata scartata "
+                    "market=%r bet=%r profit=%r",
+                    row.get("marketId"),
+                    row.get("betId"),
+                    profit_raw,
+                )
+                continue
+            expected_market = bet_to_market.get(bet_id)
+            if expected_market is None or expected_market != market_id:
+                # Belt-and-braces oltre il filtro server-side: una bet fuori
+                # dall'allowlist d'identita' (o con mercato incoerente col
+                # ledger) NON entra mai nel daily-loss.
+                logger.warning(
+                    "Settlement poll: bet %s fuori dall'allowlist bot o "
+                    "mercato incoerente (%r vs ledger %r) — riga scartata.",
+                    bet_id,
+                    market_id,
+                    expected_market,
+                )
+                continue
+            settlement_key = f"cleared:{market_id}:{bet_id}"
+            if settlement_key in self._settlement_emitted_keys:
+                continue
+            probe = self._read_cycle_recovery_state(settlement_key)
+            probe_status = str(probe.get("status") or "")
+            if probe_status == "RECOVERY_STATE_INVALID":
+                logger.warning(
+                    "Settlement poll: recovery state illeggibile per %s — "
+                    "emissione sospesa (ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                emission_failures += 1
+                continue
+            if probe_status != "RECOVERY_NO_STATE":
+                # Checkpoint durevole gia' presente: consegnato in un processo
+                # precedente. Non ri-applicare il PnL.
+                self._settlement_emitted_keys.add(settlement_key)
+                continue
+            commission_raw = row.get("commission")
+            reported_commission = (
+                float(commission_raw)
+                if (
+                    not isinstance(commission_raw, bool)
+                    and isinstance(commission_raw, (int, float))
+                    and math.isfinite(float(commission_raw))
+                )
+                else None
+            )
+            try:
+                self.pnl_engine.apply_cleared_market_settlement(
+                    market_id=market_id,
+                    gross_pnl=float(profit_raw),
+                    source="betfair_cleared_orders",
+                    settled_date=str(row.get("settledDate") or ""),
+                    reported_commission=reported_commission,
+                    settlement_ref=bet_id,
+                )
+            except ValueError as exc:
+                if "CLEARED_SETTLEMENT_DUPLICATE" in str(exc):
+                    # Il motore l'ha gia' realizzato (guardia idempotente):
+                    # marca visto e prosegui, nessun doppio conteggio.
+                    self._settlement_emitted_keys.add(settlement_key)
+                    continue
+                logger.exception(
+                    "Settlement poll: emissione fallita per %s (riga saltata, "
+                    "ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                emission_failures += 1
+                continue
+            except Exception:
+                logger.exception(
+                    "Settlement poll: emissione fallita per %s (riga saltata, "
+                    "ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                emission_failures += 1
+                continue
+            self._settlement_emitted_keys.add(settlement_key)
+
+        if emission_failures == 0:
+            # Sweep completo dichiarato fatto SOLO per la generazione di
+            # QUESTO thread, e solo se fetch ed emissioni sono andati a
+            # buon fine: una riga transitoriamente fallita al primo giro
+            # sara' ritentata ancora a orizzonte completo, mai persa oltre
+            # il lookback (rilievi Fable/GPT-5.6 su #440).
+            self._settlement_sweep_done_generation = generation
 
     def _snapshot_rest_fallback(self, *, reason: str, payload: Optional[dict] = None) -> None:
         cfg = dict(self._market_data_cfg or self._load_market_data_config())
@@ -1715,7 +2214,15 @@ class RuntimeController:
 
         self.mode = RuntimeMode.ACTIVE
         self.last_error = ""
-        
+
+        # PR3: ciclo chiusura reale — parte solo se abilitato in config
+        # (settlement.poll_enabled) e mai in SIM. Un errore qui non deve
+        # impedire lo start del runtime.
+        try:
+            self._start_settlement_poller()
+        except Exception:
+            logger.exception("Errore start settlement poller")
+
         # Fase A1: Auto-Sync al boot (background)
         if self.executor:
             self.executor.submit("boot_catalog_sync", self.catalog_sync.run_sync, force=False)
@@ -1734,6 +2241,7 @@ class RuntimeController:
         }
 
     def stop(self) -> dict:
+        self._stop_settlement_poller()
         self._stop_market_data_feed()
         self.telegram_service.stop()
         self.betfair_service.disconnect()

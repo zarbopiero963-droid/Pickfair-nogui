@@ -739,6 +739,68 @@ class BetfairService:
             row.setdefault("customer_ref", ref)
         return row
 
+    def list_cleared_orders(
+        self,
+        *,
+        bet_status: str = "SETTLED",
+        market_ids: Optional[List[str]] = None,
+        bet_ids: Optional[List[str]] = None,
+        settled_after: Optional[str] = None,
+        settled_before: Optional[str] = None,
+        group_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Facade fail-closed di ``BetfairClient.list_cleared_orders``.
+
+        Usata dal poller settlement del RuntimeController (PR3): su questo
+        percorso un errore mascherato da "nessun settlement" è una perdita
+        invisibile al daily-loss, quindi la postura è identica a
+        ``list_current_orders``:
+
+        - **SIM => raise** (``CLEARED_ORDERS_UNAVAILABLE_IN_SIMULATION``): la
+          parity del broker simulato non è ancora cablata; una lista vuota
+          silenziosa sarebbe un falso "nessun settlement";
+        - **LIVE fail-closed**: sessione known-invalid o client assente =>
+          raise; SESSION_EXPIRED durante il fetch => bounded recovery e
+          re-raise; ogni altro errore propaga. Mai una lista vuota al posto
+          di un errore.
+        """
+        broker = self.get_client()
+
+        if self.simulation_mode:
+            raise RuntimeError("CLEARED_ORDERS_UNAVAILABLE_IN_SIMULATION")
+
+        # LIVE — fail-closed.
+        if self._session_invalid:
+            raise RuntimeError(
+                f"LIVE_BLOCKED_SESSION_INVALID: {self._session_invalid_reason}"
+            )
+        if not broker:
+            raise RuntimeError("NO_LIVE_CLIENT")
+
+        try:
+            cleared = broker.list_cleared_orders(
+                bet_status=bet_status,
+                market_ids=market_ids,
+                bet_ids=bet_ids,
+                settled_after=settled_after,
+                settled_before=settled_before,
+                group_by=group_by,
+            )
+        except Exception as exc:
+            error_text = str(exc)
+            self.last_error = error_text
+            if self._is_session_expiry_error(error_text):
+                logger.warning(
+                    "betfair_service: session expiry detected in "
+                    "list_cleared_orders; invoking recovery"
+                )
+                self.handle_session_expiry(reason=error_text)
+            else:
+                logger.exception("Errore list_cleared_orders: %s", exc)
+            raise
+
+        return [o for o in (cleared or []) if isinstance(o, dict)]
+
     def place_order(self, payload: dict) -> dict:
         """Session-aware live-order facade.
 

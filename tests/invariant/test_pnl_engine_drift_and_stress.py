@@ -234,7 +234,7 @@ def test_root_pnl_engine_close_trigger_is_deterministic():
     from core.pnl_engine import PnLEngine
 
     bus = FakeBus()
-    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    engine = PnLEngine(bus=bus, commission_pct=4.5, auto_close_enabled=True)
 
     fill = {
         "event_key": "E3",
@@ -339,7 +339,7 @@ def test_runtime_authoritative_settlement_acceptance_remains_centralized_not_hel
             self.events.append((topic, dict(payload or {})))
 
     bus = _Bus()
-    engine = EventPnLEngine(bus=bus, commission_pct=4.5)
+    engine = EventPnLEngine(bus=bus, commission_pct=4.5, auto_close_enabled=True)
     engine._on_filled(
         {
             "event_key": "evt-authoritative-centralized",
