@@ -87,12 +87,14 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
      recovery state; se il checkpoint del consumer esiste, il settlement e'
      gia' stato consegnato e NON si ri-applica. Stato db illeggibile ⇒
      emissione sospesa senza marcare (ritentata quando il db risponde).
-- **Winners-first per mercato**: le righe di un giro sono processate per
-  mercato con profit DECRESCENTE — in una sequenza decrescente il minimo dei
-  prefissi coincide col totale, quindi il cumulato intraday non scende mai
-  sotto il vero market-net del mercato in lavorazione: le gambe perdenti di
-  un dutching non possono far scattare l'emergency stop su un mercato che
-  netta positivo.
+- **Ordine cronologico tra mercati, winners-first dentro il mercato**: le
+  righe di un giro sono ordinate per (`settledDate`, mercato, profit
+  DECRESCENTE). Tra mercati vale la verita' storica: un dip reale delle
+  09:00 si rigioca PRIMA del vincente delle 10:00, mai nascosto (sarebbe
+  fail-open sul kill-switch). Dentro il mercato (stesso istante di
+  settlement) i profit decrescenti garantiscono che il minimo dei prefissi
+  coincida col totale: le gambe perdenti di un dutching non possono far
+  scattare l'emergency stop su un mercato che netta positivo.
 - **Nota (degradazione conservativa)**: l'aggregatore market-net e' in
   memoria. Se un RIAVVIO cade tra due bet dello stesso mercato, il rimborso
   di commissione tra le due non viene riconosciuto: la perdita risulta al

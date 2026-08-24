@@ -462,8 +462,10 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
     giornaliero 100): nessun breach, realized finale 19.10 (20 - 0.90 di
     commissione market-net)."""
     righe_loser_first = [
-        {"betId": "201", "marketId": "1.600", "profit": -80.0},
-        {"betId": "202", "marketId": "1.600", "profit": 100.0},
+        {"betId": "201", "marketId": "1.600", "profit": -80.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+        {"betId": "202", "marketId": "1.600", "profit": 100.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
     ]
     rc = _controller(
         results=[righe_loser_first],
@@ -492,6 +494,37 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
     assert rc.risk_desk.realized_pnl == pytest.approx(19.10)
     stato = dict(rc._daily_loss_monitor_state)
     assert bool(stato["breached"]) is False
+
+
+@pytest.mark.integration
+def test_ordine_cronologico_tra_mercati_un_dip_storico_non_si_nasconde():
+    """Rilievi Fable+Fugu su #440 (quarto giro): riordinare TRA mercati
+    potrebbe anteporre un vincente successivo a un perdente precedente,
+    nascondendo un dip storico reale (fail-open sul kill-switch). Tra
+    mercati l'ordine e' CRONOLOGICO (settledDate): il perdente delle 09:00
+    si lavora PRIMA del vincente delle 10:00, anche se l'API li restituisce
+    invertiti e anche se il marketId del vincente e' lessicograficamente
+    minore."""
+    righe_api_invertite = [
+        {"betId": "302", "marketId": "1.050", "profit": 90.0,
+         "settledDate": "2026-08-24T10:00:00Z"},
+        {"betId": "301", "marketId": "1.900", "profit": -60.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+    ]
+    rc = _controller(
+        results=[righe_api_invertite],
+        bot_orders=[
+            {"bet_id": "301", "market_id": "1.900", "event_name": "E"},
+            {"bet_id": "302", "market_id": "1.050", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    assert [p["event_key"] for p in _closes(rc)] == [
+        "cleared:1.900:301",  # il perdente delle 09:00 PRIMA (verita' storica)
+        "cleared:1.050:302",
+    ]
 
 
 @pytest.mark.integration

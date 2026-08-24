@@ -650,15 +650,17 @@ class RuntimeController:
                 continue
             valid_rows.append(row)
 
-        # Winners-first PER MERCATO: in una sequenza ordinata per profit
-        # DECRESCENTE il minimo dei prefissi coincide col totale (i positivi
-        # crescono, poi i negativi scendono monotoni fino al totale), quindi
-        # il cumulato intraday non scende MAI sotto il vero market-net del
-        # mercato in lavorazione. Senza questo ordine, le gambe perdenti di
-        # un dutching processate prima della vincente potrebbero sfondare
-        # transitoriamente il daily-loss e attivare l'emergency stop su un
-        # mercato che chiude in positivo (rilievo GPT-5.6 su #440).
-        def _ordine_winners_first(row: dict):
+        # Ordine di lavorazione: CRONOLOGICO tra mercati (settledDate — la
+        # verita' economica: un dip storico reale va rigiocato fedelmente,
+        # mai nascosto anteponendo un vincente successivo: sarebbe fail-open
+        # sul kill-switch), e winners-first DENTRO il mercato: le gambe di un
+        # mercato settlano nello stesso istante e in una sequenza ordinata
+        # per profit DECRESCENTE il minimo dei prefissi coincide col totale,
+        # quindi il cumulato non scende mai sotto il vero market-net del
+        # mercato in lavorazione (le gambe perdenti di un dutching non
+        # possono far scattare l'emergency stop su un mercato che netta
+        # positivo). Rilievi GPT-5.6/Fable/Fugu su #440.
+        def _ordine_cronologico_winners_first(row: dict):
             profit = row.get("profit")
             profit_f = (
                 float(profit)
@@ -669,9 +671,13 @@ class RuntimeController:
                 )
                 else 0.0
             )
-            return (str(row.get("marketId") or ""), -profit_f)
+            return (
+                str(row.get("settledDate") or ""),
+                str(row.get("marketId") or ""),
+                -profit_f,
+            )
 
-        valid_rows.sort(key=_ordine_winners_first)
+        valid_rows.sort(key=_ordine_cronologico_winners_first)
 
         emission_failures = 0
         for row in valid_rows:
