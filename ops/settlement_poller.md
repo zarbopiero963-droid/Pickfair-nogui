@@ -9,10 +9,11 @@ filo nuovo e le sue regole operative.
 ## Il filo
 
 ```
-listClearedOrders (SETTLED, group_by=MARKET, settled_after=now-lookback)
+listClearedOrders (SETTLED, bet_ids del bot, righe per-bet)
   → BetfairService.list_cleared_orders          (facade fail-closed LIVE)
-  → RuntimeController._poll_cleared_settlements (dedupe durevole + in-memory)
-  → PnLEngine.apply_cleared_market_settlement   (commissione market-net policy)
+  → RuntimeController._poll_cleared_settlements (identita' per-bet + dedupe)
+  → PnLEngine.apply_cleared_market_settlement   (per (mercato, betId);
+                                                 commissione market-net policy)
   → RUNTIME_CLOSE_POSITION                      (payload canonico "accepted")
   → RuntimeController._on_close_position        (contratto → realized PnL →
                                                  daily-loss → bankroll sync →
@@ -45,33 +46,42 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
 
 ## Regole fail-closed (non negoziabili)
 
-- **Filtro identita' del bot (I1)** — hardening dal giro review di #440: il
-  poll interroga SOLO i mercati con bet registrate del bot
-  (`db.get_bot_active_orders`, ledger SIM+LIVE — la stessa allowlist
-  d'identita' del cashout routing), passati come `market_ids` alla API (a
-  blocchi da 100) e ri-verificati client-side riga per riga. Senza filtro le
-  scommesse manuali dell'account entrerebbero nel daily-loss: un profitto
-  esterno MASCHEREREBBE le perdite del bot (fail-open sul kill-switch).
-  Identita' illeggibile o vuota ⇒ nessuna chiamata. Nota operativa: mercati
-  in cui l'owner scommette A MANO sugli stessi mercati del bot restano
-  inclusi (granularita' = mercato); conto dedicato consigliato.
+- **Identita' del bot PER-BET (I1)** — hardening dal giro review di #440: il
+  poll interroga SOLO i `betId` registrati dal bot
+  (`db.get_bot_active_orders`, ledger a DENYLIST SIM+LIVE: le bet settlate
+  RESTANO nel ledger — si escludono solo `CANCELLED` in SIM e `INFLIGHT` in
+  LIVE — la stessa allowlist d'identita' del cashout routing), passati come
+  `bet_ids` alla API (a blocchi da 1000) e ri-verificati client-side riga
+  per riga (betId nell'allowlist E mercato coerente col ledger). Le
+  scommesse MANUALI dell'account — anche sullo STESSO mercato del bot — non
+  entrano MAI nel daily-loss: un profitto esterno maschererebbe le perdite
+  del bot (fail-open sul kill-switch). Gli id del ledger SIM (`SIMBET-*`,
+  non numerici) sono esclusi dal poll LIVE. Identita' illeggibile o vuota ⇒
+  nessuna chiamata.
 - **LIVE only**: in SIMULATION il poller non parte e non chiama nulla; la
   facade solleva `CLEARED_ORDERS_UNAVAILABLE_IN_SIMULATION` (la parity del
   broker simulato — `record_realized_settlement` e' gia' pronto ma senza
   consumer — arrivera' con una PR dedicata).
 - **Runtime non ACTIVE** ⇒ giro no-op (vale anche dopo emergency/lockdown).
-- **Primo giro = sweep completo** (senza `settled_after`, orizzonte Betfair
-  ~90 giorni): recupera i settlement maturati durante un downtime piu' lungo
-  del lookback; il dedupe durevole filtra il gia' consegnato. Il flag si
-  arma solo a fetch riuscito; i giri successivi usano la finestra mobile.
+- **Primo giro di ogni generazione = sweep completo** (senza
+  `settled_after`, orizzonte Betfair ~90 giorni): recupera i settlement
+  maturati durante un downtime piu' lungo del lookback; il dedupe filtra il
+  gia' consegnato. Lo sweep si dichiara fatto SOLO se fetch ED emissioni
+  sono riusciti (una riga transitoriamente fallita si ritenta ancora a
+  orizzonte completo) e vale per la SOLA generazione del thread che l'ha
+  eseguito (un thread vecchio oltre il join non puo' bruciare lo sweep di
+  quella nuova). Poi finestra mobile.
 - **Fetch fallito ⇒ round abortito**: mai una lista vuota spacciata per
   «nessun settlement»; si ritenta al giro successivo.
 - **Riga malformata scartata** (marketId/profit assenti o non numerici): il
   poller non inventa MAI un profit.
 - **Idempotenza a TRE livelli** sulla chiave deterministica
-  `cleared:<market_id>` (la stessa `settlement_key` del consumer):
-  1. **nel motore**: `PnLEngine` rifiuta di ri-realizzare lo stesso mercato
-     (`CLEARED_SETTLEMENT_DUPLICATE`), qualunque sia il chiamante;
+  `cleared:<market_id>:<bet_id>` (la stessa `settlement_key` del consumer;
+  piu' bet dello stesso mercato si applicano in sequenza e l'aggregatore
+  ricalcola il market-net a ogni passo):
+  1. **nel motore**: `PnLEngine` rifiuta di ri-realizzare lo stesso
+     settlement (mercato, ref) — `CLEARED_SETTLEMENT_DUPLICATE` — qualunque
+     sia il chiamante;
   2. in-memory nel poller per il processo vivo;
   3. **durevole al riavvio**: prima di emettere si interroga il cycle
      recovery state; se il checkpoint del consumer esiste, il settlement e'

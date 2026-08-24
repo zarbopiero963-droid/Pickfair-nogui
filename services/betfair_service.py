@@ -744,6 +744,7 @@ class BetfairService:
         *,
         bet_status: str = "SETTLED",
         market_ids: Optional[List[str]] = None,
+        bet_ids: Optional[List[str]] = None,
         settled_after: Optional[str] = None,
         settled_before: Optional[str] = None,
         group_by: Optional[str] = None,
@@ -780,6 +781,7 @@ class BetfairService:
             cleared = broker.list_cleared_orders(
                 bet_status=bet_status,
                 market_ids=market_ids,
+                bet_ids=bet_ids,
                 settled_after=settled_after,
                 settled_before=settled_before,
                 group_by=group_by,

@@ -3,7 +3,7 @@
 ``BetfairService.list_cleared_orders``.
 
 Il poller e' il ciclo di chiusura reale: listClearedOrders(SETTLED,
-group_by=MARKET) => PnLEngine.apply_cleared_market_settlement =>
+bet_ids del bot, righe per-bet) => PnLEngine.apply_cleared_market_settlement =>
 RUNTIME_CLOSE_POSITION => contratto settlement => realized PnL => daily-loss.
 Su questo percorso un errore mascherato da "nessun settlement" e' una perdita
 invisibile al kill-switch giornaliero: ogni ramo va provato fail-closed.
@@ -55,7 +55,7 @@ class _DB:
         self.bot_orders = list(
             bot_orders
             if bot_orders is not None
-            else [{"bet_id": "b1", "market_id": "1.100", "event_name": "E1"}]
+            else [{"bet_id": "101", "market_id": "1.100", "event_name": "E1"}]
         )
 
     def get_bot_active_orders(self):
@@ -171,8 +171,10 @@ def _controller(*, results=None, recovery=None, settings=None, db=None,
     rc.simulation_mode = False
     rc._settlement_poll_cfg = dict(_POLL_CFG)
     # Default dei test: finestra mobile gia' attiva (il primo sweep completo
-    # ha un test dedicato).
-    rc._settlement_first_sweep_done = bool(first_sweep_done)
+    # ha un test dedicato). Lo sweep e' per-generazione: si stampa quella
+    # corrente.
+    if first_sweep_done:
+        rc._settlement_sweep_done_generation = rc._settlement_poll_generation
     return rc
 
 
@@ -181,6 +183,7 @@ def _closes(rc):
 
 
 _ROW = {
+    "betId": "101",
     "marketId": "1.100",
     "profit": -40.0,
     "commission": 0.0,
@@ -201,8 +204,8 @@ def test_poll_emette_settlement_canonico_con_parametri_fetch_corretti():
 
     call = rc.betfair_service.calls[0]
     assert call["bet_status"] == "SETTLED"
-    assert call["group_by"] == "MARKET"
-    assert call["market_ids"] == ["1.100"]  # filtro identita' bot (I1)
+    assert call["bet_ids"] == ["101"]  # identita' PER-BET del bot (I1)
+    assert "group_by" not in call  # righe per-bet, niente rollup
     settled_after = datetime.fromisoformat(call["settled_after"])
     atteso = before - timedelta(hours=24)
     assert abs((settled_after - atteso).total_seconds()) < 300
@@ -210,7 +213,7 @@ def test_poll_emette_settlement_canonico_con_parametri_fetch_corretti():
     closes = _closes(rc)
     assert len(closes) == 1
     payload = closes[0]
-    assert payload["event_key"] == "cleared:1.100"
+    assert payload["event_key"] == "cleared:1.100:101"
     assert payload["gross_pnl"] == pytest.approx(-40.0)
     assert payload["commission_amount"] == pytest.approx(0.0)
     assert payload["net_pnl"] == pytest.approx(-40.0)
@@ -247,32 +250,97 @@ def test_primo_giro_sweep_completo_poi_finestra_mobile():
 
 
 @pytest.mark.integration
-def test_filtro_identita_solo_mercati_del_bot():
-    """Rilievo Fable su #440 (fail-open): senza filtro, le scommesse manuali
-    dell'account entrano nel daily-loss e un profitto esterno maschera le
-    perdite del bot. Il poll interroga SOLO i mercati con bet registrate del
-    bot, e una riga fuori allowlist (difesa client-side) non viene mai emessa."""
-    riga_bot = dict(_ROW)
-    riga_esterna = {"marketId": "1.999", "profit": 500.0, "commission": 22.5}
+def test_sweep_non_si_arma_se_una_emissione_fallisce():
+    """Rilievo Fable su #440: se nel primo giro una riga fallisce in
+    emissione (transitorio, es. recovery state illeggibile), lo sweep NON si
+    dichiara fatto — il retry avviene ancora a orizzonte completo, mai con
+    la finestra mobile che perderebbe i settlement piu' vecchi del lookback."""
+    db = _DB()
+    db.fail_reads = True  # emissione sospesa: transitorio db
     rc = _controller(
-        results=[[riga_bot, riga_esterna]],
-        bot_orders=[{"bet_id": "b1", "market_id": "1.100", "event_name": "E1"}],
+        results=[[dict(_ROW)], [dict(_ROW)], []],
+        db=db,
+        first_sweep_done=False,
+    )
+
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert rc.betfair_service.calls[0]["settled_after"] is None
+
+    db.fail_reads = False
+    rc._poll_cleared_settlements()  # ancora sweep completo, ora emette
+    assert len(_closes(rc)) == 1
+    assert rc.betfair_service.calls[1]["settled_after"] is None
+
+    rc._poll_cleared_settlements()  # solo ora finestra mobile
+    assert rc.betfair_service.calls[2]["settled_after"] is not None
+
+
+@pytest.mark.integration
+def test_sweep_legato_alla_generazione_del_thread():
+    """Rilievo GPT-5.6 su #440: un thread VECCHIO sopravvissuto al join non
+    puo' bruciare lo sweep della generazione nuova — stampa solo la SUA."""
+    rc = _controller(results=[[], []], first_sweep_done=False)
+    vecchia_generazione = rc._settlement_poll_generation
+
+    rc._settlement_poll_generation += 1  # e' partita una nuova generazione
+
+    # Il giro del thread VECCHIO completa e stampa la SUA generazione.
+    rc._poll_cleared_settlements(generation=vecchia_generazione)
+    assert rc._settlement_sweep_done_generation == vecchia_generazione
+
+    # La generazione NUOVA non risulta swept: il suo primo giro e' completo.
+    rc._poll_cleared_settlements()
+    assert rc.betfair_service.calls[1]["settled_after"] is None
+
+
+@pytest.mark.integration
+def test_identita_per_bet_esclude_le_bet_manuali_anche_sullo_stesso_mercato():
+    """Rilievi Fable+GPT-5.6 su #440 (fail-open): un profitto esterno
+    dell'account maschererebbe le perdite del bot nel daily-loss. Identita'
+    PER-BET: si interrogano solo i betId del bot, e una bet manuale — anche
+    sullo STESSO mercato del bot — non viene mai emessa (difesa client-side
+    oltre al filtro server-side)."""
+    riga_bot = dict(_ROW)
+    riga_manuale_stesso_mercato = {
+        "betId": "999", "marketId": "1.100", "profit": 500.0, "commission": 22.5,
+    }
+    rc = _controller(
+        results=[[riga_bot, riga_manuale_stesso_mercato]],
+        bot_orders=[{"bet_id": "101", "market_id": "1.100", "event_name": "E1"}],
     )
 
     rc._poll_cleared_settlements()
 
-    assert rc.betfair_service.calls[0]["market_ids"] == ["1.100"]
+    assert rc.betfair_service.calls[0]["bet_ids"] == ["101"]
     closes = _closes(rc)
     assert len(closes) == 1
-    assert closes[0]["event_key"] == "cleared:1.100"  # il +500 esterno NON entra
+    assert closes[0]["event_key"] == "cleared:1.100:101"  # il +500 manuale NON entra
+    assert closes[0]["net_pnl"] == pytest.approx(-40.0)
 
 
 @pytest.mark.integration
-def test_nessun_mercato_bot_nessuna_chiamata():
-    rc = _controller(results=[[dict(_ROW)]], bot_orders=[])
+def test_bet_ledger_sim_escluse_dal_poll_live():
+    """Gli id del ledger SIM (SIMBET-*) non esistono sull'exchange: esclusi
+    dal poll LIVE (rilievo Grok su #440 sul mixing SIM+LIVE)."""
+    rc = _controller(
+        results=[[dict(_ROW)]],
+        bot_orders=[
+            {"bet_id": "SIMBET-abc123", "market_id": "1.500", "event_name": "S"},
+            {"bet_id": "101", "market_id": "1.100", "event_name": "E1"},
+        ],
+    )
     rc._poll_cleared_settlements()
-    assert rc.betfair_service.calls == []
-    assert _closes(rc) == []
+    assert rc.betfair_service.calls[0]["bet_ids"] == ["101"]  # solo id numerici
+
+
+@pytest.mark.integration
+def test_nessuna_bet_bot_nessuna_chiamata():
+    for orders in ([], [{"bet_id": "SIMBET-x", "market_id": "1.9", "event_name": "S"}]):
+        rc = _controller(results=[[dict(_ROW)]], bot_orders=orders)
+        rc._poll_cleared_settlements()
+        assert rc.betfair_service.calls == []
+        assert _closes(rc) == []
 
 
 @pytest.mark.integration
@@ -339,14 +407,14 @@ def test_duplicato_gia_realizzato_nel_motore_marcato_senza_doppio_publish():
     motore vivo) => il poller marca visto e NON pubblica una seconda volta."""
     rc = _controller(results=[[dict(_ROW)]])
     rc.pnl_engine.apply_cleared_market_settlement(
-        market_id="1.100", gross_pnl=-40.0,
+        market_id="1.100", gross_pnl=-40.0, settlement_ref="101",
     )
     pubblicati_prima = len(_closes(rc))
 
     rc._poll_cleared_settlements()
 
     assert len(_closes(rc)) == pubblicati_prima  # nessun secondo publish
-    assert "cleared:1.100" in rc._settlement_emitted_keys
+    assert "cleared:1.100:101" in rc._settlement_emitted_keys
 
 
 @pytest.mark.integration
@@ -417,19 +485,26 @@ def test_poll_fetch_fallito_round_abortito_poi_recupera():
 @pytest.mark.integration
 def test_poll_righe_malformate_scartate_mai_inventare_profit():
     righe = [
-        {"marketId": "", "profit": 10.0},
-        {"marketId": "1.2", "profit": "12"},
-        {"marketId": "1.3", "profit": float("nan")},
-        {"marketId": "1.4"},
-        {"marketId": "1.6", "profit": True},
+        {"betId": "102", "marketId": "", "profit": 10.0},
+        {"betId": "103", "marketId": "1.3", "profit": "12"},
+        {"betId": "104", "marketId": "1.4", "profit": float("nan")},
+        {"betId": "106", "marketId": "1.6"},
+        {"betId": "107", "marketId": "1.7", "profit": True},
+        {"marketId": "1.8", "profit": 5.0},
         "spazzatura",
-        {"marketId": "1.5", "profit": 25.0},
+        {"betId": "108", "marketId": "1.5", "profit": 25.0},
+        # incoerenza ledger: il bot ha la bet 109 su 1.9, la riga dice 1.2
+        {"betId": "109", "marketId": "1.2", "profit": 7.0},
     ]
     rc = _controller(
         results=[righe],
         bot_orders=[
-            {"bet_id": f"b{m}", "market_id": m, "event_name": "E"}
-            for m in ("1.2", "1.3", "1.4", "1.5", "1.6")
+            {"bet_id": b, "market_id": m, "event_name": "E"}
+            for b, m in (
+                ("102", "1.2"), ("103", "1.3"), ("104", "1.4"),
+                ("106", "1.6"), ("107", "1.7"), ("108", "1.5"),
+                ("109", "1.9"),
+            )
         ],
     )
 
@@ -437,7 +512,7 @@ def test_poll_righe_malformate_scartate_mai_inventare_profit():
 
     closes = _closes(rc)
     assert len(closes) == 1
-    assert closes[0]["event_key"] == "cleared:1.5"
+    assert closes[0]["event_key"] == "cleared:1.5:108"
     assert closes[0]["commission_amount"] == pytest.approx(1.125)
     assert closes[0]["net_pnl"] == pytest.approx(23.875)
 
@@ -457,11 +532,11 @@ def test_poll_dedupe_durevole_dopo_riavvio_nessuna_riemissione():
     non viene ri-emessa (il PnL non si applica due volte)."""
     rc = _controller(
         results=[[dict(_ROW)]],
-        recovery={"cleared:1.100": {"exists": True, "processed": True}},
+        recovery={"cleared:1.100:101": {"exists": True, "processed": True}},
     )
     rc._poll_cleared_settlements()
     assert _closes(rc) == []
-    assert "cleared:1.100" in rc._settlement_emitted_keys
+    assert "cleared:1.100:101" in rc._settlement_emitted_keys
 
 
 @pytest.mark.integration
@@ -474,7 +549,7 @@ def test_poll_recovery_state_illeggibile_sospende_senza_marcare():
 
     rc._poll_cleared_settlements()
     assert _closes(rc) == []
-    assert "cleared:1.100" not in rc._settlement_emitted_keys
+    assert "cleared:1.100:101" not in rc._settlement_emitted_keys
 
     db.fail_reads = False
     rc._poll_cleared_settlements()
@@ -596,17 +671,17 @@ def test_facade_inoltra_parametri_e_filtra_righe_non_dict():
 
     rows = svc.list_cleared_orders(
         bet_status="SETTLED",
-        market_ids=["1.1", "1.2"],
+        bet_ids=["11", "22"],
         settled_after="2026-08-23T00:00:00+00:00",
-        group_by="MARKET",
     )
 
     assert client.calls == [{
         "bet_status": "SETTLED",
-        "market_ids": ["1.1", "1.2"],
+        "market_ids": None,
+        "bet_ids": ["11", "22"],
         "settled_after": "2026-08-23T00:00:00+00:00",
         "settled_before": None,
-        "group_by": "MARKET",
+        "group_by": None,
     }]
     assert rows == [{"marketId": "1.1"}, {"marketId": "1.2"}]
 

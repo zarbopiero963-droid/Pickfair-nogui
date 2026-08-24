@@ -351,12 +351,18 @@ class PnLEngine:
         source: str = "betfair_cleared_orders",
         settled_date: str = "",
         reported_commission: Optional[float] = None,
+        settlement_ref: str = "",
     ) -> Dict[str, Any]:
-        """Realizza il settlement di un MERCATO settlato da Betfair.
+        """Realizza un settlement reale di Betfair sul mercato indicato.
 
-        Ingresso del ciclo di chiusura reale (poller listClearedOrders,
-        ``group_by="MARKET"``): ``gross_pnl`` è il ``profit`` GROSS del report
-        (pre-commissione — la commissione Betfair è riportata a parte). La
+        Ingresso del ciclo di chiusura reale (poller listClearedOrders).
+        Granularita' PER-BET quando ``settlement_ref`` (il betId del bot) e'
+        valorizzato: piu' bet dello stesso mercato si applicano in sequenza e
+        l'aggregatore ricalcola il market-net a ogni passo (stessa meccanica
+        dei close multi-leg); l'idempotenza e' per (mercato, ref). Senza ref
+        la granularita' resta il mercato intero. ``gross_pnl`` è il ``profit``
+        GROSS del report (pre-commissione — la commissione Betfair è
+        riportata a parte). La
         commissione applicata qui è quella di POLICY (market-net, aliquota
         Italia) via aggregatore: è l'unica forma che il contratto settlement
         del RuntimeController accetta (``COMMISSION_AMOUNT_POLICY_MISMATCH``
@@ -407,24 +413,29 @@ class PnLEngine:
                     f"{reported_commission!r}"
                 ) from exc
 
+        ref = str(settlement_ref or "").strip()
+        dedupe_key = f"{market_key}:{ref}" if ref else market_key
         with self._state_lock:
-            # Idempotenza nel MOTORE (non solo nel poller): un mercato cleared
-            # gia' realizzato non si ri-applica MAI — un secondo apply
+            # Idempotenza nel MOTORE (non solo nel poller): lo stesso
+            # settlement (mercato, o singola bet del mercato quando ref e'
+            # valorizzato) non si ri-applica MAI — un secondo apply
             # raddoppierebbe realized e commissione nel daily-loss. Il guard
             # precede la mutazione dell'aggregatore: il raise non lascia
             # stato parziale.
-            if market_key in self._applied_cleared_markets:
+            if dedupe_key in self._applied_cleared_markets:
                 raise ValueError(
-                    f"CLEARED_SETTLEMENT_DUPLICATE: market {market_key} "
+                    f"CLEARED_SETTLEMENT_DUPLICATE: settlement {dedupe_key} "
                     "gia' realizzato da cleared orders"
                 )
 
             realized = self._apply_realized_market_net_commission(
                 market_id=market_key, gross_pnl=gross
             )
-            self._applied_cleared_markets.add(market_key)
+            self._applied_cleared_markets.add(dedupe_key)
             net_pnl = float(realized["net_pnl"])
-            event_key = f"cleared:{market_key}"
+            event_key = (
+                f"cleared:{market_key}:{ref}" if ref else f"cleared:{market_key}"
+            )
 
             cleared_positions = [
                 key
@@ -454,23 +465,28 @@ class PnLEngine:
                 "settlement_source": str(source or "betfair_cleared_orders"),
                 "settlement_kind": "realized_settlement",
                 "settled_date": str(settled_date or ""),
+                "settlement_ref": ref,
                 "cleared_positions": list(cleared_positions),
             }
             if reported_commission_f is not None:
                 payload["betfair_reported_commission"] = reported_commission_f
 
             logger.info(
-                "[PnL] Cleared settlement %s gross=%.2f net=%.2f positions=%d",
+                "[PnL] Cleared settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
                 market_key,
+                ref or "-",
                 gross,
                 net_pnl,
                 len(cleared_positions),
             )
 
-            if self.bus:
-                self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+        # Publish FUORI dalla sezione critica: il bus e' enqueue-only, ma un
+        # subscriber sincrono (bus di test / futuri wiring) non deve mai
+        # rientrare nel motore con il lock ancora tenuto (lock-ordering).
+        if self.bus:
+            self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
 
-            return payload
+        return payload
 
     # =========================================================
     # STATUS

@@ -258,6 +258,39 @@ def test_armato_esplicitamente_la_chiusura_a_soglia_scatta():
 
 
 @pytest.mark.unit
+def test_cleared_per_bet_secondo_leg_market_net_rimborso_accettato():
+    """Granularita' per-bet (ref distinti): piu' bet dello stesso mercato si
+    applicano in sequenza e l'aggregatore ricalcola il market-net — il ramo
+    negative-rebate del contratto, esercitato end-to-end. Esempio numerico:
+    dopo +100.00 (bet A), un -30.00 (bet B) porta il market-net a 70.00 =>
+    commissione dovuta 3.15, gia' pagata 4.50 => delta -1.35 (rimborso) =>
+    net del leg = -28.65."""
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+
+    engine.apply_cleared_market_settlement(
+        market_id="1.400", gross_pnl=100.0, settlement_ref="A",
+    )
+    payload = engine.apply_cleared_market_settlement(
+        market_id="1.400", gross_pnl=-30.0, settlement_ref="B",
+    )
+
+    assert payload["event_key"] == "cleared:1.400:B"
+    assert payload["commission_amount"] == pytest.approx(-1.35)
+    assert payload["net_pnl"] == pytest.approx(-28.65)
+    assert payload["market_net_gross"] == pytest.approx(70.0)
+    assert payload["market_commission_amount_total"] == pytest.approx(3.15)
+    contract = RuntimeController._extract_settlement_contract(payload)
+    assert contract["settlement_validation"] == "accepted", contract["reason"]
+
+    # Stessa REF due volte: duplicato bloccato anche a granularita' per-bet.
+    with pytest.raises(ValueError, match="CLEARED_SETTLEMENT_DUPLICATE"):
+        engine.apply_cleared_market_settlement(
+            market_id="1.400", gross_pnl=-30.0, settlement_ref="B",
+        )
+
+
+@pytest.mark.unit
 def test_mutatori_serializzati_dal_lock_di_stato():
     """Thread-safety (rilievo Fable full-range su #440): il thread del poller
     (apply_cleared_market_settlement) e i worker del bus (_on_filled) mutano
