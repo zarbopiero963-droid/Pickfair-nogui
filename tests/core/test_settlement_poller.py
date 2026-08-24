@@ -506,6 +506,111 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
 
 
 @pytest.mark.integration
+def test_settlement_parziali_lontani_replay_cronologico_il_dip_storico_scatta():
+    """Rilievo Fable su #440 (sesto giro, fondato): gambe dello stesso
+    mercato settlate a ORE di distanza sono eventi economici DISTINTI — il
+    gruppo-mercato atomico avrebbe mascherato un dip storico reale
+    intrecciato con un altro mercato. Coi cluster temporali il replay e'
+    cronologico: -80 (09:00, M1) poi -60 (10:00, M2) => cumulato -140 =>
+    il breach del limite 100 SCATTA (emergency stop), esattamente come
+    sarebbe accaduto in tempo reale; il +100 delle 11:00 arriva dopo, a
+    kill-switch gia' correttamente attivato."""
+    righe = [
+        {"betId": "501", "marketId": "1.700", "profit": -80.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+        {"betId": "502", "marketId": "1.700", "profit": 100.0,
+         "settledDate": "2026-08-24T11:00:00Z"},  # stesso mercato, 2h dopo
+        {"betId": "503", "marketId": "1.800", "profit": -60.0,
+         "settledDate": "2026-08-24T10:00:00Z"},  # altro mercato, in mezzo
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "501", "market_id": "1.700", "event_name": "E"},
+            {"bet_id": "502", "market_id": "1.700", "event_name": "E"},
+            {"bet_id": "503", "market_id": "1.800", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [p["event_key"] for p in closes] == [
+        "cleared:1.700:501",  # -80 @ 09:00
+        "cleared:1.800:503",  # -60 @ 10:00 (il dip -140 si rigioca fedelmente)
+        "cleared:1.700:502",  # +100 @ 11:00
+    ]
+
+    rc._on_close_position(closes[0])
+    assert rc._emergency_stopped is False
+    rc._on_close_position(closes[1])
+    assert rc._emergency_stopped is True  # breach storico REALE: scatta
+    rc._on_close_position(closes[2])  # il vincente tardivo non lo annulla
+    assert rc._emergency_stopped is True
+
+
+@pytest.mark.integration
+def test_perdita_senza_data_in_testa_fail_closed():
+    """Rilievi GPT-5.6/Fugu su #440: una PERDITA non databile non va in coda
+    (un profitto datato la attenuerebbe: fail-open) — sign-aware: nette
+    perdite in TESTA, profitti non databili in coda."""
+    righe = [
+        {"betId": "602", "marketId": "1.050", "profit": 90.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+        {"betId": "601", "marketId": "1.900", "profit": -60.0},  # senza data
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "601", "market_id": "1.900", "event_name": "E"},
+            {"bet_id": "602", "market_id": "1.050", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    assert [p["event_key"] for p in _closes(rc)] == [
+        "cleared:1.900:601",  # la perdita NON databile per prima (worst case)
+        "cleared:1.050:602",
+    ]
+
+
+@pytest.mark.integration
+def test_formati_iso_misti_ordinati_cronologicamente_non_lessicograficamente():
+    """Rilievo Fugu su #440 (sesto giro, fondato): il confronto tra stringhe
+    ISO con formati misti non e' cronologico ('.' < 'Z' avrebbe messo
+    ...00.001Z PRIMA di ...00Z). Le date sono parse a datetime reale: la
+    vincente delle 09:00:00.001Z (stesso istante di settlement della
+    perdente, formato con frazione) resta nello stesso cluster winners-first,
+    e il mercato delle 08:59:58+00:00 (offset esplicito, 2s prima oltre il
+    gap) viene lavorato per primo."""
+    righe = [
+        {"betId": "701", "marketId": "1.700", "profit": -30.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+        {"betId": "702", "marketId": "1.700", "profit": 50.0,
+         "settledDate": "2026-08-24T09:00:00.001Z"},
+        {"betId": "703", "marketId": "1.800", "profit": -10.0,
+         "settledDate": "2026-08-24T08:59:57+00:00"},
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "701", "market_id": "1.700", "event_name": "E"},
+            {"bet_id": "702", "market_id": "1.700", "event_name": "E"},
+            {"bet_id": "703", "market_id": "1.800", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    assert [p["event_key"] for p in _closes(rc)] == [
+        "cleared:1.800:703",  # 08:59:57, cronologicamente primo
+        "cleared:1.700:702",  # cluster 09:00: vincente prima
+        "cleared:1.700:701",
+    ]
+
+
+@pytest.mark.integration
 def test_gruppo_senza_data_in_coda_non_maschera_un_dip_storico():
     """Rilievi GPT-5.6/Fable su #440 (quinto giro): una riga vincente SENZA
     settledDate non deve essere anteposta a una perdita storica datata —

@@ -651,20 +651,29 @@ class RuntimeController:
             valid_rows.append(row)
 
         # Ordine di lavorazione (rilievi GPT-5.6/Fable/Fugu su #440, giri
-        # 3-5): il MERCATO e' il gruppo ATOMICO.
+        # 3-6): l'unita' atomica e' il CLUSTER TEMPORALE di mercato.
         #
-        # - DENTRO il gruppo: profit DECRESCENTE, qualunque siano i
-        #   settledDate delle gambe (settlement parziali o timestamp
-        #   divergenti al millisecondo inclusi). In una sequenza decrescente
-        #   il minimo dei prefissi coincide col totale, quindi il cumulato
-        #   non scende mai sotto il vero market-net del mercato in
-        #   lavorazione: le gambe perdenti di un dutching non possono far
-        #   scattare l'emergency stop su un mercato che netta positivo.
-        # - TRA i gruppi: CRONOLOGICO per la PRIMA settledDate del gruppo
-        #   (verita' storica a granularita' di mercato: un dip reale si
-        #   rigioca fedelmente, mai nascosto anteponendo un vincente
-        #   successivo). Gruppi senza alcuna data in CODA: un profitto non
-        #   databile non puo' mascherare un dip storico precedente.
+        # - Le gambe dello STESSO mercato settlate entro 2s l'una
+        #   dall'altra sono lo stesso evento di settlement (il jitter dei
+        #   timestamp non e' un ordine reale): dentro il cluster profit
+        #   DECRESCENTE — in una sequenza decrescente il minimo dei
+        #   prefissi coincide col totale, quindi il cumulato non scende mai
+        #   sotto il netto del cluster e le gambe perdenti di un dutching
+        #   non possono far scattare l'emergency stop su un settlement che
+        #   netta positivo.
+        # - Gambe dello stesso mercato settlate LONTANE nel tempo
+        #   (settlement parziali) sono eventi economici DISTINTI: cluster
+        #   separati, rigiocati in ordine cronologico — un dip storico
+        #   reale (anche intrecciato con altri mercati) non viene MAI
+        #   attenuato da una vincita successiva (sarebbe fail-open sul
+        #   kill-switch).
+        # - Le date sono confrontate come datetime REALI (Z/offset/frazioni
+        #   normalizzati): il confronto lessicografico tra formati ISO
+        #   misti non e' cronologico ('.' < 'Z').
+        # - Cluster non databili: sign-aware fail-closed — nette PERDITE in
+        #   TESTA (il dip non databile si assume al peggio), profitti in
+        #   coda (un profitto non databile non puo' mascherare un dip
+        #   storico datato).
         def _profit_sicuro(row: dict) -> float:
             profit = row.get("profit")
             if (
@@ -675,25 +684,67 @@ class RuntimeController:
                 return float(profit)
             return 0.0
 
+        def _data_settlement(row: dict) -> Optional[datetime]:
+            testo = str(row.get("settledDate") or "").strip()
+            if not testo:
+                return None
+            candidato = testo[:-1] + "+00:00" if testo.endswith("Z") else testo
+            try:
+                parsed = datetime.fromisoformat(candidato)
+            except ValueError:
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+        _CLUSTER_GAP_SEC = 2.0
         gruppi: dict[str, list[dict]] = {}
         for row in valid_rows:
             gruppi.setdefault(str(row.get("marketId") or ""), []).append(row)
 
-        def _ordine_gruppo(item):
-            market_id, righe_gruppo = item
-            date = [
-                str(r.get("settledDate") or "")
-                for r in righe_gruppo
-                if str(r.get("settledDate") or "")
-            ]
-            if date:
-                return (0, min(date), market_id)
-            return (1, "", market_id)
+        clusters: list[tuple[tuple, list[dict]]] = []
+        for market_id, righe_gruppo in gruppi.items():
+            datate = [(r, _data_settlement(r)) for r in righe_gruppo]
+            senza_data = [r for r, dt in datate if dt is None]
+            con_data = sorted(
+                ((r, dt) for r, dt in datate if dt is not None),
+                key=lambda item: item[1],
+            )
+            corrente: list[tuple[dict, datetime]] = []
+            for r, dt in con_data:
+                if (
+                    corrente
+                    and (dt - corrente[-1][1]).total_seconds() > _CLUSTER_GAP_SEC
+                ):
+                    ancora = corrente[0][1]
+                    righe = sorted(
+                        (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
+                    )
+                    clusters.append(((0, ancora, market_id), righe))
+                    corrente = []
+                corrente.append((r, dt))
+            if corrente:
+                ancora = corrente[0][1]
+                righe = sorted(
+                    (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
+                )
+                clusters.append(((0, ancora, market_id), righe))
+            if senza_data:
+                netto = sum(_profit_sicuro(r) for r in senza_data)
+                righe = sorted(senza_data, key=lambda x: -_profit_sicuro(x))
+                posizione = -1 if netto < 0.0 else 1
+                clusters.append(((posizione, None, market_id), righe))
 
-        valid_rows = []
-        for _market_id, righe_gruppo in sorted(gruppi.items(), key=_ordine_gruppo):
-            righe_gruppo.sort(key=lambda r: -_profit_sicuro(r))
-            valid_rows.extend(righe_gruppo)
+        def _ordine_cluster(item):
+            (posizione, ancora, market_id), _righe = item
+            if posizione == 0:
+                return (0, ancora, market_id)
+            # I non databili usano un datetime sentinella per confronto
+            # omogeneo: perdite prima di tutto, profitti dopo tutto.
+            return (posizione, datetime.min.replace(tzinfo=timezone.utc), market_id)
+
+        clusters.sort(key=_ordine_cluster)
+        valid_rows = [row for _chiave, righe in clusters for row in righe]
 
         emission_failures = 0
         for row in valid_rows:

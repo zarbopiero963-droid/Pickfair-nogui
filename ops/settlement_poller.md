@@ -87,16 +87,21 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
      recovery state; se il checkpoint del consumer esiste, il settlement e'
      gia' stato consegnato e NON si ri-applica. Stato db illeggibile ⇒
      emissione sospesa senza marcare (ritentata quando il db risponde).
-- **Il mercato e' il gruppo ATOMICO di lavorazione**: dentro il gruppo le
-  gambe sono ordinate per profit DECRESCENTE — qualunque siano i loro
-  `settledDate` (settlement parziali o timestamp divergenti inclusi) — e in
-  una sequenza decrescente il minimo dei prefissi coincide col totale: le
-  gambe perdenti di un dutching non possono far scattare l'emergency stop
-  su un mercato che netta positivo. TRA i gruppi vale la verita' storica:
-  ordine cronologico per la PRIMA `settledDate` del gruppo (un dip reale
-  delle 09:00 si rigioca PRIMA del vincente delle 10:00, mai nascosto —
-  sarebbe fail-open sul kill-switch); i gruppi senza alcuna data vanno in
-  CODA (un profitto non databile non puo' mascherare un dip storico).
+- **L'unita' atomica e' il CLUSTER TEMPORALE di mercato**: gambe dello
+  stesso mercato settlate entro 2s sono lo stesso evento di settlement (il
+  jitter dei timestamp non e' un ordine reale) e dentro il cluster valgono
+  i profit DECRESCENTI — il minimo dei prefissi coincide col netto del
+  cluster, quindi le gambe perdenti di un dutching non possono far
+  scattare l'emergency stop su un settlement che netta positivo. Gambe
+  dello stesso mercato settlate LONTANE (settlement parziali) sono eventi
+  DISTINTI: cluster separati, rigiocati in ordine cronologico anche
+  intrecciati con altri mercati — un dip storico reale scatta il breach
+  quando sarebbe scattato, mai attenuato da una vincita successiva. Le
+  date sono confrontate come datetime REALI (Z/offset/frazioni
+  normalizzati: il confronto lessicografico tra formati ISO misti non e'
+  cronologico). Cluster non databili: sign-aware fail-closed — nette
+  perdite in TESTA (worst case), profitti in coda (mai a mascherare un dip
+  datato).
 - **Nota (degradazione conservativa)**: l'aggregatore market-net e' in
   memoria. Se un RIAVVIO cade tra due bet dello stesso mercato, il rimborso
   di commissione tra le due non viene riconosciuto: la perdita risulta al
