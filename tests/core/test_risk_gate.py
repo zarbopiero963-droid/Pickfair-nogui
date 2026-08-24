@@ -785,3 +785,28 @@ def test_roserpina_vista_liquidita_owner_applicata() -> None:
     r = gate.check(payload(available_liquidity=40.0))
     assert r["allowed"] is False
     assert r["reason"] == "RISK_LIQUIDITY_INSUFFICIENT"
+
+
+def test_roserpina_vista_snapshot_isolato_per_thread() -> None:
+    """R1 su #441 (GPT-5.6+Fable convergenti, fondato): con lo snapshot
+    condiviso sull'istanza, un refresh() eseguito da un check CONCORRENTE
+    su un altro thread sostituiva lo snapshot A META' del check corrente:
+    letture strappate tra limiti (mix di config mai salvate insieme
+    dall'owner). Lo snapshot e' per-THREAD: il refresh del thread B non
+    tocca quello che il thread corrente sta leggendo."""
+    import threading as _threading
+
+    servizio = _SettingsRoserpina(RoserpinaConfig(min_price=1.02))
+    vista = RoserpinaRiskLimits(servizio)
+    vista.refresh()  # snapshot del thread corrente: min_price 1.02
+
+    servizio.cfg = RoserpinaConfig(min_price=9.99)  # "salvataggio" owner
+    thread_b = _threading.Thread(target=vista.refresh)
+    thread_b.start()
+    thread_b.join()
+
+    # Il thread corrente, a meta' del SUO check, deve ancora vedere 1.02.
+    assert vista.MIN_PRICE == 1.02
+    # Il refresh successivo del thread corrente vede il valore nuovo.
+    vista.refresh()
+    assert vista.MIN_PRICE == 9.99

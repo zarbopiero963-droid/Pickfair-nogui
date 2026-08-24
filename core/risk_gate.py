@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Any, Dict, Optional, Tuple
 
 import trading_config
@@ -86,9 +87,15 @@ class RoserpinaRiskLimits:
     congelate di `trading_config` e la tab non aveva effetto qui.
 
     Freschezza: `refresh()` e' chiamata dal gate all'inizio di OGNI check e
-    scatta uno snapshot atomico (`load_roserpina_config()`): un salvataggio
-    dell'owner a bot acceso morde dal check successivo, e dentro un singolo
-    check i limiti non possono cambiare a meta' (niente letture strappate).
+    scatta uno snapshot (`load_roserpina_config()`): un salvataggio
+    dell'owner a bot acceso morde dal check successivo. Lo snapshot e'
+    PER-THREAD (rilievo R1 #441, GPT-5.6+Fable): un check concorrente su un
+    altro thread che fa refresh NON sostituisce lo snapshot che il thread
+    corrente sta leggendo — dentro un singolo check i limiti non cambiano a
+    meta' (niente letture strappate, niente mix di config mai salvate
+    insieme). Costo per check: UNA lettura settings dallo store locale, lo
+    stesso che il percorso ordine gia' tocca in modo sincrono (dedupe,
+    queue); errore di lettura => DENY, mai attese indefinite mascherate.
 
     Fail-closed, per costruzione:
     - refresh che solleva (settings illeggibili) => il gate NEGA
@@ -106,14 +113,19 @@ class RoserpinaRiskLimits:
 
     def __init__(self, settings_service: Any) -> None:
         self._settings = settings_service
-        self._snapshot: Any = None
+        # Slot per-thread: ogni thread che fa un check ha il SUO snapshot,
+        # cosi' un refresh concorrente non puo' strappare le letture altrui.
+        self._local = threading.local()
 
     def refresh(self) -> None:
-        """Snapshot fresco della config owner. Solleva se illeggibile."""
+        """Snapshot fresco della config owner PER QUESTO thread.
+
+        Solleva se illeggibile (il gate traduce in DENY).
+        """
         snapshot = self._settings.load_roserpina_config()
         if snapshot is None:
             raise MissingRiskConfig("load_roserpina_config ha restituito None")
-        self._snapshot = snapshot
+        self._local.snapshot = snapshot
 
     def __getattr__(self, name: str) -> Any:
         # Chiamato SOLO per attributi non trovati sull'istanza (_settings e
@@ -121,7 +133,7 @@ class RoserpinaRiskLimits:
         campo = _ROSERPINA_MAP.get(name)
         if campo is None:
             raise AttributeError(name)
-        snapshot = self.__dict__.get("_snapshot")
+        snapshot = getattr(self.__dict__.get("_local"), "snapshot", None)
         if snapshot is None:
             raise AttributeError(
                 f"{name}: config Roserpina mai caricata (refresh mancante)"
