@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Any, Dict, Optional
 
 from trading_config import enforce_betfair_italy_commission_pct
@@ -86,6 +87,17 @@ class PnLEngine:
     ):
         self.bus = bus
         self.auto_close_enabled = bool(auto_close_enabled)
+        # Serializza OGNI mutazione dello stato condiviso (_positions,
+        # _position_ledgers, aggregatore market-net): i fill/market update
+        # arrivano dai worker dell'EventBus, i settlement cleared dal thread
+        # del poller — senza lock due thread corromperebbero i ledger.
+        # RLock perche' _on_market (sotto lock) chiama _close.
+        self._state_lock = threading.RLock()
+        # Idempotenza interna del settlement cleared: un mercato realizzato
+        # via cleared orders non puo' essere ri-applicato dal motore, quale
+        # che sia il chiamante (difesa in profondita' oltre il dedupe del
+        # poller e il checkpoint durevole del consumer).
+        self._applied_cleared_markets: set[str] = set()
         self._positions: Dict[str, Dict[str, Any]] = {}
         self._position_ledgers: Dict[str, PositionLedger] = {}
         self.commission = float(commission_pct) / 100.0
@@ -124,35 +136,36 @@ class PnLEngine:
         if not market_id or selection_id < 0 or price <= 1.0 or size <= 0.0:
             return
 
-        ledger = self._position_ledgers.get(event_key)
-        if ledger is None:
-            ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
-            self._position_ledgers[event_key] = ledger
+        with self._state_lock:
+            ledger = self._position_ledgers.get(event_key)
+            if ledger is None:
+                ledger = PositionLedger(market_id=market_id, runner_id=selection_id)
+                self._position_ledgers[event_key] = ledger
 
-        fill_id = str(
-            payload.get("fill_id")
-            or payload.get("match_id")
-            or payload.get("bet_id")
-            or payload.get("customer_ref")
-            or event_key
-        )
-        applied = ledger.apply_fill(
-            fill_id=fill_id,
-            side=side,
-            price=price,
-            size=size,
-        )
-        snap = applied["snapshot"]
-        self._positions[event_key] = {
-            "event_key": event_key,
-            "market_id": market_id,
-            "selection_id": selection_id,
-            "side": str(snap.open_side or side),
-            "price": float(snap.avg_entry_price or price),
-            "stake": float(snap.open_size or 0.0),
-            "table_id": payload.get("table_id"),
-            "batch_id": payload.get("batch_id"),
-        }
+            fill_id = str(
+                payload.get("fill_id")
+                or payload.get("match_id")
+                or payload.get("bet_id")
+                or payload.get("customer_ref")
+                or event_key
+            )
+            applied = ledger.apply_fill(
+                fill_id=fill_id,
+                side=side,
+                price=price,
+                size=size,
+            )
+            snap = applied["snapshot"]
+            self._positions[event_key] = {
+                "event_key": event_key,
+                "market_id": market_id,
+                "selection_id": selection_id,
+                "side": str(snap.open_side or side),
+                "price": float(snap.avg_entry_price or price),
+                "stake": float(snap.open_size or 0.0),
+                "table_id": payload.get("table_id"),
+                "batch_id": payload.get("batch_id"),
+            }
 
     # =========================================================
     # MARKET UPDATE
@@ -166,16 +179,17 @@ class PnLEngine:
 
         market_id = str(market_book.get("marketId") or "")
 
-        for pos in list(self._positions.values()):
-            if pos["market_id"] != market_id:
-                continue
+        with self._state_lock:
+            for pos in list(self._positions.values()):
+                if pos["market_id"] != market_id:
+                    continue
 
-            settlement = self._calc_settlement(pos, market_book)
-            pnl = float(settlement["net_pnl"])
+                settlement = self._calc_settlement(pos, market_book)
+                pnl = float(settlement["net_pnl"])
 
-            # 🎯 LOGICA USCITA
-            if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
-                self._close(pos, settlement)
+                # 🎯 LOGICA USCITA
+                if pnl >= pos["stake"] * 0.03 or pnl <= -pos["stake"] * 0.05:
+                    self._close(pos, settlement)
 
     # =========================================================
     # PNL CALC
@@ -269,6 +283,10 @@ class PnLEngine:
     # CLOSE
     # =========================================================
     def _close(self, pos, settlement):
+        with self._state_lock:
+            self._close_locked(pos, settlement)
+
+    def _close_locked(self, pos, settlement):
         settlement = dict(settlement or {})
         event_key = str(pos.get("event_key") or "")
         market_id = str(pos.get("market_id") or "").strip()
@@ -348,7 +366,11 @@ class PnLEngine:
         post-settlement (get_account_funds).
 
         Fail-closed: ``market_id`` vuoto o ``gross_pnl`` non finito/non
-        numerico => raise, nessun payload parziale. Identità deterministica:
+        numerico => raise, nessun payload parziale. Idempotente NEL MOTORE:
+        lo stesso mercato non si realizza due volte
+        (``CLEARED_SETTLEMENT_DUPLICATE``), qualunque sia il chiamante.
+        Thread-safe: mutazioni serializzate con i fill/market update del bus
+        (``_state_lock``). Identità deterministica:
         ``event_key = "cleared:<market_id>"`` (stessa chiave che il consumer
         usa per il checkpoint durevole => dedupe ricostruibile al riavvio).
         Le posizioni tracked del mercato vengono rimosse dal tracking
@@ -385,62 +407,79 @@ class PnLEngine:
                     f"{reported_commission!r}"
                 ) from exc
 
-        realized = self._apply_realized_market_net_commission(
-            market_id=market_key, gross_pnl=gross
-        )
-        net_pnl = float(realized["net_pnl"])
-        event_key = f"cleared:{market_key}"
+        with self._state_lock:
+            # Idempotenza nel MOTORE (non solo nel poller): un mercato cleared
+            # gia' realizzato non si ri-applica MAI — un secondo apply
+            # raddoppierebbe realized e commissione nel daily-loss. Il guard
+            # precede la mutazione dell'aggregatore: il raise non lascia
+            # stato parziale.
+            if market_key in self._applied_cleared_markets:
+                raise ValueError(
+                    f"CLEARED_SETTLEMENT_DUPLICATE: market {market_key} "
+                    "gia' realizzato da cleared orders"
+                )
 
-        cleared_positions = [
-            key
-            for key, pos in list(self._positions.items())
-            if str(pos.get("market_id") or "") == market_key
-        ]
-        for key in cleared_positions:
-            self._positions.pop(key, None)
-            self._position_ledgers.pop(key, None)
+            realized = self._apply_realized_market_net_commission(
+                market_id=market_key, gross_pnl=gross
+            )
+            self._applied_cleared_markets.add(market_key)
+            net_pnl = float(realized["net_pnl"])
+            event_key = f"cleared:{market_key}"
 
-        payload: Dict[str, Any] = {
-            "event_key": event_key,
-            "market_id": market_key,
-            "table_id": None,
-            "batch_id": "",
-            # legacy alias (net pnl) kept for compatibility
-            "pnl": net_pnl,
-            "gross_pnl": gross,
-            "commission_amount": float(realized["commission_amount"]),
-            "net_pnl": net_pnl,
-            "commission_pct": float(realized["commission_pct"]),
-            "market_net_gross": float(realized["market_net_gross"]),
-            "market_commission_amount_total": float(
-                realized["market_commission_amount_total"]
-            ),
-            "settlement_basis": str(realized["settlement_basis"]),
-            "settlement_source": str(source or "betfair_cleared_orders"),
-            "settlement_kind": "realized_settlement",
-            "settled_date": str(settled_date or ""),
-            "cleared_positions": list(cleared_positions),
-        }
-        if reported_commission_f is not None:
-            payload["betfair_reported_commission"] = reported_commission_f
+            cleared_positions = [
+                key
+                for key, pos in list(self._positions.items())
+                if str(pos.get("market_id") or "") == market_key
+            ]
+            for key in cleared_positions:
+                self._positions.pop(key, None)
+                self._position_ledgers.pop(key, None)
 
-        logger.info(
-            "[PnL] Cleared settlement %s gross=%.2f net=%.2f positions=%d",
-            market_key,
-            gross,
-            net_pnl,
-            len(cleared_positions),
-        )
+            payload: Dict[str, Any] = {
+                "event_key": event_key,
+                "market_id": market_key,
+                "table_id": None,
+                "batch_id": "",
+                # legacy alias (net pnl) kept for compatibility
+                "pnl": net_pnl,
+                "gross_pnl": gross,
+                "commission_amount": float(realized["commission_amount"]),
+                "net_pnl": net_pnl,
+                "commission_pct": float(realized["commission_pct"]),
+                "market_net_gross": float(realized["market_net_gross"]),
+                "market_commission_amount_total": float(
+                    realized["market_commission_amount_total"]
+                ),
+                "settlement_basis": str(realized["settlement_basis"]),
+                "settlement_source": str(source or "betfair_cleared_orders"),
+                "settlement_kind": "realized_settlement",
+                "settled_date": str(settled_date or ""),
+                "cleared_positions": list(cleared_positions),
+            }
+            if reported_commission_f is not None:
+                payload["betfair_reported_commission"] = reported_commission_f
 
-        if self.bus:
-            self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+            logger.info(
+                "[PnL] Cleared settlement %s gross=%.2f net=%.2f positions=%d",
+                market_key,
+                gross,
+                net_pnl,
+                len(cleared_positions),
+            )
 
-        return payload
+            if self.bus:
+                self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+
+            return payload
 
     # =========================================================
     # STATUS
     # =========================================================
     def snapshot(self):
+        with self._state_lock:
+            return self._snapshot_locked()
+
+    def _snapshot_locked(self):
         return {
             "open_positions": len(self._positions),
             "positions": [

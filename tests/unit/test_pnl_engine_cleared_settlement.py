@@ -124,22 +124,26 @@ def test_cleared_loss_commissione_zero_accettato():
 
 
 @pytest.mark.unit
-def test_cleared_secondo_leg_market_net_rimborso_accettato():
-    """Il ramo negative-rebate del contratto, esercitato end-to-end."""
+def test_cleared_stesso_mercato_due_volte_duplicate_bloccato_nel_motore():
+    """Idempotenza NEL MOTORE (rilievo Fugu full-range su #440): lo stesso
+    mercato cleared non si realizza due volte, qualunque sia il chiamante —
+    un secondo apply raddoppierebbe realized e commissione nel daily-loss.
+    Il guard precede la mutazione: ledger e publish restano quelli del primo
+    apply. (Il ramo negative-rebate dell'aggregatore market-net resta coperto
+    dagli invariant sul percorso _close multi-leg.)"""
     bus = _Bus()
     engine = PnLEngine(bus=bus, commission_pct=4.5)
 
-    engine.apply_cleared_market_settlement(market_id="1.300", gross_pnl=100.0)
-    payload = engine.apply_cleared_market_settlement(
-        market_id="1.300", gross_pnl=-30.0,
-    )
+    primo = engine.apply_cleared_market_settlement(market_id="1.300", gross_pnl=100.0)
+    ledger_dopo_primo = {
+        k: dict(v) for k, v in engine._market_net_realized_aggregator.ledger.items()
+    }
 
-    assert payload["commission_amount"] == pytest.approx(-1.35)
-    assert payload["net_pnl"] == pytest.approx(-28.65)
-    assert payload["market_net_gross"] == pytest.approx(70.0)
-    assert payload["market_commission_amount_total"] == pytest.approx(3.15)
-    contract = RuntimeController._extract_settlement_contract(payload)
-    assert contract["settlement_validation"] == "accepted", contract["reason"]
+    with pytest.raises(ValueError, match="CLEARED_SETTLEMENT_DUPLICATE"):
+        engine.apply_cleared_market_settlement(market_id="1.300", gross_pnl=-30.0)
+
+    assert engine._market_net_realized_aggregator.ledger == ledger_dopo_primo
+    assert _close_events(bus) == [primo]  # un solo publish, il primo
 
 
 @pytest.mark.unit
@@ -251,6 +255,51 @@ def test_armato_esplicitamente_la_chiusura_a_soglia_scatta():
     assert len(closes) == 1
     assert closes[0]["event_key"] == "e1"
     assert "e1" not in engine._positions
+
+
+@pytest.mark.unit
+def test_mutatori_serializzati_dal_lock_di_stato():
+    """Thread-safety (rilievo Fable full-range su #440): il thread del poller
+    (apply_cleared_market_settlement) e i worker del bus (_on_filled) mutano
+    lo stesso stato — devono contendersi LO STESSO lock. Prova deterministica:
+    con `_state_lock` tenuto da un altro thread, apply e _on_filled restano
+    bloccati finche' non viene rilasciato."""
+    import threading
+    import time
+
+    engine = PnLEngine(bus=_Bus(), commission_pct=4.5)
+    presa = threading.Event()
+    rilascia = threading.Event()
+    esiti = []
+
+    def _tieni_il_lock():
+        with engine._state_lock:
+            presa.set()
+            rilascia.wait(timeout=5.0)
+
+    def _prova_apply():
+        engine.apply_cleared_market_settlement(market_id="1.700", gross_pnl=5.0)
+        esiti.append("apply")
+
+    def _prova_fill():
+        _fill(engine, event_key="e-lock", market_id="1.701")
+        esiti.append("fill")
+
+    holder = threading.Thread(target=_tieni_il_lock, daemon=True)
+    holder.start()
+    assert presa.wait(timeout=5.0)
+
+    t_apply = threading.Thread(target=_prova_apply, daemon=True)
+    t_fill = threading.Thread(target=_prova_fill, daemon=True)
+    t_apply.start()
+    t_fill.start()
+    time.sleep(0.2)
+    assert esiti == [], "i mutatori NON aspettano il lock di stato"
+
+    rilascia.set()
+    t_apply.join(timeout=5.0)
+    t_fill.join(timeout=5.0)
+    assert sorted(esiti) == ["apply", "fill"]
 
 
 @pytest.mark.unit

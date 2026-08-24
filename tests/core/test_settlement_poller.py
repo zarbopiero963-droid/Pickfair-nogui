@@ -40,15 +40,28 @@ class _Bus:
 
 
 class _DB:
-    """Fake db con cycle recovery state configurabile.
+    """Fake db con cycle recovery state e identita' bot configurabili.
 
     ``recovery``: mappa settlement_key -> stato (dict) oppure Exception da
     sollevare. ``fail_reads=True`` fa fallire OGNI lettura (db illeggibile).
+    ``bot_orders``: righe restituite da ``get_bot_active_orders`` (l'allowlist
+    d'identita' I1 del bot); ``fail_identity=True`` la rende illeggibile.
     """
 
-    def __init__(self, recovery=None):
+    def __init__(self, recovery=None, bot_orders=None):
         self.recovery = dict(recovery or {})
         self.fail_reads = False
+        self.fail_identity = False
+        self.bot_orders = list(
+            bot_orders
+            if bot_orders is not None
+            else [{"bet_id": "b1", "market_id": "1.100", "event_name": "E1"}]
+        )
+
+    def get_bot_active_orders(self):
+        if self.fail_identity:
+            raise RuntimeError("IDENTITY_UNAVAILABLE")
+        return list(self.bot_orders)
 
     def get_cycle_recovery_state(self, key):
         if self.fail_reads:
@@ -145,10 +158,11 @@ class _Telegram:
 _POLL_CFG = {"enabled": True, "poll_sec": 60.0, "lookback_hours": 24.0}
 
 
-def _controller(*, results=None, recovery=None, settings=None, db=None):
+def _controller(*, results=None, recovery=None, settings=None, db=None,
+                bot_orders=None, first_sweep_done=True):
     rc = RuntimeController(
         bus=_Bus(),
-        db=db if db is not None else _DB(recovery=recovery),
+        db=db if db is not None else _DB(recovery=recovery, bot_orders=bot_orders),
         settings_service=settings or _Settings(),
         betfair_service=_BetfairService(results=results),
         telegram_service=_Telegram(),
@@ -156,6 +170,9 @@ def _controller(*, results=None, recovery=None, settings=None, db=None):
     rc.mode = RuntimeMode.ACTIVE
     rc.simulation_mode = False
     rc._settlement_poll_cfg = dict(_POLL_CFG)
+    # Default dei test: finestra mobile gia' attiva (il primo sweep completo
+    # ha un test dedicato).
+    rc._settlement_first_sweep_done = bool(first_sweep_done)
     return rc
 
 
@@ -185,6 +202,7 @@ def test_poll_emette_settlement_canonico_con_parametri_fetch_corretti():
     call = rc.betfair_service.calls[0]
     assert call["bet_status"] == "SETTLED"
     assert call["group_by"] == "MARKET"
+    assert call["market_ids"] == ["1.100"]  # filtro identita' bot (I1)
     settled_after = datetime.fromisoformat(call["settled_after"])
     atteso = before - timedelta(hours=24)
     assert abs((settled_after - atteso).total_seconds()) < 300
@@ -203,6 +221,132 @@ def test_poll_emette_settlement_canonico_con_parametri_fetch_corretti():
     contract = RuntimeController._extract_settlement_contract(payload)
     assert contract["settlement_validation"] == "accepted"
     assert contract["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
+
+
+@pytest.mark.integration
+def test_primo_giro_sweep_completo_poi_finestra_mobile():
+    """Rilievo GPT-5.6 su #440: la sola finestra mobile perde i settlement
+    maturati durante un downtime piu' lungo del lookback. Primo giro dopo lo
+    start: NESSUN settled_after (orizzonte Betfair ~90gg, il dedupe filtra il
+    gia' consegnato); giri successivi: finestra mobile. Il flag si arma SOLO
+    a fetch riuscito: un primo giro fallito lascia il sweep completo in coda."""
+    rc = _controller(
+        results=[RuntimeError("NOT_AUTHENTICATED"), [], []],
+        first_sweep_done=False,
+    )
+
+    rc._poll_cleared_settlements()  # fallisce => flag NON armato
+    rc._poll_cleared_settlements()  # sweep completo
+    rc._poll_cleared_settlements()  # finestra mobile
+
+    calls = rc.betfair_service.calls
+    assert len(calls) == 3
+    assert calls[0]["settled_after"] is None
+    assert calls[1]["settled_after"] is None
+    assert calls[2]["settled_after"] is not None
+
+
+@pytest.mark.integration
+def test_filtro_identita_solo_mercati_del_bot():
+    """Rilievo Fable su #440 (fail-open): senza filtro, le scommesse manuali
+    dell'account entrano nel daily-loss e un profitto esterno maschera le
+    perdite del bot. Il poll interroga SOLO i mercati con bet registrate del
+    bot, e una riga fuori allowlist (difesa client-side) non viene mai emessa."""
+    riga_bot = dict(_ROW)
+    riga_esterna = {"marketId": "1.999", "profit": 500.0, "commission": 22.5}
+    rc = _controller(
+        results=[[riga_bot, riga_esterna]],
+        bot_orders=[{"bet_id": "b1", "market_id": "1.100", "event_name": "E1"}],
+    )
+
+    rc._poll_cleared_settlements()
+
+    assert rc.betfair_service.calls[0]["market_ids"] == ["1.100"]
+    closes = _closes(rc)
+    assert len(closes) == 1
+    assert closes[0]["event_key"] == "cleared:1.100"  # il +500 esterno NON entra
+
+
+@pytest.mark.integration
+def test_nessun_mercato_bot_nessuna_chiamata():
+    rc = _controller(results=[[dict(_ROW)]], bot_orders=[])
+    rc._poll_cleared_settlements()
+    assert rc.betfair_service.calls == []
+    assert _closes(rc) == []
+
+
+@pytest.mark.integration
+def test_identita_bot_illeggibile_round_abortito():
+    """Identita' illeggibile => NIENTE ingestione account-wide di ripiego."""
+    db = _DB()
+    db.fail_identity = True
+    rc = _controller(results=[[dict(_ROW)]], db=db)
+
+    rc._poll_cleared_settlements()
+    assert rc.betfair_service.calls == []
+    assert _closes(rc) == []
+
+    db.fail_identity = False
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1  # ripristinato il db, si recupera
+
+
+@pytest.mark.integration
+def test_round_serializzati_dal_lock():
+    """Rilievo GPT-5.6 su #440: due giri concorrenti (thread vecchio oltre il
+    join + thread nuovo) non devono mai sovrapporsi. Col round-lock tenuto,
+    un giro concorrente esce subito senza chiamare nulla."""
+    rc = _controller(results=[[dict(_ROW)]])
+    assert rc._settlement_poll_round_lock.acquire(blocking=False)
+    try:
+        rc._poll_cleared_settlements()
+        assert rc.betfair_service.calls == []
+        assert _closes(rc) == []
+    finally:
+        rc._settlement_poll_round_lock.release()
+
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+
+
+@pytest.mark.integration
+def test_loop_usa_il_suo_stop_event_non_l_attributo():
+    """Rilievo GPT-5.6 su #440: il loop del thread legge l'Event PASSATO come
+    argomento — se un restart rimpiazza l'attributo, il thread vecchio resta
+    fermabile dal SUO event e non adotta quello nuovo."""
+    import threading as _threading
+
+    rc = _controller(results=[[]])
+    rc.mode = RuntimeMode.STOPPED  # ogni giro e' no-op: zero rete
+    evento_locale = _threading.Event()
+
+    thread = _threading.Thread(
+        target=rc._settlement_poll_loop, args=(evento_locale,), daemon=True
+    )
+    thread.start()
+    # Rimpiazzo l'attributo (il vecchio bug lo faceva adottare al loop).
+    rc._settlement_poll_stop = _threading.Event()
+
+    evento_locale.set()
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+
+@pytest.mark.integration
+def test_duplicato_gia_realizzato_nel_motore_marcato_senza_doppio_publish():
+    """Guardia idempotente del motore vista dal poller (rilievo Fugu su
+    #440): mercato gia' realizzato (es. processo con set in-memory perso ma
+    motore vivo) => il poller marca visto e NON pubblica una seconda volta."""
+    rc = _controller(results=[[dict(_ROW)]])
+    rc.pnl_engine.apply_cleared_market_settlement(
+        market_id="1.100", gross_pnl=-40.0,
+    )
+    pubblicati_prima = len(_closes(rc))
+
+    rc._poll_cleared_settlements()
+
+    assert len(_closes(rc)) == pubblicati_prima  # nessun secondo publish
+    assert "cleared:1.100" in rc._settlement_emitted_keys
 
 
 @pytest.mark.integration
@@ -281,7 +425,13 @@ def test_poll_righe_malformate_scartate_mai_inventare_profit():
         "spazzatura",
         {"marketId": "1.5", "profit": 25.0},
     ]
-    rc = _controller(results=[righe])
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": f"b{m}", "market_id": m, "event_name": "E"}
+            for m in ("1.2", "1.3", "1.4", "1.5", "1.6")
+        ],
+    )
 
     rc._poll_cleared_settlements()
 
@@ -446,12 +596,14 @@ def test_facade_inoltra_parametri_e_filtra_righe_non_dict():
 
     rows = svc.list_cleared_orders(
         bet_status="SETTLED",
+        market_ids=["1.1", "1.2"],
         settled_after="2026-08-23T00:00:00+00:00",
         group_by="MARKET",
     )
 
     assert client.calls == [{
         "bet_status": "SETTLED",
+        "market_ids": ["1.1", "1.2"],
         "settled_after": "2026-08-23T00:00:00+00:00",
         "settled_before": None,
         "group_by": "MARKET",

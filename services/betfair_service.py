@@ -743,6 +743,7 @@ class BetfairService:
         self,
         *,
         bet_status: str = "SETTLED",
+        market_ids: Optional[List[str]] = None,
         settled_after: Optional[str] = None,
         settled_before: Optional[str] = None,
         group_by: Optional[str] = None,
@@ -778,6 +779,7 @@ class BetfairService:
         try:
             cleared = broker.list_cleared_orders(
                 bet_status=bet_status,
+                market_ids=market_ids,
                 settled_after=settled_after,
                 settled_before=settled_before,
                 group_by=group_by,

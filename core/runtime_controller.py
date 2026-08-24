@@ -130,6 +130,14 @@ class RuntimeController:
         self._settlement_poll_thread: Optional[threading.Thread] = None
         self._settlement_poll_stop = threading.Event()
         self._settlement_poll_cfg: dict[str, Any] = {}
+        # Serializza i GIRI di poll: se un vecchio thread sta finendo un giro
+        # (join scaduto su una chiamata di rete lenta) e uno nuovo parte, i
+        # due giri non possono mai sovrapporsi (doppia emissione impossibile).
+        self._settlement_poll_round_lock = threading.Lock()
+        # Primo giro dopo lo start: sweep COMPLETO (senza settled_after,
+        # orizzonte Betfair ~90gg) per recuperare i settlement maturati
+        # durante il downtime; il dedupe durevole filtra il gia' consegnato.
+        self._settlement_first_sweep_done = False
         # Registry DIRECT (B6.3.2a): customer_ref → bet_id degli ordini DIRECT
         # vivi. In-memory, riparte vuoto al restart (fail-safe).
         self._direct_order_bet_ids: dict[str, str] = {}
@@ -465,9 +473,17 @@ class RuntimeController:
             and self._settlement_poll_thread.is_alive()
         ):
             return
-        self._settlement_poll_stop = threading.Event()
+        self._settlement_first_sweep_done = False
+        stop_event = threading.Event()
+        self._settlement_poll_stop = stop_event
+        # L'Event viene passato AL thread: il loop usa SEMPRE il proprio
+        # event locale, mai l'attributo (che un restart puo' rimpiazzare).
+        # Un thread vecchio sopravvissuto al join resta cosi' fermabile dal
+        # SUO event gia' settato e non puo' "adottare" quello nuovo
+        # (rilievo GPT-5.6 su #440).
         self._settlement_poll_thread = threading.Thread(
             target=self._settlement_poll_loop,
+            args=(stop_event,),
             name="settlement-poller",
             daemon=True,
         )
@@ -485,53 +501,117 @@ class RuntimeController:
         self._settlement_poll_stop.set()
         try:
             thread.join(timeout=5.0)
+            if thread.is_alive():
+                logger.warning(
+                    "Settlement poller ancora vivo dopo il join: uscira' al "
+                    "prossimo check del suo stop event (gia' settato); il "
+                    "round lock impedisce comunque giri sovrapposti."
+                )
         except Exception:
             logger.exception("Errore join settlement poller")
         finally:
             self._settlement_poll_thread = None
 
-    def _settlement_poll_loop(self) -> None:
+    def _settlement_poll_loop(self, stop_event: threading.Event) -> None:
         interval = max(
             5.0, float(self._settlement_poll_cfg.get("poll_sec", 60.0) or 60.0)
         )
-        while not self._settlement_poll_stop.is_set():
+        while not stop_event.is_set():
             try:
                 self._poll_cleared_settlements()
             except Exception:
                 logger.exception("Errore poll cleared settlements (round abortito)")
-            self._settlement_poll_stop.wait(interval)
+            stop_event.wait(interval)
 
     def _poll_cleared_settlements(self) -> None:
         """Un giro di poll dei settlement reali. Fail-closed su ogni ramo:
 
         - SIM o runtime non ACTIVE => nessuna chiamata;
+        - **filtro identita' del bot (I1)**: si interrogano SOLO i mercati in
+          cui il bot ha bet registrate (``db.get_bot_active_orders`` — ledger
+          SIM+LIVE, la stessa allowlist d'identita' del cashout routing).
+          Senza filtro, le scommesse manuali dell'account entrerebbero nel
+          daily-loss: un profitto esterno MASCHEREREBBE le perdite del bot
+          (fail-open sul kill-switch). Identita' illeggibile o vuota =>
+          nessuna chiamata;
+        - **primo giro = sweep completo** (senza ``settled_after``, orizzonte
+          Betfair ~90gg): recupera i settlement maturati durante il downtime
+          oltre il lookback; i giri successivi usano la finestra mobile. Il
+          flag si arma solo a fetch riuscito;
         - fetch fallito => round abortito (mai una lista vuota spacciata per
           "nessun settlement" — il client/service propagano, qui si logga e
           si ritenta al giro dopo);
-        - riga malformata (marketId/profit assenti o non numerici) =>
-          scartata con log, MAI inventare un profit;
-        - dedupe: in-memory per il processo + pre-check durevole sul cycle
-          recovery state (il consumer persiste il checkpoint alla PRIMA
-          consegna con la stessa chiave "cleared:<market_id>"); stato db
-          in errore => la riga NON viene emessa e NON viene marcata vista
-          (ritentata quando il db risponde).
+        - riga malformata (marketId/profit assenti o non numerici) o fuori
+          dall'allowlist => scartata con log, MAI inventare un profit;
+        - dedupe: guardia idempotente NEL MOTORE + in-memory per il processo
+          + pre-check durevole sul cycle recovery state (il consumer persiste
+          il checkpoint alla PRIMA consegna con la stessa chiave
+          "cleared:<market_id>"); stato db in errore => la riga NON viene
+          emessa e NON viene marcata vista (ritentata quando il db risponde);
+        - giri serializzati da ``_settlement_poll_round_lock``: un giro in
+          corso (anche di un thread vecchio) esclude il successivo.
         """
+        if not self._settlement_poll_round_lock.acquire(blocking=False):
+            return
+        try:
+            self._poll_cleared_settlements_locked()
+        finally:
+            self._settlement_poll_round_lock.release()
+
+    def _poll_cleared_settlements_locked(self) -> None:
         if self.simulation_mode:
             return
         if self.mode is not RuntimeMode.ACTIVE:
             return
-        lookback_hours = float(
-            self._settlement_poll_cfg.get("lookback_hours", 24.0) or 24.0
-        )
-        settled_after = (
-            datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
-        ).isoformat()
-        try:
-            rows = self.betfair_service.list_cleared_orders(
-                bet_status="SETTLED",
-                group_by="MARKET",
-                settled_after=settled_after,
+
+        identity_getter = getattr(self.db, "get_bot_active_orders", None)
+        if not callable(identity_getter):
+            logger.warning(
+                "Settlement poll: db senza get_bot_active_orders — nessun "
+                "filtro identita' possibile, round abortito (fail-closed)."
             )
+            return
+        try:
+            bot_orders = identity_getter() or []
+        except Exception as exc:
+            logger.warning(
+                "Settlement poll: identita' bot illeggibile (%s), round "
+                "abortito (fail-closed).",
+                exc,
+            )
+            return
+        bot_markets = sorted(
+            {
+                str(order.get("market_id") or "").strip()
+                for order in bot_orders
+                if isinstance(order, dict)
+                and str(order.get("market_id") or "").strip()
+            }
+        )
+        if not bot_markets:
+            return
+
+        settled_after: Optional[str] = None
+        if self._settlement_first_sweep_done:
+            lookback_hours = float(
+                self._settlement_poll_cfg.get("lookback_hours", 24.0) or 24.0
+            )
+            settled_after = (
+                datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+            ).isoformat()
+
+        rows: list[dict] = []
+        try:
+            for chunk_start in range(0, len(bot_markets), 100):
+                chunk = bot_markets[chunk_start:chunk_start + 100]
+                rows.extend(
+                    self.betfair_service.list_cleared_orders(
+                        bet_status="SETTLED",
+                        group_by="MARKET",
+                        settled_after=settled_after,
+                        market_ids=chunk,
+                    )
+                )
         except Exception as exc:
             logger.warning(
                 "Settlement poll: fetch cleared orders fallito, round abortito "
@@ -539,7 +619,9 @@ class RuntimeController:
                 exc,
             )
             return
+        self._settlement_first_sweep_done = True
 
+        bot_market_set = set(bot_markets)
         for row in rows or []:
             if not isinstance(row, dict):
                 logger.warning(
@@ -559,6 +641,15 @@ class RuntimeController:
                     "market=%r profit=%r",
                     row.get("marketId"),
                     profit_raw,
+                )
+                continue
+            if market_id not in bot_market_set:
+                # Belt-and-braces oltre il filtro server-side: una riga fuori
+                # dall'allowlist d'identita' NON entra mai nel daily-loss.
+                logger.warning(
+                    "Settlement poll: mercato %s fuori dall'allowlist bot — "
+                    "riga scartata.",
+                    market_id,
                 )
                 continue
             settlement_key = f"cleared:{market_id}"
@@ -596,6 +687,18 @@ class RuntimeController:
                     settled_date=str(row.get("settledDate") or ""),
                     reported_commission=reported_commission,
                 )
+            except ValueError as exc:
+                if "CLEARED_SETTLEMENT_DUPLICATE" in str(exc):
+                    # Il motore l'ha gia' realizzato (guardia idempotente):
+                    # marca visto e prosegui, nessun doppio conteggio.
+                    self._settlement_emitted_keys.add(settlement_key)
+                    continue
+                logger.exception(
+                    "Settlement poll: emissione fallita per %s (riga saltata, "
+                    "ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
             except Exception:
                 logger.exception(
                     "Settlement poll: emissione fallita per %s (riga saltata, "
