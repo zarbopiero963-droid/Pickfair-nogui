@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -78,6 +79,7 @@ class DutchingController:
         self._recent_batches: Dict[str, float] = {}
         self._batch_ttl_seconds = 6 * 60 * 60
         self._bus_attached = False
+        self._attach_lock = threading.Lock()
 
     # =========================================================
     # CORSIA BUS (piano «dutching agganciato»)
@@ -97,15 +99,20 @@ class DutchingController:
                 "DutchingController senza bus: corsia CMD_PLACE_DUTCHING "
                 "non agganciabile"
             )
-        # Idempotente (R1 #442, GPT-5.6+Fable): due attach NON devono
-        # produrre due handler (= gambe piazzate due volte). Sull'app reale
-        # il doppio attach non avviene (build() e' guardato da _built e ogni
-        # build crea un EventBus nuovo), ma il contratto lo garantisce
-        # comunque, qualunque sia il chiamante.
-        if self._bus_attached:
-            return self
-        self.bus.subscribe("CMD_PLACE_DUTCHING", self._handle_cmd_place_dutching)
-        self._bus_attached = True
+        # Idempotente e ATOMICO (R1+R2 #442, GPT-5.6+Fable): due attach —
+        # anche CONCORRENTI — non devono mai produrre due handler (= gambe
+        # piazzate due volte). Sull'app reale il doppio attach non avviene
+        # (build() e' guardato da _built e ogni build crea un EventBus
+        # nuovo), ma il contratto lo garantisce comunque, qualunque sia il
+        # chiamante: guardia e subscribe stanno nella stessa sezione
+        # critica (niente TOCTOU).
+        with self._attach_lock:
+            if self._bus_attached:
+                return self
+            self.bus.subscribe(
+                "CMD_PLACE_DUTCHING", self._handle_cmd_place_dutching
+            )
+            self._bus_attached = True
         return self
 
     def _handle_cmd_place_dutching(self, payload: Dict[str, Any]) -> None:

@@ -271,3 +271,52 @@ def test_adattatore_niente_passthrough_su_selections_dal_wire() -> None:
     assert set(gambe) == {111, 222}
     assert gambe[111]["stake"] == pytest.approx(66.67, abs=0.05)
     assert gambe[222]["stake"] == pytest.approx(33.33, abs=0.05)
+
+
+def test_attach_bus_consumer_atomico_sotto_concorrenza() -> None:
+    """R2 su #442 (GPT-5.6, fondato come contratto): la guardia di
+    idempotenza deve essere ATOMICA — due attach concorrenti non devono
+    passare entrambi il check prima del set (TOCTOU => due handler =>
+    gambe doppie).
+
+    La finestra del TOCTOU e' troppo stretta per riprodursi da sola (GIL):
+    qui la si ALLARGA deterministicamente con un bus il cui subscribe
+    attende un rendez-vous a 2 con timeout. Senza lock: entrambi i thread
+    superano la guardia, entrano in subscribe, si incontrano al rendez-vous
+    => 2 handler (rosso). Con il lock: il secondo thread resta fuori dalla
+    sezione critica, il primo scade il timeout del rendez-vous e procede
+    da solo => 1 handler (verde). Esito deterministico in entrambi i rami.
+    """
+    import threading as _threading
+
+    class _BusSubscribeLento(_BusSync):
+        def __init__(self) -> None:
+            super().__init__()
+            self.rendezvous = _threading.Barrier(2)
+
+        def subscribe(self, topic: str, callback: Any) -> None:
+            try:
+                # Senza lock i DUE thread arrivano qui insieme e si
+                # sbloccano a vicenda; col lock arriva solo il primo,
+                # che scade il timeout e procede.
+                self.rendezvous.wait(timeout=0.5)
+            except _threading.BrokenBarrierError:
+                pass
+            super().subscribe(topic, callback)
+
+    bus = _BusSubscribeLento()
+    controller = DutchingController(bus, _RuntimeAttivo())
+    via = _threading.Barrier(2)
+
+    def _attacca() -> None:
+        via.wait()
+        controller.attach_bus_consumer()
+
+    thread = [_threading.Thread(target=_attacca) for _ in range(2)]
+    for t in thread:
+        t.start()
+    for t in thread:
+        t.join(5)
+        assert not t.is_alive()
+
+    assert bus.conta("CMD_PLACE_DUTCHING") == 1
