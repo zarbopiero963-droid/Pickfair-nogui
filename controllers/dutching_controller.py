@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import math
+import threading
 import time
 from typing import Any, Dict, List, Optional
 
@@ -77,6 +78,98 @@ class DutchingController:
         self.runtime = runtime_controller
         self._recent_batches: Dict[str, float] = {}
         self._batch_ttl_seconds = 6 * 60 * 60
+        self._bus_attached = False
+        self._attach_lock = threading.Lock()
+
+    # =========================================================
+    # CORSIA BUS (piano «dutching agganciato»)
+    # =========================================================
+    def attach_bus_consumer(self) -> "DutchingController":
+        """Aggancia l'esecutore della corsia dutching:
+        ``CMD_PLACE_DUTCHING`` -> ``submit_dutching``.
+
+        Chiamata ESPLICITA dagli entrypoint, non in ``__init__``: i
+        costruttori esistenti (test, tooling, usi diretti dell'API) non
+        devono guadagnare sottoscrizioni bus in silenzio. Ritorna ``self``
+        per il wiring in una riga. Bus assente => solleva (fail-closed:
+        una corsia che sembra agganciata ma non lo e' sarebbe peggio).
+        """
+        if self.bus is None or not hasattr(self.bus, "subscribe"):
+            raise RuntimeError(
+                "DutchingController senza bus: corsia CMD_PLACE_DUTCHING "
+                "non agganciabile"
+            )
+        # Idempotente e ATOMICO (R1+R2 #442, GPT-5.6+Fable): due attach —
+        # anche CONCORRENTI — non devono mai produrre due handler (= gambe
+        # piazzate due volte). Sull'app reale il doppio attach non avviene
+        # (build() e' guardato da _built e ogni build crea un EventBus
+        # nuovo), ma il contratto lo garantisce comunque, qualunque sia il
+        # chiamante: guardia e subscribe stanno nella stessa sezione
+        # critica (niente TOCTOU).
+        with self._attach_lock:
+            if self._bus_attached:
+                return self
+            self.bus.subscribe(
+                "CMD_PLACE_DUTCHING", self._handle_cmd_place_dutching
+            )
+            self._bus_attached = True
+        return self
+
+    def _handle_cmd_place_dutching(self, payload: Dict[str, Any]) -> None:
+        """Consumer bus della corsia dutching. Non solleva MAI nel worker.
+
+        Ogni esito — incluso il rigetto del precheck — e' gia' un dict
+        auditato da ``submit_dutching`` (``DUTCHING_BATCH_REJECTED`` /
+        lifecycle del batch); un payload non-dict degrada a ``{}`` e viene
+        rigettato dal precheck (fail-closed, nessun ordine parziale: il
+        fallimento avviene PRIMA della publish delle gambe).
+        """
+        try:
+            esito = self.submit_dutching(self._payload_da_cmd(payload))
+            if not esito.get("ok"):
+                logger.warning(
+                    "[DutchingController] CMD_PLACE_DUTCHING rigettato: %s",
+                    esito.get("error"),
+                )
+        except Exception:
+            logger.exception(
+                "[DutchingController] Errore inatteso su CMD_PLACE_DUTCHING"
+            )
+
+    @staticmethod
+    def _payload_da_cmd(payload: Any) -> Dict[str, Any]:
+        """Adatta il payload ``CMD_PLACE_DUTCHING`` (shape del RiskMiddleware:
+        gambe in ``results``) al contratto di ``submit_dutching`` (gambe in
+        ``selections``).
+
+        Decisione di sicurezza: gli ``stake`` per-gamba eventualmente
+        presenti sul wire vengono IGNORATI — la fonte di verita' degli
+        stake e' il RICALCOLO del controller (equal-profit + gates
+        Roserpina) a partire da ``total_stake``, mai numeri precomputati
+        arrivati dal bus. Payload non-dict => ``{}`` (rigettato dal
+        validate, fail-closed).
+        """
+        if not isinstance(payload, dict):
+            return {}
+        # NESSUN passthrough (R1 #442, Fable): anche un payload gia' in
+        # shape `selections` viene ri-normalizzato alla whitelist — cosi'
+        # uno `stake` per-gamba sul wire non raggiunge MAI il controller,
+        # da qualunque ramo arrivi.
+        gambe = payload.get("selections") or payload.get("results") or []
+        adattato = {
+            k: v for k, v in payload.items() if k not in ("results", "selections")
+        }
+        adattato["selections"] = [
+            {
+                "selectionId": r.get("selectionId"),
+                "price": r.get("price"),
+                "side": r.get("side") or r.get("effectiveType"),
+                "runnerName": r.get("runnerName", ""),
+            }
+            for r in gambe
+            if isinstance(r, dict)
+        ]
+        return adattato
 
     # =========================================================
     # HELPERS

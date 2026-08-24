@@ -236,6 +236,8 @@ from services.telegram_service import TelegramService
 from core.trading_engine import TradingEngine
 from core.risk_gate import RiskGate, RoserpinaRiskLimits
 from core.runtime_controller import RuntimeController
+from core.risk_middleware import RiskMiddleware
+from controllers.dutching_controller import DutchingController
 from observability import RuntimeProbe
 from safe_mode import get_safe_mode_manager
 
@@ -442,6 +444,21 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.trading_engine.runtime_controller = self.runtime
         self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
         self.trading_engine.betfair_client = self.betfair_service.get_client()
+
+        # Corsia dutching del bus (piano «dutching agganciato», owner
+        # 2026-08-23): REQ_PLACE_DUTCHING -> middleware -> CMD_PLACE_DUTCHING
+        # -> controller (precheck Roserpina, tavoli, gambe come CMD_QUICK_BET
+        # nel choke dell'engine). Il middleware e' agganciato SOLO a questa
+        # corsia: le altre hanno gia' il consumer diretto (REQ_QUICK_BET ->
+        # engine; REQ_EXECUTE_CASHOUT -> cashout bridge) e un bridge parallelo
+        # le eseguirebbe DUE volte. Corsia armata ma dormiente: nessun
+        # publisher di REQ_PLACE_DUTCHING esiste ancora.
+        self.dutching_risk_middleware = RiskMiddleware(
+            self.bus, topics=("REQ_PLACE_DUTCHING",)
+        )
+        self.dutching_controller = DutchingController(
+            self.bus, self.runtime
+        ).attach_bus_consumer()
         self.runtime_probe = RuntimeProbe(
             db=self.db,
             trading_engine=self.trading_engine,

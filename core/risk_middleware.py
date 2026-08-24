@@ -24,7 +24,19 @@ logger = logging.getLogger(__name__)
 
 
 class RiskMiddleware:
-    def __init__(self, bus, guardrail=None, wom_engine=None):
+    def __init__(self, bus, guardrail=None, wom_engine=None, topics=None):
+        """OMS bridge REQ->CMD, con corsie selezionabili.
+
+        ``topics`` (iterabile di nomi REQ_*) seleziona QUALI corsie
+        sottoscrivere; ``None`` = tutte (retro-compatibile). La selezione
+        esiste perche' sull'app reale alcune corsie hanno GIA' un consumer
+        diretto (``REQ_QUICK_BET`` -> TradingEngine; ``REQ_EXECUTE_CASHOUT``
+        -> CashoutRequestBridge): agganciare il middleware anche li'
+        inoltrerebbe REQ->CMD in PARALLELO al consumer diretto — ogni
+        richiesta eseguita DUE volte (ordine doppio / cashout doppio).
+        Fail-closed: un topic sconosciuto in ``topics`` solleva, cosi' un
+        typo non lascia una corsia disarmata in silenzio.
+        """
         self.bus = bus
 
         # Tenuti solo per compatibilità con il wiring esistente del main.py
@@ -36,13 +48,26 @@ class RiskMiddleware:
         self._gc_window_sec = 15.0
         self._lock = threading.Lock()
 
-        self.bus.subscribe("REQ_QUICK_BET", self._handle_quick_bet)
-        self.bus.subscribe("REQ_PLACE_DUTCHING", self._handle_dutching)
-        self.bus.subscribe("REQ_EXECUTE_CASHOUT", self._handle_cashout)
-
-        # Compatibilità con eventuale lifecycle ordini legacy/UI
-        self.bus.subscribe("REQ_CANCEL_ORDER", self._handle_cancel_order)
-        self.bus.subscribe("REQ_REPLACE_ORDER", self._handle_replace_order)
+        corsie = {
+            "REQ_QUICK_BET": self._handle_quick_bet,
+            "REQ_PLACE_DUTCHING": self._handle_dutching,
+            "REQ_EXECUTE_CASHOUT": self._handle_cashout,
+            # Compatibilità con eventuale lifecycle ordini legacy/UI
+            "REQ_CANCEL_ORDER": self._handle_cancel_order,
+            "REQ_REPLACE_ORDER": self._handle_replace_order,
+        }
+        selezionate = (
+            tuple(corsie) if topics is None else tuple(str(t) for t in topics)
+        )
+        sconosciute = [t for t in selezionate if t not in corsie]
+        if sconosciute:
+            raise ValueError(
+                f"RiskMiddleware: corsie sconosciute {sconosciute}; "
+                f"valide: {sorted(corsie)}"
+            )
+        self.topics = selezionate
+        for topic in self.topics:
+            self.bus.subscribe(topic, corsie[topic])
 
     # =========================================================
     # INTERNALS

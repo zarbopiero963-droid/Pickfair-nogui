@@ -330,21 +330,71 @@ def test_pnl_engine_cablato_publisher_del_ciclo_finanziario(app_headless, app_gu
 
 
 @pytest.mark.guardrail
-def test_gap_dutching_senza_esecutore(app_headless):
-    """GAP (piano: PR «dutching agganciato», decisione owner 2026-08-23:
-    agganciare). DutchingController e RiskMiddleware non sono mai costruiti:
-    CMD_PLACE_DUTCHING non ha consumatori sul bus reale."""
+def test_dutching_agganciato_corsia_selettiva_senza_doppi_consumer(
+    app_headless, app_gui
+):
+    """CABLATO (promosso da GAP, piano: PR «dutching agganciato», decisione
+    owner 2026-08-23). DutchingController e RiskMiddleware sono costruiti in
+    ENTRAMBI gli entrypoint e la corsia dutching del bus e' viva:
+    REQ_PLACE_DUTCHING -> RiskMiddleware (dedupe 2s + normalizzazione) ->
+    CMD_PLACE_DUTCHING -> DutchingController.submit_dutching (precheck
+    Roserpina, tavoli, gambe come CMD_QUICK_BET nel choke dell'engine).
+    La corsia e' ARMATA ma DORMIENTE: nessun publisher di
+    REQ_PLACE_DUTCHING esiste in produzione — stesso precedente del
+    CashoutRequestBridge («dormiente by-design»).
+
+    ANTI-DOPPIO-CONSUMER (il rischio vero di questo cablaggio): il
+    middleware e' agganciato SOLO alla corsia dutching. Le altre corsie
+    hanno gia' il loro consumer unico (REQ_QUICK_BET -> TradingEngine
+    diretto; REQ_EXECUTE_CASHOUT -> CashoutRequestBridge): un middleware
+    cablato su tutti i topic inoltrerebbe REQ->CMD in PARALLELO al
+    consumer diretto — ordine doppio e cashout doppio strutturali."""
+    from controllers.dutching_controller import DutchingController
+    from core.risk_middleware import RiskMiddleware
+
     vivo = _grafo_vivo()
-    assert "controllers.dutching_controller" not in vivo, (
-        "GAP CHIUSO: dutching_controller nel grafo vivo. Promuovi in CABLATO."
+    assert "controllers.dutching_controller" in vivo, (
+        "REGRESSIONE: dutching_controller sparito dal grafo vivo."
     )
-    assert "core.risk_middleware" not in vivo, (
-        "GAP CHIUSO: risk_middleware nel grafo vivo. Promuovi in CABLATO."
+    assert "core.risk_middleware" in vivo, (
+        "REGRESSIONE: risk_middleware sparito dal grafo vivo."
     )
-    presenti = _sottoscrittori(app_headless.bus)
-    assert presenti.get("CMD_PLACE_DUTCHING", 0) == 0, (
-        "GAP CHIUSO: CMD_PLACE_DUTCHING ha un sottoscrittore. Promuovi in CABLATO."
-    )
+
+    for nome, app in (("headless", app_headless), ("gui", app_gui)):
+        assert isinstance(
+            getattr(app, "dutching_controller", None), DutchingController
+        ), f"REGRESSIONE ({nome}): DutchingController non costruito."
+        assert app.dutching_controller.bus is app.bus
+        assert app.dutching_controller.runtime is app.runtime
+        assert isinstance(
+            getattr(app, "dutching_risk_middleware", None), RiskMiddleware
+        ), f"REGRESSIONE ({nome}): RiskMiddleware non costruito."
+
+        presenti = _sottoscrittori(app.bus)
+        assert presenti.get("REQ_PLACE_DUTCHING", 0) == 1, (
+            f"REGRESSIONE ({nome}): REQ_PLACE_DUTCHING senza il bridge "
+            "del middleware (o con doppioni)."
+        )
+        assert presenti.get("CMD_PLACE_DUTCHING", 0) == 1, (
+            f"REGRESSIONE ({nome}): CMD_PLACE_DUTCHING senza l'esecutore "
+            "del controller (o con doppioni)."
+        )
+        # Le corsie preesistenti NON devono guadagnare un secondo consumer:
+        # se un conteggio sale oltre l'atteso, qualcuno ha cablato il
+        # middleware anche li' e ogni REQ produrrebbe DUE esecuzioni.
+        # Attesi di oggi: REQ_QUICK_BET=1 (engine) su entrambi;
+        # REQ_EXECUTE_CASHOUT=1 (bridge) su headless, 0 su GUI (il bridge
+        # manca dalla GUI: gap «GUI parity», tracciato a parte).
+        atteso_cashout = 1 if nome == "headless" else 0
+        assert presenti.get("REQ_QUICK_BET", 0) == 1, (
+            f"DOPPIO CONSUMER ({nome}): REQ_QUICK_BET deve restare al solo "
+            "TradingEngine."
+        )
+        assert presenti.get("REQ_EXECUTE_CASHOUT", 0) == atteso_cashout, (
+            f"DOPPIO CONSUMER ({nome}): REQ_EXECUTE_CASHOUT atteso a "
+            f"{atteso_cashout} (bridge dove esiste, mai il middleware in "
+            "parallelo)."
+        )
 
 
 @pytest.mark.guardrail
