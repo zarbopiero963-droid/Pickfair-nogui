@@ -810,3 +810,41 @@ def test_roserpina_vista_snapshot_isolato_per_thread() -> None:
     # Il refresh successivo del thread corrente vede il valore nuovo.
     vista.refresh()
     assert vista.MIN_PRICE == 9.99
+
+
+def test_gate_check_concorrenti_ognuno_col_suo_snapshot() -> None:
+    """R2 Fugu su #441: prova END-TO-END del contratto same-thread — due
+    check() SIMULTANEI (barrier dentro il load: entrambi i refresh sono in
+    volo insieme) con config owner diverse ottengono ognuno il verdetto
+    della PROPRIA config: refresh e letture avvengono sullo stesso thread
+    dentro check(), nessun mix di limiti, nessun DENY spurio da slot
+    vuoto. Il red-first del meccanismo e' nel test di isolamento della
+    vista; questo e' il lock end-to-end sul gate."""
+    import threading as _t
+
+    barriera = _t.Barrier(2, timeout=5)
+
+    class _SettingsPerThread:
+        def load_roserpina_config(self) -> RoserpinaConfig:
+            barriera.wait()  # forza la sovrapposizione dei due check
+            if _t.current_thread().name == "restrittivo":
+                return RoserpinaConfig(min_price=1.50)
+            return RoserpinaConfig()  # default: min_price 1.02
+
+    gate = RiskGate(config=RoserpinaRiskLimits(_SettingsPerThread()))
+    esiti: Dict[str, Dict[str, Any]] = {}
+
+    def _run(nome: str) -> None:
+        esiti[nome] = gate.check(payload(price=1.30))
+
+    a = _t.Thread(target=_run, args=("restrittivo",), name="restrittivo")
+    b = _t.Thread(target=_run, args=("permissivo",), name="permissivo")
+    a.start()
+    b.start()
+    a.join(5)
+    b.join(5)
+
+    assert esiti["restrittivo"]["allowed"] is False
+    assert esiti["restrittivo"]["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert esiti["permissivo"]["allowed"] is True
+    assert esiti["permissivo"]["reason"] is None

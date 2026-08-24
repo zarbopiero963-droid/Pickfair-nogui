@@ -129,7 +129,11 @@ class RoserpinaRiskLimits:
 
     def __getattr__(self, name: str) -> Any:
         # Chiamato SOLO per attributi non trovati sull'istanza (_settings e
-        # _snapshot vivono nel __dict__: nessuna ricorsione possibile).
+        # _local vivono nel __dict__: nessuna ricorsione possibile).
+        # CONTRATTO: refresh() e le letture devono avvenire sullo STESSO
+        # thread del check (oggi garantito: _check e' sincrono). Un futuro
+        # hop tra thread/executor a meta' check vedrebbe lo slot vuoto =>
+        # DENY spurio: sicuro (mai fail-open), ma da non introdurre.
         campo = _ROSERPINA_MAP.get(name)
         if campo is None:
             raise AttributeError(name)
