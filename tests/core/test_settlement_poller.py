@@ -452,6 +452,49 @@ def test_settlement_emesso_arriva_al_daily_loss_fino_al_breach():
 # ===========================================================================
 
 @pytest.mark.integration
+def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
+    """Rilievo GPT-5.6 su #440 (terzo giro): con piu' gambe per mercato
+    (dutching), processare i perdenti prima della vincente farebbe sfondare
+    TRANSITORIAMENTE il daily-loss e scatterebbe l'emergency stop su un
+    mercato che netta positivo. Con l'ordine winners-first per mercato il
+    minimo dei prefissi coincide col market-net vero: il cumulato non scende
+    mai sotto il totale. Scenario: gambe -80 e +100 (market-net +20, limite
+    giornaliero 100): nessun breach, realized finale 19.10 (20 - 0.90 di
+    commissione market-net)."""
+    righe_loser_first = [
+        {"betId": "201", "marketId": "1.600", "profit": -80.0},
+        {"betId": "202", "marketId": "1.600", "profit": 100.0},
+    ]
+    rc = _controller(
+        results=[righe_loser_first],
+        bot_orders=[
+            {"bet_id": "201", "market_id": "1.600", "event_name": "E"},
+            {"bet_id": "202", "market_id": "1.600", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [p["event_key"] for p in closes] == [
+        "cleared:1.600:202",  # la vincente PRIMA
+        "cleared:1.600:201",
+    ]
+
+    # Consegna nello stesso ordine di emissione al consumer VERO: il
+    # cumulato non scende mai sotto il market-net e il kill-switch non
+    # scatta mai (con l'ordine invertito la prima gamba -80 avvicinerebbe
+    # da sola il limite e in scenari piu' larghi lo sfonderebbe).
+    for payload in closes:
+        rc._on_close_position(payload)
+        assert rc._emergency_stopped is False
+
+    assert rc.risk_desk.realized_pnl == pytest.approx(19.10)
+    stato = dict(rc._daily_loss_monitor_state)
+    assert bool(stato["breached"]) is False
+
+
+@pytest.mark.integration
 def test_poll_in_simulation_mode_nessuna_chiamata():
     rc = _controller(results=[[dict(_ROW)]])
     rc.simulation_mode = True

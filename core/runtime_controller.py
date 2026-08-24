@@ -641,13 +641,40 @@ class RuntimeController:
             )
             return
 
-        emission_failures = 0
+        valid_rows: list[dict] = []
         for row in rows or []:
             if not isinstance(row, dict):
                 logger.warning(
                     "Settlement poll: riga cleared non-dict scartata: %r", row
                 )
                 continue
+            valid_rows.append(row)
+
+        # Winners-first PER MERCATO: in una sequenza ordinata per profit
+        # DECRESCENTE il minimo dei prefissi coincide col totale (i positivi
+        # crescono, poi i negativi scendono monotoni fino al totale), quindi
+        # il cumulato intraday non scende MAI sotto il vero market-net del
+        # mercato in lavorazione. Senza questo ordine, le gambe perdenti di
+        # un dutching processate prima della vincente potrebbero sfondare
+        # transitoriamente il daily-loss e attivare l'emergency stop su un
+        # mercato che chiude in positivo (rilievo GPT-5.6 su #440).
+        def _ordine_winners_first(row: dict):
+            profit = row.get("profit")
+            profit_f = (
+                float(profit)
+                if (
+                    isinstance(profit, (int, float))
+                    and not isinstance(profit, bool)
+                    and math.isfinite(float(profit))
+                )
+                else 0.0
+            )
+            return (str(row.get("marketId") or ""), -profit_f)
+
+        valid_rows.sort(key=_ordine_winners_first)
+
+        emission_failures = 0
+        for row in valid_rows:
             market_id = str(row.get("marketId") or "").strip()
             bet_id = str(row.get("betId") or row.get("bet_id") or "").strip()
             profit_raw = row.get("profit")
