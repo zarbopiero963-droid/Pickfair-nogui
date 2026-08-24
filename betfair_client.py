@@ -1826,6 +1826,207 @@ class BetfairClient:
         # Cap exceeded with moreAvailable still set: fail closed.
         raise RuntimeError("CURRENT_ORDERS_TRUNCATED: pagination cap exceeded")
 
+    # listClearedOrders shares the same exchange-side page limit as
+    # listCurrentOrders (1000 records per page); the cap mirrors
+    # CURRENT_ORDERS_MAX_PAGES for the same reason (bounded, fail-closed).
+    CLEARED_ORDERS_PAGE_SIZE = 1000
+    CLEARED_ORDERS_MAX_PAGES = 20
+
+    _CLEARED_BET_STATUSES = frozenset(
+        {"SETTLED", "VOIDED", "LAPSED", "CANCELLED"}
+    )
+    # Enum GroupBy NORMATIVO (Betting Enums): niente "EXCHANGE" — compare solo
+    # nella pagina roll-up come retaggio dell'era doppio-exchange; fuori
+    # dall'enum si sta fail-closed (verifica del 2026-08-23 sui docs Betfair).
+    _CLEARED_GROUP_BY = frozenset(
+        {"EVENT_TYPE", "EVENT", "MARKET", "SIDE", "BET"}
+    )
+    # Limite documentato listClearedOrders: max 1000 betId per richiesta.
+    _CLEARED_MAX_BET_IDS = 1000
+
+    @staticmethod
+    def _cleared_id_list(raw: Any, name: str) -> List[str]:
+        """Filtro id fail-closed: solo una LISTA di stringhe e' un filtro.
+
+        `str(x)` indiscriminato trasformava una stringa passata al posto della
+        lista nei suoi caratteri e un `None` nell'id "None": filtri spazzatura
+        che l'exchange non matcha, cioe' il report vuoto che sembra «nessun
+        settlement». Qui: container str/bytes o elemento non-str => raise.
+        """
+        if raw is None:
+            return []
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, (list, tuple, set, frozenset)):
+            raise RuntimeError(f"INVALID_{name}: expected list of str, got {type(raw).__name__}")
+        cleaned: List[str] = []
+        for item in raw:
+            if not isinstance(item, str):
+                raise RuntimeError(f"INVALID_{name}: non-str element {item!r}")
+            value = item.strip()
+            if value:
+                cleaned.append(value)
+        return cleaned
+
+    @staticmethod
+    def _cleared_range_bound(raw: Any, key: str) -> "tuple[str, datetime]":
+        """Estremo di settledDateRange: ISO-8601 parsabile, mai ignorato.
+
+        Fornito ma vuoto/non-str/non-ISO => raise: un estremo droppato in
+        silenzio allargherebbe la finestra di settlement del daily-loss.
+        Ritorna (valore_wire, datetime_parsato); i naive sono ancorati a UTC
+        cosi' i due estremi restano sempre confrontabili tra loro.
+        """
+        value = raw.strip() if isinstance(raw, str) else ""
+        if not value:
+            raise RuntimeError(f"INVALID_SETTLED_RANGE: {key}={raw!r}")
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            raise RuntimeError(f"INVALID_SETTLED_RANGE: {key} not ISO-8601: {raw!r}")
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return value, parsed
+
+    def list_cleared_orders(
+        self,
+        *,
+        bet_status: str = "SETTLED",
+        market_ids: Optional[List[str]] = None,
+        bet_ids: Optional[List[str]] = None,
+        settled_after: Optional[str] = None,
+        settled_before: Optional[str] = None,
+        group_by: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch cleared (settled/voided/lapsed/cancelled) orders via
+        listClearedOrders — la sorgente del SETTLEMENT reale.
+
+        Questo e' il dato da cui il ciclo di chiusura posizioni ricava il PnL
+        realizzato (con ``group_by="MARKET"`` il report porta profit e
+        commission per mercato, coerente con l'aggregazione market-net del
+        motore PnL). Contratto fail-closed, identico a ``get_current_orders``:
+
+        - qualsiasi errore API/sessione/rete PROPAGA (mai una lista vuota
+          silenziosa: un fetch fallito che sembra «niente da regolare»
+          lascerebbe il daily-loss cieco su perdite gia' avvenute);
+        - la paginazione (``moreAvailable``) viene percorsa per intero; una
+          pagina vuota con ``moreAvailable`` o il cap superato SOLLEVANO
+          invece di restituire un report parziale;
+        - ``bet_status``/``group_by`` fuori dall'enum Betfair SOLLEVANO senza
+          toccare la rete: un filtro sbagliato non deve degradare in un
+          report vuoto che sembra «nessun settlement». Stessa sorte per ogni
+          combinazione/forma che i docs Betfair documentano come
+          report-vuoto-per-contratto: ``group_by`` con status non-SETTLED,
+          ``market_ids``/``bet_ids`` non lista-di-stringhe, piu' di 1000
+          ``bet_ids``, range settled invertito (``from`` dopo ``to``);
+        - una risposta senza i campi obbligatori del report
+          (``clearedOrders``/``moreAvailable``) SOLLEVA
+          ``CLEARED_ORDERS_MALFORMED_RESPONSE`` invece di degradare in
+          lista vuota.
+
+        ``settled_after``/``settled_before`` (ISO-8601, es.
+        ``2026-08-23T00:00:00Z``) delimitano ``settledDateRange``; forniti ma
+        vuoti/non stringa/non parsabili ISO => errore, mai ignorati in
+        silenzio. (Contratto irrobustito dal giro di verifica avversariale
+        pre-PR del 2026-08-23: ogni ramo qui sopra nasce da un rilievo con
+        mutazione dimostrata.)
+        """
+        status = str(bet_status or "").strip().upper()
+        if status not in self._CLEARED_BET_STATUSES:
+            raise RuntimeError(f"INVALID_BET_STATUS: {bet_status!r}")
+
+        base_params: Dict[str, Any] = {"betStatus": status}
+
+        wanted_markets = self._cleared_id_list(market_ids, "MARKET_IDS")
+        if wanted_markets:
+            base_params["marketIds"] = wanted_markets
+        wanted_bets = self._cleared_id_list(bet_ids, "BET_IDS")
+        if len(wanted_bets) > self._CLEARED_MAX_BET_IDS:
+            # Limite documentato dell'API: oltre 1000 betId la richiesta e'
+            # invalida — si rifiuta qui, senza toccare la rete.
+            raise RuntimeError(f"TOO_MANY_BET_IDS: {len(wanted_bets)}")
+        if wanted_bets:
+            base_params["betIds"] = wanted_bets
+
+        date_range: Dict[str, str] = {}
+        parsed_bounds: Dict[str, datetime] = {}
+        for key, raw in (("from", settled_after), ("to", settled_before)):
+            if raw is None:
+                continue
+            value, parsed = self._cleared_range_bound(raw, key)
+            date_range[key] = value
+            parsed_bounds[key] = parsed
+        if len(parsed_bounds) == 2 and parsed_bounds["from"] > parsed_bounds["to"]:
+            # Betfair documenta che from > to restituisce ZERO risultati: un
+            # range invertito diventerebbe un report vuoto che sembra
+            # «nessun settlement». Fail-closed qui.
+            raise RuntimeError(
+                f"INVALID_SETTLED_RANGE: from {date_range['from']!r} "
+                f"is after to {date_range['to']!r}"
+            )
+        if date_range:
+            base_params["settledDateRange"] = date_range
+
+        if group_by is not None:
+            grouping = str(group_by or "").strip().upper()
+            if grouping not in self._CLEARED_GROUP_BY:
+                raise RuntimeError(f"INVALID_GROUP_BY: {group_by!r}")
+            if status != "SETTLED":
+                # Doc Betfair: groupBy «is only applicable to SETTLED
+                # BetStatus» — con LAPSED/CANCELLED e rollup non-BET il report
+                # torna vuoto per contratto. Un report vuoto da filtro
+                # incompatibile e' indistinguibile da «nessun settlement»:
+                # si rifiuta la combinazione, senza toccare la rete.
+                raise RuntimeError(
+                    f"INVALID_GROUP_BY_FOR_STATUS: groupBy={grouping} "
+                    f"requires betStatus=SETTLED, got {status}"
+                )
+            base_params["groupBy"] = grouping
+
+        all_cleared: List[Dict[str, Any]] = []
+        from_record = 0
+        for _page in range(self.CLEARED_ORDERS_MAX_PAGES):
+            params = dict(base_params)
+            params["fromRecord"] = from_record
+            params["recordCount"] = self.CLEARED_ORDERS_PAGE_SIZE
+
+            result = self._post_jsonrpc(
+                self.BETTING_URL,
+                "SportsAPING/v1.0/listClearedOrders",
+                params,
+            )
+
+            # ClearedOrderSummaryReport ha ENTRAMBI i campi obbligatori, DEI
+            # TIPI GIUSTI: un envelope senza `result` degrada in {} dentro
+            # _post_jsonrpc (lista vuota con breaker success — il fetch
+            # fallito invisibile), e un `clearedOrders` non-lista finirebbe
+            # in extend() che itera contenuto arbitrario verso il PnL
+            # (rilievo Fable sulla #439). isinstance copre anche l'assenza:
+            # chiave mancante => None => non e' il tipo => raise.
+            raw_orders = result.get("clearedOrders") if isinstance(result, dict) else None
+            more_available = result.get("moreAvailable") if isinstance(result, dict) else None
+            if not isinstance(raw_orders, list) or not isinstance(more_available, bool):
+                raise RuntimeError(
+                    "CLEARED_ORDERS_MALFORMED_RESPONSE: clearedOrders/"
+                    "moreAvailable missing or wrong type"
+                )
+
+            page_orders = raw_orders
+            all_cleared.extend(page_orders)
+
+            if not more_available:
+                return all_cleared
+
+            # moreAvailable con pagina vuota/mancante = snapshot paginato
+            # incoerente: fail-closed, mai un report parziale spacciato per
+            # completo (e niente loop che non avanza).
+            if not page_orders:
+                raise RuntimeError(
+                    "CLEARED_ORDERS_TRUNCATED: moreAvailable with empty page"
+                )
+
+            from_record += len(page_orders)
+
+        raise RuntimeError("CLEARED_ORDERS_TRUNCATED: pagination cap exceeded")
+
     def cancel_order(
         self,
         *,
