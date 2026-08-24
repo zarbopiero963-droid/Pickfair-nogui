@@ -79,6 +79,78 @@ class DutchingController:
         self._batch_ttl_seconds = 6 * 60 * 60
 
     # =========================================================
+    # CORSIA BUS (piano «dutching agganciato»)
+    # =========================================================
+    def attach_bus_consumer(self) -> "DutchingController":
+        """Aggancia l'esecutore della corsia dutching:
+        ``CMD_PLACE_DUTCHING`` -> ``submit_dutching``.
+
+        Chiamata ESPLICITA dagli entrypoint, non in ``__init__``: i
+        costruttori esistenti (test, tooling, usi diretti dell'API) non
+        devono guadagnare sottoscrizioni bus in silenzio. Ritorna ``self``
+        per il wiring in una riga. Bus assente => solleva (fail-closed:
+        una corsia che sembra agganciata ma non lo e' sarebbe peggio).
+        """
+        if self.bus is None or not hasattr(self.bus, "subscribe"):
+            raise RuntimeError(
+                "DutchingController senza bus: corsia CMD_PLACE_DUTCHING "
+                "non agganciabile"
+            )
+        self.bus.subscribe("CMD_PLACE_DUTCHING", self._handle_cmd_place_dutching)
+        return self
+
+    def _handle_cmd_place_dutching(self, payload: Dict[str, Any]) -> None:
+        """Consumer bus della corsia dutching. Non solleva MAI nel worker.
+
+        Ogni esito — incluso il rigetto del precheck — e' gia' un dict
+        auditato da ``submit_dutching`` (``DUTCHING_BATCH_REJECTED`` /
+        lifecycle del batch); un payload non-dict degrada a ``{}`` e viene
+        rigettato dal precheck (fail-closed, nessun ordine parziale: il
+        fallimento avviene PRIMA della publish delle gambe).
+        """
+        try:
+            esito = self.submit_dutching(self._payload_da_cmd(payload))
+            if not esito.get("ok"):
+                logger.warning(
+                    "[DutchingController] CMD_PLACE_DUTCHING rigettato: %s",
+                    esito.get("error"),
+                )
+        except Exception:
+            logger.exception(
+                "[DutchingController] Errore inatteso su CMD_PLACE_DUTCHING"
+            )
+
+    @staticmethod
+    def _payload_da_cmd(payload: Any) -> Dict[str, Any]:
+        """Adatta il payload ``CMD_PLACE_DUTCHING`` (shape del RiskMiddleware:
+        gambe in ``results``) al contratto di ``submit_dutching`` (gambe in
+        ``selections``).
+
+        Decisione di sicurezza: gli ``stake`` per-gamba eventualmente
+        presenti sul wire vengono IGNORATI — la fonte di verita' degli
+        stake e' il RICALCOLO del controller (equal-profit + gates
+        Roserpina) a partire da ``total_stake``, mai numeri precomputati
+        arrivati dal bus. Payload non-dict => ``{}`` (rigettato dal
+        validate, fail-closed).
+        """
+        if not isinstance(payload, dict):
+            return {}
+        if payload.get("selections"):
+            return payload  # gia' nel contratto del controller
+        adattato = {k: v for k, v in payload.items() if k != "results"}
+        adattato["selections"] = [
+            {
+                "selectionId": r.get("selectionId"),
+                "price": r.get("price"),
+                "side": r.get("side") or r.get("effectiveType"),
+                "runnerName": r.get("runnerName", ""),
+            }
+            for r in payload.get("results", []) or []
+            if isinstance(r, dict)
+        ]
+        return adattato
+
+    # =========================================================
     # HELPERS
     # =========================================================
     def _ok(self, **kwargs) -> Dict[str, Any]:

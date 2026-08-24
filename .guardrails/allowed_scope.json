@@ -1460,6 +1460,20 @@
       ],
       "max_files": 7,
       "allow_tests": true
+    },
+    "dutching_bus_lane": {
+      "description": "PR 5 del piano di cablaggio (owner: «Vai prossima pr», 2026-08-24; decisione 2026-08-23: agganciare). Corsia dutching del bus: REQ_PLACE_DUTCHING -> RiskMiddleware (dedupe 2s + normalizzazione, corsie SELEZIONABILI via topics= — sull'app reale SOLO la corsia dutching: le altre hanno gia' il consumer diretto, engine per REQ_QUICK_BET e CashoutRequestBridge per REQ_EXECUTE_CASHOUT, e un bridge parallelo le eseguirebbe due volte) -> CMD_PLACE_DUTCHING -> DutchingController.attach_bus_consumer (aggancio esplicito, mai in __init__) -> _handle_cmd_place_dutching (adattatore results->selections; gli stake dal wire si IGNORANO: fonte di verita' = ricalcolo equal-profit del controller) -> submit_dutching (validate + precheck Roserpina + runtime ACTIVE gate + tavoli) -> gambe come CMD_QUICK_BET nel choke del TradingEngine. Corsia armata ma DORMIENTE: nessun publisher di REQ_PLACE_DUTCHING in produzione (precedente CashoutRequestBridge). Guardrail promosso con assert ANTI-DOPPIO-CONSUMER (REQ_QUICK_BET=1, REQ_EXECUTE_CASHOUT=1 headless/0 GUI). Topic sconosciuto in topics= => ValueError (typo non disarma corsie in silenzio). Test: 11 catena su bus sincrono deterministico (gambe ricalcolate 66.67/33.33, dedupe, malformati fail-closed, runtime non-ACTIVE rigetta, handler mai-raise) + guardrail; sabotaggi S1 blanket-subscribe / S2 adattatore rimosso / S3 attach silente, tutti rossi mirati con ripristino.",
+      "files": [
+        "core/risk_middleware.py",
+        "controllers/dutching_controller.py",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        "tests/core/test_dutching_bus_wiring.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 7,
+      "allow_tests": true
     }
   }
 }
