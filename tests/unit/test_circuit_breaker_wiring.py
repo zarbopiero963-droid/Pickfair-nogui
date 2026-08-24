@@ -380,3 +380,132 @@ def _make_ctx(engine: Any) -> Any:
         customer_ref="test-ref",
         created_at=0.0,
     )
+
+
+# ===========================================================================
+# Risoluzione LAZY del client live (piano: PR «betfair_client lazy»)
+# ===========================================================================
+
+def _runtime_live() -> Any:
+    rt = MagicMock()
+    rt._daily_loss_entry_blocked.return_value = False
+    rt.get_effective_execution_mode.return_value = "LIVE"
+    rt.is_live_allowed.return_value = True
+    return rt
+
+
+@pytest.mark.unit
+def test_lazy_client_breaker_aperto_blocca_anche_senza_client_congelato():
+    """REPRO del gap «betfair_client congelato a build-time»: con
+    betfair_client=None (il valore congelato del build pre-connessione) e il
+    client REALE disponibile solo via client_getter, il breaker APERTO deve
+    comunque bloccare la submission. Sul codice vecchio il ramo protetto
+    veniva scavalcato (live_client=None) e l'ordine cadeva sul percorso raw
+    del getter SENZA breaker: piazzato a breaker aperto."""
+    import time
+    engine = _make_engine()
+    engine._order_submission_breaker.state = State.OPEN
+    engine._order_submission_breaker.opened_at = time.time()
+    engine.runtime_controller = _runtime_live()
+
+    fake_client = MagicMock()
+    fake_client.place_order.return_value = {"ok": True}
+    fake_client.place_bet.return_value = {"ok": True}
+    engine.betfair_client = None
+    engine.client_getter = lambda: fake_client
+
+    with pytest.raises(RuntimeError, match="ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN"):
+        engine._submit_to_order_path(
+            _make_ctx(engine),
+            {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+        )
+    fake_client.place_order.assert_not_called()
+    fake_client.place_bet.assert_not_called()
+
+
+@pytest.mark.unit
+def test_lazy_client_session_expired_instrada_recovery():
+    """Col client risolto lazy, un SESSION_EXPIRED deve passare dal ramo
+    protetto: handle_session_expiry del service + raise + breaker failure.
+    Sul codice vecchio il percorso raw ignorava tutto questo."""
+    engine = _make_engine()
+    rt = _runtime_live()
+    svc = MagicMock()
+    svc._session_invalid = False
+    rt.betfair_service = svc
+    engine.runtime_controller = rt
+
+    fake_client = MagicMock()
+    fake_client.place_order.return_value = {"ok": False, "error": "SESSION_EXPIRED"}
+    engine.betfair_client = None
+    engine.client_getter = lambda: fake_client
+
+    with pytest.raises(RuntimeError, match="SESSION_EXPIRED"):
+        engine._submit_to_order_path(
+            _make_ctx(engine),
+            {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+        )
+    svc.handle_session_expiry.assert_called_once()
+    assert engine._order_submission_breaker.failures == 1
+
+
+@pytest.mark.unit
+def test_lazy_client_override_esplicito_vince_sul_getter():
+    """betfair_client impostato (test/injection) resta l'override: il getter
+    non viene interpellato."""
+    engine = _make_engine()
+    engine.runtime_controller = _runtime_live()
+
+    override = MagicMock()
+    override.place_order.return_value = {"ok": True, "bet_id": "B1"}
+    dal_getter = MagicMock()
+    engine.betfair_client = override
+    engine.client_getter = lambda: dal_getter
+
+    result = engine._submit_to_order_path(
+        _make_ctx(engine),
+        {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+    )
+    assert result == {"ok": True, "bet_id": "B1"}
+    override.place_order.assert_called_once()
+    dal_getter.place_order.assert_not_called()
+
+
+@pytest.mark.unit
+def test_lazy_client_getter_none_semantica_invariata():
+    """Getter che ritorna None (non connesso): la submission LIVE cade sui
+    fallback esistenti e chiude con NO_VALID_EXECUTION_PATH — nessun ordine
+    inventato, nessun crash nuovo."""
+    engine = _make_engine()
+    engine.runtime_controller = _runtime_live()
+    engine.betfair_client = None
+    engine.client_getter = lambda: None
+
+    with pytest.raises(RuntimeError, match="NO_VALID_EXECUTION_PATH"):
+        engine._submit_to_order_path(
+            _make_ctx(engine),
+            {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0},
+        )
+
+
+@pytest.mark.unit
+def test_lazy_client_failure_ripetute_aprono_il_breaker():
+    """I fallimenti del client risolto lazy contano nel breaker come quelli
+    dell'override: 3 TIMEOUT => circuito aperto."""
+    engine = _make_engine()
+    engine.runtime_controller = _runtime_live()
+
+    fake_client = MagicMock()
+    fake_client.place_order.side_effect = RuntimeError("TIMEOUT")
+    engine.betfair_client = None
+    engine.client_getter = lambda: fake_client
+
+    ctx = _make_ctx(engine)
+    payload = {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0}
+    for _ in range(3):
+        try:
+            engine._submit_to_order_path(ctx, payload)
+        except RuntimeError:
+            pass
+
+    assert engine._order_submission_breaker.is_open()

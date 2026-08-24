@@ -1422,6 +1422,20 @@ class TradingEngine:
     # ==================================================================
     # SUBMIT PATH
     # ==================================================================
+    def _resolve_live_client(self) -> Any:
+        """Client live per la submission: override esplicito se impostato
+        (test/injection), altrimenti risoluzione LAZY dal getter — il client
+        Betfair nasce DOPO la connessione, quindi un valore congelato al
+        build resterebbe None e farebbe cadere la submission LIVE sul
+        percorso raw client_getter in coda, scavalcando circuit breaker e
+        gestione sessione scaduta. Eccezioni del getter propagano
+        (fail-closed: meglio nessun ordine che un ordine non protetto)."""
+        if self.betfair_client is not None:
+            return self.betfair_client
+        if callable(self.client_getter):
+            return self.client_getter()
+        return None
+
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
         self._assert_valid_ctx(ctx)
         payload = dict(request)
@@ -1460,7 +1474,7 @@ class TradingEngine:
                 if _betfair_svc is not None and getattr(_betfair_svc, "_session_invalid", False) is True:
                     raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
 
-                live_client = self.betfair_client
+                live_client = self._resolve_live_client()
                 if live_client is not None:
                     if self._order_submission_breaker.is_open():
                         raise RuntimeError("ORDER_SUBMISSION_CIRCUIT_BREAKER_OPEN")
