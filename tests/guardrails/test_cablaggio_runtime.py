@@ -6,7 +6,8 @@ La suite (5000+ verdi) prova che ogni pezzo funziona, ma nessun test montava il
 programma che si avvia davvero per chiedere: i pezzi sono COLLEGATI? L'audit di
 cablaggio del 2026-08-23 ha trovato funzionalita' complete, testate e verdi che
 a runtime sono inerti perche' nessuno le istanzia: il `core/pnl_engine` (unico
-publisher di `RUNTIME_CLOSE_POSITION`), il `DutchingController` (consumatore di
+publisher di `RUNTIME_CLOSE_POSITION` — gap CHIUSO e promosso in CABLATO dalla
+PR `runtime_settlement_wiring`), il `DutchingController` (consumatore di
 `CMD_PLACE_DUTCHING`), il `RiskGate` che legge le costanti di `trading_config`
 invece della config Roserpina salvata dalla GUI. Tutti con test propri verdi:
 il verde dei pezzi non dice niente sul montaggio.
@@ -40,11 +41,11 @@ from __future__ import annotations
 import importlib.util
 import os
 import pathlib
-import re
 
 import pytest
 
 import trading_config
+from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
 from core.risk_gate import RiskGate
 
@@ -192,9 +193,14 @@ TOPIC_CABLATI_HEADLESS = (
     "REQ_EXECUTE_CASHOUT",
     "CMD_EXECUTE_CASHOUT",
     "CASHOUT_FAILED",
-    # ciclo finanziario: il consumatore c'e' (RuntimeController); il publisher
-    # e' il GAP `pnl_engine_mai_istanziato` qui sotto.
+    # ciclo finanziario: RuntimeController consuma; il publisher e' il
+    # core.pnl_engine.PnLEngine cablato in RuntimeController.__init__
+    # (PR `runtime_settlement_wiring`, promosso dal gap
+    # `pnl_engine_mai_istanziato`).
     "RUNTIME_CLOSE_POSITION",
+    # mark-to-market: sottoscritto dal PnLEngine cablato (stessa PR). Il
+    # publisher arrivera' col market-data poll; l'auto-close resta OFF.
+    "MARKET_BOOK_UPDATE",
     # ciclo di vita runtime, consumato dal logger headless
     "RUNTIME_STARTED",
     "RUNTIME_STOPPED",
@@ -288,34 +294,39 @@ def test_probe_readiness_gate_armato(app_headless, app_gui):
 
 
 @pytest.mark.guardrail
-def test_gap_pnl_engine_mai_istanziato(app_headless):
-    """GAP (piano: PR «ciclo chiusura posizioni»). La CLASSE
-    `core.pnl_engine.PnLEngine` — unico publisher di RUNTIME_CLOSE_POSITION —
-    non e' mai costruita da nessun modulo vivo: il PnL realizzato non entra
-    mai, e il monitor daily-loss confronta un valore fermo a zero.
+def test_pnl_engine_cablato_publisher_del_ciclo_finanziario(app_headless, app_gui):
+    """PROMOSSO da GAP `pnl_engine_mai_istanziato`, chiuso dalla PR
+    `runtime_settlement_wiring` (come prescritto dal registro: il gap test e'
+    fallito apposta e la voce e' salita qui, in CABLATO).
 
-    Precisione imparata scrivendo questo test: il MODULO `core.pnl_engine` E'
-    nel grafo vivo (simulation_broker ne importa l'aggregatore di settlement),
-    quindi il gap non si misura sull'import ma sull'istanziazione della classe
-    e sull'effetto osservabile: il costruttore di PnLEngine sottoscriverebbe
-    MARKET_BOOK_UPDATE, che sull'app reale non ha nessun sottoscrittore."""
-    istanziatori = [
-        nome
-        for nome, sorgente in _sorgenti_vive().items()
-        if nome != "core.pnl_engine"
-        and re.search(r"(?<![A-Za-z_])PnLEngine\s*\(", sorgente)
-    ]
-    assert istanziatori == [], (
-        f"GAP CHIUSO: {istanziatori} istanzia PnLEngine. Promuovi la voce in "
-        "CABLATO: asserisci il publisher di RUNTIME_CLOSE_POSITION e il "
-        "sottoscrittore di MARKET_BOOK_UPDATE sull'app montata."
-    )
-    presenti = _sottoscrittori(app_headless.bus)
-    assert presenti.get("MARKET_BOOK_UPDATE", 0) == 0, (
-        "GAP CHIUSO: MARKET_BOOK_UPDATE ha un sottoscrittore sull'app "
-        "headless reale (il PnLEngine — o qualcos'altro — e' stato cablato). "
-        "Promuovi la voce in CABLATO."
-    )
+    Il RuntimeController costruisce in `__init__` il
+    `core.pnl_engine.PnLEngine` REALE — publisher unico di
+    RUNTIME_CLOSE_POSITION — sul bus dell'app, per ENTRAMBI gli entrypoint
+    (headless e GUI, parity by construction). Il sottoscrittore di
+    MARKET_BOOK_UPDATE e' asserito dal test dei topic
+    (TOPIC_CABLATI_HEADLESS).
+
+    Vincolo di safety che NON deve regredire: sull'app reale l'auto-close
+    mark-to-market resta DISARMATO (`auto_close_enabled=False`) — una
+    chiusura contabile a soglia senza ordine reale realizzerebbe PnL
+    fantasma su una posizione ancora viva su Betfair, in contrasto col
+    contratto del runtime («NON chiude automaticamente le posizioni»).
+    Il settlement REALE passa dal poller cleared orders, non da questo flag."""
+    for nome, app in (("headless", app_headless), ("gui", app_gui)):
+        engine = getattr(app.runtime, "pnl_engine", None)
+        assert isinstance(engine, PnLEngine), (
+            f"{nome}: FILO STACCATO — RuntimeController non costruisce piu' "
+            f"il PnLEngine reale (trovato: {type(engine).__name__}). Il "
+            "PnL realizzato non entrerebbe piu' nel daily-loss."
+        )
+        assert engine.bus is app.bus, (
+            f"{nome}: il PnLEngine e' su un bus DIVERSO da quello dell'app: "
+            "i suoi RUNTIME_CLOSE_POSITION cadrebbero nel vuoto."
+        )
+        assert engine.auto_close_enabled is False, (
+            f"{nome}: auto-close mark-to-market ARMATO di default sull'app "
+            "reale: chiusure contabili senza ordine reale — vietato."
+        )
 
 
 @pytest.mark.guardrail

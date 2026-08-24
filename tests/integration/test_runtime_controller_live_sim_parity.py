@@ -1322,7 +1322,7 @@ def test_runtime_controller_live_event_settlement_economics_align_with_simulatio
             return None
 
     live_bus = _BusCapture()
-    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5)
+    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5, auto_close_enabled=True)
 
     base_fill = {
         "market_id": "1.990",
@@ -1484,7 +1484,7 @@ def test_runtime_controller_live_event_settlement_parity_with_duplicate_and_dela
             return None
 
     live_bus = _BusCapture()
-    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5)
+    live_engine = EventDrivenPnLEngine(bus=live_bus, commission_pct=4.5, auto_close_enabled=True)
 
     fill_payload = {
         "market_id": "1.991",

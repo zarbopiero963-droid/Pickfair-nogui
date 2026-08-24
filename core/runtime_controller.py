@@ -6,13 +6,14 @@ import logging
 import math
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
+from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
@@ -28,7 +29,12 @@ from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
 from services.streaming_feed import StreamingConfigError, StreamingFeed
-from trading_config import AUTO_GREEN_DELAY_SEC, STRICT_LIVE_KEY_SOURCE_REQUIRED, enforce_betfair_italy_commission_pct
+from trading_config import (
+    AUTO_GREEN_DELAY_SEC,
+    BETFAIR_ITALY_COMMISSION_PCT,
+    STRICT_LIVE_KEY_SOURCE_REQUIRED,
+    enforce_betfair_italy_commission_pct,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +113,23 @@ class RuntimeController:
         self.streaming_feed: Optional[StreamingFeed] = None
         self._market_data_cfg: dict[str, Any] = {}
         self._last_fallback_snapshot_at: float = 0.0
+        # PR3 (runtime_settlement_wiring): motore PnL cablato — publisher unico
+        # di RUNTIME_CLOSE_POSITION. Auto-close mark-to-market OFF: il
+        # controller NON chiude posizioni da solo; il settlement REALE arriva
+        # dal poller cleared orders (default OFF, LIVE-only). Commissione =
+        # costante di policy: il contratto settlement accetta solo quella.
+        self.pnl_engine = PnLEngine(
+            bus=self.bus,
+            commission_pct=BETFAIR_ITALY_COMMISSION_PCT,
+            auto_close_enabled=False,
+        )
+        # Dedupe emissione settlement: in-memory per il processo vivo; il
+        # riavvio è coperto dal pre-check durevole sul cycle recovery state
+        # (stessa settlement_key del consumer: "cleared:<market_id>").
+        self._settlement_emitted_keys: set[str] = set()
+        self._settlement_poll_thread: Optional[threading.Thread] = None
+        self._settlement_poll_stop = threading.Event()
+        self._settlement_poll_cfg: dict[str, Any] = {}
         # Registry DIRECT (B6.3.2a): customer_ref → bet_id degli ordini DIRECT
         # vivi. In-memory, riparte vuoto al restart (fail-safe).
         self._direct_order_bet_ids: dict[str, str] = {}
@@ -384,6 +407,203 @@ class RuntimeController:
             logger.exception("Errore stop streaming_feed")
         finally:
             self.streaming_feed = None
+
+    # =========================================================
+    # Settlement poller (PR3, runtime_settlement_wiring) — il ciclo di
+    # chiusura reale: listClearedOrders(SETTLED, group_by=MARKET) =>
+    # PnLEngine.apply_cleared_market_settlement => RUNTIME_CLOSE_POSITION
+    # => daily-loss/bankroll sync. Default OFF, LIVE-only, fail-closed.
+    # =========================================================
+    def _load_settlement_poll_config(self) -> dict:
+        """Config del poller settlement, letta dalle settings (pattern
+        market-data). Chiavi: ``settlement.poll_enabled`` (default False —
+        dormiente, decisione owner), ``settlement.poll_sec`` (default 60,
+        min 5), ``settlement.lookback_hours`` (default 24, clamp 1..168).
+        Qualsiasi errore di lettura/parse => default DISABLED (fail-closed).
+        """
+        defaults = {"enabled": False, "poll_sec": 60.0, "lookback_hours": 24.0}
+        try:
+            data = (
+                self.settings_service.get_all_settings()
+                if hasattr(self.settings_service, "get_all_settings")
+                else {}
+            )
+            if not isinstance(data, dict):
+                return dict(defaults)
+            enabled = self._safe_bool(
+                data.get("settlement.poll_enabled"), default=False
+            )
+            poll_sec = float(
+                data.get("settlement.poll_sec", defaults["poll_sec"])
+                or defaults["poll_sec"]
+            )
+            lookback = float(
+                data.get("settlement.lookback_hours", defaults["lookback_hours"])
+                or defaults["lookback_hours"]
+            )
+            if not math.isfinite(poll_sec) or not math.isfinite(lookback):
+                return dict(defaults)
+            return {
+                "enabled": bool(enabled),
+                "poll_sec": max(5.0, poll_sec),
+                "lookback_hours": min(168.0, max(1.0, lookback)),
+            }
+        except Exception:
+            logger.exception("Errore load settlement poll config (default: disabled)")
+            return dict(defaults)
+
+    def _start_settlement_poller(self) -> None:
+        self._settlement_poll_cfg = self._load_settlement_poll_config()
+        if not bool(self._settlement_poll_cfg.get("enabled", False)):
+            return
+        if self.simulation_mode:
+            # Parity SIM non ancora cablata (record_realized_settlement del
+            # broker simulato resta senza consumer): nessun poll in SIM.
+            return
+        if (
+            self._settlement_poll_thread is not None
+            and self._settlement_poll_thread.is_alive()
+        ):
+            return
+        self._settlement_poll_stop = threading.Event()
+        self._settlement_poll_thread = threading.Thread(
+            target=self._settlement_poll_loop,
+            name="settlement-poller",
+            daemon=True,
+        )
+        self._settlement_poll_thread.start()
+        logger.info(
+            "Settlement poller avviato (poll_sec=%.0f lookback_hours=%.0f)",
+            float(self._settlement_poll_cfg.get("poll_sec", 60.0)),
+            float(self._settlement_poll_cfg.get("lookback_hours", 24.0)),
+        )
+
+    def _stop_settlement_poller(self) -> None:
+        thread = self._settlement_poll_thread
+        if thread is None:
+            return
+        self._settlement_poll_stop.set()
+        try:
+            thread.join(timeout=5.0)
+        except Exception:
+            logger.exception("Errore join settlement poller")
+        finally:
+            self._settlement_poll_thread = None
+
+    def _settlement_poll_loop(self) -> None:
+        interval = max(
+            5.0, float(self._settlement_poll_cfg.get("poll_sec", 60.0) or 60.0)
+        )
+        while not self._settlement_poll_stop.is_set():
+            try:
+                self._poll_cleared_settlements()
+            except Exception:
+                logger.exception("Errore poll cleared settlements (round abortito)")
+            self._settlement_poll_stop.wait(interval)
+
+    def _poll_cleared_settlements(self) -> None:
+        """Un giro di poll dei settlement reali. Fail-closed su ogni ramo:
+
+        - SIM o runtime non ACTIVE => nessuna chiamata;
+        - fetch fallito => round abortito (mai una lista vuota spacciata per
+          "nessun settlement" — il client/service propagano, qui si logga e
+          si ritenta al giro dopo);
+        - riga malformata (marketId/profit assenti o non numerici) =>
+          scartata con log, MAI inventare un profit;
+        - dedupe: in-memory per il processo + pre-check durevole sul cycle
+          recovery state (il consumer persiste il checkpoint alla PRIMA
+          consegna con la stessa chiave "cleared:<market_id>"); stato db
+          in errore => la riga NON viene emessa e NON viene marcata vista
+          (ritentata quando il db risponde).
+        """
+        if self.simulation_mode:
+            return
+        if self.mode is not RuntimeMode.ACTIVE:
+            return
+        lookback_hours = float(
+            self._settlement_poll_cfg.get("lookback_hours", 24.0) or 24.0
+        )
+        settled_after = (
+            datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+        ).isoformat()
+        try:
+            rows = self.betfair_service.list_cleared_orders(
+                bet_status="SETTLED",
+                group_by="MARKET",
+                settled_after=settled_after,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Settlement poll: fetch cleared orders fallito, round abortito "
+                "(fail-closed): %s",
+                exc,
+            )
+            return
+
+        for row in rows or []:
+            if not isinstance(row, dict):
+                logger.warning(
+                    "Settlement poll: riga cleared non-dict scartata: %r", row
+                )
+                continue
+            market_id = str(row.get("marketId") or "").strip()
+            profit_raw = row.get("profit")
+            profit_valid = (
+                not isinstance(profit_raw, bool)
+                and isinstance(profit_raw, (int, float))
+                and math.isfinite(float(profit_raw))
+            )
+            if not market_id or not profit_valid:
+                logger.warning(
+                    "Settlement poll: riga cleared malformata scartata "
+                    "market=%r profit=%r",
+                    row.get("marketId"),
+                    profit_raw,
+                )
+                continue
+            settlement_key = f"cleared:{market_id}"
+            if settlement_key in self._settlement_emitted_keys:
+                continue
+            probe = self._read_cycle_recovery_state(settlement_key)
+            probe_status = str(probe.get("status") or "")
+            if probe_status == "RECOVERY_STATE_INVALID":
+                logger.warning(
+                    "Settlement poll: recovery state illeggibile per %s — "
+                    "emissione sospesa (ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
+            if probe_status != "RECOVERY_NO_STATE":
+                # Checkpoint durevole gia' presente: consegnato in un processo
+                # precedente. Non ri-applicare il PnL.
+                self._settlement_emitted_keys.add(settlement_key)
+                continue
+            commission_raw = row.get("commission")
+            reported_commission = (
+                float(commission_raw)
+                if (
+                    not isinstance(commission_raw, bool)
+                    and isinstance(commission_raw, (int, float))
+                    and math.isfinite(float(commission_raw))
+                )
+                else None
+            )
+            try:
+                self.pnl_engine.apply_cleared_market_settlement(
+                    market_id=market_id,
+                    gross_pnl=float(profit_raw),
+                    source="betfair_cleared_orders",
+                    settled_date=str(row.get("settledDate") or ""),
+                    reported_commission=reported_commission,
+                )
+            except Exception:
+                logger.exception(
+                    "Settlement poll: emissione fallita per %s (riga saltata, "
+                    "ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
+            self._settlement_emitted_keys.add(settlement_key)
 
     def _snapshot_rest_fallback(self, *, reason: str, payload: Optional[dict] = None) -> None:
         cfg = dict(self._market_data_cfg or self._load_market_data_config())
@@ -1715,7 +1935,15 @@ class RuntimeController:
 
         self.mode = RuntimeMode.ACTIVE
         self.last_error = ""
-        
+
+        # PR3: ciclo chiusura reale — parte solo se abilitato in config
+        # (settlement.poll_enabled) e mai in SIM. Un errore qui non deve
+        # impedire lo start del runtime.
+        try:
+            self._start_settlement_poller()
+        except Exception:
+            logger.exception("Errore start settlement poller")
+
         # Fase A1: Auto-Sync al boot (background)
         if self.executor:
             self.executor.submit("boot_catalog_sync", self.catalog_sync.run_sync, force=False)
@@ -1734,6 +1962,7 @@ class RuntimeController:
         }
 
     def stop(self) -> dict:
+        self._stop_settlement_poller()
         self._stop_market_data_feed()
         self.telegram_service.stop()
         self.betfair_service.disconnect()
