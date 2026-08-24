@@ -1474,6 +1474,20 @@
       ],
       "max_files": 7,
       "allow_tests": true
+    },
+    "trading_engine_lazy_client": {
+      "description": "PR 6 del piano di cablaggio (owner: «Vai prossima pr», 2026-08-24). betfair_client risolto LAZY nella submission LIVE: prima il client era congelato una volta in build() PRIMA della connessione (quindi None), e il ramo LIVE protetto (circuit breaker di submission + gestione SESSION_EXPIRED/INVALID_SESSION via handle_session_expiry) veniva scavalcato: la submission cadeva sul percorso raw client_getter in coda, SENZA breaker e SENZA recovery di sessione. Fix minimale: TradingEngine._resolve_live_client() (override esplicito se impostato — test/injection — altrimenti risoluzione lazy dal client_getter; eccezioni del getter propagano = fail-closed) usato nel ramo LIVE al posto della lettura dell'attributo congelato; rimozione dell'assegnazione congelata nei due entrypoint (headless_main, mini_gui). Guardrail promosso: test_gap_betfair_client_congelato_a_build_time => test_cablato_betfair_client_risolto_lazy (nessun congelamento al build, getter = BetfairService.get_client, risoluzione lazy dal getter, override esplicito vince, con ripristino). Test hard red-first: 5 unit (tests/unit/test_circuit_breaker_wiring.py sezione lazy_client: breaker aperto blocca anche a client congelato assente, SESSION_EXPIRED instrada handle_session_expiry + record_failure, 3 failure aprono il breaker, override esplicito vince sul getter, getter->None conserva NO_VALID_EXECUTION_PATH) + 2 integrazione aggiornati alla semantica lazy.",
+      "files": [
+        "core/trading_engine.py",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/unit/test_circuit_breaker_wiring.py",
+        "tests/integration/test_control_plane_runtime_binding.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 7,
+      "allow_tests": true
     }
   }
 }

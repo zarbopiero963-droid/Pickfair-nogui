@@ -443,7 +443,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         )
         self.trading_engine.runtime_controller = self.runtime
         self.trading_engine.simulation_broker = getattr(self, "simulation_broker", None)
-        self.trading_engine.betfair_client = self.betfair_service.get_client()
+        # NIENTE assegnazione di betfair_client qui: al build la connessione
+        # non esiste ancora e congelarlo a None farebbe scavalcare breaker e
+        # gestione sessione nel ramo LIVE. Il client si risolve LAZY a ogni
+        # submission via client_getter (TradingEngine._resolve_live_client).
 
         # Corsia dutching del bus (piano «dutching agganciato», owner
         # 2026-08-23): REQ_PLACE_DUTCHING -> middleware -> CMD_PLACE_DUTCHING

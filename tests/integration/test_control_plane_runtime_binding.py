@@ -59,6 +59,7 @@ def test_headless_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
             self.runtime_controller = None
             self.simulation_broker = None
             self.betfair_client = None
+            self.client_getter = _kwargs.get("client_getter")
 
     class FakeRuntime:
         def __init__(self, **_kwargs):
@@ -100,7 +101,14 @@ def test_headless_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
     app.build()
 
     assert app.trading_engine.runtime_controller is app.runtime
-    assert app.trading_engine.betfair_client is app.betfair_service.client
+    # Semantica lazy (PR «betfair_client lazy»): il build NON congela il
+    # client (a build-time la connessione non esiste); l'engine lo risolve
+    # a ogni submission tramite il getter del BetfairService.
+    assert app.trading_engine.betfair_client is None
+    assert getattr(app.trading_engine.client_getter, "__self__", None) is (
+        app.betfair_service
+    )
+    assert app.trading_engine.client_getter() is app.betfair_service.client
 
 
 @pytest.mark.integration
@@ -149,6 +157,7 @@ def test_mini_gui_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
             self.runtime_controller = None
             self.simulation_broker = None
             self.betfair_client = None
+            self.client_getter = _kwargs.get("client_getter")
 
     class FakeRuntime:
         def __init__(self, **_kwargs):
@@ -183,4 +192,11 @@ def test_mini_gui_bootstrap_wires_runtime_control_plane_dependencies(monkeypatch
     app = mini_gui.MiniPickfairGUI(test_mode=True)
 
     assert app.trading_engine.runtime_controller is app.runtime
-    assert app.trading_engine.betfair_client is app.betfair_service.client
+    # Semantica lazy (PR «betfair_client lazy»): il build NON congela il
+    # client (a build-time la connessione non esiste); l'engine lo risolve
+    # a ogni submission tramite il getter del BetfairService.
+    assert app.trading_engine.betfair_client is None
+    assert getattr(app.trading_engine.client_getter, "__self__", None) is (
+        app.betfair_service
+    )
+    assert app.trading_engine.client_getter() is app.betfair_service.client

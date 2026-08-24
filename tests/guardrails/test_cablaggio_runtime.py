@@ -440,14 +440,40 @@ def test_risk_gate_legge_la_config_roserpina_dell_owner(app_headless, app_gui):
 
 
 @pytest.mark.guardrail
-def test_gap_betfair_client_congelato_a_build_time(app_headless):
-    """GAP (piano: PR «betfair_client lazy»). Assegnato una volta in build(),
-    prima della connessione: in LIVE il ramo col breaker di submission e la
-    gestione sessione scaduta resta scavalcato."""
-    assert app_headless.trading_engine.betfair_client is None, (
-        "GAP CHIUSO: trading_engine.betfair_client non e' piu' congelato a "
-        "None. Promuovi in CABLATO asserendo la risoluzione lazy."
+def test_cablato_betfair_client_risolto_lazy(app_headless):
+    """CABLATO (PR «betfair_client lazy»). Il build NON congela piu' il
+    client: l'engine lo risolve a ogni submission via client_getter
+    (override esplicito se impostato), cosi' in LIVE il ramo col breaker
+    di submission e la gestione sessione scaduta non viene scavalcato."""
+    engine = app_headless.trading_engine
+
+    # Nessun valore congelato al build: l'attributo resta il default None.
+    assert engine.betfair_client is None, (
+        "REGRESSIONE: betfair_client ri-congelato al build. A build-time la "
+        "connessione non esiste: il valore congelato scavalca breaker e "
+        "gestione sessione nel ramo LIVE."
     )
+
+    # Il getter e' quello del BetfairService reale dell'app.
+    assert getattr(engine.client_getter, "__self__", None) is (
+        app_headless.betfair_service
+    ), "REGRESSIONE: client_getter non e' il get_client del BetfairService."
+
+    # Risoluzione lazy: senza override segue il getter del servizio...
+    risolutore = getattr(engine, "_resolve_live_client", None)
+    assert callable(risolutore), (
+        "REGRESSIONE: manca TradingEngine._resolve_live_client — il ramo "
+        "LIVE torna a leggere l'attributo congelato."
+    )
+    assert engine._resolve_live_client() is app_headless.betfair_service.get_client()
+
+    # ...e con override esplicito (test/injection) vince l'override.
+    sentinella = object()
+    engine.betfair_client = sentinella
+    try:
+        assert engine._resolve_live_client() is sentinella
+    finally:
+        engine.betfair_client = None  # fixture module-scoped: ripristina
 
 
 @pytest.mark.guardrail
