@@ -576,6 +576,132 @@ class RuntimeController:
         finally:
             self._settlement_poll_round_lock.release()
 
+    @staticmethod
+    def _ordina_righe_cleared(valid_rows: list[dict]) -> list[dict]:
+        """Ordine di lavorazione dei settlement (rilievi GPT-5.6/Fable/Fugu
+        su #440, giri 3-7): l'unita' atomica e' il CLUSTER TEMPORALE di
+        mercato.
+
+        - Le gambe dello STESSO mercato settlate entro 2s dall'ANCORA (la
+          prima gamba del cluster) sono lo stesso evento di settlement (il
+          jitter dei timestamp non e' un ordine reale): dentro il cluster
+          profit DECRESCENTE — in una sequenza decrescente il minimo dei
+          prefissi coincide col totale, quindi il cumulato non scende mai
+          sotto il netto del cluster e le gambe perdenti di un dutching non
+          possono far scattare l'emergency stop su un settlement che netta
+          positivo. La finestra si misura dall'ancora e NON dal
+          predecessore: il confronto con la sola gamba precedente creerebbe
+          cluster transitivi di durata illimitata (t=0, 1.9, 3.8, ...) che
+          fondono eventi economici distinti e mascherano un dip storico
+          (fail-open sul kill-switch, rilievo R7).
+        - Gambe dello stesso mercato OLTRE la finestra (settlement
+          parziali) sono eventi economici DISTINTI: cluster separati,
+          rigiocati in ordine cronologico — un dip storico reale (anche
+          intrecciato con altri mercati) non viene MAI attenuato da una
+          vincita successiva.
+        - Le date sono confrontate come datetime REALI (Z normalizzata,
+          offset/frazioni gestiti da ``fromisoformat``): il confronto
+          lessicografico tra formati ISO misti non e' cronologico
+          ('.' < 'Z').
+        - Gambe NON databili: worst-case PER GAMBA, senza netting (una
+          coppia +100/-80 senza date non e' provabilmente un evento unico:
+          piazzarla in coda in base al netto avrebbe potuto occultare un
+          breach storico, rilievo R7). Perdite non databili in TESTA (il
+          dip si assume al peggio, a costo di uno stop spurio fail-closed),
+          profitti non databili in coda (mai a mascherare un dip datato).
+        """
+
+        def _profit_sicuro(row: dict) -> float:
+            profit = row.get("profit")
+            if (
+                isinstance(profit, (int, float))
+                and not isinstance(profit, bool)
+                and math.isfinite(float(profit))
+            ):
+                return float(profit)
+            return 0.0
+
+        def _data_settlement(row: dict) -> Optional[datetime]:
+            testo = str(row.get("settledDate") or "").strip()
+            if not testo:
+                return None
+            candidato = testo[:-1] + "+00:00" if testo.endswith("Z") else testo
+            try:
+                parsed = datetime.fromisoformat(candidato)
+            except ValueError:
+                # Data illeggibile => gamba "non databile": degradazione
+                # CONSERVATIVA per costruzione (perdita in testa, profitto
+                # in coda), mai fail-open. Il floor supportato (Python 3.11
+                # su CI, EXE Windows e venv) parsa nativamente offset senza
+                # ':', frazioni lunghe e virgola decimale.
+                return None
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed
+
+        _CLUSTER_GAP_SEC = 2.0
+        gruppi: dict[str, list[dict]] = {}
+        for row in valid_rows:
+            gruppi.setdefault(str(row.get("marketId") or ""), []).append(row)
+
+        clusters: list[tuple[tuple, list[dict]]] = []
+
+        def _chiudi_cluster(
+            corrente: list[tuple[dict, datetime]], market_id: str
+        ) -> None:
+            ancora = corrente[0][1]
+            righe = sorted(
+                (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
+            )
+            clusters.append(((0, ancora, market_id), righe))
+
+        for market_id, righe_gruppo in gruppi.items():
+            datate = [(r, _data_settlement(r)) for r in righe_gruppo]
+            senza_data = [r for r, dt in datate if dt is None]
+            con_data = sorted(
+                ((r, dt) for r, dt in datate if dt is not None),
+                key=lambda item: item[1],
+            )
+            corrente: list[tuple[dict, datetime]] = []
+            for r, dt in con_data:
+                if (
+                    corrente
+                    and (dt - corrente[0][1]).total_seconds() > _CLUSTER_GAP_SEC
+                ):
+                    _chiudi_cluster(corrente, market_id)
+                    corrente = []
+                corrente.append((r, dt))
+            if corrente:
+                _chiudi_cluster(corrente, market_id)
+            perdite = [r for r in senza_data if _profit_sicuro(r) < 0.0]
+            profitti = [r for r in senza_data if _profit_sicuro(r) >= 0.0]
+            if perdite:
+                clusters.append(
+                    ((-1, None, market_id), sorted(perdite, key=_profit_sicuro))
+                )
+            if profitti:
+                clusters.append(
+                    (
+                        (1, None, market_id),
+                        sorted(profitti, key=lambda x: -_profit_sicuro(x)),
+                    )
+                )
+
+        def _ordine_cluster(item):
+            (posizione, ancora, market_id), _righe = item
+            if posizione == 0:
+                return (0, ancora, market_id)
+            # I non databili usano un datetime sentinella per confronto
+            # omogeneo: perdite prima di tutto, profitti dopo tutto.
+            return (
+                posizione,
+                datetime.min.replace(tzinfo=timezone.utc),
+                market_id,
+            )
+
+        clusters.sort(key=_ordine_cluster)
+        return [row for _chiave, righe in clusters for row in righe]
+
     def _poll_cleared_settlements_locked(self, *, generation: int) -> None:
         if self.simulation_mode:
             return
@@ -650,101 +776,10 @@ class RuntimeController:
                 continue
             valid_rows.append(row)
 
-        # Ordine di lavorazione (rilievi GPT-5.6/Fable/Fugu su #440, giri
-        # 3-6): l'unita' atomica e' il CLUSTER TEMPORALE di mercato.
-        #
-        # - Le gambe dello STESSO mercato settlate entro 2s l'una
-        #   dall'altra sono lo stesso evento di settlement (il jitter dei
-        #   timestamp non e' un ordine reale): dentro il cluster profit
-        #   DECRESCENTE — in una sequenza decrescente il minimo dei
-        #   prefissi coincide col totale, quindi il cumulato non scende mai
-        #   sotto il netto del cluster e le gambe perdenti di un dutching
-        #   non possono far scattare l'emergency stop su un settlement che
-        #   netta positivo.
-        # - Gambe dello stesso mercato settlate LONTANE nel tempo
-        #   (settlement parziali) sono eventi economici DISTINTI: cluster
-        #   separati, rigiocati in ordine cronologico — un dip storico
-        #   reale (anche intrecciato con altri mercati) non viene MAI
-        #   attenuato da una vincita successiva (sarebbe fail-open sul
-        #   kill-switch).
-        # - Le date sono confrontate come datetime REALI (Z/offset/frazioni
-        #   normalizzati): il confronto lessicografico tra formati ISO
-        #   misti non e' cronologico ('.' < 'Z').
-        # - Cluster non databili: sign-aware fail-closed — nette PERDITE in
-        #   TESTA (il dip non databile si assume al peggio), profitti in
-        #   coda (un profitto non databile non puo' mascherare un dip
-        #   storico datato).
-        def _profit_sicuro(row: dict) -> float:
-            profit = row.get("profit")
-            if (
-                isinstance(profit, (int, float))
-                and not isinstance(profit, bool)
-                and math.isfinite(float(profit))
-            ):
-                return float(profit)
-            return 0.0
-
-        def _data_settlement(row: dict) -> Optional[datetime]:
-            testo = str(row.get("settledDate") or "").strip()
-            if not testo:
-                return None
-            candidato = testo[:-1] + "+00:00" if testo.endswith("Z") else testo
-            try:
-                parsed = datetime.fromisoformat(candidato)
-            except ValueError:
-                return None
-            if parsed.tzinfo is None:
-                parsed = parsed.replace(tzinfo=timezone.utc)
-            return parsed
-
-        _CLUSTER_GAP_SEC = 2.0
-        gruppi: dict[str, list[dict]] = {}
-        for row in valid_rows:
-            gruppi.setdefault(str(row.get("marketId") or ""), []).append(row)
-
-        clusters: list[tuple[tuple, list[dict]]] = []
-        for market_id, righe_gruppo in gruppi.items():
-            datate = [(r, _data_settlement(r)) for r in righe_gruppo]
-            senza_data = [r for r, dt in datate if dt is None]
-            con_data = sorted(
-                ((r, dt) for r, dt in datate if dt is not None),
-                key=lambda item: item[1],
-            )
-            corrente: list[tuple[dict, datetime]] = []
-            for r, dt in con_data:
-                if (
-                    corrente
-                    and (dt - corrente[-1][1]).total_seconds() > _CLUSTER_GAP_SEC
-                ):
-                    ancora = corrente[0][1]
-                    righe = sorted(
-                        (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
-                    )
-                    clusters.append(((0, ancora, market_id), righe))
-                    corrente = []
-                corrente.append((r, dt))
-            if corrente:
-                ancora = corrente[0][1]
-                righe = sorted(
-                    (x for x, _ in corrente), key=lambda x: -_profit_sicuro(x)
-                )
-                clusters.append(((0, ancora, market_id), righe))
-            if senza_data:
-                netto = sum(_profit_sicuro(r) for r in senza_data)
-                righe = sorted(senza_data, key=lambda x: -_profit_sicuro(x))
-                posizione = -1 if netto < 0.0 else 1
-                clusters.append(((posizione, None, market_id), righe))
-
-        def _ordine_cluster(item):
-            (posizione, ancora, market_id), _righe = item
-            if posizione == 0:
-                return (0, ancora, market_id)
-            # I non databili usano un datetime sentinella per confronto
-            # omogeneo: perdite prima di tutto, profitti dopo tutto.
-            return (posizione, datetime.min.replace(tzinfo=timezone.utc), market_id)
-
-        clusters.sort(key=_ordine_cluster)
-        valid_rows = [row for _chiave, righe in clusters for row in righe]
+        # Ordine di lavorazione: cluster temporali di mercato con finestra
+        # dall'ancora, worst-case per-gamba sui non databili — razionale e
+        # invarianti nel docstring di _ordina_righe_cleared.
+        valid_rows = self._ordina_righe_cleared(valid_rows)
 
         emission_failures = 0
         for row in valid_rows:

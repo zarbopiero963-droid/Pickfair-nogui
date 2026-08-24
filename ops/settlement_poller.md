@@ -88,20 +88,30 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
      gia' stato consegnato e NON si ri-applica. Stato db illeggibile ⇒
      emissione sospesa senza marcare (ritentata quando il db risponde).
 - **L'unita' atomica e' il CLUSTER TEMPORALE di mercato**: gambe dello
-  stesso mercato settlate entro 2s sono lo stesso evento di settlement (il
-  jitter dei timestamp non e' un ordine reale) e dentro il cluster valgono
-  i profit DECRESCENTI — il minimo dei prefissi coincide col netto del
-  cluster, quindi le gambe perdenti di un dutching non possono far
-  scattare l'emergency stop su un settlement che netta positivo. Gambe
-  dello stesso mercato settlate LONTANE (settlement parziali) sono eventi
-  DISTINTI: cluster separati, rigiocati in ordine cronologico anche
-  intrecciati con altri mercati — un dip storico reale scatta il breach
-  quando sarebbe scattato, mai attenuato da una vincita successiva. Le
-  date sono confrontate come datetime REALI (Z/offset/frazioni
-  normalizzati: il confronto lessicografico tra formati ISO misti non e'
-  cronologico). Cluster non databili: sign-aware fail-closed — nette
-  perdite in TESTA (worst case), profitti in coda (mai a mascherare un dip
-  datato).
+  stesso mercato settlate entro 2s **dall'ANCORA** (la prima gamba del
+  cluster — la finestra NON e' transitiva: una catena t=0/1.9/3.8s non si
+  fonde in un cluster illimitato, hardening R7) sono lo stesso evento di
+  settlement (il jitter dei timestamp non e' un ordine reale) e dentro il
+  cluster valgono i profit DECRESCENTI — il minimo dei prefissi coincide
+  col netto del cluster, quindi le gambe perdenti di un dutching non
+  possono far scattare l'emergency stop su un settlement che netta
+  positivo. Gambe dello stesso mercato OLTRE la finestra (settlement
+  parziali) sono eventi DISTINTI: cluster separati, rigiocati in ordine
+  cronologico anche intrecciati con altri mercati — un dip storico reale
+  scatta il breach quando sarebbe scattato, mai attenuato da una vincita
+  successiva. Le date sono confrontate come datetime REALI (Z/offset/
+  frazioni via `fromisoformat`: il confronto lessicografico tra formati
+  ISO misti non e' cronologico; il floor supportato — Python 3.11 su CI,
+  EXE Windows e venv — parsa nativamente anche offset senza `:`, frazioni
+  lunghe e virgola decimale). Gambe non databili: **worst-case PER GAMBA,
+  senza netting** (hardening R7: una coppia +100/-80 senza date non e'
+  provabilmente un evento unico, e piazzata in coda col netto avrebbe
+  potuto occultare un breach storico) — perdite non databili in TESTA,
+  profitti non databili in coda. Costo accettato e documentato: una gamba
+  di dutching perdente SENZA data accanto alla vincente datata puo' far
+  scattare uno stop spurio su un mercato che netta positivo (fail-closed,
+  mai fail-open); col caso reale Betfair (date presenti) vale il cluster
+  winners-first.
 - **Nota (degradazione conservativa)**: l'aggregatore market-net e' in
   memoria. Se un RIAVVIO cade tra due bet dello stesso mercato, il rimborso
   di commissione tra le due non viene riconosciuto: la perdita risulta al

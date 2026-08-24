@@ -669,6 +669,126 @@ def test_ordine_cronologico_tra_mercati_un_dip_storico_non_si_nasconde():
 
 
 @pytest.mark.integration
+def test_catena_transitiva_di_settlement_parziali_non_si_fonde_in_un_cluster():
+    """R7 su #440 (GPT-5.6+Fable+Fugu convergenti, fondato): il gap 2s era
+    misurato tra gambe CONSECUTIVE, quindi una catena con drift transitivo
+    (09:00:00 -> 09:00:01.9 -> 09:00:03.8) si fondeva in un unico cluster
+    winners-first di durata illimitata: la vincente arrivata 3.8s dopo
+    avrebbe mascherato il dip storico reale -140 (fail-open sul
+    kill-switch). La finestra del cluster si misura dall'ANCORA (prima
+    gamba): la vincente oltre i 2s dall'ancora e' un evento DISTINTO,
+    rigiocato dopo, e il breach del limite 100 scatta."""
+    righe = [
+        {"betId": "801", "marketId": "1.910", "profit": -80.0,
+         "settledDate": "2026-08-24T09:00:00.000Z"},
+        {"betId": "802", "marketId": "1.910", "profit": -60.0,
+         "settledDate": "2026-08-24T09:00:01.900Z"},  # entro 2s dall'ancora
+        {"betId": "803", "marketId": "1.910", "profit": 150.0,
+         "settledDate": "2026-08-24T09:00:03.800Z"},  # 1.9s dal predecessore
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "801", "market_id": "1.910", "event_name": "E"},
+            {"bet_id": "802", "market_id": "1.910", "event_name": "E"},
+            {"bet_id": "803", "market_id": "1.910", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [p["event_key"] for p in closes] == [
+        "cleared:1.910:802",  # cluster 09:00:00..01.9 winners-first (-60 > -80)
+        "cleared:1.910:801",
+        "cleared:1.910:803",  # oltre la finestra dall'ancora: evento distinto
+    ]
+
+    rc._on_close_position(closes[0])
+    assert rc._emergency_stopped is False  # -60: sotto il limite 100
+    rc._on_close_position(closes[1])
+    assert rc._emergency_stopped is True  # -140: il dip storico SCATTA
+    rc._on_close_position(closes[2])
+    assert rc._emergency_stopped is True  # la vincente tardiva non lo annulla
+
+
+@pytest.mark.integration
+def test_gambe_non_databili_worst_case_per_gamba_niente_netting():
+    """R7 su #440 (GPT-5.6, fondato): il gruppo non databile era piazzato in
+    base al NETTO — un mercato senza date che netta positivo (+100/-80)
+    finiva in coda winners-first e il suo -80, nella cronologia reale,
+    poteva aver sfondato il limite insieme a una perdita datata (-40):
+    breach storico occultato (fail-open). Senza date la simultaneita' delle
+    gambe non e' provabile: worst-case PER GAMBA, senza netting — perdite
+    non databili in TESTA, profitti non databili in coda."""
+    righe = [
+        {"betId": "812", "marketId": "1.920", "profit": 100.0},  # senza data
+        {"betId": "811", "marketId": "1.920", "profit": -80.0},  # senza data
+        {"betId": "813", "marketId": "1.930", "profit": -40.0,
+         "settledDate": "2026-08-24T10:00:00Z"},
+    ]
+    rc = _controller(
+        results=[righe],
+        bot_orders=[
+            {"bet_id": "811", "market_id": "1.920", "event_name": "E"},
+            {"bet_id": "812", "market_id": "1.920", "event_name": "E"},
+            {"bet_id": "813", "market_id": "1.930", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [p["event_key"] for p in closes] == [
+        "cleared:1.920:811",  # perdita non databile in testa (worst case)
+        "cleared:1.930:813",  # poi la cronologia datata
+        "cleared:1.920:812",  # profitto non databile in coda
+    ]
+
+    rc._on_close_position(closes[0])
+    assert rc._emergency_stopped is False  # -80: sotto il limite 100
+    rc._on_close_position(closes[1])
+    assert rc._emergency_stopped is True  # -120: il breach non e' occultato
+
+
+@pytest.mark.integration
+def test_gamba_dutching_non_databile_stop_conservativo_documentato():
+    """R7 su #440 (Fable, richiesta di documentazione/test esplicito): una
+    gamba di dutching PERDENTE senza settledDate accanto alla vincente
+    DATATA dello stesso mercato va in testa worst-case: l'emergency stop
+    puo' scattare anche se il mercato netta positivo (+20). E' la
+    degradazione CONSERVATIVA scelta e documentata in
+    ops/settlement_poller.md: senza data la simultaneita' delle gambe non
+    e' provabile, e uno stop spurio (fail-closed) e' accettato contro il
+    rischio di un breach mascherato (fail-open). Con le date presenti —
+    il caso reale Betfair — vale il cluster winners-first."""
+    righe = [
+        {"betId": "822", "marketId": "1.940", "profit": 100.0,
+         "settledDate": "2026-08-24T09:00:00Z"},
+        {"betId": "821", "marketId": "1.940", "profit": -80.0},  # senza data
+    ]
+    rc = _controller(
+        results=[righe],
+        settings=_SettingsLimite50(),
+        bot_orders=[
+            {"bet_id": "821", "market_id": "1.940", "event_name": "E"},
+            {"bet_id": "822", "market_id": "1.940", "event_name": "E"},
+        ],
+    )
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [p["event_key"] for p in closes] == [
+        "cleared:1.940:821",  # la perdita non databile in testa
+        "cleared:1.940:822",
+    ]
+
+    rc._on_close_position(closes[0])
+    assert rc._emergency_stopped is True  # stop conservativo: -80 > limite 50
+
+
+@pytest.mark.integration
 def test_poll_in_simulation_mode_nessuna_chiamata():
     rc = _controller(results=[[dict(_ROW)]])
     rc.simulation_mode = True
