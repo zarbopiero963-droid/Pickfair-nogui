@@ -348,17 +348,45 @@ def test_gap_dutching_senza_esecutore(app_headless):
 
 
 @pytest.mark.guardrail
-def test_gap_risk_gate_legge_trading_config_non_roserpina(app_headless, app_gui):
-    """GAP (piano: PR «RiskGate ↔ config Roserpina»). Il gate applica i limiti
-    delle COSTANTI (MAX_WIN 10000, MIN_PRICE 1.02, BOOK_BLOCK 110): quello che
-    l'owner salva nella tab Roserpina non arriva al gate."""
+def test_risk_gate_legge_la_config_roserpina_dell_owner(app_headless, app_gui):
+    """CABLATO (promosso da GAP, piano: PR «RiskGate ↔ config Roserpina»).
+
+    Il gate del percorso ordine legge la config Roserpina salvata dall'owner
+    (vista ``RoserpinaRiskLimits``, snapshot fresco a ogni check), non piu' le
+    COSTANTI congelate di trading_config: un ``roserpina.min_price`` salvato
+    nella tab arriva al gate al check successivo, SENZA riavvio. A settings
+    vergini i default della vista coincidono con le costanti (zero delta).
+    Il fail-closed sui campi mancanti/illeggibili e' asserito nei test unit
+    (tests/core/test_risk_gate.py, sezione RoserpinaRiskLimits)."""
+    from core.risk_gate import RoserpinaRiskLimits
+
+    ordine = {"bet_type": "BACK", "price": 1.30, "stake": 10.0}
     for nome, app in (("headless", app_headless), ("gui", app_gui)):
         gate = app.trading_engine.risk_middleware
-        assert getattr(gate, "config", None) is trading_config, (
-            f"GAP CHIUSO ({nome}): il RiskGate non legge piu' il modulo "
-            "trading_config. Promuovi in CABLATO asserendo la sorgente nuova "
-            "(config Roserpina) e il fail-closed sui campi mancanti."
+        vista = getattr(gate, "config", None)
+        assert isinstance(vista, RoserpinaRiskLimits), (
+            f"REGRESSIONE ({nome}): il RiskGate non legge la config Roserpina "
+            f"dell'owner (config={type(vista).__name__}): i limiti salvati "
+            "nella tab non arrivano al percorso ordine."
         )
+        assert vista is not trading_config
+
+        # Comportamentale: il valore salvato dall'owner MORDE al check dopo.
+        assert gate.check(dict(ordine))["allowed"] is True  # default 1.02
+        app.settings_service.save_settings({"roserpina.min_price": 1.50})
+        try:
+            verdetto = gate.check(dict(ordine))
+            assert verdetto["allowed"] is False, (
+                f"REGRESSIONE ({nome}): min_price=1.50 salvato dall'owner "
+                "non applicato dal gate (ordine a 1.30 permesso)."
+            )
+            assert verdetto["reason"] == "RISK_PRICE_BELOW_MIN"
+        finally:
+            # Fixture module-scoped: si ripristina il default per i test dopo.
+            app.settings_service.save_settings(
+                {"roserpina.min_price": trading_config.MIN_PRICE}
+            )
+        assert gate.check(dict(ordine))["allowed"] is True
 
 
 @pytest.mark.guardrail

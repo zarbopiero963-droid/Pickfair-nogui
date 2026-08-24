@@ -12,9 +12,14 @@ from typing import Any, Dict
 import pytest
 
 import trading_config
-from core.risk_gate import _REQUIRED_FLAGS, _REQUIRED_LIMITS, RiskGate
+from core.risk_gate import (
+    _REQUIRED_FLAGS,
+    _REQUIRED_LIMITS,
+    RiskGate,
+    RoserpinaRiskLimits,
+)
+from core.system_state import RoserpinaConfig
 from core.trading_engine import TradingEngine
-
 
 GATE = RiskGate()
 
@@ -645,3 +650,201 @@ def test_tripwire_limiti_configurati_oggi() -> None:
     assert trading_config.LIQUIDITY_MULTIPLIER == 3.0
     assert trading_config.MIN_LIQUIDITY_ABSOLUTE == 50.0
     assert trading_config.LIQUIDITY_WARNING_ONLY is True
+
+
+# ---------------------------------------------------------------------------
+# RoserpinaRiskLimits — la vista owner-config del gate
+# (piano: PR «RiskGate ↔ config Roserpina»)
+# ---------------------------------------------------------------------------
+class _SettingsRoserpina:
+    """SettingsService minimo: la vista chiede solo load_roserpina_config().
+
+    ``cfg`` puo' essere una RoserpinaConfig (restituita), una Exception
+    (sollevata: settings illeggibili) o un oggetto qualunque (per simulare
+    snapshot con campi mancanti). Riassegnabile tra un check e l'altro per
+    simulare il salvataggio dell'owner a bot acceso.
+    """
+
+    def __init__(self, cfg: Any) -> None:
+        self.cfg = cfg
+        self.loads = 0
+
+    def load_roserpina_config(self) -> Any:
+        self.loads += 1
+        if isinstance(self.cfg, Exception):
+            raise self.cfg
+        return self.cfg
+
+
+def _gate_roserpina(cfg: Any) -> "tuple[RiskGate, _SettingsRoserpina]":
+    servizio = _SettingsRoserpina(cfg)
+    return RiskGate(config=RoserpinaRiskLimits(servizio)), servizio
+
+
+def test_roserpina_vista_applica_i_limiti_salvati_dall_owner() -> None:
+    """Il min_price della tab Roserpina NEGA sotto soglia; le costanti no."""
+    gate, _ = _gate_roserpina(RoserpinaConfig(min_price=1.50))
+    r = gate.check(payload(price=1.30))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert gate.check(payload(price=1.60))["allowed"] is True
+
+
+def test_roserpina_vista_refresh_a_ogni_check_senza_riavvio() -> None:
+    """L'owner salva a bot acceso: il check DOPO applica il valore nuovo."""
+    gate, servizio = _gate_roserpina(RoserpinaConfig())
+    assert gate.check(payload(price=1.30))["allowed"] is True  # default 1.02
+    servizio.cfg = RoserpinaConfig(min_price=1.50)  # "salvataggio" owner
+    r = gate.check(payload(price=1.30))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert servizio.loads >= 2, "la vista deve ricaricare a ogni check"
+
+
+def test_roserpina_vista_default_vergini_identici_alle_costanti() -> None:
+    """Zero delta a settings vergini: stessi verdetti del modulo costanti."""
+    gate, _ = _gate_roserpina(RoserpinaConfig())
+    assert gate.check(payload())["allowed"] is True
+    assert gate.check(payload(price=1.01))["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert gate.check(payload(stake=0.05))["reason"] == "RISK_BELOW_MIN_STAKE"
+    assert (
+        gate.check(payload(stake=600.0, price=21.0, bet_type="LAY"))["reason"]
+        == "RISK_MAX_EXPOSURE_EXCEEDED"
+    )  # H-14: liability 12.000 > max_win 10.000
+
+
+def test_roserpina_vista_campo_mancante_nega_fail_closed() -> None:
+    """Snapshot senza un campo atteso => il gate NEGA, mai default silenziosi."""
+    class _SenzaMaxWin:
+        min_stake = 0.10
+        min_price = 1.02
+        book_block = 110.0
+        liquidity_guard_enabled = True
+        liquidity_multiplier = 3.0
+        min_liquidity_absolute = 50.0
+        liquidity_warning_only = True
+        # max_win MANCANTE di proposito
+
+    gate, _ = _gate_roserpina(_SenzaMaxWin())
+    r = gate.check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_roserpina_vista_settings_illeggibili_nega() -> None:
+    """load_roserpina_config solleva (db giu') => DENY, mai limiti di comodo."""
+    gate, _ = _gate_roserpina(RuntimeError("SETTINGS_UNAVAILABLE"))
+    r = gate.check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_roserpina_vista_snapshot_none_nega() -> None:
+    """Loader che restituisce None => vista senza limiti => DENY."""
+    gate, _ = _gate_roserpina(None)
+    r = gate.check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_roserpina_vista_valore_non_finito_nega() -> None:
+    """Un NaN scritto nel store attraversa il loader (_f non lo filtra): il
+    gate lo intercetta come limite illeggibile e NEGA (H-13 sul config)."""
+    gate, _ = _gate_roserpina(RoserpinaConfig(min_price=float("nan")))
+    r = gate.check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_roserpina_vista_flag_non_bool_nega() -> None:
+    """Interruttore non-bool ("yes") => DENY: mai coercizioni di comodo."""
+    gate, _ = _gate_roserpina(RoserpinaConfig(liquidity_warning_only="yes"))
+    r = gate.check(payload(available_liquidity=1.0))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_roserpina_max_win_resta_blocco_hard_sul_gate() -> None:
+    """`max_win_warning_only` governa SOLO il precheck dutching: sul gate del
+    percorso ordine il cap resta un BLOCCO (H-14), qualunque sia il flag —
+    declassarlo ad avviso qui sarebbe fail-open sull'esposizione."""
+    gate, _ = _gate_roserpina(
+        RoserpinaConfig(max_win=100.0, max_win_warning_only=True)
+    )
+    r = gate.check(payload(stake=60.0, price=3.0))  # win 120 > 100
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_MAX_WIN_EXCEEDED"
+
+
+def test_roserpina_vista_liquidita_owner_applicata() -> None:
+    """Soglie di liquidita' owner (multiplier 5x, warning_only=False armato
+    dalla GUI) applicate al gate: 40 < max(10*5, 50) => blocco reale."""
+    gate, _ = _gate_roserpina(
+        RoserpinaConfig(liquidity_multiplier=5.0, liquidity_warning_only=False)
+    )
+    r = gate.check(payload(available_liquidity=40.0))
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_LIQUIDITY_INSUFFICIENT"
+
+
+def test_roserpina_vista_snapshot_isolato_per_thread() -> None:
+    """R1 su #441 (GPT-5.6+Fable convergenti, fondato): con lo snapshot
+    condiviso sull'istanza, un refresh() eseguito da un check CONCORRENTE
+    su un altro thread sostituiva lo snapshot A META' del check corrente:
+    letture strappate tra limiti (mix di config mai salvate insieme
+    dall'owner). Lo snapshot e' per-THREAD: il refresh del thread B non
+    tocca quello che il thread corrente sta leggendo."""
+    import threading as _threading
+
+    servizio = _SettingsRoserpina(RoserpinaConfig(min_price=1.02))
+    vista = RoserpinaRiskLimits(servizio)
+    vista.refresh()  # snapshot del thread corrente: min_price 1.02
+
+    servizio.cfg = RoserpinaConfig(min_price=9.99)  # "salvataggio" owner
+    thread_b = _threading.Thread(target=vista.refresh)
+    thread_b.start()
+    thread_b.join()
+
+    # Il thread corrente, a meta' del SUO check, deve ancora vedere 1.02.
+    assert vista.MIN_PRICE == 1.02
+    # Il refresh successivo del thread corrente vede il valore nuovo.
+    vista.refresh()
+    assert vista.MIN_PRICE == 9.99
+
+
+def test_gate_check_concorrenti_ognuno_col_suo_snapshot() -> None:
+    """R2 Fugu su #441: prova END-TO-END del contratto same-thread — due
+    check() SIMULTANEI (barrier dentro il load: entrambi i refresh sono in
+    volo insieme) con config owner diverse ottengono ognuno il verdetto
+    della PROPRIA config: refresh e letture avvengono sullo stesso thread
+    dentro check(), nessun mix di limiti, nessun DENY spurio da slot
+    vuoto. Il red-first del meccanismo e' nel test di isolamento della
+    vista; questo e' il lock end-to-end sul gate."""
+    import threading as _t
+
+    barriera = _t.Barrier(2, timeout=5)
+
+    class _SettingsPerThread:
+        def load_roserpina_config(self) -> RoserpinaConfig:
+            barriera.wait()  # forza la sovrapposizione dei due check
+            if _t.current_thread().name == "restrittivo":
+                return RoserpinaConfig(min_price=1.50)
+            return RoserpinaConfig()  # default: min_price 1.02
+
+    gate = RiskGate(config=RoserpinaRiskLimits(_SettingsPerThread()))
+    esiti: Dict[str, Dict[str, Any]] = {}
+
+    def _run(nome: str) -> None:
+        esiti[nome] = gate.check(payload(price=1.30))
+
+    a = _t.Thread(target=_run, args=("restrittivo",), name="restrittivo")
+    b = _t.Thread(target=_run, args=("permissivo",), name="permissivo")
+    a.start()
+    b.start()
+    a.join(5)
+    b.join(5)
+
+    assert esiti["restrittivo"]["allowed"] is False
+    assert esiti["restrittivo"]["reason"] == "RISK_PRICE_BELOW_MIN"
+    assert esiti["permissivo"]["allowed"] is True
+    assert esiti["permissivo"]["reason"] is None

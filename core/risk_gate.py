@@ -9,10 +9,13 @@ segnaposto interno all'engine, che approva tutto. `core/risk_middleware.py` NON
 e' un sostituto — e' un sottoscrittore di eventi sul bus e non espone `check()`.
 Questo modulo colma quel vuoto.
 
-I limiti NON sono scritti qui: vengono letti da `trading_config`, cioe' dai
-valori gia' configurati dall'owner, e una costante MANCANTE fa NEGARE invece di
-ripiegare su un numero di comodo (un typo nel config disarmerebbe i limiti in
-silenzio).
+I limiti NON sono scritti qui: sull'app reale vengono letti dalla config
+ROSERPINA salvata dall'owner (vista `RoserpinaRiskLimits`, snapshot fresco a
+ogni check — un salvataggio dalla tab morde al check successivo, senza
+riavvio); `trading_config` resta il default di libreria e la fonte dei
+default del loader. Un campo MANCANTE o illeggibile fa NEGARE invece di
+ripiegare su un numero di comodo (un typo nel config disarmerebbe i limiti
+in silenzio).
 
 Tre trappole che l'ordine e la forma dei controlli devono rispettare:
 
@@ -32,6 +35,7 @@ from __future__ import annotations
 
 import logging
 import math
+import threading
 from typing import Any, Dict, Optional, Tuple
 
 import trading_config
@@ -55,7 +59,94 @@ _Verdict = Optional[Dict[str, Any]]
 
 
 class MissingRiskConfig(LookupError):
-    """Una costante di rischio attesa non esiste in trading_config."""
+    """Un limite di rischio atteso non esiste nella sorgente config."""
+
+
+# Nome UPPERCASE che il gate legge -> campo della RoserpinaConfig dell'owner.
+# La mappa e' ristretta di proposito: la vista espone SOLO i limiti del gate,
+# niente passthrough generico (un campo nuovo si aggiunge qui, a vista).
+_ROSERPINA_MAP = {
+    "MIN_STAKE": "min_stake",
+    "MIN_PRICE": "min_price",
+    "MAX_WIN": "max_win",
+    "BOOK_BLOCK": "book_block",
+    "LIQUIDITY_MULTIPLIER": "liquidity_multiplier",
+    "MIN_LIQUIDITY_ABSOLUTE": "min_liquidity_absolute",
+    "LIQUIDITY_GUARD_ENABLED": "liquidity_guard_enabled",
+    "LIQUIDITY_WARNING_ONLY": "liquidity_warning_only",
+}
+
+
+class RoserpinaRiskLimits:
+    """Vista dei limiti Roserpina dell'owner nel contratto config del gate.
+
+    Il gate legge attributi UPPERCASE (`hasattr`/`getattr`, vedi `_limit` e
+    `_flag`): questa vista li mappa sui campi della `RoserpinaConfig` salvata
+    dall'owner (tab Roserpina => settings su db), cosi' i limiti che l'owner
+    edita ARRIVANO al percorso ordine — prima il gate applicava le costanti
+    congelate di `trading_config` e la tab non aveva effetto qui.
+
+    Freschezza: `refresh()` e' chiamata dal gate all'inizio di OGNI check e
+    scatta uno snapshot (`load_roserpina_config()`): un salvataggio
+    dell'owner a bot acceso morde dal check successivo. Lo snapshot e'
+    PER-THREAD (rilievo R1 #441, GPT-5.6+Fable): un check concorrente su un
+    altro thread che fa refresh NON sostituisce lo snapshot che il thread
+    corrente sta leggendo — dentro un singolo check i limiti non cambiano a
+    meta' (niente letture strappate, niente mix di config mai salvate
+    insieme). Costo per check: UNA lettura settings dallo store locale, lo
+    stesso che il percorso ordine gia' tocca in modo sincrono (dedupe,
+    queue); errore di lettura => DENY, mai attese indefinite mascherate.
+
+    Fail-closed, per costruzione:
+    - refresh che solleva (settings illeggibili) => il gate NEGA
+      (`RISK_CONFIG_MISSING`), mai limiti di comodo;
+    - snapshot mai caricato o None => attributo assente => NEGA;
+    - campo mancante dallo snapshot => attributo assente => NEGA;
+    - la VALIDAZIONE dei valori (finiti, bool veri) resta nel gate
+      (`_limit`/`_flag`): la vista non coercizza e non ripara nulla.
+
+    Nota semantica dichiarata: sul gate `max_win` e' un BLOCCO hard (H-14),
+    qualunque sia `max_win_warning_only` — quel flag governa solo il precheck
+    dutching. Declassare il cap ad avviso qui sarebbe fail-open
+    sull'esposizione del singolo ordine.
+    """
+
+    def __init__(self, settings_service: Any) -> None:
+        self._settings = settings_service
+        # Slot per-thread: ogni thread che fa un check ha il SUO snapshot,
+        # cosi' un refresh concorrente non puo' strappare le letture altrui.
+        self._local = threading.local()
+
+    def refresh(self) -> None:
+        """Snapshot fresco della config owner PER QUESTO thread.
+
+        Solleva se illeggibile (il gate traduce in DENY).
+        """
+        snapshot = self._settings.load_roserpina_config()
+        if snapshot is None:
+            raise MissingRiskConfig("load_roserpina_config ha restituito None")
+        self._local.snapshot = snapshot
+
+    def __getattr__(self, name: str) -> Any:
+        # Chiamato SOLO per attributi non trovati sull'istanza (_settings e
+        # _local vivono nel __dict__: nessuna ricorsione possibile).
+        # CONTRATTO: refresh() e le letture devono avvenire sullo STESSO
+        # thread del check (oggi garantito: _check e' sincrono). Un futuro
+        # hop tra thread/executor a meta' check vedrebbe lo slot vuoto =>
+        # DENY spurio: sicuro (mai fail-open), ma da non introdurre.
+        campo = _ROSERPINA_MAP.get(name)
+        if campo is None:
+            raise AttributeError(name)
+        snapshot = getattr(self.__dict__.get("_local"), "snapshot", None)
+        if snapshot is None:
+            raise AttributeError(
+                f"{name}: config Roserpina mai caricata (refresh mancante)"
+            )
+        if not hasattr(snapshot, campo):
+            raise AttributeError(
+                f"{name}: campo '{campo}' assente dalla RoserpinaConfig"
+            )
+        return getattr(snapshot, campo)
 
 
 class RiskGate:
@@ -273,6 +364,19 @@ class RiskGate:
     def _check(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(payload, dict):
             return self._deny(payload, "RISK_PAYLOAD_NOT_DICT")
+
+        refresh = getattr(self.config, "refresh", None)
+        if callable(refresh):
+            # Sorgente viva (config Roserpina dell'owner): snapshot fresco per
+            # QUESTO check. Se la config non si riesce a leggere il gate non sa
+            # quali limiti applicare => NEGA, come per una costante mancante.
+            try:
+                refresh()
+            except Exception:
+                logger.exception(
+                    "Config di rischio illeggibile al refresh -> DENY"
+                )
+                return self._deny(payload, "RISK_CONFIG_MISSING")
 
         self._validate_config()
 

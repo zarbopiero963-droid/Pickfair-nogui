@@ -234,7 +234,7 @@ from services.betfair_service import BetfairService
 from services.telegram_service import TelegramService
 
 from core.trading_engine import TradingEngine
-from core.risk_gate import RiskGate
+from core.risk_gate import RiskGate, RoserpinaRiskLimits
 from core.runtime_controller import RuntimeController
 from observability import RuntimeProbe
 from safe_mode import get_safe_mode_manager
@@ -414,15 +414,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.safe_mode = get_safe_mode_manager()
 
         # H-04: senza questo argomento l'engine ripiega sul segnaposto che
-        # approva ogni richiesta, e nessun limite di trading_config viene
-        # applicato sul percorso dell'ordine.
+        # approva ogni richiesta, e nessun limite viene applicato sul
+        # percorso dell'ordine. La vista Roserpina fa arrivare al gate i
+        # limiti SALVATI dall'owner (tab Roserpina), freschi a ogni check —
+        # non piu' le costanti congelate di trading_config.
         self.trading_engine = TradingEngine(
             bus=self.bus,
             db=self.db,
             client_getter=self.betfair_service.get_client,
             executor=self.executor,
             safe_mode=self.safe_mode,
-            risk_middleware=RiskGate(),
+            risk_middleware=RiskGate(
+                config=RoserpinaRiskLimits(self.settings_service)
+            ),
         )
 
         self.runtime = RuntimeController(
