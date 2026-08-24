@@ -229,3 +229,45 @@ def test_handler_cmd_non_solleva_mai_nel_worker() -> None:
     bus.publish("CMD_PLACE_DUTCHING", None)
 
     assert bus.eventi("CMD_QUICK_BET") == []
+
+
+def test_attach_bus_consumer_idempotente_un_solo_handler() -> None:
+    """R1 su #442 (GPT-5.6+Fable, difesa in profondita'): due chiamate ad
+    attach_bus_consumer NON devono produrre due handler (= gambe piazzate
+    due volte). Sull'app reale il doppio attach non avviene (build() e'
+    guardato da _built e ogni build crea un EventBus NUOVO), ma il
+    contratto della classe lo garantisce comunque."""
+    bus = _BusSync()
+    controller = DutchingController(bus, _RuntimeAttivo())
+    controller.attach_bus_consumer()
+    tornato = controller.attach_bus_consumer()  # seconda chiamata: no-op
+    assert tornato is controller
+    assert bus.conta("CMD_PLACE_DUTCHING") == 1
+
+    bus.publish("CMD_PLACE_DUTCHING", None)  # nessun raise, nessuna gamba
+    assert bus.eventi("CMD_QUICK_BET") == []
+
+
+def test_adattatore_niente_passthrough_su_selections_dal_wire() -> None:
+    """R1 su #442 (Fable, fondato): un CMD gia' in shape `selections` non
+    deve bypassare l'adattatore — gli stake avvelenati (99/1) vengono
+    scartati e la distribuzione resta il ricalcolo equal-profit."""
+    bus, _mw, _ctrl = _catena()
+
+    bus.publish(
+        "CMD_PLACE_DUTCHING",
+        {
+            "market_id": "1.234",
+            "total_stake": 100.0,
+            "bet_type": "BACK",
+            "selections": [
+                {"selectionId": 111, "price": 2.0, "stake": 99.0},
+                {"selectionId": 222, "price": 4.0, "stake": 1.0},
+            ],
+        },
+    )
+
+    gambe = {g["selection_id"]: g for g in bus.eventi("CMD_QUICK_BET")}
+    assert set(gambe) == {111, 222}
+    assert gambe[111]["stake"] == pytest.approx(66.67, abs=0.05)
+    assert gambe[222]["stake"] == pytest.approx(33.33, abs=0.05)

@@ -77,6 +77,7 @@ class DutchingController:
         self.runtime = runtime_controller
         self._recent_batches: Dict[str, float] = {}
         self._batch_ttl_seconds = 6 * 60 * 60
+        self._bus_attached = False
 
     # =========================================================
     # CORSIA BUS (piano «dutching agganciato»)
@@ -96,7 +97,15 @@ class DutchingController:
                 "DutchingController senza bus: corsia CMD_PLACE_DUTCHING "
                 "non agganciabile"
             )
+        # Idempotente (R1 #442, GPT-5.6+Fable): due attach NON devono
+        # produrre due handler (= gambe piazzate due volte). Sull'app reale
+        # il doppio attach non avviene (build() e' guardato da _built e ogni
+        # build crea un EventBus nuovo), ma il contratto lo garantisce
+        # comunque, qualunque sia il chiamante.
+        if self._bus_attached:
+            return self
         self.bus.subscribe("CMD_PLACE_DUTCHING", self._handle_cmd_place_dutching)
+        self._bus_attached = True
         return self
 
     def _handle_cmd_place_dutching(self, payload: Dict[str, Any]) -> None:
@@ -135,9 +144,14 @@ class DutchingController:
         """
         if not isinstance(payload, dict):
             return {}
-        if payload.get("selections"):
-            return payload  # gia' nel contratto del controller
-        adattato = {k: v for k, v in payload.items() if k != "results"}
+        # NESSUN passthrough (R1 #442, Fable): anche un payload gia' in
+        # shape `selections` viene ri-normalizzato alla whitelist — cosi'
+        # uno `stake` per-gamba sul wire non raggiunge MAI il controller,
+        # da qualunque ramo arrivi.
+        gambe = payload.get("selections") or payload.get("results") or []
+        adattato = {
+            k: v for k, v in payload.items() if k not in ("results", "selections")
+        }
         adattato["selections"] = [
             {
                 "selectionId": r.get("selectionId"),
@@ -145,7 +159,7 @@ class DutchingController:
                 "side": r.get("side") or r.get("effectiveType"),
                 "runnerName": r.get("runnerName", ""),
             }
-            for r in payload.get("results", []) or []
+            for r in gambe
             if isinstance(r, dict)
         ]
         return adattato
