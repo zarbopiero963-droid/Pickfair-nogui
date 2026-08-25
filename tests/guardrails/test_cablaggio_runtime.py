@@ -528,14 +528,35 @@ def test_cablato_reconciliation_engine_risolto_dal_runtime(app_headless):
 
 
 @pytest.mark.guardrail
-def test_gap_safety_layer_non_passato_al_cashout_executor(app_headless):
-    """GAP (piano: PR «SafetyLayer al CashoutExecutor»). Il parametro esiste
-    gia' nel costruttore; headless_main non lo passa, quindi
-    validate_cashout_request() non gira mai."""
-    assert app_headless.cashout_executor.safety_layer is None, (
-        "GAP CHIUSO: il CashoutExecutor riceve un safety_layer. "
-        "Promuovi in CABLATO."
+def test_cablato_safety_layer_nel_cashout_executor(app_headless):
+    """CABLATO (PR «SafetyLayer al CashoutExecutor», #437). L'executor riceve
+    un SafetyLayer REALE: validate_cashout_request gira su ogni cashout e
+    aggiunge schema+tipi (difesa in profondita') agli invarianti hard.
+    Compatibilita' garantita per costruzione: il CashoutRequestBridge
+    normalizza gia' i tipi sul percorso reale, quindi il layer non puo'
+    rigettare cashout legittimi."""
+    executor = app_headless.cashout_executor
+    layer = executor.safety_layer
+
+    assert layer is not None, (
+        "REGRESSIONE: CashoutExecutor di nuovo senza safety_layer — "
+        "validate_cashout_request non gira piu' su nessun cashout."
     )
+    assert type(layer).__name__ == "SafetyLayer", (
+        f"REGRESSIONE: safety_layer di tipo inatteso {type(layer).__name__}."
+    )
+    assert callable(getattr(layer, "validate_cashout_request", None))
+
+    # Comportamentale sul layer del wiring REALE: il payload nella forma
+    # normalizzata dal bridge PASSA...
+    payload_ok = {"market_id": "1.1", "selection_id": 55, "side": "LAY",
+                  "stake": 1.0, "price": 1.5, "green_up": 0.1}
+    assert layer.validate_cashout_request(dict(payload_ok)) is True
+
+    # ...e la violazione di schema che gli invarianti hard non coprono
+    # (selection_id come stringa) viene RIGETTATA.
+    with pytest.raises(Exception):
+        layer.validate_cashout_request(dict(payload_ok, selection_id="55"))
 
 
 @pytest.mark.guardrail

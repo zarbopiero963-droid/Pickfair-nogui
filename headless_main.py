@@ -23,6 +23,7 @@ from core.trading_engine import TradingEngine
 from core.risk_gate import RiskGate, RoserpinaRiskLimits
 from core.runtime_controller import RuntimeController
 from core.risk_middleware import RiskMiddleware
+from core.safety_layer import SafetyLayer
 from controllers.dutching_controller import DutchingController
 from core.order_router import OrderRouter
 from cashout_executor import CashoutExecutor
@@ -518,7 +519,14 @@ class HeadlessApp:
             raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
 
         self.order_router = OrderRouter(self.betfair_service)
-        self.cashout_executor = CashoutExecutor(self.bus, self.order_router)
+        # SafetyLayer REALE sull'executor (#437): validate_cashout_request
+        # aggiunge schema+tipi (es. selection_id int esatto) agli invarianti
+        # hard. Il costruttore e' inerte (nessun thread, nessuno stato che
+        # start() ricostruisce) e il bridge normalizza gia' i tipi sul
+        # percorso reale: il layer non puo' rigettare cashout legittimi.
+        self.cashout_executor = CashoutExecutor(
+            self.bus, self.order_router, safety_layer=SafetyLayer()
+        )
         self.cashout_executor.wire()
 
         self.cashout_request_bridge = CashoutRequestBridge(self.bus)

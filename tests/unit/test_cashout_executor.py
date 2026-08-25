@@ -333,3 +333,59 @@ def test_sim_flag_captured_before_place_not_after():
 
     CashoutExecutor(bus, _RouterFlips()).on_cmd_execute_cashout(_cmd_payload())
     assert bus.last(CASHOUT_SUCCESS)["sim"] is True
+
+
+# =========================================================================
+# SafetyLayer cablato (piano #437, PR «SafetyLayer al CashoutExecutor»).
+# Il bridge normalizza gia' i tipi sul percorso reale (REQ->CMD), quindi il
+# layer non puo' rigettare cashout legittimi; aggiunge schema+tipi come
+# difesa in profondita' per ogni payload che arrivi da altri percorsi.
+# =========================================================================
+
+def _executor_con_layer(bus, router):
+    from core.safety_layer import SafetyLayer
+
+    return CashoutExecutor(bus, router, safety_layer=SafetyLayer())
+
+
+def test_safety_layer_reale_lascia_passare_il_payload_normalizzato():
+    """LOCK anti-regressione del cablaggio: il payload nella forma prodotta
+    dal CashoutRequestBridge (tipi gia' normalizzati) attraversa il layer
+    REALE e piazza — cablare il layer non deve rigettare cashout legittimi."""
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result(matched=4.0, bet_id="CB-LAYER"))
+    _executor_con_layer(bus, router).on_cmd_execute_cashout(_cmd_payload())
+
+    assert router.calls, "il layer ha bloccato un payload legittimo normalizzato"
+    assert bus.last(CASHOUT_SUCCESS) is not None
+
+
+def test_safety_layer_reale_blocca_selection_id_non_int():
+    """Delta del layer (verificato in Phase 0): selection_id come STRINGA
+    passa gli invarianti hard dell'executor (presenza/side/finitezza/bound)
+    ma viola lo schema del SafetyLayer (tipo int richiesto). Col layer
+    cablato il cashout e' RIGETTATO prima del piazzamento."""
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    _executor_con_layer(bus, router).on_cmd_execute_cashout(
+        _cmd_payload(selection_id="55")
+    )
+
+    assert not router.calls, "payload con selection_id str arrivato al router"
+    failed = bus.last(CASHOUT_FAILED)
+    assert failed is not None and failed.get("status") == "REJECTED"
+    assert str(failed.get("reason", "")).startswith("validation:")
+
+
+def test_senza_layer_selection_id_str_oggi_piazza():
+    """Documenta il DELTA che il cablaggio chiude: SENZA layer lo stesso
+    payload supera gli invarianti hard e arriva al router. Se questo test
+    diventa rosso, gli invarianti hard hanno iniziato a coprire i tipi e la
+    nota di delta nel guardrail va aggiornata."""
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result())
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(
+        _cmd_payload(selection_id="55")
+    )
+
+    assert router.calls, "gli invarianti hard ora bloccano i tipi: aggiorna il delta"
