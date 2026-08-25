@@ -511,7 +511,8 @@ def test_cablato_reconciliation_engine_risolto_dal_runtime(app_headless):
 
     # ...e segue la ricostruzione del motore (start() lo rifa' ogni volta).
     class _Rimpiazzo:
-        def enqueue(self, **_kw):
+        @staticmethod
+        def enqueue(**_kw):
             return None
 
     rimpiazzo = _Rimpiazzo()

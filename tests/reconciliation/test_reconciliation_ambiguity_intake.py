@@ -22,16 +22,20 @@ class _FakeDB:
     def __init__(self, batch_sagas=None):
         self._batch_sagas = batch_sagas or {}
 
-    def persist_decision_log(self, batch_id, entries):
+    @staticmethod
+    def persist_decision_log(batch_id, entries):
         return None
 
-    def get_pending_sagas(self):
+    @staticmethod
+    def get_pending_sagas():
         return []
 
-    def get_reconcile_marker(self, batch_id):
+    @staticmethod
+    def get_reconcile_marker(batch_id):
         return None
 
-    def set_reconcile_marker(self, batch_id, value):
+    @staticmethod
+    def set_reconcile_marker(batch_id, value):
         return None
 
     def get_batch_sagas(self, batch_id):
@@ -164,9 +168,10 @@ def test_snapshot_copia_difensiva():
 
 @pytest.mark.unit
 def test_drain_su_reconcile_all_open_batches(monkeypatch):
-    """Quando il batch di un'ambiguita' pending viene riconciliato, l'entry
-    esce dal registro; le ambiguita' di ALTRI batch restano pending."""
-    db = _FakeDB(batch_sagas={"B1": [{"customer_ref": "REF1"}]})
+    """Quando il batch di un'ambiguita' pending viene riconciliato (esito ok,
+    saga terminale), l'entry esce dal registro; le ambiguita' di ALTRI batch
+    restano pending."""
+    db = _FakeDB(batch_sagas={"B1": [{"customer_ref": "REF1", "status": "MATCHED"}]})
     bm = _BatchManagerConBatchAperti(aperti=[{"batch_id": "B1"}])
     eng = _make_engine(db=db, batch_manager=bm)
 
@@ -183,3 +188,61 @@ def test_drain_su_reconcile_all_open_batches(monkeypatch):
     refs_pending = {e["customer_ref"] for e in eng.ambiguity_snapshot().values()}
     assert "REF1" not in refs_pending, "ambiguita' del batch riconciliato non drenata"
     assert "REF-ALTRO-BATCH" in refs_pending, "drain troppo largo: ha perso un pending estraneo"
+
+
+@pytest.mark.unit
+def test_drain_non_scatta_su_reconcile_non_riuscito(monkeypatch):
+    """Bloccante GPT-5.6 Sol su #444: reconcile_batch puo' tornare senza
+    sollevare con esiti NON riconciliati (lock-busy RECONCILE_ALREADY_RUNNING,
+    BATCH_NOT_FOUND, fetch failure). Il drain NON deve scattare: l'ambiguita'
+    non e' stata guardata, la sua visibilita' resta."""
+    db = _FakeDB(batch_sagas={"B1": [{"customer_ref": "REF1", "status": "MATCHED"}]})
+    bm = _BatchManagerConBatchAperti(aperti=[{"batch_id": "B1"}])
+    eng = _make_engine(db=db, batch_manager=bm)
+
+    eng.enqueue(order_id="OID1", ambiguity_reason="SUBMIT_TIMEOUT",
+                customer_ref="REF1", correlation_id="CID1")
+
+    monkeypatch.setattr(
+        eng, "reconcile_batch",
+        lambda batch_id: {"ok": False, "batch_id": batch_id,
+                          "reason_code": "RECONCILE_ALREADY_RUNNING"},
+    )
+    eng.reconcile_all_open_batches()
+
+    refs_pending = {e["customer_ref"] for e in eng.ambiguity_snapshot().values()}
+    assert "REF1" in refs_pending, (
+        "drain su esito non riconciliato: ambiguita' persa senza che nessuno "
+        "l'abbia mai guardata sull'exchange"
+    )
+
+
+@pytest.mark.unit
+def test_drain_solo_saghe_terminali(monkeypatch):
+    """Bloccante GPT-5.6 Sol su #444 (precisione a livello ordine): dentro un
+    batch riconciliato con esito ok, esce dal registro SOLO l'ambiguita' la
+    cui saga e' terminale; una saga ancora pending (PENDING/SUBMITTED/PLACED/
+    PARTIAL/ROLLBACK_PENDING) tiene viva la propria entry."""
+    db = _FakeDB(batch_sagas={"B1": [
+        {"customer_ref": "REF1", "status": "MATCHED"},
+        {"customer_ref": "REF3", "status": "PENDING"},
+        {"customer_ref": "REF4", "status": ""},  # stato ignoto => conservativo
+    ]})
+    bm = _BatchManagerConBatchAperti(aperti=[{"batch_id": "B1"}])
+    eng = _make_engine(db=db, batch_manager=bm)
+
+    for ref, oid, cid in (("REF1", "OID1", "CID1"),
+                          ("REF3", "OID3", "CID3"),
+                          ("REF4", "OID4", "CID4")):
+        eng.enqueue(order_id=oid, ambiguity_reason="SUBMIT_TIMEOUT",
+                    customer_ref=ref, correlation_id=cid)
+
+    monkeypatch.setattr(
+        eng, "reconcile_batch", lambda batch_id: {"ok": True, "batch_id": batch_id}
+    )
+    eng.reconcile_all_open_batches()
+
+    refs_pending = {e["customer_ref"] for e in eng.ambiguity_snapshot().values()}
+    assert "REF1" not in refs_pending, "saga terminale non drenata"
+    assert "REF3" in refs_pending, "saga ancora pending drenata: visibilita' persa"
+    assert "REF4" in refs_pending, "stato saga ignoto drenato: non conservativo"

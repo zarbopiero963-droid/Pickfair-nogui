@@ -1501,25 +1501,34 @@ class ReconciliationEngine:
         with self._ambiguity_lock:
             return {k: dict(v) for k, v in self._pending_ambiguities.items()}
 
+    # Stati saga ancora "vivi": specchio della SELECT di
+    # database.get_pending_sagas (fonte di verita' della semantica pending).
+    _SAGA_PENDING_STATES = frozenset(
+        {"PENDING", "SUBMITTED", "PLACED", "PARTIAL", "ROLLBACK_PENDING"}
+    )
+
     def _drain_ambiguities_for_batch(self, batch_id: str) -> None:
-        """Toglie dal registro le ambiguita' i cui ordini appartengono al
-        batch appena riconciliato (match per customer_ref delle sue saghe).
+        """Toglie dal registro le ambiguita' del batch appena riconciliato,
+        ma SOLO quelle la cui saga risulta terminale: una saga ancora
+        pending (o con stato ignoto) tiene viva la propria entry — mai
+        perdere visibilita' su un ordine che nessuno ha ancora chiuso.
         Fail-safe: un drain fallito lascia solo entry pending in piu'."""
         try:
             getter = getattr(self.db, "get_batch_sagas", None)
             if not callable(getter):
                 return
-            refs = {
-                str(r.get("customer_ref") or "").strip()
-                for r in (getter(batch_id) or [])
-                if str(r.get("customer_ref") or "").strip()
-            }
-            if not refs:
+            refs_terminali = set()
+            for r in (getter(batch_id) or []):
+                ref = str(r.get("customer_ref") or "").strip()
+                stato = str(r.get("status") or "").strip().upper()
+                if ref and stato and stato not in self._SAGA_PENDING_STATES:
+                    refs_terminali.add(ref)
+            if not refs_terminali:
                 return
             with self._ambiguity_lock:
                 da_togliere = [
                     k for k, e in self._pending_ambiguities.items()
-                    if e.get("customer_ref") in refs
+                    if e.get("customer_ref") in refs_terminali
                 ]
                 for k in da_togliere:
                     del self._pending_ambiguities[k]
@@ -1952,7 +1961,12 @@ class ReconciliationEngine:
             try:
                 result = self.reconcile_batch(batch_id)
                 reconciled.append(result)
-                self._drain_ambiguities_for_batch(batch_id)
+                # Drain SOLO su riconciliazione davvero avvenuta: esiti come
+                # RECONCILE_ALREADY_RUNNING / BATCH_NOT_FOUND / fetch failure
+                # tornano ok=False senza sollevare e NON devono togliere
+                # visibilita' a un'ambiguita' che nessuno ha guardato.
+                if isinstance(result, dict) and result.get("ok") is True:
+                    self._drain_ambiguities_for_batch(batch_id)
             except Exception as exc:
                 logger.exception("Errore reconcile batch_id=%s", batch_id)
                 self._log_decision(
