@@ -477,17 +477,54 @@ def test_cablato_betfair_client_risolto_lazy(app_headless):
 
 
 @pytest.mark.guardrail
-def test_gap_trading_engine_con_reconciliation_segnaposto(app_headless):
-    """GAP (piano: PR «iniezione ReconciliationEngine»). L'engine gira col
-    _NullReconciliationEngine: una submission ambigua (timeout, risposta
-    persa) chiama enqueue() sul vuoto. Il motore vero esiste — e' quello del
-    runtime (asserito in PARTE 1) — ma l'engine non lo riceve."""
-    assert type(app_headless.trading_engine.reconciliation_engine).__name__ == (
+def test_cablato_reconciliation_engine_risolto_dal_runtime(app_headless):
+    """CABLATO (PR «iniezione ReconciliationEngine», #437 punto 4). Le
+    submission ambigue non finiscono piu' nel _NullReconciliationEngine:
+    l'engine risolve LIVE il motore del runtime a ogni enqueue — start()
+    lo RICOSTRUISCE a ogni avvio, quindi niente riferimenti congelati al
+    build (stesso principio della risoluzione lazy del betfair_client)."""
+    engine = app_headless.trading_engine
+
+    # Nessuna iniezione congelata al build: l'attributo resta il default.
+    assert type(engine.reconciliation_engine).__name__ == (
         "_NullReconciliationEngine"
     ), (
-        "GAP CHIUSO: il TradingEngine riceve un reconciliation engine reale. "
-        "Promuovi in CABLATO asserendo l'identita' col motore del runtime."
+        "REGRESSIONE: motore congelato al build — dopo il primo start() "
+        "(che ricostruisce il motore del runtime) andrebbe stantio."
     )
+
+    risolutore = getattr(engine, "_resolve_reconciliation_engine", None)
+    assert callable(risolutore), (
+        "REGRESSIONE: manca TradingEngine._resolve_reconciliation_engine — "
+        "le submission ambigue tornano nel vuoto del segnaposto."
+    )
+
+    # Risoluzione live: identita' col motore CORRENTE del runtime...
+    originale = app_headless.runtime.reconciliation_engine
+    assert engine._resolve_reconciliation_engine() is originale
+
+    # ...che espone davvero l'intake enqueue (non un motore muto).
+    assert callable(getattr(originale, "enqueue", None)), (
+        "REGRESSIONE: il ReconciliationEngine reale non espone enqueue — "
+        "l'iniezione consegnerebbe le ambiguita' a un metodo inesistente."
+    )
+
+    # ...e segue la ricostruzione del motore (start() lo rifa' ogni volta).
+    class _Rimpiazzo:
+        @staticmethod
+        def enqueue(**_kw):
+            return None
+
+    rimpiazzo = _Rimpiazzo()
+    app_headless.runtime.reconciliation_engine = rimpiazzo
+    try:
+        assert engine._resolve_reconciliation_engine() is rimpiazzo, (
+            "REGRESSIONE: risoluzione congelata — dopo un rebuild l'enqueue "
+            "andrebbe al motore vecchio."
+        )
+    finally:
+        # Fixture module-scoped: ripristina il motore reale per i test dopo.
+        app_headless.runtime.reconciliation_engine = originale
 
 
 @pytest.mark.guardrail

@@ -5,6 +5,7 @@ import json
 import logging
 import threading
 import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from core.batch_lock_manager import _BatchLockManager
@@ -105,6 +106,14 @@ class ReconciliationEngine:
         # ── outbox for reliable event delivery (Point 6) ────────
         self._outbox: List[OutboxEntry] = []
         self._outbox_lock = threading.Lock()
+
+        # ── intake ambiguita' di submission (#437 punto 4) ──────
+        # Registro pending {chiave → entry} deduplicato e con cap: la
+        # verita' DURABILE dell'ambiguita' e' lo stato AMBIGUOUS su DB;
+        # questo registro da' visibilita' immediata e viene drenato quando
+        # il batch dell'ordine viene riconciliato.
+        self._pending_ambiguities: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+        self._ambiguity_lock = threading.Lock()
 
         # ── fencing token counter (Point 3) ─────────────────────
         # Token is a monotonically increasing integer assigned to each
@@ -1436,6 +1445,104 @@ class ReconciliationEngine:
     def ghost_evidence_snapshot(self) -> Dict[str, Any]:
         return dict(self._ghost_evidence_snapshot)
 
+    # ─────────────────────────────────────────────────────────────
+    # AMBIGUITY INTAKE — enqueue dal TradingEngine (#437 punto 4)
+    # ─────────────────────────────────────────────────────────────
+
+    AMBIGUITY_QUEUE_CAP = 500
+
+    def enqueue(self, **meta: Any) -> None:
+        """Intake delle submission ambigue dal percorso ordine.
+
+        Registra l'ambiguita' nel registro pending (dedupe per identita'
+        ordine, cap drop-oldest) e la rende visibile su bus
+        (RECONCILE_AMBIGUITY_ENQUEUED) e log. NON risolve inline: il
+        chiamante e' _resolve_ambiguity del TradingEngine, in piena
+        submission — niente I/O verso l'exchange qui. La risoluzione passa
+        da reconcile_batch / reconcile_all_open_batches, che drena le entry
+        del batch riconciliato. MAI un'eccezione verso il chiamante: la
+        verita' durabile resta lo stato AMBIGUOUS dell'ordine su DB."""
+        try:
+            order_id = str(meta.get("order_id") or "").strip()
+            customer_ref = str(meta.get("customer_ref") or "").strip()
+            correlation_id = str(meta.get("correlation_id") or "").strip()
+            ambiguity_reason = str(meta.get("ambiguity_reason") or "").strip()
+            chiave = f"{order_id}|{correlation_id}|{customer_ref}"
+            entry = {
+                "order_id": order_id,
+                "customer_ref": customer_ref,
+                "correlation_id": correlation_id,
+                "ambiguity_reason": ambiguity_reason,
+            }
+            with self._ambiguity_lock:
+                nuova = chiave not in self._pending_ambiguities
+                self._pending_ambiguities[chiave] = entry
+                self._pending_ambiguities.move_to_end(chiave)
+                while len(self._pending_ambiguities) > self.AMBIGUITY_QUEUE_CAP:
+                    scartata, _ = self._pending_ambiguities.popitem(last=False)
+                    logger.warning(
+                        "Ambiguity queue oltre il cap (%d): drop-oldest %s "
+                        "(la verita' durabile resta su DB)",
+                        self.AMBIGUITY_QUEUE_CAP, scartata,
+                    )
+            if nuova:
+                logger.warning(
+                    "Submission ambigua in coda reconcile: order_id=%s ref=%s reason=%s",
+                    order_id, customer_ref, ambiguity_reason,
+                )
+            self._publish("RECONCILE_AMBIGUITY_ENQUEUED", dict(entry))
+        except Exception:
+            logger.exception(
+                "enqueue ambiguity fallita (fail-safe: l'ordine resta AMBIGUOUS su DB)"
+            )
+
+    def ambiguity_snapshot(self) -> Dict[str, Dict[str, Any]]:
+        """Copia difensiva del registro pending delle ambiguita'."""
+        with self._ambiguity_lock:
+            return {k: dict(v) for k, v in self._pending_ambiguities.items()}
+
+    @staticmethod
+    def _stati_saga_drenabili() -> Set[str]:
+        """ALLOWLIST esplicita degli stati saga che permettono il drain:
+        gli stati TERMINALI del contratto ordine (order_manager.
+        TERMINAL_STATES — fonte unica, niente copie a mano) MENO AMBIGUOUS:
+        una saga sigillata come ambigua e' esattamente cio' che il registro
+        deve continuare a mostrare. Ogni altro stato — pending, vuoto,
+        NUOVO o intermedio (es. un futuro RECONCILING) — tiene viva la
+        entry: mai drenare cio' che non e' provatamente chiuso."""
+        from order_manager import TERMINAL_STATES, OrderStatus
+
+        return {s.value for s in TERMINAL_STATES} - {OrderStatus.AMBIGUOUS.value}
+
+    def _drain_ambiguities_for_batch(self, batch_id: str) -> None:
+        """Toglie dal registro le ambiguita' del batch appena riconciliato,
+        ma SOLO quelle la cui saga sta nell'allowlist degli stati terminali
+        (_stati_saga_drenabili): tutto il resto tiene viva la propria entry
+        — mai perdere visibilita' su un ordine che nessuno ha chiuso.
+        Fail-safe: un drain fallito lascia solo entry pending in piu'."""
+        try:
+            getter = getattr(self.db, "get_batch_sagas", None)
+            if not callable(getter):
+                return
+            drenabili = self._stati_saga_drenabili()
+            refs_terminali = set()
+            for r in (getter(batch_id) or []):
+                ref = str(r.get("customer_ref") or "").strip()
+                stato = str(r.get("status") or "").strip().upper()
+                if ref and stato in drenabili:
+                    refs_terminali.add(ref)
+            if not refs_terminali:
+                return
+            with self._ambiguity_lock:
+                da_togliere = [
+                    k for k, e in self._pending_ambiguities.items()
+                    if e.get("customer_ref") in refs_terminali
+                ]
+                for k in da_togliere:
+                    del self._pending_ambiguities[k]
+        except Exception:
+            logger.exception("Drain ambiguity fallito per batch=%s", batch_id)
+
     def _cancel_ghost_orders(self, ghosts: List[Dict[str, Any]]) -> None:
         client = self._get_client()
         if not client:
@@ -1862,6 +1969,12 @@ class ReconciliationEngine:
             try:
                 result = self.reconcile_batch(batch_id)
                 reconciled.append(result)
+                # Drain SOLO su riconciliazione davvero avvenuta: esiti come
+                # RECONCILE_ALREADY_RUNNING / BATCH_NOT_FOUND / fetch failure
+                # tornano ok=False senza sollevare e NON devono togliere
+                # visibilita' a un'ambiguita' che nessuno ha guardato.
+                if isinstance(result, dict) and result.get("ok") is True:
+                    self._drain_ambiguities_for_batch(batch_id)
             except Exception as exc:
                 logger.exception("Errore reconcile batch_id=%s", batch_id)
                 self._log_decision(

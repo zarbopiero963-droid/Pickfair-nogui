@@ -1555,11 +1555,26 @@ class TradingEngine:
             return AMBIGUITY_SPLIT_STATE
         return AMBIGUITY_SUBMIT_UNKNOWN
 
+    def _resolve_reconciliation_engine(self) -> Any:
+        """Motore di riconciliazione per l'enqueue delle ambiguita':
+        iniezione esplicita se fornita (test/DI), altrimenti risoluzione
+        LIVE dal runtime — start() RICOSTRUISCE il motore a ogni avvio,
+        quindi un riferimento catturato al build andrebbe stantio (stesso
+        principio della risoluzione lazy del client Betfair). Il motore del
+        runtime e' accettato solo se espone un enqueue chiamabile."""
+        iniettato = self.reconciliation_engine
+        if iniettato is not None and not isinstance(iniettato, _NullReconciliationEngine):
+            return iniettato
+        dal_runtime = getattr(self.runtime_controller, "reconciliation_engine", None)
+        if dal_runtime is not None and callable(getattr(dal_runtime, "enqueue", None)):
+            return dal_runtime
+        return iniettato
+
     def _enqueue_reconcile(self, ctx: _ExecutionContext, audit: Dict[str, Any],
                            order_id: Any, ambiguity_reason: str,
                            extra_fields: Optional[Dict[str, Any]] = None) -> None:
         self._assert_valid_ctx(ctx)
-        enqueue = getattr(self.reconciliation_engine, "enqueue", None)
+        enqueue = getattr(self._resolve_reconciliation_engine(), "enqueue", None)
         if callable(enqueue):
             meta = {
                 "order_id": order_id,
@@ -1575,7 +1590,19 @@ class TradingEngine:
                     meta["order_origin"] = extra_fields["order_origin"]
                 self._copy_best_price_meta(meta, extra_fields)
 
-            enqueue(**meta)
+            # L'intake non deve MAI interrompere il lifecycle dell'ordine
+            # ambiguo (transizione gia' persistita su DB): un motore rotto
+            # lascia l'ambiguita' affidata allo stato AMBIGUOUS durabile.
+            try:
+                enqueue(**meta)
+            except Exception:
+                logger.exception(
+                    "reconciliation enqueue fallita per order_id=%s: "
+                    "ambiguita' affidata allo stato AMBIGUOUS su DB", order_id)
+                self._emit(ctx, audit, "RECONCILE_ENQUEUE_FAILED",
+                           {"order_id": order_id, "ambiguity_reason": ambiguity_reason},
+                           category="reconcile")
+                return
             self._emit(ctx, audit, "RECONCILE_ENQUEUED",
                        {"order_id": order_id, "ambiguity_reason": ambiguity_reason},
                        category="reconcile")

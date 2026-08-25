@@ -1488,6 +1488,19 @@
       ],
       "max_files": 7,
       "allow_tests": true
+    },
+    "reconciliation_engine_injection": {
+      "description": "PR 7 del piano di cablaggio (#437 punto 4, owner: «Vai prossima pr», 2026-08-24). Le submission ambigue (timeout, risposta persa) del TradingEngine chiamavano enqueue() sul _NullReconciliationEngine: perse nel vuoto. Fix in due parti. (1) core/reconciliation_engine: intake reale enqueue(**meta) — registro pending OrderedDict deduplicato per (order_id|correlation_id|customer_ref), cap 500 drop-oldest con warning, thread-safe (lock dedicato), evento bus RECONCILE_AMBIGUITY_ENQUEUED, MAI raise verso il percorso ordine (fail-safe totale: la verita' durabile resta lo stato AMBIGUOUS su DB); ambiguity_snapshot() copia difensiva; drain in reconcile_all_open_batches: le entry del batch riconciliato escono dal registro (match customer_ref via db.get_batch_sagas). NESSUN I/O exchange inline nell'enqueue (chiamato in piena submission). (2) core/trading_engine: _resolve_reconciliation_engine() — iniezione esplicita del costruttore vince (contratto test esistente), altrimenti risoluzione LIVE dal runtime (start() RICOSTRUISCE il motore a ogni avvio: un riferimento congelato al build andrebbe stantio — stesso principio della risoluzione lazy del betfair_client #443), accettato solo con enqueue chiamabile, fallback segnaposto; usata in _enqueue_reconcile e recover_after_restart; guard try/except attorno a enqueue: un motore rotto non interrompe il lifecycle dell'ordine ambiguo (evento RECONCILE_ENQUEUE_FAILED). NESSUN edit degli entrypoint: il cablaggio passa da runtime_controller gia' assegnato. Guardrail promosso: test_gap_trading_engine_con_reconciliation_segnaposto => test_cablato_reconciliation_engine_risolto_dal_runtime (attributo resta default, risolutore live = motore del runtime, enqueue reale esposto, segue il rebuild, con ripristino). Test red-first: 7 unit intake (tests/reconciliation/test_reconciliation_ambiguity_intake) + 5 integrazione risoluzione (test_trading_engine_reconcile_hook: consegna al runtime, esplicito vince, segue rebuild, fallback senza crash, motore rotto non rompe il lifecycle).",
+      "files": [
+        "core/trading_engine.py",
+        "core/reconciliation_engine.py",
+        "tests/integration/test_trading_engine_reconcile_hook.py",
+        "tests/reconciliation/test_reconciliation_ambiguity_intake.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6,
+      "allow_tests": true
     }
   }
 }
