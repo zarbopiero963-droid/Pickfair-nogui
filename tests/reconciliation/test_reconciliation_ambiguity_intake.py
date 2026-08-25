@@ -219,21 +219,29 @@ def test_drain_non_scatta_su_reconcile_non_riuscito(monkeypatch):
 
 @pytest.mark.unit
 def test_drain_solo_saghe_terminali(monkeypatch):
-    """Bloccante GPT-5.6 Sol su #444 (precisione a livello ordine): dentro un
-    batch riconciliato con esito ok, esce dal registro SOLO l'ambiguita' la
-    cui saga e' terminale; una saga ancora pending (PENDING/SUBMITTED/PLACED/
-    PARTIAL/ROLLBACK_PENDING) tiene viva la propria entry."""
+    """Bloccanti GPT-5.6 Sol su #444 (push 1 e push 2): dentro un batch
+    riconciliato con esito ok, esce dal registro SOLO l'ambiguita' la cui
+    saga sta nell'ALLOWLIST degli stati terminali del contratto ordine
+    (order_manager.TERMINAL_STATES meno AMBIGUOUS). Tutto il resto tiene
+    viva la propria entry: saga pending, stato VUOTO, stato NUOVO/IGNOTO
+    (es. RECONCILING — il push-2 blocker: una denylist lo avrebbe drenato)
+    e saga sigillata AMBIGUOUS (l'ambiguita' NON e' risolta: e' esattamente
+    cio' che il registro deve continuare a mostrare)."""
     db = _FakeDB(batch_sagas={"B1": [
         {"customer_ref": "REF1", "status": "MATCHED"},
         {"customer_ref": "REF3", "status": "PENDING"},
-        {"customer_ref": "REF4", "status": ""},  # stato ignoto => conservativo
+        {"customer_ref": "REF4", "status": ""},  # stato vuoto => conservativo
+        {"customer_ref": "REF5", "status": "RECONCILING"},  # ignoto => resta
+        {"customer_ref": "REF6", "status": "AMBIGUOUS"},  # sigillata ambigua => resta
     ]})
     bm = _BatchManagerConBatchAperti(aperti=[{"batch_id": "B1"}])
     eng = _make_engine(db=db, batch_manager=bm)
 
     for ref, oid, cid in (("REF1", "OID1", "CID1"),
                           ("REF3", "OID3", "CID3"),
-                          ("REF4", "OID4", "CID4")):
+                          ("REF4", "OID4", "CID4"),
+                          ("REF5", "OID5", "CID5"),
+                          ("REF6", "OID6", "CID6")):
         eng.enqueue(order_id=oid, ambiguity_reason="SUBMIT_TIMEOUT",
                     customer_ref=ref, correlation_id=cid)
 
@@ -245,4 +253,59 @@ def test_drain_solo_saghe_terminali(monkeypatch):
     refs_pending = {e["customer_ref"] for e in eng.ambiguity_snapshot().values()}
     assert "REF1" not in refs_pending, "saga terminale non drenata"
     assert "REF3" in refs_pending, "saga ancora pending drenata: visibilita' persa"
-    assert "REF4" in refs_pending, "stato saga ignoto drenato: non conservativo"
+    assert "REF4" in refs_pending, "stato saga vuoto drenato: non conservativo"
+    assert "REF5" in refs_pending, (
+        "stato saga IGNOTO drenato: la denylist e' tornata — serve "
+        "l'allowlist esplicita degli stati terminali"
+    )
+    assert "REF6" in refs_pending, (
+        "saga sigillata AMBIGUOUS drenata: l'ambiguita' non e' risolta e "
+        "la sua visibilita' deve restare"
+    )
+
+
+@pytest.mark.unit
+def test_drain_contratto_dao_reale(tmp_path, monkeypatch):
+    """Bloccante Fugu push-2 su #444: il drain dipende dalla colonna
+    ``status`` restituita da ``get_batch_sagas``. Qui il contratto e'
+    asserito sul Database REALE (niente fake DB): ``create_order_saga``
+    scrive, ``get_batch_sagas`` riporta lo status, e il drain end-to-end
+    funziona col DAO vero — se la SELECT smettesse di riportare la colonna,
+    questo test diventa rosso."""
+    from database import Database
+
+    db = Database(str(tmp_path / "pickfair.db"))
+
+    def _saga(ref: str, status: str) -> None:
+        db.create_order_saga(
+            customer_ref=ref, batch_id="B1", event_key="EV", table_id=1,
+            market_id="1.1", selection_id=123, bet_type="BACK",
+            price=2.0, stake=1.0, payload={}, status=status,
+            logical_key=f"LK-{ref}",
+        )
+
+    _saga("REF1", "MATCHED")
+    _saga("REF2", "PENDING")
+
+    righe = db.get_batch_sagas("B1")
+    assert {r["customer_ref"]: r["status"] for r in righe} == {
+        "REF1": "MATCHED", "REF2": "PENDING",
+    }, "contratto DAO rotto: get_batch_sagas non riporta status per ref"
+
+    bm = _BatchManagerConBatchAperti(aperti=[{"batch_id": "B1"}])
+    eng = ReconciliationEngine(
+        db=db, bus=_FakeBus(), batch_manager=bm, client_getter=lambda: None,
+    )
+    eng.enqueue(order_id="OID1", ambiguity_reason="SUBMIT_TIMEOUT",
+                customer_ref="REF1", correlation_id="CID1")
+    eng.enqueue(order_id="OID2", ambiguity_reason="SUBMIT_TIMEOUT",
+                customer_ref="REF2", correlation_id="CID2")
+
+    monkeypatch.setattr(
+        eng, "reconcile_batch", lambda batch_id: {"ok": True, "batch_id": batch_id}
+    )
+    eng.reconcile_all_open_batches()
+
+    refs_pending = {e["customer_ref"] for e in eng.ambiguity_snapshot().values()}
+    assert "REF1" not in refs_pending, "drain col DAO reale non avvenuto"
+    assert "REF2" in refs_pending, "saga PENDING drenata col DAO reale"

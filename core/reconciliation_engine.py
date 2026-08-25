@@ -1501,27 +1501,35 @@ class ReconciliationEngine:
         with self._ambiguity_lock:
             return {k: dict(v) for k, v in self._pending_ambiguities.items()}
 
-    # Stati saga ancora "vivi": specchio della SELECT di
-    # database.get_pending_sagas (fonte di verita' della semantica pending).
-    _SAGA_PENDING_STATES = frozenset(
-        {"PENDING", "SUBMITTED", "PLACED", "PARTIAL", "ROLLBACK_PENDING"}
-    )
+    @staticmethod
+    def _stati_saga_drenabili() -> Set[str]:
+        """ALLOWLIST esplicita degli stati saga che permettono il drain:
+        gli stati TERMINALI del contratto ordine (order_manager.
+        TERMINAL_STATES — fonte unica, niente copie a mano) MENO AMBIGUOUS:
+        una saga sigillata come ambigua e' esattamente cio' che il registro
+        deve continuare a mostrare. Ogni altro stato — pending, vuoto,
+        NUOVO o intermedio (es. un futuro RECONCILING) — tiene viva la
+        entry: mai drenare cio' che non e' provatamente chiuso."""
+        from order_manager import TERMINAL_STATES, OrderStatus
+
+        return {s.value for s in TERMINAL_STATES} - {OrderStatus.AMBIGUOUS.value}
 
     def _drain_ambiguities_for_batch(self, batch_id: str) -> None:
         """Toglie dal registro le ambiguita' del batch appena riconciliato,
-        ma SOLO quelle la cui saga risulta terminale: una saga ancora
-        pending (o con stato ignoto) tiene viva la propria entry — mai
-        perdere visibilita' su un ordine che nessuno ha ancora chiuso.
+        ma SOLO quelle la cui saga sta nell'allowlist degli stati terminali
+        (_stati_saga_drenabili): tutto il resto tiene viva la propria entry
+        — mai perdere visibilita' su un ordine che nessuno ha chiuso.
         Fail-safe: un drain fallito lascia solo entry pending in piu'."""
         try:
             getter = getattr(self.db, "get_batch_sagas", None)
             if not callable(getter):
                 return
+            drenabili = self._stati_saga_drenabili()
             refs_terminali = set()
             for r in (getter(batch_id) or []):
                 ref = str(r.get("customer_ref") or "").strip()
                 stato = str(r.get("status") or "").strip().upper()
-                if ref and stato and stato not in self._SAGA_PENDING_STATES:
+                if ref and stato in drenabili:
                     refs_terminali.add(ref)
             if not refs_terminali:
                 return
