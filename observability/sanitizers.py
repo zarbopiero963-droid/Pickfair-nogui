@@ -2,59 +2,35 @@ from __future__ import annotations
 
 from typing import Any
 
-# Exact-match sensitive keys (case-insensitive)
-SENSITIVE_KEYS: frozenset = frozenset({
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "session_token",
-    "session_string",
-    "app_key",
-    "certificate",
-    "cert",
-    "private_key",
-    "authorization",
-    "cookie",
-    "telegram_token",
-    "api_key",
-    "api_hash",
-    "api_id",
-    "ssoid",
-})
-
-# Suffix-based matching: any key whose last component (after the last dot)
-# is in this set is also considered sensitive.  Handles dot-notation keys
-# like "telegram.api_hash", "telegram.session_string", etc.
-_SENSITIVE_KEY_SUFFIXES: frozenset = frozenset({
-    "password",
-    "passwd",
-    "secret",
-    "token",
-    "session_token",
-    "session_string",
-    "app_key",
-    "certificate",
-    "cert",
-    "private_key",
-    "authorization",
-    "cookie",
-    "api_key",
-    "api_hash",
-    "api_id",
-})
+# Rilevamento chiavi sensibili delegato al predicato UNICO condiviso
+# (core.redaction), lo stesso usato da telegram_sanitizer: i due path di
+# log non possono più divergere. I nomi storici SENSITIVE_KEYS /
+# _SENSITIVE_KEY_SUFFIXES restano esportati (compat: importati dai test) e
+# puntano all'unione condivisa.
+from core.redaction import (
+    SENSITIVE_KEY_SUFFIXES as _SENSITIVE_KEY_SUFFIXES,
+    SENSITIVE_KEYS_EXACT as SENSITIVE_KEYS,
+    is_sensitive_key,
+)
 
 _REDACTED = "***REDACTED***"
 
+# API pubblica del modulo. `SENSITIVE_KEYS` e `_SENSITIVE_KEY_SUFFIXES` sono
+# re-export INTENZIONALI del predicato condiviso (core.redaction), consumati da
+# tests/observability/test_sanitizers_coverage.py: dichiararli qui li marca come
+# esportati (non import morti) e mantiene la compat storica dei nomi.
+__all__ = [
+    "sanitize_value",
+    "sanitize_dict",
+    "SENSITIVE_KEYS",
+    "_SENSITIVE_KEY_SUFFIXES",
+    "is_sensitive_key",
+]
+
 
 def _is_sensitive_key(key: str) -> bool:
-    """Return True if key should be redacted."""
-    lower = str(key).lower()
-    if lower in SENSITIVE_KEYS:
-        return True
-    # Dot-notation suffix check: "telegram.api_hash" → suffix "api_hash"
-    suffix = lower.rsplit(".", 1)[-1]
-    return suffix in _SENSITIVE_KEY_SUFFIXES
+    """Return True if key should be redacted (predicato condiviso)."""
+    return is_sensitive_key(key)
 
 
 def sanitize_value(value: Any) -> Any:
