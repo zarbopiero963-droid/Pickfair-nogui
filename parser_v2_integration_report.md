@@ -18,6 +18,6 @@ Ho completato l'implementazione integrale delle specifiche tecniche richieste (I
 
 ## 4. Validazione Hard
 - **Test Zero-Touch**: Validato tramite `test_zero_touch_sync.py`, confermando l'avvio del thread di sync al boot.
-- **Pipeline Completa**: Validata tramite `hard_verify_parser_v2.py`.
+- **Pipeline Completa**: Validata tramite `tests/integration/test_parser_v2_pipeline.py` (test reale sotto `tests/`; ex script `hard_verify_parser_v2.py`, convertito nel follow-up #374).
 
 **Il sistema è ora pronto per la distribuzione come software professionale autogestito.**

@@ -72,17 +72,29 @@ LOTTO_2 = frozenset({
 # hard_verify_issue_320.py e hard_verify_parser_v2.py erano nel primo taglio come
 # «verifiche di lavori gia' chiusi». GPT-5.6 Sol li ha fermati sulla #436, e aveva
 # ragione: non sono scarti, sono l'unica copertura di alcune cose. Misurato in
-# tests/ prima di decidere:
+# tests/ prima di decidere (misura storica #436):
 #     max_recovery_tables_reached   0 file      add_risk_position_history  0 file
 #     DelimiterParser               0 file      DeterministicResolver      0 file
 #     DutchingCalculator            0 file
-# Il primo e' una unittest.TestCase su MIN_STAKE, drawdown hard-stop, esposizione
-# massima, recovery tables, SL/TP e persistenza dello storico rischio; il secondo
-# e' l'UNICO esercizio end-to-end del parser a delimitatori di #301
-# (messaggio -> evento -> mercato -> selection_id -> stake dutching). Restano
-# finche' quei controlli non diventano test veri sotto tests/ (follow-up su #374).
+# hard_verify_issue_320.py e' una unittest.TestCase su MIN_STAKE, drawdown hard-stop,
+# esposizione massima, recovery tables, SL/TP e persistenza dello storico rischio:
+# RESTA, e' ancora l'unica copertura di quelle cose (conversione = follow-up #374
+# successivo). hard_verify_parser_v2.py era l'UNICO esercizio end-to-end del parser a
+# delimitatori di #301 (messaggio -> evento -> mercato -> selection_id): quella
+# copertura ora VIVE come test reale in tests/integration/test_parser_v2_pipeline.py
+# (parse + resolve + i casi fail-closed «non inventa dati»), quindi lo script esce ora.
 
-TOLTI = ALBERO_DEL_BRIDGE | LOTTO_2
+# Convertiti sotto tests/ e rimossi (A1, follow-up #374). core.dutching_calculator era
+# il calcolatore dutching NAIVE usato solo da hard_verify_parser_v2.py (il dutching di
+# produzione e' dutching_batch_manager/money_management), mai nel grafo vivo: l'assert
+# dutching dello script (Fase 6) copriva quel calcolatore morto ed esce con lui, senza
+# perdere copertura viva. DelimiterParser/DeterministicResolver ora coperti dal test.
+CONVERTITI_374 = frozenset({
+    "core.dutching_calculator",
+    "hard_verify_parser_v2",
+})
+
+TOLTI = ALBERO_DEL_BRIDGE | LOTTO_2 | CONVERTITI_374
 
 # Le capacita' che i reviewer temevano di perdere, e il modulo VIVO che le tiene.
 # Non basta che il file esista: deve stare nel grafo vivo e definire quel nome.
