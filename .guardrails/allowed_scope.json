@@ -4,6 +4,16 @@
     "max_files": 8
   },
   "tasks": {
+    "exposure_total_clamp_m06": {
+      "description": "#320-A / M-06 (owner, 2026-08-26): clamp fail-closed a >=0 sul contributo per-tavolo in TableManager.total_exposure(). Quella somma alimenta il cap assoluto in euro max_open_exposure (runtime_controller, Enforcement A2 #320: projected_total = total_exposure()+stake; blocca se > cap). Un current_exposure negativo su un tavolo DEFLAZIONAVA la somma e gonfiava la capacità residua => un ordine sarebbe passato oltre il cap €. Oggi nessun path produce esposizione negativa (activate riceve recommended_stake/next_stake >=0), quindi è hardening fail-closed / defense-in-depth su un'aggregazione safety-critical, non un bug attivo. Fix minimale: sum(max(0.0, current_exposure)). Nessun cambiamento per esposizioni tutto-positive (baseline invariata). Test PASS+BLOCK (tests/unit/test_table_manager_exposure_clamp.py) red-first: pre-fix il negativo deflaziona il totale e fa passare il cap (2 rossi incluso il caso bypass del cap €), col clamp 3 verdi. Docs N/A: il contratto documentato di max_open_exposure (cap € assoluto) non cambia, viene solo enforce-ato correttamente.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "core/table_manager.py",
+        "tests/unit/test_table_manager_exposure_clamp.py"
+      ],
+      "max_files": 3
+    },
     "parser_v2_pipeline_coverage": {
       "description": "A1 / follow-up #374 (owner, 2026-08-26): converte la copertura end-to-end del parser a delimitatori di #301 da script __main__ a test pytest reale sotto tests/, poi rimuove l'orfano. hard_verify_parser_v2.py era l'UNICO esercizio messaggio->evento->mercato->selection_id (mai eseguito in CI; GPT-5.6 Sol lo bloccò su #436 come «unica copertura»): ora VIVE in tests/integration/test_parser_v2_pipeline.py (parse + resolve + casi fail-closed «il parser non inventa dati mancanti», PASS+BLOCK verificato sabotando resolve_runner -> 3 rossi incluso il caso unknown-runner). core/dutching_calculator.py era il calcolatore dutching NAIVE usato SOLO dallo script (il dutching di produzione è dutching_batch_manager/money_management), mai nel grafo vivo: l'assert dutching (Fase 6) copriva codice morto ed esce con lo script, nessuna copertura viva persa. Il guard test test_albero_del_bridge_resta_fuori.py estende TOLTI con CONVERTITI_374 (core.dutching_calculator, hard_verify_parser_v2): red-first verificato (i due file presenti + l'import fanno fallire il guard, la delete li fa passare). Doc parser_v2_integration_report.md aggiornata al nuovo test. hard_verify_issue_320.py NON toccato: resta l'unica copertura del money management, conversione = follow-up successivo.",
       "allow_tests": true,

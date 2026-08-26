@@ -202,7 +202,13 @@ class TableManager:
 
     def total_exposure(self) -> float:
         with self._lock:
-            return float(sum(t.current_exposure for t in self._tables.values()))
+            # Fail-closed (M-06, #320-A): un `current_exposure` negativo su un
+            # tavolo NON deve DEFLAZIONARE il totale. Questa somma alimenta il cap
+            # assoluto in euro `max_open_exposure` (runtime_controller, Enforcement
+            # A2 #320): un contributo negativo gonfierebbe la capacità residua e
+            # farebbe passare un ordine oltre il cap. Clamp per-tavolo a >= 0
+            # (sovra-stima al più, mai sotto-stima l'esposizione aperta).
+            return float(sum(max(0.0, t.current_exposure) for t in self._tables.values()))
 
     # =========================================================
     # RESET / SNAPSHOT
