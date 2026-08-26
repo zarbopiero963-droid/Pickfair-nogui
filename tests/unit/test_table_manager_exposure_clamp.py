@@ -73,3 +73,31 @@ def test_negative_exposure_cannot_bypass_eur_cap():
         f"bypass del cap €: projected={projected_total} <= cap={cap} "
         "(esposizione negativa ha gonfiato la capacità residua)"
     )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_total_exposure_fail_closed_on_nan():
+    # NaN = esposizione corrotta. NON deve essere trattata come 0: `max(0.0, NaN)`
+    # darebbe 0.0 e la nasconderebbe, sotto-stimando il totale e facendo passare il
+    # cap. Fail-closed => total_exposure() inf => il cap A2 blocca ogni nuovo ordine.
+    tm = TableManager(table_count=2)
+    _activate(tm, 1, 100.0)
+    _activate(tm, 2, float("nan"))
+    total = tm.total_exposure()
+    assert total == float("inf")
+    # Il cap A2 deve bloccare (inf > qualunque cap finito):
+    assert (total + 1.0) > 130.0, (
+        f"bypass del cap € via NaN: projected={total + 1.0} <= 130 "
+        "(esposizione non finita nascosta come 0)"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+def test_total_exposure_fail_closed_on_inf():
+    # Un'esposizione infinita resta fail-closed (inf) e il cap blocca.
+    tm = TableManager(table_count=2)
+    _activate(tm, 1, 100.0)
+    _activate(tm, 2, float("inf"))
+    assert tm.total_exposure() == float("inf")
