@@ -11,9 +11,10 @@ oscurava. Esempi materiali (BLOCK di questo test):
   → sarebbe finito in chiaro in un bundle diagnostico condivisibile;
 - `app_key` (App Key Betfair) NON era oscurato dal path Telegram.
 
-Questo test PASSA solo con il predicato condiviso (`core.secret_redaction`):
-ogni segreto è oscurato su ENTRAMBI i path; i campi non-segreti restano intatti
-su entrambi (nessuna sovra-redazione).
+Questo test PASSA solo con il predicato condiviso (`core.redaction`): ogni
+segreto è oscurato su ENTRAMBI i path; i campi non-segreti restano intatti su
+entrambi (nessuna sovra-redazione). Copre anche le chiavi in camelCase (tipiche
+delle API Betfair/Telethon), che il predicato normalizza prima del match.
 """
 
 import pytest
@@ -43,6 +44,22 @@ NON_SECRET_KEYS = [
     "username", "market_id", "selection_id", "stake", "price",
     "event_name", "phone_number", "chat_id", "alerts_enabled",
     "simulation_mode", "execution_mode", "runner_name", "market_name",
+]
+
+# Segreti in camelCase: le API Betfair/Telethon usano chiavi come `appKey`,
+# `sessionToken`, `botToken`. Il predicato normalizza il camelCase prima del
+# match (es. `botToken` -> `bot_token`), quindi NON devono trapelare su nessun
+# path. BLOCK: pre-fix `_SPLIT` non separava il camelCase -> segreto in chiaro.
+CRITICAL_SECRET_KEYS_CAMEL = [
+    "botToken", "appKey", "sessionString", "apiKey", "sessionToken",
+    "accessToken", "refreshToken", "clientSecret", "userSession", "apiSecret",
+    "authToken",
+]
+
+# camelCase legittimo (non segreto): NON deve essere sovra-redatto dopo la
+# normalizzazione (es. `marketId` -> `market_id`, `apiVersion` -> `api_version`).
+NON_SECRET_KEYS_CAMEL = [
+    "marketId", "selectionId", "eventName", "runnerName", "apiVersion",
 ]
 
 
@@ -106,3 +123,30 @@ def test_both_paths_agree(key):
     tg = _redacted(sanitize_telegram_payload, key)
     obs = _redacted(sanitize_value, key)
     assert tg == obs, f"divergenza sul path per {key!r}: telegram={tg} observability={obs}"
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+@pytest.mark.parametrize("key", CRITICAL_SECRET_KEYS_CAMEL)
+def test_camelcase_secret_redacted_both_paths(key):
+    # BLOCK: pre-fix il camelCase non veniva separato -> segreto Betfair/Telegram
+    # in chiaro su entrambi i path nonostante l'unificazione.
+    assert _redacted(sanitize_telegram_payload, key), (
+        f"{key!r} (camelCase) trapela sul path Telegram"
+    )
+    assert _redacted(sanitize_value, key), (
+        f"{key!r} (camelCase) trapela sul path osservabilità"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+@pytest.mark.parametrize("key", NON_SECRET_KEYS_CAMEL)
+def test_camelcase_non_secret_not_redacted_both_paths(key):
+    # La normalizzazione camelCase non deve sovra-redigere chiavi legittime.
+    assert sanitize_value({key: _SENTINEL})[key] == _SENTINEL, (
+        f"{key!r} (camelCase) sovra-redatto sul path osservabilità"
+    )
+    assert sanitize_telegram_payload({key: _SENTINEL})[key] == _SENTINEL, (
+        f"{key!r} (camelCase) sovra-redatto sul path Telegram"
+    )

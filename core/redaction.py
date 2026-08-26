@@ -8,9 +8,12 @@ bundle diagnostico condivisibile, `app_key`/`ssoid`/`session_string` in un log
 Telegram).
 
 Strategia = UNIONE di ciò che i due predicati storici coprivano, **fail-closed**
-(sovra-redige piuttosto che lasciar trapelare un segreto):
+(sovra-redige piuttosto che lasciar trapelare un segreto). La chiave è prima
+NORMALIZZATA inserendo `_` ai confini camelCase (`sessionToken` -> `session_token`)
+e minuscolando, così le chiavi camelCase delle API Betfair/Telethon ricadono
+nelle stesse strategie della forma snake_case; poi:
 - match esatto sull'unione dei nomi-chiave;
-- match sul suffisso dopo l'ultimo punto (dot-notation, es. `telegram.api_hash`);
+- match sul suffisso dopo l'ultimo punto (dot-notation, es. `telegram.apiHash`);
 - combo a ≥2 frammenti sensibili in una chiave multi-parte (es. `api_token`).
 
 Dipende solo dalla stdlib (`re`): nessun import di runtime, nessun ciclo.
@@ -46,17 +49,34 @@ SENSITIVE_KEY_SUFFIXES: frozenset = SENSITIVE_KEYS_EXACT
 
 _SPLIT = re.compile(r"[\s_.-]+")
 
+# Confine camelCase / PascalCase: separa `botToken` -> `bot_Token`,
+# `appKey` -> `app_Key`, `APIKey` -> `API_Key`. Necessario perché le API
+# Betfair/Telethon usano chiavi camelCase: senza normalizzazione un segreto come
+# `sessionToken`/`appKey` non matcherebbe né esatto, né suffisso, né combo, e
+# trapelerebbe su ENTRAMBI i path (fail-open, contro il contratto fail-closed).
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
+def _normalize(key: str) -> str:
+    """Inserisce '_' ai confini camelCase, poi minuscolo.
+
+    `botToken`/`appKey`/`sessionString` -> `bot_token`/`app_key`/`session_string`,
+    così un segreto in camelCase ricade nell'unione esatta/suffisso/combo esattamente
+    come la forma snake_case. No-op su chiavi già snake_case o tutto-minuscolo/maiuscolo.
+    """
+    return _CAMEL_BOUNDARY.sub("_", str(key or "")).lower()
+
 
 def is_sensitive_key(key: str) -> bool:
     """True se la chiave va oscurata (unione delle strategie storiche, fail-closed)."""
-    key_l = str(key or "").lower()
-    if key_l in SENSITIVE_KEYS_EXACT:
+    norm = _normalize(key)
+    if norm in SENSITIVE_KEYS_EXACT:
         return True
-    # dot-notation: suffisso dopo l'ultimo punto (es. "telegram.api_hash" -> "api_hash")
-    if key_l.rsplit(".", 1)[-1] in SENSITIVE_KEY_SUFFIXES:
+    # dot-notation: suffisso dopo l'ultimo punto (es. "telegram.apiHash" -> "api_hash")
+    if norm.rsplit(".", 1)[-1] in SENSITIVE_KEY_SUFFIXES:
         return True
     # combo: ≥2 frammenti sensibili in una chiave multi-parte
-    parts = [p for p in _SPLIT.split(key_l) if p]
+    parts = [p for p in _SPLIT.split(norm) if p]
     if len(parts) > 1 and sum(1 for p in parts if p in SENSITIVE_KEY_FRAGMENTS) >= 2:
         return True
     return False

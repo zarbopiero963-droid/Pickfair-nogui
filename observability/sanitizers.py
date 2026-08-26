@@ -15,6 +15,18 @@ from core.redaction import (
 
 _REDACTED = "***REDACTED***"
 
+# API pubblica del modulo. `SENSITIVE_KEYS` e `_SENSITIVE_KEY_SUFFIXES` sono
+# re-export INTENZIONALI del predicato condiviso (core.redaction), consumati da
+# tests/observability/test_sanitizers_coverage.py: dichiararli qui li marca come
+# esportati (non import morti) e mantiene la compat storica dei nomi.
+__all__ = [
+    "sanitize_value",
+    "sanitize_dict",
+    "SENSITIVE_KEYS",
+    "_SENSITIVE_KEY_SUFFIXES",
+    "is_sensitive_key",
+]
+
 
 def _is_sensitive_key(key: str) -> bool:
     """Return True if key should be redacted (predicato condiviso)."""
