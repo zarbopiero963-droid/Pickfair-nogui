@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from threading import RLock
@@ -202,7 +204,22 @@ class TableManager:
 
     def total_exposure(self) -> float:
         with self._lock:
-            return float(sum(t.current_exposure for t in self._tables.values()))
+            # Questa somma alimenta il cap assoluto in euro `max_open_exposure`
+            # (runtime_controller, Enforcement A2 #320): non deve MAI sotto-stimare
+            # l'esposizione aperta, altrimenti un ordine passerebbe oltre il cap.
+            total = 0.0
+            for t in self._tables.values():
+                exp = t.current_exposure
+                # Fail-closed su valori NON FINITI (NaN/inf) = stato corrotto: NON
+                # trattarli come 0 — `max(0.0, NaN)` darebbe 0.0 e li nasconderebbe,
+                # sotto-stimando il totale e facendo passare il cap. Restituisci inf
+                # cosi' il cap A2 blocca ogni nuovo ordine finche' lo stato e' corrotto.
+                if not math.isfinite(exp):
+                    return float("inf")
+                # Clamp per-tavolo a >= 0 (M-06): un `current_exposure` negativo non
+                # deve DEFLAZIONARE il totale (sovra-stima al piu', mai sotto-stima).
+                total += max(0.0, exp)
+            return float(total)
 
     # =========================================================
     # RESET / SNAPSHOT
