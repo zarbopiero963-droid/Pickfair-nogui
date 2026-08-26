@@ -198,6 +198,12 @@ def test_telegram_alert_format_redacts_secrets_in_details():
 
     assert "supersecret" not in text, "password must be redacted in alert text"
     assert "hash123" not in text, "api_hash must be redacted in alert text"
-    assert _REDACTED in text, "redaction marker must appear in alert text"
+    # L'alert service doppio-sanitizza (observability -> telegram, vedi
+    # telegram_alerts_service._format_alert_text). Col predicato UNIFICATO (M1) il
+    # sanitizer telegram esterno ora ri-oscura anche api_hash, quindi TUTTI i
+    # segreti escono col marker telegram "[REDACTED]" invece che, per api_hash,
+    # col vecchio "***REDACTED***" sopravvissuto alla divergenza. Assert
+    # marker-agnostico: conta che un marker di redazione compaia, non quale.
+    assert ("[REDACTED]" in text or _REDACTED in text), "redaction marker must appear in alert text"
     # Non-secret field should still be present
     assert "1.111" in text, "market_id should NOT be redacted"

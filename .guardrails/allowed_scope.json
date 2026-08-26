@@ -1512,6 +1512,19 @@
       ],
       "max_files": 4,
       "allow_tests": true
+    },
+    "secret_redaction_unify": {
+      "description": "M1 (#437/#388): unificazione della redazione segreti. Esistevano DUE predicati _is_sensitive_key indipendenti e divergenti — telegram_sanitizer (log/alert Telegram) e observability/sanitizers (snapshot + bundle diagnostici) — con set di chiavi diversi: un segreto oscurato su un path trapelava sull'altro (es. bot_token in un bundle diagnostico condivisibile; app_key/ssoid/session_string/api_hash in un log Telegram). Fix: predicato UNICO condiviso core/redaction.is_sensitive_key = unione dei set esatti + suffisso-dopo-punto + combo-2-frammenti, fail-closed (sovra-redige piuttosto che lasciar trapelare). Entrambi i sanitizer delegano ad esso mantenendo il proprio marker ([REDACTED] vs ***REDACTED***) e la ricorsione; i nomi pubblici SENSITIVE_KEYS/_SENSITIVE_KEY_SUFFIXES/_is_sensitive_key restano esportati (compat test). Test hard red-first (44 fail sul codice divergente) => PASS: ogni segreto oscurato su ENTRAMBI i path, nessuna sovra-redazione dei campi non-segreti, i due path concordano. Aggiornata 1 asserzione marker-agnostica in test_sanitizers_coverage: l'alert service doppio-sanitizza (observability->telegram), col fix telegram ri-oscura anche api_hash => marker uniforme [REDACTED], segreti comunque assenti. core/ init leggero, packaging via import statico (nessun hiddenimport). Nessuna soglia/livello safety toccata.",
+      "files": [
+        "core/redaction.py",
+        "telegram_sanitizer.py",
+        "observability/sanitizers.py",
+        "tests/observability/test_secret_redaction_unified.py",
+        "tests/observability/test_sanitizers_coverage.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 6,
+      "allow_tests": true
     }
   }
 }
