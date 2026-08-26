@@ -1501,6 +1501,17 @@
       ],
       "max_files": 6,
       "allow_tests": true
+    },
+    "cashout_safety_layer_wiring": {
+      "description": "PR 8 del piano di cablaggio (#437, owner: «Vai prossima pr», 2026-08-25). SafetyLayer mai istanziato: il CashoutExecutor accetta safety_layer dal costruttore ma headless_main non lo passava, quindi validate_cashout_request() non girava mai su nessun cashout. Fix minimale: SafetyLayer() passato al CashoutExecutor in _wire_cashout_execution_chain (headless_main). Il costruttore del layer e' inerte (solo campi: nessun thread avviato, nessuno stato che start() ricostruisce => nessun problema frozen-vs-live). Compatibilita' verificata in Phase 0: il CashoutRequestBridge normalizza gia' i tipi del payload (selection_id int esatto, stake/price/green_up float finiti) prima del CMD_EXECUTE_CASHOUT, quindi il layer non puo' rigettare cashout legittimi sul percorso reale; aggiunge schema+tipi come difesa in profondita' per ogni altro percorso (delta provato: selection_id come stringa passa gli invarianti hard dell'executor ma il layer lo rigetta PayloadValidationError). GUI: N/A, la catena cashout non esiste nel processo GUI (gap separato di parita' GUI). Guardrail promosso: test_gap_safety_layer_non_passato_al_cashout_executor => test_cablato_safety_layer_nel_cashout_executor (layer reale, validate chiamabile, payload normalizzato passa, selection_id str rigettato). Unit: lock payload-normalizzato-passa (anti-regressione del cablaggio), delta selection-id-str-rigettato col layer, contrasto documentale senza-layer-oggi-piazza.",
+      "files": [
+        "headless_main.py",
+        "tests/unit/test_cashout_executor.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        ".guardrails/allowed_scope.json"
+      ],
+      "max_files": 4,
+      "allow_tests": true
     }
   }
 }
