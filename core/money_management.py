@@ -216,7 +216,33 @@ class RoserpinaMoneyManagement:
             return 0.0
 
         target_profit = self._target_profit_eur(bankroll_current)
-        to_recover = target_profit + max(0.0, table_loss)
+
+        # Componente di recovery che INSEGUE la perdita del tavolo. Cap
+        # anti-martingala ASSOLUTO in euro (#320-D1), OPT-IN e DEFAULT OFF:
+        #   None (non configurato) / <= 0 finito (opt-out esplicito)
+        #                            => DISARMATO: chase storico (illimitato)
+        #   > 0 finito               => ARMATO: chase limitato al tetto € (min)
+        #   non-finito (NaN/inf)     => FAIL-CLOSED: chase = 0 (config corrotta)
+        # Il fail-closed (rilievo GPT-5.6 Sol #450) evita il fail-OPEN: un cap
+        # ARMATO ma corrotto NON deve ripristinare in silenzio il chase
+        # illimitato (gonfierebbe lo stake proprio quando la protezione e' rotta).
+        # Si distingue "non configurato / disattivato" (None/<=0 => storico) da
+        # "configurato ma illeggibile" (NaN/inf => massima protezione, chase 0).
+        # Nessun blocco dell'ordine: lo stake resta positivo (target_profit),
+        # niente DoS sul recovery; i cap single/total/event a valle restano.
+        chase = max(0.0, table_loss)
+        cap = getattr(self.config, "max_recovery_chase_abs", None)
+        if cap is not None:
+            try:
+                cap = float(cap)
+            except (TypeError, ValueError):
+                cap = float("nan")
+            if not math.isfinite(cap):
+                chase = 0.0            # cap armato ma corrotto => fail-closed
+            elif cap > 0.0:
+                chase = min(chase, cap)
+            # cap finito <= 0.0 => opt-out esplicito => chase storico invariato
+        to_recover = target_profit + chase
 
         stake = to_recover / (price - 1.0)
         return max(0.0, stake)

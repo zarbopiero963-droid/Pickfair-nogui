@@ -56,6 +56,18 @@ class RoserpinaConfig:
     max_daily_loss: Optional[float] = None
     max_drawdown_hard_stop_pct: Optional[float] = None
     max_open_exposure: Optional[float] = None
+    # Cap anti-martingala ASSOLUTO in euro sulla componente di recovery-chase
+    # del base_stake (#320-D1). OPT-IN, DEFAULT OFF:
+    #   None (non configurato) / <= 0 finito (opt-out) => disarmato (chase
+    #     illimitato = comportamento storico);
+    #   > 0 finito => il chase che insegue la perdita del tavolo e' limitato a
+    #     questo tetto € prima di dividere per (price-1);
+    #   non-finito (NaN/inf, config corrotta) => FAIL-CLOSED (chase = 0): un cap
+    #     armato ma illeggibile NON ripristina il chase illimitato (sarebbe
+    #     fail-open sulla protezione). Vedi core.money_management.
+    #     _calculate_base_stake. Persistito come gli altri hard-stop opzionali
+    #     (services.setting_service._optional_hard_stop_value).
+    max_recovery_chase_abs: Optional[float] = None
 
     auto_reset_drawdown_pct: float = 15.0
     defense_drawdown_pct: float = 7.5

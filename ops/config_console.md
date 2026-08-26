@@ -353,6 +353,52 @@ ritardare un cashout per un problema di configurazione).
   implicitamente dalla pending-guard (uno per target) e dal fallback inline su
   esaurimento thread.
 
+## Cap anti-martingala sul recovery-chase (#320-D1)
+
+Lo stake base di Roserpina insegue la perdita accumulata sul tavolo:
+`core/money_management.RoserpinaMoneyManagement._calculate_base_stake` calcola
+`stake = (target_profit + chase) / (price - 1)`, dove `chase = max(0, table_loss)`
+e' la porzione di recupero. Senza limite, una perdita grande gonfia lo stake
+successivo in modo **martingala-like** (il chase cresce con la perdita, illimitato).
+
+**Nuovo cap ASSOLUTO in euro** `RoserpinaConfig.max_recovery_chase_abs` (chiave DB
+`roserpina.max_recovery_chase_abs`), **OPT-IN e DEFAULT OFF**:
+
+- `None` (non configurato) / `<= 0` finito (opt-out esplicito) => **DISARMATO**:
+  `chase = max(0, table_loss)` = comportamento storico invariato (nessuna sorpresa
+  alla progressione esistente).
+- `> 0` finito => **ARMATO**: `chase = min(max(0, table_loss), cap)`. La componente
+  che insegue la perdita e' limitata al tetto € **prima** di dividere per `(price-1)`;
+  `target_profit` non e' toccato (l'obiettivo di ciclo resta), cosi' il cap frena la
+  rincorsa senza spegnere il recupero.
+- **non-finito** (NaN/inf, config corrotta) => **FAIL-CLOSED** (`chase = 0`): un cap
+  **armato ma illeggibile** applica la massima protezione anti-martingala, **non**
+  ripristina il chase illimitato. Ripristinarlo sarebbe **fail-open** proprio quando la
+  protezione e' rotta (rilievo GPT-5.6 Sol su #450). Distinto da `None`/`<= 0`
+  (non configurato / disattivato ⇒ storico): "configurato ma corrotto" ⇒ chase 0.
+
+**Ambito preciso.** Il cap tocca **solo** la componente di recovery-chase del
+`base_stake` **calcolato**. NON tocca lo **stake fisso da segnale** (`signal["stake"]`
+del tipster: istruzione esplicita, non un inseguimento) e **non allenta** nessun cap
+esistente (`max_single_bet_pct`, `max_total_exposure_pct`, `max_event_exposure_pct`
+continuano ad applicarsi a valle, invariati).
+
+**Fail-closed su config corrotta.** Un cap **armato ma non-finito** (NaN/inf da
+config illeggibile) applica `chase = 0` (massima protezione), **non** ripristina il
+chase illimitato: sarebbe fail-open sulla protezione money-management. Non e' un
+blocco dell'ordine (lo stake resta `target_profit`, nessun DoS sul recovery) e i cap
+single/total/event a valle restano comunque attivi. Persistenza allineata agli altri hard-stop
+opzionali (`services/setting_service.py`: load via `_optional_hard_stop_value`, save
+con semantica **preserve-if-not-None** — un campo vuoto NON azzera un cap gia'
+persistito).
+
+**Come armarlo.** Scrivere la chiave DB `roserpina.max_recovery_chase_abs` a un valore
+€ `> 0` (il valore sopravvive ai salvataggi Roserpina, che preservano le chiavi non
+gestite). L'esposizione come **campo editabile nel tab Roserpina della mini GUI** e'
+un follow-up dedicato (questa PR e' il cap money-core + persistenza + test). Copertura
+test: `tests/core/test_money_management_recovery_cap.py` (enforcement PASS+BLOCK,
+percorsi OFF, round-trip persistenza).
+
 ## Configurazione Simulazione editabile in GUI (tab Simulazione) — G1
 
 I parametri del **broker simulato** erano configurabili solo via DB. Ora il tab

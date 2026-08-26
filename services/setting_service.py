@@ -238,6 +238,11 @@ class SettingsService:
                 "roserpina.max_open_exposure",
                 fallback_key="max_open_exposure",
             ),
+            max_recovery_chase_abs=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_recovery_chase_abs",
+                fallback_key="max_recovery_chase_abs",
+            ),
             auto_reset_drawdown_pct=self._f(data, "roserpina.auto_reset_drawdown_pct", 15.0),
             defense_drawdown_pct=self._f(data, "roserpina.defense_drawdown_pct", 7.5),
             lockdown_drawdown_pct=self._f(data, "roserpina.lockdown_drawdown_pct", 20.0),
@@ -314,6 +319,8 @@ class SettingsService:
             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
         if config.max_open_exposure is not None:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+        if config.max_recovery_chase_abs is not None:
+            payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
 
         self.db.save_settings(payload)
 
