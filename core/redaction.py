@@ -14,6 +14,8 @@ e minuscolando, così le chiavi camelCase delle API Betfair/Telethon ricadono
 nelle stesse strategie della forma snake_case; poi:
 - match esatto sull'unione dei nomi-chiave;
 - match sul suffisso dopo l'ultimo punto (dot-notation, es. `telegram.apiHash`);
+- match sulla forma collassata (separatori rimossi) per le chiavi tutto-maiuscolo
+  attaccate che il camelCase-split non separa (es. `APIKEY` -> `apikey`);
 - combo a ≥2 frammenti sensibili in una chiave multi-parte (es. `api_token`).
 
 Dipende solo dalla stdlib (`re`): nessun import di runtime, nessun ciclo.
@@ -47,6 +49,16 @@ SENSITIVE_KEY_FRAGMENTS: frozenset = frozenset({
 # suffisso (superset dei suffissi storici dell'osservabilità).
 SENSITIVE_KEY_SUFFIXES: frozenset = SENSITIVE_KEYS_EXACT
 
+# Forme "collassate" (separatori rimossi) dei nomi esatti multi-parte. Catturano
+# le chiavi tutto-maiuscolo attaccate SENZA separatori (es. `APIKEY`,
+# `SESSIONTOKEN`, `BOTTOKEN`): il camelCase-split non le tocca (nessuna
+# transizione minuscola->maiuscola) e resterebbero un unico frammento, quindi
+# senza questo set trapelerebbero (fail-open). Solo i nomi multi-parte: i singoli
+# (`token`, `secret`, …) sono già coperti dal match esatto.
+SENSITIVE_KEYS_COLLAPSED: frozenset = frozenset(
+    k.replace("_", "") for k in SENSITIVE_KEYS_EXACT if "_" in k
+)
+
 _SPLIT = re.compile(r"[\s_.-]+")
 
 # Confine camelCase / PascalCase: separa `botToken` -> `bot_Token`,
@@ -73,7 +85,11 @@ def is_sensitive_key(key: str) -> bool:
     if norm in SENSITIVE_KEYS_EXACT:
         return True
     # dot-notation: suffisso dopo l'ultimo punto (es. "telegram.apiHash" -> "api_hash")
-    if norm.rsplit(".", 1)[-1] in SENSITIVE_KEY_SUFFIXES:
+    tail = norm.rsplit(".", 1)[-1]
+    if tail in SENSITIVE_KEY_SUFFIXES:
+        return True
+    # forma collassata: chiave tutto-maiuscolo attaccata (es. "APIKEY" -> "apikey")
+    if tail.replace("_", "") in SENSITIVE_KEYS_COLLAPSED:
         return True
     # combo: ≥2 frammenti sensibili in una chiave multi-parte
     parts = [p for p in _SPLIT.split(norm) if p]

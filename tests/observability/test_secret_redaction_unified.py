@@ -62,6 +62,20 @@ NON_SECRET_KEYS_CAMEL = [
     "marketId", "selectionId", "eventName", "runnerName", "apiVersion",
 ]
 
+# Segreti tutto-maiuscolo ATTACCATI (senza separatori): il camelCase-split non li
+# tocca (nessuna transizione minuscola->maiuscola); la forma collassata li cattura.
+# BLOCK: pre-fix restavano un unico frammento e trapelavano su entrambi i path.
+CRITICAL_SECRET_KEYS_UPPER = [
+    "APIKEY", "SESSIONTOKEN", "BOTTOKEN", "APPKEY", "ACCESSTOKEN",
+    "CLIENTSECRET", "REFRESHTOKEN", "PRIVATEKEY", "APISECRET", "SESSIONSTRING",
+]
+
+# Tutto-maiuscolo legittimo (non segreto): NON deve essere sovra-redatto dalla
+# forma collassata (es. `MARKETID` -> `marketid`, non nell'unione).
+NON_SECRET_KEYS_UPPER = [
+    "MARKETID", "SELECTIONID", "EVENTNAME", "STAKE", "PRICE",
+]
+
 
 def _redacted(sanitizer, key):
     out = sanitizer({key: _SENTINEL})
@@ -149,4 +163,31 @@ def test_camelcase_non_secret_not_redacted_both_paths(key):
     )
     assert sanitize_telegram_payload({key: _SENTINEL})[key] == _SENTINEL, (
         f"{key!r} (camelCase) sovra-redatto sul path Telegram"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+@pytest.mark.parametrize("key", CRITICAL_SECRET_KEYS_UPPER)
+def test_uppercase_secret_redacted_both_paths(key):
+    # BLOCK: pre-fix le chiavi tutto-maiuscolo attaccate restavano un unico
+    # frammento -> segreto in chiaro su entrambi i path.
+    assert _redacted(sanitize_telegram_payload, key), (
+        f"{key!r} (ALL-CAPS) trapela sul path Telegram"
+    )
+    assert _redacted(sanitize_value, key), (
+        f"{key!r} (ALL-CAPS) trapela sul path osservabilità"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.guardrail
+@pytest.mark.parametrize("key", NON_SECRET_KEYS_UPPER)
+def test_uppercase_non_secret_not_redacted_both_paths(key):
+    # La forma collassata non deve sovra-redigere chiavi legittime tutto-maiuscolo.
+    assert sanitize_value({key: _SENTINEL})[key] == _SENTINEL, (
+        f"{key!r} (ALL-CAPS) sovra-redatto sul path osservabilità"
+    )
+    assert sanitize_telegram_payload({key: _SENTINEL})[key] == _SENTINEL, (
+        f"{key!r} (ALL-CAPS) sovra-redatto sul path Telegram"
     )
