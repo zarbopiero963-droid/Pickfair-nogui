@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 import uuid
@@ -600,32 +601,51 @@ class OrderManager:
         # exhausted
         raise last_exc  # type: ignore[misc]
 
-    def _raw_place_bet(self, client, payload: Dict[str, Any]) -> Dict[str, Any]:
-        """Attempt broker call, with legacy-fallback."""
+    #: kwargs core SEMPRE accettati da qualunque place_bet (fallback minimo).
+    _PLACE_BET_CORE_KEYS = ("market_id", "selection_id", "side", "price", "size")
+
+    @staticmethod
+    def _filter_place_bet_kwargs(fn, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Solo i kwargs dichiarati dalla firma di ``fn`` (o tutti se ha **kwargs).
+
+        Come ``OrderRouter._filter_kwargs``: si adatta alla firma del broker senza
+        try/except sulla CHIAMATA — cosi' ``place_bet`` viene invocato ESATTAMENTE
+        una volta e un ``TypeError`` del suo CORPO (dopo l'invio HTTP) NON puo' mai
+        provocarne una seconda invocazione (doppia bet reale — #452).
+        """
         try:
-            return client.place_bet(
-                market_id=payload["market_id"],
-                selection_id=int(payload["selection_id"]),
-                side=payload["bet_type"],
-                price=float(payload["price"]),
-                size=float(payload["stake"]),
-                customer_ref=payload["customer_ref"],
-                event_key=payload.get("event_key", ""),
-                table_id=payload.get("table_id"),
-                batch_id=payload.get("batch_id", ""),
-                event_name=payload.get("event_name", ""),
-                market_name=payload.get("market_name", ""),
-                runner_name=payload.get("runner_name", ""),
-            )
-        except TypeError:
-            # legacy client that doesn't accept extra kwargs
-            return client.place_bet(
-                market_id=payload["market_id"],
-                selection_id=int(payload["selection_id"]),
-                side=payload["bet_type"],
-                price=float(payload["price"]),
-                size=float(payload["stake"]),
-            )
+            params = inspect.signature(fn).parameters
+        except (TypeError, ValueError):
+            # Firma non ispezionabile (builtin/C): solo i core garantiti.
+            return {k: kwargs[k] for k in OrderManager._PLACE_BET_CORE_KEYS}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return dict(kwargs)
+        return {k: v for k, v in kwargs.items() if k in params}
+
+    def _raw_place_bet(self, client, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Piazza sul broker chiamando ``place_bet`` ESATTAMENTE UNA VOLTA.
+
+        I kwargs sono filtrati per firma (come ``OrderRouter``): il client live
+        (``BetfairClient``) riceve i 5 core + ``customer_ref`` (#PR-C, propagato al
+        wire come ``customerRef``); il sim riceve anche gli audit-kwargs; un client
+        legacy solo-core riceve i 5 core. ``customer_ref`` via ``.get`` (mai
+        ``KeyError`` sul percorso denaro reale, #452). NIENTE retry-su-``TypeError``.
+        """
+        full_kwargs = {
+            "market_id": payload["market_id"],
+            "selection_id": int(payload["selection_id"]),
+            "side": payload["bet_type"],
+            "price": float(payload["price"]),
+            "size": float(payload["stake"]),
+            "customer_ref": payload.get("customer_ref", ""),
+            "event_key": payload.get("event_key", ""),
+            "table_id": payload.get("table_id"),
+            "batch_id": payload.get("batch_id", ""),
+            "event_name": payload.get("event_name", ""),
+            "market_name": payload.get("market_name", ""),
+            "runner_name": payload.get("runner_name", ""),
+        }
+        return client.place_bet(**self._filter_place_bet_kwargs(client.place_bet, full_kwargs))
 
     @staticmethod
     def _reason_from_exc(exc: Exception) -> str:

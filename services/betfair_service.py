@@ -834,6 +834,9 @@ class BetfairService:
                 side=payload.get("bet_type") or payload.get("side"),
                 price=payload.get("price"),
                 size=payload.get("stake") or payload.get("size"),
+                # #PR-C: propaga il customer_ref al wire (customerRef, de-dup
+                # Betfair). Il client lo valida/normalizza; assente => "" => omesso.
+                customer_ref=payload.get("customer_ref") or "",
             )
         except Exception as exc:
             err = str(exc)

@@ -1759,10 +1759,15 @@ class Database:
           scrive ``order_saga``): ``betId`` dal ``response_json``,
           ``market_id``/``event_name`` dal ``payload_json``.
 
-        È la **sorgente d'identità I1**: il ``customerOrderRef`` NON è inviato a
-        Betfair sul piazzamento, quindi il bot si riconosce dai propri ``bet_id``
-        registrati. Risultato **deduplicato** per ``bet_id`` (univoco su Betfair).
-        Solo righe con ``bet_id`` e ``market_id`` valorizzati. **Read-only.**
+        È la **sorgente d'identità I1** e continua a riconoscere il bot dai propri
+        ``bet_id`` registrati (**deduplicato** per ``bet_id``, univoco su Betfair).
+        NB (#PR-C): da PR-C ``place_bet`` invia il ``customerRef`` a Betfair (per
+        la de-dup a 60s lato Betfair contro la doppia-bet), quindi il
+        ``customerOrderRef`` NON è più sempre vuoto sul lato remoto — ma questa
+        sorgente I1 NON cambia: resta ancorata al ``bet_id``. Il match per
+        ``customerOrderRef`` vive nel ``reconciliation_engine`` (segnale
+        aggiuntivo), non qui. Solo righe con ``bet_id`` e ``market_id``
+        valorizzati. **Read-only.**
 
         La liveness effettiva è ri-verificata a valle dal ``CashoutRouter`` contro
         ``list_current_orders``: questa lista è l'allowlist di identità del bot

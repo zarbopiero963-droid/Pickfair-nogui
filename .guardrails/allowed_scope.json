@@ -4,6 +4,21 @@
     "max_files": 8
   },
   "tasks": {
+    "place_bet_customer_ref": {
+      "description": "PR-C (owner, 2026-08-27; go-live: customer_ref + fix place_bet idempotenza Betfair). Owner ha deciso via AskUserQuestion: (1) 'Sì, invia customerRef' (ribalta l'invariante documentato database.py:1762 che il customerOrderRef NON era inviato); (2) scope 'Solo customerRef' (customerStrategyRef ≤15 char greenfield => rimandato a follow-up dedicato). Fino a PR-C il customer_ref (uuid4().hex generato da OrderManager per la dedup DB) non raggiungeva mai il wire: placeOrders partiva senza customerRef, la doppia-bet su retry evitata solo da single_shot + reconciliation per bet_id. Ora: betfair_client.place_bet accetta customer_ref e inietta un top-level customerRef nella placeOrders SOLO se conforme ai vincoli Betfair (_normalize_customer_ref: regex ^[A-Za-z0-9-._+*:;~]{1,32}$, altrimenti OMESSO — fail-closed SUL REF non sull'ordine: mai mangled, mai rifiuto Betfair, mai ordine bloccato; ref assente/non conforme => payload byte-identico al legacy). single_shot RESTA True (posture retry invariata; con customerRef un eventuale retry a monte sarebbe deduplicato da Betfair 60s). Threading del customer_ref ai percorsi vivi: order_manager._raw_place_bet (fallback ora a 6 arg con customer_ref, + ulteriore fallback 5-arg per client davvero legacy, nessuna regressione compat); services/betfair_service.place_order (aggiunge customer_ref=payload.get('customer_ref')). order_router auto-forward via signature-filtering (nessuna modifica). simulation_broker già aveva il param (parity). Doc: database.py get_bot_active_orders docstring (I1 resta su bet_id, customerOrderRef non più sempre vuoto) + ops/roadmap_go_live.md (note supersede #PR-C). reconciliation_engine legge già customerOrderRef (match aggiuntivo, prima sempre vuoto): 275 test reconciliation/invariant/recovery/chaos verdi. Test PASS+BLOCK (tests/unit/test_place_bet_customer_ref.py): red-first (ref valido => customerRef sul wire; threading order_manager/betfair_service droppavano il ref pre-fix), guardie fail-closed (ref vuoto/>32/charset invalido/non-ASCII => omesso, payload legacy), charset boundary, single_shot invariato. PR safety-critical (order path denaro reale) => merge MANUALE owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "betfair_client.py",
+        "order_manager.py",
+        "services/betfair_service.py",
+        "database.py",
+        "ops/roadmap_go_live.md",
+        "tests/unit/test_place_bet_customer_ref.py",
+        "guardrails/public_api_snapshot.json"
+      ],
+      "max_files": 8
+    },
     "min_stake_single_source": {
       "description": "#320-D2 (owner, 2026-08-27; seconda meta' dello split di #320-D, dopo #320-D1 merged in #450): MIN_STAKE fonte unica. trading_config.MIN_STAKE (floor software dello stake, 0.10) deve essere la SOLA sorgente del minimo; il literal 0.10 era duplicato in tre punti che potevano divergere se MIN_STAKE cambiasse. Cablati a trading_config.MIN_STAKE: (1) core/system_state.RoserpinaConfig.min_stake default dataclass (import-time, + import trading_config che e' modulo-foglia senza import di core/services => nessun ciclo); (2) services/setting_service.load_roserpina_config default di load (call-time; setting_service gia' importava trading_config); (3) core/money_management._calculate fallback _safe_float(min_stake, ...) (call-time, + import trading_config). risk_gate/dutching/config_registry gia' sourcano correttamente (nessuna modifica); telegram_listener non usa min_stake (fuori scope). Nessun cambiamento di comportamento al valore corrente (MIN_STAKE==0.10==vecchio literal). Test PASS+BLOCK (tests/core/test_min_stake_single_source.py): red-first via monkeypatch di trading_config.MIN_STAKE sui due path runtime (load default => segue 0.25; fallback money management => con min_stake nan e target 1.0 il clamp alza a MIN_STAKE=2.0, OLD dava 1.0), guardia uguaglianza default dataclass<->sorgente, guardia valore reale 0.10 invariato. Docs: N/A user-facing (refactor interno, nessuna nuova chiave config ne' cambio comportamento; commenti inline ai tre siti). PR safety-critical (floor di stake, money) => merge MANUALE owner.",
       "allow_tests": true,
