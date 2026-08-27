@@ -120,6 +120,28 @@ def test_valid_customer_ref_charset_boundary():
     assert cap["params"]["customerRef"] == ref
 
 
+@pytest.mark.unit
+@pytest.mark.safety
+def test_customer_ref_is_request_level_not_per_instruction():
+    # PR-C invia il ref a **livello di richiesta** (`customerRef` top-level della
+    # placeOrders = de-dup 60s), NON come `customerOrderRef` **per-istruzione**
+    # (il campo che Betfair riporta sull'ordine in listCurrentOrders). I due campi
+    # Betfair sono distinti: il customerOrderRef resta NON inviato, quindi vuoto
+    # sugli ordini remoti (popolarlo è un follow-up dedicato). BLOCK: se qualcuno
+    # spostasse il ref dentro l'instruction come `customerOrderRef`, cambierebbe la
+    # semantica di de-dup e la docstring I1 (database.get_bot_active_orders)
+    # diventerebbe falsa senza che nessun test se ne accorga.
+    c = _client()
+    cap = _capture(c)
+    _place(c, customer_ref="a" * 32)
+    # top-level (chiave di de-dup della richiesta):
+    assert cap["params"]["customerRef"] == "a" * 32
+    # mai iniettato per-istruzione:
+    instr = cap["params"]["instructions"][0]
+    assert "customerOrderRef" not in instr
+    assert "customerRef" not in instr
+
+
 # ---------------------------------------------------------------------------
 # THREADING — il customer_ref raggiunge place_bet dai percorsi vivi
 # ---------------------------------------------------------------------------
