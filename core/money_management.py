@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import math
 from typing import Any, Dict, Optional
 
+import trading_config
 from core.system_state import DeskMode, RiskProfile, RoserpinaConfig
 from core.type_helpers import safe_float
 
@@ -351,7 +352,9 @@ class RoserpinaMoneyManagement:
             desk_mult = self._desk_mode_multiplier(desk_mode)
             recommended = base_stake * risk_mult * desk_mult
 
-        min_stake = self._safe_float(self.config.min_stake, 0.10)
+        # Fallback su trading_config.MIN_STAKE (fonte unica #320-D2), non su un
+        # literal duplicato: se il floor globale cambia, anche la difesa lo segue.
+        min_stake = self._safe_float(self.config.min_stake, trading_config.MIN_STAKE)
         max_single = self._max_single_stake_abs(bankroll_current)
         max_total = self._max_total_exposure_abs(bankroll_current)
         max_event = self._max_event_exposure_abs(bankroll_current)

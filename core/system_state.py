@@ -4,6 +4,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
 
+# `trading_config` e' un modulo-foglia (nessun import di core/services): safe da
+# importare qui. Fonte UNICA del floor di stake `MIN_STAKE` (#320-D2).
+import trading_config
+
 
 class RiskProfile(Enum):
     CONSERVATIVE = "CONSERVATIVE"
@@ -84,7 +88,7 @@ class RoserpinaConfig:
     anti_duplication_enabled: bool = True
 
     commission_pct: float = 4.5
-    min_stake: float = 0.10
+    min_stake: float = trading_config.MIN_STAKE  # fonte unica (#320-D2)
     max_stake_abs: float = 10000.0
 
     # Book % (over-round) thresholds — editabili da GUI, applicati come gate reale

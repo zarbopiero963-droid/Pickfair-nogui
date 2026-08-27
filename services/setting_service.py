@@ -255,7 +255,7 @@ class SettingsService:
             allow_recovery=self._b(data, "roserpina.allow_recovery", True),
             anti_duplication_enabled=self._b(data, "roserpina.anti_duplication_enabled", True),
             commission_pct=self._f(data, "roserpina.commission_pct", 4.5),
-            min_stake=self._f(data, "roserpina.min_stake", 0.10),
+            min_stake=self._f(data, "roserpina.min_stake", trading_config.MIN_STAKE),
             max_stake_abs=self._f(data, "roserpina.max_stake_abs", 10000.0),
             book_warning=self._f(data, "roserpina.book_warning", trading_config.BOOK_WARNING),
             book_block=self._f(data, "roserpina.book_block", trading_config.BOOK_BLOCK),
