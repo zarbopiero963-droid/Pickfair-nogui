@@ -209,3 +209,74 @@ def test_block_resta_un_reviewer_per_push_senza_label_gate() -> None:
         "aggiunto un gate a label: cosi' Sol smetterebbe di coprire i push "
         "intermedi e resterebbe solo Grok"
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — ogni messaggio di NON-review deve far scattare il guard del chiamante
+#
+# Rilievo di Claude Fable 5 sulla PR #463, ed era un bug REALE introdotto
+# mescolando i due file: il ramo `choices` vuoto viene da Fugu, il guard viene
+# dal file OpenAI — e quel guard non elenca "choices", perche' la Responses API
+# non ha quel campo. Risultato:
+#
+#   "Il modello non ha restituito choices."  ->  review_complete = True
+#
+# cioe' il done_marker veniva scritto, il range registrato come RECENSITO e i
+# re-run deduplicati: una non-review pubblicata come review completa. Lo stesso
+# falso verde che questa PR dichiara di voler togliere. (Fugu Ultra la voce ce
+# l'ha: il difetto e' nato nel trapianto, non era in nessuno dei due originali.)
+#
+# Il test non pinna la singola stringa mancante: estrae TUTTI i messaggi di
+# non-review che `call_model` puo' restituire e verifica che il guard li prenda
+# tutti. Cosi' copre anche il prossimo messaggio aggiunto e dimenticato.
+# ---------------------------------------------------------------------------
+import ast  # noqa: E402  (vicino al test che lo usa, per leggibilita')
+
+#: Un messaggio che comincia con uno di questi NON e' una review vera.
+_PREFISSI_NON_REVIEW = ("Il modello non ha restituito", "Output troncato")
+
+
+def _messaggi_di_non_review(albero: ast.Module) -> set[str]:
+    fn = next((n for n in ast.walk(albero)
+               if isinstance(n, ast.FunctionDef) and n.name == "call_model"), None)
+    assert fn is not None, "call_model non trovata nello script del workflow"
+    return {
+        n.value for n in ast.walk(fn)
+        if isinstance(n, ast.Constant) and isinstance(n.value, str)
+        and n.value.startswith(_PREFISSI_NON_REVIEW)
+    }
+
+
+def _prefissi_del_guard(albero: ast.Module) -> tuple[str, ...]:
+    for nodo in ast.walk(albero):
+        if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
+                and isinstance(nodo.targets[0], ast.Name)
+                and nodo.targets[0].id == "review_complete"):
+            # review_complete = not review.lstrip().startswith((...))
+            chiamata = next((n for n in ast.walk(nodo)
+                             if isinstance(n, ast.Call)
+                             and getattr(n.func, "attr", "") == "startswith"), None)
+            assert chiamata and chiamata.args, "guard startswith senza argomenti"
+            arg = chiamata.args[0]
+            elementi = arg.elts if isinstance(arg, (ast.Tuple, ast.List)) else [arg]
+            return tuple(e.value for e in elementi if isinstance(e, ast.Constant))
+    raise AssertionError(
+        "assegnazione `review_complete` non trovata: il guard che decide il "
+        "done_marker e' cambiato forma, questo test va aggiornato con esso"
+    )
+
+
+def test_block_ogni_non_review_fa_scattare_il_guard() -> None:
+    albero = ast.parse(_script_python())
+    guard = _prefissi_del_guard(albero)
+    messaggi = _messaggi_di_non_review(albero)
+    assert messaggi, "nessun messaggio di non-review trovato: regex o codice cambiati?"
+
+    sfuggiti = sorted(m for m in messaggi if not m.lstrip().startswith(guard))
+    assert not sfuggiti, (
+        f"questi messaggi di NON-review non fanno scattare il guard: {sfuggiti}.\n"
+        f"Prefissi riconosciuti: {list(guard)}.\n"
+        f"Conseguenza: review_complete=True, done_marker scritto, il range "
+        f"registrato come recensito e i re-run deduplicati — una non-review "
+        f"pubblicata come completa."
+    )

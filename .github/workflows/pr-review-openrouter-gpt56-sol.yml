@@ -807,6 +807,15 @@ jobs:
           review_complete = not review.lstrip().startswith((
               "Output troncato",
               "Il modello non ha restituito testo",
+              # chat/completions puo' rispondere con `choices` vuoto: e' un
+              # messaggio DIVERSO da "nessun testo" e va elencato a parte.
+              # Senza questa voce il guard non scatta, il done_marker viene
+              # scritto e una NON-review resta registrata come recensione
+              # completa — i re-run la deduplicano via (rilievo Fable 5 su
+              # #463). Il ramo `choices` arriva dal trasporto OpenRouter, il
+              # guard dal file OpenAI, dove `choices` non esiste: il difetto e'
+              # nato nel trapianto. Fugu Ultra questa voce ce l'ha gia'.
+              "Il modello non ha restituito choices",
               "## Review GPT-5.6 Sol non completata",
           ))
           done_line = done_marker if review_complete else ""
