@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import re
 import ssl
 import stat
 import threading
@@ -22,6 +23,15 @@ from circuit_breaker import CircuitBreaker
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
+
+#: Betfair `customerRef` (placeOrders): stringa client per de-dup di
+#: ri-sottomissioni entro una finestra di 60s. Vincoli API: <=32 caratteri,
+#: charset ALFANUMERICO + `- . _ + * : ; ~`. Un ref fuori da questo insieme
+#: viene RIFIUTATO da Betfair (l'intera placeOrders fallirebbe), quindi si
+#: valida al confine e, se non conforme, si OMETTE (mai inviare mangled).
+#: Usato con `fullmatch` (niente ancore `^`/`$`: `$` accetterebbe un newline
+#: finale — un ref con `\n` in coda passerebbe erroneamente).
+_CUSTOMER_REF_RE = re.compile(r"[A-Za-z0-9\-._+*:;~]{1,32}")
 
 #: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
 #: in un percorso non standard, e ai test.
@@ -1537,6 +1547,21 @@ class BetfairClient:
     # =========================================================
     # ORDERS
     # =========================================================
+    @staticmethod
+    def _normalize_customer_ref(customer_ref: Any) -> str:
+        """Ref Betfair-valido da inviare come `customerRef`, o "" se non conforme.
+
+        Fail-closed SUL REF (mai sull'ordine): un `customer_ref` non conforme ai
+        vincoli Betfair (<=32, charset `[A-Za-z0-9-._+*:;~]`) viene OMESSO — mai
+        troncato/ripulito (eviterebbe un falso-dedup) e mai inviato grezzo
+        (Betfair rifiuterebbe l'INTERA placeOrders). Il percorso ordini reale usa
+        `uuid4().hex` (32 hex) che passa invariato; i ref liberi da altri percorsi
+        (es. cashout `source`) degradano in sicurezza al comportamento legacy
+        (nessun customerRef) senza bloccare il piazzamento.
+        """
+        ref = str(customer_ref or "")
+        return ref if _CUSTOMER_REF_RE.fullmatch(ref) else ""
+
     def place_bet(
         self,
         *,
@@ -1545,6 +1570,7 @@ class BetfairClient:
         side: Any,
         price: Any,
         size: Any,
+        customer_ref: Any = "",
     ) -> Dict[str, Any]:
         market_id_s = str(market_id or "").strip()
         if not market_id_s:
@@ -1571,27 +1597,36 @@ class BetfairClient:
         if size_f <= 0.0:
             raise RuntimeError("INVALID_SIZE")
 
+        params: Dict[str, Any] = {
+            "marketId": market_id_s,
+            "instructions": [{
+                "selectionId": selection_id_i,
+                "side": self._safe_side(side),
+                "orderType": "LIMIT",
+                "limitOrder": {
+                    "size": size_f,
+                    "price": price_f,
+                    "persistenceType": "LAPSE",
+                },
+            }],
+        }
+        # customerRef (#PR-C): chiave di de-dup lato Betfair (finestra 60s). Se il
+        # ref e' conforme lo inviamo => una ri-sottomissione con lo stesso ref
+        # NON piazza una seconda bet reale. Se non conforme/assente, la chiave e'
+        # OMESSA e il payload resta identico al legacy (nessun customerRef).
+        ref = self._normalize_customer_ref(customer_ref)
+        if ref:
+            params["customerRef"] = ref
+
         try:
             result = self._post_jsonrpc(
                 self.BETTING_URL,
                 "SportsAPING/v1.0/placeOrders",
-                {
-                    "marketId": market_id_s,
-                    "instructions": [{
-                        "selectionId": selection_id_i,
-                        "side": self._safe_side(side),
-                        "orderType": "LIMIT",
-                        "limitOrder": {
-                            "size": size_f,
-                            "price": price_f,
-                            "persistenceType": "LAPSE",
-                        },
-                    }],
-                },
-                # placeOrders non e' idempotente e non ha customerRef: un retry
-                # dopo timeout/reset puo' piazzare una SECONDA bet reale (la
-                # prima puo' essere passata). Esito incerto => order_unknown
-                # sotto, risolve la reconciliation. Mai re-inviare.
+                params,
+                # placeOrders resta single_shot: un timeout NON prova che l'ordine
+                # non sia passato. Con customerRef presente, un eventuale retry a
+                # monte verrebbe deduplicato da Betfair (60s); senza, l'esito
+                # incerto => order_unknown sotto, risolve la reconciliation.
                 single_shot=True,
             )
 
@@ -1599,7 +1634,11 @@ class BetfairClient:
             reports = result.get("instructionReports") or []
 
             if status != "SUCCESS":
-                raise RuntimeError(f"BET_FAILED: {status}")
+                # errorCode nel testo => la classificazione order_unknown sotto puo'
+                # riconoscere DUPLICATE_TRANSACTION (dedup customerRef, #PR-C/#452):
+                # la prima bet e' VIVA, non e' un fallimento definitivo.
+                error_code = str(result.get("errorCode") or "").strip()
+                raise RuntimeError(f"BET_FAILED: {status} {error_code}".strip())
 
             if not reports:
                 raise RuntimeError("BET_NO_REPORT")
@@ -1620,12 +1659,18 @@ class BetfairClient:
                 "ok": False,
                 "error": error_text,
                 "classification": self._classify_error(error_text),
-                # TIMEOUT/NETWORK_ERROR/HTTP_5xx: la richiesta puo' aver
-                # raggiunto Betfair anche se la risposta e' andata persa =>
-                # esito SCONOSCIUTO (reconciliation), non fallimento definitivo.
+                # Esito SCONOSCIUTO (=> reconciliation, non fallimento definitivo):
+                # - TIMEOUT/NETWORK_ERROR/HTTP_5xx: la richiesta puo' aver raggiunto
+                #   Betfair anche se la risposta e' andata persa;
+                # - DUPLICATE_TRANSACTION: Betfair ha deduplicato un customerRef gia'
+                #   visto (60s) => la PRIMA bet e' VIVA. Marcarla FAILED sarebbe un
+                #   falso-negativo su una bet reale: la reconciliation la ritrova.
                 "order_unknown": any(
                     marker in error_upper
-                    for marker in ("TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR")
+                    for marker in (
+                        "TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR",
+                        "DUPLICATE_TRANSACTION",
+                    )
                 ),
             }
 

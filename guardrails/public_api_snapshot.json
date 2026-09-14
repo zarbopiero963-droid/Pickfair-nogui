@@ -237,7 +237,8 @@
             "selection_id",
             "side",
             "price",
-            "size"
+            "size",
+            "customer_ref"
           ],
           "status": []
         }
