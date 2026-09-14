@@ -2120,13 +2120,6 @@ def build_retry_push_gate_context(context: dict[str, Any] | None = None) -> dict
     return retry_gate
 
 
-def canary_timestamp_utc() -> str:
-    """Build a UTC timestamp for canary branch names."""
-    now = dt.datetime.now(dt.UTC)
-    return (
-        f"{now.year:04d}{now.month:02d}{now.day:02d}"
-        f"-{now.hour:02d}{now.minute:02d}{now.second:02d}"
-    )
 
 
 def push_with_retry_once(
@@ -2165,77 +2158,6 @@ def push_with_retry_once(
 
 
 
-def cmd_canary(args: argparse.Namespace) -> int:
-    gate_context: dict[str, Any] | None = None
-    raw_context = str(getattr(args, "post_fix_gate_context", "") or "").strip()
-    if raw_context:
-        parsed = json.loads(raw_context)
-        if not isinstance(parsed, dict):
-            raise RuntimeError("invalid --post-fix-gate-context: expected json object")
-        gate_context = parsed
-
-    ts = canary_timestamp_utc()
-    branch = f"test/safe-autofix-canary-{ts}"
-    filename = ".safe-autofix-auto-trigger-test.md"
-
-    if args.mode == "cleanup":
-        prs = gh_json([
-            "gh", "pr", "list", "--repo", args.repo,
-            "--state", "open",
-            "--search", "safe autofix canary in:title",
-            "--json", "number,headRefName,title",
-        ])
-        closed = []
-        for pr in prs:
-            number = str(pr["number"])
-            sh(["gh", "pr", "close", number, "--repo", args.repo, "--delete-branch"], check=False)
-            closed.append(number)
-        result = {"action": "cleanup", "closed": closed}
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 0
-
-    if not isinstance(gate_context, dict):
-        raise RuntimeError("missing required --post-fix-gate-context for canary create")
-    gate = ensure_post_fix_audit_gate_before_push(gate_context)
-    if not gate["allowed"]:
-        raise RuntimeError(f"post-fix audit gate denied before canary mutation: {gate['reason']}")
-
-    sh(["git", "fetch", "origin", "main"])
-    sh(["git", "checkout", "-B", branch, "origin/main"])
-    Path(filename).write_text(
-        "# TASK: safe-autofix-auto-trigger-test\n"
-        f"safe autofix canary {ts}\n",
-        encoding="utf-8",
-    )
-    sh(["git", "add", filename])
-    sh(["git", "commit", "-m", "test: safe autofix canary"])
-    push_status = push_with_retry_once(sh, args.repo, branch, context=gate_context)
-    if not push_status["ok"]:
-        raise RuntimeError(f"cannot push canary branch: {push_status.get('error', 'unknown error')}")
-
-    title = f"test: safe autofix canary {ts}"
-    body = (
-        "Temporary canary PR for the automatic PR flow.\n\n"
-        "NOTE: the original trigger of this canary was a controlled Codacy\n"
-        "markdownlint finding. Codacy is DECOMMISSIONED, so that step can no\n"
-        "longer happen and this canary no longer exercises the analyzer ->\n"
-        "safe-autofix path it was built for (raised by Codex on #462).\n"
-        "What it still exercises: post-fix audit gate, branch push, PR open.\n"
-        "Retargeting it to an active analyzer, or retiring it, is an owner\n"
-        "decision and is NOT done here.\n\n"
-        "Expected path:\n"
-        "1. Safe autofix collects context.\n"
-        "2. Codex fixes only allowed files.\n"
-        "3. Merge readiness becomes clean.\n"
-        "4. This PR can be closed after validation.\n"
-    )
-    url = sh([
-        "gh", "pr", "create", "--repo", args.repo,
-        "--base", "main", "--head", branch,
-        "--title", title, "--body", body,
-    ])
-    print(json.dumps({"action": "created", "branch": branch, "url": url}, indent=2, sort_keys=True))
-    return 0
 
 
 def main() -> int:
@@ -2278,12 +2200,6 @@ def main() -> int:
     p.add_argument("--comment", action="store_true")
     p.add_argument("--no-fail", action="store_true")
     p.set_defaults(func=cmd_report)
-
-    p = sub.add_parser("canary")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--mode", choices=["create", "cleanup"], default="create")
-    p.add_argument("--post-fix-gate-context", default="")
-    p.set_defaults(func=cmd_canary)
 
     args = parser.parse_args()
     return args.func(args)

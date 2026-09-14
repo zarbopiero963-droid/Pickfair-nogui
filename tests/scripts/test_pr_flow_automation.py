@@ -552,98 +552,16 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
     ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
 
 
-def test_cmd_canary_requires_explicit_pr3h_gate_context(monkeypatch):
-    """Canary create must fail-closed without explicit invocation context."""
-    calls: list[list[str]] = []
-
-    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
-        ASSERTIONS.assertTrue(check)
-        calls.append(list(cmd))
-        return ""
-
-    monkeypatch.setattr(flow, "sh", _fake_sh)
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "missing required --post-fix-gate-context"):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=""))
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_cmd_canary_cleanup_does_not_require_create_gate_context(monkeypatch):
-    """Canary cleanup mode should run without requiring create-mode gate context."""
-    calls: list[list[str]] = []
-
-    monkeypatch.setattr(
-        flow,
-        "gh_json",
-        lambda _cmd: [{"number": 1, "headRefName": "test/safe-autofix-canary-1", "title": "safe autofix canary"}],
-    )
-
-    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
-        calls.append(list(cmd))
-        ASSERTIONS.assertFalse(check)
-        return ""
-
-    monkeypatch.setattr(flow, "sh", _fake_sh)
-    result = flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="cleanup", post_fix_gate_context=""))
-
-    ASSERTIONS.assertEqual(result, 0)
-    ASSERTIONS.assertEqual(
-        calls,
-        [["gh", "pr", "close", "1", "--repo", "owner/repo", "--delete-branch"]],
-    )
 
 
-def test_cmd_canary_passes_explicit_pr3h_gate_context_to_push_with_retry_once(monkeypatch):
-    """Canary create path must pass provided explicit context to guarded push helper."""
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    explicit_ctx = json.dumps(_full_pr3h_push_gate_context())
-    monkeypatch.setattr(
-        flow,
-        "push_with_retry_once",
-        lambda _run, _repo, _branch, *, remote="origin", context=None: (
-            captured.update({"remote": remote, "context": context}) or {"ok": False, "error": "stop"}
-        ),
-    )
-    with ASSERTIONS.assertRaises(RuntimeError):
-        flow.cmd_canary(
-            argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=explicit_ctx)
-        )
-    ASSERTIONS.assertEqual(captured["remote"], "origin")
-    ASSERTIONS.assertEqual(captured["context"], _full_pr3h_push_gate_context())
 
 
-def test_cmd_canary_create_denied_gate_aborts_before_mutation(monkeypatch):
-    """Canary create must abort before fetch/checkout/write when gate denies."""
-    calls: list[list[str]] = []
-    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    denied_ctx = json.dumps({"post_fix_audit": "FAIL"})
-
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "post-fix audit gate denied before canary mutation"):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=denied_ctx))
-
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_cmd_canary_create_malformed_gate_context_aborts_before_mutation(monkeypatch):
-    """Canary create must fail on malformed context before any mutation command."""
-    calls: list[list[str]] = []
-    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-
-    with ASSERTIONS.assertRaises(json.JSONDecodeError):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context="{"))
-
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_canary_timestamp_utc_shape_is_branch_safe_without_strftime() -> None:
-    """Canary timestamp format should stay branch-safe and avoid strftime."""
-    value = flow.canary_timestamp_utc()
-    ASSERTIONS.assertRegex(value, r"^\d{8}-\d{6}$")
-    ASSERTIONS.assertNotIn("strftime", inspect.getsource(flow.canary_timestamp_utc))
 
 
 def _automation_controller_args() -> argparse.Namespace:
@@ -2380,4 +2298,38 @@ def _required_telegram_summary_keys() -> tuple[str, ...]:
         "head_sha",
         "active_unresolved_review_count",
         "next_action",
+    )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — la canary del safe-autofix e' RITIRATA, e non deve tornare.
+#
+# Il workflow `pr-safe-autofix-canary.yml` era gia' stato ritirato il
+# 2026-08-20 insieme ad altri 15 (vedi tests/guardrails/test_automazioni_
+# ritirate.py). Era sopravvissuto solo il sottocomando CLI `canary`, perche'
+# vive in uno script e non in un file workflow, quindi quel guardrail — che
+# guarda .github/workflows/ — non lo vedeva.
+#
+# Non e' codice morto innocuo. Lanciato oggi apriva una PR che diventa VERDE
+# SUBITO, perche' cio' che doveva svegliare (`pr-autofix-safe-supervisor`) e'
+# in quarantena dall'audit di sicurezza del 2026-07-11 e `CI Quarantine Guard`
+# ne impedisce il ritorno. Il risultato sarebbe un falso "pipeline sana": il
+# tipo di falso verde peggiore, perche' arriva da uno strumento diagnostico.
+#
+# Se un domani il safe-autofix viene riattivato (PR dedicata, alle condizioni
+# del README della quarantena), la canary va RIPROGETTATA insieme al suo
+# trigger — non ripristinata com'era.
+# ---------------------------------------------------------------------------
+def test_block_la_canary_ritirata_non_deve_tornare() -> None:
+    for attr in ("cmd_canary", "canary_timestamp_utc"):
+        ASSERTIONS.assertFalse(
+            hasattr(flow, attr),
+            f"flow.{attr} e' tornato: la canary del safe-autofix e' ritirata. "
+            f"Cio' che doveva svegliare e' in quarantena, quindi una canary "
+            f"reintrodotta cosi' com'era produce solo un falso verde.",
+        )
+    source = inspect.getsource(flow)
+    ASSERTIONS.assertNotIn(
+        'add_parser("canary")', source,
+        "il sottocomando CLI `canary` e' tornato nel parser",
     )
