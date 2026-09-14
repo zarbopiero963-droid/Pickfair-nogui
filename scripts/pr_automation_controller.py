@@ -1473,8 +1473,21 @@ def is_failure(check: dict[str, Any]) -> bool:
     return check_state(check) in FAIL_STATES
 
 
+#: Nome ESATTO del check pubblicato dalla GitHub App di Codacy, dismessa.
+#: FONTE UNICA: `pr_flow_automation` importa questa costante, cosi' i due
+#: percorsi decisionali (gate CI e controller) non possono divergere — al giro
+#: 3 avevo stretto solo quello del flow e qui era rimasto il match largo.
+#: NON per sottostringa e NON sull'URL: bastava la stringa "codacy" nel nome o
+#: in un link per far sparire dai blockers un check REALE fallito — fail-open
+#: sul gate di merge (rilievo convergente di Fugu Ultra, Fable 5 e Codex).
+DECOMMISSIONED_CODACY_CHECK_NAMES = frozenset({
+    "codacy static code analysis",
+})
+
+
 def is_codacy_check(check: dict[str, Any]) -> bool:
-    return "codacy" in f"{name_of(check)} {url_of(check)}".lower()
+    """True solo per il check ESATTO della GitHub App Codacy dismessa."""
+    return str(name_of(check) or "").strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
 def extract_run_id(url: str) -> str:
@@ -5764,7 +5777,9 @@ def codacy_evidence_for_checks(
         "checks": codacy_checks,
         "issues": [],
         "issues_returned": 0,
-        "api_ok": True,
+        # NIENTE `api_ok`: l'API Codacy non esiste piu'. Dichiarare api_ok=True
+        # sarebbe evidenza FABBRICATA — un consumer a valle potrebbe leggerlo
+        # come "verificato" (rilievo Claude Fable 5).
         "reason": "codacy_decommissioned",
     }
 
@@ -7173,10 +7188,10 @@ def triage_review_thread_contract(
                 decision = "EVIDENCE_RESOLVE"
                 reason = resolve_reason
                 next_action = "resolve_with_evidence"
-                if provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
-                    decision = "NEEDS_MANUAL"
-                    reason = "missing_or_blocking_codacy_evidence"
-                    next_action = "needs_manual"
+                # Codacy DISMESSO: qui un thread gia' dimostrato risolto veniva
+                # comunque riportato a NEEDS_MANUAL in mancanza di un verdetto
+                # Codacy verde, che non puo' piu' esistere => i thread Codacy
+                # storici non erano piu' risolvibili con evidenza (Codex).
             elif resolve_reason in {
                 "missing_current_head_sha",
                 "missing_evidence_head_sha",
@@ -8029,9 +8044,7 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
         return False
     if _has_blocking_checks(evidence) or not _review_evidence_checks_green(evidence, str(triage.get("claimed_issue") or "")):
         return False
-    if provider == "codacy-production" or evidence.get("codacy_relevant"):
-        if not _codacy_review_evidence_green(evidence):
-            return False
+    # Codacy DISMESSO: vedi la nota in triage_review_thread_contract.
     return not _review_resolution_evidence_blockers(thread, evidence, triage)
 
 
@@ -9410,15 +9423,14 @@ def _decision_is_merge_clean(decision: dict[str, Any]) -> bool:
     return mergeable and merge_state
 
 
-def _decision_has_clean_codacy(decision: dict[str, Any]) -> bool:
-    return str(decision.get("codacy_classification") or "") in {"none", "stale_github_check"}
-
-
 def should_run_final_micro_audit(decision: dict[str, Any], state: dict[str, Any]) -> bool:
     return (
+        # Codacy DISMESSO: il gate su `codacy_classification` accettava solo
+        # {"none", "stale_github_check"}, ma il controller scrive ora
+        # "decommissioned" => il micro-audit finale OBBLIGATORIO non veniva mai
+        # schedulato (rilievo Codex). Rimosso: le condizioni reali restano.
         _decision_has_no_pending_or_bad(decision)
         and _decision_is_merge_clean(decision)
-        and _decision_has_clean_codacy(decision)
         and _active_micro_audit_exists(state)
     )
 

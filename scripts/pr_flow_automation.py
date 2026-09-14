@@ -114,16 +114,18 @@ def is_self_check(check: dict[str, Any]) -> bool:
 
 
 #: Nome ESATTO del check pubblicato dalla GitHub App di Codacy, dismessa.
+#: FONTE UNICA nel controller: i due percorsi decisionali (questo gate CI e
+#: `pr_automation_controller`) devono usare la STESSA identita', altrimenti
+#: divergono — ed e' esattamente quello che era successo: stretto qui al giro
+#: 3, lasciato largo nel controller fino al giro 4.
 #: Deliberatamente un match esatto e non una sottostringa "codacy": un
 #: predicato per sottostringa e' un vettore FAIL-OPEN sul gate di merge —
 #: qualunque check futuro col nome che contiene "codacy" (una guardia sulla
 #: dismissione, un workflow rinominato) sparirebbe dai blockers anche da
-#: FAILURE. Rilievo convergente di Codex e Claude Fable 5 su #462.
+#: FAILURE. Rilievo convergente di Fugu Ultra, Claude Fable 5 e Codex su #462.
 #: Un check Codacy con un nome diverso da questi NON e' esente: bloccherebbe,
 #: che e' la direzione sicura (fail-closed).
-DECOMMISSIONED_CODACY_CHECK_NAMES = frozenset({
-    "codacy static code analysis",
-})
+DECOMMISSIONED_CODACY_CHECK_NAMES = controller.DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
 def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:

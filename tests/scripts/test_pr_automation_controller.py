@@ -5457,17 +5457,6 @@ def test_passive_review_plan_malformed_check_counts_fail_closed_before_evidence_
     )
 
 
-def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed():
-    action_required = _single_review_plan(
-        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
-        codacy_state="action_required",
-    )
-    annotated = _single_review_plan(
-        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
-        codacy_annotations_count=2,
-    )
-    ASSERTIONS.assertEqual(action_required["items"][0]["decision"], "NEEDS_MANUAL")
-    ASSERTIONS.assertEqual(annotated["items"][0]["decision"], "NEEDS_MANUAL")
 
 
 def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
@@ -5486,14 +5475,12 @@ def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
             ),
             {"codacy_state": "action_required"},
         ),
-        (
-            _passive_review_thread(
-                "stale Codacy annotation",
-                author="codacy-production[bot]",
-                tests_covering_behavior=covered_tests,
-            ),
-            {"codacy_state": "", "codacy_annotations_count": -1},
-        ),
+        # Caso rimosso: {"codacy_state": "", "codacy_annotations_count": -1}.
+        # Con Codacy DISMESSO un thread storico scritto dal bot Codacy non puo'
+        # piu' esibire un verdetto Codacy verde, quindi pretenderlo lo rendeva
+        # IRRISOLVIBILE per sempre (rilievo Codex su #462). I quattro gate
+        # reali qui sopra — validation, evidence head, pending, failing —
+        # restano invariati e continuano a bloccare.
     )
 
     for thread, extra in cases:
@@ -7893,52 +7880,8 @@ def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
 
 
-def test_review_codacy_aliases_require_codacy_specific_green_evidence_for_triage():
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "tests": ["pytest"],
-    }
-    for author in ("codacy", "codacy[bot]", "codacy-production", "codacy-production[bot]"):
-        thread = _review_thread(author=author, body="already fixed stale")
-        triage = controller.triage_review_thread_contract(thread, evidence)
-        ASSERTIONS.assertEqual(triage["provider"], "codacy-production")
-        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
-        ASSERTIONS.assertEqual(triage["reason"], "missing_or_blocking_codacy_evidence")
-        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_alias_action_required_or_annotations_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    base = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "tests": ["pytest"],
-    }
-    action_required = dict(base) | {"codacy_conclusion": "action_required", "annotations_count": 0}
-    annotations = dict(base) | {"codacy_conclusion": "success", "annotations_count": 1}
-    ASSERTIONS.assertNotEqual(
-        controller.triage_review_thread_contract(thread, action_required)["decision"], "EVIDENCE_RESOLVE"
-    )
-    ASSERTIONS.assertNotEqual(
-        controller.triage_review_thread_contract(thread, annotations)["decision"], "EVIDENCE_RESOLVE"
-    )
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, action_required))
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, annotations))
 
 
 def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
@@ -7980,42 +7923,8 @@ def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_reso
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_nested_codacy_annotations_count_nonzero_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 2},
-        "tests": ["pytest"],
-    }
-    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_nested_codacy_annotations_count_malformed_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": "n/a"},
-        "tests": ["pytest"],
-    }
-    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
 def test_deepsource_complexity_with_green_evidence_is_not_patch_required():

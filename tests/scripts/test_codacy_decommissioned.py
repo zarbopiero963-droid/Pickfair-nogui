@@ -387,3 +387,113 @@ def test_passive_rerun_still_blocks_on_real_conditions():
         assert expected in blockers, (
             f"{key}={value!r}: atteso blocker {expected}, ottenuti {blockers}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Giro 4 — le review full-range hanno trovato lo STESSO difetto specchiato:
+# al giro 3 ho stretto il matcher in `pr_flow_automation`, ma quello del
+# CONTROLLER (`is_codacy_check`) era rimasto per SOTTOSTRINGA su nome + url.
+# Il controller e' un percorso decisionale separato: stesso fail-open, altro
+# ingresso. Rilievo convergente di Fugu Ultra, Claude Fable 5 e Codex.
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.parametrize("name", [
+    "codacy-decommission-guard",
+    "verify no codacy references",
+    "my-codacy-migration-check",
+])
+def test_controller_matcher_is_exact_too(name):
+    check = {"name": name, "conclusion": "FAILURE", "status": "COMPLETED"}
+    assert controller.is_codacy_check(check) is False, (
+        f"{name!r} classificato come check Codacy dismesso: fail-open nel controller"
+    )
+    kept = [c["name"] for c in controller.filter_ignored_codacy_checks([check], {})]
+    assert name in kept, f"{name!r} rimosso dai blockers dal filtro del controller"
+
+
+@pytest.mark.unit
+def test_controller_matcher_still_exempts_the_retired_check():
+    check = {"name": "Codacy Static Code Analysis", "conclusion": "ACTION_REQUIRED",
+             "status": "COMPLETED"}
+    assert controller.is_codacy_check(check) is True
+    assert controller.filter_ignored_codacy_checks([check], {}) == []
+
+
+@pytest.mark.unit
+def test_controller_matcher_does_not_trust_the_url():
+    """Un check con URL codacy ma nome diverso NON e' il check dismesso.
+
+    Prima bastava la stringa "codacy" nell'URL per far sparire un check dai
+    blockers: un link in una descrizione era sufficiente.
+    """
+    check = {"name": "security-scan", "conclusion": "FAILURE", "status": "COMPLETED",
+             "detailsUrl": "https://app.codacy.com/gh/owner/repo/pull-requests/1"}
+    assert controller.is_codacy_check(check) is False
+    assert [c["name"] for c in controller.filter_ignored_codacy_checks([check], {})] == ["security-scan"]
+
+
+# --- Fable: `api_ok: True` e' evidenza FABBRICATA per un'API inesistente ----
+@pytest.mark.unit
+def test_decommissioned_evidence_does_not_claim_a_working_api():
+    ev = controller.codacy_evidence_for_checks("repo", 1, [])
+    assert ev.get("api_ok") is not True, (
+        "lo stub dichiara api_ok=True per un'API che non esiste piu': "
+        "evidenza fabbricata"
+    )
+
+
+# --- Codex: il micro-audit finale OBBLIGATORIO non veniva piu' schedulato ---
+@pytest.mark.unit
+def test_final_micro_audit_is_still_scheduled_after_decommission(tmp_path):
+    audit = tmp_path / "audit.md"
+    audit.write_text("micro-audit", encoding="utf-8")
+    decision = {
+        "pending": [], "bad": [], "blockers": [],
+        "mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE",
+        "codacy_classification": "decommissioned",   # <- cio' che scrive oggi il controller
+    }
+    state = {"active_final_micro_audit_path": str(audit)}
+    assert controller.should_run_final_micro_audit(decision, state) is True, (
+        "il micro-audit finale obbligatorio non viene piu' schedulato: "
+        "la classificazione 'decommissioned' non era accettata"
+    )
+
+
+@pytest.mark.unit
+def test_final_micro_audit_still_requires_its_real_conditions(tmp_path):
+    """BLOCK: togliere il gate Codacy non deve schedularlo a vuoto."""
+    audit = tmp_path / "audit.md"
+    audit.write_text("micro-audit", encoding="utf-8")
+    base = {
+        "pending": [], "bad": [], "blockers": [],
+        "mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE",
+        "codacy_classification": "decommissioned",
+    }
+    state = {"active_final_micro_audit_path": str(audit)}
+    for key, value in (("pending", [{"name": "x"}]), ("bad", [{"name": "x"}]),
+                       ("mergeStateStatus", "DIRTY")):
+        broken = dict(base); broken[key] = value
+        assert controller.should_run_final_micro_audit(broken, state) is False, (
+            f"{key}={value!r} non impedisce piu' la schedulazione"
+        )
+    # file di audit assente => niente schedulazione
+    assert controller.should_run_final_micro_audit(base, {"active_final_micro_audit_path": ""}) is False
+
+
+@pytest.mark.unit
+def test_the_two_decision_paths_share_one_identity():
+    """I due percorsi NON possono divergere: e' la causa radice del giro 4.
+
+    Al giro 3 avevo stretto il matcher del gate CI (`pr_flow_automation`) e
+    lasciato largo quello del controller: stesso fail-open, altro ingresso.
+    Ora l'allowlist e' UNA SOLA, e questo test fallisce se qualcuno la duplica.
+    """
+    assert flow.DECOMMISSIONED_CODACY_CHECK_NAMES is controller.DECOMMISSIONED_CODACY_CHECK_NAMES
+
+    # e i due predicati devono dare lo STESSO verdetto sugli stessi check
+    for name in ("Codacy Static Code Analysis", "codacy-decommission-guard",
+                 "verify no codacy references", "unit"):
+        check = {"name": name, "conclusion": "FAILURE", "status": "COMPLETED"}
+        assert flow.is_decommissioned_codacy_check(check) == controller.is_codacy_check(check), (
+            f"i due percorsi divergono su {name!r}"
+        )

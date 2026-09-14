@@ -15,13 +15,31 @@
 > qualunque sia il suo stato. Non si aspetta, non si classifica, non si patcha
 > per lui.
 >
-> **L'esenzione è per NOME ESATTO**, non per sottostringa: solo i nomi in
-> `DECOMMISSIONED_CODACY_CHECK_NAMES` (oggi `codacy static code analysis`).
-> Un predicato "il nome contiene codacy" sarebbe un vettore **fail-open** sul
-> gate di merge — una guardia sulla dismissione, o un workflow rinominato,
-> sparirebbe dai blockers anche da FAILURE (rilievo convergente di Codex e
-> Claude Fable 5 su #462). Un check Codacy con un nome diverso NON è esente:
-> blocca, che è la direzione sicura.
+> **L'esenzione è per NOME ESATTO**, non per sottostringa e **mai sull'URL**:
+> solo i nomi in `DECOMMISSIONED_CODACY_CHECK_NAMES` (oggi
+> `codacy static code analysis`). Un predicato "il nome o l'URL contiene
+> codacy" è un vettore **fail-open** sul gate di merge — una guardia sulla
+> dismissione, un workflow rinominato, o un check con un semplice link a
+> codacy.com sparirebbe dai blockers anche da FAILURE (rilievo convergente di
+> Fugu Ultra, Claude Fable 5 e Codex su #462). Un check con un nome diverso NON
+> è esente: blocca, che è la direzione sicura.
+>
+> **Una sola identità per due percorsi.** `pr_flow_automation`
+> (`is_decommissioned_codacy_check`, usato dal gate CI) e
+> `pr_automation_controller` (`is_codacy_check`, usato dalle decisioni del
+> controller) condividono la **stessa** costante: il flow la importa dal
+> controller. Non è pignoleria: al primo giro era stato stretto solo il
+> predicato del flow e quello del controller era rimasto largo — stesso
+> fail-open, altro ingresso. Un test pinna che i due siano lo stesso oggetto e
+> diano lo stesso verdetto.
+>
+> **Nessun gate pretende più evidenza Codacy**, perché non può più esistere e
+> pretenderla significa bloccare per sempre: né il micro-audit finale
+> obbligatorio (`should_run_final_micro_audit` non guarda più
+> `codacy_classification`), né la risoluzione con evidenza dei thread Codacy
+> storici (`triage_review_thread_contract` / `should_resolve_review_thread`).
+> L'evidenza decommissionata **non dichiara** `api_ok`: affermare che un'API
+> inesistente ha risposto bene sarebbe evidenza fabbricata.
 >
 > Di conseguenza **nessun gate pretende più evidenza da Codacy**: né la catena
 > "DeepSource advisory", né `can_auto_merge`, né `_report_ready_to_merge`.
