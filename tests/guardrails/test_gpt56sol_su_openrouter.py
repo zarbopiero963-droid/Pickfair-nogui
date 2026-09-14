@@ -26,11 +26,11 @@ Il test guarda il codice REALE del workflow, non una copia.
 """
 from __future__ import annotations
 
+import re
 import textwrap
 from pathlib import Path
 
 import pytest
-import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -78,6 +78,51 @@ def _senza_commenti(testo: str) -> str:
 # ---------------------------------------------------------------------------
 # BLOCK — il workflow OpenAI e' ritirato e non deve tornare
 # ---------------------------------------------------------------------------
+def _env() -> dict[str, str]:
+    """Il blocco `env:` del job, letto dal file SENZA PyYAML.
+
+    PyYAML non e' installato nel job CI `tests`: importarlo in testa non fa
+    fallire questo test, fa fallire la RACCOLTA e pytest interrompe l'intero
+    job. E' la convenzione gia' usata da `_env()` in test_ai_review_effort.py,
+    ed e' vincolata da tests/guardrails/test_raccolta_test_senza_pyyaml.py.
+    Le chiavi del job-env stanno a sei spazi: `      CHIAVE: valore`.
+    """
+    voci: dict[str, str] = {}
+    for riga in _testo().splitlines():
+        m = re.match(r"^      ([A-Z][A-Z0-9_]*): +(.*?)\s*$", riga)
+        if m:
+            voci[m.group(1)] = m.group(2).strip().strip('"').strip("'")
+    # Zero chiavi vuol dire che il parser non ha letto NIENTE, non che l'env
+    # sia vuoto: questo workflow un job-env ce l'ha sempre. Senza questa riga
+    # il fallimento del parser sarebbe silenzioso e passerebbe per successo.
+    assert voci, (
+        f"{WORKFLOW}: nessuna chiave letta dal blocco `env:` del job. Il parser "
+        f"cerca `      CHIAVE: valore` a sei spazi d'indentazione: se il "
+        f"workflow ha cambiato forma, questi test non verificano piu' niente."
+    )
+    return voci
+
+
+def _tipi_del_trigger(evento: str) -> list[str]:
+    """La lista `types:` di un evento sotto `on:`, letta dal file senza PyYAML."""
+    testo = _senza_commenti(_testo())
+    m = re.search(
+        rf"^on:\n(?:.*\n)*?  {re.escape(evento)}:\n    types: \[([^\]]*)\]",
+        testo,
+        re.MULTILINE,
+    )
+    # Nessun match = il trigger non c'e' PIU' nella forma attesa. Non si
+    # restituisce una lista vuota (che farebbe passare i divieti "x not in
+    # tipi" a vuoto): si fallisce, perche' un guardrail che non trova quel che
+    # controlla e' rotto, non soddisfatto.
+    assert m, (
+        f"{WORKFLOW}: non trovo `on: -> {evento}: -> types: [...]`. O il "
+        f"trigger e' stato tolto, o il workflow ha cambiato forma e questo "
+        f"guardrail va aggiornato nella stessa PR."
+    )
+    return [t.strip() for t in m.group(1).split(",") if t.strip()]
+
+
 def test_block_il_workflow_openai_e_ritirato() -> None:
     assert not (ROOT / WORKFLOW_RITIRATO).is_file(), (
         f"{WORKFLOW_RITIRATO} e' tornato. La chiave OpenAI e' esaurita: quel "
@@ -121,8 +166,7 @@ def test_block_model_id_col_prefisso_del_produttore() -> None:
     commenti che lo spiegano — cioe' controllava la prosa invece del codice.
     Trovato col sabotaggio, che e' il motivo per cui si sabotano i test.
     """
-    doc = yaml.safe_load(_testo())
-    env = doc["jobs"]["review"]["env"]
+    env = _env()
     modello = env.get("OPENROUTER_MODEL")
     assert modello == "openai/gpt-5.6-sol", (
         f"OPENROUTER_MODEL = {modello!r}. Su OpenRouter l'id porta il prefisso "
@@ -192,14 +236,10 @@ def test_block_chiede_i_token_reali_invece_di_stimarli() -> None:
 # BLOCK — il RUOLO non cambia: per-push, nessun gate a label
 # ---------------------------------------------------------------------------
 def test_block_resta_un_reviewer_per_push_senza_label_gate() -> None:
-    doc = yaml.safe_load(_testo())
-    trigger = doc.get(True) or doc.get("on")  # PyYAML legge `on:` come True
-    assert "pull_request_target" in trigger, (
-        "il workflow non parte piu' su pull_request_target: e' la forma che "
-        "esegue il file dal branch BASE, cosi' una PR non puo' esfiltrare i "
-        "secret modificando il proprio .yml"
-    )
-    tipi = trigger["pull_request_target"]["types"]
+    # _tipi_del_trigger fallisce se `on: -> pull_request_target: -> types:` non
+    # c'e' piu': e' la forma che esegue il file dal branch BASE, cosi' una PR
+    # non puo' esfiltrare i secret modificando il proprio .yml.
+    tipi = _tipi_del_trigger("pull_request_target")
     assert set(tipi) == {"opened", "synchronize", "reopened", "ready_for_review"}, (
         f"il gating per-push e' cambiato: {tipi}. GPT-5.6 Sol e' uno dei due "
         f"reviewer che girano su OGNI push (con Grok 4.6); i due forti a label "

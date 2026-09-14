@@ -1613,13 +1613,14 @@
       "description": "CI (owner, 2026-09-14): sposta il reviewer GPT-5.6 Sol dall'API OpenAI diretta a OpenRouter, riusando il secret che gia' esisteva per Fugu Ultra (OPENROUTER_PICKFAIR). Motivo: la chiave OpenAI e' esaurita — `credit_balance_exhausted` (HTTP 429) su OGNI push, misurato su #452 e su tutti e sei i giri della #462 — e un rosso che non e' un difetto del codice rende il gate meno leggibile, non piu' sicuro. NON e' un cambio di reviewer: il modello resta gpt-5.6-sol, cambia il fornitore, e resta uno dei due reviewer per-push (con Grok 4.6). Nuovo .github/workflows/pr-review-openrouter-gpt56-sol.yml costruito dal file OpenAI (gating per-push invariato: pull_request_target su opened/synchronize/reopened/ready_for_review, NESSUN label gate) con il solo trasporto sostituito da quello OpenRouter gia' in uso da Fugu Ultra: endpoint chat/completions (non v1/responses), prompt in `messages` (non `input`), tetto `max_tokens` (non `max_output_tokens`), troncamento letto da finish_reason=='length' (non status+incomplete_details), model id col prefisso del produttore `openai/gpt-5.6-sol`, header HTTP-Referer/X-Title e usage.include per i token reali. Leggere il campo di troncamento dell'ALTRA API significherebbe non accorgersi MAI di un taglio, cioe' pubblicare una review parziale come completa: un falso verde su un gate di review. Eliminato pr-review-openai-gpt56-sol.yml. Aggiornati i due guardrail che elencavano il file per nome (test_ai_review_effort.py, test_ai_review_range_solo_pr.py — entrambi dicono nel proprio messaggio di essere aggiornati nella stessa PR) e docs/ai_audit_workflows.md (tabella workflow, tabella segreti, nota PICKFAIR_OPENAI non piu' necessario).",
       "max_files": 8,
       "files": [
-        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
         ".github/workflows/pr-review-openai-gpt56-sol.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
         ".guardrails/allowed_scope.json",
         "docs/ai_audit_workflows.md",
         "tests/guardrails/test_ai_review_effort.py",
         "tests/guardrails/test_ai_review_range_solo_pr.py",
-        "tests/guardrails/test_gpt56sol_su_openrouter.py"
+        "tests/guardrails/test_gpt56sol_su_openrouter.py",
+        "tests/guardrails/test_raccolta_test_senza_pyyaml.py"
       ]
     }
   }
