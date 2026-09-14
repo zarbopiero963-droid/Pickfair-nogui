@@ -64,16 +64,24 @@ def test_split_checks_ignores_self_checks_when_requested():
     checks = {
         "statusCheckRollup": [
             _check("PR Merge Readiness", "FAILURE"),
-            _check("Unit tests", "SUCCESS"),
+            _check("Unit tests", "FAILURE"),
             _codacy_check(),
         ]
     }
 
     buckets = flow.split_checks(checks, ignore_self=True)
 
-    ASSERTIONS.assertEqual(buckets["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertEqual(buckets["ignored"][0]["name"], "PR Merge Readiness")
-    ASSERTIONS.assertEqual(buckets["self_stale"][0]["name"], "PR Merge Readiness")
+    # Il blocker e' il check REALE fallito. Codacy e' DISMESSO: il suo check
+    # residuo finisce tra gli ignorati (marcato `decommissioned`), non tra i
+    # blockers — prima di questa PR bloccava, ed era il falso rosso.
+    ASSERTIONS.assertEqual([c["name"] for c in buckets["blockers"]], ["Unit tests"])
+    ignored_names = [c["name"] for c in buckets["ignored"]]
+    ASSERTIONS.assertIn("PR Merge Readiness", ignored_names)
+    ASSERTIONS.assertIn("Codacy Static Code Analysis", ignored_names)
+    codacy_item = next(c for c in buckets["ignored"] if "Codacy" in c["name"])
+    ASSERTIONS.assertTrue(codacy_item.get("decommissioned"))
+    # Solo il self-check stantio va in self_stale: Codacy non e' un self-check.
+    ASSERTIONS.assertEqual([c["name"] for c in buckets["self_stale"]], ["PR Merge Readiness"])
 
 
 
@@ -158,18 +166,26 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
             "isDraft": False,
             "mergeable": "MERGEABLE",
             "mergeStateStatus": "UNSTABLE",
-            "statusCheckRollup": [_check("PR Merge Readiness", "FAILURE"), _codacy_check()],
+            "statusCheckRollup": [
+                _check("PR Merge Readiness", "FAILURE"),
+                _check("Unit tests", "FAILURE"),
+                _codacy_check(),
+            ],
         },
     )
 
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
     ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
+    # Il blocker reale resta; il check Codacy dismesso non entra nei blockers.
+    ASSERTIONS.assertEqual([c["name"] for c in decision["blockers"]], ["Unit tests"])
+    ignored_names = [c["name"] for c in decision["ignored_self_checks"]]
+    ASSERTIONS.assertIn("PR Merge Readiness", ignored_names)
+    ASSERTIONS.assertIn("Codacy Static Code Analysis", ignored_names)
     ASSERTIONS.assertIn("blocker_taxonomy", decision)
-    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_codacy_current_issues")
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_codacy_current_issues")
+    # Un blocker reale non classificato resta fail-closed: needs_manual.
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual")
 
 
 def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):

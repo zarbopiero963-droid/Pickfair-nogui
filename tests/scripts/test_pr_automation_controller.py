@@ -9274,16 +9274,8 @@ def test_classify_pr_report_status_ready_to_merge_strict_gate():
     ASSERTIONS.assertEqual(status, "READY_TO_MERGE")
 
 
-def test_not_ready_to_merge_when_codacy_not_success():
-    status = controller.classify_pr_report_status(_pr_report_context(codacy={"conclusion": "action_required"}))
-    ASSERTIONS.assertEqual(status, "FIXING")
 
 
-def test_not_ready_to_merge_when_codacy_annotations_exist():
-    status = controller.classify_pr_report_status(
-        _pr_report_context(codacy={"conclusion": "success", "annotations_count": 2})
-    )
-    ASSERTIONS.assertEqual(status, "FIXING")
 
 
 def test_not_ready_to_merge_when_pending_exists():
@@ -11932,9 +11924,10 @@ def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
         "bad": [],
         "pending": [],
         "unresolved_active": 0,
-        "codacy_conclusion": "SUCCESS",
-        "codacy_status": "SUCCESS",
-        "annotations_count": 0,
+        # Codacy DISMESSO: nessuna chiave Codacy fabbricata. Prima erano
+        # "codacy_conclusion/codacy_status = SUCCESS" + "annotations_count = 0",
+        # cioe' i test passavano solo INVENTANDO l'evidenza di un servizio che
+        # non esiste piu' (rilievo Codex P2 su #462).
         "current_head_matches": True,
         "explicit_merge_authorization": True,
     }
@@ -12734,14 +12727,6 @@ def test_can_auto_merge_denies_each_guard_condition():
         ("pending_checks_missing", {"pending": "not-a-list"}),
         ("unresolved_active_missing", {"unresolved_active": "bad-value"}),
         ("unresolved_reviews_present", {"unresolved_active": 1}),
-        (
-            "codacy_failure_state_present",
-            {"codacy_conclusion": "SUCCESS", "codacy_status": "FAILURE"},
-        ),
-        ("codacy_not_success", {"codacy_conclusion": "NEUTRAL", "codacy_status": "NEUTRAL"}),
-        ("codacy_not_success", {"codacy_conclusion": "", "codacy_status": ""}),
-        ("annotations_data_missing", {"annotations_count": "unknown"}),
-        ("annotations_present", {"annotations_count": 1}),
         ("current_head_mismatch", {"current_head_matches": False}),
         ("explicit_merge_authorization_required", {"explicit_merge_authorization": False}),
     ]
@@ -12788,86 +12773,14 @@ def test_can_auto_merge_bad_missing_and_blockers_missing_denies_bad_checks_missi
     ASSERTIONS.assertEqual(result["reason"], "bad_checks_missing")
 
 
-def test_can_auto_merge_mixed_codacy_success_failure_denies():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="SUCCESS",
-            codacy_status="FAILURE",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertIn("codacy_failure_state_present", result["reason"])
 
 
-def test_can_auto_merge_codacy_failure_without_success_does_not_add_not_success_reason():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="FAILURE",
-            codacy_status="",
-            github_codacy_state="",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "codacy_failure_state_present")
 
 
-def test_can_auto_merge_codacy_missing_state_denies_with_not_success_only():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            github_codacy_state="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "codacy_not_success")
 
 
-def test_can_auto_merge_uses_controller_codacy_keys():
-    allowed = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-            github_codacy_state="SUCCESS",
-        )
-    )
-    ASSERTIONS.assertTrue(allowed["allowed"])
-
-    denied = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-            github_codacy_state="FAILURE",
-        )
-    )
-    ASSERTIONS.assertFalse(denied["allowed"])
-    ASSERTIONS.assertIn("codacy_failure_state_present", denied["reason"])
 
 
-def test_can_auto_merge_annotation_count_aliases_and_missing_reason():
-    from_codacy_nested = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"github_annotations_count": 0},
-        )
-    )
-    ASSERTIONS.assertTrue(from_codacy_nested["allowed"])
-
-    missing = controller.can_auto_merge(_automation_ctx("live", annotations_count="not-int"))
-    ASSERTIONS.assertFalse(missing["allowed"])
-    ASSERTIONS.assertIn("annotations_data_missing", missing["reason"])
 
 
 def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_green():
@@ -12878,20 +12791,8 @@ def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_g
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_codacy_annotations_count_gt_zero_denies_annotations_present():
-    result = controller.can_auto_merge(
-        _automation_ctx("live", annotations_count=None, codacy_annotations_count=2)
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
 
 
-def test_can_auto_merge_codacy_annotations_count_malformed_denies_data_missing():
-    result = controller.can_auto_merge(
-        _automation_ctx("live", annotations_count=None, codacy_annotations_count="n/a")
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
 
 
 def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_green():
@@ -12906,28 +12807,8 @@ def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_g
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_codacy_annotations_list_with_dict_denies_present():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"conclusion": "SUCCESS", "annotations": [{"x": 1}]},
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
 
 
-def test_can_auto_merge_codacy_annotations_list_with_scalar_denies_data_missing():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"conclusion": "SUCCESS", "annotations": ["bad"]},
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
 
 
 def test_can_auto_merge_all_green_with_explicit_auth_allows():

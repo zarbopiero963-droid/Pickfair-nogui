@@ -113,6 +113,21 @@ def is_self_check(check: dict[str, Any]) -> bool:
     )
 
 
+def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
+    """Il check pubblicato dalla GitHub App di Codacy, che e' DISMESSA.
+
+    Codacy non ha piu' ne' API ne' token: quel check resta appeso finche'
+    l'owner non disinstalla l'app, e la sua ACTION_REQUIRED e' stantia per
+    definizione. Un servizio dismesso non e' un segnale: non blocca (non e'
+    un blocker) e non tiene in attesa (non e' un pending).
+
+    Rilievo Codex P1 su #462: il gate CI gira `pr_merge_readiness.py`, che
+    delega QUI. Filtrare il check solo nel controller non toglieva il falso
+    rosso, perche' il controller non sta su questo percorso.
+    """
+    return "codacy" in check_name(check).lower()
+
+
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
     return gh_json([
         "gh", "pr", "view", str(pr),
@@ -151,6 +166,15 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             ignored.append(item)
             if item["state"] in BAD_STATES:
                 self_stale.append(item)
+            continue
+
+        # Codacy e' DISMESSO: il check residuo della GitHub App non e' ne' un
+        # blocker ne' un pending, qualunque sia il suo stato (vedi
+        # is_decommissioned_codacy_check).
+        if is_decommissioned_codacy_check(raw):
+            item["ignored"] = True
+            item["decommissioned"] = True
+            ignored.append(item)
             continue
 
         item["ignored"] = False

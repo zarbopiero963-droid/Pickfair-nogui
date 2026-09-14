@@ -1379,16 +1379,14 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("unresolved_active_missing")
     elif unresolved_active != 0:
         merge_guard_failures.append("unresolved_reviews_present")
-    codacy_success = any(state == "SUCCESS" for state in codacy_states)
-    codacy_failure = any(state in FAIL_STATES for state in codacy_states)
-    if codacy_failure:
-        merge_guard_failures.append("codacy_failure_state_present")
-    elif not codacy_success:
-        merge_guard_failures.append("codacy_not_success")
-    if annotations_count < 0:
-        merge_guard_failures.append("annotations_data_missing")
-    elif annotations_count != 0:
-        merge_guard_failures.append("annotations_present")
+    # Codacy e' DISMESSO (rilievo Codex P2 su #462): nessun contesto reale puo'
+    # piu' avere codacy_conclusion == SUCCESS ne' un conteggio di annotazioni
+    # Codacy, quindi questi due gate non erano piu' fail-closed: erano
+    # IRRAGGIUNGIBILI: il merge automatico non poteva mai essere permesso, e
+    # l'unico modo di passarli era FABBRICARE l'evidenza di un servizio che non
+    # esiste piu' — cosa che AGENTS.md vieta. Rimossi. Tutti gli altri gate
+    # (mergeable, merge state, blockers, pending, review irrisolte, current
+    # head, autorizzazione esplicita) restano invariati.
     if not current_head_matches:
         merge_guard_failures.append("current_head_mismatch")
     if not explicit_merge_authorization:
@@ -9274,14 +9272,8 @@ def _report_ready_to_merge(context: dict[str, Any]) -> bool:
     merge_state_status = norm_state(context.get("mergeStateStatus"))
     if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
         return False
-    codacy = context.get("codacy")
-    if not isinstance(codacy, dict):
-        codacy = {
-            "conclusion": context.get("codacy_conclusion"),
-            "annotations_count": context.get("codacy_annotations_count"),
-        }
-    codacy_conclusion = norm_state(codacy.get("conclusion"))
-    annotations_count = safe_nonnegative_int(codacy.get("annotations_count"), 0)
+    # Codacy DISMESSO: vedi la nota in can_auto_merge. Pretendere qui un
+    # codacy_conclusion == SUCCESS rendeva READY_TO_MERGE irraggiungibile.
     ready_action = next_action in {"ready", "ready_to_merge", "merge_ready"}
     return (
         not bad
@@ -9290,8 +9282,6 @@ def _report_ready_to_merge(context: dict[str, Any]) -> bool:
         and ready_action
         and merge_state_status == "CLEAN"
         and unresolved_active == 0
-        and codacy_conclusion == "SUCCESS"
-        and annotations_count == 0
     )
 
 

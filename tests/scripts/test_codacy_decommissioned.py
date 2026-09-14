@@ -163,3 +163,140 @@ def test_merge_readiness_workflow_has_no_codacy_and_stays_fail_closed():
     # fail-closed preservato: il ramo "non mergiabile" esce comunque con errore
     assert re.search(r'if \[ "\$CAN_MERGE" != "true" \];.*?exit 1', wf, re.S), \
         "il gate non fallisce più sui blocker reali (fail-open!)"
+
+
+# ---------------------------------------------------------------------------
+# Rilievo Codex P1 (#462): il gate CI gira `pr_merge_readiness.py`, che delega a
+# `pr_flow_automation`. Il filtro del controller NON e' su quel percorso: finche'
+# la GitHub App dismessa pubblica `Codacy Static Code Analysis =
+# ACTION_REQUIRED`, `split_checks` lo mette nei blockers e il gate esce 1.
+# E' ESATTAMENTE il falso rosso che questa PR deve togliere.
+# ---------------------------------------------------------------------------
+def _codacy_rollup_check(state: str = "ACTION_REQUIRED") -> dict:
+    return {
+        "__typename": "CheckRun",
+        "name": "Codacy Static Code Analysis",
+        "status": "COMPLETED",
+        "conclusion": state,
+    }
+
+
+@pytest.mark.unit
+def test_codacy_check_is_never_a_blocker_in_the_workflow_path():
+    """Il percorso REALE del workflow non deve mai bloccare per Codacy."""
+    pr = {
+        "statusCheckRollup": [
+            _codacy_rollup_check(),
+            {"__typename": "CheckRun", "name": "unit",
+             "status": "COMPLETED", "conclusion": "SUCCESS"},
+        ]
+    }
+    out = flow.split_checks(pr)
+    names = [c["name"] for c in out["blockers"]]
+    assert "Codacy Static Code Analysis" not in names, (
+        "il check della GitHub App dismessa blocca ancora la readiness"
+    )
+    # BLOCK: un check REALE rosso deve continuare a bloccare.
+    pr_real = {
+        "statusCheckRollup": [
+            {"__typename": "CheckRun", "name": "unit",
+             "status": "COMPLETED", "conclusion": "FAILURE"},
+        ]
+    }
+    assert [c["name"] for c in flow.split_checks(pr_real)["blockers"]] == ["unit"], (
+        "un check reale fallito non blocca piu': esclusione troppo larga"
+    )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("state", ["ACTION_REQUIRED", "FAILURE", "PENDING", "QUEUED", ""])
+def test_codacy_check_never_blocks_nor_hangs_readiness(state):
+    """Ne' blocker ne' pending: un servizio dismesso non e' piu' un segnale."""
+    out = flow.split_checks({"statusCheckRollup": [_codacy_rollup_check(state)]})
+    assert out["blockers"] == [], f"Codacy blocca con conclusion={state!r}"
+    assert out["pending"] == [], f"Codacy tiene la readiness in attesa con {state!r}"
+
+
+# ---------------------------------------------------------------------------
+# Rilievo Codex P2 (#462): con Codacy dismesso nessun contesto reale puo' avere
+# un `codacy_conclusion == SUCCESS`, quindi i gate finali restano IRRAGGIUNGIBILI
+# per sempre. Un gate superabile solo fabbricando evidenza di un servizio che
+# non esiste piu' e' peggio che inutile: invita a inventarla (vietato da AGENTS).
+# ---------------------------------------------------------------------------
+def _clean_merge_context() -> dict:
+    """Contesto REALISTICO post-dismissione: tutto verde, zero dati Codacy."""
+    return {
+        "automation_mode": "live",
+        "automation_flags": {
+            "SAFE_AUTOFIX_ENABLED": True,
+            "AUTO_RESOLVE_ENABLED": True,
+            "AUTO_RERUN_ENABLED": True,
+            "AUTO_PUSH_ENABLED": True,
+            "AUTO_MERGE_ENABLED": True,
+            "GITHUB_MUTATION_ENABLED": True,
+            "EXTERNAL_SIDE_EFFECT_ENABLED": True,
+            "REPORTING_ENABLED": True,
+        },
+        "task_no_commit_push": False,
+        "mergeable": "MERGEABLE",
+        "mergeStateStatus": "CLEAN",
+        "bad": [],
+        "blockers": [],
+        "pending": [],
+        "unresolved_active": 0,
+        "current_head_matches": True,
+        "explicit_merge_authorization": True,
+    }
+
+
+@pytest.mark.unit
+def test_auto_merge_is_reachable_without_any_codacy_evidence():
+    result = controller.can_auto_merge(_clean_merge_context())
+    reason = str(result.get("reason") or "")
+    # La proprieta' vera: senza UN SOLO dato Codacy il merge dev'essere
+    # RAGGIUNGIBILE. Asserire solo "reason non contiene codacy" sarebbe debole:
+    # un gate reintrodotto con un altro nome passerebbe inosservato.
+    assert result["allowed"] is True, f"auto-merge irraggiungibile: {result}"
+    assert "codacy" not in reason.lower(), f"gate Codacy ancora attivo: {reason}"
+    assert "annotations" not in reason.lower(), f"gate annotazioni Codacy attivo: {reason}"
+
+
+@pytest.mark.unit
+def test_auto_merge_still_blocks_on_every_real_guard():
+    """BLOCK: togliere i gate Codacy non deve aprire nessun'altra porta."""
+    for key, value, expected in (
+        ("mergeable", "CONFLICTING", "mergeable_not_mergeable"),
+        ("mergeStateStatus", "BLOCKED", "merge_state_not_clean"),
+        ("blockers", [{"name": "unit"}], "bad_checks_present"),
+        ("pending", [{"name": "unit"}], "pending_checks_present"),
+        ("unresolved_active", 2, "unresolved_reviews_present"),
+        ("current_head_matches", False, "current_head_mismatch"),
+        ("explicit_merge_authorization", False, "explicit_merge_authorization_required"),
+    ):
+        ctx = _clean_merge_context()
+        ctx[key] = value
+        result = controller.can_auto_merge(ctx)
+        assert not result["allowed"], f"{key}={value!r} non blocca piu' il merge"
+        assert expected in str(result.get("reason") or ""), (
+            f"{key}={value!r}: motivo atteso {expected}, ottenuto {result.get('reason')!r}"
+        )
+
+
+@pytest.mark.unit
+def test_ready_to_merge_is_reachable_without_any_codacy_evidence():
+    ctx = {
+        "next_action": "ready_to_merge",
+        "bad": [], "pending": [], "blockers": [],
+        "mergeStateStatus": "CLEAN", "unresolved_active": 0,
+    }
+    assert controller._report_ready_to_merge(ctx) is True, (
+        "READY_TO_MERGE irraggiungibile senza evidenza di un servizio dismesso"
+    )
+    # BLOCK: i gate reali restano.
+    for key, value in (("blockers", [{"name": "x"}]), ("pending", [{"name": "x"}]),
+                       ("unresolved_active", 1), ("mergeStateStatus", "DIRTY")):
+        broken = dict(ctx)
+        broken[key] = value
+        assert controller._report_ready_to_merge(broken) is False, (
+            f"{key}={value!r} non impedisce piu' READY_TO_MERGE"
+        )

@@ -1,14 +1,25 @@
 # Auto PR Flow — Specifica
 
-> **⚠️ CODACY È DISMESSO (integrazione rimossa).** Ogni riferimento a Codacy in
-> questo documento è **storico** e non descrive più il comportamento reale.
+> **⚠️ CODACY È DISMESSO (integrazione rimossa).** Questo documento è la
+> specifica ATTIVA: le istruzioni operative su Codacy sono state **rimosse**,
+> non marcate come storiche (rilievo Codex P2 su #462 — un passo prescrittivo
+> lasciato in pagina viene eseguito, qualunque disclaimer ci sia sopra).
+>
 > Non esistono più: l'API Codacy (nessuna chiamata di rete nel repo), il comando
 > `codacy-task`, il segreto `CODACY_API_TOKEN`, lo step Codacy nel workflow di
-> merge readiness. Un eventuale check "Codacy" residuo (GitHub App non ancora
-> disinstallata) è **sempre ignorato** e non entra mai tra i blockers. La catena
-> di evidenza "DeepSource advisory" **non richiede più** che Codacy sia verde:
-> pretendere evidenza da un servizio dismesso sarebbe un blocco permanente.
-> Tutti gli altri gate restano **fail-closed e invariati**.
+> merge readiness.
+>
+> **Contratto attuale, in una riga:** un eventuale check "Codacy" residuo
+> (GitHub App non ancora disinstallata) è escluso da `split_checks`
+> (`is_decommissioned_codacy_check`) e non è **né un blocker né un pending**,
+> qualunque sia il suo stato. Non si aspetta, non si classifica, non si patcha
+> per lui.
+>
+> Di conseguenza **nessun gate pretende più evidenza da Codacy**: né la catena
+> "DeepSource advisory", né `can_auto_merge`, né `_report_ready_to_merge`.
+> Pretenderla da un servizio dismesso non sarebbe fail-closed: sarebbe un blocco
+> permanente, superabile solo **inventando** l'evidenza — cosa che AGENTS.md
+> vieta. Tutti gli altri gate restano **fail-closed e invariati**.
 
 > Specifica del flusso automatico di gestione PR (orchestrator fail-closed).
 > Implementazione di riferimento: `scripts/pr_automation_controller.py`,
@@ -98,7 +109,6 @@ Il flusso leggerà:
 - branch protection
 - required status checks
 - statusCheckRollup
-- Codacy current-head
 - DeepSource Python current-head
 - review active
 - unresolved_active
@@ -113,8 +123,6 @@ E produrrà una evidence esplicita tipo:
   "required_checks": [],
   "deepsource_required": false,
   "deepsource_required_current_head_check_failing": false,
-  "codacy_success": true,
-  "codacy_annotations_count": 0,
   "unresolved_active": 0,
   "current_head_sha": "..."
 }
@@ -124,7 +132,6 @@ Questa evidence serve per automatizzare il ragionamento che abbiamo fatto a mano
 
 - branch protection assente
 - => DeepSource Python non è required
-- => Codacy verde
 - => review attive 0
 - => DeepSource FAILURE è advisory
 - => non bloccare readiness solo per DeepSource
@@ -143,7 +150,6 @@ PASS:
 - branch_protection_absent=true
 - required_checks=[]
 - DeepSource failure non-required
-- Codacy success
 - review active=0
 - => non bloccare
 
@@ -153,7 +159,6 @@ BLOCK:
 - required_checks malformati
 - DeepSource required=true
 - DeepSource required current-head failing=true
-- Codacy failure
 - review active > 0
 - head mismatch
 - => blocca fail-closed
@@ -191,7 +196,6 @@ dangerous gates:
 - required checks
 - DeepSource required/advisory
 - branch protection absent
-- Codacy current-head
 - review active
 - merge readiness
 - PR flow guardrails
@@ -387,8 +391,6 @@ Dopo push o dopo PR aperta aggiornata, legge:
 - bad checks
 - pending checks
 - cancelled checks
-- Codacy status
-- Codacy annotations_count
 - DeepSource status
 - Merge readiness
 - PR flow guardrails
@@ -398,29 +400,26 @@ Dopo push o dopo PR aperta aggiornata, legge:
 - mergeable
 - mergeStateStatus
 
-Se Codacy è in progress:
+Se un check è in progress:
 
 ```
 AUTO_PR_FLOW_STATUS=CHECKS_PENDING
 NEXT_ACTION=wait
 ```
 
-Se Codacy è success con annotations 0:
+Quando tutti i check sono settled e verdi:
 
 ```
-CODACY=success
-CODACY_ANNOTATIONS=0
 NEXT_ACTION=review_triage
 ```
 
-Se Codacy è action_required con annotations current-head in scope:
+**Codacy non entra in questa lettura.** Il servizio è dismesso: il check
+residuo della GitHub App viene ESCLUSO da `split_checks`
+(`is_decommissioned_codacy_check`) e non è né un blocker né un pending. Non
+attenderlo, non classificarlo, non patchare per lui.
 
-```
-REVIEW_TRIAGE_RESULT=PATCH_REQUIRED
-REASON=codacy_current_head_action_required
-```
-
-La policy dice di non patchare mentre Codacy/checks sono in progress salvo bug current-head riproducibile.
+La policy dice di non patchare mentre i check sono in progress salvo bug
+current-head riproducibile.
 
 ---
 
@@ -450,7 +449,6 @@ Capisce:
 - è fail-open?
 - è refactor/style?
 - è DeepSource advisory?
-- è Codacy current-head?
 - è già coperto da test?
 - richiede file vietati?
 
@@ -478,7 +476,6 @@ entra nel fix loop.
 Ma non fa una patch per ogni commento. Raggruppa per cluster:
 
 - cluster: required-check evidence bug
-- cluster: Codacy current-head annotation
 - cluster: fail-open branch
 - cluster: missing test reale
 
@@ -554,7 +551,6 @@ Dopo PR8E, readiness e guardrails dovrebbero capire:
 
 - branch_protection_absent=true
 - DeepSource non-required
-- Codacy success
 - review active=0
 - => READY_TO_MERGE possibile anche se DeepSource Python è FAILURE advisory
 
@@ -607,7 +603,7 @@ quando trova:
 - workflow edit richiesto ma non autorizzato
 - review comment architetturale
 - provider sconosciuto non classificabile
-- Codacy/checks in progress senza bug riproducibile
+- checks in progress senza bug riproducibile
 - test failure non recuperabile
 - scope troppo largo
 - segreti/runtime/live Betfair/Telegram
@@ -654,7 +650,6 @@ può inviare solo report passivi:
 - FAILED
 - PATCH_REQUIRED_LOOP_STOPPED
 - CHECKS_PENDING
-- CODACY_ACTION_REQUIRED
 
 Telegram non può:
 
@@ -686,10 +681,9 @@ Capisce queste cose:
 11. Il micro-audit è passato?
 12. I test sono passati?
 13. Posso fare push o devo fermarmi?
-14. Codacy è verde?
-15. Le review attive sono zero?
-16. DeepSource è required o advisory?
-17. Branch protection è assente o presente?
-18. I required checks includono DeepSource Python?
-19. Readiness può passare?
+14. Le review attive sono zero?
+15. DeepSource è required o advisory?
+16. Branch protection è assente o presente?
+17. I required checks includono DeepSource Python?
+18. Readiness può passare?
 20. Devo patchare, evidence-resolve, skippare o fermarmi?
