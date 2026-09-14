@@ -81,11 +81,36 @@ jobs:
             echo "- mergeStateStatus: \`$(jq -r '.mergeStateStatus' .merge-readiness/decision.json)\`"
             echo "- blockers: \`$(jq '.blockers | length' .merge-readiness/decision.json)\`"
             echo "- pending: \`$(jq '.pending | length' .merge-readiness/decision.json)\`"
-            echo "- ignored self-checks: \`$(jq '.ignored | length' .merge-readiness/decision.json)\`"
+            echo "- ignored checks: \`$(jq '.ignored_self_checks | length' .merge-readiness/decision.json)\`"
             echo ""
             echo "### Reasons"
             jq -r '.reasons[]? | "- " + .' .merge-readiness/decision.json
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Un check ESCLUSO che e' ROSSO non deve sparire in silenzio (rilievo
+          # Claude Fable 5 su #462). L'esclusione resta — self-check del flow,
+          # oppure il check della GitHub App Codacy dismessa — ma viene DETTA,
+          # con nome e stato, sia nel riepilogo sia come ::warning:: in Actions.
+          # Prima questa riga leggeva `.ignored`, una chiave che la decisione non
+          # produce: jq restituiva null e il riepilogo non mostrava nulla.
+          EXCLUDED_BAD="$(
+            jq -r '[.ignored_self_checks[]? | select(((.state // "") | ascii_upcase) as $s
+                   | $s != "" and $s != "SUCCESS" and $s != "SKIPPED" and $s != "NEUTRAL")] | length' \
+              .merge-readiness/decision.json
+          )"
+          if [ "${EXCLUDED_BAD:-0}" != "0" ]; then
+            echo "::warning::$EXCLUDED_BAD excluded check(s) are NOT green. They do not block the merge gate by design - listed in the job summary."
+            {
+              echo ""
+              echo "### Excluded checks that are not green"
+              echo ""
+              jq -r '.ignored_self_checks[]? | select(((.state // "") | ascii_upcase) as $s
+                     | $s != "" and $s != "SUCCESS" and $s != "SKIPPED" and $s != "NEUTRAL")
+                     | "- `" + (.name // "?") + "` = `" + (.state // "?") + "`"
+                       + (if .decommissioned then " (decommissioned service)" else " (flow self-check)" end)' \
+                .merge-readiness/decision.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           # Fail-closed sui blocker REALI: se la readiness dice che non si puo'
           # mergiare, il gate FALLISCE. Codacy e' dismesso (nessuna API, nessun

@@ -4,6 +4,8 @@
 import argparse
 import inspect
 import json
+import re
+from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
 
@@ -2333,3 +2335,80 @@ def test_block_la_canary_ritirata_non_deve_tornare() -> None:
         'add_parser("canary")', source,
         "il sottocomando CLI `canary` e' tornato nel parser",
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — il workflow di readiness non deve leggere chiavi che la decisione NON
+# produce. Bug reale trovato da Claude Fable 5 su #462: il riepilogo faceva
+# `jq '.ignored | length'`, ma la decisione espone `ignored_self_checks`. jq
+# restituiva `null` e la riga "ignored checks" non mostrava NULLA — cioe' un
+# check rosso ESCLUSO spariva dalla vista dell'umano che legge il job summary.
+#
+# Questo test non pinna la singola chiave sbagliata: verifica che OGNI chiave
+# di primo livello letta dal workflow esista davvero nella decisione. Cosi'
+# copre anche il prossimo refuso, non solo quello gia' corretto.
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+READINESS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-merge-readiness.yml"
+
+
+def _decisione_reale() -> dict:
+    pr = {
+        "state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE",
+        "mergeStateStatus": "UNSTABLE", "headRefOid": "abc",
+        "statusCheckRollup": [
+            _check("Codacy Static Code Analysis", "FAILURE"),
+            _check("Merge readiness", "FAILURE"),
+            _check("unit", "SUCCESS"),
+        ],
+    }
+    original = flow.pr_view
+    try:
+        flow.pr_view = lambda _repo, _pr: pr
+        return flow.build_decision("owner/repo", "462", ignore_self=True)
+    finally:
+        flow.pr_view = original
+
+
+def test_block_il_workflow_non_legge_chiavi_inesistenti_dalla_decisione() -> None:
+    testo = READINESS_WORKFLOW.read_text(encoding="utf-8")
+    decisione = _decisione_reale()
+    # chiavi di primo livello referenziate come  jq ... '.chiave...'
+    lette = {
+        m.group(1)
+        for m in re.finditer(r"jq [^\n]*?'\.([A-Za-z_][A-Za-z0-9_]*)", testo)
+    }
+    ASSERTIONS.assertTrue(lette, "nessuna chiave jq trovata: regex o workflow cambiati?")
+    mancanti = sorted(k for k in lette if k not in decisione)
+    ASSERTIONS.assertEqual(
+        mancanti, [],
+        f"il workflow legge chiavi che la decisione non produce: {mancanti}. "
+        f"jq restituirebbe null e l'informazione sparirebbe dal riepilogo.",
+    )
+
+
+def test_block_un_check_escluso_e_rosso_resta_visibile() -> None:
+    """Il dato su cui poggia il ::warning:: del workflow deve esserci.
+
+    L'esclusione dai blockers e' voluta; l'invisibilita' no. Ogni check escluso
+    deve portarsi dietro nome e stato, cosi' il workflow puo' nominarlo.
+    """
+    decisione = _decisione_reale()
+    esclusi = decisione["ignored_self_checks"]
+    rossi = [c for c in esclusi if str(c.get("state", "")).upper() not in {"", "SUCCESS", "SKIPPED", "NEUTRAL"}]
+    nomi = sorted(c["name"] for c in rossi)
+    ASSERTIONS.assertEqual(
+        nomi, ["Codacy Static Code Analysis", "Merge readiness"],
+        "un check escluso e ROSSO non e' piu' rintracciabile nella decisione: "
+        "il warning del workflow non avrebbe piu' nulla da mostrare",
+    )
+    for c in rossi:
+        ASSERTIONS.assertTrue(str(c.get("state") or "").strip(), f"{c['name']}: stato assente")
+    codacy = next(c for c in rossi if "Codacy" in c["name"])
+    ASSERTIONS.assertTrue(
+        codacy.get("decommissioned"),
+        "il check della App dismessa non e' piu' marcato `decommissioned`: "
+        "il riepilogo non potrebbe distinguerlo da un self-check del flow",
+    )
+    # E il merge resta comunque permesso: rendere VISIBILE non deve BLOCCARE.
+    ASSERTIONS.assertTrue(decisione["can_merge"], "l'esclusione ha smesso di escludere")
