@@ -113,6 +113,19 @@ def is_self_check(check: dict[str, Any]) -> bool:
     )
 
 
+#: Nome ESATTO del check pubblicato dalla GitHub App di Codacy, dismessa.
+#: Deliberatamente un match esatto e non una sottostringa "codacy": un
+#: predicato per sottostringa e' un vettore FAIL-OPEN sul gate di merge —
+#: qualunque check futuro col nome che contiene "codacy" (una guardia sulla
+#: dismissione, un workflow rinominato) sparirebbe dai blockers anche da
+#: FAILURE. Rilievo convergente di Codex e Claude Fable 5 su #462.
+#: Un check Codacy con un nome diverso da questi NON e' esente: bloccherebbe,
+#: che e' la direzione sicura (fail-closed).
+DECOMMISSIONED_CODACY_CHECK_NAMES = frozenset({
+    "codacy static code analysis",
+})
+
+
 def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
     """Il check pubblicato dalla GitHub App di Codacy, che e' DISMESSA.
 
@@ -125,7 +138,7 @@ def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
     delega QUI. Filtrare il check solo nel controller non toglieva il falso
     rosso, perche' il controller non sta su questo percorso.
     """
-    return "codacy" in check_name(check).lower()
+    return check_name(check).strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
@@ -2201,12 +2214,18 @@ def cmd_canary(args: argparse.Namespace) -> int:
     title = f"test: safe autofix canary {ts}"
     body = (
         "Temporary canary PR for the automatic PR flow.\n\n"
+        "NOTE: the original trigger of this canary was a controlled Codacy\n"
+        "markdownlint finding. Codacy is DECOMMISSIONED, so that step can no\n"
+        "longer happen and this canary no longer exercises the analyzer ->\n"
+        "safe-autofix path it was built for (raised by Codex on #462).\n"
+        "What it still exercises: post-fix audit gate, branch push, PR open.\n"
+        "Retargeting it to an active analyzer, or retiring it, is an owner\n"
+        "decision and is NOT done here.\n\n"
         "Expected path:\n"
-        "1. Codacy reports a controlled markdownlint issue.\n"
-        "2. Safe autofix collects context.\n"
-        "3. Codex fixes only allowed files.\n"
-        "4. Merge readiness becomes clean.\n"
-        "5. This PR can be closed after validation.\n"
+        "1. Safe autofix collects context.\n"
+        "2. Codex fixes only allowed files.\n"
+        "3. Merge readiness becomes clean.\n"
+        "4. This PR can be closed after validation.\n"
     )
     url = sh([
         "gh", "pr", "create", "--repo", args.repo,

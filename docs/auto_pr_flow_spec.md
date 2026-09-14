@@ -9,11 +9,19 @@
 > `codacy-task`, il segreto `CODACY_API_TOKEN`, lo step Codacy nel workflow di
 > merge readiness.
 >
-> **Contratto attuale, in una riga:** un eventuale check "Codacy" residuo
-> (GitHub App non ancora disinstallata) è escluso da `split_checks`
+> **Contratto attuale, in una riga:** il check residuo della GitHub App non
+> ancora disinstallata è escluso da `split_checks`
 > (`is_decommissioned_codacy_check`) e non è **né un blocker né un pending**,
 > qualunque sia il suo stato. Non si aspetta, non si classifica, non si patcha
 > per lui.
+>
+> **L'esenzione è per NOME ESATTO**, non per sottostringa: solo i nomi in
+> `DECOMMISSIONED_CODACY_CHECK_NAMES` (oggi `codacy static code analysis`).
+> Un predicato "il nome contiene codacy" sarebbe un vettore **fail-open** sul
+> gate di merge — una guardia sulla dismissione, o un workflow rinominato,
+> sparirebbe dai blockers anche da FAILURE (rilievo convergente di Codex e
+> Claude Fable 5 su #462). Un check Codacy con un nome diverso NON è esente:
+> blocca, che è la direzione sicura.
 >
 > Di conseguenza **nessun gate pretende più evidenza da Codacy**: né la catena
 > "DeepSource advisory", né `can_auto_merge`, né `_report_ready_to_merge`.
@@ -415,8 +423,13 @@ NEXT_ACTION=review_triage
 
 **Codacy non entra in questa lettura.** Il servizio è dismesso: il check
 residuo della GitHub App viene ESCLUSO da `split_checks`
-(`is_decommissioned_codacy_check`) e non è né un blocker né un pending. Non
-attenderlo, non classificarlo, non patchare per lui.
+(`is_decommissioned_codacy_check`, match per **nome esatto**) e non è né un
+blocker né un pending. Non attenderlo, non classificarlo, non patchare per lui.
+
+Per lo stesso motivo il planner di rerun passivo non ha più il blocker
+`codacy_not_green`: `build_next_action_context` scrive sempre
+`codacy.github_codacy_state`, quindi quel gate si sarebbe accodato per sempre
+(Codacy ignorato dalla readiness ma ancora capace di impedire il rerun).
 
 La policy dice di non patchare mentre i check sono in progress salvo bug
 current-head riproducibile.

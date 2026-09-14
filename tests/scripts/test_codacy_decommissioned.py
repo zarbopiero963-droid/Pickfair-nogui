@@ -300,3 +300,90 @@ def test_ready_to_merge_is_reachable_without_any_codacy_evidence():
         assert controller._report_ready_to_merge(broken) is False, (
             f"{key}={value!r} non impedisce piu' READY_TO_MERGE"
         )
+
+
+# ---------------------------------------------------------------------------
+# Giro 3 — rilievo convergente di Codex E Fable 5 (full-range) su #462:
+# il matcher `"codacy" in nome` e' un vettore FAIL-OPEN sul gate di merge.
+# Un check futuro con "codacy" nel nome (una guardia di dismissione, un
+# workflow rinominato) sparirebbe dai blockers anche se FAILURE.
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.parametrize("name", [
+    "codacy-decommission-guard",          # una guardia NOSTRA sulla dismissione
+    "verify no codacy references",        # un check di repo-guardrail
+    "Codacy Static Code Analysis (fork)", # un check omonimo ma non quello dell'App
+    "my-codacy-migration-check",
+])
+def test_only_the_exact_retired_codacy_check_is_exempt(name):
+    """Solo il check ESATTO della App dismessa e' esente: tutto il resto blocca."""
+    pr = {"statusCheckRollup": [
+        {"__typename": "CheckRun", "name": name,
+         "status": "COMPLETED", "conclusion": "FAILURE"},
+    ]}
+    blockers = [c["name"] for c in flow.split_checks(pr)["blockers"]]
+    assert blockers == [name], (
+        f"il check {name!r} e' stato escluso dai blockers: esenzione troppo larga "
+        "(fail-open sul gate di merge)"
+    )
+
+
+@pytest.mark.unit
+def test_exact_retired_codacy_check_is_still_exempt():
+    """PASS: il check reale della GitHub App dismessa resta esente."""
+    for spelling in ("Codacy Static Code Analysis", "codacy static code analysis",
+                     "  Codacy Static Code Analysis  "):
+        pr = {"statusCheckRollup": [
+            {"__typename": "CheckRun", "name": spelling,
+             "status": "COMPLETED", "conclusion": "ACTION_REQUIRED"},
+        ]}
+        out = flow.split_checks(pr)
+        assert out["blockers"] == [], f"{spelling!r} blocca ancora"
+        assert out["pending"] == [], f"{spelling!r} tiene in attesa"
+
+
+# ---------------------------------------------------------------------------
+# Rilievo Codex (giro 3): `build_next_action_context` scrive SEMPRE
+# `codacy.github_codacy_state`, quindi `_codacy_review_evidence_present` e'
+# sempre vero e `_codacy_review_evidence_green` sempre falso => il planner di
+# rerun passivo accodava `codacy_not_green` PER SEMPRE. Stesso deadlock
+# fail-closed di can_auto_merge, su un altro gate.
+# ---------------------------------------------------------------------------
+def _decommissioned_rerun_context() -> dict:
+    codacy = controller.codacy_evidence_for_checks("repo", 1, [])
+    codacy["github_codacy_state"] = ""
+    codacy.setdefault("github_annotations", 0)
+    return {
+        "codacy": codacy,
+        "current_head_sha": "abc123",
+        "evidence_head_sha": "abc123",
+        "checks_green": True,
+        "pending_checks": [],
+        "failing_checks": [],
+    }
+
+
+@pytest.mark.unit
+def test_passive_rerun_is_not_blocked_forever_by_a_dismissed_service():
+    plan = controller.build_passive_rerun_readiness_plan(_decommissioned_rerun_context())
+    blockers = [str(b) for b in (plan.get("blocked_reasons") or [])]
+    assert "codacy_not_green" not in blockers, (
+        f"il rerun passivo resta bloccato da un servizio dismesso: {blockers}"
+    )
+
+
+@pytest.mark.unit
+def test_passive_rerun_still_blocks_on_real_conditions():
+    """BLOCK: togliere il gate Codacy non deve aprire gli altri."""
+    for key, value, expected in (
+        ("checks_green", False, "checks_not_green"),
+        ("pending_checks", [{"name": "unit"}], "pending_checks"),
+        ("failing_checks", [{"name": "unit"}], "failing_checks"),
+        ("evidence_head_sha", "deadbee", "evidence_head_mismatch"),
+    ):
+        ctx = _decommissioned_rerun_context()
+        ctx[key] = value
+        blockers = [str(b) for b in (controller.build_passive_rerun_readiness_plan(ctx).get("blocked_reasons") or [])]
+        assert expected in blockers, (
+            f"{key}={value!r}: atteso blocker {expected}, ottenuti {blockers}"
+        )

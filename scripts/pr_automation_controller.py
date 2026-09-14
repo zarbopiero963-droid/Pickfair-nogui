@@ -7986,8 +7986,11 @@ def _review_resolution_evidence_blockers(
     if bool(evidence.get("failing_checks")):
         blockers.append("failing_checks")
     blockers.extend(_check_count_blocker_reasons(evidence, "failing_checks_count", "failing_checks"))
-    if _review_thread_codacy_involved(thread, evidence, provider) and not _codacy_review_evidence_green(evidence):
-        blockers.append("codacy_not_green")
+    # Codacy DISMESSO (rilievo Codex su #462): `build_next_action_context`
+    # scrive SEMPRE `codacy.github_codacy_state`, quindi l'evidenza risulta
+    # "presente" e mai "verde" => questo blocker si sarebbe accodato PER
+    # SEMPRE. Stesso deadlock di can_auto_merge, su un altro gate: Codacy
+    # ignorato dalla merge readiness ma ancora capace di impedire il rerun.
     if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
         blockers.append("safety_or_regression_not_proven_fixed")
     if _review_thread_has_active_failure_wording(claimed_issue) and not _review_fixed_or_stale(evidence):
@@ -8339,9 +8342,7 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
         blockers.append("active_reviews_not_clear")
     if ctx.get("checks_green") is False:
         blockers.append("checks_not_green")
-    codacy_required = ctx.get("codacy_relevant") is True
-    if (codacy_required or _codacy_review_evidence_present(ctx)) and not _codacy_review_evidence_green(ctx):
-        blockers.append("codacy_not_green")
+    # Codacy DISMESSO: vedi la nota in _review_resolution_evidence_blockers.
     if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
         blockers.append("pending_checks")
     if bool(ctx.get("failing_checks")) or _check_count_blocks_rerun(ctx, "failing_checks_count"):
