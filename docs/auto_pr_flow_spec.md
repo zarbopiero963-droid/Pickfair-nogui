@@ -1,5 +1,15 @@
 # Auto PR Flow — Specifica
 
+> **⚠️ CODACY È DISMESSO (integrazione rimossa).** Ogni riferimento a Codacy in
+> questo documento è **storico** e non descrive più il comportamento reale.
+> Non esistono più: l'API Codacy (nessuna chiamata di rete nel repo), il comando
+> `codacy-task`, il segreto `CODACY_API_TOKEN`, lo step Codacy nel workflow di
+> merge readiness. Un eventuale check "Codacy" residuo (GitHub App non ancora
+> disinstallata) è **sempre ignorato** e non entra mai tra i blockers. La catena
+> di evidenza "DeepSource advisory" **non richiede più** che Codacy sia verde:
+> pretendere evidenza da un servizio dismesso sarebbe un blocco permanente.
+> Tutti gli altri gate restano **fail-closed e invariati**.
+
 > Specifica del flusso automatico di gestione PR (orchestrator fail-closed).
 > Implementazione di riferimento: `scripts/pr_automation_controller.py`,
 > `scripts/pr_flow_automation.py`, `scripts/pr_merge_readiness.py`.
@@ -510,12 +520,10 @@ può rispondere e risolvere solo se:
 - AUTO_RESOLVE_ENABLED=true
 - current head combacia
 - validation passata
-- TUTTI i check current-head SETTLED (non solo Codacy): nessun check in
+- TUTTI i check current-head SETTLED: nessun check in
   PENDING/QUEUED/IN_PROGRESS/WAITING/REQUESTED/EXPECTED/UNKNOWN/null —
   i bot pubblicano rilievi solo a check completato, quindi il resolve
   definitivo aspetta l'intero rollup (vedi CLAUDE.md check-completion gate)
-- Codacy success
-- annotations_count=0
 - test/evidence coprono il commento
 - nessun blocker attivo sullo stesso tema
 
@@ -525,7 +533,7 @@ Se AUTO_RESOLVE_ENABLED=false:
 NEXT_ACTION=human_evidence_resolve
 ```
 
-Quindi prepara testo e prove, ma non risolve automaticamente. Le regole vietano di risolvere thread "perché sembra risolto"; servono head SHA, validation e check/Codacy evidence.
+Quindi prepara testo e prove, ma non risolve automaticamente. Le regole vietano di risolvere thread "perché sembra risolto"; servono head SHA, validation ed evidenza dai check.
 
 ---
 
@@ -533,7 +541,6 @@ Quindi prepara testo e prove, ma non risolve automaticamente. Le regole vietano 
 
 Rerunna readiness/guardrails solo quando:
 
-- Codacy verde
 - review active = 0
 - pending = 0
 - nessun blocker codice reale
@@ -566,15 +573,13 @@ solo se:
 - bad=[]
 - pending=[]
 - unresolved_active=0
-- Codacy success
-- Codacy annotations_count=0
 - required checks non bloccanti
 - DeepSource/Semgrep/security gates non blocking
 - current head match
 - PR non draft
 - mergeStateStatus pulito o accettabile
 
-L'orchestrator prevede READY_TO_MERGE solo con bad vuoti, pending vuoti, unresolved_active 0 e Codacy success.
+L'orchestrator prevede READY_TO_MERGE solo con bad vuoti, pending vuoti e unresolved_active 0. (Il vincolo storico «Codacy success» non esiste più.)
 
 Ma il merge resta manuale:
 

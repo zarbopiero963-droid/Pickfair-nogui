@@ -21,7 +21,6 @@ if "/" not in REPO_FULL:
 
 OWNER, REPO = REPO_FULL.split("/", 1)
 
-CODACY_TOKEN = os.environ.get("CODACY_API_TOKEN", "")
 DEEPSOURCE_TOKEN = os.environ.get("DEEPSOURCE_API_TOKEN", "")
 
 
@@ -88,40 +87,6 @@ def compact_text(value: Any, limit: int = 500) -> str:
     return text[:limit]
 
 
-def collect_codacy() -> dict[str, Any]:
-    if not PR_NUMBER:
-        return {"ok": False, "error": "PR_NUMBER missing"}
-
-    provider = os.environ.get("CODACY_PROVIDER", "gh")
-    org = urllib.parse.quote(OWNER, safe="")
-    repo = urllib.parse.quote(REPO, safe="")
-
-    params = urllib.parse.urlencode(
-        {
-            "status": "new",
-            "onlyPotential": "false",
-            "limit": "100",
-        }
-    )
-
-    url = (
-        "https://api.codacy.com/api/v3/analysis/"
-        f"organizations/{provider}/{org}/repositories/{repo}/"
-        f"pull-requests/{PR_NUMBER}/issues?{params}"
-    )
-
-    headers: dict[str, str] = {}
-    if CODACY_TOKEN:
-        headers["api-token"] = CODACY_TOKEN
-
-    result = request_json(url, headers=headers)
-    result["token_configured"] = bool(CODACY_TOKEN)
-    result["provider"] = provider
-    result["url_template"] = (
-        "https://api.codacy.com/api/v3/analysis/"
-        "organizations/{provider}/{org}/repositories/{repo}/pull-requests/{pr}/issues"
-    )
-    return result
 
 
 def collect_deepsource() -> dict[str, Any]:
@@ -188,85 +153,8 @@ query($name: String!, $login: String!, $vcsProvider: VCSProvider!, $number: Int!
     return result
 
 
-def find_codacy_items(body: Any) -> list[dict[str, Any]]:
-    if isinstance(body, list):
-        return [x for x in body if isinstance(x, dict)]
-
-    if not isinstance(body, dict):
-        return []
-
-    for key in ("data", "issues", "results", "items"):
-        value = body.get(key)
-        if isinstance(value, list):
-            return [x for x in value if isinstance(x, dict)]
-
-    return []
 
 
-def format_codacy(result: dict[str, Any]) -> str:
-    lines = [
-        "## Codacy API",
-        f"- token_configured: {result.get('token_configured')}",
-        f"- ok: {result.get('ok')}",
-        f"- status: {result.get('status')}",
-    ]
-
-    if not result.get("ok"):
-        lines.append(f"- error: {compact_text(result.get('error'))}")
-        return "\n".join(lines) + "\n"
-
-    items = find_codacy_items(result.get("body"))
-
-    if not items:
-        lines.append("- issues: none returned or response shape not issue-list")
-        return "\n".join(lines) + "\n"
-
-    lines.append(f"- issues_returned: {len(items)}")
-
-    for idx, item in enumerate(items[:50], 1):
-        commit_issue = item.get("commitIssue") if isinstance(item.get("commitIssue"), dict) else item
-
-        path = (
-            commit_issue.get("filePath")
-            or commit_issue.get("path")
-            or item.get("filePath")
-            or item.get("path")
-            or "unknown"
-        )
-        line = (
-            commit_issue.get("line")
-            or commit_issue.get("lineNumber")
-            or commit_issue.get("startLine")
-            or item.get("line")
-            or item.get("lineNumber")
-            or "unknown"
-        )
-        level = (
-            commit_issue.get("level")
-            or item.get("level")
-            or item.get("severity")
-            or "unknown"
-        )
-        pattern = (
-            commit_issue.get("patternId")
-            or commit_issue.get("pattern")
-            or item.get("patternId")
-            or item.get("category")
-            or "unknown"
-        )
-        message = (
-            item.get("message")
-            or item.get("title")
-            or item.get("description")
-            or commit_issue.get("message")
-            or ""
-        )
-
-        lines.append(
-            f"{idx}. {path}:{line} [{level}] {pattern} — {compact_text(message)}"
-        )
-
-    return "\n".join(lines) + "\n"
 
 
 def format_deepsource(result: dict[str, Any]) -> str:
@@ -328,10 +216,8 @@ def format_deepsource(result: dict[str, Any]) -> str:
 
 
 def main() -> int:
-    codacy = collect_codacy()
     deepsource = collect_deepsource()
 
-    write_json(OUT_DIR / "codacy-pr-issues.json", codacy)
     write_json(OUT_DIR / "deepsource-pr-issues.json", deepsource)
 
     md = [
@@ -339,8 +225,6 @@ def main() -> int:
         "",
         f"Repo: {REPO_FULL}",
         f"PR: #{PR_NUMBER or 'unknown'}",
-        "",
-        format_codacy(codacy),
         "",
         format_deepsource(deepsource),
         "",
@@ -352,7 +236,6 @@ def main() -> int:
     )
 
     print("External analyzer API context written:")
-    print(f"- {OUT_DIR / 'codacy-pr-issues.json'}")
     print(f"- {OUT_DIR / 'deepsource-pr-issues.json'}")
     print(f"- {OUT_DIR / 'external-review-context.md'}")
 

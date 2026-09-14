@@ -235,7 +235,7 @@ Use this mode if any of these are true:
 - The prompt mentions an existing PR branch.
 - The current branch is already associated with an open PR.
 - A handoff `.md` references an existing PR.
-- The request is about failing checks, review comments, Codacy, DeepSource,
+- The request is about failing checks, review comments, DeepSource,
   CodeRabbit, Sourcery, Gitar, GitHub Actions, or other feedback on an
   existing PR.
 - The request says to continue on the same PR, same branch, or current PR.
@@ -567,7 +567,6 @@ This applies to:
 - GitHub review threads.
 - Failing GitHub Actions workflows.
 - Failing checks.
-- Codacy findings.
 - DeepSource findings.
 - CodeRabbit comments.
 - Sourcery comments.
@@ -630,7 +629,7 @@ When a handoff file is provided and no PR exists:
 - Do not create a new PR for follow-up fixes.
 - Do not create a new PR for review comment fixes.
 - Do not create a new PR for failing check fixes.
-- Do not create a new PR for Codacy/DeepSource/static analysis fixes.
+- Do not create a new PR for DeepSource/static analysis fixes.
 - Do not create a new PR from a handoff file that references the current PR.
 - Merge only via the gated auto-merge policy; otherwise merge is manual and
   owner-only.
@@ -1128,7 +1127,6 @@ statuses, including:
 - GitHub Actions check runs;
 - commit statuses;
 - statusCheckRollup;
-- Codacy;
 - DeepSource;
 - CodeRabbit/Sourcery/Gitar if present (subject to the absence rules above);
 - guard / merge readiness / PR flow guardrails;
@@ -1156,7 +1154,7 @@ never authorizes skipping a real check run. Unknown or missing states of
 binding checks remain fail-closed (not settled).
 
 Read review findings, inline comments and review bodies **after** checks
-finish — the bots (CodeRabbit/Codacy/DeepSource/Sourcery/Gitar) often publish
+finish — the bots (CodeRabbit/DeepSource/Sourcery/Gitar) often publish
 only when their check completes. After EVERY push repeat the cycle: push =>
 wait for checks => re-read checks + annotations + comments + inline + threads
 => triage => patch if needed. An intermediate monitoring status is allowed,
@@ -1638,7 +1636,7 @@ Do not stop if:
 - The task is to fix the currently open PR.
 - The task is triggered by GitHub review comments on the currently open PR.
 - The task is triggered by failing checks on the currently open PR.
-- The task is triggered by Codacy feedback on the currently open PR.
+- The task is triggered by static-analysis feedback on the currently open PR.
 - The task is triggered by DeepSource feedback on the currently open PR.
 - The task is triggered by CodeRabbit feedback on the currently open PR.
 - The task is triggered by Sourcery feedback on the currently open PR.

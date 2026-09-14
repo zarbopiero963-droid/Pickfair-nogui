@@ -22,6 +22,10 @@ NEXT_ACTION_ALLOWED = {
     "fix_codacy_current_issues",
     "fix_github_codacy_annotations",
     "rerun_stale_checks",
+    # Azione legittima del controller (6 call-site). Prima non compariva qui
+    # perche' un blocker Codacy la mascherava sempre; con Codacy dismesso il
+    # vero blocker (thread di review non risolto) emerge.
+    "fix_review_comments",
     "run_final_micro_audit",
     "refresh_merge_readiness",
     "send_ready_to_merge_telegram",
@@ -57,7 +61,7 @@ def _args() -> argparse.Namespace:
 def _stub_codacy_evidence(monkeypatch, *, blocking: bool, ignored: bool, issues: int) -> None:
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
         lambda _repo, _pr, _blockers: {
             "blocking": blocking,
             "ignored": ignored,
@@ -403,42 +407,10 @@ def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_require
     )
 
 
-def test_controller_preserves_safe_autofix_launch_for_current_codacy_blocker(monkeypatch):
-    """Current Codacy blockers remain launchable for safe autofix."""
-    decision = _controller_decision(monkeypatch, blocking=True, ignored=False)
-
-    ASSERTIONS.assertEqual(decision["next_action"], "would_launch_safe_autofix")
-    ASSERTIONS.assertEqual(
-        decision["launchable_for_safe_autofix"][0]["name"],
-        "Codacy Static Code Analysis",
-    )
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertTrue(decision["actions"])
 
 
-def test_codacy_api_token_is_not_trusted_outside_github_actions(monkeypatch):
-    """Local shell CODACY_API_TOKEN is not accepted as Codacy API authority."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.setenv("HAS_CODACY_API_TOKEN", "true")
-    monkeypatch.setenv("CODACY_API_TOKEN", "local-token")
-
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "only trusted inside GitHub Actions"):
-        controller.codacy_api_token()
 
 
-def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
-    """Controller Codacy task writer persists raw API response and normalized task context."""
-    raw = {"data": [{"filePath": "scripts/pr_automation_controller.py", "lineNumber": 12, "message": "Fix me"}]}
-
-    controller.write_codacy_task(tmp_path, raw, raw["data"])
-
-    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
-    ASSERTIONS.assertTrue((tmp_path / "codacy-issues.json").exists())
-    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
-    ASSERTIONS.assertIn("scripts/pr_automation_controller.py:12", task)
-    ASSERTIONS.assertIn("Fix me", task)
-    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
-    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", task)
 
 
 def test_ensure_post_fix_micro_audit_section_adds_no_commit_rule_once():
@@ -1160,10 +1132,6 @@ def test_phase0_helpers_do_not_call_runtime_tools():
         ASSERTIONS.assertNotIn("codex ", block)
 
 
-def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
-    """Codacy task includes the required post-fix micro-audit section."""
-    task = "\n".join(controller.codacy_task_lines([]))
-    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
 
 
 def test_validate_codex_prompt_contract_rejects_git_commit_without_allowance():
@@ -2811,7 +2779,7 @@ def test_controller_waits_on_pending_real_checks_without_launching_safe_autofix(
     """Pending real checks must keep controller in wait_pending and skip safe-autofix launch."""
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
         lambda *_args, **_kwargs: controller.codacy_evidence_without_checks(),
     )
     monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
@@ -3623,19 +3591,6 @@ def test_codacy_annotations_fallback_become_real_blockers():
     ASSERTIONS.assertFalse(result.get("ignored", False))
 
 
-def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path():
-    """API evidence should retain github_annotations so mismatch classification stays reachable."""
-    evidence = controller.codacy_evidence_from_api(
-        [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
-        True,
-        [],
-        "ok",
-        github_annotations=3,
-    )
-    classified = controller.classify_codacy_evidence(evidence)
-
-    ASSERTIONS.assertEqual(evidence["github_annotations"], 3)
-    ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
 
 
 def test_codacy_annotation_fallback_api_issues_classifies_real_codacy_issue():
@@ -7025,20 +6980,17 @@ def test_next_action_summary_contract():
 def _mock_codacy_evidence_helper(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
+        # Rispecchia l'evidenza REALE dopo la dismissione di Codacy: nessuna
+        # API, servizio dismesso, check sempre ignorato.
         lambda *_args: {
             "checks": [{"name": "Codacy Static Code Analysis", "state": "ACTION_REQUIRED"}],
-            "check_blocking": True,
-            "github_codacy_state": "ACTION_REQUIRED",
-            "github_annotations": 0,
-            "codacy_api_issues": 1,
-            "issues": [{"filePath": "a.py", "patternId": "X"}],
-            "api_available": True,
+            "ignored": True,
+            "classification": "decommissioned",
+            "issues": [],
+            "issues_returned": 0,
             "api_ok": True,
-            "issues_returned": 1,
-            "blocking": True,
-            "ignored": False,
-            "reason": "test",
+            "reason": "codacy_decommissioned",
         },
     )
 
@@ -7080,8 +7032,13 @@ def _build_ctx_for_codacy_review_summary() -> controller.NextActionContext:
 
 
 def _assert_codacy_review_summary(ctx: controller.NextActionContext) -> None:
-    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "real_current_issues")
-    ASSERTIONS.assertFalse(ctx.decision["codacy"]["ignored"])
+    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "decommissioned")
+    ASSERTIONS.assertTrue(ctx.decision["codacy"]["ignored"])
+    # BLOCK: un check Codacy residuo non deve MAI finire tra i blockers.
+    blocker_names = " ".join(
+        str(b.get("name", "")) for b in ctx.decision.get("blockers", []) if isinstance(b, dict)
+    ).lower()
+    ASSERTIONS.assertNotIn("codacy", blocker_names)
     ASSERTIONS.assertEqual(ctx.decision["review"]["unresolved_active"], 1)
     ASSERTIONS.assertIn(ctx.decision["next_action_summary"], NEXT_ACTION_ALLOWED)
 
