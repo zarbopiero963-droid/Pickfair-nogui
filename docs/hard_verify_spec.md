@@ -46,13 +46,12 @@ Obiettivo:
 Merge readiness deve capire se DeepSource Python è required o advisory.
 
 PASS:
-branch protection absent + DeepSource non-required + Codacy success
+branch protection absent + DeepSource non-required
 + review attive 0 => non blocca
 
 BLOCK:
 required-check evidence mancante/malformata
 DeepSource required failing
-Codacy failure
 review attive > 0
 head mismatch
 => blocca
@@ -187,14 +186,12 @@ Per PR aperte o appena mergiate, leggi su current head:
 
 - bad / pending / skipped
 - headRefOid
-- Codacy conclusion + annotations_count
 - active review comments / unresolved_active
 - DeepSource status
 - Merge readiness / PR flow guardrails
 
 Regole:
 
-- Codacy success + annotations 0 = bene
 - unresolved_active 0 = bene
 - DeepSource failure = blocca solo se required/current-head/blocking
 - Merge readiness / guardrails failure = wiring o gate non verde
@@ -230,7 +227,6 @@ Non basta che "funzioni quando tutto è bello". Deve bloccare quando manca evide
 - branch protection ambiguous => block
 - required checks missing => block
 - DeepSource required failing => block
-- Codacy annotations current-head > 0 => block
 - review active > 0 => block
 - file forbidden touched => block
 - workflow edit non autorizzato => block

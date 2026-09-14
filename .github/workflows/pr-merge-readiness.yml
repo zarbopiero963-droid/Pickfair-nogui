@@ -43,8 +43,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
-      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
-      HAS_CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN != '' }}
       REPO: ${{ github.repository }}
       PR: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
     steps:
@@ -67,11 +65,6 @@ jobs:
           fi
 
           mkdir -p .merge-readiness
-          python3 scripts/pr_automation_controller.py codacy-task \
-            --repo "$REPO" \
-            --pr "$PR" \
-            --outdir .merge-readiness/codacy-context
-
           python3 scripts/pr_merge_readiness.py \
             --repo "$REPO" \
             --pr "$PR" \
@@ -88,26 +81,42 @@ jobs:
             echo "- mergeStateStatus: \`$(jq -r '.mergeStateStatus' .merge-readiness/decision.json)\`"
             echo "- blockers: \`$(jq '.blockers | length' .merge-readiness/decision.json)\`"
             echo "- pending: \`$(jq '.pending | length' .merge-readiness/decision.json)\`"
-            echo "- ignored self-checks: \`$(jq '.ignored | length' .merge-readiness/decision.json)\`"
+            echo "- ignored checks: \`$(jq '.ignored_self_checks | length' .merge-readiness/decision.json)\`"
             echo ""
             echo "### Reasons"
             jq -r '.reasons[]? | "- " + .' .merge-readiness/decision.json
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$CAN_MERGE" != "true" ]; then
-            CODACY_ISSUES="$(jq 'length' .merge-readiness/codacy-context/codacy-issues.json 2>/dev/null || echo 1)"
-            NON_CODACY_BLOCKERS="$(
-              jq '[.blockers[]? | select((((.name // "") + " " + (.url // "") | ascii_downcase | contains("codacy")) | not))] | length' \
+          # Un check ESCLUSO che e' ROSSO non deve sparire in silenzio (rilievo
+          # Claude Fable 5 su #462). L'esclusione resta — self-check del flow,
+          # oppure il check della GitHub App Codacy dismessa — ma viene DETTA,
+          # con nome e stato, sia nel riepilogo sia come ::warning:: in Actions.
+          # Prima questa riga leggeva `.ignored`, una chiave che la decisione non
+          # produce: jq restituiva null e il riepilogo non mostrava nulla.
+          EXCLUDED_BAD="$(
+            jq -r '[.ignored_self_checks[]? | select(((.state // "") | ascii_upcase) as $s
+                   | $s != "" and $s != "SUCCESS" and $s != "SKIPPED" and $s != "NEUTRAL")] | length' \
+              .merge-readiness/decision.json
+          )"
+          if [ "${EXCLUDED_BAD:-0}" != "0" ]; then
+            echo "::warning::$EXCLUDED_BAD excluded check(s) are NOT green. They do not block the merge gate by design - listed in the job summary."
+            {
+              echo ""
+              echo "### Excluded checks that are not green"
+              echo ""
+              jq -r '.ignored_self_checks[]? | select(((.state // "") | ascii_upcase) as $s
+                     | $s != "" and $s != "SUCCESS" and $s != "SKIPPED" and $s != "NEUTRAL")
+                     | "- `" + (.name // "?") + "` = `" + (.state // "?") + "`"
+                       + (if .decommissioned then " (decommissioned service)" else " (flow self-check)" end)' \
                 .merge-readiness/decision.json
-            )"
-            PENDING_COUNT="$(jq '.pending | length' .merge-readiness/decision.json)"
-            BLOCKER_COUNT="$(jq '.blockers | length' .merge-readiness/decision.json)"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-            if [ "$CODACY_ISSUES" = "0" ] && [ "$BLOCKER_COUNT" != "0" ] && [ "$NON_CODACY_BLOCKERS" = "0" ] && [ "$PENDING_COUNT" = "0" ]; then
-              echo "::notice::Ignoring stale Codacy ACTION_REQUIRED because Codacy API returned no current issues."
-              exit 0
-            fi
-
+          # Fail-closed sui blocker REALI: se la readiness dice che non si puo'
+          # mergiare, il gate FALLISCE. Codacy e' dismesso (nessuna API, nessun
+          # token, nessun caso speciale): non esiste piu' alcun ramo che rende
+          # verde una readiness negativa.
+          if [ "$CAN_MERGE" != "true" ]; then
             echo "::warning::PR is not merge-ready yet."
             jq '.reasons' .merge-readiness/decision.json
             exit 1

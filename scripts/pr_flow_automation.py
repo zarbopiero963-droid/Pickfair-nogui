@@ -113,6 +113,36 @@ def is_self_check(check: dict[str, Any]) -> bool:
     )
 
 
+#: Nome ESATTO del check pubblicato dalla GitHub App di Codacy, dismessa.
+#: FONTE UNICA nel controller: i due percorsi decisionali (questo gate CI e
+#: `pr_automation_controller`) devono usare la STESSA identita', altrimenti
+#: divergono — ed e' esattamente quello che era successo: stretto qui al giro
+#: 3, lasciato largo nel controller fino al giro 4.
+#: Deliberatamente un match esatto e non una sottostringa "codacy": un
+#: predicato per sottostringa e' un vettore FAIL-OPEN sul gate di merge —
+#: qualunque check futuro col nome che contiene "codacy" (una guardia sulla
+#: dismissione, un workflow rinominato) sparirebbe dai blockers anche da
+#: FAILURE. Rilievo convergente di Fugu Ultra, Claude Fable 5 e Codex su #462.
+#: Un check Codacy con un nome diverso da questi NON e' esente: bloccherebbe,
+#: che e' la direzione sicura (fail-closed).
+DECOMMISSIONED_CODACY_CHECK_NAMES = controller.DECOMMISSIONED_CODACY_CHECK_NAMES
+
+
+def is_decommissioned_codacy_check(check: dict[str, Any]) -> bool:
+    """Il check pubblicato dalla GitHub App di Codacy, che e' DISMESSA.
+
+    Codacy non ha piu' ne' API ne' token: quel check resta appeso finche'
+    l'owner non disinstalla l'app, e la sua ACTION_REQUIRED e' stantia per
+    definizione. Un servizio dismesso non e' un segnale: non blocca (non e'
+    un blocker) e non tiene in attesa (non e' un pending).
+
+    Rilievo Codex P1 su #462: il gate CI gira `pr_merge_readiness.py`, che
+    delega QUI. Filtrare il check solo nel controller non toglieva il falso
+    rosso, perche' il controller non sta su questo percorso.
+    """
+    return check_name(check).strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
+
+
 def pr_view(repo: str, pr: str) -> dict[str, Any]:
     return gh_json([
         "gh", "pr", "view", str(pr),
@@ -151,6 +181,15 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             ignored.append(item)
             if item["state"] in BAD_STATES:
                 self_stale.append(item)
+            continue
+
+        # Codacy e' DISMESSO: il check residuo della GitHub App non e' ne' un
+        # blocker ne' un pending, qualunque sia il suo stato (vedi
+        # is_decommissioned_codacy_check).
+        if is_decommissioned_codacy_check(raw):
+            item["ignored"] = True
+            item["decommissioned"] = True
+            ignored.append(item)
             continue
 
         item["ignored"] = False
@@ -223,78 +262,18 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def codacy_api_token() -> str:
-    """Return CODACY_API_TOKEN only when running inside GitHub Actions."""
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise RuntimeError("CODACY_API_TOKEN is only trusted inside GitHub Actions")
-    token = os.environ.get("CODACY_API_TOKEN", "")
-    if not token:
-        raise RuntimeError("GitHub Actions CODACY_API_TOKEN secret is unavailable")
-    return token
 
 
-def codacy_url(repo: str, pr_number: str) -> str:
-    """Build the Codacy pull-request issues endpoint URL."""
-    owner, repo_name = repo.split("/", 1)
-    provider = os.environ.get("CODACY_PROVIDER", "gh")
-    params = urllib.parse.urlencode({
-        "status": "new",
-        "onlyPotential": "false",
-        "limit": "100",
-    })
-    return (
-        "https://api.codacy.com/api/v3/analysis/"
-        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
-        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
-        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
-    )
 
 
-def validate_codacy_url(url: str) -> None:
-    """Validate that the Codacy endpoint uses the expected HTTPS host."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
-        raise RuntimeError("invalid Codacy API URL")
 
 
-def codacy_request_target(parsed: urllib.parse.ParseResult) -> str:
-    """Build Codacy API request target from a parsed URL."""
-    return f"{parsed.path}?{parsed.query}" if parsed.query else parsed.path
 
 
-def codacy_https_request(target: str, token: str) -> tuple[int, str]:
-    """Execute a Codacy HTTPS GET request and return status and payload text."""
-    request = urllib.request.Request(
-        f"https://api.codacy.com{target}",
-        headers={"api-token": token},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310  # nosemgrep
-            status = int(getattr(response, "status", 200))
-            payload = response.read().decode("utf-8")
-    except OSError as exc:
-        raise RuntimeError("Codacy API request failed") from exc
-    return status, payload
 
 
-def codacy_http_response(url: str, token: str) -> tuple[int, str]:
-    """Request Codacy API data and return status code and decoded payload."""
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
-        raise RuntimeError("invalid Codacy API URL")
-    return codacy_https_request(codacy_request_target(parsed), token)
 
 
-def fetch_codacy_json(url: str, token: str) -> Any:
-    """Fetch JSON payload from the validated Codacy API endpoint."""
-    validate_codacy_url(url)
-    parsed = urllib.parse.urlparse(url)
-    _ = codacy_request_target(parsed)
-    status, payload = codacy_http_response(url, token)
-    if status >= 400:
-        raise RuntimeError(f"Codacy API request failed with status {status}")
-    return json.loads(payload or "{}")
 
 
 def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
@@ -304,23 +283,8 @@ def dict_items_from_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)]
 
 
-def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
-    """Extract issue dictionaries from known Codacy response shapes."""
-    if isinstance(body, list):
-        return dict_items_from_list(body)
-    if not isinstance(body, dict):
-        return []
-    for key in ("data", "issues", "results", "items"):
-        items = dict_items_from_list(body.get(key))
-        if items:
-            return items
-    return []
 
 
-def issue_dict_from_item(item: dict[str, Any]) -> dict[str, Any]:
-    """Unwrap nested Codacy `commitIssue` payloads into a single issue dict."""
-    candidate = item.get("commitIssue")
-    return candidate if isinstance(candidate, dict) else item
 
 
 def nested_dict(source: dict[str, Any], key: str) -> dict[str, Any]:
@@ -337,42 +301,8 @@ def first_nonempty(*values: Any) -> Any:
     return ""
 
 
-def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
-    """Normalize a Codacy issue item into a flat task record."""
-    issue = issue_dict_from_item(item)
-    pattern_info = nested_dict(issue, "patternInfo")
-    tool_info = nested_dict(issue, "toolInfo") or nested_dict(issue, "tool")
-    pattern_id = first_nonempty(pattern_info.get("id"), issue.get("patternId"), issue.get("patternID"))
-    severity = first_nonempty(pattern_info.get("severityLevel"), pattern_info.get("level"), issue.get("severity"))
-    return {
-        "filePath": first_nonempty(issue.get("filePath"), issue.get("filename")),
-        "lineNumber": issue.get("lineNumber"),
-        "tool": first_nonempty(tool_info.get("name"), issue.get("toolName")),
-        "patternId": pattern_id,
-        "severity": severity,
-        "message": first_nonempty(issue.get("message")),
-    }
 
 
-def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
-    """Render normalized Codacy issue records as markdown lines."""
-    lines = [
-        "# Current Codacy API issues",
-        "",
-        f"Total: {len(records)}",
-        "",
-        "Fix only these current Codacy blockers. Preserve PR scope.",
-        "",
-    ]
-    for index, record in enumerate(records, 1):
-        tool_pattern = "/".join(
-            str(value) for value in (record["tool"], record["patternId"]) if value
-        ) or "unknown-tool-pattern"
-        location = f"{record['filePath']}:{record['lineNumber']}"
-        lines.append(
-            f"{index}. {location} {tool_pattern} {record['severity']} - {record['message']}"
-        )
-    return ensure_post_fix_micro_audit_section("\n".join(lines)).splitlines()
 
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
@@ -431,28 +361,10 @@ def post_fix_micro_audit_failed(report: dict[str, Any] | None) -> bool:
     return controller.post_fix_micro_audit_failed(report)
 
 
-def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    """Fetch and normalize Codacy pull-request issues."""
-    body = fetch_codacy_json(codacy_url(repo, pr_number), codacy_api_token())
-    raw = body if isinstance(body, dict) else {"data": body}
-    return raw, codacy_issue_items(body)
 
 
-def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-    """Persist Codacy raw payload and normalized task markdown in outdir."""
-    records = [codacy_issue_record(item) for item in issues]
-    write_json(outdir / "codacy-raw.json", raw)
-    (outdir / "codacy-task.md").write_text(
-        "\n".join(codacy_task_lines(records)) + "\n",
-        encoding="utf-8",
-    )
 
 
-def codacy_is_blocking(repo: str, pr_number: str) -> bool:
-    """Return True when Codacy appears among blocking PR checks."""
-    pr = pr_view(repo, pr_number)
-    checks = split_checks(pr, ignore_self=True)
-    return any("codacy" in f"{item['name']} {item['url']}".lower() for item in checks["blockers"])
 
 
 def post_or_update_comment(repo: str, pr: str, marker: str, body: str) -> None:
@@ -836,7 +748,6 @@ def _is_high_priority_action(action: str) -> bool:
         "needs_manual_merge_conflict",
         "needs_manual_secret",
         "needs_manual_scope_violation",
-        "needs_manual_codacy_rule_conflict",
         "rerun_stale_checks",
         "auto_resolve_merge_conflict",
     }
@@ -888,16 +799,11 @@ def summarize_blocker_actions(blockers: list[dict[str, Any]], context: dict[str,
 
 def build_telegram_summary(context: dict[str, Any]) -> dict[str, Any]:
     """Build a Telegram-ready summary payload from workflow context."""
-    codacy = context.get("codacy")
-    codacy_dict = codacy if isinstance(codacy, dict) else {}
     review = context.get("review")
     review_dict = review if isinstance(review, dict) else {}
     return {
         "pr_number": context.get("pr"),
         "head_sha": context.get("headRefOid"),
-        "codacy_classification": codacy_dict.get("classification"),
-        "github_codacy_check_state": context.get("github_codacy_check_state"),
-        "codacy_api_issue_count": codacy_dict.get("issues_returned"),
         "active_unresolved_review_count": review_dict.get("unresolved_active"),
         "next_action": context.get("next_action"),
     }
@@ -1049,10 +955,6 @@ def _deepsource_advisory_top_level_context(pr_data: dict[str, Any]) -> dict[str,
         "evidence_head_sha",
         "evidence_present",
         "deepsource_advisory_evidence",
-        "codacy",
-        "codacy_state",
-        "github_codacy_state",
-        "codacy_annotations_count",
         "github_annotations_count",
         "github_annotations",
         "unresolved_active",
@@ -1069,7 +971,6 @@ def _deepsource_has_explicit_advisory_evidence(context: dict[str, Any]) -> bool:
     return (
         context.get("evidence_present") is True
         or bool(context.get("deepsource_advisory_evidence"))
-        or isinstance(context.get("codacy"), dict)
     )
 
 
@@ -1087,7 +988,6 @@ def _deepsource_completed_advisory_context(
     current_head_sha = _completed_advisory_current_head_sha(pr_data, context)
     _complete_advisory_head_context(pr_data, context, advisory, current_head_sha)
     _complete_advisory_explicit_evidence(context)
-    _complete_advisory_codacy_context(pr_data, context)
     _complete_advisory_required_context(pr_data, context, current_head_sha)
     return context
 
@@ -1113,12 +1013,6 @@ def _complete_advisory_explicit_evidence(context: dict[str, Any]) -> None:
         context["evidence_present"] = True
 
 
-def _complete_advisory_codacy_context(pr_data: dict[str, Any], context: dict[str, Any]) -> None:
-    if "codacy_state" not in context and "github_codacy_state" not in context:
-        context["codacy_state"] = _deepsource_autoderived_codacy_state(pr_data)
-    codacy = _normalized_codacy_payload(context)
-    if not _deepsource_has_codacy_annotation_count(context, codacy):
-        context["codacy_annotations_count"] = _deepsource_autoderived_codacy_annotations_count(pr_data)
 
 
 def _complete_advisory_required_context(
@@ -1154,8 +1048,6 @@ def _deepsource_autoderived_context(
         "evidence_head_sha": _deepsource_advisory_group_head_sha(pr_data, advisory),
         "evidence_present": True,
         "deepsource_advisory_evidence": _deepsource_advisory_group_evidence(advisory),
-        "codacy_state": _deepsource_autoderived_codacy_state(pr_data),
-        "codacy_annotations_count": _deepsource_autoderived_codacy_annotations_count(pr_data),
         "deepsource_required_current_head_check_failing": _deepsource_autoderived_required_failing(
             pr_data, current_head_sha
         ),
@@ -1166,7 +1058,6 @@ def _deepsource_autoderived_context(
 def _deepsource_autoderived_context_missing(context: dict[str, Any]) -> bool:
     return (
         _deepsource_autoderived_head_or_evidence_missing(context)
-        or _deepsource_autoderived_codacy_missing(context)
         or context.get("deepsource_required_current_head_check_failing") is not False
     )
 
@@ -1179,9 +1070,6 @@ def _deepsource_autoderived_head_or_evidence_missing(context: dict[str, Any]) ->
     )
 
 
-def _deepsource_autoderived_codacy_missing(context: dict[str, Any]) -> bool:
-    annotations_count = _deepsource_annotation_count(context.get("codacy_annotations_count"))
-    return context.get("codacy_state") != "SUCCESS" or annotations_count != 0
 
 
 def _deepsource_autoderived_merge_evidence_malformed(pr_data: dict[str, Any]) -> bool:
@@ -1239,61 +1127,22 @@ def _deepsource_advisory_group_evidence(advisory: list[dict[str, Any]]) -> str:
     return "\n".join(evidence)
 
 
-def _deepsource_autoderived_codacy_state(pr_data: dict[str, Any]) -> str:
-    codacy = _normalized_codacy_payload(pr_data)
-    state = _deepsource_codacy_state(pr_data, codacy)
-    if state:
-        return state
-    return _find_codacy_status_in_rollup(pr_data)
 
 
-def _normalized_codacy_payload(pr_data: dict[str, Any]) -> dict[str, Any]:
-    codacy = pr_data.get("codacy")
-    return codacy if isinstance(codacy, dict) else {}
 
 
-def _find_codacy_status_in_rollup(pr_data: dict[str, Any]) -> str:
-    check = _find_codacy_check_in_rollup(pr_data)
-    if check:
-        return _codacy_rollup_check_state(check)
-    return ""
 
 
-def _find_codacy_check_in_rollup(pr_data: dict[str, Any]) -> dict[str, Any]:
-    for item in pr_data.get("statusCheckRollup") or []:
-        check = _dict_payload(item)
-        if check and _check_is_codacy(check):
-            return check
-    return {}
 
 
-def _codacy_rollup_check_state(check: dict[str, Any]) -> str:
-    return norm_state(check.get("conclusion") or check.get("state") or check.get("status"))
 
 
-def _check_is_codacy(check: dict[str, Any]) -> bool:
-    return "codacy" in f"{check_name(check)} {check_url(check)}".lower()
 
 
-def _deepsource_autoderived_codacy_annotations_count(pr_data: dict[str, Any]) -> int:
-    codacy = _normalized_codacy_payload(pr_data)
-    count = _deepsource_codacy_annotations_count(pr_data, codacy)
-    if _deepsource_has_codacy_annotation_count(pr_data, codacy):
-        return count
-    if count >= 0:
-        return count
-    return 0 if _codacy_rollup_success(pr_data) else -1
 
 
-def _codacy_rollup_success(pr_data: dict[str, Any]) -> bool:
-    return _find_codacy_status_in_rollup(pr_data) == "SUCCESS"
 
 
-def _deepsource_has_codacy_annotation_count(
-    context: dict[str, Any],
-    codacy: dict[str, Any],
-) -> bool:
-    return any(value is not None for value in _deepsource_codacy_annotation_values(context, codacy))
 
 
 def _deepsource_autoderived_required_failing(pr_data: dict[str, Any], current_head_sha: str) -> Any:
@@ -1477,7 +1326,6 @@ def _deepsource_advisory_evidence_reason(context: dict[str, Any]) -> str:
         _deepsource_current_head_evidence_decision(context),
         _deepsource_advisory_claim_decision(context),
         _deepsource_explicit_evidence_decision(context),
-        _deepsource_codacy_evidence_decision(context),
         _deepsource_merge_evidence_decision(context),
     ):
         if decision:
@@ -1489,8 +1337,6 @@ def _deepsource_explicit_evidence_decision(context: dict[str, Any]) -> str:
     return "" if context.get("evidence_present") is True else "missing_explicit_evidence"
 
 
-def _deepsource_codacy_evidence_decision(context: dict[str, Any]) -> str:
-    return "" if _deepsource_codacy_evidence_clear(context) else "codacy_evidence_not_clear"
 
 
 def _deepsource_merge_evidence_decision(context: dict[str, Any]) -> str:
@@ -1612,43 +1458,12 @@ def _deepsource_claim_has_guardrail_signal(claimed_issue: str) -> bool:
     )
 
 
-def _deepsource_codacy_evidence_clear(context: dict[str, Any]) -> bool:
-    codacy = context.get("codacy")
-    codacy_dict = codacy if isinstance(codacy, dict) else {}
-    codacy_state = _deepsource_codacy_state(context, codacy_dict)
-    annotations_count = _deepsource_codacy_annotations_count(context, codacy_dict)
-    return codacy_state == "SUCCESS" and annotations_count == 0
 
 
-def _deepsource_codacy_state(context: dict[str, Any], codacy: dict[str, Any]) -> str:
-    return norm_state(
-        context.get("codacy_state")
-        or context.get("github_codacy_state")
-        or codacy.get("codacy_state")
-        or codacy.get("github_codacy_state")
-        or codacy.get("state")
-    )
 
 
-def _deepsource_codacy_annotations_count(context: dict[str, Any], codacy: dict[str, Any]) -> int:
-    for value in _deepsource_codacy_annotation_values(context, codacy):
-        count = _deepsource_annotation_count(value)
-        if count >= 0:
-            return count
-    return -1
 
 
-def _deepsource_codacy_annotation_values(context: dict[str, Any], codacy: dict[str, Any]) -> tuple[Any, ...]:
-    return (
-        context.get("codacy_annotations_count"),
-        context.get("github_annotations_count"),
-        context.get("github_annotations"),
-        codacy.get("codacy_annotations_count"),
-        codacy.get("github_annotations_count"),
-        codacy.get("github_annotations"),
-        codacy.get("annotations_count"),
-        codacy.get("annotations"),
-    )
 
 
 def _deepsource_annotation_count(value: Any) -> int:
@@ -1776,41 +1591,12 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
     return controller.build_passive_rerun_readiness_plan(context)
 
 
-def classify_codacy_rule_conflict(issues: list[dict[str, Any]]) -> dict[str, Any]:
-    """Detect contradictory Codacy D203/D211 rule findings on the same entity."""
-    grouped_patterns: dict[tuple[str, str, str, str], set[str]] = {}
-    for key, pattern_id in _iter_d203_d211_rule_records(issues):
-        grouped_patterns.setdefault(key, set()).add(pattern_id)
-        if len(grouped_patterns[key]) == 2:
-            return _codacy_rule_conflict_result()
-    return {"classification": "none", "next_action": ""}
 
 
-def _iter_d203_d211_rule_records(
-    issues: list[dict[str, Any]],
-) -> list[tuple[tuple[str, str, str, str], str]]:
-    records: list[tuple[tuple[str, str, str, str], str]] = []
-    for issue in issues:
-        if not isinstance(issue, dict):
-            continue
-        pattern_id = _codacy_rule_id(issue)
-        if pattern_id not in {"D203", "D211"}:
-            continue
-        records.append((_codacy_rule_location_key(issue), pattern_id))
-    return records
 
 
-def _codacy_rule_id(issue: dict[str, Any]) -> str:
-    return str(issue.get("patternId") or issue.get("patternID") or "").strip().upper()
 
 
-def _codacy_rule_location_key(issue: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (
-        _normalized_issue_file(issue),
-        _normalized_issue_line(issue),
-        _normalized_issue_column(issue),
-        _normalized_issue_symbol(issue),
-    )
 
 
 def _normalized_issue_file(issue: dict[str, Any]) -> str:
@@ -1837,11 +1623,6 @@ def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
     return ""
 
 
-def _codacy_rule_conflict_result() -> dict[str, str]:
-    return {
-        "classification": "codacy_rule_conflict",
-        "next_action": "needs_manual_codacy_rule_conflict",
-    }
 
 
 def cmd_readiness(args: argparse.Namespace) -> int:
@@ -1964,10 +1745,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     issues: list[str] = []
     warnings: list[str] = []
 
-    codacy_blocking = any("codacy" in (b["name"] + " " + b["url"]).lower() for b in checks["blockers"])
-    if codacy_blocking and os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
-        issues.append("CODACY_API_TOKEN missing while Codacy is blocking")
-
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
 
@@ -1981,7 +1758,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for f in changed_files_for_commit(c):
             file_touches[f] = file_touches.get(f, 0) + 1
 
-    if codacy_blocking and len(commits) > args.max_safe_autofix_commits:
+    # Guard anti-loop autofix: prima era gatato su "Codacy sta bloccando"; con
+    # Codacy dismesso il gate diventerebbe morto, quindi il limite vale SEMPRE
+    # (piu' severo, mai piu' permissivo).
+    if len(commits) > args.max_safe_autofix_commits:
         issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
 
     oscillating = [
@@ -1989,8 +1769,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for f, n in sorted(file_touches.items())
         if n >= args.oscillation_touch_limit
     ]
-    if oscillating and codacy_blocking:
-        issues.append("possible autofix oscillation detected while Codacy is still blocking")
+    if oscillating:
+        issues.append("possible autofix oscillation detected")
 
     result = {
         "repo": args.repo,
@@ -1998,7 +1778,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         "state": pr.get("state"),
         "head": pr.get("headRefOid"),
         "branch": branch,
-        "codacy_blocking": codacy_blocking,
         "safe_autofix_commits": commits,
         "file_touches": file_touches,
         "oscillating_files": oscillating,
@@ -2029,41 +1808,9 @@ def cmd_report(args: argparse.Namespace) -> int:
         review_nodes = []
     decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes)
     blockers = decision.get("blockers")
-    blocker_items = blockers if isinstance(blockers, list) else []
-    codacy_checks = [
-        item
-        for item in blocker_items
-        if isinstance(item, dict)
-        and "codacy" in f"{check_name(item)} {check_url(item)}".lower()
-    ]
-    codacy_state = norm_state(
-        codacy_checks[0].get("state")
-        or codacy_checks[0].get("conclusion")
-        or codacy_checks[0].get("status")
-    ) if codacy_checks else ""
-    codacy: dict[str, Any] = {
-        "classification": "none",
-        "issues_returned": 0,
-        "treat_annotations_as_blockers": False,
-        "next_action": "",
-    }
-    try:
-        _, codacy_issues = fetch_codacy_pr_issues(args.repo, args.pr)
-        codacy["issues_returned"] = len(codacy_issues)
-        codacy.update(classify_codacy_rule_conflict(codacy_issues))
-        if codacy["classification"] == "none":
-            if codacy_issues:
-                codacy["classification"] = "real_current_issues"
-            elif codacy_checks:
-                codacy["classification"] = "stale_github_check"
-            else:
-                codacy["classification"] = "none"
-        codacy["treat_annotations_as_blockers"] = bool(codacy_checks and codacy_issues)
-    except (RuntimeError, ValueError, OSError):
-        codacy["classification"] = "unknown"
+    _ = blockers if isinstance(blockers, list) else []
     unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
     review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
-    decision["codacy"] = codacy
     decision["review"] = review
 
     decision["ready_to_merge_notification"] = should_notify_ready_to_merge({
@@ -2076,8 +1823,6 @@ def cmd_report(args: argparse.Namespace) -> int:
     decision["telegram_summary"] = build_telegram_summary({
         "pr": decision.get("pr"),
         "headRefOid": decision.get("headRefOid"),
-        "codacy": codacy,
-        "github_codacy_check_state": codacy_state,
         "review": review,
         "next_action": decision.get("next_action"),
     })
@@ -2181,29 +1926,6 @@ def _review_threads_next_cursor(review_raw: dict[str, Any]) -> str:
     return str(next_cursor) if next_cursor else ""
 
 
-def cmd_codacy_task(args: argparse.Namespace) -> int:
-    """Write current Codacy issues to task artifacts for the autofix loop."""
-    outdir = Path(args.outdir)
-    blocking = codacy_is_blocking(args.repo, args.pr)
-    try:
-        raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
-    except (RuntimeError, ValueError, OSError) as exc:
-        return codacy_task_error_result(args, blocking, exc)
-
-    write_codacy_task(outdir, raw, issues)
-    codacy_rule_conflict = classify_codacy_rule_conflict(issues)
-    result = {
-        "repo": args.repo,
-        "pr": str(args.pr),
-        "ok": True,
-        "codacy_blocking": blocking,
-        "issues_returned": len(issues),
-        "codacy_rule_conflict": codacy_rule_conflict,
-        "codacy_raw": str(outdir / "codacy-raw.json"),
-        "codacy_task": str(outdir / "codacy-task.md"),
-    }
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
 
 
 def is_non_fast_forward_push_error(exc: Exception) -> bool:
@@ -2398,13 +2120,6 @@ def build_retry_push_gate_context(context: dict[str, Any] | None = None) -> dict
     return retry_gate
 
 
-def canary_timestamp_utc() -> str:
-    """Build a UTC timestamp for canary branch names."""
-    now = dt.datetime.now(dt.UTC)
-    return (
-        f"{now.year:04d}{now.month:02d}{now.day:02d}"
-        f"-{now.hour:02d}{now.minute:02d}{now.second:02d}"
-    )
 
 
 def push_with_retry_once(
@@ -2441,88 +2156,8 @@ def push_with_retry_once(
         return _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
 
 
-def codacy_task_error_result(
-    args: argparse.Namespace,
-    blocking: bool,
-    exc: Exception,
-) -> int:
-    """Return the command result for Codacy-task fetch failures."""
-    result = {
-        "repo": args.repo,
-        "pr": str(args.pr),
-        "ok": False,
-        "codacy_blocking": blocking,
-        "error": f"{type(exc).__name__}: {exc}",
-    }
-    print(json.dumps(result, indent=2, sort_keys=True), file=sys.stderr)
-    return 1 if blocking else 0
 
 
-def cmd_canary(args: argparse.Namespace) -> int:
-    gate_context: dict[str, Any] | None = None
-    raw_context = str(getattr(args, "post_fix_gate_context", "") or "").strip()
-    if raw_context:
-        parsed = json.loads(raw_context)
-        if not isinstance(parsed, dict):
-            raise RuntimeError("invalid --post-fix-gate-context: expected json object")
-        gate_context = parsed
-
-    ts = canary_timestamp_utc()
-    branch = f"test/safe-autofix-canary-{ts}"
-    filename = ".safe-autofix-auto-trigger-test.md"
-
-    if args.mode == "cleanup":
-        prs = gh_json([
-            "gh", "pr", "list", "--repo", args.repo,
-            "--state", "open",
-            "--search", "safe autofix canary in:title",
-            "--json", "number,headRefName,title",
-        ])
-        closed = []
-        for pr in prs:
-            number = str(pr["number"])
-            sh(["gh", "pr", "close", number, "--repo", args.repo, "--delete-branch"], check=False)
-            closed.append(number)
-        result = {"action": "cleanup", "closed": closed}
-        print(json.dumps(result, indent=2, sort_keys=True))
-        return 0
-
-    if not isinstance(gate_context, dict):
-        raise RuntimeError("missing required --post-fix-gate-context for canary create")
-    gate = ensure_post_fix_audit_gate_before_push(gate_context)
-    if not gate["allowed"]:
-        raise RuntimeError(f"post-fix audit gate denied before canary mutation: {gate['reason']}")
-
-    sh(["git", "fetch", "origin", "main"])
-    sh(["git", "checkout", "-B", branch, "origin/main"])
-    Path(filename).write_text(
-        "# TASK: safe-autofix-auto-trigger-test\n"
-        f"safe autofix canary {ts}\n",
-        encoding="utf-8",
-    )
-    sh(["git", "add", filename])
-    sh(["git", "commit", "-m", "test: safe autofix canary"])
-    push_status = push_with_retry_once(sh, args.repo, branch, context=gate_context)
-    if not push_status["ok"]:
-        raise RuntimeError(f"cannot push canary branch: {push_status.get('error', 'unknown error')}")
-
-    title = f"test: safe autofix canary {ts}"
-    body = (
-        "Temporary canary PR for the automatic PR flow.\n\n"
-        "Expected path:\n"
-        "1. Codacy reports a controlled markdownlint issue.\n"
-        "2. Safe autofix collects context.\n"
-        "3. Codex fixes only allowed files.\n"
-        "4. Merge readiness becomes clean.\n"
-        "5. This PR can be closed after validation.\n"
-    )
-    url = sh([
-        "gh", "pr", "create", "--repo", args.repo,
-        "--base", "main", "--head", branch,
-        "--title", title, "--body", body,
-    ])
-    print(json.dumps({"action": "created", "branch": branch, "url": url}, indent=2, sort_keys=True))
-    return 0
 
 
 def main() -> int:
@@ -2565,18 +2200,6 @@ def main() -> int:
     p.add_argument("--comment", action="store_true")
     p.add_argument("--no-fail", action="store_true")
     p.set_defaults(func=cmd_report)
-
-    p = sub.add_parser("codacy-task")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--pr", required=True)
-    p.add_argument("--outdir", default=".autofix/context")
-    p.set_defaults(func=cmd_codacy_task)
-
-    p = sub.add_parser("canary")
-    p.add_argument("--repo", required=True)
-    p.add_argument("--mode", choices=["create", "cleanup"], default="create")
-    p.add_argument("--post-fix-gate-context", default="")
-    p.set_defaults(func=cmd_canary)
 
     args = parser.parse_args()
     return args.func(args)

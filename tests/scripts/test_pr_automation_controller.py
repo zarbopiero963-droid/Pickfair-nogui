@@ -22,6 +22,10 @@ NEXT_ACTION_ALLOWED = {
     "fix_codacy_current_issues",
     "fix_github_codacy_annotations",
     "rerun_stale_checks",
+    # Azione legittima del controller (6 call-site). Prima non compariva qui
+    # perche' un blocker Codacy la mascherava sempre; con Codacy dismesso il
+    # vero blocker (thread di review non risolto) emerge.
+    "fix_review_comments",
     "run_final_micro_audit",
     "refresh_merge_readiness",
     "send_ready_to_merge_telegram",
@@ -57,7 +61,7 @@ def _args() -> argparse.Namespace:
 def _stub_codacy_evidence(monkeypatch, *, blocking: bool, ignored: bool, issues: int) -> None:
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
         lambda _repo, _pr, _blockers: {
             "blocking": blocking,
             "ignored": ignored,
@@ -403,42 +407,10 @@ def test_controller_does_not_launch_safe_autofix_for_stale_codacy_action_require
     )
 
 
-def test_controller_preserves_safe_autofix_launch_for_current_codacy_blocker(monkeypatch):
-    """Current Codacy blockers remain launchable for safe autofix."""
-    decision = _controller_decision(monkeypatch, blocking=True, ignored=False)
-
-    ASSERTIONS.assertEqual(decision["next_action"], "would_launch_safe_autofix")
-    ASSERTIONS.assertEqual(
-        decision["launchable_for_safe_autofix"][0]["name"],
-        "Codacy Static Code Analysis",
-    )
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertTrue(decision["actions"])
 
 
-def test_codacy_api_token_is_not_trusted_outside_github_actions(monkeypatch):
-    """Local shell CODACY_API_TOKEN is not accepted as Codacy API authority."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.setenv("HAS_CODACY_API_TOKEN", "true")
-    monkeypatch.setenv("CODACY_API_TOKEN", "local-token")
-
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "only trusted inside GitHub Actions"):
-        controller.codacy_api_token()
 
 
-def test_codacy_task_writes_raw_response_and_normalized_issue(tmp_path):
-    """Controller Codacy task writer persists raw API response and normalized task context."""
-    raw = {"data": [{"filePath": "scripts/pr_automation_controller.py", "lineNumber": 12, "message": "Fix me"}]}
-
-    controller.write_codacy_task(tmp_path, raw, raw["data"])
-
-    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
-    ASSERTIONS.assertTrue((tmp_path / "codacy-issues.json").exists())
-    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
-    ASSERTIONS.assertIn("scripts/pr_automation_controller.py:12", task)
-    ASSERTIONS.assertIn("Fix me", task)
-    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
-    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", task)
 
 
 def test_ensure_post_fix_micro_audit_section_adds_no_commit_rule_once():
@@ -1160,10 +1132,6 @@ def test_phase0_helpers_do_not_call_runtime_tools():
         ASSERTIONS.assertNotIn("codex ", block)
 
 
-def test_codacy_task_lines_keep_post_fix_micro_audit_section_included():
-    """Codacy task includes the required post-fix micro-audit section."""
-    task = "\n".join(controller.codacy_task_lines([]))
-    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
 
 
 def test_validate_codex_prompt_contract_rejects_git_commit_without_allowance():
@@ -2811,7 +2779,7 @@ def test_controller_waits_on_pending_real_checks_without_launching_safe_autofix(
     """Pending real checks must keep controller in wait_pending and skip safe-autofix launch."""
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
         lambda *_args, **_kwargs: controller.codacy_evidence_without_checks(),
     )
     monkeypatch.setattr(controller, "active_safe_autofix_runs", lambda _repo: [])
@@ -3623,19 +3591,6 @@ def test_codacy_annotations_fallback_become_real_blockers():
     ASSERTIONS.assertFalse(result.get("ignored", False))
 
 
-def test_codacy_evidence_from_api_preserves_annotation_field_for_mismatch_path():
-    """API evidence should retain github_annotations so mismatch classification stays reachable."""
-    evidence = controller.codacy_evidence_from_api(
-        [_check("Codacy Static Code Analysis", "ACTION_REQUIRED")],
-        True,
-        [],
-        "ok",
-        github_annotations=3,
-    )
-    classified = controller.classify_codacy_evidence(evidence)
-
-    ASSERTIONS.assertEqual(evidence["github_annotations"], 3)
-    ASSERTIONS.assertEqual(classified["classification"], "api_github_mismatch")
 
 
 def test_codacy_annotation_fallback_api_issues_classifies_real_codacy_issue():
@@ -5502,17 +5457,6 @@ def test_passive_review_plan_malformed_check_counts_fail_closed_before_evidence_
     )
 
 
-def test_passive_review_plan_codacy_action_required_or_annotations_fail_closed():
-    action_required = _single_review_plan(
-        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
-        codacy_state="action_required",
-    )
-    annotated = _single_review_plan(
-        _passive_review_thread("stale Codacy annotation", author="codacy-production[bot]"),
-        codacy_annotations_count=2,
-    )
-    ASSERTIONS.assertEqual(action_required["items"][0]["decision"], "NEEDS_MANUAL")
-    ASSERTIONS.assertEqual(annotated["items"][0]["decision"], "NEEDS_MANUAL")
 
 
 def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
@@ -5531,14 +5475,12 @@ def test_should_resolve_review_thread_existing_gates_remain_fail_closed():
             ),
             {"codacy_state": "action_required"},
         ),
-        (
-            _passive_review_thread(
-                "stale Codacy annotation",
-                author="codacy-production[bot]",
-                tests_covering_behavior=covered_tests,
-            ),
-            {"codacy_state": "", "codacy_annotations_count": -1},
-        ),
+        # Caso rimosso: {"codacy_state": "", "codacy_annotations_count": -1}.
+        # Con Codacy DISMESSO un thread storico scritto dal bot Codacy non puo'
+        # piu' esibire un verdetto Codacy verde, quindi pretenderlo lo rendeva
+        # IRRISOLVIBILE per sempre (rilievo Codex su #462). I quattro gate
+        # reali qui sopra — validation, evidence head, pending, failing —
+        # restano invariati e continuano a bloccare.
     )
 
     for thread, extra in cases:
@@ -5612,14 +5554,6 @@ def test_passive_rerun_readiness_blocks_on_head_mismatch_or_missing_head_evidenc
     ASSERTIONS.assertIn("missing_head_evidence", missing["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_blocks_on_codacy_not_green():
-    """Passive rerun readiness should fail closed when Codacy is not green."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    plan = controller.build_passive_rerun_readiness_plan(
-        _passive_review_evidence(review_resolution_plan=review_plan, codacy_state="action_required")
-    )
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_blocks_when_checks_green_false():
@@ -5994,34 +5928,8 @@ def test_passive_rerun_readiness_accepts_nested_codacy_state_aliases():
         ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"], alias)
 
 
-def test_passive_rerun_readiness_blocks_nested_codacy_non_green_state():
-    """Passive rerun readiness should fail closed on nested non-green Codacy state."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    evidence = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        codacy_relevant=True,
-    )
-    evidence.pop("codacy_state")
-    evidence.pop("codacy_annotations_count")
-    evidence["codacy"] = {"codacy_state": "ACTION_REQUIRED", "annotations_count": 0}
-    plan = controller.build_passive_rerun_readiness_plan(evidence)
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_blocks_nonempty_dict_github_annotations():
-    """Dict-shaped GitHub annotations should count as present annotation evidence."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    evidence = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        github_codacy_state="SUCCESS",
-        github_annotations={"path": "x.py", "message": "issue"},
-    )
-    evidence.pop("codacy_state")
-    evidence.pop("codacy_annotations_count")
-    plan = controller.build_passive_rerun_readiness_plan(evidence)
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_accepts_empty_dict_github_annotations():
@@ -6039,19 +5947,6 @@ def test_passive_rerun_readiness_accepts_empty_dict_github_annotations():
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_blocks_nested_nonempty_dict_github_annotations():
-    """Nested dict-shaped GitHub annotations should count as present annotation evidence."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    evidence = _passive_review_evidence(review_resolution_plan=review_plan)
-    evidence.pop("codacy_state")
-    evidence.pop("codacy_annotations_count")
-    evidence["codacy"] = {
-        "github_codacy_state": "SUCCESS",
-        "github_annotations": {"path": "x.py", "message": "issue"},
-    }
-    plan = controller.build_passive_rerun_readiness_plan(evidence)
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_accepts_nested_empty_dict_github_annotations():
@@ -6066,39 +5961,8 @@ def test_passive_rerun_readiness_accepts_nested_empty_dict_github_annotations():
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_blocks_nonzero_github_annotations_counts():
-    """Passive rerun readiness should block nonzero GitHub annotation evidence."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    for extra in (
-        {"github_codacy_state": "SUCCESS", "github_annotations": 1},
-        {"codacy": {"github_codacy_state": "SUCCESS", "github_annotations": 1}},
-    ):
-        evidence = _passive_review_evidence(review_resolution_plan=review_plan, **extra)
-        evidence.pop("codacy_state")
-        evidence.pop("codacy_annotations_count")
-        plan = controller.build_passive_rerun_readiness_plan(evidence)
-        ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-        ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_malformed_github_annotations_fail_closed_unless_zero_alias_present():
-    """Malformed GitHub annotation evidence should fail closed unless another explicit zero source is present."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    malformed = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        github_codacy_state="SUCCESS",
-        github_annotations="n/a",
-    )
-    malformed.pop("codacy_state")
-    malformed.pop("codacy_annotations_count")
-    blocked = controller.build_passive_rerun_readiness_plan(malformed)
-    ASSERTIONS.assertFalse(blocked["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", blocked["blocked_reasons"])
-
-    allowed = dict(malformed) | {"github_annotations_count": "0"}
-    plan = controller.build_passive_rerun_readiness_plan(allowed)
-    ASSERTIONS.assertTrue(plan["safe_to_rerun"])
-    ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_ignores_absent_codacy_evidence_when_not_relevant():
@@ -6136,74 +6000,12 @@ def test_passive_rerun_readiness_ignores_summary_only_codacy_dict_when_not_relev
     ASSERTIONS.assertNotIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_codacy_relevant_missing_evidence_blocks():
-    """Explicit Codacy relevance should require green state and zero annotations."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    evidence = _passive_review_evidence(review_resolution_plan=review_plan, codacy_relevant=True)
-    evidence.pop("codacy_state")
-    evidence.pop("codacy_annotations_count")
-    plan = controller.build_passive_rerun_readiness_plan(evidence)
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_codacy_relevant_summary_only_evidence_blocks():
-    """Explicit Codacy relevance should not accept summary-only classification output."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    evidence = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        codacy_relevant=True,
-        codacy={
-            "classification": "none",
-            "issues_returned": 0,
-            "next_action": "",
-            "treat_annotations_as_blockers": False,
-        },
-    )
-    evidence.pop("codacy_state")
-    evidence.pop("codacy_annotations_count")
-    plan = controller.build_passive_rerun_readiness_plan(evidence)
-    ASSERTIONS.assertFalse(plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_nested_codacy_state_and_annotations_count():
-    """Nested Codacy state plus Codacy annotation count should gate readiness."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    green = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        codacy={"codacy_state": "SUCCESS", "codacy_annotations_count": 0},
-    )
-    green.pop("codacy_state")
-    green.pop("codacy_annotations_count")
-    green_plan = controller.build_passive_rerun_readiness_plan(green)
-    ASSERTIONS.assertTrue(green_plan["safe_to_rerun"])
-    ASSERTIONS.assertNotIn("codacy_not_green", green_plan["blocked_reasons"])
-
-    bad = dict(green, codacy={"codacy_state": "ACTION_REQUIRED", "codacy_annotations_count": 1})
-    bad_plan = controller.build_passive_rerun_readiness_plan(bad)
-    ASSERTIONS.assertFalse(bad_plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", bad_plan["blocked_reasons"])
 
 
-def test_passive_rerun_readiness_top_level_codacy_state_and_annotations_count():
-    """Top-level GitHub Codacy state plus annotation count should gate readiness."""
-    review_plan = _single_review_plan(_passive_review_thread())
-    green = _passive_review_evidence(
-        review_resolution_plan=review_plan,
-        github_codacy_state="SUCCESS",
-        github_annotations_count=0,
-    )
-    green.pop("codacy_state")
-    green.pop("codacy_annotations_count")
-    green_plan = controller.build_passive_rerun_readiness_plan(green)
-    ASSERTIONS.assertTrue(green_plan["safe_to_rerun"])
-    ASSERTIONS.assertNotIn("codacy_not_green", green_plan["blocked_reasons"])
-
-    bad = dict(green, github_codacy_state="ACTION_REQUIRED", github_annotations_count=1)
-    bad_plan = controller.build_passive_rerun_readiness_plan(bad)
-    ASSERTIONS.assertFalse(bad_plan["safe_to_rerun"])
-    ASSERTIONS.assertIn("codacy_not_green", bad_plan["blocked_reasons"])
 
 
 def test_passive_rerun_readiness_accepts_github_codacy_check_state_alias():
@@ -7025,20 +6827,17 @@ def test_next_action_summary_contract():
 def _mock_codacy_evidence_helper(monkeypatch) -> None:
     monkeypatch.setattr(
         controller,
-        "controller_codacy_blocking_evidence",
+        "codacy_evidence_for_checks",
+        # Rispecchia l'evidenza REALE dopo la dismissione di Codacy: nessuna
+        # API, servizio dismesso, check sempre ignorato.
         lambda *_args: {
             "checks": [{"name": "Codacy Static Code Analysis", "state": "ACTION_REQUIRED"}],
-            "check_blocking": True,
-            "github_codacy_state": "ACTION_REQUIRED",
-            "github_annotations": 0,
-            "codacy_api_issues": 1,
-            "issues": [{"filePath": "a.py", "patternId": "X"}],
-            "api_available": True,
+            "ignored": True,
+            "classification": "decommissioned",
+            "issues": [],
+            "issues_returned": 0,
             "api_ok": True,
-            "issues_returned": 1,
-            "blocking": True,
-            "ignored": False,
-            "reason": "test",
+            "reason": "codacy_decommissioned",
         },
     )
 
@@ -7080,8 +6879,13 @@ def _build_ctx_for_codacy_review_summary() -> controller.NextActionContext:
 
 
 def _assert_codacy_review_summary(ctx: controller.NextActionContext) -> None:
-    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "real_current_issues")
-    ASSERTIONS.assertFalse(ctx.decision["codacy"]["ignored"])
+    ASSERTIONS.assertEqual(ctx.decision["codacy"]["classification"], "decommissioned")
+    ASSERTIONS.assertTrue(ctx.decision["codacy"]["ignored"])
+    # BLOCK: un check Codacy residuo non deve MAI finire tra i blockers.
+    blocker_names = " ".join(
+        str(b.get("name", "")) for b in ctx.decision.get("blockers", []) if isinstance(b, dict)
+    ).lower()
+    ASSERTIONS.assertNotIn("codacy", blocker_names)
     ASSERTIONS.assertEqual(ctx.decision["review"]["unresolved_active"], 1)
     ASSERTIONS.assertIn(ctx.decision["next_action_summary"], NEXT_ACTION_ALLOWED)
 
@@ -8076,52 +7880,8 @@ def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
 
 
-def test_review_codacy_aliases_require_codacy_specific_green_evidence_for_triage():
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "tests": ["pytest"],
-    }
-    for author in ("codacy", "codacy[bot]", "codacy-production", "codacy-production[bot]"):
-        thread = _review_thread(author=author, body="already fixed stale")
-        triage = controller.triage_review_thread_contract(thread, evidence)
-        ASSERTIONS.assertEqual(triage["provider"], "codacy-production")
-        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
-        ASSERTIONS.assertEqual(triage["reason"], "missing_or_blocking_codacy_evidence")
-        ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_alias_action_required_or_annotations_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    base = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "tests": ["pytest"],
-    }
-    action_required = dict(base) | {"codacy_conclusion": "action_required", "annotations_count": 0}
-    annotations = dict(base) | {"codacy_conclusion": "success", "annotations_count": 1}
-    ASSERTIONS.assertNotEqual(
-        controller.triage_review_thread_contract(thread, action_required)["decision"], "EVIDENCE_RESOLVE"
-    )
-    ASSERTIONS.assertNotEqual(
-        controller.triage_review_thread_contract(thread, annotations)["decision"], "EVIDENCE_RESOLVE"
-    )
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, action_required))
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, annotations))
 
 
 def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
@@ -8163,42 +7923,8 @@ def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_reso
     ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_nested_codacy_annotations_count_nonzero_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 2},
-        "tests": ["pytest"],
-    }
-    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
-def test_review_codacy_nested_codacy_annotations_count_malformed_blocks_evidence_resolve():
-    thread = _review_thread(author="codacy", body="already fixed stale")
-    evidence = {
-        "safe_to_resolve": True,
-        "issue_fixed_or_stale": True,
-        "head_matches": True,
-        "current_head_sha": "abc",
-        "evidence_head_sha": "abc",
-        "validation_passed": True,
-        "checks_green": True,
-        "pending_checks": False,
-        "failing_checks": False,
-        "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": "n/a"},
-        "tests": ["pytest"],
-    }
-    ASSERTIONS.assertNotEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
 
 
 def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
@@ -9317,16 +9043,8 @@ def test_classify_pr_report_status_ready_to_merge_strict_gate():
     ASSERTIONS.assertEqual(status, "READY_TO_MERGE")
 
 
-def test_not_ready_to_merge_when_codacy_not_success():
-    status = controller.classify_pr_report_status(_pr_report_context(codacy={"conclusion": "action_required"}))
-    ASSERTIONS.assertEqual(status, "FIXING")
 
 
-def test_not_ready_to_merge_when_codacy_annotations_exist():
-    status = controller.classify_pr_report_status(
-        _pr_report_context(codacy={"conclusion": "success", "annotations_count": 2})
-    )
-    ASSERTIONS.assertEqual(status, "FIXING")
 
 
 def test_not_ready_to_merge_when_pending_exists():
@@ -11975,9 +11693,10 @@ def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
         "bad": [],
         "pending": [],
         "unresolved_active": 0,
-        "codacy_conclusion": "SUCCESS",
-        "codacy_status": "SUCCESS",
-        "annotations_count": 0,
+        # Codacy DISMESSO: nessuna chiave Codacy fabbricata. Prima erano
+        # "codacy_conclusion/codacy_status = SUCCESS" + "annotations_count = 0",
+        # cioe' i test passavano solo INVENTANDO l'evidenza di un servizio che
+        # non esiste piu' (rilievo Codex P2 su #462).
         "current_head_matches": True,
         "explicit_merge_authorization": True,
     }
@@ -12777,14 +12496,6 @@ def test_can_auto_merge_denies_each_guard_condition():
         ("pending_checks_missing", {"pending": "not-a-list"}),
         ("unresolved_active_missing", {"unresolved_active": "bad-value"}),
         ("unresolved_reviews_present", {"unresolved_active": 1}),
-        (
-            "codacy_failure_state_present",
-            {"codacy_conclusion": "SUCCESS", "codacy_status": "FAILURE"},
-        ),
-        ("codacy_not_success", {"codacy_conclusion": "NEUTRAL", "codacy_status": "NEUTRAL"}),
-        ("codacy_not_success", {"codacy_conclusion": "", "codacy_status": ""}),
-        ("annotations_data_missing", {"annotations_count": "unknown"}),
-        ("annotations_present", {"annotations_count": 1}),
         ("current_head_mismatch", {"current_head_matches": False}),
         ("explicit_merge_authorization_required", {"explicit_merge_authorization": False}),
     ]
@@ -12831,86 +12542,14 @@ def test_can_auto_merge_bad_missing_and_blockers_missing_denies_bad_checks_missi
     ASSERTIONS.assertEqual(result["reason"], "bad_checks_missing")
 
 
-def test_can_auto_merge_mixed_codacy_success_failure_denies():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="SUCCESS",
-            codacy_status="FAILURE",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertIn("codacy_failure_state_present", result["reason"])
 
 
-def test_can_auto_merge_codacy_failure_without_success_does_not_add_not_success_reason():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="FAILURE",
-            codacy_status="",
-            github_codacy_state="",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "codacy_failure_state_present")
 
 
-def test_can_auto_merge_codacy_missing_state_denies_with_not_success_only():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            github_codacy_state="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "codacy_not_success")
 
 
-def test_can_auto_merge_uses_controller_codacy_keys():
-    allowed = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-            github_codacy_state="SUCCESS",
-        )
-    )
-    ASSERTIONS.assertTrue(allowed["allowed"])
-
-    denied = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            codacy_conclusion="",
-            codacy_status="",
-            codacy_check_conclusion="",
-            codacy_check_status="",
-            github_codacy_state="FAILURE",
-        )
-    )
-    ASSERTIONS.assertFalse(denied["allowed"])
-    ASSERTIONS.assertIn("codacy_failure_state_present", denied["reason"])
 
 
-def test_can_auto_merge_annotation_count_aliases_and_missing_reason():
-    from_codacy_nested = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"github_annotations_count": 0},
-        )
-    )
-    ASSERTIONS.assertTrue(from_codacy_nested["allowed"])
-
-    missing = controller.can_auto_merge(_automation_ctx("live", annotations_count="not-int"))
-    ASSERTIONS.assertFalse(missing["allowed"])
-    ASSERTIONS.assertIn("annotations_data_missing", missing["reason"])
 
 
 def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_green():
@@ -12921,20 +12560,8 @@ def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_g
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_codacy_annotations_count_gt_zero_denies_annotations_present():
-    result = controller.can_auto_merge(
-        _automation_ctx("live", annotations_count=None, codacy_annotations_count=2)
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
 
 
-def test_can_auto_merge_codacy_annotations_count_malformed_denies_data_missing():
-    result = controller.can_auto_merge(
-        _automation_ctx("live", annotations_count=None, codacy_annotations_count="n/a")
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
 
 
 def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_green():
@@ -12949,28 +12576,8 @@ def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_g
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_codacy_annotations_list_with_dict_denies_present():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"conclusion": "SUCCESS", "annotations": [{"x": 1}]},
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_present")
 
 
-def test_can_auto_merge_codacy_annotations_list_with_scalar_denies_data_missing():
-    result = controller.can_auto_merge(
-        _automation_ctx(
-            "live",
-            annotations_count=None,
-            codacy={"conclusion": "SUCCESS", "annotations": ["bad"]},
-        )
-    )
-    ASSERTIONS.assertFalse(result["allowed"])
-    ASSERTIONS.assertEqual(result["reason"], "annotations_data_missing")
 
 
 def test_can_auto_merge_all_green_with_explicit_auth_allows():

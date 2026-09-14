@@ -4,6 +4,8 @@
 import argparse
 import inspect
 import json
+import re
+from pathlib import Path
 from typing import Any, cast
 from unittest import TestCase
 
@@ -64,50 +66,28 @@ def test_split_checks_ignores_self_checks_when_requested():
     checks = {
         "statusCheckRollup": [
             _check("PR Merge Readiness", "FAILURE"),
-            _check("Unit tests", "SUCCESS"),
+            _check("Unit tests", "FAILURE"),
             _codacy_check(),
         ]
     }
 
     buckets = flow.split_checks(checks, ignore_self=True)
 
-    ASSERTIONS.assertEqual(buckets["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertEqual(buckets["ignored"][0]["name"], "PR Merge Readiness")
-    ASSERTIONS.assertEqual(buckets["self_stale"][0]["name"], "PR Merge Readiness")
+    # Il blocker e' il check REALE fallito. Codacy e' DISMESSO: il suo check
+    # residuo finisce tra gli ignorati (marcato `decommissioned`), non tra i
+    # blockers — prima di questa PR bloccava, ed era il falso rosso.
+    ASSERTIONS.assertEqual([c["name"] for c in buckets["blockers"]], ["Unit tests"])
+    ignored_names = [c["name"] for c in buckets["ignored"]]
+    ASSERTIONS.assertIn("PR Merge Readiness", ignored_names)
+    ASSERTIONS.assertIn("Codacy Static Code Analysis", ignored_names)
+    codacy_item = next(c for c in buckets["ignored"] if "Codacy" in c["name"])
+    ASSERTIONS.assertTrue(codacy_item.get("decommissioned"))
+    # Solo il self-check stantio va in self_stale: Codacy non e' un self-check.
+    ASSERTIONS.assertEqual([c["name"] for c in buckets["self_stale"]], ["PR Merge Readiness"])
 
 
-def test_codacy_task_normalizes_common_issue_fields(tmp_path):
-    """Codacy API output is persisted raw and rendered into a concise task file."""
-    controller.write_codacy_task(tmp_path, {"data": [_codacy_issue()]}, [_codacy_issue()])
-
-    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
-
-    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
-    ASSERTIONS.assertTrue((tmp_path / "codacy-issues.json").exists())
-    ASSERTIONS.assertIn("scripts/pr_flow_automation.py", task)
-    ASSERTIONS.assertIn("PY001", task)
-    ASSERTIONS.assertIn("Example issue", task)
-    ASSERTIONS.assertIn("POST-FIX MICRO-AUDIT BEFORE COMMIT", task)
 
 
-def test_flow_codacy_task_writes_raw_response_and_task_file(tmp_path, monkeypatch):
-    """The flow codacy-task command writes Codacy context for safe autofix."""
-    raw = {"data": [_codacy_issue()]}
-    monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)
-    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda _repo, _pr: (raw, raw["data"]))
-
-    result = flow.cmd_codacy_task(
-        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path))
-    )
-
-    ASSERTIONS.assertEqual(result, 0)
-    ASSERTIONS.assertTrue((tmp_path / "codacy-raw.json").exists())
-    task = (tmp_path / "codacy-task.md").read_text(encoding="utf-8")
-    ASSERTIONS.assertIn("scripts/pr_flow_automation.py:42", task)
-    ASSERTIONS.assertIn("ruff/PY001", task)
-    ASSERTIONS.assertIn("Medium", task)
-    ASSERTIONS.assertIn("Example issue", task)
-    ASSERTIONS.assertIn("Do not commit a patch that fails this audit.", task)
 
 
 def test_post_fix_micro_audit_helpers_do_not_trigger_final_merge_audit():
@@ -170,56 +150,12 @@ def test_flow_phase0_parser_supports_json_string_list_evidence_fields():
     ASSERTIONS.assertFalse(flow.phase0_preflight_failed(report))
 
 
-def test_flow_codacy_task_fails_closed_when_blocking_api_fails(tmp_path, monkeypatch, capsys):
-    """Codacy API failures remain blocking when the Codacy check is blocking."""
-    monkeypatch.setattr(flow, "codacy_is_blocking", lambda _repo, _pr: True)
-    monkeypatch.setattr(
-        flow,
-        "fetch_codacy_pr_issues",
-        lambda _repo, _pr: (_ for _ in ()).throw(RuntimeError("Codacy API request failed")),
-    )
-
-    result = flow.cmd_codacy_task(
-        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path))
-    )
-
-    ASSERTIONS.assertEqual(result, 1)
-    ASSERTIONS.assertIn("Codacy API request failed", capsys.readouterr().err)
 
 
-def test_flow_codacy_api_token_is_only_trusted_in_github_actions(monkeypatch):
-    """Local CODACY_API_TOKEN values are ignored outside GitHub Actions."""
-    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
-    monkeypatch.setenv("CODACY_API_TOKEN", "local-token")
-
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "only trusted inside GitHub Actions"):
-        flow.codacy_api_token()
 
 
-def test_codacy_blocking_evidence_ignores_stale_check_when_api_is_clear(monkeypatch):
-    """A stale Codacy ACTION_REQUIRED check is ignored once the Codacy API is clear."""
-    monkeypatch.setattr(controller, "fetch_codacy_pr_issues", lambda _repo, _pr: ({}, []))
-
-    evidence = controller.controller_codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
-
-    ASSERTIONS.assertFalse(evidence["blocking"])
-    ASSERTIONS.assertTrue(evidence["ignored"])
-    ASSERTIONS.assertEqual(evidence["issues_returned"], 0)
 
 
-def test_codacy_blocking_evidence_preserves_current_blocker(monkeypatch):
-    """Current Codacy issues keep ACTION_REQUIRED checks blocking."""
-    monkeypatch.setattr(
-        controller,
-        "fetch_codacy_pr_issues",
-        lambda _repo, _pr: ({"data": [_codacy_issue()]}, [_codacy_issue()]),
-    )
-
-    evidence = controller.controller_codacy_blocking_evidence("owner/repo", "225", [_codacy_check()])
-
-    ASSERTIONS.assertTrue(evidence["blocking"])
-    ASSERTIONS.assertFalse(evidence["ignored"])
-    ASSERTIONS.assertEqual(evidence["issues_returned"], 1)
 
 
 def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
@@ -232,18 +168,26 @@ def test_build_decision_reports_real_blockers_and_merge_state(monkeypatch):
             "isDraft": False,
             "mergeable": "MERGEABLE",
             "mergeStateStatus": "UNSTABLE",
-            "statusCheckRollup": [_check("PR Merge Readiness", "FAILURE"), _codacy_check()],
+            "statusCheckRollup": [
+                _check("PR Merge Readiness", "FAILURE"),
+                _check("Unit tests", "FAILURE"),
+                _codacy_check(),
+            ],
         },
     )
 
     decision = flow.build_decision("owner/repo", "225", ignore_self=True)
 
     ASSERTIONS.assertFalse(decision["can_merge"])
-    ASSERTIONS.assertEqual(decision["blockers"][0]["name"], "Codacy Static Code Analysis")
-    ASSERTIONS.assertEqual(decision["ignored_self_checks"][0]["name"], "PR Merge Readiness")
+    # Il blocker reale resta; il check Codacy dismesso non entra nei blockers.
+    ASSERTIONS.assertEqual([c["name"] for c in decision["blockers"]], ["Unit tests"])
+    ignored_names = [c["name"] for c in decision["ignored_self_checks"]]
+    ASSERTIONS.assertIn("PR Merge Readiness", ignored_names)
+    ASSERTIONS.assertIn("Codacy Static Code Analysis", ignored_names)
     ASSERTIONS.assertIn("blocker_taxonomy", decision)
-    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "fix_codacy_current_issues")
-    ASSERTIONS.assertEqual(decision["next_action"], "fix_codacy_current_issues")
+    # Un blocker reale non classificato resta fail-closed: needs_manual.
+    ASSERTIONS.assertEqual(decision["blocker_taxonomy"]["next_action"], "needs_manual")
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual")
 
 
 def test_build_decision_includes_active_review_threads_in_taxonomy(monkeypatch):
@@ -388,8 +332,10 @@ def _allow_push_gate_response() -> dict[str, Any]:
     }
 
 
-def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch):
-    """Preflight does not fail only because of autofix history when Codacy is clear."""
+def test_preflight_commit_limit_applies_without_codacy(monkeypatch):
+    """Il limite di commit safe-autofix vale SEMPRE: prima era gatato su "Codacy
+    sta bloccando", gate che con Codacy dismesso sarebbe diventato morto. Ora il
+    guard anti-loop e' incondizionato (piu' severo, mai piu' permissivo)."""
     monkeypatch.setattr(flow, "pr_view", _preflight_pr_view)
     monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(
@@ -405,7 +351,8 @@ def test_preflight_commit_limit_only_blocks_when_codacy_is_blocking(monkeypatch)
 
     rc = flow.cmd_preflight(_preflight_args())
 
-    ASSERTIONS.assertEqual(rc, 0)
+    # 4 commit safe-autofix > max_safe_autofix_commits=3 => preflight segnala.
+    ASSERTIONS.assertEqual(rc, 1)
 
 
 def test_push_with_retry_once_succeeds_on_first_push():
@@ -607,98 +554,16 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
     ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
 
 
-def test_cmd_canary_requires_explicit_pr3h_gate_context(monkeypatch):
-    """Canary create must fail-closed without explicit invocation context."""
-    calls: list[list[str]] = []
-
-    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
-        ASSERTIONS.assertTrue(check)
-        calls.append(list(cmd))
-        return ""
-
-    monkeypatch.setattr(flow, "sh", _fake_sh)
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "missing required --post-fix-gate-context"):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=""))
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_cmd_canary_cleanup_does_not_require_create_gate_context(monkeypatch):
-    """Canary cleanup mode should run without requiring create-mode gate context."""
-    calls: list[list[str]] = []
-
-    monkeypatch.setattr(
-        flow,
-        "gh_json",
-        lambda _cmd: [{"number": 1, "headRefName": "test/safe-autofix-canary-1", "title": "safe autofix canary"}],
-    )
-
-    def _fake_sh(cmd: list[str], *, check: bool = True) -> str:
-        calls.append(list(cmd))
-        ASSERTIONS.assertFalse(check)
-        return ""
-
-    monkeypatch.setattr(flow, "sh", _fake_sh)
-    result = flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="cleanup", post_fix_gate_context=""))
-
-    ASSERTIONS.assertEqual(result, 0)
-    ASSERTIONS.assertEqual(
-        calls,
-        [["gh", "pr", "close", "1", "--repo", "owner/repo", "--delete-branch"]],
-    )
 
 
-def test_cmd_canary_passes_explicit_pr3h_gate_context_to_push_with_retry_once(monkeypatch):
-    """Canary create path must pass provided explicit context to guarded push helper."""
-    captured: dict[str, Any] = {}
-    monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    explicit_ctx = json.dumps(_full_pr3h_push_gate_context())
-    monkeypatch.setattr(
-        flow,
-        "push_with_retry_once",
-        lambda _run, _repo, _branch, *, remote="origin", context=None: (
-            captured.update({"remote": remote, "context": context}) or {"ok": False, "error": "stop"}
-        ),
-    )
-    with ASSERTIONS.assertRaises(RuntimeError):
-        flow.cmd_canary(
-            argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=explicit_ctx)
-        )
-    ASSERTIONS.assertEqual(captured["remote"], "origin")
-    ASSERTIONS.assertEqual(captured["context"], _full_pr3h_push_gate_context())
 
 
-def test_cmd_canary_create_denied_gate_aborts_before_mutation(monkeypatch):
-    """Canary create must abort before fetch/checkout/write when gate denies."""
-    calls: list[list[str]] = []
-    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-    denied_ctx = json.dumps({"post_fix_audit": "FAIL"})
-
-    with ASSERTIONS.assertRaisesRegex(RuntimeError, "post-fix audit gate denied before canary mutation"):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context=denied_ctx))
-
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_cmd_canary_create_malformed_gate_context_aborts_before_mutation(monkeypatch):
-    """Canary create must fail on malformed context before any mutation command."""
-    calls: list[list[str]] = []
-    monkeypatch.setattr(flow, "sh", lambda cmd, *, check=True: (calls.append(list(cmd)) or ""))
-    monkeypatch.setattr(flow.Path, "write_text", lambda *_args, **_kwargs: 1)
-
-    with ASSERTIONS.assertRaises(json.JSONDecodeError):
-        flow.cmd_canary(argparse.Namespace(repo="owner/repo", mode="create", post_fix_gate_context="{"))
-
-    ASSERTIONS.assertEqual(calls, [])
 
 
-def test_canary_timestamp_utc_shape_is_branch_safe_without_strftime() -> None:
-    """Canary timestamp format should stay branch-safe and avoid strftime."""
-    value = flow.canary_timestamp_utc()
-    ASSERTIONS.assertRegex(value, r"^\d{8}-\d{6}$")
-    ASSERTIONS.assertNotIn("strftime", inspect.getsource(flow.canary_timestamp_utc))
 
 
 def _automation_controller_args() -> argparse.Namespace:
@@ -1338,16 +1203,6 @@ def test_deepsource_advisory_status_missing_explicit_evidence_manual():
         ASSERTIONS.assertEqual(decision["reason"], "missing_explicit_evidence")
 
 
-def test_deepsource_advisory_status_missing_codacy_annotations_manual():
-    """Missing Codacy annotation evidence keeps DeepSource advisory status manual."""
-    context = _deepsource_advisory_status_context()
-    context.pop("codacy_annotations_count")
-    decision = flow.deepsource_advisory_status_nonblocking_evidence(
-        _deepsource_python_failure_check(),
-        context,
-    )
-    ASSERTIONS.assertFalse(decision["nonblocking"])
-    ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
 
 
 def test_deepsource_advisory_status_github_codacy_count_clear():
@@ -1390,32 +1245,8 @@ def _assert_deepsource_codacy_evidence_manual(context: dict[str, Any]) -> None:
     ASSERTIONS.assertEqual(decision["reason"], "codacy_evidence_not_clear")
 
 
-def test_deepsource_advisory_status_codacy_state_manual():
-    """Codacy action-required state keeps advisory status manual."""
-    for context in (
-        _deepsource_advisory_status_context(codacy_state="ACTION_REQUIRED"),
-        _deepsource_advisory_status_context(
-            codacy_state=None,
-            codacy_annotations_count=None,
-            github_codacy_state="ACTION_REQUIRED",
-            github_annotations_count=0,
-        ),
-    ):
-        _assert_deepsource_codacy_evidence_manual(context)
 
 
-def test_deepsource_advisory_status_codacy_annotations_manual():
-    """Codacy annotation evidence keeps advisory status manual."""
-    for context in (
-        _deepsource_advisory_status_context(codacy_annotations_count=1),
-        _deepsource_advisory_status_context(
-            codacy_state=None,
-            codacy_annotations_count=None,
-            github_codacy_state="SUCCESS",
-            github_annotations=[{"path": "scripts/pr_flow_automation.py"}],
-        ),
-    ):
-        _assert_deepsource_codacy_evidence_manual(context)
 
 
 def test_deepsource_advisory_status_merge_evidence_not_clear_manual():
@@ -2025,39 +1856,8 @@ def test_unknown_author_complexity_text_still_fails_closed_in_flow():
     ASSERTIONS.assertEqual([item["id"] for item in eligible], ["u1"])
 
 
-def test_d203_d211_rule_conflict_detection_contract():
-    """D203 and D211 on same file/symbol should classify as codacy rule conflict needing manual action."""
-    if not hasattr(flow, "classify_codacy_rule_conflict"):
-        raise NotImplementedError("classify_codacy_rule_conflict not implemented")
-    result = flow.classify_codacy_rule_conflict(
-        [
-            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D203", "symbol": "ClassX"},
-            {"filePath": "scripts/pr_flow_automation.py", "patternId": "D211", "symbol": "ClassX"},
-        ]
-    )
-    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
-    ASSERTIONS.assertEqual(result["next_action"], "needs_manual_codacy_rule_conflict")
 
 
-def test_d203_d211_same_file_same_line_conflict_even_if_messages_differ():
-    """D203/D211 conflicts should be detected by location even when messages differ."""
-    result = flow.classify_codacy_rule_conflict(
-        [
-            {
-                "filePath": "scripts/pr_flow_automation.py",
-                "patternId": "D203",
-                "lineNumber": 42,
-                "message": "blank line required",
-            },
-            {
-                "filePath": "scripts/pr_flow_automation.py",
-                "patternId": "D211",
-                "lineNumber": 42,
-                "message": "blank line not allowed",
-            },
-        ]
-    )
-    ASSERTIONS.assertEqual(result["classification"], "codacy_rule_conflict")
 
 
 def _stub_pr_view_for_report(monkeypatch) -> None:
@@ -2082,18 +1882,6 @@ def _stub_pr_view_for_report(monkeypatch) -> None:
     )
 
 
-def _stub_codacy_for_report(monkeypatch) -> None:
-    monkeypatch.setattr(
-        flow,
-        "fetch_codacy_pr_issues",
-        lambda *_args: (
-            {},
-            [
-                {"filePath": "a.py", "patternId": "D203", "lineNumber": 1},
-                {"filePath": "a.py", "patternId": "D211", "lineNumber": 1},
-            ],
-        ),
-    )
 
 
 def _stub_review_threads_for_report(monkeypatch) -> None:
@@ -2187,7 +1975,6 @@ def test_fetch_all_review_threads_second_page_sends_cursor(monkeypatch):
 
 def _run_cmd_report_second_page_thread(tmp_path, monkeypatch) -> dict[str, object]:
     monkeypatch.setattr(flow, "pr_view", _ready_to_merge_pr_view)
-    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
     _stub_two_page_review_threads(monkeypatch)
     rc = flow.cmd_report(
         argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
@@ -2353,7 +2140,6 @@ def _assert_fail_closed_readiness_decision(rc: int, output: Any) -> None:
 def _stub_report_output_paths(monkeypatch) -> None:
     _stub_pr_view_for_report(monkeypatch)
     _stub_review_threads_for_report(monkeypatch)
-    _stub_codacy_for_report(monkeypatch)
 
 
 def _stub_cmd_report_inputs(monkeypatch) -> None:
@@ -2377,8 +2163,6 @@ def _assert_cmd_report_context_output(tmp_path) -> None:
     ASSERTIONS.assertEqual(decision["review_auto_resolve_candidates"], 1)
     ASSERTIONS.assertEqual(decision["telegram_summary"]["pr_number"], "225")
     ASSERTIONS.assertEqual(decision["telegram_summary"]["head_sha"], "abc123")
-    ASSERTIONS.assertEqual(decision["telegram_summary"]["codacy_classification"], "codacy_rule_conflict")
-    ASSERTIONS.assertEqual(decision["telegram_summary"]["github_codacy_check_state"], "ACTION_REQUIRED")
     ASSERTIONS.assertEqual(decision["telegram_summary"]["active_unresolved_review_count"], 1)
     ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
 
@@ -2474,36 +2258,8 @@ def _assert_no_codacy_check_not_stale(decision: dict[str, object]) -> None:
     ASSERTIONS.assertFalse(codacy["treat_annotations_as_blockers"])
 
 
-def test_cmd_report_no_codacy_check_and_zero_issues_is_not_stale(tmp_path, monkeypatch):
-    """No Codacy check with empty API issues should remain classification none."""
-    args = _stub_report_without_codacy_check(monkeypatch, tmp_path)
-    rc = flow.cmd_report(args)
-    decision = _read_report_decision(tmp_path)
-
-    ASSERTIONS.assertEqual(rc, 0)
-    _assert_no_codacy_check_not_stale(decision)
 
 
-def test_cmd_report_codacy_check_zero_issues_is_stale(tmp_path, monkeypatch):
-    """Codacy check with empty API issues should classify as stale_github_check."""
-    _stub_pr_view_for_report(monkeypatch)
-    monkeypatch.setattr(flow, "fetch_codacy_pr_issues", lambda *_args: ({}, []))
-    monkeypatch.setattr(
-        flow,
-        "gh_json",
-        lambda *_args, **_kwargs: {
-            "data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": []}}}}
-        },
-    )
-
-    rc = flow.cmd_report(
-        argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False, no_fail=True)
-    )
-    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
-
-    ASSERTIONS.assertEqual(rc, 0)
-    ASSERTIONS.assertEqual(decision["codacy"]["classification"], "stale_github_check")
-    ASSERTIONS.assertFalse(decision["codacy"]["treat_annotations_as_blockers"])
 
 
 def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
@@ -2533,10 +2289,8 @@ def _telegram_summary_context() -> dict[str, object]:
     return {
         "pr": "225",
         "headRefOid": "abc123",
-        "codacy": {"classification": "real_current_issues", "issues_returned": 2},
-        "github_codacy_check_state": "ACTION_REQUIRED",
         "review": {"unresolved_active": 1},
-        "next_action": "fix_codacy_current_issues",
+        "next_action": "fix_review_comments",
     }
 
 
@@ -2544,9 +2298,117 @@ def _required_telegram_summary_keys() -> tuple[str, ...]:
     return (
         "pr_number",
         "head_sha",
-        "codacy_classification",
-        "github_codacy_check_state",
-        "codacy_api_issue_count",
         "active_unresolved_review_count",
         "next_action",
     )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — la canary del safe-autofix e' RITIRATA, e non deve tornare.
+#
+# Il workflow `pr-safe-autofix-canary.yml` era gia' stato ritirato il
+# 2026-08-20 insieme ad altri 15 (vedi tests/guardrails/test_automazioni_
+# ritirate.py). Era sopravvissuto solo il sottocomando CLI `canary`, perche'
+# vive in uno script e non in un file workflow, quindi quel guardrail — che
+# guarda .github/workflows/ — non lo vedeva.
+#
+# Non e' codice morto innocuo. Lanciato oggi apriva una PR che diventa VERDE
+# SUBITO, perche' cio' che doveva svegliare (`pr-autofix-safe-supervisor`) e'
+# in quarantena dall'audit di sicurezza del 2026-07-11 e `CI Quarantine Guard`
+# ne impedisce il ritorno. Il risultato sarebbe un falso "pipeline sana": il
+# tipo di falso verde peggiore, perche' arriva da uno strumento diagnostico.
+#
+# Se un domani il safe-autofix viene riattivato (PR dedicata, alle condizioni
+# del README della quarantena), la canary va RIPROGETTATA insieme al suo
+# trigger — non ripristinata com'era.
+# ---------------------------------------------------------------------------
+def test_block_la_canary_ritirata_non_deve_tornare() -> None:
+    for attr in ("cmd_canary", "canary_timestamp_utc"):
+        ASSERTIONS.assertFalse(
+            hasattr(flow, attr),
+            f"flow.{attr} e' tornato: la canary del safe-autofix e' ritirata. "
+            f"Cio' che doveva svegliare e' in quarantena, quindi una canary "
+            f"reintrodotta cosi' com'era produce solo un falso verde.",
+        )
+    source = inspect.getsource(flow)
+    ASSERTIONS.assertNotIn(
+        'add_parser("canary")', source,
+        "il sottocomando CLI `canary` e' tornato nel parser",
+    )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — il workflow di readiness non deve leggere chiavi che la decisione NON
+# produce. Bug reale trovato da Claude Fable 5 su #462: il riepilogo faceva
+# `jq '.ignored | length'`, ma la decisione espone `ignored_self_checks`. jq
+# restituiva `null` e la riga "ignored checks" non mostrava NULLA — cioe' un
+# check rosso ESCLUSO spariva dalla vista dell'umano che legge il job summary.
+#
+# Questo test non pinna la singola chiave sbagliata: verifica che OGNI chiave
+# di primo livello letta dal workflow esista davvero nella decisione. Cosi'
+# copre anche il prossimo refuso, non solo quello gia' corretto.
+# ---------------------------------------------------------------------------
+REPO_ROOT = Path(__file__).resolve().parents[2]
+READINESS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-merge-readiness.yml"
+
+
+def _decisione_reale() -> dict:
+    pr = {
+        "state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE",
+        "mergeStateStatus": "UNSTABLE", "headRefOid": "abc",
+        "statusCheckRollup": [
+            _check("Codacy Static Code Analysis", "FAILURE"),
+            _check("Merge readiness", "FAILURE"),
+            _check("unit", "SUCCESS"),
+        ],
+    }
+    original = flow.pr_view
+    try:
+        flow.pr_view = lambda _repo, _pr: pr
+        return flow.build_decision("owner/repo", "462", ignore_self=True)
+    finally:
+        flow.pr_view = original
+
+
+def test_block_il_workflow_non_legge_chiavi_inesistenti_dalla_decisione() -> None:
+    testo = READINESS_WORKFLOW.read_text(encoding="utf-8")
+    decisione = _decisione_reale()
+    # chiavi di primo livello referenziate come  jq ... '.chiave...'
+    lette = {
+        m.group(1)
+        for m in re.finditer(r"jq [^\n]*?'\.([A-Za-z_][A-Za-z0-9_]*)", testo)
+    }
+    ASSERTIONS.assertTrue(lette, "nessuna chiave jq trovata: regex o workflow cambiati?")
+    mancanti = sorted(k for k in lette if k not in decisione)
+    ASSERTIONS.assertEqual(
+        mancanti, [],
+        f"il workflow legge chiavi che la decisione non produce: {mancanti}. "
+        f"jq restituirebbe null e l'informazione sparirebbe dal riepilogo.",
+    )
+
+
+def test_block_un_check_escluso_e_rosso_resta_visibile() -> None:
+    """Il dato su cui poggia il ::warning:: del workflow deve esserci.
+
+    L'esclusione dai blockers e' voluta; l'invisibilita' no. Ogni check escluso
+    deve portarsi dietro nome e stato, cosi' il workflow puo' nominarlo.
+    """
+    decisione = _decisione_reale()
+    esclusi = decisione["ignored_self_checks"]
+    rossi = [c for c in esclusi if str(c.get("state", "")).upper() not in {"", "SUCCESS", "SKIPPED", "NEUTRAL"}]
+    nomi = sorted(c["name"] for c in rossi)
+    ASSERTIONS.assertEqual(
+        nomi, ["Codacy Static Code Analysis", "Merge readiness"],
+        "un check escluso e ROSSO non e' piu' rintracciabile nella decisione: "
+        "il warning del workflow non avrebbe piu' nulla da mostrare",
+    )
+    for c in rossi:
+        ASSERTIONS.assertTrue(str(c.get("state") or "").strip(), f"{c['name']}: stato assente")
+    codacy = next(c for c in rossi if "Codacy" in c["name"])
+    ASSERTIONS.assertTrue(
+        codacy.get("decommissioned"),
+        "il check della App dismessa non e' piu' marcato `decommissioned`: "
+        "il riepilogo non potrebbe distinguerlo da un self-check del flow",
+    )
+    # E il merge resta comunque permesso: rendere VISIBILE non deve BLOCCARE.
+    ASSERTIONS.assertTrue(decisione["can_merge"], "l'esclusione ha smesso di escludere")

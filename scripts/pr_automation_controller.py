@@ -1379,16 +1379,14 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
         merge_guard_failures.append("unresolved_active_missing")
     elif unresolved_active != 0:
         merge_guard_failures.append("unresolved_reviews_present")
-    codacy_success = any(state == "SUCCESS" for state in codacy_states)
-    codacy_failure = any(state in FAIL_STATES for state in codacy_states)
-    if codacy_failure:
-        merge_guard_failures.append("codacy_failure_state_present")
-    elif not codacy_success:
-        merge_guard_failures.append("codacy_not_success")
-    if annotations_count < 0:
-        merge_guard_failures.append("annotations_data_missing")
-    elif annotations_count != 0:
-        merge_guard_failures.append("annotations_present")
+    # Codacy e' DISMESSO (rilievo Codex P2 su #462): nessun contesto reale puo'
+    # piu' avere codacy_conclusion == SUCCESS ne' un conteggio di annotazioni
+    # Codacy, quindi questi due gate non erano piu' fail-closed: erano
+    # IRRAGGIUNGIBILI: il merge automatico non poteva mai essere permesso, e
+    # l'unico modo di passarli era FABBRICARE l'evidenza di un servizio che non
+    # esiste piu' — cosa che AGENTS.md vieta. Rimossi. Tutti gli altri gate
+    # (mergeable, merge state, blockers, pending, review irrisolte, current
+    # head, autorizzazione esplicita) restano invariati.
     if not current_head_matches:
         merge_guard_failures.append("current_head_mismatch")
     if not explicit_merge_authorization:
@@ -1475,8 +1473,21 @@ def is_failure(check: dict[str, Any]) -> bool:
     return check_state(check) in FAIL_STATES
 
 
+#: Nome ESATTO del check pubblicato dalla GitHub App di Codacy, dismessa.
+#: FONTE UNICA: `pr_flow_automation` importa questa costante, cosi' i due
+#: percorsi decisionali (gate CI e controller) non possono divergere — al giro
+#: 3 avevo stretto solo quello del flow e qui era rimasto il match largo.
+#: NON per sottostringa e NON sull'URL: bastava la stringa "codacy" nel nome o
+#: in un link per far sparire dai blockers un check REALE fallito — fail-open
+#: sul gate di merge (rilievo convergente di Fugu Ultra, Fable 5 e Codex).
+DECOMMISSIONED_CODACY_CHECK_NAMES = frozenset({
+    "codacy static code analysis",
+})
+
+
 def is_codacy_check(check: dict[str, Any]) -> bool:
-    return "codacy" in f"{name_of(check)} {url_of(check)}".lower()
+    """True solo per il check ESATTO della GitHub App Codacy dismessa."""
+    return str(name_of(check) or "").strip().lower() in DECOMMISSIONED_CODACY_CHECK_NAMES
 
 
 def extract_run_id(url: str) -> str:
@@ -3346,12 +3357,6 @@ def first_issue_list(body: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def codacy_issue_items(body: Any) -> list[dict[str, Any]]:
-    if isinstance(body, list):
-        return dict_items_from_list(body)
-    if not isinstance(body, dict):
-        return []
-    return first_issue_list(body)
 
 
 def issue_dict_from_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -3371,103 +3376,24 @@ def first_nonempty(*values: Any) -> Any:
     return ""
 
 
-def codacy_issue_record(item: dict[str, Any]) -> dict[str, Any]:
-    issue = issue_dict_from_item(item)
-    pattern = nested_dict(issue, "patternInfo")
-    tool = nested_dict(issue, "toolInfo")
-    return {
-        "filePath": first_nonempty(issue.get("filePath"), issue.get("filename")),
-        "lineNumber": issue.get("lineNumber"),
-        "message": first_nonempty(issue.get("message")),
-        "patternId": first_nonempty(pattern.get("id"), issue.get("patternId")),
-        "category": first_nonempty(pattern.get("category")),
-        "severity": first_nonempty(pattern.get("severityLevel"), pattern.get("level")),
-        "tool": first_nonempty(tool.get("name")),
-    }
 
 
-def codacy_api_token() -> str:
-    if os.environ.get("GITHUB_ACTIONS") != "true":
-        raise RuntimeError("Codacy API token is only trusted inside GitHub Actions")
-    if os.environ.get("HAS_CODACY_API_TOKEN", "").lower() not in {"true", "1", "yes"}:
-        hidden_word = "sec" + "ret"
-        raise RuntimeError(f"GitHub Actions CODACY_API_TOKEN {hidden_word} is unavailable")
-    token = os.environ.get("CODACY_API_TOKEN", "")
-    if not token:
-        hidden_word = "sec" + "ret"
-        raise RuntimeError(f"GitHub Actions CODACY_API_TOKEN {hidden_word} is empty")
-    return token
 
 
-def codacy_url(repo: str, pr_number: str) -> str:
-    owner, repo_name = repo.split("/", 1)
-    provider = os.environ.get("CODACY_PROVIDER", "gh")
-    params = urllib.parse.urlencode({
-        "status": "new",
-        "onlyPotential": "false",
-        "limit": "100",
-    })
-    return (
-        "https://api.codacy.com/api/v3/analysis/"
-        f"organizations/{provider}/{urllib.parse.quote(owner, safe='')}/"
-        f"repositories/{urllib.parse.quote(repo_name, safe='')}/"
-        f"pull-requests/{urllib.parse.quote(str(pr_number), safe='')}/issues?{params}"
-    )
 
 
-def validate_codacy_url(url: str) -> None:
-    parsed = urllib.parse.urlparse(url)
-    if parsed.scheme != "https" or parsed.netloc != "api.codacy.com":
-        raise RuntimeError("invalid Codacy API URL")
 
 
-def codacy_https_json(url: str, token: str) -> Any:
-    validate_codacy_url(url)
-    request = urllib.request.Request(url, headers={"api-token": token}, method="GET")
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # nosec B310  # nosemgrep
-            payload = response.read().decode("utf-8")
-            status = getattr(response, "status", 200)
-            if status >= 400:
-                raise RuntimeError(f"Codacy API request failed ({status})")
-    except OSError as exc:
-        raise RuntimeError("Codacy API request failed") from exc
-    return json.loads(payload or "{}")
 
 
-def fetch_json(url: str, token: str) -> Any:
-    return codacy_https_json(url, token)
 
 
-def fetch_codacy_pr_issues(repo: str, pr_number: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    token = codacy_api_token()
-    url = codacy_url(repo, pr_number)
-    validate_codacy_url(url)
-    body = fetch_json(url, token)
-    raw = body if isinstance(body, dict) else {"data": body}
-    return raw, codacy_issue_items(body)
 
 
 def write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def codacy_task_lines(records: list[dict[str, Any]]) -> list[str]:
-    lines = [
-        "# Current Codacy API issues",
-        "",
-        f"Total: {len(records)}",
-        "",
-        "Fix only these current Codacy blockers. Preserve PR scope.",
-        "Codex must not call Codacy or DeepSource APIs directly.",
-        "",
-    ]
-    for index, record in enumerate(records, 1):
-        lines.append(
-            f"{index}. {record['filePath']}:{record['lineNumber']} "
-            f"{record['patternId']} {record['severity']} {record['tool']} - {record['message']}"
-        )
-    return ensure_codex_prompt_contract("\n".join(lines)).splitlines()
 
 
 def build_post_fix_micro_audit_prompt(task_text: str, context: dict[str, Any] | None = None) -> str:
@@ -5100,31 +5026,8 @@ def _unsafe_commit_push_patterns() -> tuple[re.Pattern[str], ...]:
     return COMMIT_PUSH_IMPERATIVE_PATTERNS
 
 
-def write_codacy_task(outdir: Path, raw: dict[str, Any], issues: list[dict[str, Any]]) -> None:
-    outdir.mkdir(parents=True, exist_ok=True)
-    records = [codacy_issue_record(item) for item in issues]
-    write_json(outdir / "codacy-raw.json", raw)
-    write_json(outdir / "codacy-issues.json", records)
-    (outdir / "codacy-task.md").write_text(
-        "\n".join(codacy_task_lines(records)) + "\n",
-        encoding="utf-8",
-    )
 
 
-def cmd_codacy_task(args: argparse.Namespace) -> int:
-    outdir = Path(args.outdir)
-    raw, issues = fetch_codacy_pr_issues(args.repo, args.pr)
-    write_codacy_task(outdir, raw, issues)
-    result = {
-        "repo": args.repo,
-        "pr": str(args.pr),
-        "issues_returned": len(issues),
-        "codacy_raw": str(outdir / "codacy-raw.json"),
-        "codacy_issues": str(outdir / "codacy-issues.json"),
-        "codacy_task": str(outdir / "codacy-task.md"),
-    }
-    print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
 
 
 def codacy_evidence_without_checks() -> dict[str, Any]:
@@ -5710,57 +5613,10 @@ def _codacy_head_match_value(evidence: dict[str, Any]) -> bool | None:
     return bool(head_match["match"])
 
 
-def codacy_api_status(
-    repo: str,
-    pr_number: str,
-) -> tuple[bool, list[dict[str, Any]], str]:
-    try:
-        _, issues = fetch_codacy_pr_issues(repo, pr_number)
-        return True, issues, f"Codacy API returned {len(issues)} current issue(s)"
-    except Exception as exc:
-        return False, [], f"Codacy API unavailable ({type(exc).__name__}): {exc}"
 
 
-def codacy_evidence_from_api(
-    codacy_checks: list[dict[str, Any]],
-    api_ok: bool,
-    issues: list[dict[str, Any]],
-    reason: str,
-    github_annotations: int | None = None,
-) -> dict[str, Any]:
-    codacy_check_state = ""
-    if codacy_checks:
-        codacy_check_state = norm_state(
-            codacy_checks[0].get("state")
-            or codacy_checks[0].get("conclusion")
-            or codacy_checks[0].get("status")
-        )
-    annotations = safe_nonnegative_int(github_annotations, 0)
-    return {
-        "checks": codacy_checks,
-        "check_blocking": bool(codacy_checks),
-        "github_codacy_state": codacy_check_state,
-        "github_annotations": annotations,
-        "codacy_api_issues": len(issues),
-        "issues": issues,
-        "api_available": api_ok,
-        "api_ok": api_ok,
-        "issues_returned": len(issues),
-        "blocking": bool(codacy_checks) if not api_ok else bool(issues),
-        "ignored": api_ok and not issues,
-        "reason": reason,
-    }
 
 
-def controller_codacy_blocking_evidence(
-    repo: str,
-    pr_number: str,
-    codacy_checks: list[dict[str, Any]],
-) -> dict[str, Any]:
-    if not codacy_checks:
-        return codacy_evidence_without_checks()
-    api_ok, issues, reason = codacy_api_status(repo, pr_number)
-    return codacy_evidence_from_api(codacy_checks, api_ok, issues, reason)
 
 
 def decide_next_action(ctx: NextActionContext) -> None:
@@ -5791,13 +5647,6 @@ def decide_next_action(ctx: NextActionContext) -> None:
 
 
 def parse_controller_args() -> argparse.Namespace:
-    if len(sys.argv) > 1 and sys.argv[1] == "codacy-task":
-        parser = argparse.ArgumentParser()
-        parser.add_argument("command")
-        parser.add_argument("--repo", required=True)
-        parser.add_argument("--pr", required=True)
-        parser.add_argument("--outdir", default=".autofix/context")
-        return parser.parse_args()
     parser = argparse.ArgumentParser()
     add_controller_core_args(parser)
     add_controller_clean_scope_args(parser)
@@ -5906,20 +5755,41 @@ def codacy_evidence_for_checks(
     pr: str,
     checks: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    codacy_blockers = [
+    """Codacy e' DISMESSO: nessuna API, nessun verdetto, nessuna rete.
+
+    Non esiste piu' alcuna chiamata a Codacy nel repository. Gli eventuali
+    check "Codacy" residui (GitHub App non ancora disinstallata) provengono da
+    un servizio dismesso: il loro esito non ha piu' significato, quindi sono
+    marcati `ignored` e NON entrano mai tra i blockers.
+
+    Nessun altro gate viene indebolito: ogni check reale (test, guardrail,
+    invarianti, DeepSource required, ...) continua a bloccare come prima.
+    """
+    _ = (repo, pr)
+    codacy_checks = [
         compact_check(check)
         for check in checks
         if is_real_blocker(check) and is_codacy_check(check)
     ]
-    return controller_codacy_blocking_evidence(repo, pr, codacy_blockers)
+    return {
+        "ignored": True,
+        "classification": "decommissioned",
+        "checks": codacy_checks,
+        "issues": [],
+        "issues_returned": 0,
+        # NIENTE `api_ok`: l'API Codacy non esiste piu'. Dichiarare api_ok=True
+        # sarebbe evidenza FABBRICATA — un consumer a valle potrebbe leggerlo
+        # come "verificato" (rilievo Claude Fable 5).
+        "reason": "codacy_decommissioned",
+    }
 
 
 def ignored_codacy_checks(
     checks: list[dict[str, Any]],
     codacy: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if not codacy.get("ignored"):
-        return []
+    """Elenca i check Codacy residui ignorati (servizio dismesso)."""
+    _ = codacy
     return [
         compact_check(check)
         for check in checks
@@ -5931,8 +5801,13 @@ def filter_ignored_codacy_checks(
     checks: list[dict[str, Any]],
     codacy: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    if not codacy.get("ignored"):
-        return checks
+    """Codacy e' DISMESSO: i suoi check sono SEMPRE esclusi dai blockers.
+
+    L'esclusione e' incondizionata e non dipende da alcuna classificazione: un
+    check prodotto da un servizio dismesso (GitHub App non ancora disinstallata)
+    non ha piu' un verdetto significativo. Ogni altro check continua a bloccare.
+    """
+    _ = codacy
     return [check for check in checks if not is_codacy_check(check)]
 
 
@@ -6018,7 +5893,9 @@ def build_next_action_context(
         )
     codacy.setdefault("github_annotations", 0)
     codacy["pr_head"] = first_nonempty(pr.get("headRefOid"), codacy.get("pr_head"))
-    codacy.update(classify_codacy_evidence(codacy))
+    # Nessuna riclassificazione: senza l'API Codacy non c'e' nulla da
+    # classificare, e classify_codacy_evidence sovrascriverebbe il marcatore
+    # "decommissioned" rimettendo ignored=False (Codacy tornerebbe a bloccare).
     effective_checks = filter_ignored_codacy_checks(checks, codacy)
     blockers = set_check_buckets(decision, effective_checks)
     review_summary = review_comments_summary(_review_thread_nodes(_review_threads_raw(args.repo, args.pr)))
@@ -6220,15 +6097,7 @@ def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any],
 
 def main() -> int:
     args = parse_controller_args()
-    if getattr(args, "command", "") != "codacy-task":
-        return run_controller(args, initial_decision(args))
-    result = cmd_codacy_task(args)
-    try:
-        _write_extra_repair_context_after_codacy_task()
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        Path(".autofix").mkdir(exist_ok=True)
-        Path(".autofix/context-extra-error.txt").write_text(str(exc), encoding="utf-8")
-    return result
+    return run_controller(args, initial_decision(args))
 
 
 
@@ -7319,10 +7188,10 @@ def triage_review_thread_contract(
                 decision = "EVIDENCE_RESOLVE"
                 reason = resolve_reason
                 next_action = "resolve_with_evidence"
-                if provider == "codacy-production" and not _codacy_review_evidence_green(ctx):
-                    decision = "NEEDS_MANUAL"
-                    reason = "missing_or_blocking_codacy_evidence"
-                    next_action = "needs_manual"
+                # Codacy DISMESSO: qui un thread gia' dimostrato risolto veniva
+                # comunque riportato a NEEDS_MANUAL in mancanza di un verdetto
+                # Codacy verde, che non puo' piu' esistere => i thread Codacy
+                # storici non erano piu' risolvibili con evidenza (Codex).
             elif resolve_reason in {
                 "missing_current_head_sha",
                 "missing_evidence_head_sha",
@@ -8132,8 +8001,11 @@ def _review_resolution_evidence_blockers(
     if bool(evidence.get("failing_checks")):
         blockers.append("failing_checks")
     blockers.extend(_check_count_blocker_reasons(evidence, "failing_checks_count", "failing_checks"))
-    if _review_thread_codacy_involved(thread, evidence, provider) and not _codacy_review_evidence_green(evidence):
-        blockers.append("codacy_not_green")
+    # Codacy DISMESSO (rilievo Codex su #462): `build_next_action_context`
+    # scrive SEMPRE `codacy.github_codacy_state`, quindi l'evidenza risulta
+    # "presente" e mai "verde" => questo blocker si sarebbe accodato PER
+    # SEMPRE. Stesso deadlock di can_auto_merge, su un altro gate: Codacy
+    # ignorato dalla merge readiness ma ancora capace di impedire il rerun.
     if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
         blockers.append("safety_or_regression_not_proven_fixed")
     if _review_thread_has_active_failure_wording(claimed_issue) and not _review_fixed_or_stale(evidence):
@@ -8172,9 +8044,7 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
         return False
     if _has_blocking_checks(evidence) or not _review_evidence_checks_green(evidence, str(triage.get("claimed_issue") or "")):
         return False
-    if provider == "codacy-production" or evidence.get("codacy_relevant"):
-        if not _codacy_review_evidence_green(evidence):
-            return False
+    # Codacy DISMESSO: vedi la nota in triage_review_thread_contract.
     return not _review_resolution_evidence_blockers(thread, evidence, triage)
 
 
@@ -8485,9 +8355,7 @@ def build_passive_rerun_readiness_plan(context: dict[str, Any] | None = None) ->
         blockers.append("active_reviews_not_clear")
     if ctx.get("checks_green") is False:
         blockers.append("checks_not_green")
-    codacy_required = ctx.get("codacy_relevant") is True
-    if (codacy_required or _codacy_review_evidence_present(ctx)) and not _codacy_review_evidence_green(ctx):
-        blockers.append("codacy_not_green")
+    # Codacy DISMESSO: vedi la nota in _review_resolution_evidence_blockers.
     if bool(ctx.get("pending_checks")) or _check_count_blocks_rerun(ctx, "pending_checks_count"):
         blockers.append("pending_checks")
     if bool(ctx.get("failing_checks")) or _check_count_blocks_rerun(ctx, "failing_checks_count"):
@@ -9418,14 +9286,8 @@ def _report_ready_to_merge(context: dict[str, Any]) -> bool:
     merge_state_status = norm_state(context.get("mergeStateStatus"))
     if _report_needs_manual({"next_action": next_action, "phase0_status": phase0_status}):
         return False
-    codacy = context.get("codacy")
-    if not isinstance(codacy, dict):
-        codacy = {
-            "conclusion": context.get("codacy_conclusion"),
-            "annotations_count": context.get("codacy_annotations_count"),
-        }
-    codacy_conclusion = norm_state(codacy.get("conclusion"))
-    annotations_count = safe_nonnegative_int(codacy.get("annotations_count"), 0)
+    # Codacy DISMESSO: vedi la nota in can_auto_merge. Pretendere qui un
+    # codacy_conclusion == SUCCESS rendeva READY_TO_MERGE irraggiungibile.
     ready_action = next_action in {"ready", "ready_to_merge", "merge_ready"}
     return (
         not bad
@@ -9434,8 +9296,6 @@ def _report_ready_to_merge(context: dict[str, Any]) -> bool:
         and ready_action
         and merge_state_status == "CLEAN"
         and unresolved_active == 0
-        and codacy_conclusion == "SUCCESS"
-        and annotations_count == 0
     )
 
 
@@ -9563,15 +9423,14 @@ def _decision_is_merge_clean(decision: dict[str, Any]) -> bool:
     return mergeable and merge_state
 
 
-def _decision_has_clean_codacy(decision: dict[str, Any]) -> bool:
-    return str(decision.get("codacy_classification") or "") in {"none", "stale_github_check"}
-
-
 def should_run_final_micro_audit(decision: dict[str, Any], state: dict[str, Any]) -> bool:
     return (
+        # Codacy DISMESSO: il gate su `codacy_classification` accettava solo
+        # {"none", "stale_github_check"}, ma il controller scrive ora
+        # "decommissioned" => il micro-audit finale OBBLIGATORIO non veniva mai
+        # schedulato (rilievo Codex). Rimosso: le condizioni reali restano.
         _decision_has_no_pending_or_bad(decision)
         and _decision_is_merge_clean(decision)
-        and _decision_has_clean_codacy(decision)
         and _active_micro_audit_exists(state)
     )
 
@@ -9587,35 +9446,8 @@ def _active_micro_audit_exists(state: dict[str, Any]) -> bool:
     return Path(path_text).exists()
 
 
-def _append_extra_context_to_codacy_task(outdir: Path) -> None:
-    """Append extra repair context to codacy-task.md so existing prompts include it."""
-    codacy_task = outdir / "codacy-task.md"
-    if not codacy_task.exists():
-        return
-    extra_parts = []
-    for name in ("deepsource-task.md", "review-comments-task.md"):
-        path = outdir / name
-        if path.exists():
-            extra_parts.extend(["", f"# Included {name}", "", path.read_text(encoding="utf-8")])
-    if extra_parts:
-        codacy_task.write_text(
-            codacy_task.read_text(encoding="utf-8") + "\n".join(extra_parts) + "\n",
-            encoding="utf-8",
-        )
 
 
-def _write_extra_repair_context_after_codacy_task() -> None:
-    """Generate DeepSource and review-comment context after codacy-task."""
-    if len(sys.argv) < 2 or sys.argv[1] != "codacy-task":
-        return
-    repo = _cli_arg_value(("--repo",), "")
-    pr_number = _cli_arg_value(("--pr", "--pr-number"), "")
-    outdir = Path(_cli_arg_value(("--outdir", "--output-dir", "--context-dir"), ".autofix/context"))
-    outdir.mkdir(parents=True, exist_ok=True)
-    if repo and pr_number:
-        _write_deepsource_task(outdir, repo, pr_number)
-        _write_review_task(outdir, repo, pr_number)
-        _append_extra_context_to_codacy_task(outdir)
 
 
 if __name__ == "__main__":

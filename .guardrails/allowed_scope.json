@@ -1588,6 +1588,26 @@
       ],
       "max_files": 6,
       "allow_tests": true
+    },
+    "codacy_integration_removal": {
+      "description": "Rimozione integrazione Codacy (owner, 2026-09-14): l'owner ha dismesso Codacy (API/token/app). Il gate CI `Merge readiness` falliva perche' lo step `codacy-task` chiamava l'API Codacy e riceveva HTTP 401 Unauthorized, facendo crashare il job (stesso flake del check `Codacy Static Code Analysis` = action_required). Rimossi: lo step `codacy-task` e gli env CODACY_API_TOKEN/HAS_CODACY_API_TOKEN dal workflow; i DUE client API Codacy duplicati (scripts/pr_flow_automation.py e scripts/pr_automation_controller.py); il comando CLI `codacy-task`; la raccolta Codacy nei due script .github/scripts. Nessun `api.codacy.com` e nessun CODACY_API_TOKEN resta nel repo (pinnato da test). SCOPERTA PHASE-0: la catena di evidenza 'DeepSource advisory' pretendeva codacy_state=='SUCCESS'; con Codacy disinstallato quella condizione non sarebbe mai stata vera e DeepSource sarebbe tornato BLOCCANTE (CI piu' rossa, non piu' verde) => rimossa la precondizione Codacy lasciando INTATTE tutte le altre condizioni fail-closed (head/evidence presenti, deepsource_required_current_head_check_failing=False, pending=0, unresolved=0). Un check 'Codacy' residuo (App non ancora disinstallata) e' ora SEMPRE escluso dai blockers (esclusione incondizionata, non piu' dipendente da una classificazione che sovrascriveva il flag). Il gate `Merge readiness` resta FAIL-CLOSED sui blocker REALI: rimosso il ramo che rendeva verde una readiness negativa; nessun sempre-verde. Guard anti-loop autofix di cmd_preflight resi incondizionati (piu' severi; preflight non gira in CI). NON toccati i commenti di attribuzione 'rilievo Codacy' nei file runtime/core (telegram_listener, config_registry, mini_gui, catalog_sync_service): churn inutile, zero beneficio. Test PASS+BLOCK in tests/scripts/test_codacy_decommissioned.py (verificati per sabotaggio: rimettere il filtro condizionato, reintrodurre l'endpoint API, o indebolire il fail-closed DeepSource fanno FALLIRE il test giusto). Suite tests/scripts: 1248 verdi. Tocca .github/workflows => merge MANUALE owner.",
+      "allow_tests": true,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        ".github/workflows/pr-merge-readiness.yml",
+        ".github/scripts/pr_autofix_safe_context.py",
+        ".github/scripts/collect_external_review_context.py",
+        "scripts/pr_automation_controller.py",
+        "scripts/pr_flow_automation.py",
+        "tests/scripts/test_pr_automation_controller.py",
+        "tests/scripts/test_pr_flow_automation.py",
+        "tests/scripts/test_codacy_decommissioned.py",
+        "docs/auto_pr_flow_spec.md",
+        "docs/hard_verify_spec.md",
+        "AGENTS.md",
+        "CLAUDE.md"
+      ],
+      "max_files": 13
     }
   }
 }

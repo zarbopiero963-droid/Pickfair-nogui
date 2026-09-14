@@ -33,7 +33,7 @@ Usa il flusso completo (AUTO PR FLOW + AGENTS.md) per qualsiasi task che:
 - modifica build/packaging (`packaging/`, `pickfair.spec`,
   `install_linux.sh`, `*.bat`), dipendenze o workflow;
 - richiede commit, push, PR, resolve thread o valutazione merge;
-- corregge review comments, check rossi, Codacy, DeepSource, CodeRabbit,
+- corregge review comments, check rossi, DeepSource, CodeRabbit,
   Sourcery, Gitar o GitHub Actions.
 
 Per domande, spiegazioni o analisi read-only non serve il flusso.
@@ -123,12 +123,12 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 - Check-completion gate: le decisioni FINALI (READY_TO_MERGE,
   "implementato"/"done", evidence-resolve, resolve definitivo dei
   thread) si prendono solo quando TUTTI i check current-head sono
-  SETTLED — non basta il solo Codacy finito. Rafforza
-  auto_pr_flow_spec §10/§13/§14: dove la spec gatta sul singolo Codacy,
+  SETTLED. Rafforza
+  auto_pr_flow_spec §10/§13/§14: dove la spec gatta su un singolo check,
   qui si richiede l'intero rollup settled. Sono NON settled: PENDING,
   QUEUED, IN_PROGRESS, WAITING, REQUESTED, EXPECTED, UNKNOWN, null/empty.
   Leggi i rilievi review/inline/corpi **dopo** che i check finiscono (i
-  bot — CodeRabbit/Codacy/DeepSource/Sourcery/Gitar — pubblicano spesso
+  bot — CodeRabbit/DeepSource/Sourcery/Gitar — pubblicano spesso
   solo a check completato). Dopo OGNI push ripeti il ciclo: push =>
   attendi fine check => rileggi check+annotazioni+commenti+inline+thread
   => triage => eventuale patch. Lo status intermedio di monitoraggio è
@@ -146,7 +146,8 @@ REGOLE NON NEGOZIABILI (valgono sempre):
   cambiamento: PASS/FAIL" (definito in hard_verify_spec §12-bis).
 - A ogni check-in della PR leggi e fai triage dei thread inline
   attivi, non-outdated e non-risolti (review comments e review threads,
-  inclusi i bot: CodeRabbit, Sourcery, Gitar, DeepSource, Codacy).
+  inclusi i bot: CodeRabbit, Sourcery, Gitar, DeepSource). Codacy è DISMESSO:
+  nessuna integrazione, nessun gate, mai un blocker.
   Classifica ogni rilievo: `PATCH_REQUIRED` (bug reale current-head =>
   patch stretta), `EVIDENCE_RESOLVE` (già coperto/outdated => rispondi
   con prova), `SKIP` (falso positivo / duplicato / fuori scope =>
