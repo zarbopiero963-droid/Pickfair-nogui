@@ -1721,11 +1721,20 @@ def cmd_readiness(args: argparse.Namespace) -> int:
             or intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
         )
     ):
-        visti = decision.get("checks_seen", 0)
-        intervalli_stabili = intervalli_stabili + 1 if visti == visti_prima else 0
-        visti_prima = visti
+        visti_prima = decision.get("checks_seen", 0)
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+        # Il contatore si aggiorna sulla lettura APPENA FATTA, non su quella
+        # precedente. Calcolarlo prima del fetch (come faceva la prima stesura,
+        # rilievo di Grok 4.6) significa che la condizione d'uscita consulta un
+        # valore che non sa nulla dell'ultimo fetch: se il conteggio cresce
+        # proprio all'ultima lettura, il gate esce lo stesso — su un rollup che
+        # sta ancora crescendo.
+        intervalli_stabili = (
+            intervalli_stabili + 1
+            if decision.get("checks_seen", 0) == visti_prima
+            else 0
+        )
 
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:

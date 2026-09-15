@@ -165,8 +165,8 @@ def test_block_aspetta_finche_i_check_sono_in_volo(monkeypatch: Any) -> None:
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 4, (
-        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 4: non sta "
+    assert len(viste) == 3, (
+        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 3: non sta "
         f"aspettando che i check finiscano, sta decidendo sul primo colpo. "
         f"(Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
         f"{flow.INTERVALLI_STABILI_RICHIESTI}: se cambia, va ricalcolato.)"
@@ -375,8 +375,8 @@ def test_block_aspetta_anche_col_rollup_ancora_vuoto(monkeypatch: Any) -> None:
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 5, (
-        f"interrogata l'API {len(viste)} volta/e invece di 5: col rollup vuoto "
+    assert len(viste) == 4, (
+        f"interrogata l'API {len(viste)} volta/e invece di 4: col rollup vuoto "
         f"il gate ha deciso subito, invece di aspettare che i check comparissero. "
         f"(Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
         f"{flow.INTERVALLI_STABILI_RICHIESTI}.)"
@@ -488,8 +488,8 @@ def test_block_non_si_decide_mentre_il_rollup_sta_ancora_crescendo(monkeypatch: 
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 6, (
-        f"interrogata l'API {len(viste)} volta/e invece di 6: il gate ha "
+    assert len(viste) == 5, (
+        f"interrogata l'API {len(viste)} volta/e invece di 5: il gate ha "
         f"deciso mentre il rollup stava ancora crescendo — un verde con la "
         f"suite non ancora partita. (Conteggio legato a "
         f"INTERVALLI_STABILI_RICHIESTI={flow.INTERVALLI_STABILI_RICHIESTI}.)"
@@ -544,10 +544,10 @@ def test_block_un_solo_intervallo_stabile_non_basta(monkeypatch: Any) -> None:
     # attraversato il plateau — e di conseguenza su quale decisione si e'
     # fermato:
     #
-    #     N=1: letture=3  rc=1   (uscito sul plateau)
-    #     N=2: letture=6  rc=0   (arrivato alla decisione stabile)
-    assert len(viste) == 6, (
-        f"il gate ha interrogato l'API {len(viste)} volte invece di 6: e' uscito "
+    #     N=1: letture=2  rc=1   (uscito sul plateau)
+    #     N=2: letture=5  rc=0   (arrivato alla decisione stabile)
+    assert len(viste) == 5, (
+        f"il gate ha interrogato l'API {len(viste)} volte invece di 5: e' uscito "
         f"sul plateau iniziale, dichiarando pronta una PR con la suite non "
         f"ancora comparsa. (Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
         f"{flow.INTERVALLI_STABILI_RICHIESTI}: se cambia, va ricalcolato.)"
@@ -555,4 +555,44 @@ def test_block_un_solo_intervallo_stabile_non_basta(monkeypatch: Any) -> None:
     assert rc == 0, (
         "il gate non si e' fermato sulla decisione stabile: un solo intervallo "
         "invariato e' bastato a convincerlo che il rollup fosse fermo."
+    )
+
+
+def test_block_non_esce_su_un_conteggio_appena_cresciuto(monkeypatch: Any) -> None:
+    """Rilievo di Grok 4.6 su `6d1c46a`, ed era una regressione mia.
+
+    Introducendo il contatore di intervalli stabili avevo tolto dalla
+    condizione il confronto col conteggio CORRENTE. Risultato: il contatore si
+    aggiornava sulla lettura PRECEDENTE, quindi la condizione d'uscita
+    consultava un valore che non sapeva nulla dell'ultimo fetch. Se il
+    conteggio cresceva proprio all'ultima lettura, il gate usciva lo stesso:
+
+        letture=4  ultima_usata_checks_seen=55   <- il rollup stava crescendo
+
+    Qui il conteggio resta fermo a 40 e poi salta a 55 all'ultimo fetch: il
+    gate deve fermarsi su una lettura STABILE (40), non su quella cresciuta.
+    """
+    sequenza = [
+        _decisione([], checks_seen=40),
+        _decisione([], checks_seen=40),
+        _decisione([], checks_seen=40),
+        _decisione([], can_merge=True, checks_seen=55),   # cresce all'improvviso
+    ]
+    viste: list[dict[str, Any]] = []
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        d = sequenza[min(len(viste), len(sequenza) - 1)]
+        viste.append(d)
+        return d
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    flow.cmd_readiness(_args())
+
+    assert viste[-1]["checks_seen"] == 40, (
+        f"il gate si e' fermato su una lettura con checks_seen="
+        f"{viste[-1]['checks_seen']}, cioe' su un conteggio APPENA cresciuto: "
+        f"il contatore di stabilita' sta guardando letture vecchie invece di "
+        f"quella corrente."
     )
