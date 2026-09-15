@@ -677,3 +677,41 @@ def test_block_checks_seen_e_top_level_nella_decisione_vera() -> None:
         f"checks_seen = {decisione['checks_seen']!r} invece di 2: il conteggio "
         f"dei check reali non rispecchia il rollup."
     )
+
+
+def test_block_timeout_senza_stabilita_non_e_un_verde(monkeypatch: Any) -> None:
+    """Rilievo di Claude Fable 5, e contraddiceva una MIA affermazione.
+
+    Avevo scritto — nel commit, nella spec e nel commento accanto al codice —
+    «fail-closed: scaduto il budget si giudica lo stato REALE, se i check non
+    sono finiti `can_merge` resta falso». Vero solo se `pending` e' non vuoto.
+    Se allo scadere del budget il rollup sta ancora CRESCENDO ma `pending` e'
+    momentaneamente vuoto, `can_merge` resta vero e il gate pubblica un verde
+    su una suite incompleta. Riprodotto con un rollup che cresce a ogni
+    lettura, quindi senza mai raggiungere la stabilita':
+
+        budget scaduto SENZA stabilita' confermata  ->  rc=0 (PRONTA)
+
+    Il budget e' generoso (900s contro ~20s di registrazione), quindi il caso e'
+    raro: ma «raro» non e' «fail-closed», e la differenza sta proprio nel ramo
+    che si imbocca quando le cose vanno male. Un gate che promette fail-closed
+    e non lo e' e' peggio di uno che non lo promette.
+    """
+    contatore = {"n": 0}
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        contatore["n"] += 1
+        # il conteggio cambia a ogni lettura: stabilita' mai raggiunta
+        return _decisione([], can_merge=True, checks_seen=contatore["n"])
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    rc = flow.cmd_readiness(_args(wait_pending_seconds=1, poll_seconds=1))
+
+    assert rc == 1, (
+        "budget scaduto senza che il rollup si sia mai stabilizzato, e il gate "
+        "ha detto PRONTA: e' un fail-OPEN sul ramo timeout, il contrario di "
+        "quanto la spec dichiara. Se la stabilita' non e' stata confermata, il "
+        "verdetto non puo' essere verde."
+    )

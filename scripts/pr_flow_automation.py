@@ -1743,6 +1743,29 @@ def cmd_readiness(args: argparse.Namespace) -> int:
             else 0
         )
 
+    # FAIL-CLOSED sul ramo timeout (rilievo di Claude Fable 5, e contraddiceva
+    # quanto avevo dichiarato io nella spec).
+    #
+    # Uscire dal ciclo per budget scaduto NON e' come uscirne perche' il rollup
+    # si e' stabilizzato. Se `pending` e' momentaneamente vuoto mentre i check
+    # continuano a comparire, `can_merge` resta vero e il gate pubblicherebbe un
+    # verde su una suite incompleta. Il budget e' generoso (900s contro ~20s di
+    # registrazione), quindi il caso e' raro: ma "raro" non e' "fail-closed", e
+    # un gate che promette fail-closed senza esserlo e' peggio di uno che non lo
+    # promette.
+    if (
+        args.wait_pending_seconds > 0
+        and not decision["already_merged"]
+        and intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
+    ):
+        decision["can_merge"] = False
+        motivo = (
+            f"rollup never stayed stable for {INTERVALLI_STABILI_RICHIESTI} "
+            f"poll interval(s) within the wait budget"
+        )
+        if motivo not in decision.setdefault("reasons", []):
+            decision["reasons"].append(motivo)
+
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
         write_json(Path(args.output), decision)

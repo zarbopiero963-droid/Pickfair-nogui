@@ -460,10 +460,23 @@ la stringe soltanto. Eliminarla davvero richiederebbe l'elenco dei check ATTESI,
 che invecchierebbe a ogni workflow aggiunto o tolto — e un manifest stantio
 produce falsi ROSSI sistematici, un danno peggiore del rischio che chiude.
 
+**Fail-closed anche sul timeout.** Uscire dal ciclo per budget scaduto non e'
+come uscirne perche' il rollup si e' stabilizzato: se la stabilita' non e' mai
+stata confermata, il verdetto viene forzato a NON pronto con un reason
+esplicito. Senza, un `pending` momentaneamente vuoto mentre i check continuano
+a comparire produrrebbe un verde su suite incompleta — fail-open proprio nel
+ramo che deve reggere quando le cose vanno male.
+
+**`workflow_dispatch`: lanciarlo SUL BRANCH DELLA PR.** La run si attacca al ref
+su cui viene lanciata: dal branch di default il verdetto finisce su `main`,
+cioe' lo stesso difetto che questa modifica toglie per `check_run`/`workflow_run`.
+Per una rivalutazione manuale che serva a qualcosa va scelto il branch della PR,
+non `main`.
+
 **Limite operativo dichiarato.** Tolti `check_run`/`workflow_run`, se il budget
 scade con check ancora in volo il verdetto resta rosso sull'head e NON si
-rivaluta da solo: serve `workflow_dispatch` (input `pr_number`) o un nuovo
-push. E' una scelta, non una svista: rimettere quei trigger significherebbe
+rivaluta da solo: serve `workflow_dispatch` (input `pr_number`, lanciato sul
+branch della PR) o un nuovo push. E' una scelta, non una svista: rimettere quei trigger significherebbe
 ripubblicare il verdetto su `main` invece che sull'head — il difetto che teneva
 il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
 (900s) e' circa il triplo della durata osservata della suite (~322s), e perche'
