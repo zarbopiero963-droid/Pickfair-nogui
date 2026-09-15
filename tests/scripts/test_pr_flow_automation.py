@@ -2375,11 +2375,19 @@ def _decisione_reale(monkeypatch) -> dict:
     `monkeypatch` e' scoped al test e disfatto da pytest in ordine LIFO, quindi
     quel modo di fallire sparisce.
 
-    Limite dichiarato: `monkeypatch.setattr` muta comunque un globale di modulo.
-    Toglie la gestione a mano e la persistenza dell'avvelenamento, NON rende
-    sicura l'esecuzione concorrente in-process — per quella servirebbe un seam
-    di iniezione in `flow.build_decision`, che e' un cambiamento al codice di
-    produzione e non a un test.
+    Si usa `monkeypatch.context()`, non `monkeypatch.setattr` diretto. Rilievo di
+    GPT-5.6 Sol sulla prima versione, ed era una regressione: `setattr` ripristina
+    al TEARDOWN del test, mentre il vecchio `finally` ripristinava appena
+    `build_decision` tornava. Sostituire l'uno con l'altro toglieva la patch a
+    mano ma ALLARGAVA la finestra in cui un altro test puo' vedere lo stub — si
+    guadagnava una proprieta' perdendone un'altra. Il context manager le tiene
+    entrambe: ripristino immediato, e nessun salvataggio a mano.
+
+    Limite dichiarato: si muta comunque un globale di modulo. La finestra e'
+    stretta quanto quella di prima e l'avvelenamento permanente non e' piu'
+    possibile, ma l'esecuzione concorrente in-process NON diventa sicura — per
+    quella servirebbe un seam di iniezione in `flow.build_decision`, che e' un
+    cambiamento al codice di produzione e non a un test.
     """
     pr = {
         "state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE",
@@ -2390,8 +2398,9 @@ def _decisione_reale(monkeypatch) -> dict:
             _check("unit", "SUCCESS"),
         ],
     }
-    monkeypatch.setattr(flow, "pr_view", lambda _repo, _pr: pr)
-    return flow.build_decision("owner/repo", "462", ignore_self=True)
+    with monkeypatch.context() as patch:
+        patch.setattr(flow, "pr_view", lambda _repo, _pr: pr)
+        return flow.build_decision("owner/repo", "462", ignore_self=True)
 
 
 def _programmi_jq(testo: str) -> list[str]:
@@ -2516,6 +2525,23 @@ def test_block_le_chiavi_sulle_righe_di_continuazione_non_sfuggono(monkeypatch) 
     )
     # E il caso legittimo NON deve diventare rosso: `.can_merge` esiste.
     ASSERTIONS.assertNotIn("can_merge", " ".join(mancanti), "falso positivo su una chiave valida")
+
+
+def test_block_lo_stub_di_pr_view_non_sopravvive_alla_costruzione(monkeypatch) -> None:
+    """La patch deve sparire appena la decisione e' costruita, non al teardown.
+
+    Rilievo di GPT-5.6 Sol: con `monkeypatch.setattr` diretto lo stub resta
+    installato fino alla fine del test, cioe' una finestra PIU' LARGA di quella
+    del vecchio `try/finally`. Questo test fallisce su quella versione.
+    """
+    prima = flow.pr_view
+    _decisione_reale(monkeypatch)
+    ASSERTIONS.assertIs(
+        flow.pr_view, prima,
+        "lo stub di `pr_view` e' ancora installato dopo `_decisione_reale`: la "
+        "finestra in cui un altro test puo' vederlo arriva fino al teardown, "
+        "piu' larga di quella del try/finally che si voleva sostituire",
+    )
 
 
 def test_block_collezione_vuota_non_e_una_verifica_riuscita(monkeypatch) -> None:

@@ -1,4 +1,4 @@
-"""Nei test non si assegna a mano un attributo di modulo: si usa `monkeypatch`.
+"""Nei test non si muta a mano un attributo di modulo: si usa `monkeypatch`.
 
 FOLLOW-UP #462. `tests/scripts/test_pr_flow_automation.py` installava lo stub di
 `flow.pr_view` a mano::
@@ -18,13 +18,21 @@ test successivo del worker gira su una `pr_view` finta senza che nulla lo dica.
 Un test che passa su un mock sbagliato e' indistinguibile da un test che passa.
 
 `monkeypatch` non rende sicura l'esecuzione concorrente in-process (muta
-comunque un globale di modulo): toglie la gestione a mano, garantisce il
-ripristino anche se il test esplode, e in ordine LIFO, quindi l'avvelenamento
-permanente non puo' piu' accadere. Per l'isolamento vero servirebbe un seam di
-iniezione nel codice di produzione — scelta dell'owner, non di un test.
+comunque un globale di modulo): toglie la gestione a mano e garantisce il
+ripristino, quindi l'avvelenamento permanente non puo' piu' accadere. Per
+l'isolamento vero servirebbe un seam di iniezione nel codice di produzione —
+scelta dell'owner, non di un test.
 
 Questo guard blocca la comparsa di NUOVI punti. I punti preesistenti sono
-elencati qui sotto, non nascosti: e' debito visibile, non una deroga silenziosa.
+elencati qui sotto CON IL LORO NUMERO, non nascosti: e' debito visibile, non una
+deroga silenziosa — e un'assegnazione in piu' dentro un file derogato non passa
+per il fatto che quel file compare nell'elenco.
+
+Rilievo di GPT-5.6 Sol sulla prima versione, fondato: l'allow-list ragionava per
+(file, attributo) senza contare, quindi in un file derogato una seconda
+assegnazione allo stesso attributo passava indisturbata; e il guard guardava solo
+`ast.Assign`, quindi `x.y: T = ...`, `x.y += ...` e `setattr(x, "y", ...)` lo
+aggiravano del tutto. Ora sono coperte tutte e quattro le forme.
 """
 
 import ast
@@ -35,18 +43,17 @@ ASSERTIONS = TestCase()
 
 RADICE_TEST = Path(__file__).resolve().parents[1]
 
-# Punti preesistenti al follow-up #462, fuori dal suo scope. Ogni voce e'
-# (percorso relativo a tests/, "modulo.attributo"). Un attributo NUOVO, o lo
-# stesso attributo in un file NUOVO, resta bloccato.
-PREESISTENTI: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("chaos/test_runtime_reconcile_under_stress.py", "time.sleep"),
-        ("chaos/test_runtime_reconcile_under_stress.py", "time.time"),
-        ("failure/test_reconcile_retry_policy.py", "time.sleep"),
-        ("parsers/test_parser_personalizzati.py", "cpe.matches_message"),
-        ("unit/test_tick_throttle_executor_determinism.py", "tick_module._dispatcher"),
-    }
-)
+# Punti preesistenti al follow-up #462, fuori dal suo scope: (file relativo a
+# tests/, "modulo.attributo") -> quante volte. Il conteggio e' parte della
+# deroga: una mutazione IN PIU' nello stesso file, sullo stesso attributo, resta
+# bloccata.
+PREESISTENTI: dict[tuple[str, str], int] = {
+    ("chaos/test_runtime_reconcile_under_stress.py", "time.sleep"): 2,
+    ("chaos/test_runtime_reconcile_under_stress.py", "time.time"): 2,
+    ("failure/test_reconcile_retry_policy.py", "time.sleep"): 2,
+    ("parsers/test_parser_personalizzati.py", "cpe.matches_message"): 2,
+    ("unit/test_tick_throttle_executor_determinism.py", "tick_module._dispatcher"): 2,
+}
 
 
 def _moduli_importati(albero: ast.Module) -> set[str]:
@@ -59,28 +66,77 @@ def _moduli_importati(albero: ast.Module) -> set[str]:
     return nomi
 
 
-def _assegnazioni_a_moduli(percorso: Path) -> list[tuple[int, str]]:
-    """(riga, "modulo.attributo") per ogni assegnazione diretta nel file."""
+def _e_attributo_di_modulo(nodo: ast.expr | None, moduli: set[str]) -> bool:
+    return (
+        isinstance(nodo, ast.Attribute)
+        and isinstance(nodo.value, ast.Name)
+        and nodo.value.id in moduli
+    )
+
+
+def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
+    """(riga, "modulo.attributo") per ogni mutazione a mano nel sorgente.
+
+    Quattro forme, tutte equivalenti nell'effetto — sostituire un globale di
+    modulo senza che nulla garantisca il ripristino:
+
+        mod.attr = ...          ast.Assign
+        mod.attr: T = ...       ast.AnnAssign
+        mod.attr += ...         ast.AugAssign
+        setattr(mod, "attr", …) ast.Call
+    """
     try:
-        albero = ast.parse(percorso.read_text(encoding="utf-8"))
+        albero = ast.parse(sorgente)
     except SyntaxError:  # pragma: no cover - un file rotto lo dice la raccolta
         return []
     moduli = _moduli_importati(albero)
     trovate: list[tuple[int, str]] = []
     for nodo in ast.walk(albero):
-        if not isinstance(nodo, ast.Assign):
+        bersagli: list[ast.expr] = []
+        if isinstance(nodo, ast.Assign):
+            bersagli = list(nodo.targets)
+        elif isinstance(nodo, (ast.AnnAssign, ast.AugAssign)):
+            bersagli = [nodo.target]
+        elif (
+            isinstance(nodo, ast.Call)
+            and isinstance(nodo.func, ast.Name)
+            and nodo.func.id == "setattr"
+            and nodo.args
+            and isinstance(nodo.args[0], ast.Name)
+            and nodo.args[0].id in moduli
+        ):
+            attributo = nodo.args[1] if len(nodo.args) > 1 else None
+            nome = (
+                attributo.value
+                if isinstance(attributo, ast.Constant) and isinstance(attributo.value, str)
+                else "?"
+            )
+            trovate.append((nodo.lineno, f"{nodo.args[0].id}.{nome}"))
             continue
-        for bersaglio in nodo.targets:
-            if (
-                isinstance(bersaglio, ast.Attribute)
-                and isinstance(bersaglio.value, ast.Name)
-                and bersaglio.value.id in moduli
-            ):
+
+        for bersaglio in bersagli:
+            if _e_attributo_di_modulo(bersaglio, moduli):
+                assert isinstance(bersaglio, ast.Attribute)  # ristretto sopra
+                assert isinstance(bersaglio.value, ast.Name)
                 trovate.append((nodo.lineno, f"{bersaglio.value.id}.{bersaglio.attr}"))
     return trovate
 
 
-def test_block_nessuna_nuova_assegnazione_diretta_a_un_modulo() -> None:
+def _mutazioni_del_file(percorso: Path) -> list[tuple[int, str]]:
+    return _mutazioni_di_modulo(percorso.read_text(encoding="utf-8"))
+
+
+def _conteggio_reale() -> dict[tuple[str, str], int]:
+    """(file, "modulo.attributo") -> quante mutazioni, su tutta la suite."""
+    conteggio: dict[tuple[str, str], int] = {}
+    for percorso in sorted(RADICE_TEST.rglob("test_*.py")):
+        relativo = percorso.relative_to(RADICE_TEST).as_posix()
+        for _riga, bersaglio in _mutazioni_del_file(percorso):
+            conteggio[(relativo, bersaglio)] = conteggio.get((relativo, bersaglio), 0) + 1
+    return conteggio
+
+
+def test_block_nessuna_nuova_mutazione_diretta_di_un_modulo() -> None:
     moduli_test = sorted(RADICE_TEST.rglob("test_*.py"))
     # Anti-vacuo: se la scansione non trova la suite, il verde non prova nulla.
     ASSERTIONS.assertGreater(
@@ -89,42 +145,73 @@ def test_block_nessuna_nuova_assegnazione_diretta_a_un_modulo() -> None:
         "la scansione e' rotta, non la suite",
     )
 
-    nuove: list[str] = []
-    for percorso in moduli_test:
-        relativo = percorso.relative_to(RADICE_TEST).as_posix()
-        for riga, bersaglio in _assegnazioni_a_moduli(percorso):
-            if (relativo, bersaglio) not in PREESISTENTI:
-                nuove.append(f"tests/{relativo}:{riga}  {bersaglio} = ...")
+    conteggio = _conteggio_reale()
+    eccedenze: list[str] = []
+    for (relativo, bersaglio), quante in sorted(conteggio.items()):
+        derogate = PREESISTENTI.get((relativo, bersaglio), 0)
+        if quante > derogate:
+            eccedenze.append(
+                f"tests/{relativo}  {bersaglio}: {quante} mutazioni, "
+                f"{derogate} derogate"
+            )
 
     ASSERTIONS.assertEqual(
-        nuove, [],
-        "assegnazione diretta a un attributo di modulo in un test:\n  "
-        + "\n  ".join(nuove)
-        + "\nUsa `monkeypatch.setattr(modulo, \"attributo\", ...)`: il ripristino "
-        "a mano non regge l'interleaving e puo' rendere lo stub permanente.",
+        eccedenze, [],
+        "mutazione diretta di un attributo di modulo in un test:\n  "
+        + "\n  ".join(eccedenze)
+        + "\nUsa `monkeypatch.setattr(modulo, \"attributo\", ...)` — o "
+        "`monkeypatch.context()` se la patch deve sparire prima della fine del "
+        "test. Il ripristino a mano non regge l'interleaving e puo' rendere lo "
+        "stub permanente.",
     )
 
 
 def test_block_l_elenco_dei_preesistenti_non_invecchia() -> None:
-    """Una voce che non esiste piu' va tolta, non lasciata a coprire il nulla.
+    """Una deroga che non corrisponde piu' al codice va tolta, non lasciata.
 
-    Un allow-list che sopravvive al codice che scusava e' una deroga aperta su
-    un punto che nessuno controlla piu'.
+    Vale in entrambe le direzioni: una voce sparita copre il nulla, e un
+    conteggio piu' alto del reale lascia spazio libero per una mutazione nuova
+    senza che nessuno se ne accorga.
     """
-    ancora_presenti = set()
-    for relativo, bersaglio in PREESISTENTI:
-        percorso = RADICE_TEST / relativo
-        if not percorso.exists():
-            # File sparito: la voce NON finisce fra le presenti, quindi viene
-            # segnalata come obsoleta qui sotto. Il `continue` evita solo la
-            # lettura di un file che non c'e'.
-            continue
-        if any(b == bersaglio for _riga, b in _assegnazioni_a_moduli(percorso)):
-            ancora_presenti.add((relativo, bersaglio))
-
-    obsolete = sorted(f"{f} -> {b}" for f, b in PREESISTENTI - ancora_presenti)
+    conteggio = _conteggio_reale()
+    obsolete = sorted(
+        f"{f} -> {b}: derogate {quante}, reali {conteggio.get((f, b), 0)}"
+        for (f, b), quante in PREESISTENTI.items()
+        if conteggio.get((f, b), 0) != quante
+    )
     ASSERTIONS.assertEqual(
         obsolete, [],
-        "voci dell'allow-list che non corrispondono piu' a nulla nel codice: "
-        f"{obsolete}. Toglile: una deroga senza oggetto copre solo il prossimo caso.",
+        f"voci dell'allow-list disallineate dal codice: {obsolete}. "
+        "Allineale o toglile: una deroga piu' larga del reale e' spazio libero.",
     )
+
+
+def test_block_le_quattro_forme_di_mutazione_sono_tutte_viste() -> None:
+    """BLOCK del rilievo di Sol: nessuna delle quattro forme deve sfuggire.
+
+    Se questo test torna verde con una forma non rilevata, il guard e' di nuovo
+    aggirabile riscrivendo la stessa mutazione in un altro modo.
+    """
+    casi = {
+        "assegnazione": "import flow\nflow.pr_view = lambda: 1\n",
+        "annotata": "import flow\nflow.pr_view: object = lambda: 1\n",
+        "aumentata": "import flow\nflow.contatore += 1\n",
+        "setattr": "import flow\nsetattr(flow, 'pr_view', lambda: 1)\n",
+    }
+    for nome, sorgente in casi.items():
+        trovate = [b for _riga, b in _mutazioni_di_modulo(sorgente)]
+        ASSERTIONS.assertTrue(
+            trovate, f"forma «{nome}» non rilevata: il guard e' aggirabile cosi'"
+        )
+
+    # E nessun falso positivo su cio' che modulo non e': un oggetto locale, o
+    # un modulo mai importato, non c'entrano nulla.
+    innocui = (
+        "class C: pass\nc = C()\nc.attr = 1\n",
+        "import flow\naltro.attr = 1\n",
+    )
+    for sorgente in innocui:
+        ASSERTIONS.assertEqual(
+            _mutazioni_di_modulo(sorgente), [],
+            "falso positivo: non e' la mutazione di un modulo importato",
+        )
