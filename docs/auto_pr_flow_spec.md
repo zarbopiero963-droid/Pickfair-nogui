@@ -446,6 +446,12 @@ mentre gli altri non sono ancora comparsi nel rollup, `pending` e' vuoto e
 da partire. Il criterio si auto-calibra: nessuna soglia da aggiornare quando si
 aggiunge o si toglie un workflow.
 
+La stabilita' si conta **solo a `pending` vuoto**: un conteggio fermo mentre la
+suite gira dice che i check ci sono gia' tutti, non che il rollup sia completo.
+Senza quel vincolo il contatore arrivava a N durante l'attesa e il gate usciva
+nell'istante in cui l'ultimo pending diventava verde, senza mai osservare la
+finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
+
 La stabilita' va verificata su **`INTERVALLI_STABILI_RICHIESTI` = 2** intervalli
 di poll consecutivi, non su uno solo: con un intervallo, un ritardo di
 registrazione piu' lungo di `--poll-seconds` basterebbe a far uscire il gate sul

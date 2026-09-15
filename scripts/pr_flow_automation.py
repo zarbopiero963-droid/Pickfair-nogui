@@ -1730,9 +1730,16 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         # valore che non sa nulla dell'ultimo fetch: se il conteggio cresce
         # proprio all'ultima lettura, il gate esce lo stesso — su un rollup che
         # sta ancora crescendo.
+        # La stabilita' si conta SOLO a pending vuoto (rilievo di Fugu Ultra).
+        # Un conteggio fermo mentre la suite gira dice che i check ci sono gia'
+        # tutti, non che il rollup sia completo: senza questo vincolo il
+        # contatore arrivava a N durante l'attesa e il gate usciva nell'istante
+        # in cui l'ultimo pending diventava verde, senza mai osservare la
+        # finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
         intervalli_stabili = (
             intervalli_stabili + 1
             if decision.get("checks_seen", 0) == visti_prima
+            and not decision.get("pending")
             else 0
         )
 

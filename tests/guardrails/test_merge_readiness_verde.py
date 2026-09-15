@@ -165,8 +165,8 @@ def test_block_aspetta_finche_i_check_sono_in_volo(monkeypatch: Any) -> None:
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 3, (
-        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 3: non sta "
+    assert len(viste) == 4, (
+        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 4: non sta "
         f"aspettando che i check finiscano, sta decidendo sul primo colpo. "
         f"(Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
         f"{flow.INTERVALLI_STABILI_RICHIESTI}: se cambia, va ricalcolato.)"
@@ -595,4 +595,85 @@ def test_block_non_esce_su_un_conteggio_appena_cresciuto(monkeypatch: Any) -> No
         f"{viste[-1]['checks_seen']}, cioe' su un conteggio APPENA cresciuto: "
         f"il contatore di stabilita' sta guardando letture vecchie invece di "
         f"quella corrente."
+    )
+
+
+def test_block_la_stabilita_si_conta_solo_a_pending_vuoto(monkeypatch: Any) -> None:
+    """Rilievo di Fugu Ultra sulla full-range di `1cca781`, fondato.
+
+    Il contatore cresceva anche mentre c'erano check PENDENTI: bastava che il
+    conteggio restasse fermo (i check ci sono gia' tutti, stanno solo girando)
+    perche' `intervalli_stabili` arrivasse a N. Cosi', nell'istante in cui
+    l'ultimo pending diventava verde, il gate usciva — senza aver mai
+    osservato un solo intervallo stabile A PENDING VUOTO. Riprodotto:
+
+        letture=3   intervalli stabili a pending vuoto: ZERO
+
+    «Conteggio fermo mentre la suite gira» non e' la stessa cosa di «il rollup
+    e' completo»: la seconda si puo' affermare solo guardando la finestra DOPO
+    che i pending sono spariti. Costa due poll (30s) su un gate che ne impiega
+    ~300: si pagano volentieri per non pubblicare un verde prematuro.
+    """
+    sequenza = [
+        _decisione(["a", "b", "c"], checks_seen=40),
+        _decisione(["a"], checks_seen=40),
+        _decisione([], checks_seen=40),
+        _decisione([], can_merge=True, checks_seen=40),
+    ]
+    viste: list[dict[str, Any]] = []
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        d = sequenza[min(len(viste), len(sequenza) - 1)]
+        viste.append(d)
+        return d
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    rc = flow.cmd_readiness(_args())
+
+    assert len(viste) >= 4, (
+        f"il gate e' uscito dopo {len(viste)} letture: e' uscito nell'istante in "
+        f"cui l'ultimo pending e' diventato verde, senza osservare nemmeno un "
+        f"intervallo stabile a pending vuoto. La stabilita' accumulata mentre "
+        f"la suite girava non dice nulla su quel che si registra dopo."
+    )
+    assert rc == 0
+
+
+def test_block_checks_seen_e_top_level_nella_decisione_vera() -> None:
+    """La verifica chiesta da Claude Fable 5 sulla full-range di `1cca781`.
+
+    Fable lo poneva come domanda: *«il loop legge `decision.get("checks_seen")`
+    al top level, ma viene popolato in `_base_decision_checks` (sotto la chiave
+    `checks`?). Se la decisione lo annida, il default 0 mantiene
+    `checks_seen <= 0` vero per sempre: il gate consuma l'intero budget e
+    fallisce SEMPRE anche a suite verde.»*
+
+    Domanda legittima, e la risposta va inchiodata invece che spiegata: il test
+    che gia' esisteva confrontava i NOMI delle chiavi, non il LIVELLO a cui
+    stanno. Questo costruisce una decisione con il codice reale e guarda dove
+    finisce `checks_seen`.
+
+    (Controprova indipendente, dalla produzione: se fosse sempre 0 il gate
+    avrebbe consumato tutti i 900s e sarebbe fallito. Ha chiuso `success` in
+    314s.)
+    """
+    pr = _pr([
+        {"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+        {"name": "smoke", "status": "IN_PROGRESS", "conclusion": None},
+    ])
+    checks = flow.split_checks(pr)
+    stato = flow._merge_readiness_state(pr, checks, [])
+    decisione = flow._base_decision({"repo": "o/r", "pr_number": "1"}, pr, checks, stato)
+
+    assert "checks_seen" in decisione, (
+        f"`checks_seen` NON e' al livello che il loop legge. Chiavi presenti: "
+        f"{sorted(decisione)}. Con `decision.get(\"checks_seen\", 0)` il default "
+        f"varrebbe 0 per sempre, la condizione `<= 0` resterebbe vera, e il gate "
+        f"consumerebbe l'intero budget fallendo anche a suite verde."
+    )
+    assert decisione["checks_seen"] == 2, (
+        f"checks_seen = {decisione['checks_seen']!r} invece di 2: il conteggio "
+        f"dei check reali non rispecchia il rollup."
     )
