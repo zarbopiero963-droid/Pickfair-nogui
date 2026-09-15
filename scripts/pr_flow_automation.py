@@ -1639,6 +1639,29 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 
+    # I check dell'head non sono istantanei. La run `pull_request` parte ~20s
+    # dopo il push, quando decine di check sono ancora in volo: decidere li'
+    # significa dire "non pronta" SEMPRE, e quel rosso e' l'unico che si attacca
+    # all'head della PR. Si aspetta che i check siano settled, poi si giudica.
+    #
+    # Anti-stallo: il self-check del gate non compare mai tra i `pending`
+    # (`split_checks` lo esclude). Senza quella garanzia questa attesa sarebbe un
+    # deadlock — il gate aspetterebbe se stesso fino allo scadere del budget.
+    # C'e' un test che la inchioda, perche' se cambiasse si romperebbe qui.
+    #
+    # Fail-closed: scaduto il budget si giudica lo stato REALE. Se i check non
+    # sono finiti `can_merge` resta falso e il gate fallisce. L'attesa serve a
+    # dare un giudizio vero, non a fabbricare un verde.
+    deadline_pending = time.time() + args.wait_pending_seconds
+    while (
+        args.wait_pending_seconds > 0
+        and time.time() < deadline_pending
+        and not decision["already_merged"]
+        and decision.get("pending")
+    ):
+        time.sleep(args.poll_seconds)
+        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
         write_json(Path(args.output), decision)
@@ -2169,6 +2192,7 @@ def main() -> int:
     p.add_argument("--pr", required=True)
     p.add_argument("--ignore-safe-autofix", action="store_true")
     p.add_argument("--wait-unknown-seconds", type=int, default=0)
+    p.add_argument("--wait-pending-seconds", type=int, default=0)
     p.add_argument("--poll-seconds", type=int, default=10)
     p.add_argument("--output", default="")
     p.add_argument("--no-fail", action="store_true")

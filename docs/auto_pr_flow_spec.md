@@ -410,6 +410,35 @@ Il design vieta push, resolve, rerun e merge di default; ogni azione esterna ric
 
 ---
 
+## 9-bis. Quando il gate «Merge readiness» esprime il giudizio
+
+Il gate gira **solo** su `pull_request` (piu' `workflow_dispatch` per la
+rivalutazione manuale). E' l'unico evento il cui esito si attacca all'head della
+PR: `check_run` e `workflow_run` rivalutavano nel contesto del branch di
+default, quindi pubblicavano il verdetto su `main` — invisibile sulla PR, e con
+una scia di run rosse su `main` (24 su 27, misurato sulla #463). Sono stati
+rimossi: non si rimettono.
+
+Poiche' la run parte ~20s dopo il push, quando i check dell'head sono ancora in
+volo, il gate **aspetta** che siano settled prima di decidere:
+
+| chiave | valore | significato |
+|---|---|---|
+| `--wait-pending-seconds` | `900` | budget d'attesa; `0` = non aspetta (default dello script) |
+| `--poll-seconds` | `15` | intervallo fra due letture |
+| `timeout-minutes` (job) | `25` | rete di sicurezza se la suite si blocca |
+
+**Fail-closed.** Scaduto il budget si giudica lo stato REALE: se i check non
+sono finiti, `can_merge` resta falso e il gate FALLISCE. L'attesa serve a dare
+un giudizio vero, non a fabbricare un verde.
+
+**Anti-stallo.** Il self-check del gate non compare mai fra i `pending`
+(`split_checks(..., ignore_self=True)`): senza quella esclusione l'attesa
+sarebbe un deadlock — il gate aspetterebbe se stesso fino al timeout. E'
+inchiodata da `tests/guardrails/test_merge_readiness_verde.py`.
+
+---
+
 ## 10. CHECK_STATUS — legge PR dopo push
 
 Dopo push o dopo PR aperta aggiornata, legge:
