@@ -28,6 +28,13 @@ elencati qui sotto CON IL LORO NUMERO, non nascosti: e' debito visibile, non una
 deroga silenziosa — e un'assegnazione in piu' dentro un file derogato non passa
 per il fatto che quel file compare nell'elenco.
 
+FORME DI IMPORT: l'elenco e' ESAURITO. `import x`, `import x as y`, `import x.y`,
+`from x import y`, `from x import y as z`, `from . import y`, e `from x import *`
+— quest'ultimo fail-closed: con lo star import i nomi legati dipendono dal
+runtime, quindi il file viene SEGNALATO invece di passare in silenzio. Non
+esistono altre forme di import in Python: questa superficie e' chiusa, non
+"chiusa fino al prossimo rilievo".
+
 SOGGETTO DICHIARATO. Il guard parla di una cosa sola: un ATTRIBUTO di modulo
 riassegnato o rimosso da una rotta che NOMINA il modulo. Sono coperte tutte:
 
@@ -117,6 +124,26 @@ def _nomi_importati(albero: ast.Module) -> set[str]:
                 if alias.name != "*":
                     nomi.add(alias.asname or alias.name)
     return nomi
+
+
+def _star_import(albero: ast.Module) -> list[tuple[int, str]]:
+    """`from X import *`: il guard non puo' piu' sapere COSA e' stato legato.
+
+    Rilievo di GPT-5.6 Sol. Con lo star import i nomi disponibili dipendono dal
+    modulo importato a runtime, quindi `qualcosa.attr = ...` in quel file puo'
+    essere una mutazione di modulo senza che l'AST lo mostri. Non si puo'
+    verificare => non si dichiara verificato: il file viene segnalato, come la
+    collezione vuota nel guard delle chiavi jq.
+
+    Costo oggi: zero. Misurato — `tests/` non contiene nessuno star import (gli
+    unici del repo stanno in `.venv`, codice di terze parti che non scansioniamo).
+    """
+    return [
+        (nodo.lineno, "from ... import * (il guard non puo' verificare questo file)")
+        for nodo in ast.walk(albero)
+        if isinstance(nodo, ast.ImportFrom)
+        and any(alias.name == "*" for alias in nodo.names)
+    ]
 
 
 def _e_attributo_di_modulo(nodo: ast.expr, moduli: set[str]) -> bool:
@@ -248,7 +275,7 @@ def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
     except SyntaxError:  # pragma: no cover - un file rotto lo dice la raccolta
         return []
     moduli = _nomi_importati(albero)
-    trovate: list[tuple[int, str]] = []
+    trovate: list[tuple[int, str]] = _star_import(albero)
     for nodo in ast.walk(albero):
         chiamata = _chiamata_su_modulo(nodo, moduli)
         if chiamata is not None:
@@ -367,6 +394,7 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
         "from import":       "from scripts import flow\nflow.pr_view = lambda: 1\n",
         "from import as":    "from scripts import pr_flow as flow\nflow.pr_view = lambda: 1\n",
         "from relativo":     "from . import flow\ndel flow.pr_view\n",
+        "star import":       "from scripts import *\nflow.pr_view = lambda: 1\n",
     }
     for nome, sorgente in da_vedere.items():
         ASSERTIONS.assertTrue(
