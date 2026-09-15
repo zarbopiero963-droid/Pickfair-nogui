@@ -28,11 +28,28 @@ elencati qui sotto CON IL LORO NUMERO, non nascosti: e' debito visibile, non una
 deroga silenziosa — e un'assegnazione in piu' dentro un file derogato non passa
 per il fatto che quel file compare nell'elenco.
 
-Rilievo di GPT-5.6 Sol sulla prima versione, fondato: l'allow-list ragionava per
-(file, attributo) senza contare, quindi in un file derogato una seconda
-assegnazione allo stesso attributo passava indisturbata; e il guard guardava solo
-`ast.Assign`, quindi `x.y: T = ...`, `x.y += ...` e `setattr(x, "y", ...)` lo
-aggiravano del tutto. Ora sono coperte tutte e quattro le forme.
+CONFINE DICHIARATO. Il guard vede le mutazioni che nominano l'attributo
+direttamente — legarlo (assegnazione in ogni forma, `for`, `with as`,
+comprehension, `setattr`) o slegarlo (`del`, `delattr`). NON vede le vie
+riflessive: `mod.__dict__["a"] = v`, `vars(mod)["a"] = v`, `sys.modules[...]`,
+`importlib.reload(mod)`, `object.__setattr__(mod, ...)`.
+
+Non e' una svista, e' dove si ferma di proposito. Coprirle richiederebbe di
+trattare come sospetto ogni accesso a `__dict__` e ogni scrittura in un dict, e
+un guard che suona su tutto viene disattivato — cioe' protegge meno di uno che
+dichiara dove arriva. Le forme non coperte sono inchiodate da un test, cosi'
+restano una decisione leggibile invece di un buco silenzioso. `mock.patch.object`
+non e' nell'elenco perche' non e' il problema: ripristina da solo, come
+`monkeypatch`.
+
+I rilievi di GPT-5.6 Sol che hanno portato qui, tutti fondati: l'allow-list
+ragionava per (file, attributo) senza contare, quindi in un file derogato una
+seconda mutazione dello stesso attributo passava; il guard guardava solo
+`ast.Assign`, quindi `x.y: T = ...`, `x.y += ...` e `setattr` lo aggiravano; il
+controllo era sul primo livello dei bersagli, quindi `x.y, altro = ...` passava;
+e mancavano le forme di cancellazione. Inseguirle una per giro di review costa
+un push ciascuno e lascia sempre la successiva scoperta: da qui l'enumerazione
+esplicita, verificata con `ast.parse`, e il confine scritto sopra.
 """
 
 import ast
@@ -97,13 +114,15 @@ def _bersagli_di_binding(nodo: ast.expr | None) -> list[ast.Attribute]:
 
 
 def _bersagli_del_nodo(nodo: ast.AST) -> list[ast.expr]:
-    """Le espressioni-bersaglio di ogni costrutto che puo' LEGARE un attributo.
+    """I bersagli di ogni costrutto che puo' LEGARE o SLEGARE un attributo.
 
     Non solo l'assegnazione: `for mod.a in ...`, `with ... as mod.a` e il
-    bersaglio di una comprehension legano anche loro, e sono tutti sintassi
-    valida. Elencarli qui invece di inseguirli un rilievo alla volta.
+    bersaglio di una comprehension legano anche loro, e `del mod.a` slega —
+    lasciando il modulo senza l'attributo, che contamina i test successivi
+    quanto uno stub. Sono tutti sintassi valida. Elencarli qui invece di
+    inseguirli un rilievo alla volta.
     """
-    if isinstance(nodo, ast.Assign):
+    if isinstance(nodo, (ast.Assign, ast.Delete)):
         return list(nodo.targets)
     if isinstance(nodo, (ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor)):
         return [nodo.target]
@@ -114,12 +133,12 @@ def _bersagli_del_nodo(nodo: ast.AST) -> list[ast.expr]:
     return []
 
 
-def _setattr_su_modulo(nodo: ast.AST, moduli: set[str]) -> tuple[int, str] | None:
-    """`setattr(mod, "attr", ...)`: stessa mutazione, scritta come chiamata."""
+def _chiamata_su_modulo(nodo: ast.AST, moduli: set[str]) -> tuple[int, str] | None:
+    """`setattr(mod, "a", v)` / `delattr(mod, "a")`: la stessa cosa, come chiamata."""
     if not (
         isinstance(nodo, ast.Call)
         and isinstance(nodo.func, ast.Name)
-        and nodo.func.id == "setattr"
+        and nodo.func.id in ("setattr", "delattr")
         and nodo.args
         and isinstance(nodo.args[0], ast.Name)
         and nodo.args[0].id in moduli
@@ -150,7 +169,7 @@ def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
     moduli = _moduli_importati(albero)
     trovate: list[tuple[int, str]] = []
     for nodo in ast.walk(albero):
-        chiamata = _setattr_su_modulo(nodo, moduli)
+        chiamata = _chiamata_su_modulo(nodo, moduli)
         if chiamata is not None:
             trovate.append(chiamata)
             continue
@@ -253,6 +272,9 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
         "for destrutturato": "import flow\nfor flow.pr_view, x in stub:\n    pass\n",
         "with as":           "import flow\nwith aperto() as flow.pr_view:\n    pass\n",
         "comprehension":     "import flow\n[1 for flow.pr_view in stub]\n",
+        "del":               "import flow\ndel flow.pr_view\n",
+        "del multiplo":      "import flow\ndel flow.pr_view, flow.altro\n",
+        "delattr":           "import flow\ndelattr(flow, 'pr_view')\n",
     }
     for nome, sorgente in da_vedere.items():
         ASSERTIONS.assertTrue(
@@ -273,4 +295,28 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
             _mutazioni_di_modulo(sorgente), [],
             f"falso positivo su «{nome}»: non e' la riassegnazione di un "
             "attributo di modulo",
+        )
+
+
+def test_block_il_confine_del_guard_e_dichiarato_non_implicito() -> None:
+    """Le vie riflessive NON sono coperte, ed e' una decisione scritta.
+
+    Se un giorno si decide di coprirle, questo test dice che si sta cambiando
+    una scelta, non riparando una dimenticanza. E se qualcuno allargasse il
+    rilevatore fin qui, il verde di questo test diventerebbe rosso e lo
+    costringerebbe a misurare i falsi positivi che si porta dietro.
+    """
+    fuori_dal_confine = {
+        "__dict__":    "import flow\nflow.__dict__['pr_view'] = 1\n",
+        "vars()":      "import flow\nvars(flow)['pr_view'] = 1\n",
+        "sys.modules": "import sys\nsys.modules['flow'] = finto\n",
+        "reload":      "import importlib, flow\nimportlib.reload(flow)\n",
+        "__setattr__": "import flow\nobject.__setattr__(flow, 'pr_view', 1)\n",
+    }
+    for nome, sorgente in fuori_dal_confine.items():
+        ASSERTIONS.assertEqual(
+            _mutazioni_di_modulo(sorgente), [],
+            f"«{nome}» ora viene rilevata: il confine dichiarato nel docstring "
+            "del modulo non corrisponde piu' al codice — aggiorna l'uno o "
+            "l'altro, ma non lasciarli divergere",
         )
