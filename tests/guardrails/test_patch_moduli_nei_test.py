@@ -28,19 +28,33 @@ elencati qui sotto CON IL LORO NUMERO, non nascosti: e' debito visibile, non una
 deroga silenziosa — e un'assegnazione in piu' dentro un file derogato non passa
 per il fatto che quel file compare nell'elenco.
 
-CONFINE DICHIARATO. Il guard vede le mutazioni che nominano l'attributo
-direttamente — legarlo (assegnazione in ogni forma, `for`, `with as`,
-comprehension, `setattr`) o slegarlo (`del`, `delattr`). NON vede le vie
-riflessive: `mod.__dict__["a"] = v`, `vars(mod)["a"] = v`, `sys.modules[...]`,
-`importlib.reload(mod)`, `object.__setattr__(mod, ...)`.
+SOGGETTO DICHIARATO. Il guard parla di una cosa sola: un ATTRIBUTO di modulo
+riassegnato o rimosso da una rotta che NOMINA il modulo. Sono coperte tutte:
 
-Non e' una svista, e' dove si ferma di proposito. Coprirle richiederebbe di
-trattare come sospetto ogni accesso a `__dict__` e ogni scrittura in un dict, e
-un guard che suona su tutto viene disattivato — cioe' protegge meno di uno che
-dichiara dove arriva. Le forme non coperte sono inchiodate da un test, cosi'
-restano una decisione leggibile invece di un buco silenzioso. `mock.patch.object`
-non e' nell'elenco perche' non e' il problema: ripristina da solo, come
-`monkeypatch`.
+    legare    = / : = / += / tupla / lista / starred / annidata
+              for / async for / with as / comprehension / setattr
+    slegare   del / delattr
+    riflessive  mod.__dict__ (in qualunque uso) / vars(mod)
+                object.__setattr__ / object.__delattr__
+
+Sulle riflessive si segnala QUALUNQUE accesso, non solo la scrittura:
+distinguere lettura da scrittura costerebbe un'analisi di flusso, e le
+occorrenze legittime in questa suite sono ZERO — misurato, non supposto —
+quindi la regola larga non paga falsi positivi.
+
+Restano fuori `sys.modules[...] = ...` e `importlib.reload(mod)`. NON perche'
+siano tollerati: perche' non sono mutazioni di un attributo — sostituiscono o
+ricostruiscono il modulo intero, che e' un soggetto diverso e ha usi legittimi
+(la suite ne ha uno). Un test lo dice, ma dice quello: «questo guard non parla
+di loro», non «va bene farlo».
+
+La differenza conta, ed e' un rilievo accolto da GPT-5.6 Sol: una versione
+precedente asseriva che `mod.__dict__` NON dovesse essere segnalato, e cosi'
+faceva del bypass un comportamento atteso, protetto dalla CI. Nessun test di
+questo file dichiara lecita una mutazione reale.
+
+`mock.patch.object` non e' nell'elenco perche' non e' il problema: ripristina da
+solo, come `monkeypatch`.
 
 I rilievi di GPT-5.6 Sol che hanno portato qui, tutti fondati: l'allow-list
 ragionava per (file, attributo) senza contare, quindi in un file derogato una
@@ -153,6 +167,51 @@ def _chiamata_su_modulo(nodo: ast.AST, moduli: set[str]) -> tuple[int, str] | No
     return (nodo.lineno, f"{nodo.args[0].id}.{nome}")
 
 
+def _namespace_di_modulo(nodo: ast.AST, moduli: set[str]) -> tuple[int, str] | None:
+    """`mod.__dict__` o `vars(mod)`: la rotta riflessiva al namespace del modulo.
+
+    Si segnala QUALUNQUE accesso, non solo la scrittura. Distinguere lettura da
+    scrittura costerebbe un'analisi di flusso, e non serve: in questa suite le
+    occorrenze legittime sono ZERO (misurato), quindi la regola larga non ha
+    falsi positivi da pagare — e un `mod.__dict__` in un test e' comunque una
+    cosa da guardare in faccia.
+    """
+    if (
+        isinstance(nodo, ast.Attribute)
+        and nodo.attr == "__dict__"
+        and isinstance(nodo.value, ast.Name)
+        and nodo.value.id in moduli
+    ):
+        return (nodo.lineno, f"{nodo.value.id}.__dict__")
+    if (
+        isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Name)
+        and nodo.func.id == "vars"
+        and nodo.args
+        and isinstance(nodo.args[0], ast.Name)
+        and nodo.args[0].id in moduli
+    ):
+        return (nodo.lineno, f"vars({nodo.args[0].id})")
+    if (
+        isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Attribute)
+        and nodo.func.attr in ("__setattr__", "__delattr__")
+        and isinstance(nodo.func.value, ast.Name)
+        and nodo.func.value.id == "object"
+        and nodo.args
+        and isinstance(nodo.args[0], ast.Name)
+        and nodo.args[0].id in moduli
+    ):
+        attributo = nodo.args[1] if len(nodo.args) > 1 else None
+        nome = (
+            attributo.value
+            if isinstance(attributo, ast.Constant) and isinstance(attributo.value, str)
+            else "?"
+        )
+        return (nodo.lineno, f"{nodo.args[0].id}.{nome}")
+    return None
+
+
 def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
     """(riga, "modulo.attributo") per ogni mutazione a mano nel sorgente.
 
@@ -172,6 +231,10 @@ def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
         chiamata = _chiamata_su_modulo(nodo, moduli)
         if chiamata is not None:
             trovate.append(chiamata)
+            continue
+        riflessiva = _namespace_di_modulo(nodo, moduli)
+        if riflessiva is not None:
+            trovate.append(riflessiva)
             continue
         for bersaglio in _bersagli_del_nodo(nodo):
             for attributo in _bersagli_di_binding(bersaglio):
@@ -275,6 +338,10 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
         "del":               "import flow\ndel flow.pr_view\n",
         "del multiplo":      "import flow\ndel flow.pr_view, flow.altro\n",
         "delattr":           "import flow\ndelattr(flow, 'pr_view')\n",
+        "__dict__":          "import flow\nflow.__dict__['pr_view'] = 1\n",
+        "__dict__.update":   "import flow\nflow.__dict__.update({'a': 1})\n",
+        "vars()":            "import flow\nvars(flow)['pr_view'] = 1\n",
+        "object.__setattr__":"import flow\nobject.__setattr__(flow, 'pr_view', 1)\n",
     }
     for nome, sorgente in da_vedere.items():
         ASSERTIONS.assertTrue(
@@ -298,25 +365,28 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
         )
 
 
-def test_block_il_confine_del_guard_e_dichiarato_non_implicito() -> None:
-    """Le vie riflessive NON sono coperte, ed e' una decisione scritta.
+def test_block_la_sostituzione_del_MODULO_resta_fuori_soggetto() -> None:
+    """`sys.modules[...]` e `reload` non sono coperti — e non sono un bypass.
 
-    Se un giorno si decide di coprirle, questo test dice che si sta cambiando
-    una scelta, non riparando una dimenticanza. E se qualcuno allargasse il
-    rilevatore fin qui, il verde di questo test diventerebbe rosso e lo
-    costringerebbe a misurare i falsi positivi che si porta dietro.
+    Rilievo di GPT-5.6 Sol sulla versione precedente, ACCOLTO: un test che
+    asserisse «`mod.__dict__` non deve essere segnalato» avrebbe reso il bypass
+    un comportamento ATTESO, protetto dalla CI. Quelle rotte ora sono coperte, e
+    quell'assertion e' sparita: nessun test di questo file dichiara lecita una
+    mutazione reale.
+
+    Restano fuori `sys.modules[...] = ...` e `importlib.reload(mod)`, che non
+    sono mutazioni di un ATTRIBUTO: sostituiscono o ricostruiscono il modulo
+    intero, che e' un soggetto diverso (e ha usi legittimi — la suite ne ha uno).
+    Questo test non dice che vanno bene: dice che questo guard non parla di loro.
     """
-    fuori_dal_confine = {
-        "__dict__":    "import flow\nflow.__dict__['pr_view'] = 1\n",
-        "vars()":      "import flow\nvars(flow)['pr_view'] = 1\n",
+    fuori_soggetto = {
         "sys.modules": "import sys\nsys.modules['flow'] = finto\n",
         "reload":      "import importlib, flow\nimportlib.reload(flow)\n",
-        "__setattr__": "import flow\nobject.__setattr__(flow, 'pr_view', 1)\n",
     }
-    for nome, sorgente in fuori_dal_confine.items():
+    for nome, sorgente in fuori_soggetto.items():
         ASSERTIONS.assertEqual(
             _mutazioni_di_modulo(sorgente), [],
-            f"«{nome}» ora viene rilevata: il confine dichiarato nel docstring "
-            "del modulo non corrisponde piu' al codice — aggiorna l'uno o "
-            "l'altro, ma non lasciarli divergere",
+            f"«{nome}» ora viene segnalata da un guard che parla di ATTRIBUTI: "
+            "o e' un falso positivo, o il soggetto del guard e' cambiato e va "
+            "riscritto il docstring del modulo",
         )
