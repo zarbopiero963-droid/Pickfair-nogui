@@ -17,7 +17,21 @@ on:
         required: true
 
 concurrency:
-  group: pr-merge-readiness-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
+  # Corsia PROPRIA per il verdetto attaccato all'head (`-head-`).
+  #
+  # Finche' `main` porta la vecchia versione di questo workflow, i suoi trigger
+  # `check_run`/`workflow_run` continuano a partire e calcolano il gruppo con
+  # la vecchia espressione, che per la stessa PR vale `pr-merge-readiness-<n>`.
+  # Con `cancel-in-progress: true` quel gruppo cancellava la run che sta
+  # aspettando i check: misurato su dae8a26, la run e' durata 243s (l'attesa
+  # funziona) ed e' finita `cancelled` 14s dopo l'avvio di una run
+  # `workflow_run`.
+  #
+  # Il prefisso distinto isola le due cose senza indebolire la supersession: un
+  # nuovo push sulla STESSA PR ricade nello stesso gruppo e cancella la run
+  # precedente, che e' il comportamento voluto (il verdetto vecchio non serve
+  # piu').
+  group: pr-merge-readiness-head-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:

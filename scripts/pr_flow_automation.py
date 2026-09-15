@@ -157,6 +157,9 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
     pending: list[dict[str, Any]] = []
     ignored: list[dict[str, Any]] = []
     self_stale: list[dict[str, Any]] = []
+    # Quanti check REALI sono stati osservati: esclusi il self-check del gate e
+    # i servizi dismessi, inclusi quelli gia' passati.
+    visti = 0
 
     for payload in pr.get("statusCheckRollup") or []:
         raw = payload if isinstance(payload, dict) else {}
@@ -193,6 +196,10 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             continue
 
         item["ignored"] = False
+        # I check gia' VERDI non finiscono in nessuna lista: vanno contati qui,
+        # o "tutto verde" e "nessun check ancora registrato" diventano
+        # indistinguibili — ed e' la differenza fra "pronta" e "non lo so".
+        visti += 1
         if item["state"] in PENDING_STATES:
             pending.append(item)
         elif item["state"] not in OK_STATES:
@@ -203,6 +210,7 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         "pending": pending,
         "ignored": ignored,
         "self_stale": self_stale,
+        "checks_seen": visti,
     }
 
 
@@ -462,6 +470,22 @@ def _can_merge_from_reasons(
     return already_merged or (not reasons and not active_review_threads)
 
 
+def _reason_no_checks_seen(checks: dict[str, Any]) -> str:
+    """Zero check reali osservati non vuol dire "tutto a posto": vuol dire
+    "non lo so ancora".
+
+    Rilievo di Claude Fable 5 sulla #463. Nella finestra iniziale dopo il push
+    GitHub puo' non aver ancora registrato NESSUN check: `pending` e' vuoto,
+    `blockers` e' vuoto, e con `mergeStateStatus` CLEAN la readiness concludeva
+    `can_merge=True` — un verde con zero check eseguiti. E' il falso verde
+    simmetrico a quello che questa PR toglie, e ora che il gate torna
+    affidabile sarebbe quello a cui si crede.
+    """
+    if checks.get("checks_seen", 0) <= 0:
+        return "no real checks observed yet (only self-checks or empty rollup)"
+    return ""
+
+
 def _merge_readiness_reasons(
     pr_data: dict[str, Any],
     checks: dict[str, Any],
@@ -476,6 +500,7 @@ def _merge_readiness_reasons(
             _reason_pr_merge_state_status(pr_data, checks),
             _reason_blocking_checks(checks),
             _reason_pending_checks(checks),
+            _reason_no_checks_seen(checks),
             _reason_review_threads(active_review_threads),
         )
         if reason
@@ -554,6 +579,7 @@ def _base_decision_checks(checks: dict[str, Any]) -> dict[str, Any]:
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
+        "checks_seen": checks.get("checks_seen", 0),
     }
 
 
@@ -1657,7 +1683,7 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         args.wait_pending_seconds > 0
         and time.time() < deadline_pending
         and not decision["already_merged"]
-        and decision.get("pending")
+        and (decision.get("pending") or decision.get("checks_seen", 0) <= 0)
     ):
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)

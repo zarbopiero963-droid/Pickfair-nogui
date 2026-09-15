@@ -136,11 +136,15 @@ def _args(**kw: Any) -> Any:
     return argparse.Namespace(**base)
 
 
-def _decisione(pending: list[str], can_merge: bool = False) -> dict[str, Any]:
+def _decisione(pending: list[str], can_merge: bool = False,
+               checks_seen: int = 40) -> dict[str, Any]:
+    # `checks_seen` va messo apposta: una decisione che non lo porta viene
+    # trattata come "non lo so ancora" e il gate aspetta il budget intero —
+    # che e' il comportamento voluto, ma qui simuliamo check gia' registrati.
     return {
         "already_merged": False, "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
         "reasons": [], "blockers": [], "can_merge": can_merge,
-        "pending": [{"name": n} for n in pending],
+        "pending": [{"name": n} for n in pending], "checks_seen": checks_seen,
     }
 
 
@@ -239,4 +243,170 @@ def test_block_lattesa_legge_una_chiave_che_la_decisione_produce() -> None:
         f"un no-op silenzioso — il gate torna a decidere a 20s dal push, verde "
         f"in apparenza e inutile di fatto. E' lo stesso difetto del `.ignored` "
         f"letto con jq sulla #462."
+    )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — rilievi di Claude Fable 5 sulla #463, giro 4. Tutti e tre fondati.
+# ---------------------------------------------------------------------------
+def _pr(rollup: list[dict[str, Any]], stato: str = "CLEAN") -> dict[str, Any]:
+    return {"statusCheckRollup": rollup, "mergeStateStatus": stato,
+            "mergeable": "MERGEABLE", "mergedAt": None, "isDraft": False,
+            "labels": [], "reviewDecision": "", "state": "OPEN"}
+
+
+def _can_merge(rollup: list[dict[str, Any]]) -> bool:
+    pr = _pr(rollup)
+    checks = flow.split_checks(pr)
+    return bool(flow._merge_readiness_state(pr, checks, [])["can_merge"])
+
+
+def test_block_rollup_vuoto_non_e_un_verde() -> None:
+    """Il falso verde simmetrico: decidere presto e dire PRONTA.
+
+    Rilievo di Fable 5. L'attesa introdotta in questa PR scatta solo se
+    `pending` e' non vuoto. Ma nella finestra iniziale dopo il push GitHub puo'
+    non aver ancora registrato NESSUN check: `pending` e' vuoto, non si aspetta,
+    e con `mergeStateStatus` CLEAN il gate concludeva `can_merge=True` — verde
+    con zero check eseguiti.
+
+    Misurato prima del fix:
+
+        rollup VUOTO (finestra iniziale dopo push)   pending=0  🟢 VERDE
+
+    Zero check visti non vuol dire "tutto a posto": vuol dire "non lo so
+    ancora". Un gate che confonde le due cose e' peggio di un gate assente,
+    perche' quel verde lo si crede.
+    """
+    assert not _can_merge([]), (
+        "rollup VUOTO e il gate dice PRONTA: e' un verde con zero check "
+        "eseguiti. Zero check visti significa 'non lo so ancora', mai 'tutto "
+        "a posto'."
+    )
+
+
+def test_block_solo_il_self_check_non_e_un_verde() -> None:
+    """Variante piu' insidiosa: l'unico check registrato e' il gate stesso.
+
+    Viene escluso (giustamente, o sarebbe stallo), quindi i check REALI visti
+    restano zero — ma il rollup non e' vuoto, e un controllo scritto sulla
+    lunghezza grezza del rollup ci cascherebbe.
+    """
+    assert not _can_merge([
+        {"name": "Merge readiness", "status": "IN_PROGRESS", "conclusion": None},
+    ]), (
+        "l'unico check e' il gate stesso, escluso dal conteggio: i check reali "
+        "visti sono zero, quindi non si puo' dichiarare PRONTA."
+    )
+
+
+def test_block_un_check_verde_vero_resta_un_verde() -> None:
+    """Contro-prova: il fail-closed non deve diventare 'mai verde'.
+
+    Senza questo, la patch che chiude il falso verde passerebbe anche
+    bloccando tutto per sempre — che e' l'altro modo di rompere un gate.
+    """
+    assert _can_merge([
+        {"name": "tests", "status": "COMPLETED", "conclusion": "SUCCESS"},
+    ]), "un check reale verde e nessun blocker: il gate DEVE poter dire PRONTA"
+
+
+def test_block_lattesa_copre_anche_il_rollup_ancora_vuoto() -> None:
+    """Non basta fallire: bisogna ASPETTARE che i check compaiano.
+
+    Altrimenti il fix del falso verde diventa un rosso garantito nei primi
+    secondi — di nuovo il difetto di partenza, solo col segno invertito.
+    """
+    import inspect
+
+    sorgente = inspect.getsource(flow.cmd_readiness)
+    assert "checks_seen" in sorgente, (
+        "l'attesa guarda solo `pending`: nella finestra iniziale `pending` e' "
+        "vuoto perche' i check non esistono ancora, quindi non si aspetta e si "
+        "decide sul vuoto. Serve attendere anche mentre i check reali visti "
+        "sono zero."
+    )
+
+
+def test_block_il_nome_del_job_e_quello_che_il_gate_riconosce() -> None:
+    """Anti-stallo, seconda meta' (rilievo 3 di Fable 5).
+
+    L'esclusione del self-check passa per il NOME: `SELF_CHECK_NAMES`. La
+    `detailsUrl` del rollup e' l'URL del job (`/actions/runs/<id>/job/<id>`) e
+    NON contiene il nome del workflow, quindi il ramo URL di `is_self_check`
+    non aiuta qui. Se il job venisse rinominato senza aggiornare
+    `SELF_CHECK_NAMES`, il gate finirebbe tra i propri `pending` e aspetterebbe
+    se stesso per 15 minuti prima di fallire: uno stallo travestito da timeout,
+    su OGNI PR.
+    """
+    m = re.search(r"^    name: (.+)$", _senza_commenti(_testo()), re.MULTILINE)
+    assert m, f"{WORKFLOW}: non trovo il `name:` del job; il workflow ha cambiato forma"
+    nome = m.group(1).strip().strip('"').strip("'")
+
+    assert nome.lower() in flow.SELF_CHECK_NAMES, (
+        f"il job si chiama {nome!r}, che NON e' in SELF_CHECK_NAMES "
+        f"({sorted(flow.SELF_CHECK_NAMES)}). Il gate non si riconoscerebbe piu': "
+        f"finirebbe tra i propri `pending` e aspetterebbe se stesso fino al "
+        f"timeout, su ogni PR. Se rinomini il job, aggiorna SELF_CHECK_NAMES "
+        f"nello stesso commit."
+    )
+
+
+def test_block_aspetta_anche_col_rollup_ancora_vuoto(monkeypatch: Any) -> None:
+    """La finestra iniziale: nessun check registrato, `pending` vuoto.
+
+    Senza questo ramo il gate deciderebbe sul vuoto. Con il ramo, aspetta che i
+    check compaiano e poi giudica.
+    """
+    sequenza = [
+        _decisione([], checks_seen=0),          # GitHub non ha registrato nulla
+        _decisione(["tests"], checks_seen=40),  # i check compaiono
+        _decisione([], can_merge=True, checks_seen=40),
+    ]
+    viste: list[int] = []
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        viste.append(1)
+        return sequenza[min(len(viste) - 1, len(sequenza) - 1)]
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    rc = flow.cmd_readiness(_args())
+    assert len(viste) == 3, (
+        f"interrogata l'API {len(viste)} volta/e invece di 3: col rollup vuoto "
+        f"il gate ha deciso subito, invece di aspettare che i check comparissero."
+    )
+    assert rc == 0
+
+
+def test_block_il_verdetto_sullhead_ha_una_corsia_di_concorrenza_propria() -> None:
+    """Il gruppo di concorrenza deve distinguersi da quello della versione
+    vecchia del workflow, che resta viva su `main` finche' questa PR non e'
+    mergiata.
+
+    Su `dae8a26` la run attaccata all'head e' durata 243s — l'attesa funziona —
+    ma e' finita `cancelled` 14s dopo l'avvio di una run `workflow_run` nata
+    dalla definizione vecchia. Quelle run calcolano il gruppo con l'espressione
+    vecchia, che per la stessa PR coincideva col nostro: con
+    `cancel-in-progress: true`, cancellavano il verdetto mentre aspettava.
+
+    La supersession NON va indebolita: un nuovo push sulla stessa PR deve
+    ancora cancellare la run precedente, quindi il gruppo resta indicizzato
+    sulla PR, non sullo SHA.
+    """
+    testo = _senza_commenti(_testo())
+    m = re.search(r"^  group: (.+)$", testo, re.MULTILINE)
+    assert m, f"{WORKFLOW}: non trovo il `group:` di concurrency"
+    gruppo = m.group(1)
+
+    assert "pr-merge-readiness-head-" in gruppo, (
+        f"gruppo di concorrenza {gruppo!r}: coincide con quello della versione "
+        f"vecchia del workflow ancora viva su `main`, che cancella questa run "
+        f"mentre aspetta i check."
+    )
+    assert "pull_request.number" in gruppo, (
+        f"gruppo {gruppo!r}: non e' piu' indicizzato sulla PR. Se passasse allo "
+        f"SHA, un nuovo push non cancellerebbe piu' la run precedente e ogni "
+        f"push lascerebbe una run zombie ad aspettare fino al timeout."
     )
