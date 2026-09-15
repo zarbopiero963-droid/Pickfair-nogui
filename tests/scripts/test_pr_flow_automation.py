@@ -2428,6 +2428,14 @@ def _chiavi_del_programma(filtro: str) -> tuple[set[str], str | None, set[str]]:
     e' di primo livello, `state` appartiene all'ELEMENTO. Confonderle
     produrrebbe falsi rossi (`.name`, `.decommissioned` non sono chiavi della
     decisione) — il motivo per cui non basta allargare la regex.
+
+    LIMITE DICHIARATO (rilievo non bloccante di Claude Fable 5): si riconosce UNA
+    iterazione per programma. Con due livelli (`.a[] | ... | .b[] | ...`) tutto
+    cio' che segue la prima viene attribuito agli elementi di `a`. Nessun
+    programma del workflow ha oggi due iterazioni; se ne comparisse una, questa
+    funzione va estesa prima, non dopo. Stesso spirito per lo stripping dei
+    commenti, che toglie le righe che INIZIANO con `#` e non i commenti YAML a
+    fine riga: oggi nel workflow non ce ne sono dentro un programma jq.
     """
     iterazione = re.search(r"\.([A-Za-z_][A-Za-z0-9_]*)\[\]", filtro)
     if iterazione is None:

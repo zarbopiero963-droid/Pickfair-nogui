@@ -87,13 +87,35 @@ PREESISTENTI: dict[tuple[str, str], int] = {
 }
 
 
-def _moduli_importati(albero: ast.Module) -> set[str]:
-    """I nomi legati da un `import x` / `import x as y` / `import x.y`."""
+def _nomi_importati(albero: ast.Module) -> set[str]:
+    """Ogni nome legato da un import, `from` COMPRESO.
+
+    Rilievo di Fugu Ultra: si guardava solo `ast.Import`, quindi
+    `from scripts import pr_flow_automation as flow` non entrava nell'insieme e
+    `flow.pr_view = ...` sfuggiva. L'istanza che portava era sbagliata — il file
+    in questione usa `import scripts.pr_flow_automation as flow`, che era gia'
+    coperto, e il guard lo prende (verificato sabotandolo) — ma il buco e' reale:
+    `from X import Y` e' un import, e il contratto qui sopra diceva «ogni nome
+    legato da un import».
+
+    Coprirlo non costa nulla: misurato sulla suite, 10 mutazioni prima e 10
+    dopo. Oggi non c'e' un bypass vivo, ma il contratto smette di essere piu'
+    largo del codice — che era esattamente il difetto di partenza di questa PR.
+
+    Un nome legato da `from` puo' non essere un modulo (`from x import funzione`).
+    Non si distingue staticamente, e non serve: riassegnare un attributo di un
+    oggetto importato a livello di modulo e' la stessa mutazione globale senza
+    ripristino, quindi merita lo stesso trattamento.
+    """
     nomi: set[str] = set()
     for nodo in ast.walk(albero):
         if isinstance(nodo, ast.Import):
             for alias in nodo.names:
                 nomi.add(alias.asname or alias.name.split(".")[0])
+        elif isinstance(nodo, ast.ImportFrom):
+            for alias in nodo.names:
+                if alias.name != "*":
+                    nomi.add(alias.asname or alias.name)
     return nomi
 
 
@@ -225,7 +247,7 @@ def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
         albero = ast.parse(sorgente)
     except SyntaxError:  # pragma: no cover - un file rotto lo dice la raccolta
         return []
-    moduli = _moduli_importati(albero)
+    moduli = _nomi_importati(albero)
     trovate: list[tuple[int, str]] = []
     for nodo in ast.walk(albero):
         chiamata = _chiamata_su_modulo(nodo, moduli)
@@ -342,6 +364,9 @@ def test_block_ogni_forma_di_mutazione_e_vista() -> None:
         "__dict__.update":   "import flow\nflow.__dict__.update({'a': 1})\n",
         "vars()":            "import flow\nvars(flow)['pr_view'] = 1\n",
         "object.__setattr__":"import flow\nobject.__setattr__(flow, 'pr_view', 1)\n",
+        "from import":       "from scripts import flow\nflow.pr_view = lambda: 1\n",
+        "from import as":    "from scripts import pr_flow as flow\nflow.pr_view = lambda: 1\n",
+        "from relativo":     "from . import flow\ndel flow.pr_view\n",
     }
     for nome, sorgente in da_vedere.items():
         ASSERTIONS.assertTrue(
