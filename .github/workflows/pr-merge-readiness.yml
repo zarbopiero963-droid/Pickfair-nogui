@@ -3,18 +3,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
+  # Solo `pull_request`: e' l'UNICO evento il cui esito si attacca all'head
+  # della PR. I trigger `check_run`/`workflow_run` che stavano qui rivalutavano
+  # nel contesto del branch di DEFAULT, quindi pubblicavano il verdetto su
+  # `main` — invisibile sulla PR, e 24 run rosse su 27 lasciate su `main`
+  # (misurato sulla #463). Per rivalutare a mano c'e' `workflow_dispatch`.
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-  check_run:
-    types: [completed, rerequested]
-  workflow_run:
-    workflows:
-      - pr-check
-      - dutching
-      - pnl-engine
-      - stateful-integrity
-      - merge-simulation-hard
-    types: [completed]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -22,7 +17,21 @@ on:
         required: true
 
 concurrency:
-  group: pr-merge-readiness-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number || github.run_id }}
+  # Corsia PROPRIA per il verdetto attaccato all'head (`-head-`).
+  #
+  # Finche' `main` porta la vecchia versione di questo workflow, i suoi trigger
+  # `check_run`/`workflow_run` continuano a partire e calcolano il gruppo con
+  # la vecchia espressione, che per la stessa PR vale `pr-merge-readiness-<n>`.
+  # Con `cancel-in-progress: true` quel gruppo cancellava la run che sta
+  # aspettando i check: misurato su dae8a26, la run e' durata 243s (l'attesa
+  # funziona) ed e' finita `cancelled` 14s dopo l'avvio di una run
+  # `workflow_run`.
+  #
+  # Il prefisso distinto isola le due cose senza indebolire la supersession: un
+  # nuovo push sulla STESSA PR ricade nello stesso gruppo e cancella la run
+  # precedente, che e' il comportamento voluto (il verdetto vecchio non serve
+  # piu').
+  group: pr-merge-readiness-head-${{ github.event.inputs.pr_number || github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -35,16 +44,14 @@ permissions:
 jobs:
   readiness:
     name: Merge readiness
-    if: >-
-      ${{
-        github.event_name != 'check_run' ||
-        github.event.check_run.pull_requests[0].number
-      }}
     runs-on: ubuntu-latest
+    # Il gate ora ASPETTA che i check dell'head finiscano: serve un tetto, o una
+    # suite bloccata terrebbe occupato un runner per il default di 6 ore.
+    timeout-minutes: 25
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      PR: ${{ github.event.inputs.pr_number || github.event.pull_request.number || github.event.workflow_run.pull_requests[0].number || github.event.check_run.pull_requests[0].number }}
+      PR: ${{ github.event.inputs.pr_number || github.event.pull_request.number }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -65,10 +72,17 @@ jobs:
           fi
 
           mkdir -p .merge-readiness
+          # Senza budget il gate decide ~20s dopo il push, con i check ancora in
+          # volo: "non pronta" garantito. 900s coprono la suite completa (~5
+          # min) con margine; il tetto del job (25 min) resta la rete di
+          # sicurezza. Scaduto il budget si giudica lo stato reale: se i check
+          # non sono finiti il gate FALLISCE (fail-closed).
           python3 scripts/pr_merge_readiness.py \
             --repo "$REPO" \
             --pr "$PR" \
             --ignore-safe-autofix \
+            --wait-pending-seconds 900 \
+            --poll-seconds 15 \
             --output .merge-readiness/decision.json
 
           CAN_MERGE="$(jq -r '.can_merge' .merge-readiness/decision.json)"

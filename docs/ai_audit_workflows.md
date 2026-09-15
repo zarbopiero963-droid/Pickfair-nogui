@@ -9,7 +9,7 @@ controllo umano** e **non approvano né mergiano** nulla.
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
 |---|---|---|---|
-| `pr-review-openai-gpt56-sol.yml` | GPT-5.6 Sol | OpenAI Responses API | ogni push della PR |
+| `pr-review-openrouter-gpt56-sol.yml` | GPT-5.6 Sol | OpenRouter `chat/completions` | ogni push della PR |
 | `pr-review-xai-grok46.yml` | Grok 4.6 | xAI API | ogni push della PR |
 | `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-fugu-review` |
 | `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
@@ -73,16 +73,21 @@ Configurare in *Settings → Secrets and variables → Actions*:
 
 | Secret (nome nel repo) | Provider | Usato da |
 |---|---|---|
-| `PICKFAIR_OPENAI` | OpenAI API | GPT-5.6 Sol |
+| `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra **e** GPT-5.6 Sol |
 | `GROK_PICKFAIR` | xAI API | Grok 4.6 |
-| `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra |
 | `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5 |
 
-> I workflow leggono il segreto tramite questi nomi (`secrets.PICKFAIR_OPENAI`,
-> `secrets.GROK_PICKFAIR`, `secrets.OPENROUTER_PICKFAIR`, `secrets.CLAUDE_PICKFAIR`)
-> e lo espongono allo script con una env var interna (`OPENAI_API_KEY` /
-> `XAI_API_KEY` / `OPENROUTER_API_KEY` / `ANTHROPIC_API_KEY`): il nome del segreto
-> e quello della env interna sono volutamente distinti.
+> `PICKFAIR_OPENAI` **non serve più**: dal 2026-09-14 GPT-5.6 Sol gira su
+> OpenRouter con la chiave che già esisteva per Fugu Ultra. La chiave OpenAI
+> diretta era esaurita (`credit_balance_exhausted`, HTTP 429 su ogni push) e il
+> suo rosso non era un difetto del codice — era rumore sul gate. Il segreto può
+> essere rimosso dal repo.
+
+> I workflow leggono il segreto tramite questi nomi (`secrets.OPENROUTER_PICKFAIR`,
+> `secrets.GROK_PICKFAIR`, `secrets.CLAUDE_PICKFAIR`) e lo espongono allo script
+> con una env var interna (`OPENROUTER_API_KEY` / `XAI_API_KEY` /
+> `ANTHROPIC_API_KEY`): il nome del segreto e quello della env interna sono
+> volutamente distinti.
 
 `GITHUB_TOKEN` è fornito automaticamente da Actions. Per far pubblicare i
 commenti al bot serve *Settings → Actions → General → Workflow permissions →

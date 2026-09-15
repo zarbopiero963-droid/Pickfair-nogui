@@ -30,7 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # I tre che l'esperimento tocca. Fable e' escluso di proposito: vedi in fondo.
 WORKFLOWS_ESPERIMENTO = [
-    ".github/workflows/pr-review-openai-gpt56-sol.yml",
+    ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
     ".github/workflows/pr-review-xai-grok46.yml",
     ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
 ]

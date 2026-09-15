@@ -157,6 +157,9 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
     pending: list[dict[str, Any]] = []
     ignored: list[dict[str, Any]] = []
     self_stale: list[dict[str, Any]] = []
+    # Quanti check REALI sono stati osservati: esclusi il self-check del gate e
+    # i servizi dismessi, inclusi quelli gia' passati.
+    visti = 0
 
     for payload in pr.get("statusCheckRollup") or []:
         raw = payload if isinstance(payload, dict) else {}
@@ -193,6 +196,10 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
             continue
 
         item["ignored"] = False
+        # I check gia' VERDI non finiscono in nessuna lista: vanno contati qui,
+        # o "tutto verde" e "nessun check ancora registrato" diventano
+        # indistinguibili — ed e' la differenza fra "pronta" e "non lo so".
+        visti += 1
         if item["state"] in PENDING_STATES:
             pending.append(item)
         elif item["state"] not in OK_STATES:
@@ -203,6 +210,7 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         "pending": pending,
         "ignored": ignored,
         "self_stale": self_stale,
+        "checks_seen": visti,
     }
 
 
@@ -462,6 +470,22 @@ def _can_merge_from_reasons(
     return already_merged or (not reasons and not active_review_threads)
 
 
+def _reason_no_checks_seen(checks: dict[str, Any]) -> str:
+    """Zero check reali osservati non vuol dire "tutto a posto": vuol dire
+    "non lo so ancora".
+
+    Rilievo di Claude Fable 5 sulla #463. Nella finestra iniziale dopo il push
+    GitHub puo' non aver ancora registrato NESSUN check: `pending` e' vuoto,
+    `blockers` e' vuoto, e con `mergeStateStatus` CLEAN la readiness concludeva
+    `can_merge=True` — un verde con zero check eseguiti. E' il falso verde
+    simmetrico a quello che questa PR toglie, e ora che il gate torna
+    affidabile sarebbe quello a cui si crede.
+    """
+    if checks.get("checks_seen", 0) <= 0:
+        return "no real checks observed yet (only self-checks or empty rollup)"
+    return ""
+
+
 def _merge_readiness_reasons(
     pr_data: dict[str, Any],
     checks: dict[str, Any],
@@ -476,6 +500,7 @@ def _merge_readiness_reasons(
             _reason_pr_merge_state_status(pr_data, checks),
             _reason_blocking_checks(checks),
             _reason_pending_checks(checks),
+            _reason_no_checks_seen(checks),
             _reason_review_threads(active_review_threads),
         )
         if reason
@@ -554,6 +579,7 @@ def _base_decision_checks(checks: dict[str, Any]) -> dict[str, Any]:
         "pending": checks["pending"],
         "ignored_self_checks": checks["ignored"],
         "self_stale": checks["self_stale"],
+        "checks_seen": checks.get("checks_seen", 0),
     }
 
 
@@ -1625,6 +1651,24 @@ def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
 
 
 
+# Per quanti intervalli di poll consecutivi il numero di check osservati deve
+# restare INVARIATO prima di considerare il rollup fermo.
+#
+# Un solo intervallo non basta: rilievo convergente di Claude Fable 5 e Fugu
+# Ultra sulla review full-range della #463. Se GitHub ritarda la registrazione
+# oltre un singolo intervallo con pochi check gia' verdi, il gate uscirebbe e
+# direbbe "pronta" con la suite non ancora comparsa.
+#
+# Limite DICHIARATO: nessun valore di N elimina la finestra, la stringe
+# soltanto. Eliminarla davvero richiederebbe l'elenco dei check ATTESI, che
+# invecchierebbe a ogni workflow aggiunto o tolto — e un manifest stantio
+# produce falsi ROSSI sistematici, cioe' un danno peggiore del rischio che
+# chiude. Misurato sulla #463: 28 check registrati entro 20s dal push; con
+# poll=15s, due intervalli coprono 30s di stabilita' oltre ai ~20s che il gate
+# impiega ad avviarsi.
+INTERVALLI_STABILI_RICHIESTI = 2
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
@@ -1638,6 +1682,89 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     ):
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+
+    # I check dell'head non sono istantanei. La run `pull_request` parte ~20s
+    # dopo il push, quando decine di check sono ancora in volo: decidere li'
+    # significa dire "non pronta" SEMPRE, e quel rosso e' l'unico che si attacca
+    # all'head della PR. Si aspetta che i check siano settled, poi si giudica.
+    #
+    # Anti-stallo: il self-check del gate non compare mai tra i `pending`
+    # (`split_checks` lo esclude). Senza quella garanzia questa attesa sarebbe un
+    # deadlock — il gate aspetterebbe se stesso fino allo scadere del budget.
+    # C'e' un test che la inchioda, perche' se cambiasse si romperebbe qui.
+    #
+    # Fail-closed: scaduto il budget si giudica lo stato REALE. Se i check non
+    # sono finiti `can_merge` resta falso e il gate fallisce. L'attesa serve a
+    # dare un giudizio vero, non a fabbricare un verde.
+    deadline_pending = time.time() + args.wait_pending_seconds
+    # Terza condizione: il rollup non deve piu' CRESCERE.
+    #
+    # "Ho visto almeno un check" non basta (rilievo di Claude Fable 5 sulla
+    # full-range della #463): se un check veloce e' gia' verde mentre gli altri
+    # non sono ancora registrati, `pending` e' vuoto e `checks_seen` vale 1 —
+    # il gate uscirebbe dall'attesa dichiarando PRONTA con la suite ancora da
+    # partire. Riprodotto: 1 check verde, 38 non registrati => can_merge=True.
+    #
+    # Il criterio giusto e' "il rollup ha smesso di crescere": si aspetta
+    # finche' il numero di check osservati cambia fra due letture. Si
+    # auto-calibra (niente soglia inventata, che invecchierebbe a ogni
+    # workflow aggiunto o tolto) e impone almeno un giro di grazia.
+    visti_prima = -1
+    intervalli_stabili = 0
+    while (
+        args.wait_pending_seconds > 0
+        and time.time() < deadline_pending
+        and not decision["already_merged"]
+        and (
+            decision.get("pending")
+            or decision.get("checks_seen", 0) <= 0
+            or intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
+        )
+    ):
+        visti_prima = decision.get("checks_seen", 0)
+        time.sleep(args.poll_seconds)
+        decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
+        # Il contatore si aggiorna sulla lettura APPENA FATTA, non su quella
+        # precedente. Calcolarlo prima del fetch (come faceva la prima stesura,
+        # rilievo di Grok 4.6) significa che la condizione d'uscita consulta un
+        # valore che non sa nulla dell'ultimo fetch: se il conteggio cresce
+        # proprio all'ultima lettura, il gate esce lo stesso — su un rollup che
+        # sta ancora crescendo.
+        # La stabilita' si conta SOLO a pending vuoto (rilievo di Fugu Ultra).
+        # Un conteggio fermo mentre la suite gira dice che i check ci sono gia'
+        # tutti, non che il rollup sia completo: senza questo vincolo il
+        # contatore arrivava a N durante l'attesa e il gate usciva nell'istante
+        # in cui l'ultimo pending diventava verde, senza mai osservare la
+        # finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
+        intervalli_stabili = (
+            intervalli_stabili + 1
+            if decision.get("checks_seen", 0) == visti_prima
+            and not decision.get("pending")
+            else 0
+        )
+
+    # FAIL-CLOSED sul ramo timeout (rilievo di Claude Fable 5, e contraddiceva
+    # quanto avevo dichiarato io nella spec).
+    #
+    # Uscire dal ciclo per budget scaduto NON e' come uscirne perche' il rollup
+    # si e' stabilizzato. Se `pending` e' momentaneamente vuoto mentre i check
+    # continuano a comparire, `can_merge` resta vero e il gate pubblicherebbe un
+    # verde su una suite incompleta. Il budget e' generoso (900s contro ~20s di
+    # registrazione), quindi il caso e' raro: ma "raro" non e' "fail-closed", e
+    # un gate che promette fail-closed senza esserlo e' peggio di uno che non lo
+    # promette.
+    if (
+        args.wait_pending_seconds > 0
+        and not decision["already_merged"]
+        and intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
+    ):
+        decision["can_merge"] = False
+        motivo = (
+            f"rollup never stayed stable for {INTERVALLI_STABILI_RICHIESTI} "
+            f"poll interval(s) within the wait budget"
+        )
+        if motivo not in decision.setdefault("reasons", []):
+            decision["reasons"].append(motivo)
 
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
@@ -2169,6 +2296,7 @@ def main() -> int:
     p.add_argument("--pr", required=True)
     p.add_argument("--ignore-safe-autofix", action="store_true")
     p.add_argument("--wait-unknown-seconds", type=int, default=0)
+    p.add_argument("--wait-pending-seconds", type=int, default=0)
     p.add_argument("--poll-seconds", type=int, default=10)
     p.add_argument("--output", default="")
     p.add_argument("--no-fail", action="store_true")
