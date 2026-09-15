@@ -410,6 +410,68 @@ Il design vieta push, resolve, rerun e merge di default; ogni azione esterna ric
 
 ---
 
+## 9-bis. Quando il gate «Merge readiness» esprime il giudizio
+
+Il gate gira **solo** su `pull_request` (piu' `workflow_dispatch` per la
+rivalutazione manuale). E' l'unico evento il cui esito si attacca all'head della
+PR: `check_run` e `workflow_run` rivalutavano nel contesto del branch di
+default, quindi pubblicavano il verdetto su `main` — invisibile sulla PR, e con
+una scia di run rosse su `main` (24 su 27, misurato sulla #463). Sono stati
+rimossi: non si rimettono.
+
+Poiche' la run parte ~20s dopo il push, quando i check dell'head sono ancora in
+volo, il gate **aspetta** che siano settled prima di decidere:
+
+| chiave | valore | significato |
+|---|---|---|
+| `--wait-pending-seconds` | `900` | budget d'attesa; `0` = non aspetta (default dello script) |
+| `--poll-seconds` | `15` | intervallo fra due letture |
+| `timeout-minutes` (job) | `25` | rete di sicurezza se la suite si blocca |
+
+**Fail-closed.** Scaduto il budget si giudica lo stato REALE: se i check non
+sono finiti, `can_merge` resta falso e il gate FALLISCE. L'attesa serve a dare
+un giudizio vero, non a fabbricare un verde.
+
+**Anti-stallo.** Il self-check del gate non compare mai fra i `pending`
+(`split_checks(..., ignore_self=True)`): senza quella esclusione l'attesa
+sarebbe un deadlock — il gate aspetterebbe se stesso fino al timeout. E'
+inchiodata da `tests/guardrails/test_merge_readiness_verde.py`.
+
+**Quando si decide.** Non basta che `pending` sia vuoto: si esce dall'attesa
+solo quando (a) nessun check e' pendente, (b) i check reali osservati sono piu'
+di zero e (c) il loro numero NON e' cambiato fra due letture. La terza
+condizione copre la finestra di registrazione: se un check veloce e' gia' verde
+mentre gli altri non sono ancora comparsi nel rollup, `pending` e' vuoto e
+`checks_seen` vale 1 — senza (c) il gate direbbe «pronta» con la suite ancora
+da partire. Il criterio si auto-calibra: nessuna soglia da aggiornare quando si
+aggiunge o si toglie un workflow.
+
+La stabilita' si conta **solo a `pending` vuoto**: un conteggio fermo mentre la
+suite gira dice che i check ci sono gia' tutti, non che il rollup sia completo.
+Senza quel vincolo il contatore arrivava a N durante l'attesa e il gate usciva
+nell'istante in cui l'ultimo pending diventava verde, senza mai osservare la
+finestra DOPO. Costa due poll (~30s) su un gate che ne impiega ~300.
+
+La stabilita' va verificata su **`INTERVALLI_STABILI_RICHIESTI` = 2** intervalli
+di poll consecutivi, non su uno solo: con un intervallo, un ritardo di
+registrazione piu' lungo di `--poll-seconds` basterebbe a far uscire il gate sul
+plateau iniziale. **Limite dichiarato:** nessun valore di N elimina la finestra,
+la stringe soltanto. Eliminarla davvero richiederebbe l'elenco dei check ATTESI,
+che invecchierebbe a ogni workflow aggiunto o tolto — e un manifest stantio
+produce falsi ROSSI sistematici, un danno peggiore del rischio che chiude.
+
+**Limite operativo dichiarato.** Tolti `check_run`/`workflow_run`, se il budget
+scade con check ancora in volo il verdetto resta rosso sull'head e NON si
+rivaluta da solo: serve `workflow_dispatch` (input `pr_number`) o un nuovo
+push. E' una scelta, non una svista: rimettere quei trigger significherebbe
+ripubblicare il verdetto su `main` invece che sull'head — il difetto che teneva
+il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
+(900s) e' circa il triplo della durata osservata della suite (~322s), e perche'
+un budget scaduto con check fermi e' un caso in cui il rosso e' la risposta
+giusta.
+
+---
+
 ## 10. CHECK_STATUS — legge PR dopo push
 
 Dopo push o dopo PR aperta aggiornata, legge:

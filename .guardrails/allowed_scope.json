@@ -1622,6 +1622,18 @@
         "tests/guardrails/test_gpt56sol_su_openrouter.py",
         "tests/guardrails/test_raccolta_test_senza_pyyaml.py"
       ]
+    },
+    "merge_readiness_verde": {
+      "files": [
+        ".github/workflows/pr-merge-readiness.yml",
+        ".guardrails/allowed_scope.json",
+        "docs/auto_pr_flow_spec.md",
+        "scripts/pr_flow_automation.py",
+        "tests/guardrails/test_merge_readiness_verde.py",
+        "tests/scripts/test_pr_flow_automation.py"
+      ],
+      "max_files": 6,
+      "description": "Gate `PR Merge Readiness`: il verdetto si attacca all'head della PR invece che a `main`. Attesa dei check settled prima di decidere, rimozione dei trigger che rivalutano nel contesto del branch di default, fail-closed su rollup vuoto."
     }
   }
 }
