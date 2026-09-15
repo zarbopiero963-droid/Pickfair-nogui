@@ -410,3 +410,43 @@ def test_block_il_verdetto_sullhead_ha_una_corsia_di_concorrenza_propria() -> No
         f"SHA, un nuovo push non cancellerebbe piu' la run precedente e ogni "
         f"push lascerebbe una run zombie ad aspettare fino al timeout."
     )
+
+
+def test_block_almeno_un_workflow_gira_su_ogni_pr() -> None:
+    """La precondizione che rende sicuro il fail-closed su `checks_seen <= 0`.
+
+    Rilievo di Fugu Ultra sulla #463: se una PR potesse legittimamente non
+    generare NESSUN check (solo-docs, workflow tutti con filtri di path), il
+    fail-closed la terrebbe rossa per sempre, bruciando l'intero budget
+    d'attesa — un rosso garantito simmetrico al falso verde appena tolto.
+
+    In questo repo non e' raggiungibile: oltre venti workflow partono su OGNI
+    PR senza filtri di `paths`. Ma «non e' raggiungibile oggi» invecchia male:
+    se qualcuno mettesse un filtro ovunque, il gate diventerebbe irraggiungibile
+    e nessun altro controllo lo direbbe. Quindi la precondizione e' sorvegliata
+    qui, dove si rompe.
+
+    Non e' un test sul gate: e' un test sull'IPOTESI del gate.
+    """
+    incondizionati = []
+    for percorso in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        testo = percorso.read_text(encoding="utf-8")
+        m = re.search(r"^on:\n(?:[ \t].*\n|\n)*", testo, re.MULTILINE)
+        if not m:
+            continue
+        blocco = m.group(0)
+        if not re.search(r"^  pull_request(_target)?:", blocco, re.MULTILINE):
+            continue
+        if not re.search(r"^\s+paths(-ignore)?:", blocco, re.MULTILINE):
+            incondizionati.append(percorso.name)
+
+    # Zero workflow letti = glob rotto, non repo pulito: fallire, non passare
+    # a vuoto.
+    assert incondizionati, (
+        "nessun workflow parte su ogni PR senza filtri di `paths`. Allora una "
+        "PR puo' non generare alcun check reale, e il fail-closed su "
+        "`checks_seen <= 0` la terrebbe rossa fino allo scadere del budget: un "
+        "rosso garantito, simmetrico al falso verde che quel fail-closed "
+        "esiste per togliere. Se il parco workflow cambia davvero cosi', il "
+        "gate va ripensato — non questo test allentato."
+    )
