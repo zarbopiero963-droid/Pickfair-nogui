@@ -450,3 +450,43 @@ def test_block_almeno_un_workflow_gira_su_ogni_pr() -> None:
         "esiste per togliere. Se il parco workflow cambia davvero cosi', il "
         "gate va ripensato — non questo test allentato."
     )
+
+
+def test_block_non_si_decide_mentre_il_rollup_sta_ancora_crescendo(monkeypatch: Any) -> None:
+    """Rilievo 1 di Fable 5 sulla full-range: `checks_seen > 0` non basta.
+
+    Se UN check veloce e' gia' verde mentre gli altri non sono ancora
+    registrati nel rollup, `pending` e' vuoto e `checks_seen` vale 1: il gate
+    usciva dall'attesa e dichiarava PRONTA con la suite ancora da partire.
+    Riprodotto:
+
+        1 check verde, 38 non ancora registrati
+          pending=0  checks_seen=1  can_merge=True
+
+    Il criterio giusto non e' "ho visto almeno un check" ma "il rollup ha
+    smesso di crescere": si aspetta finche' il numero di check osservati
+    cambia fra due letture. Si auto-calibra — niente soglia inventata — e
+    impone naturalmente almeno un giro di grazia.
+    """
+    sequenza = [
+        _decisione([], checks_seen=1),                     # solo il primo check
+        _decisione([], checks_seen=20),                    # ne compaiono altri
+        _decisione([], checks_seen=39),                    # e altri ancora
+        _decisione([], can_merge=True, checks_seen=39),    # stabile: ora si decide
+    ]
+    viste: list[int] = []
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        viste.append(1)
+        return sequenza[min(len(viste) - 1, len(sequenza) - 1)]
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    rc = flow.cmd_readiness(_args())
+    assert len(viste) == 4, (
+        f"interrogata l'API {len(viste)} volta/e invece di 4: il gate ha "
+        f"deciso mentre il rollup stava ancora crescendo — un verde con la "
+        f"suite non ancora partita."
+    )
+    assert rc == 0

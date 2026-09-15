@@ -1679,12 +1679,30 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     # sono finiti `can_merge` resta falso e il gate fallisce. L'attesa serve a
     # dare un giudizio vero, non a fabbricare un verde.
     deadline_pending = time.time() + args.wait_pending_seconds
+    # Terza condizione: il rollup non deve piu' CRESCERE.
+    #
+    # "Ho visto almeno un check" non basta (rilievo di Claude Fable 5 sulla
+    # full-range della #463): se un check veloce e' gia' verde mentre gli altri
+    # non sono ancora registrati, `pending` e' vuoto e `checks_seen` vale 1 —
+    # il gate uscirebbe dall'attesa dichiarando PRONTA con la suite ancora da
+    # partire. Riprodotto: 1 check verde, 38 non registrati => can_merge=True.
+    #
+    # Il criterio giusto e' "il rollup ha smesso di crescere": si aspetta
+    # finche' il numero di check osservati cambia fra due letture. Si
+    # auto-calibra (niente soglia inventata, che invecchierebbe a ogni
+    # workflow aggiunto o tolto) e impone almeno un giro di grazia.
+    visti_prima = -1
     while (
         args.wait_pending_seconds > 0
         and time.time() < deadline_pending
         and not decision["already_merged"]
-        and (decision.get("pending") or decision.get("checks_seen", 0) <= 0)
+        and (
+            decision.get("pending")
+            or decision.get("checks_seen", 0) <= 0
+            or decision.get("checks_seen", 0) != visti_prima
+        )
     ):
+        visti_prima = decision.get("checks_seen", 0)
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 

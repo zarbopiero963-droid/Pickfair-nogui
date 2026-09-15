@@ -437,6 +437,25 @@ un giudizio vero, non a fabbricare un verde.
 sarebbe un deadlock — il gate aspetterebbe se stesso fino al timeout. E'
 inchiodata da `tests/guardrails/test_merge_readiness_verde.py`.
 
+**Quando si decide.** Non basta che `pending` sia vuoto: si esce dall'attesa
+solo quando (a) nessun check e' pendente, (b) i check reali osservati sono piu'
+di zero e (c) il loro numero NON e' cambiato fra due letture. La terza
+condizione copre la finestra di registrazione: se un check veloce e' gia' verde
+mentre gli altri non sono ancora comparsi nel rollup, `pending` e' vuoto e
+`checks_seen` vale 1 — senza (c) il gate direbbe «pronta» con la suite ancora
+da partire. Il criterio si auto-calibra: nessuna soglia da aggiornare quando si
+aggiunge o si toglie un workflow.
+
+**Limite operativo dichiarato.** Tolti `check_run`/`workflow_run`, se il budget
+scade con check ancora in volo il verdetto resta rosso sull'head e NON si
+rivaluta da solo: serve `workflow_dispatch` (input `pr_number`) o un nuovo
+push. E' una scelta, non una svista: rimettere quei trigger significherebbe
+ripubblicare il verdetto su `main` invece che sull'head — il difetto che teneva
+il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
+(900s) e' circa il triplo della durata osservata della suite (~322s), e perche'
+un budget scaduto con check fermi e' un caso in cui il rosso e' la risposta
+giusta.
+
 ---
 
 ## 10. CHECK_STATUS — legge PR dopo push
