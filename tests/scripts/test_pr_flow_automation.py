@@ -2348,14 +2348,47 @@ def test_block_la_canary_ritirata_non_deve_tornare() -> None:
 # check rosso ESCLUSO spariva dalla vista dell'umano che legge il job summary.
 #
 # Questo test non pinna la singola chiave sbagliata: verifica che OGNI chiave
-# di primo livello letta dal workflow esista davvero nella decisione. Cosi'
-# copre anche il prossimo refuso, non solo quello gia' corretto.
+# letta dal workflow esista davvero nella decisione. Cosi' copre anche il
+# prossimo refuso, non solo quello gia' corretto.
+#
+# FOLLOW-UP #462. La prima versione cercava  jq [^\n]*?'\.(chiave)  : `[^\n]`
+# non attraversa il newline, quindi di ogni invocazione vedeva solo la PRIMA
+# chiave sulla PRIMA riga. I due programmi jq del riepilogo sono multi-riga:
+# erano coperti per `ignored_self_checks` e ciechi su tutto cio' che segue.
+# Misurato sul workflow reale: 7 chiavi viste su 10 lette. Un refuso su una riga
+# di continuazione — esattamente la forma che il workflow usa oggi — sarebbe
+# passato, cioe' la stessa classe di bug che questo test esiste per impedire.
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).resolve().parents[2]
 READINESS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-merge-readiness.yml"
 
 
-def _decisione_reale() -> dict:
+def _decisione_reale(monkeypatch) -> dict:
+    """La decisione VERA, costruita dal codice di produzione.
+
+    FOLLOW-UP #462: qui prima si assegnava `flow.pr_view` a mano, salvando e
+    ripristinando l'originale in un `try/finally` — unico punto del file su una
+    quindicina a farlo. Il `try/finally` protegge dalle eccezioni, non
+    dall'interleaving: se un altro test dello stesso processo legge
+    `flow.pr_view` mentre lo stub e' installato, lo salva come "originale" e poi
+    lo RIPRISTINA, avvelenando in modo permanente ogni test successivo.
+    `monkeypatch` e' scoped al test e disfatto da pytest in ordine LIFO, quindi
+    quel modo di fallire sparisce.
+
+    Si usa `monkeypatch.context()`, non `monkeypatch.setattr` diretto. Rilievo di
+    GPT-5.6 Sol sulla prima versione, ed era una regressione: `setattr` ripristina
+    al TEARDOWN del test, mentre il vecchio `finally` ripristinava appena
+    `build_decision` tornava. Sostituire l'uno con l'altro toglieva la patch a
+    mano ma ALLARGAVA la finestra in cui un altro test puo' vedere lo stub — si
+    guadagnava una proprieta' perdendone un'altra. Il context manager le tiene
+    entrambe: ripristino immediato, e nessun salvataggio a mano.
+
+    Limite dichiarato: si muta comunque un globale di modulo. La finestra e'
+    stretta quanto quella di prima e l'avvelenamento permanente non e' piu'
+    possibile, ma l'esecuzione concorrente in-process NON diventa sicura — per
+    quella servirebbe un seam di iniezione in `flow.build_decision`, che e' un
+    cambiamento al codice di produzione e non a un test.
+    """
     pr = {
         "state": "OPEN", "isDraft": False, "mergeable": "MERGEABLE",
         "mergeStateStatus": "UNSTABLE", "headRefOid": "abc",
@@ -2365,24 +2398,101 @@ def _decisione_reale() -> dict:
             _check("unit", "SUCCESS"),
         ],
     }
-    original = flow.pr_view
-    try:
-        flow.pr_view = lambda _repo, _pr: pr
+    with monkeypatch.context() as patch:
+        patch.setattr(flow, "pr_view", lambda _repo, _pr: pr)
         return flow.build_decision("owner/repo", "462", ignore_self=True)
-    finally:
-        flow.pr_view = original
 
 
-def test_block_il_workflow_non_legge_chiavi_inesistenti_dalla_decisione() -> None:
+def _programmi_jq(testo: str) -> list[str]:
+    """I filtri di ogni invocazione `jq`, RIGHE DI CONTINUAZIONE COMPRESE.
+
+    Restituisce il solo filtro (dall'invocazione fino a prima del path), cosi'
+    `.merge-readiness/decision.json` non entra fra le chiavi lette. Le righe di
+    commento vengono tolte PRIMA: una prosa che nomina `jq` aprirebbe un
+    programma fantasma che inghiotte il testo fino al `decision.json`
+    successivo, e le parole del commento diventerebbero chiavi.
+    """
+    senza_commenti = "\n".join(
+        r for r in testo.splitlines() if not r.lstrip().startswith("#")
+    )
+    return re.findall(
+        r"jq\b(.*?)\.merge-readiness/decision\.json", senza_commenti, re.DOTALL
+    )
+
+
+def _chiavi_del_programma(filtro: str) -> tuple[set[str], str | None, set[str]]:
+    """(chiavi di primo livello, collezione iterata, chiavi dell'elemento).
+
+    jq cambia il documento d'ingresso quando itera: in
+    `.ignored_self_checks[]? | select(.state)` la chiave `ignored_self_checks`
+    e' di primo livello, `state` appartiene all'ELEMENTO. Confonderle
+    produrrebbe falsi rossi (`.name`, `.decommissioned` non sono chiavi della
+    decisione) — il motivo per cui non basta allargare la regex.
+
+    LIMITE DICHIARATO (rilievo non bloccante di Claude Fable 5): si riconosce UNA
+    iterazione per programma. Con due livelli (`.a[] | ... | .b[] | ...`) tutto
+    cio' che segue la prima viene attribuito agli elementi di `a`. Nessun
+    programma del workflow ha oggi due iterazioni; se ne comparisse una, questa
+    funzione va estesa prima, non dopo. Stesso spirito per lo stripping dei
+    commenti, che toglie le righe che INIZIANO con `#` e non i commenti YAML a
+    fine riga: oggi nel workflow non ce ne sono dentro un programma jq.
+    """
+    iterazione = re.search(r"\.([A-Za-z_][A-Za-z0-9_]*)\[\]", filtro)
+    if iterazione is None:
+        return set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)", filtro)), None, set()
+    testa = filtro[: iterazione.end()]
+    coda = filtro[iterazione.end() :]
+    return (
+        set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)", testa)),
+        iterazione.group(1),
+        set(re.findall(r"\.([A-Za-z_][A-Za-z0-9_]*)", coda)),
+    )
+
+
+def _chiavi_inesistenti(testo: str, decisione: dict) -> list[str]:
+    """Ogni `.chiave` letta dal workflow che la decisione reale non produce."""
+    programmi = _programmi_jq(testo)
+    mancanti: set[str] = set()
+    for filtro in programmi:
+        top, collezione, elemento = _chiavi_del_programma(filtro)
+        mancanti |= {k for k in top if k not in decisione}
+        if not elemento:
+            continue
+        voci = decisione.get(collezione) if collezione else None
+        dizionari = [v for v in voci if isinstance(v, dict)] if isinstance(voci, list) else []
+        if not dizionari:
+            # Non si puo' verificare => non si dichiara verificato.
+            mancanti |= {f"{collezione}[].{k} (collezione vuota nel fixture)" for k in elemento}
+            continue
+        note = set().union(*(set(d) for d in dizionari))
+        mancanti |= {f"{collezione}[].{k}" for k in elemento if k not in note}
+    return sorted(mancanti)
+
+
+def test_block_il_workflow_non_legge_chiavi_inesistenti_dalla_decisione(monkeypatch) -> None:
     testo = READINESS_WORKFLOW.read_text(encoding="utf-8")
-    decisione = _decisione_reale()
-    # chiavi di primo livello referenziate come  jq ... '.chiave...'
-    lette = {
-        m.group(1)
-        for m in re.finditer(r"jq [^\n]*?'\.([A-Za-z_][A-Za-z0-9_]*)", testo)
-    }
+    decisione = _decisione_reale(monkeypatch)
+
+    programmi = _programmi_jq(testo)
+    ASSERTIONS.assertTrue(programmi, "nessun programma jq trovato: regex o workflow cambiati?")
+    # Nessuna invocazione deve restare fuori dall'estrazione: un `jq` non
+    # accoppiato e' un pezzo di workflow NON verificato che si presenta identico
+    # a un workflow pulito.
+    senza_commenti = "\n".join(
+        r for r in testo.splitlines() if not r.lstrip().startswith("#")
+    )
+    ASSERTIONS.assertEqual(
+        len(re.findall(r"jq\b", senza_commenti)), len(programmi),
+        "un'invocazione jq non e' stata accoppiata al suo decision.json: "
+        "resterebbe senza controllo sulle chiavi",
+    )
+    lette = set()
+    for filtro in programmi:
+        top, _coll, elemento = _chiavi_del_programma(filtro)
+        lette |= top | elemento
     ASSERTIONS.assertTrue(lette, "nessuna chiave jq trovata: regex o workflow cambiati?")
-    mancanti = sorted(k for k in lette if k not in decisione)
+
+    mancanti = _chiavi_inesistenti(testo, decisione)
     ASSERTIONS.assertEqual(
         mancanti, [],
         f"il workflow legge chiavi che la decisione non produce: {mancanti}. "
@@ -2390,13 +2500,88 @@ def test_block_il_workflow_non_legge_chiavi_inesistenti_dalla_decisione() -> Non
     )
 
 
-def test_block_un_check_escluso_e_rosso_resta_visibile() -> None:
+def test_block_le_chiavi_sulle_righe_di_continuazione_non_sfuggono(monkeypatch) -> None:
+    """BLOCK del follow-up: il refuso su una riga di continuazione va visto.
+
+    E' il caso che la regex a riga singola lasciava passare. Se questo test
+    torna verde con entrambe le chiavi fasulle, il guard e' di nuovo cieco
+    proprio dove il workflow scrive i suoi programmi jq piu' lunghi.
+    """
+    decisione = _decisione_reale(monkeypatch)
+    # `ignored_self_checks` ha elementi-dizionario nel fixture, quindi la chiave
+    # d'elemento viene confrontata con le chiavi VERE dell'elemento, non scartata
+    # dal ramo "non posso verificare".
+    finto = (
+        "          CAN=\"$(jq -r '.can_merge' .merge-readiness/decision.json)\"\n"
+        "          jq -r '.ignored_self_checks[]?\n"
+        "                 | .chiave_di_elemento_inesistente' \\\n"
+        "            .merge-readiness/decision.json\n"
+        "          jq -r '.blockers\n"
+        "                 | .chiave_top_inesistente' \\\n"
+        "            .merge-readiness/decision.json\n"
+    )
+    mancanti = _chiavi_inesistenti(finto, decisione)
+    ASSERTIONS.assertIn(
+        "chiave_top_inesistente", " ".join(mancanti),
+        "una chiave di PRIMO LIVELLO inesistente su una riga di continuazione "
+        "non viene piu' rilevata: il guard e' tornato cieco oltre la prima riga",
+    )
+    ASSERTIONS.assertIn(
+        "chiave_di_elemento_inesistente", " ".join(mancanti),
+        "una chiave di ELEMENTO inesistente su una riga di continuazione non "
+        "viene piu' rilevata",
+    )
+    # E il caso legittimo NON deve diventare rosso: `.can_merge` esiste.
+    ASSERTIONS.assertNotIn("can_merge", " ".join(mancanti), "falso positivo su una chiave valida")
+
+
+def test_block_lo_stub_di_pr_view_non_sopravvive_alla_costruzione(monkeypatch) -> None:
+    """La patch deve sparire appena la decisione e' costruita, non al teardown.
+
+    Rilievo di GPT-5.6 Sol: con `monkeypatch.setattr` diretto lo stub resta
+    installato fino alla fine del test, cioe' una finestra PIU' LARGA di quella
+    del vecchio `try/finally`. Questo test fallisce su quella versione.
+    """
+    prima = flow.pr_view
+    _decisione_reale(monkeypatch)
+    ASSERTIONS.assertIs(
+        flow.pr_view, prima,
+        "lo stub di `pr_view` e' ancora installato dopo `_decisione_reale`: la "
+        "finestra in cui un altro test puo' vederlo arriva fino al teardown, "
+        "piu' larga di quella del try/finally che si voleva sostituire",
+    )
+
+
+def test_block_collezione_vuota_non_e_una_verifica_riuscita(monkeypatch) -> None:
+    """Fail-closed: se il fixture non ha elementi, le chiavi non sono verificate.
+
+    Con una collezione vuota non esistono chiavi d'elemento da confrontare. Il
+    silenzio qui sarebbe la peggiore delle risposte: il guard passerebbe senza
+    aver guardato nulla, ed e' proprio il modo in cui un controllo diventa
+    decorativo senza che nessuno se ne accorga.
+    """
+    decisione = _decisione_reale(monkeypatch)
+    decisione["blockers"] = []          # collezione presente ma senza elementi
+    finto = (
+        "          jq -r '.blockers[]?\n"
+        "                 | .qualsiasi_chiave' \\\n"
+        "            .merge-readiness/decision.json\n"
+    )
+    mancanti = _chiavi_inesistenti(finto, decisione)
+    ASSERTIONS.assertIn(
+        "qualsiasi_chiave", " ".join(mancanti),
+        "con una collezione vuota il guard ha taciuto: sta dichiarando "
+        "verificato cio' che non ha potuto guardare",
+    )
+
+
+def test_block_un_check_escluso_e_rosso_resta_visibile(monkeypatch) -> None:
     """Il dato su cui poggia il ::warning:: del workflow deve esserci.
 
     L'esclusione dai blockers e' voluta; l'invisibilita' no. Ogni check escluso
     deve portarsi dietro nome e stato, cosi' il workflow puo' nominarlo.
     """
-    decisione = _decisione_reale()
+    decisione = _decisione_reale(monkeypatch)
     esclusi = decisione["ignored_self_checks"]
     rossi = [c for c in esclusi if str(c.get("state", "")).upper() not in {"", "SUCCESS", "SKIPPED", "NEUTRAL"}]
     nomi = sorted(c["name"] for c in rossi)

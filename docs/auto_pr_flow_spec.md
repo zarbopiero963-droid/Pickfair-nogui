@@ -483,6 +483,25 @@ il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
 un budget scaduto con check fermi e' un caso in cui il rosso e' la risposta
 giusta.
 
+**Il riepilogo legge solo chiavi che la decisione produce.** Il job summary
+estrae i suoi dati con `jq` da `decision.json`. Una chiave sbagliata non rompe
+nulla: `jq` restituisce `null` e la riga esce VUOTA — un check rosso escluso
+sparisce dalla vista di chi legge, senza un solo errore. E' successo davvero
+(`jq '.ignored | length'` contro `ignored_self_checks`, trovato da Claude Fable 5
+sulla #462). Il contratto e' inchiodato da
+`tests/scripts/test_pr_flow_automation.py`, che costruisce la decisione VERA col
+codice di produzione e verifica ogni `.chiave` letta dal workflow.
+
+Il guard legge il programma `jq` PER INTERO, righe di continuazione comprese. La
+prima versione si fermava alla prima riga (`jq [^\n]*?'\.(chiave)`) e vedeva 7
+chiavi su 10: i due programmi multi-riga del riepilogo erano coperti solo per la
+prima chiave. Distingue inoltre il livello, perche' `jq` cambia documento quando
+itera: in `.ignored_self_checks[]? | select(.state)` la prima chiave e' di primo
+livello, `state` appartiene all'elemento — trattarle allo stesso modo darebbe
+falsi rossi su `.name` e `.decommissioned`, che chiavi della decisione non sono.
+**Limite dichiarato:** il guard verifica che la chiave ESISTA al livello giusto,
+non che il suo tipo sia quello che il filtro si aspetta.
+
 ---
 
 ## 10. CHECK_STATUS — legge PR dopo push

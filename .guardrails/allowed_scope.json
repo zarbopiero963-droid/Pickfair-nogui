@@ -1634,6 +1634,16 @@
       ],
       "max_files": 6,
       "description": "Gate `PR Merge Readiness`: il verdetto si attacca all'head della PR invece che a `main`. Attesa dei check settled prima di decidere, rimozione dei trigger che rivalutano nel contesto del branch di default, fail-closed su rollup vuoto."
+    },
+    "follow_up_462_jq_multiriga_e_monkeypatch": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "docs/auto_pr_flow_spec.md",
+        "tests/guardrails/test_patch_moduli_nei_test.py",
+        "tests/scripts/test_pr_flow_automation.py"
+      ],
+      "max_files": 4,
+      "description": "Due follow-up annotati sulla #462 e mai fatti. (1) Il guard sulle chiavi jq del workflow di readiness ispezionava solo la prima riga di ogni invocazione: 7 chiavi viste su 10, ciechi sui due programmi multi-riga del riepilogo. Ora legge il programma per intero e distingue chiavi di primo livello da chiavi dell'elemento iterato. (2) `_decisione_reale` installava lo stub di `flow.pr_view` assegnando il globale a mano: passa a `monkeypatch`, e un guardrail blocca la ricomparsa del pattern nei test."
     }
   }
 }
