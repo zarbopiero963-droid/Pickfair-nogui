@@ -66,24 +66,82 @@ def _moduli_importati(albero: ast.Module) -> set[str]:
     return nomi
 
 
-def _e_attributo_di_modulo(nodo: ast.expr | None, moduli: set[str]) -> bool:
-    return (
-        isinstance(nodo, ast.Attribute)
-        and isinstance(nodo.value, ast.Name)
-        and nodo.value.id in moduli
+def _e_attributo_di_modulo(nodo: ast.expr, moduli: set[str]) -> bool:
+    """`mod.attr` dove `mod` e' un modulo importato.
+
+    `mod.attr.b` NON lo e' (muta un oggetto DENTRO il modulo, non il legame del
+    modulo), e nemmeno `mod.attr[0]`.
+    """
+    return isinstance(nodo, ast.Attribute) and isinstance(nodo.value, ast.Name) and nodo.value.id in moduli
+
+
+def _bersagli_di_binding(nodo: ast.expr | None) -> list[ast.Attribute]:
+    """Gli attributi RIASSEGNATI da questo bersaglio, tuple e liste comprese.
+
+    Rilievo di GPT-5.6 Sol: `mod.attr, x = valori` mette un `ast.Tuple` in
+    `targets`, quindi il controllo sul solo primo livello lo mancava. Il
+    problema non era quella forma: era guardare il primo livello. Qui si scende
+    in `Tuple`/`List`/`Starred`, a qualunque profondita'.
+
+    Si NON scende in `Subscript` (`mod.attr[0] = v` cambia il contenuto, non il
+    legame) ne' in catene piu' lunghe (`mod.attr.b = v`): non sono
+    riassegnazioni dell'attributo del modulo.
+    """
+    if isinstance(nodo, ast.Attribute):
+        return [nodo]
+    if isinstance(nodo, ast.Starred):
+        return _bersagli_di_binding(nodo.value)
+    if isinstance(nodo, (ast.Tuple, ast.List)):
+        return [a for elemento in nodo.elts for a in _bersagli_di_binding(elemento)]
+    return []
+
+
+def _bersagli_del_nodo(nodo: ast.AST) -> list[ast.expr]:
+    """Le espressioni-bersaglio di ogni costrutto che puo' LEGARE un attributo.
+
+    Non solo l'assegnazione: `for mod.a in ...`, `with ... as mod.a` e il
+    bersaglio di una comprehension legano anche loro, e sono tutti sintassi
+    valida. Elencarli qui invece di inseguirli un rilievo alla volta.
+    """
+    if isinstance(nodo, ast.Assign):
+        return list(nodo.targets)
+    if isinstance(nodo, (ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor)):
+        return [nodo.target]
+    if isinstance(nodo, (ast.With, ast.AsyncWith)):
+        return [v.optional_vars for v in nodo.items if v.optional_vars is not None]
+    if isinstance(nodo, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        return [g.target for g in nodo.generators]
+    return []
+
+
+def _setattr_su_modulo(nodo: ast.AST, moduli: set[str]) -> tuple[int, str] | None:
+    """`setattr(mod, "attr", ...)`: stessa mutazione, scritta come chiamata."""
+    if not (
+        isinstance(nodo, ast.Call)
+        and isinstance(nodo.func, ast.Name)
+        and nodo.func.id == "setattr"
+        and nodo.args
+        and isinstance(nodo.args[0], ast.Name)
+        and nodo.args[0].id in moduli
+    ):
+        return None
+    attributo = nodo.args[1] if len(nodo.args) > 1 else None
+    nome = (
+        attributo.value
+        if isinstance(attributo, ast.Constant) and isinstance(attributo.value, str)
+        else "?"
     )
+    return (nodo.lineno, f"{nodo.args[0].id}.{nome}")
 
 
 def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
     """(riga, "modulo.attributo") per ogni mutazione a mano nel sorgente.
 
-    Quattro forme, tutte equivalenti nell'effetto — sostituire un globale di
-    modulo senza che nulla garantisca il ripristino:
-
-        mod.attr = ...          ast.Assign
-        mod.attr: T = ...       ast.AnnAssign
-        mod.attr += ...         ast.AugAssign
-        setattr(mod, "attr", …) ast.Call
+    Copre ogni costrutto che riassegna un attributo di modulo — assegnazione
+    semplice, annotata, aumentata, con destrutturazione, `for`, `with as`,
+    comprehension — piu' `setattr`. Un guard che vede una forma sola non
+    protegge: si aggira riscrivendo la stessa riga in un altro modo, e da' solo
+    l'impressione che qualcuno stia controllando.
     """
     try:
         albero = ast.parse(sorgente)
@@ -92,34 +150,18 @@ def _mutazioni_di_modulo(sorgente: str) -> list[tuple[int, str]]:
     moduli = _moduli_importati(albero)
     trovate: list[tuple[int, str]] = []
     for nodo in ast.walk(albero):
-        bersagli: list[ast.expr] = []
-        if isinstance(nodo, ast.Assign):
-            bersagli = list(nodo.targets)
-        elif isinstance(nodo, (ast.AnnAssign, ast.AugAssign)):
-            bersagli = [nodo.target]
-        elif (
-            isinstance(nodo, ast.Call)
-            and isinstance(nodo.func, ast.Name)
-            and nodo.func.id == "setattr"
-            and nodo.args
-            and isinstance(nodo.args[0], ast.Name)
-            and nodo.args[0].id in moduli
-        ):
-            attributo = nodo.args[1] if len(nodo.args) > 1 else None
-            nome = (
-                attributo.value
-                if isinstance(attributo, ast.Constant) and isinstance(attributo.value, str)
-                else "?"
-            )
-            trovate.append((nodo.lineno, f"{nodo.args[0].id}.{nome}"))
+        chiamata = _setattr_su_modulo(nodo, moduli)
+        if chiamata is not None:
+            trovate.append(chiamata)
             continue
-
-        for bersaglio in bersagli:
-            if _e_attributo_di_modulo(bersaglio, moduli):
-                assert isinstance(bersaglio, ast.Attribute)  # ristretto sopra
-                assert isinstance(bersaglio.value, ast.Name)
-                trovate.append((nodo.lineno, f"{bersaglio.value.id}.{bersaglio.attr}"))
-    return trovate
+        for bersaglio in _bersagli_del_nodo(nodo):
+            for attributo in _bersagli_di_binding(bersaglio):
+                if _e_attributo_di_modulo(attributo, moduli):
+                    assert isinstance(attributo.value, ast.Name)  # ristretto sopra
+                    trovate.append(
+                        (attributo.lineno, f"{attributo.value.id}.{attributo.attr}")
+                    )
+    return sorted(set(trovate))
 
 
 def _mutazioni_del_file(percorso: Path) -> list[tuple[int, str]]:
@@ -186,32 +228,49 @@ def test_block_l_elenco_dei_preesistenti_non_invecchia() -> None:
     )
 
 
-def test_block_le_quattro_forme_di_mutazione_sono_tutte_viste() -> None:
-    """BLOCK del rilievo di Sol: nessuna delle quattro forme deve sfuggire.
+def test_block_ogni_forma_di_mutazione_e_vista() -> None:
+    """BLOCK: nessun costrutto che lega un attributo di modulo deve sfuggire.
 
     Se questo test torna verde con una forma non rilevata, il guard e' di nuovo
-    aggirabile riscrivendo la stessa mutazione in un altro modo.
+    aggirabile riscrivendo la stessa mutazione in un altro modo — che e' il modo
+    in cui un controllo diventa decorativo senza che nessuno se ne accorga.
+
+    L'elenco nasce dai rilievi di GPT-5.6 Sol (prima `AnnAssign`/`AugAssign`/
+    `setattr`, poi la destrutturazione) e dai costrutti che NON aveva nominato:
+    inseguirli uno per giro di review costa un push ciascuno e lascia sempre il
+    prossimo scoperto.
     """
-    casi = {
-        "assegnazione": "import flow\nflow.pr_view = lambda: 1\n",
-        "annotata": "import flow\nflow.pr_view: object = lambda: 1\n",
-        "aumentata": "import flow\nflow.contatore += 1\n",
-        "setattr": "import flow\nsetattr(flow, 'pr_view', lambda: 1)\n",
+    da_vedere = {
+        "assegnazione":      "import flow\nflow.pr_view = lambda: 1\n",
+        "annotata":          "import flow\nflow.pr_view: object = lambda: 1\n",
+        "aumentata":         "import flow\nflow.contatore += 1\n",
+        "setattr":           "import flow\nsetattr(flow, 'pr_view', lambda: 1)\n",
+        "tupla":             "import flow\nflow.pr_view, altro = stub, 1\n",
+        "lista":             "import flow\n[flow.pr_view, altro] = stub, 1\n",
+        "starred":           "import flow\n*flow.resto, ultimo = valori\n",
+        "annidata":          "import flow\n(a, (flow.pr_view, b)) = 1, (2, 3)\n",
+        "for":               "import flow\nfor flow.pr_view in stub:\n    pass\n",
+        "for destrutturato": "import flow\nfor flow.pr_view, x in stub:\n    pass\n",
+        "with as":           "import flow\nwith aperto() as flow.pr_view:\n    pass\n",
+        "comprehension":     "import flow\n[1 for flow.pr_view in stub]\n",
     }
-    for nome, sorgente in casi.items():
-        trovate = [b for _riga, b in _mutazioni_di_modulo(sorgente)]
+    for nome, sorgente in da_vedere.items():
         ASSERTIONS.assertTrue(
-            trovate, f"forma «{nome}» non rilevata: il guard e' aggirabile cosi'"
+            _mutazioni_di_modulo(sorgente),
+            f"forma «{nome}» non rilevata: il guard e' aggirabile cosi'",
         )
 
-    # E nessun falso positivo su cio' che modulo non e': un oggetto locale, o
-    # un modulo mai importato, non c'entrano nulla.
-    innocui = (
-        "class C: pass\nc = C()\nc.attr = 1\n",
-        "import flow\naltro.attr = 1\n",
-    )
-    for sorgente in innocui:
+    # E nessun falso positivo: qui NON si riassegna l'attributo del modulo.
+    da_non_vedere = {
+        "oggetto locale":      "class C: pass\nc = C()\nc.attr = 1\n",
+        "modulo non importato": "import flow\naltro.attr = 1\n",
+        "contenuto, non legame": "import flow\nflow.registro[0] = 1\n",
+        "catena piu' lunga":   "import flow\nflow.oggetto.campo = 1\n",
+        "sola lettura":        "import flow\nx = flow.pr_view\n",
+    }
+    for nome, sorgente in da_non_vedere.items():
         ASSERTIONS.assertEqual(
             _mutazioni_di_modulo(sorgente), [],
-            "falso positivo: non e' la mutazione di un modulo importato",
+            f"falso positivo su «{nome}»: non e' la riassegnazione di un "
+            "attributo di modulo",
         )
