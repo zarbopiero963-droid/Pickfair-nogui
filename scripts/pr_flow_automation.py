@@ -1651,6 +1651,24 @@ def _normalized_issue_field(issue: dict[str, Any], *keys: str) -> str:
 
 
 
+# Per quanti intervalli di poll consecutivi il numero di check osservati deve
+# restare INVARIATO prima di considerare il rollup fermo.
+#
+# Un solo intervallo non basta: rilievo convergente di Claude Fable 5 e Fugu
+# Ultra sulla review full-range della #463. Se GitHub ritarda la registrazione
+# oltre un singolo intervallo con pochi check gia' verdi, il gate uscirebbe e
+# direbbe "pronta" con la suite non ancora comparsa.
+#
+# Limite DICHIARATO: nessun valore di N elimina la finestra, la stringe
+# soltanto. Eliminarla davvero richiederebbe l'elenco dei check ATTESI, che
+# invecchierebbe a ogni workflow aggiunto o tolto — e un manifest stantio
+# produce falsi ROSSI sistematici, cioe' un danno peggiore del rischio che
+# chiude. Misurato sulla #463: 28 check registrati entro 20s dal push; con
+# poll=15s, due intervalli coprono 30s di stabilita' oltre ai ~20s che il gate
+# impiega ad avviarsi.
+INTERVALLI_STABILI_RICHIESTI = 2
+
+
 def cmd_readiness(args: argparse.Namespace) -> int:
     deadline = time.time() + args.wait_unknown_seconds
     decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
@@ -1692,6 +1710,7 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     # auto-calibra (niente soglia inventata, che invecchierebbe a ogni
     # workflow aggiunto o tolto) e impone almeno un giro di grazia.
     visti_prima = -1
+    intervalli_stabili = 0
     while (
         args.wait_pending_seconds > 0
         and time.time() < deadline_pending
@@ -1699,10 +1718,12 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         and (
             decision.get("pending")
             or decision.get("checks_seen", 0) <= 0
-            or decision.get("checks_seen", 0) != visti_prima
+            or intervalli_stabili < INTERVALLI_STABILI_RICHIESTI
         )
     ):
-        visti_prima = decision.get("checks_seen", 0)
+        visti = decision.get("checks_seen", 0)
+        intervalli_stabili = intervalli_stabili + 1 if visti == visti_prima else 0
+        visti_prima = visti
         time.sleep(args.poll_seconds)
         decision = _readiness_decision(args.repo, args.pr, args.ignore_safe_autofix)
 

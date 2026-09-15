@@ -446,6 +446,14 @@ mentre gli altri non sono ancora comparsi nel rollup, `pending` e' vuoto e
 da partire. Il criterio si auto-calibra: nessuna soglia da aggiornare quando si
 aggiunge o si toglie un workflow.
 
+La stabilita' va verificata su **`INTERVALLI_STABILI_RICHIESTI` = 2** intervalli
+di poll consecutivi, non su uno solo: con un intervallo, un ritardo di
+registrazione piu' lungo di `--poll-seconds` basterebbe a far uscire il gate sul
+plateau iniziale. **Limite dichiarato:** nessun valore di N elimina la finestra,
+la stringe soltanto. Eliminarla davvero richiederebbe l'elenco dei check ATTESI,
+che invecchierebbe a ogni workflow aggiunto o tolto — e un manifest stantio
+produce falsi ROSSI sistematici, un danno peggiore del rischio che chiude.
+
 **Limite operativo dichiarato.** Tolti `check_run`/`workflow_run`, se il budget
 scade con check ancora in volo il verdetto resta rosso sull'head e NON si
 rivaluta da solo: serve `workflow_dispatch` (input `pr_number`) o un nuovo

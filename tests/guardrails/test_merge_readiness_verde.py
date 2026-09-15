@@ -165,9 +165,11 @@ def test_block_aspetta_finche_i_check_sono_in_volo(monkeypatch: Any) -> None:
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 3, (
-        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 3: non sta "
-        f"aspettando che i check finiscano, sta decidendo sul primo colpo."
+    assert len(viste) == 4, (
+        f"il gate ha interrogato l'API {len(viste)} volta/e invece di 4: non sta "
+        f"aspettando che i check finiscano, sta decidendo sul primo colpo. "
+        f"(Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
+        f"{flow.INTERVALLI_STABILI_RICHIESTI}: se cambia, va ricalcolato.)"
     )
     assert rc == 0, "check tutti settled e verdi: il gate doveva passare"
 
@@ -373,9 +375,11 @@ def test_block_aspetta_anche_col_rollup_ancora_vuoto(monkeypatch: Any) -> None:
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 3, (
-        f"interrogata l'API {len(viste)} volta/e invece di 3: col rollup vuoto "
-        f"il gate ha deciso subito, invece di aspettare che i check comparissero."
+    assert len(viste) == 5, (
+        f"interrogata l'API {len(viste)} volta/e invece di 5: col rollup vuoto "
+        f"il gate ha deciso subito, invece di aspettare che i check comparissero. "
+        f"(Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
+        f"{flow.INTERVALLI_STABILI_RICHIESTI}.)"
     )
     assert rc == 0
 
@@ -484,9 +488,71 @@ def test_block_non_si_decide_mentre_il_rollup_sta_ancora_crescendo(monkeypatch: 
     monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
 
     rc = flow.cmd_readiness(_args())
-    assert len(viste) == 4, (
-        f"interrogata l'API {len(viste)} volta/e invece di 4: il gate ha "
+    assert len(viste) == 6, (
+        f"interrogata l'API {len(viste)} volta/e invece di 6: il gate ha "
         f"deciso mentre il rollup stava ancora crescendo — un verde con la "
-        f"suite non ancora partita."
+        f"suite non ancora partita. (Conteggio legato a "
+        f"INTERVALLI_STABILI_RICHIESTI={flow.INTERVALLI_STABILI_RICHIESTI}.)"
     )
     assert rc == 0
+
+
+def test_block_un_solo_intervallo_stabile_non_basta(monkeypatch: Any) -> None:
+    """Rilievo convergente di Fable 5 e Fugu Ultra sulla full-range.
+
+    Il criterio "il rollup ha smesso di crescere" verificato su UN SOLO
+    intervallo (15s) e' debole: se GitHub ritarda la registrazione oltre quel
+    singolo intervallo con pochi check gia' verdi, il gate esce e dichiara
+    `can_merge=True` con la suite non ancora comparsa — lo stesso falso verde,
+    con finestra piu' stretta.
+
+    Qui il conteggio resta fermo a 1 per due letture consecutive (il plateau
+    che ingannerebbe il criterio debole) e solo dopo compaiono gli altri
+    check. Il gate NON deve decidere sul plateau.
+
+    Limite dichiarato, scritto anche accanto alla costante: nessun N elimina la
+    finestra, la stringe soltanto. Eliminarla richiederebbe l'elenco dei check
+    attesi, che invecchierebbe a ogni workflow aggiunto o tolto — e un manifest
+    stantio produce falsi ROSSI sistematici, peggio del rischio che chiude.
+    """
+    sequenza = [
+        _decisione([], checks_seen=1),                    # un check veloce, solo
+        _decisione([], checks_seen=1),                    # ancora fermo a 1: il plateau
+        _decisione([], checks_seen=39),                   # ecco il resto della suite
+        _decisione([], checks_seen=39),
+        _decisione([], can_merge=True, checks_seen=39),
+    ]
+    viste: list[dict[str, Any]] = []
+
+    def finta(repo: str, pr: str, ignore: bool) -> dict[str, Any]:
+        d = sequenza[min(len(viste), len(sequenza) - 1)]
+        viste.append(d)
+        return d
+
+    monkeypatch.setattr(flow, "_readiness_decision", finta)
+    monkeypatch.setattr(flow.time, "sleep", lambda _s: None)
+
+    rc = flow.cmd_readiness(_args())
+
+    # NOTA su come si misura. `viste` registra cio' che viene LETTO, e il ciclo
+    # legge sempre una volta in piu' prima di rivalutare la condizione: quindi
+    # l'ULTIMA lettura ha checks_seen=39 sia con N=1 sia con N=2, e asserire su
+    # quella non distingue niente. (Prima versione di questo test: lo faceva, e
+    # il sabotaggio N=1 passava. Trovato sabotando.)
+    #
+    # Cio' che distingue e' quante volte ha interrogato l'API — cioe' se ha
+    # attraversato il plateau — e di conseguenza su quale decisione si e'
+    # fermato:
+    #
+    #     N=1: letture=3  rc=1   (uscito sul plateau)
+    #     N=2: letture=6  rc=0   (arrivato alla decisione stabile)
+    assert len(viste) == 6, (
+        f"il gate ha interrogato l'API {len(viste)} volte invece di 6: e' uscito "
+        f"sul plateau iniziale, dichiarando pronta una PR con la suite non "
+        f"ancora comparsa. (Conteggio legato a INTERVALLI_STABILI_RICHIESTI="
+        f"{flow.INTERVALLI_STABILI_RICHIESTI}: se cambia, va ricalcolato.)"
+    )
+    assert rc == 0, (
+        "il gate non si e' fermato sulla decisione stabile: un solo intervallo "
+        "invariato e' bastato a convincerlo che il rollup fosse fermo."
+    )
