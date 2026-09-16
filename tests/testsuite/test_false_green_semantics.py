@@ -19,20 +19,48 @@ def _read(path: str) -> str:
 
 
 def _workflow(path: str):
+    """Il workflow PARSATO. Senza PyYAML si ferma: non si degrada in silenzio.
+
+    Prima, senza PyYAML, questa funzione restituiva un sentinel `{"_text": testo}`
+    e ogni consumatore scivolava su un ramo testuale. Le asserzioni continuavano
+    a girare — su un bersaglio piu' facile. `_run_text` in particolare tornava il
+    FILE INTERO invece dei soli blocchi `run:`, cioe' 46.329 caratteri contro
+    14.770 sui 26 workflow ispezionati qui: 3,1 volte tanto, fatto di commenti,
+    nomi di step, trigger ed env.
+
+    Non era teoria. Mutando `merge-simulation-hard.yml` perche' NON lanci piu'
+    pytest (`pip install nulla`, `echo NESSUN_TEST`), lasciando la parola solo
+    nei NOMI degli step — che non eseguono nulla:
+
+        con PyYAML    ->  assert "pytest" in hard_run   FALLISCE
+        senza PyYAML  ->  1 passed
+
+    E PyYAML nel job CI `tests` non c'e'. Quindi nell'unico ambiente che conta,
+    il guard che esiste per garantire che la simulazione di merge esegua la
+    suite completa sarebbe rimasto verde anche smettendo di eseguirla.
+
+    Un controllo che non puo' verificare deve FERMARSI, non accontentarsi.
+    """
     text = _read(path)
     try:
         import yaml  # type: ignore
-    except Exception:
-        return {"_text": text}
+    except Exception as exc:  # pragma: no cover - in CI PyYAML c'e'
+        raise RuntimeError(
+            "PyYAML non disponibile: questo file ispeziona i workflow PARSATI e "
+            "senza parser non puo' verificare nulla. E' in requirements-test.txt "
+            "proprio per questo — non reintrodurre un fallback testuale, che "
+            "renderebbe le asserzioni piu' deboli senza dirlo."
+        ) from exc
     data = yaml.safe_load(text)
     if isinstance(data, dict) and True in data and "on" not in data:
         data["on"] = data[True]
-    return data if isinstance(data, dict) else {"_text": text}
+    if not isinstance(data, dict):
+        raise RuntimeError(f"{path}: YAML non e' una mappa, il workflow e' malformato")
+    return data
 
 
 def _run_text(workflow_obj) -> str:
-    if not isinstance(workflow_obj, dict) or "_text" in workflow_obj:
-        return str((workflow_obj or {}).get("_text", ""))
+    """I soli blocchi `run:`, cioe' il codice che il workflow ESEGUE."""
     runs = []
     jobs = workflow_obj.get("jobs") or {}
     if isinstance(jobs, dict):
@@ -56,31 +84,19 @@ def _assert_no_forbidden_workflow_tokens(text: str, rel: str):
 
 
 def _workflow_has_trigger(rel: str, trigger_name: str) -> bool:
-    wf = _workflow(rel)
-    if isinstance(wf, dict) and "_text" not in wf:
-        triggers = wf.get("on") or {}
-        if isinstance(triggers, dict):
-            return trigger_name in triggers
-    raw = _read(rel)
-    return bool(re.search(rf"(?m)^\s*{re.escape(trigger_name)}\s*:", raw))
+    triggers = _workflow(rel).get("on") or {}
+    assert isinstance(triggers, dict), f"{rel}: blocco `on:` malformato"
+    return trigger_name in triggers
 
 
 
 def _workflow_has_pull_request_closed_trigger(rel: str) -> bool:
-    wf = _workflow(rel)
-    if isinstance(wf, dict) and "_text" not in wf:
-        triggers = wf.get("on") or {}
-        if isinstance(triggers, dict):
-            pull = triggers.get("pull_request")
-            if isinstance(pull, dict):
-                types = pull.get("types") or []
-                return "closed" in [str(x) for x in types]
-            return False
-    raw = _read(rel)
-    return bool(
-        re.search(r"(?m)^\s*pull_request\s*:", raw)
-        and re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+types\s*:\s*\[\s*closed\s*\]", raw)
-    )
+    triggers = _workflow(rel).get("on") or {}
+    assert isinstance(triggers, dict), f"{rel}: blocco `on:` malformato"
+    pull = triggers.get("pull_request")
+    if not isinstance(pull, dict):
+        return False
+    return "closed" in [str(x) for x in (pull.get("types") or [])]
 
 def _validate_callable_methods(owner, required_methods):
     for method_name in required_methods:
@@ -144,7 +160,7 @@ def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_
 def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     wf = _workflow(".github/workflows/pr-check.yml")
     run_blocks = _run_text(wf)
-    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+    trigger_block = wf.get("on") or {}
 
     if isinstance(trigger_block, dict) and trigger_block:
         assert "pull_request" in trigger_block
@@ -167,7 +183,7 @@ def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
 def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
     wf = _workflow(".github/workflows/merge-simulation-hard.yml")
     run_blocks = _run_text(wf)
-    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+    trigger_block = wf.get("on") or {}
     raw = _read(".github/workflows/merge-simulation-hard.yml")
 
     if isinstance(trigger_block, dict) and trigger_block:
@@ -185,7 +201,7 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
 def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
     hard = _workflow(".github/workflows/merge-simulation-hard.yml")
     hard_raw = _read(".github/workflows/merge-simulation-hard.yml")
-    hard_trigger_block = (hard.get("on") if isinstance(hard, dict) and "_text" not in hard else None) or {}
+    hard_trigger_block = hard.get("on") or {}
     hard_run = _run_text(hard)
 
     if isinstance(hard_trigger_block, dict) and hard_trigger_block:
@@ -199,7 +215,7 @@ def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
 
     legacy = _workflow(".github/workflows/merge-simulation.yml")
     legacy_raw = _read(".github/workflows/merge-simulation.yml")
-    legacy_trigger_block = (legacy.get("on") if isinstance(legacy, dict) and "_text" not in legacy else None) or {}
+    legacy_trigger_block = legacy.get("on") or {}
     legacy_run = _run_text(legacy)
 
     assert Path(".github/workflows/merge-simulation.yml").exists()
@@ -223,7 +239,7 @@ def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
     wf = _workflow(".github/workflows/pr-guard.yml")
     raw = _read(".github/workflows/pr-guard.yml")
     run_blocks = _run_text(wf)
-    trigger_block = (wf.get("on") if isinstance(wf, dict) and "_text" not in wf else None) or {}
+    trigger_block = wf.get("on") or {}
 
     if isinstance(trigger_block, dict) and trigger_block:
         assert "pull_request" in trigger_block
@@ -285,34 +301,17 @@ def test_module_ultra_check_uses_validation_only_guardrail_runner_fail_closed():
     raw = _read(".github/workflows/_module-ultra-check.yml")
 
     target_steps = None
-    if isinstance(wf, dict) and "_text" not in wf:
-        jobs = wf.get("jobs")
-        assert isinstance(jobs, dict)
-        for job in jobs.values():
-            if not isinstance(job, dict):
-                continue
-            steps = job.get("steps")
-            if not isinstance(steps, list):
-                continue
-            if any(isinstance(s, dict) and "python scripts/guardrail_runner.py --module" in str(s.get("run", "")) for s in steps):
-                target_steps = steps
-                break
-    else:
-        runner_pos = raw.find("python scripts/guardrail_runner.py --module")
-        json_pos = raw.find("- name: Validate guardrail JSON syntax")
-        focused_pos = raw.find("- name: Run module-focused tests")
-        full_pos = raw.find("- name: Run full test suite (backstop)")
-        assert json_pos != -1
-        assert runner_pos != -1
-        assert focused_pos != -1
-        assert full_pos != -1
-        assert json_pos < runner_pos < focused_pos
-        assert json_pos < runner_pos < full_pos
-        assert "set -euo pipefail" in raw
-        assert "--run-mutations" not in raw
-        assert "--mutation-timeout-sec" not in raw
-        assert "inputs.module_path" in raw
-        return
+    jobs = wf.get("jobs")
+    assert isinstance(jobs, dict)
+    for job in jobs.values():
+        if not isinstance(job, dict):
+            continue
+        steps = job.get("steps")
+        if not isinstance(steps, list):
+            continue
+        if any(isinstance(s, dict) and "python scripts/guardrail_runner.py --module" in str(s.get("run", "")) for s in steps):
+            target_steps = steps
+            break
 
     assert isinstance(target_steps, list)
 

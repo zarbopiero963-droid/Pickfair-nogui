@@ -9,3 +9,14 @@ pytest>=7.4.0
 pytest-asyncio>=0.23.0
 pytest-cov>=4.0.0
 pytest-xdist>=3.0.0
+
+# =========================
+# LETTURA DEI WORKFLOW
+# =========================
+# tests/testsuite/test_false_green_semantics.py ispeziona i workflow PARSATI e
+# senza parser si FERMA (fail-closed). Prima degradava a un confronto testuale
+# sul file intero: le asserzioni continuavano a girare, su un bersaglio 3,1
+# volte piu' grande. Misurato: mutando merge-simulation-hard.yml perche' NON
+# lanci piu' pytest, con la parola rimasta solo nei nomi degli step, il guard
+# passava senza PyYAML e falliva con PyYAML.
+PyYAML>=6.0
