@@ -1677,6 +1677,19 @@
       ],
       "max_files": 6,
       "description": "test_false_green_semantics.py ispezionava i workflow PARSATI ma senza PyYAML restituiva un sentinel {'_text': testo} e ogni consumatore scivolava su un ramo testuale: le asserzioni continuavano a girare, su un bersaglio 3,1 volte piu' grande (46.329 caratteri contro 14.770 sui 26 workflow ispezionati). Provato per mutazione su merge-simulation-hard.yml — tolto pytest dai blocchi run:, lasciata la parola solo nei nomi degli step: con PyYAML l'assert falliva, senza PyYAML passava. E in CI PyYAML non c'era. Ora _workflow() e' fail-closed (solleva) e PyYAML e' una dipendenza dichiarata; i rami degradati, diventati irraggiungibili, sono rimossi. Il guard test_raccolta_test_senza_pyyaml.py e' sostituito da test_pyyaml_dipendenza_dichiarata.py: il suo presupposto (PyYAML assente in CI) non vale piu', e un guard che dichiara un falso e' il difetto che questa PR corregge. Costo misurato: sweep completa con/senza PyYAML sul main aggiornato -> ZERO test cambiano esito. NOTA: aggiungere una dipendenza rende STALE requirements-build-linux.lock, che blinda la toolchain di build Linux con --require-hashes. Il gate `generate` l'ha colto al primo push. Il lock e' stato rigenerato col workflow del repository (pip-compile --generate-hashes, seminato dal lock committato) e copiato dal suo stdout fra marcatori, non scritto a mano. Verificato che il seed abbia retto: confrontando i pin, l'unica differenza e' pyyaml==6.0.3 — nessun bump non richiesto inghiottito."
+    },
+    "copertura_diff_nel_prompt": {
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_copertura_diff.py"
+      ],
+      "max_files": 7,
+      "description": "I reviewer AI sono diff-only: binari, file senza patch e file oltre budget vengono SALTATI e non entrano nel prompt. L'elenco dei saltati finiva pero' solo nel COMMENTO pubblicato ('File non inviati al modello'), cioe' lo leggeva l'umano dopo: il modello vedeva un diff piu' corto e nessun avviso. Per due PR consecutive ne ha dedotto che il codice mancasse. #465: 15 file nel diff, test_codex_gate_parser.py non inviato, Fugu e Fable scrivono che 'non e' nel diff (14 file)'. #466: 6 file, test_false_green_semantics.py non inviato, Grok lo dichiara BLOCCANTE ('fail-closed non shippato'). In entrambi i casi il file c'era. blocco_copertura() porta totale/inviati/non inviati e la regola di lettura ('non verificabile, NON assente') dentro user_prompt, dove il modello la legge prima di concludere. Guard red-first: sui workflow di main 20 test falliscono; helper presente ma non interpolato nel prompt => 4 falliti; copertura messa a costante => 4 falliti; via la frase di lettura => 4 falliti; totale contato sui soli file visti => 8 falliti."
     }
   }
 }

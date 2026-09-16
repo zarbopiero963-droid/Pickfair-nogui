@@ -93,6 +93,37 @@ Configurare in *Settings → Secrets and variables → Actions*:
 commenti al bot serve *Settings → Actions → General → Workflow permissions →
 Read and write permissions*.
 
+## Copertura del diff: quello che il modello NON ha visto
+
+Un reviewer diff-only riceve le patch dei file, non il repository. Alcuni file
+restano fuori dal prompt: **binari**, file **senza patch** nella risposta della
+Compare API, e quelli che **non entrano nel budget** (`MAX_TOTAL_PATCH_CHARS`).
+
+Quell'elenco è sempre stato pubblicato, ma **solo nel commento**, nella sezione
+*«File non inviati al modello»* in fondo: cioè lo leggeva l'umano, dopo. Il
+modello vedeva un diff più corto e nessun avviso — e per due PR consecutive ne
+ha dedotto che il codice mancasse:
+
+| PR | File nel diff | File non inviato | Cosa ha concluso il reviewer |
+|---|---|---|---|
+| #465 | 15 | `tests/scripts/test_codex_gate_parser.py` | Fugu e Fable: «non è nel diff (14 file)» |
+| #466 | 6 | `tests/testsuite/test_false_green_semantics.py` | Grok, come **bloccante**: «non è nel range […] fail-closed non shippato» |
+
+In tutti e due i casi il file c'era. Un bloccante falso non è gratis: va
+smentito con l'evidenza, e se arriva dai due reviewer forti costa un altro giro
+a label, a pagamento.
+
+Per questo `blocco_copertura()` mette la stessa informazione **nel prompt**,
+dove la legge il modello prima di concludere: quanti file ha il range, quanti
+ne sono arrivati, quali no, e come vanno letti — *un file non inviato è
+**non verificabile**, non assente*. La stessa regola vale dove nel diff compare
+`[PATCH FILE TRONCATO PER BUDGET TOKEN]`: di quel file si vede solo l'inizio.
+
+Il guard `tests/guardrails/test_ai_review_copertura_diff.py` estrae la funzione
+dai workflow veri e verifica sia il contenuto del blocco sia che il valore sia
+davvero interpolato in `user_prompt` — una funzione che esiste ma non arriva al
+modello lascerebbe il difetto intatto con un test verde sopra.
+
 ## Costi e anti-doppia-review
 
 - Ogni reviewer stima e riporta i token usati e un costo indicativo nel commento.
