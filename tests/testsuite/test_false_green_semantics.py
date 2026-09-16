@@ -157,25 +157,45 @@ def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_
     _assert_no_forbidden_workflow_tokens(legacy_raw, legacy_rel)
 
 
+def _trigger_block(wf: dict, path: str) -> dict:
+    """Il blocco `on:` come MAPPA, oppure si fallisce.
+
+    Questi controlli avevano un `else` che ricadeva su una regex nel testo
+    grezzo del file. Serviva a tollerare il sentinel `{"_text": ...}`: senza
+    PyYAML `wf` non era un workflow parsato, e senza un ripiego il test
+    sarebbe esploso. Ora `_workflow()` e' fail-closed e quel ripiego non ha
+    piu' un caso legittimo da coprire.
+
+    Tenerlo sarebbe il difetto di questo file in miniatura: un `on:` che non
+    e' una mappa non vuota descrive un workflow che NON PARTE, e rispondergli
+    declassando in silenzio il controllo a una regex piu' permissiva significa
+    dichiarare verde cio' che non si e' potuto verificare.
+    """
+    blocco = wf.get("on")
+    assert isinstance(blocco, dict) and blocco, (
+        f"{path}: il blocco `on:` non e' una mappa non vuota ({blocco!r}). "
+        "Un workflow senza trigger non parte: e' un rosso, non un caso da "
+        "trattare con un controllo piu' debole."
+    )
+    return blocco
+
+
 def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     wf = _workflow(".github/workflows/pr-check.yml")
     run_blocks = _run_text(wf)
-    trigger_block = wf.get("on") or {}
+    trigger_block = _trigger_block(wf, ".github/workflows/pr-check.yml")
 
-    if isinstance(trigger_block, dict) and trigger_block:
-        assert "pull_request" in trigger_block
-        pull = trigger_block.get("pull_request")
-        if isinstance(pull, dict):
-            branches = pull.get("branches")
-            assert isinstance(branches, list)
-            assert "main" in [str(x) for x in branches]
-    else:
-        raw = _read(".github/workflows/pr-check.yml")
-        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
-        assert (
-            re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\[\s*main\s*\]", raw)
-            or re.search(r"(?ms)^\s*pull_request\s*:\s*\n(?:[ \t]+.*\n)*?[ \t]+branches\s*:\s*\n(?:[ \t]+-\s*main\s*\n)", raw)
-        )
+    assert "pull_request" in trigger_block
+    pull = trigger_block.get("pull_request")
+    assert isinstance(pull, dict), (
+        f"pr-check.yml: sotto `pull_request:` non c'e' piu' una mappa ({pull!r}), "
+        "quindi non c'e' piu' `branches`: il gate non e' piu' ancorato a main."
+    )
+    branches = pull.get("branches")
+    assert isinstance(branches, list), (
+        f"pr-check.yml: `branches` non e' una lista ({branches!r})."
+    )
+    assert "main" in [str(x) for x in branches]
 
     assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
 
@@ -183,15 +203,10 @@ def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
 def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
     wf = _workflow(".github/workflows/merge-simulation-hard.yml")
     run_blocks = _run_text(wf)
-    trigger_block = wf.get("on") or {}
-    raw = _read(".github/workflows/merge-simulation-hard.yml")
+    trigger_block = _trigger_block(wf, ".github/workflows/merge-simulation-hard.yml")
 
-    if isinstance(trigger_block, dict) and trigger_block:
-        assert "workflow_call" in trigger_block
-        assert "pull_request" in trigger_block
-    else:
-        assert re.search(r"(?m)^\s*workflow_call\s*:", raw)
-        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+    assert "workflow_call" in trigger_block
+    assert "pull_request" in trigger_block
 
     assert re.search(r"git\s+fetch\s+origin\s+main", run_blocks)
     assert re.search(r"git\s+merge\b[^\n]*origin/main", run_blocks)
@@ -201,13 +216,10 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
 def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
     hard = _workflow(".github/workflows/merge-simulation-hard.yml")
     hard_raw = _read(".github/workflows/merge-simulation-hard.yml")
-    hard_trigger_block = hard.get("on") or {}
+    hard_trigger_block = _trigger_block(hard, ".github/workflows/merge-simulation-hard.yml")
     hard_run = _run_text(hard)
 
-    if isinstance(hard_trigger_block, dict) and hard_trigger_block:
-        assert "pull_request" in hard_trigger_block or "workflow_call" in hard_trigger_block
-    else:
-        assert re.search(r"(?m)^\s*pull_request\s*:", hard_raw) or re.search(r"(?m)^\s*workflow_call\s*:", hard_raw)
+    assert "pull_request" in hard_trigger_block or "workflow_call" in hard_trigger_block
     assert re.search(r"git\s+merge\b", hard_run) or ("origin/main" in hard_run) or ("fetch-depth" in hard_raw)
     assert "pytest" in hard_run
     if "validate_guardrails.py" in hard_raw:
@@ -215,16 +227,12 @@ def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
 
     legacy = _workflow(".github/workflows/merge-simulation.yml")
     legacy_raw = _read(".github/workflows/merge-simulation.yml")
-    legacy_trigger_block = legacy.get("on") or {}
+    legacy_trigger_block = _trigger_block(legacy, ".github/workflows/merge-simulation.yml")
     legacy_run = _run_text(legacy)
 
     assert Path(".github/workflows/merge-simulation.yml").exists()
-    if isinstance(legacy_trigger_block, dict) and legacy_trigger_block:
-        assert "workflow_dispatch" in legacy_trigger_block
-        assert "pull_request" not in legacy_trigger_block
-    else:
-        assert re.search(r"(?m)^\s*workflow_dispatch\s*:", legacy_raw)
-        assert not re.search(r"(?m)^\s*pull_request\s*:", legacy_raw)
+    assert "workflow_dispatch" in legacy_trigger_block
+    assert "pull_request" not in legacy_trigger_block
     assert (
         re.search(r"git\s+merge\b", legacy_run)
         or "origin/main" in legacy_run
@@ -239,17 +247,22 @@ def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
     wf = _workflow(".github/workflows/pr-guard.yml")
     raw = _read(".github/workflows/pr-guard.yml")
     run_blocks = _run_text(wf)
-    trigger_block = wf.get("on") or {}
+    trigger_block = _trigger_block(wf, ".github/workflows/pr-guard.yml")
 
-    if isinstance(trigger_block, dict) and trigger_block:
-        assert "pull_request" in trigger_block
-        pull = trigger_block.get("pull_request")
-        if isinstance(pull, dict) and isinstance(pull.get("types"), list):
-            types = {str(x) for x in pull.get("types")}
-            for required in {"opened", "edited", "synchronize", "reopened"}:
-                assert required in types
-    else:
-        assert re.search(r"(?m)^\s*pull_request\s*:", raw)
+    assert "pull_request" in trigger_block
+    pull = trigger_block.get("pull_request")
+    assert isinstance(pull, dict), (
+        f"pr-guard.yml: sotto `pull_request:` non c'e' piu' una mappa ({pull!r}), "
+        "quindi non c'e' piu' l'elenco `types`."
+    )
+    dichiarati = pull.get("types")
+    assert isinstance(dichiarati, list), (
+        f"pr-guard.yml: `types` non e' una lista ({dichiarati!r}): senza elenco "
+        "esplicito il guard non gira su tutti gli eventi che deve coprire."
+    )
+    types = {str(x) for x in dichiarati}
+    for required in ("opened", "edited", "synchronize", "reopened"):
+        assert required in types, f"pr-guard.yml: manca il tipo di evento {required!r}"
 
     assert "set -euo pipefail" in run_blocks
     assert re.search(r"python\s+scripts/guardrail_check\.py", run_blocks)
