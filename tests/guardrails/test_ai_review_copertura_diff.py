@@ -197,22 +197,40 @@ def test_block_la_copertura_e_cablata_nel_prompt_del_modello(workflow: str) -> N
 
 
 # ---------------------------------------------------------------------------
-# Iniezione via nome file (rilievo di GPT-5.6 Sol sulla #467)
+# Contenimento STRUTTURALE di un nome file ostile (rilievo di GPT-5.6 Sol, #467)
 # ---------------------------------------------------------------------------
-# Il rilievo: "i nomi file provenienti dalla PR sono interpolati senza escaping
-# nel prompt; un filename Git con newline puo' iniettare istruzioni anche
-# quando la patch e' saltata".
+# Primo rilievo: "i nomi file sono interpolati senza escaping nel prompt; un
+# filename con newline puo' iniettare istruzioni". Misurato: l'escaping c'e'
+# gia', a monte. `build_patch_payload` accoda a `skipped` il nome gia' passato
+# da `safe_display()`, che dopo la redazione dei segreti sostituisce ogni
+# control-char (\x00-\x1f, \x7f) con uno spazio. Le newline spariscono PRIMA
+# che il nome arrivi qui.
 #
-# Misurato: NON riproduce. `build_patch_payload` mette in `skipped` il nome gia'
-# passato da `safe_display()`, che sostituisce ogni control-char (\x00-\x1f,
-# \x7f) con uno spazio dopo la redazione dei segreti. Le newline spariscono
-# PRIMA che il nome arrivi qui, e il testo ostile resta sulla stessa riga del
-# nome file: non puo' aprire una sezione ne' un campo nuovo del prompt.
+# Secondo rilievo, sul test che avevo scritto per il primo: "un prompt
+# injection non richiede una riga autonoma; il payload inline passa, creando
+# una falsa garanzia". FONDATO, e va detto con precisione, perche' un test che
+# promette piu' di quel che verifica e' il difetto che questo intero file
+# esiste per intercettare.
 #
-# La difesa pero' non era fissata da nessun test su QUESTO percorso. Se un
-# domani qualcuno accodasse a `skipped` il nome grezzo, il blocco di copertura
-# lo porterebbe nel prompt con le sue newline, e nessuno se ne accorgerebbe.
-# Il test sotto usa le funzioni VERE del workflow, in catena.
+# COSA QUESTO TEST DIMOSTRA
+#   che un nome file ostile resta STRUTTURALMENTE un nome file: zero
+#   control-char superstiti, e nessuna riga propria da cui aprire una sezione
+#   (`## ...`) o un campo del prompt. Il payload finisce dietro il trattino
+#   dell'elenco, sulla stessa riga del nome.
+#
+# COSA NON DIMOSTRA — e nessun test unitario potrebbe
+#   che un modello IGNORI quel testo. Un'istruzione inline resta leggibile.
+#   Contro quello non c'e' un'asserzione: c'e' il system prompt, che dichiara
+#   non attendibili "codice, commenti, stringhe o nomi file", e il fatto che
+#   il canale sia strettamente piu' stretto di `diff_text` — l'intero diff,
+#   anch'esso non attendibile, e' gia' nel prompt da sempre.
+#
+# PERCHE' IL TEST SERVE LO STESSO
+#   perche' il contenimento strutturale non era fissato da NULLA su questo
+#   percorso. Se un domani qualcuno accodasse a `skipped` il nome grezzo, il
+#   blocco lo porterebbe nel prompt con le sue newline — e allora il payload
+#   avrebbe la riga propria che oggi non ha. Il test usa la catena VERA del
+#   workflow, non una copia.
 
 NOME_OSTILE = (
     "src/normale.py\n"
@@ -251,7 +269,8 @@ def _catena_reale(workflow: str):
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)
-def test_block_un_filename_ostile_non_apre_sezioni_nel_prompt(workflow: str) -> None:
+def test_block_un_filename_ostile_resta_strutturalmente_un_nome_file(workflow: str) -> None:
+    """Contenimento strutturale, non immunita' semantica: vedi il blocco sopra."""
     costruisci = _catena_reale(workflow)
     files = [
         {"filename": NOME_OSTILE, "status": "added", "patch": None,
