@@ -83,18 +83,52 @@ def _assert_no_forbidden_workflow_tokens(text: str, rel: str):
         assert token not in low, rel
 
 
-def _workflow_has_trigger(rel: str, trigger_name: str) -> bool:
-    triggers = _workflow(rel).get("on") or {}
-    assert isinstance(triggers, dict), f"{rel}: blocco `on:` malformato"
-    return trigger_name in triggers
+def _trigger_block(wf: dict, path: str) -> dict:
+    """I trigger dichiarati in `on:`, normalizzati a mappa. Altrimenti si fallisce.
 
+    Questi controlli avevano un `else` che ricadeva su una regex nel testo
+    grezzo del file. Serviva a tollerare il sentinel `{"_text": ...}`: senza
+    PyYAML `wf` non era un workflow parsato, e senza un ripiego il test
+    sarebbe esploso. Ora `_workflow()` e' fail-closed e quel ripiego non ha
+    piu' un caso legittimo da coprire: un `on:` illeggibile descrive un
+    workflow che NON PARTE, e declassare in silenzio il controllo a una regex
+    piu' permissiva significa dichiarare verde cio' che non si e' verificato.
+
+    Fail-closed non vuol dire pero' pretendere UNA sola sintassi. GitHub ne
+    accetta tre, tutte valide, e il trigger dichiarato e' lo stesso::
+
+        on: pull_request           ->  {"pull_request": None}
+        on: [pull_request, push]   ->  {"pull_request": None, "push": None}
+        on: {pull_request: {...}}  ->  invariata
+
+    Scalare e lista non possono portare sotto-chiavi. Chi qui gli chiede solo
+    QUALI trigger esistono e' servito lo stesso; chi ha bisogno di `branches:`
+    o di `types:` fallira' subito dopo — ed e' un rosso GIUSTO, perche' in
+    quella forma l'invariante non e' davvero soddisfatta, non perche' la
+    sintassi non piaccia.
+    """
+    blocco = wf.get("on")
+    if isinstance(blocco, str):
+        blocco = {blocco: None}
+    elif isinstance(blocco, list):
+        blocco = {str(voce): None for voce in blocco}
+    assert isinstance(blocco, dict) and blocco, (
+        f"{path}: da `on:` non si ricava nessun trigger ({wf.get('on')!r}). "
+        "Un workflow senza trigger non parte: e' un rosso, non un caso da "
+        "trattare con un controllo piu' debole."
+    )
+    return blocco
+
+
+def _workflow_has_trigger(rel: str, trigger_name: str) -> bool:
+    return trigger_name in _trigger_block(_workflow(rel), rel)
 
 
 def _workflow_has_pull_request_closed_trigger(rel: str) -> bool:
-    triggers = _workflow(rel).get("on") or {}
-    assert isinstance(triggers, dict), f"{rel}: blocco `on:` malformato"
-    pull = triggers.get("pull_request")
+    pull = _trigger_block(_workflow(rel), rel).get("pull_request")
     if not isinstance(pull, dict):
+        # forma scalare o lista: nessun `types:`, quindi `closed` non e'
+        # dichiarato. Non e' un errore del workflow, e' una risposta: no.
         return False
     return "closed" in [str(x) for x in (pull.get("types") or [])]
 
@@ -157,29 +191,6 @@ def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_
     _assert_no_forbidden_workflow_tokens(legacy_raw, legacy_rel)
 
 
-def _trigger_block(wf: dict, path: str) -> dict:
-    """Il blocco `on:` come MAPPA, oppure si fallisce.
-
-    Questi controlli avevano un `else` che ricadeva su una regex nel testo
-    grezzo del file. Serviva a tollerare il sentinel `{"_text": ...}`: senza
-    PyYAML `wf` non era un workflow parsato, e senza un ripiego il test
-    sarebbe esploso. Ora `_workflow()` e' fail-closed e quel ripiego non ha
-    piu' un caso legittimo da coprire.
-
-    Tenerlo sarebbe il difetto di questo file in miniatura: un `on:` che non
-    e' una mappa non vuota descrive un workflow che NON PARTE, e rispondergli
-    declassando in silenzio il controllo a una regex piu' permissiva significa
-    dichiarare verde cio' che non si e' potuto verificare.
-    """
-    blocco = wf.get("on")
-    assert isinstance(blocco, dict) and blocco, (
-        f"{path}: il blocco `on:` non e' una mappa non vuota ({blocco!r}). "
-        "Un workflow senza trigger non parte: e' un rosso, non un caso da "
-        "trattare con un controllo piu' debole."
-    )
-    return blocco
-
-
 def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     wf = _workflow(".github/workflows/pr-check.yml")
     run_blocks = _run_text(wf)
@@ -188,8 +199,9 @@ def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     assert "pull_request" in trigger_block
     pull = trigger_block.get("pull_request")
     assert isinstance(pull, dict), (
-        f"pr-check.yml: sotto `pull_request:` non c'e' piu' una mappa ({pull!r}), "
-        "quindi non c'e' piu' `branches`: il gate non e' piu' ancorato a main."
+        f"pr-check.yml: sotto `pull_request:` non c'e' una mappa ({pull!r}), quindi "
+        "non c'e' `branches`: con `on:` in forma scalare o lista il gate non e' piu' "
+        "ancorato a main, e questo controllo esiste per accorgersene."
     )
     branches = pull.get("branches")
     assert isinstance(branches, list), (
@@ -252,8 +264,9 @@ def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
     assert "pull_request" in trigger_block
     pull = trigger_block.get("pull_request")
     assert isinstance(pull, dict), (
-        f"pr-guard.yml: sotto `pull_request:` non c'e' piu' una mappa ({pull!r}), "
-        "quindi non c'e' piu' l'elenco `types`."
+        f"pr-guard.yml: sotto `pull_request:` non c'e' una mappa ({pull!r}), quindi non "
+        "c'e' l'elenco `types`: con `on:` in forma scalare o lista valgono i tipi di "
+        "default (opened, synchronize, reopened) e il guard smette di girare su `edited`."
     )
     dichiarati = pull.get("types")
     assert isinstance(dichiarati, list), (
