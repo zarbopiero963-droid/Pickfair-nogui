@@ -395,6 +395,44 @@ jobs:
           def is_critical(filename: str) -> bool:
               return any(re.search(pattern, filename) for pattern in CRITICAL_PATTERNS)
 
+          def blocco_copertura(files, skipped):
+              """Dice al modello che cosa NON ha visto, e come deve leggerlo.
+
+              I reviewer sono diff-only. Un file binario, senza patch, o che non
+              entra nel budget non finisce nel prompt — e finora quell'elenco
+              viveva SOLO nel commento pubblicato, cioe' lo leggeva l'umano DOPO.
+              Il modello vedeva un diff piu' corto e nessun avviso, e piu' volte
+              ne ha dedotto che il codice MANCASSE.
+
+              Misurato, due volte di fila. Sulla #465: 15 file nel diff,
+              `tests/scripts/test_codex_gate_parser.py` non inviato; Fugu e Fable
+              hanno scritto entrambi che il file "non e' nel diff (14 file)".
+              Sulla #466: `tests/testsuite/test_false_green_semantics.py` non
+              inviato, e Grok ha dichiarato BLOCCANTE che "il fail-closed non e'
+              shippato". In tutti e due i casi il file c'era: i reviewer hanno
+              letto "saltato" come "assente", e un bloccante falso costa un giro
+              di review a pagamento piu' il tempo di smentirlo con l'evidenza.
+              """
+              non_inviati = sorted(set(skipped))
+              totale = len(files)
+              if not non_inviati:
+                  return f"COPERTURA: {totale} file nel range, tutti inviati qui sotto."
+              elenco = "\n".join(f"          - {nome}" for nome in non_inviati[:40])
+              if len(non_inviati) > 40:
+                  elenco += f"\n          - ...e altri {len(non_inviati) - 40}"
+              return (
+                  f"COPERTURA: {totale} file nel range, {totale - len(non_inviati)} inviati qui "
+                  f"sotto, {len(non_inviati)} NON inviati (binari, senza patch, o oltre il budget).\n"
+                  f"          File NON inviati:\n{elenco}\n"
+                  "          Un file NON inviato E' PRESENTE nel diff: semplicemente non lo vedi.\n"
+                  "          E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
+                  "          che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
+                  "          Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
+                  "          VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
+                  "          diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
+                  "          vedi solo l'inizio."
+              )
+
           def build_patch_payload(files):
               chunks, skipped, critical = [], [], []
               total = 0
@@ -768,6 +806,8 @@ jobs:
             niente rischi minori, niente miglioramenti opzionali, niente sezioni extra.
           """
 
+          copertura = blocco_copertura(files, skipped_files)
+
           user_prompt = f"""
           Repository: {REPO}
           PR: #{PR_NUMBER}
@@ -781,6 +821,8 @@ jobs:
 
           ## Bloccanti
           ## Verdetto finale
+
+          {copertura}
 
           Diff del range appena pushato:
           {diff_text}
