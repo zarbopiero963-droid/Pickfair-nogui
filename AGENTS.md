@@ -1345,6 +1345,27 @@ config/secrets. On these the agent:
   not merge and goes through the need-manual cycle;
 - NEVER uses urgency or "it's green anyway" as a substitute for a missing gate.
 
+**THE ONE EXCLUSION: the documents that define what the agent may merge.**
+PRs touching these stay MANUAL owner merge:
+
+- `CLAUDE.md`
+- `AGENTS.md`
+- `docs/auto_pr_flow_spec.md`
+- `docs/hard_verify_spec.md`
+
+The reason is structural, not a risk category. If the agent could merge a change
+to these files on its own, it could **progressively widen its own authority**:
+each step individually gated, the cumulative effect unbounded. An authorization
+that can rewrite itself is no longer the owner's authorization.
+
+Flagged independently by GPT-5.6 Sol and Claude Fable 5 on #469 — the very PR
+granting the autonomy. Owner decision: exclude the policy files only; everything
+else (`core/`, `.github/workflows/*`, Betfair, dutching, `order_manager`,
+config/secrets) the agent merges on its own under the gates above.
+
+On these PRs the agent gets everything green and able-to-merge, declares it, and
+leaves the merge to the owner.
+
 The per-issue override that used to lift the exclusion case by case is no longer
 needed and is withdrawn: the authorization is global and lives here.
 

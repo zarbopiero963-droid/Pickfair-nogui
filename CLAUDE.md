@@ -463,6 +463,28 @@ management, `betfair_client`/`betfair_market_api`, `dutching*`,
   mergia e passa dal ciclo need-manual;
 - non usa MAI l'urgenza o "tanto è verde" come sostituto di un gate mancante.
 
+**UNICA ESCLUSIONE: i documenti che definiscono cosa l'agente può mergiare.**
+Restano a merge MANUALE dell'owner le PR che toccano:
+
+- `CLAUDE.md`
+- `AGENTS.md`
+- `docs/auto_pr_flow_spec.md`
+- `docs/hard_verify_spec.md`
+
+Il motivo è strutturale, non di categoria di rischio. Se l'agente potesse
+mergiare da solo una modifica a questi file, potrebbe **allargare
+progressivamente la propria autorità**: ogni passo singolarmente gated, l'effetto
+cumulativo senza limite. Un'autorizzazione che può riscrivere se stessa non è
+più un'autorizzazione dell'owner.
+
+Rilevato da GPT-5.6 Sol e Claude Fable 5, indipendentemente, sulla #469 —
+la PR che concedeva l'autonomia. Decisione dell'owner: esclusi i soli
+file-policy; tutto il resto (`core/`, `.github/workflows/*`, Betfair, dutching,
+`order_manager`, config/segreti) l'agente lo mergia da solo ai gate qui sopra.
+
+Su queste PR l'agente prepara tutto verde e able-to-merge, lo dichiara, e lascia
+il merge all'owner.
+
 L'override per-issue che serviva a togliere l'esclusione caso per caso non
 serve più ed è ritirato: l'autorizzazione è globale e sta qui.
 
