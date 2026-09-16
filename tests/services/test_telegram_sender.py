@@ -25,6 +25,24 @@ class _ClientOk:
         return _Msg(321)
 
 
+class _ClientLento(_ClientOk):
+    """Come _ClientOk, ma l'invio ci mette un po' a registrarsi.
+
+    Il worker fa `self._queue.get()` PRIMA di eseguire `send_message`, e
+    `get_queue_size()` e' `qsize()`: fra il prelievo dalla coda e la chiamata
+    registrata esiste una finestra in cui la coda e' gia' vuota e l'invio non
+    e' ancora avvenuto. Su un runner carico quella finestra si allarga da
+    sola (`loop.run_until_complete` non e' istantaneo); qui la si allarga di
+    proposito, in modo deterministico, senza toccare il codice di produzione.
+    """
+
+    RITARDO = 0.3
+
+    async def send_message(self, entity, text, **kwargs):
+        time.sleep(self.RITARDO)
+        return await super().send_message(entity, text, **kwargs)
+
+
 class _ClientFail:
     async def get_entity(self, chat_id):
         return {"entity": chat_id}
@@ -481,15 +499,35 @@ def test_start_worker_logs_only_on_real_new_start(monkeypatch):
     sender.stop_worker()
 
 
-def test_worker_drains_queued_message_before_stop():
-    client = _ClientOk()
+@pytest.mark.parametrize("fabbrica_client", [_ClientOk, _ClientLento],
+                         ids=["invio-immediato", "invio-lento"])
+def test_worker_drains_queued_message_before_stop(fabbrica_client):
+    """L'attesa finisce quando il messaggio e' STATO INVIATO, non quando la coda si svuota.
+
+    L'attesa usciva su `and sender.get_queue_size() > 0`, cioe' bastava che una
+    delle due condizioni cadesse. Ma la coda si svuota PRIMA dell'invio: il
+    worker fa `_queue.get()` e solo dopo esegue `send_message`. In quella
+    finestra `get_queue_size() > 0` e' gia' falso e `send_calls` e' ancora
+    vuoto, quindi il ciclo usciva troppo presto e l'assert successivo diventava
+    `assert 0 == 1`.
+
+    Non e' teoria: ha fatto fallire `simulate-merge` sulla #466 su un diff che
+    non sfiorava Telegram, mentre il job `tests` sullo stesso commit passava.
+    Un test che arrossa a caso costa un giro di CI a ogni PR del repository,
+    su codice che non c'entra.
+
+    Il caso `invio-lento` tiene inchiodata la correzione: con la vecchia
+    clausola quel parametro fallisce in modo deterministico.
+    """
+    client = fabbrica_client()
     sender = TelegramSender(client=client, queue_maxsize=2, base_delay=0.0)
 
     try:
         assert sender.queue_message("99", "drain-me") is True
 
-        deadline = time.monotonic() + 1.0
-        while len(client.send_calls) < 1 and sender.get_queue_size() > 0:
+        # UNICA uscita oltre al timeout: l'effetto osservabile, cioe' l'invio.
+        deadline = time.monotonic() + 5.0
+        while len(client.send_calls) < 1:
             if time.monotonic() >= deadline:
                 pytest.fail("Timed out waiting for sender worker to drain queued message")
             time.sleep(0.01)

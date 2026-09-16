@@ -119,6 +119,13 @@ ne sono arrivati, quali no, e come vanno letti — *un file non inviato è
 **non verificabile**, non assente*. La stessa regola vale dove nel diff compare
 `[PATCH FILE TRONCATO PER BUDGET TOKEN]`: di quel file si vede solo l'inizio.
 
+Il blocco vive a **colonna 0**, come il resto del prompt: a runtime YAML strippa
+l'indentazione del blocco `run: |`, ma non quella scritta dentro una stringa
+Python. Un rientro di quattro o più spazi è la sintassi con cui si scrive un
+blocco di codice, e un avviso che chiede di essere letto come istruzione non
+deve somigliare a un listato — perciò l'assenza di rientro è un'invariante
+verificata, non una questione di gusto.
+
 Il guard `tests/guardrails/test_ai_review_copertura_diff.py` estrae la funzione
 dai workflow veri e verifica sia il contenuto del blocco sia che il valore sia
 davvero interpolato in `user_prompt` — una funzione che esiste ma non arriva al

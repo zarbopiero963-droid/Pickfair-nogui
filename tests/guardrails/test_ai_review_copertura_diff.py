@@ -140,6 +140,31 @@ def test_block_senza_file_saltati_non_si_allarma_nessuno(workflow: str) -> None:
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS)
+def test_block_il_blocco_non_rientra_rispetto_al_resto_del_prompt(workflow: str) -> None:
+    """Nessuna riga del blocco deve iniziare con spazi.
+
+    A runtime YAML strippa l'indentazione del blocco `run: |`, quindi il
+    prompt vive a colonna 0. Un'indentazione scritta dentro una stringa
+    Python, invece, YAML non la tocca: si vedeva solo questo blocco rientrato
+    di dieci spazi rispetto a tutto il resto.
+
+    Non e' (solo) estetica: quattro spazi o piu' sono la sintassi con cui si
+    scrive un blocco di CODICE, e un avviso che chiede di essere letto come
+    istruzione non deve somigliare a un listato. Rilievo di Claude Fable 5
+    sulla #467, marcato li' NON VERIFICABILE perche' la parte rilevante non
+    era nel diff.
+    """
+    copertura = carica_funzione(workflow)
+    for blocco in (copertura(_finti(3), ["a/b.py", "c/d.py"]), copertura(_finti(3), [])):
+        rientrate = [r for r in blocco.split("\n") if r[:1].isspace()]
+        assert not rientrate, (
+            f"{workflow}: righe rientrate nel blocco di copertura: {rientrate!r}. "
+            f"Il resto del prompt sta a colonna 0; un rientro le fa leggere come "
+            f"un blocco di codice invece che come l'avviso che sono."
+        )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
 def test_block_elenco_lungo_non_viene_troncato_in_silenzio(workflow: str) -> None:
     """Se i saltati sono tanti, il taglio dell'elenco va DICHIARATO."""
     copertura = carica_funzione(workflow)
