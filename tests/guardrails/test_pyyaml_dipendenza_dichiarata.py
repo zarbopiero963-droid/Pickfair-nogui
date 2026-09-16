@@ -83,13 +83,7 @@ def test_block_pyyaml_resta_dichiarato_fra_le_dipendenze_di_test() -> None:
     )
 
 
-def test_block_chi_dipende_da_pyyaml_si_ferma_invece_di_degradare() -> None:
-    """Il fail-closed va inchiodato qui, non solo nel file che lo implementa.
-
-    Se un domani qualcuno rimettesse un fallback testuale in `_workflow()`, la
-    suite resterebbe verde e nessuno lo saprebbe: e' precisamente il modo in cui
-    il difetto era nato.
-    """
+def _funzione_workflow() -> ast.FunctionDef:
     ASSERTIONS.assertTrue(CHI_LO_USA.is_file(), f"{CHI_LO_USA} non esiste")
     albero = ast.parse(CHI_LO_USA.read_text(encoding="utf-8"))
     funzione = next(
@@ -97,25 +91,96 @@ def test_block_chi_dipende_da_pyyaml_si_ferma_invece_di_degradare() -> None:
         None,
     )
     ASSERTIONS.assertIsNotNone(funzione, "_workflow non trovata: il file e' stato riscritto?")
+    return funzione
 
-    # Il CODICE, non la prosa: il docstring nomina il sentinel per spiegarlo, e
-    # un controllo sul testo grezzo ci cascherebbe — sarebbe un guard che legge
-    # i commenti invece di cio' che viene eseguito.
+
+def _stringhe_usate_come_dato(funzione: ast.FunctionDef) -> list[str]:
+    """Le stringhe che il codice USA, non quelle che racconta.
+
+    I messaggi d'errore vivono dentro `raise`, e nominare li' il sentinel e'
+    legittimo — serve a dire cosa non si fa piu'. Quei sottoalberi restano
+    quindi fuori, insieme al docstring: cosi' il guard misura il comportamento
+    e non la prosa, che e' la distinzione che questa PR difende. Guardare il
+    dump dell'AST per intero non bastava: ci finiva dentro anche il testo del
+    messaggio, e un messaggio onesto avrebbe fatto fallire il guard.
+    """
+    trovate: list[str] = []
+
+    class _Visita(ast.NodeVisitor):
+        def visit_Raise(self, node: ast.Raise) -> None:  # noqa: N802
+            return  # messaggio d'errore: prosa, non dato
+
+        def visit_Constant(self, node: ast.Constant) -> None:  # noqa: N802
+            if isinstance(node.value, str):
+                trovate.append(node.value)
+
     corpo = list(funzione.body)
     if corpo and isinstance(corpo[0], ast.Expr) and isinstance(corpo[0].value, ast.Constant):
         corpo = corpo[1:]
-    codice = "\n".join(ast.dump(n) for n in corpo)
+    for nodo in corpo:
+        _Visita().visit(nodo)
+    return trovate
 
-    ASSERTIONS.assertIn(
-        "RuntimeError",
-        codice,
-        "_workflow non solleva piu' quando PyYAML manca: e' tornata a degradare "
-        "in silenzio, ed e' il difetto che questo guard esiste per bloccare.",
+
+def test_block_nessun_handler_di_workflow_restituisce_un_ripiego() -> None:
+    """Il fail-closed va inchiodato qui, non solo nel file che lo implementa.
+
+    Se un domani qualcuno rimettesse un fallback in `_workflow()`, la suite
+    resterebbe verde e nessuno lo saprebbe: e' precisamente il modo in cui il
+    difetto era nato — `except Exception: return {"_text": text}`.
+
+    L'invariante e' strutturale, non lessicale: nessun gestore di eccezione di
+    `_workflow` puo' RESTITUIRE un valore, e almeno uno deve rilanciare.
+    """
+    funzione = _funzione_workflow()
+    handler = [n for n in ast.walk(funzione) if isinstance(n, ast.ExceptHandler)]
+    ASSERTIONS.assertTrue(
+        handler,
+        "_workflow non intercetta piu' l'import di PyYAML: se il file e' stato "
+        "riscritto, riscrivi anche questo guard invece di cancellarlo.",
     )
+
+    degradano = [
+        h
+        for h in handler
+        if any(isinstance(n, ast.Return) for n in ast.walk(h))
+    ]
+    ASSERTIONS.assertEqual(
+        [],
+        [ast.unparse(h).splitlines()[0] for h in degradano],
+        "un gestore di eccezione di _workflow torna a RESTITUIRE un valore "
+        "invece di fermarsi: e' il ripiego silenzioso che questo guard esiste "
+        "per bloccare. Un controllo che non puo' verificare deve sollevare.",
+    )
+
+    rilancia = any(
+        isinstance(n, ast.Raise)
+        and isinstance(n.exc, ast.Call)
+        and isinstance(n.exc.func, ast.Name)
+        and n.exc.func.id == "RuntimeError"
+        for h in handler
+        for n in ast.walk(h)
+    )
+    ASSERTIONS.assertTrue(
+        rilancia,
+        "nessun gestore di _workflow solleva piu' RuntimeError quando PyYAML "
+        "manca: senza parser il file non verifica nulla, e deve dirlo.",
+    )
+
+
+def test_block_il_sentinel_text_non_torna_come_dato_in_workflow() -> None:
+    """La chiave `_text` non deve tornare a esistere come VALORE.
+
+    Non basta che `_workflow` sollevi: se qualcuno reintroducesse il sentinel
+    su un altro ramo, i consumatori riscivolerebbero sul confronto testuale col
+    file intero — un bersaglio 3,1 volte piu' grande, fatto di commenti, nomi
+    di step, trigger ed env.
+    """
+    usate = _stringhe_usate_come_dato(_funzione_workflow())
     ASSERTIONS.assertNotIn(
         "_text",
-        codice,
-        "il sentinel `{\"_text\": ...}` e' tornato in _workflow: i consumatori "
-        "riscivolerebbero sul confronto testuale col file intero, cioe' su un "
-        "bersaglio 3,1 volte piu' grande.",
+        usate,
+        'il sentinel `{"_text": ...}` e\' tornato a essere un dato dentro '
+        "_workflow: i consumatori tornerebbero a confrontare il testo grezzo "
+        "del workflow invece della sua struttura.",
     )
