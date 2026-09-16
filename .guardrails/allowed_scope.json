@@ -1665,6 +1665,18 @@
       ],
       "max_files": 15,
       "description": "Ritiro della famiglia Codex, decisione owner del 2026-09-16. Codex era l'agente che scriveva il codice; oggi quel ruolo lo copre l'agente in sessione, e Codex e' in usage-limit permanente. I workflow continuavano a girare leggendo un servizio muto: `codex-bug-gate` in particolare girava 6273 volte pubblicando verde, ma con findings vuoti `codex_bug_gate.py --fail-on-real` esce 0 — verificato eseguendolo. Un gate il cui verde significa «il servizio tace», non «non ci sono bug». Ritirati anche `codex-comment-on-pr-conflict` (girava su `pull_request_target`, trigger privilegiato, per nessuno), `codex-activity-telegram`, `codex-comment-on-pr-check-failure` (sempre skipped), `pr-codex-monitor` (gia' disattivato) e `bootstrap-next-task` (zero run in assoluto). Registrati in test_automazioni_ritirate.py perche' non tornino; rimossi i tre script orfani col loro test, e i due test di test_false_green_semantics.py che iteravano su quei workflow — rimossi, non svuotati: un ciclo su una tupla vuota e' il test vacuo per definizione."
+    },
+    "pyyaml_fail_closed": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "requirements-build-linux.lock",
+        "requirements-test.txt",
+        "tests/guardrails/test_pyyaml_dipendenza_dichiarata.py",
+        "tests/guardrails/test_raccolta_test_senza_pyyaml.py",
+        "tests/testsuite/test_false_green_semantics.py"
+      ],
+      "max_files": 6,
+      "description": "test_false_green_semantics.py ispezionava i workflow PARSATI ma senza PyYAML restituiva un sentinel {'_text': testo} e ogni consumatore scivolava su un ramo testuale: le asserzioni continuavano a girare, su un bersaglio 3,1 volte piu' grande (46.329 caratteri contro 14.770 sui 26 workflow ispezionati). Provato per mutazione su merge-simulation-hard.yml — tolto pytest dai blocchi run:, lasciata la parola solo nei nomi degli step: con PyYAML l'assert falliva, senza PyYAML passava. E in CI PyYAML non c'era. Ora _workflow() e' fail-closed (solleva) e PyYAML e' una dipendenza dichiarata; i rami degradati, diventati irraggiungibili, sono rimossi. Il guard test_raccolta_test_senza_pyyaml.py e' sostituito da test_pyyaml_dipendenza_dichiarata.py: il suo presupposto (PyYAML assente in CI) non vale piu', e un guard che dichiara un falso e' il difetto che questa PR corregge. Costo misurato: sweep completa con/senza PyYAML sul main aggiornato -> ZERO test cambiano esito. NOTA: aggiungere una dipendenza rende STALE requirements-build-linux.lock, che blinda la toolchain di build Linux con --require-hashes. Il gate `generate` l'ha colto al primo push. Il lock e' stato rigenerato col workflow del repository (pip-compile --generate-hashes, seminato dal lock committato) e copiato dal suo stdout fra marcatori, non scritto a mano. Verificato che il seed abbia retto: confrontando i pin, l'unica differenza e' pyyaml==6.0.3 — nessun bump non richiesto inghiottito."
     }
   }
 }
