@@ -199,5 +199,5 @@ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 
 Catena coperta da ~200 unit/integration test (resolver, router, cancel-adapter,
 bridge, executor, residual-handler, trigger, copy-pattern, migrazione DB). Gate
-CI verdi su tutte le PR (codex-bug-gate, smoke, integration, e2e, guardrails).
+CI verdi su tutte le PR (smoke, integration, e2e, guardrails).
 DeepSource grade A sulle ultime PR.

@@ -58,7 +58,6 @@ MANUAL_ONLY = {
     "stateful-integrity.yml",
     "pr-guard.yml",
     "pr-overlap-guard.yml",
-    "codex-bug-gate.yml",
     "ci-master-gate.yml",
 }
 
