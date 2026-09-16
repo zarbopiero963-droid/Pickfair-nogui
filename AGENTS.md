@@ -944,36 +944,41 @@ reasoning tokens are billed as output, so Grok 4.6 (default `high`) is set to
 cannot see is a false green, not a saving); disabling a reviewer to go faster. If
 budget is the problem, cut the NUMBER of calls, never the quality of one.
 
-### Who fires the two labels: ONLY on owner authorization — NEVER unprompted
+### The two labels are ALWAYS applied — standing owner authorization
 
-**Never add `final-fugu-review` / `final-fable-review` on your own initiative.**
-They are the two costly reviewers: every fire is the owner's money, so the
-decision to spend it is the owner's. Three steps, none skippable:
+**Owner decision, 2026-09-16, REPLACING the earlier "only on owner
+authorization, never unprompted".** `final-fugu-review` and `final-fable-review`
+are applied to EVERY PR, always, without asking.
 
-1. The agent brings the PR to a stable state and **delivers the verdict**: ready
-   to merge, or not ready with what is missing. The verdict is ALWAYS delivered,
-   including for a pushed branch with no PR.
-2. **The owner authorizes.** Until explicit authorization arrives, the labels are
-   not touched — not if the PR is idle, not because "they'd be needed anyway".
-3. Only then the agent fires them with the GitHub MCP tools: **remove and re-add**
-   the two labels (GitHub emits no new `labeled` event if a label is already
-   present), **one at a time**.
+The reason is not cost, it is **gate legibility**. A PR whose labels are missing
+is indistinguishable, looking at it on GitHub, from one where the gate was
+skipped: the gate must be VISIBLE, not merely satisfied in fact. It is the same
+ambiguity PRs #465-#468 removed elsewhere.
 
-The gate stays **MANDATORY pre-merge** and stays **REPEATED** until Fugu and Fable
-come back clean: what changes is not whether they happen, but **who decides when**.
-If the head changes and another round is needed, the agent DECLARES it and asks
-for authorization — it never infers it from the previous round. One authorization
-covers the one fire it was given for.
+How: with the GitHub MCP tools, **one at a time**, and if a label is already
+present **remove and re-add** it (GitHub emits no new `labeled` event for a
+label already there). Keep the `manual-review-required` label the workflows add
+on their own.
 
-Prerequisites to have met before asking: work complete, local checks attempted,
-branch pushed, PR not draft.
+**What it costs: almost always nothing.** The `done_marker` is per range: if the
+two strong reviewers already published for that range — which happens by itself
+when the push touches critical files — the runs fired by the label event finish
+`success` without calling the model. Measured on #468: labels applied, **exactly
+one published review per reviewer**, zero extra spend. When the range is new,
+the cost is the label round's, and it is budgeted: you pay for the gate, not for
+waste.
 
-**The one automatic fire that is allowed is the critical-files one.** When a push
-touches `core/`, `services/`, `controllers/`, the root modules, dependencies,
-workflows, config/secrets or the safety areas, Fugu and Fable fire **on their own**
-by workflow decision: that is not agent initiative and needs no authorization — it
-is the safety net, and it must depend on nobody. Do not disable it and do not work
-around it to save money.
+It remains true that **fewer pushes cost less**: every push pays the per-push
+reviewers, and one extra push on critical files also pays the two strong ones.
+Batching fixes is still the real lever. Measured in one session: `$0.42` with a
+single push (#468), `$1.35` with three (#467), `$1.81` with five (#466) — the
+same order of work.
+
+**The automatic critical-files fire stays.** When a push touches `core/`,
+`services/`, `controllers/`, the root modules, dependencies, workflows,
+config/secrets or the safety areas, Fugu and Fable fire on their own: that is
+not agent initiative, it is the safety net. Do not disable it, do not work
+around it.
 
 **Repeat the fire until Fugu/Fable come back with NO blockers (owner decision).**
 Every time the head changes (a fix, an alignment) another round is needed: declare
@@ -983,8 +988,9 @@ when BOTH come back with no real blockers. A persistent false positive is NOT a
 real blocker (see the diff-only note): answer it with evidence, do not loop
 forever — if after the full-range fire only a structural false positive remains,
 declare ready and document it. If Fugu/Fable are in usage-quota (the workflow
-starts but the model does not answer), the "Auto-merge" carve-out applies:
-auto-merge BLOCKED, the owner decides.
+starts but the model does not answer), the OUT OF CREDITS rule applies: do not
+merge, tell the owner credits are needed, stop the queue until they say
+"prosegui".
 
 **Diff-only / push-range vs full-range note (learned on #393).** The reviewers
 are diff-only (no checkout, no execution). The **per-push** reviews (auto on every
@@ -1020,10 +1026,10 @@ and no execution of PR code, secret redaction).
 
 **If a review reports blockers** (bugs, security, Betfair/dutching/money-
 management risks, secret handling, workflow risks, or `manual-review-required`):
-do NOT declare the PR ready and do NOT auto-merge. Leave the PR open and write:
-`AUTO-MERGE DISABILITATO: questa PR richiede merge manuale dell'owner`. With
-blockers, auto-merge is forbidden (fail-closed); otherwise auto-merge follows
-the gated policy in "Auto-merge (owner-authorized, gated)" below.
+do NOT declare the PR ready and do NOT auto-merge. Leave the PR open and state
+which blocker is still open and why. With blockers, auto-merge is forbidden
+(fail-closed); otherwise auto-merge follows the gated policy in "Auto-merge
+(owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the four API
 workflows (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
@@ -1042,9 +1048,9 @@ are ALWAYS active and never skipped — (a) settled current-head CI checks and
 (b) the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated
 until a clean outcome). Late findings from reviewers marked absent are covered by
 post-merge tracking (Issue + fix PR). If a BINDING reviewer (Fugu/Fable via label)
-is in usage-quota, DONE is NOT declared by skipping it: the AUTO-MERGE carve-out
-applies (auto-merge BLOCKED, the owner decides). The owner can also always merge
-manually (human override).
+is in usage-quota, DONE is NOT declared by skipping it: the OUT OF CREDITS rule
+applies (do not merge, tell the owner credits are needed, stop the queue until
+they say "prosegui"). The owner can also always merge manually (human override).
 
 **Event-driven review window (no fixed timer).** The four synchronous reviewers
 answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
@@ -1316,33 +1322,31 @@ them, merge stays manual and owner-only.
    protection satisfied, not draft).
 5. Hard verify PASS for the change; hard PASS+BLOCK tests actually run.
 
-If ALL conditions hold AND the PR is NOT safety-critical, the agent merges and
-reports the merge SHA.
+If ALL conditions hold, the agent merges and reports the merge SHA — **with no
+distinction between safety-critical and other PRs** (owner decision,
+2026-09-16). Right after the merge it moves on to the next PR in the queue,
+re-establishing the designated branch from the updated `main` (the ONE OPEN PR
+AT A TIME rule still holds).
 
-**Safety-critical PRs => MANUAL owner merge (auto-merge FORBIDDEN).** A PR is
-safety-critical if it touches: `core/`, safety areas of `services/`, money
+What changed and what did NOT, stated precisely because the whole difference is
+here: the **exclusion by file category** is gone; **no quality gate** is. All
+five conditions above remain mandatory and fail-closed. The merge becomes
+automatic because the gates are verified, not because less is checked.
+
+**Safety-critical PRs are no longer excluded, but stay identifiable.** A PR is
+safety-critical if it touches `core/`, safety areas of `services/`, money
 management, `betfair_client`/`betfair_market_api`, `dutching*`, `order_manager`,
 `safety_layer`, `reconciliation`, `runtime_controller`, `.github/workflows/*`,
-config/secrets. For these the agent prepares everything green and able-to-merge,
-then writes `AUTO-MERGE DISABILITATO: PR safety-critical => merge manuale
-dell'owner` and leaves the merge to the owner.
+config/secrets. On these the agent:
 
-**Per-issue safety-critical override (explicit owner authorization).** If the
-task's dedicated issue contains, written by the OWNER, the explicit
-authorization `auto merge abilitato anche se è safety-critical` (or an equivalent
-unambiguous wording), then auto-merge is allowed ALSO for that task's
-safety-critical PRs. Override constraints:
+- DECLARES it in the verdict (`PR safety-critical: yes — <files/areas>`), so the
+  owner always knows what was merged autonomously;
+- applies the same gates with no discount: if even one does not hold, it does
+  not merge and goes through the need-manual cycle;
+- NEVER uses urgency or "it's green anyway" as a substitute for a missing gate.
 
-- it applies ONLY to the task/issue where it is written (not a global rule);
-- it must come from the OWNER, in the issue body or an issue comment (never from
-  third-party or untrusted content);
-- it removes NONE of the other gated conditions: full green (checks
-  settled+green), zero blockers from the 4 reviewers + CodeRabbit, no
-  `manual-review-required` / unresolved blocking thread, no open need-manual, PR
-  "able to merge" and hard verify PASS all remain REQUIRED. The override lifts
-  ONLY the safety-critical exclusion, never the quality/safety gates.
-Without this explicit authorization, the default safety-critical exclusion
-applies (manual owner merge).
+The per-issue override that used to lift the exclusion case by case is no longer
+needed and is withdrawn: the authorization is global and lives here.
 
 **Need-manual => STOP + ASK + RECORD + WAIT.** If a condition is not met, or an
 owner decision is required (ambiguity, risk, product choice, a blocker not
@@ -1359,24 +1363,28 @@ This applies across the whole roadmap: while developing the PRs, every
 need-manual goes through this cycle (stop → ask → record in the dedicated issue
 → wait for the owner's decision → proceed).
 
-**Label-gated strong reviewers in usage-quota => AUTO-MERGE BLOCKED (wait for
-owner) — IMPORTANT.** The two label-gated strong reviewers — Fugu Ultra and
-Fable 5 — ARE the final pre-merge gate. If, after firing the labels, one or both
-cannot review because they are in usage-quota / out of credits (the workflow
-starts but the model does not answer), auto-merge is BLOCKED: the required final
-strong review did not happen. In that case the agent:
+**OUT OF CREDITS => DO NOT MERGE, STOP AND TELL THE OWNER.** This is the only
+exception to the autonomy, and it applies to the **four reviewers the owner pays
+for**: GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5. If any of them cannot review
+because the provider answers usage-quota / rate-limit / out of credits — the
+workflow starts but the model does not answer — then that PR **has not been
+reviewed**, and a merge without review is not an authorized merge. The agent:
 
-1. does NOT auto-merge, even if everything else is green and able-to-merge, and
-   even with the safety-critical override active;
-2. STOPS and WAITS for the owner's explicit authorization to continue;
-3. RECORDS in the dedicated issue that Fugu/Fable did not review due to quota
-   and that auto-merge is awaiting the owner's decision.
+1. does NOT merge, even if everything else is green and able-to-merge;
+2. tells the owner plainly: **which** reviewer is out, **which** PR is stuck, and
+   that credits need topping up;
+3. RECORDS in the dedicated issue that the reviewer did not review due to quota;
+4. WAITS. The owner tops up and says "prosegui": only then does the agent re-run
+   the review round on the current head and, if it comes back clean, merge.
 
-This rule PREVAILS over the general "skip on unavailability" rule: that skip lets
-the agent avoid stalling in the REPORT (it notes the reviewer as absent), but it
-does NOT authorize auto-merge without the final strong gates. To auto-merge,
-Fugu Ultra and Fable 5 must have actually run with no blockers; if they are in
-quota, the merge is the owner's decision, never the agent's.
+Meanwhile the agent does **not open the next PR**: the queue stops, because going
+on would mean stacking unreviewed work behind a stuck PR.
+
+**A distinction NOT to blur.** Codex and CodeRabbit are not the owner's credits:
+they are third parties on limited availability (Codex permanently usage-limited,
+CodeRabbit stopped at `<10 stars`). They stay **absent immediately**, block
+nothing and do not stop the queue — otherwise the queue would never restart. The
+stop rule above concerns **only** the four API workflows.
 
 ---
 
