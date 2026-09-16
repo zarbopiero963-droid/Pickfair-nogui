@@ -396,20 +396,27 @@ jobs:
               totale = len(files)
               if not non_inviati:
                   return f"COPERTURA: {totale} file nel range, tutti inviati qui sotto."
-              elenco = "\n".join(f"          - {nome}" for nome in non_inviati[:40])
+              # Niente indentazione: a runtime YAML strippa quella del blocco
+              # `run: |`, quindi il resto del prompt sta a colonna 0. Dieci
+              # spazi qui dentro — che stanno in una stringa Python e YAML non
+              # tocca — facevano rientrare solo questo blocco, e un rientro di
+              # quattro o piu' spazi e' la sintassi con cui si scrive un blocco
+              # di codice: un avviso che chiede di essere LETTO non deve
+              # somigliare a un listato.
+              elenco = "\n".join(f"- {nome}" for nome in non_inviati[:40])
               if len(non_inviati) > 40:
-                  elenco += f"\n          - ...e altri {len(non_inviati) - 40}"
+                  elenco += f"\n- ...e altri {len(non_inviati) - 40}"
               return (
                   f"COPERTURA: {totale} file nel range, {totale - len(non_inviati)} inviati qui "
                   f"sotto, {len(non_inviati)} NON inviati (binari, senza patch, o oltre il budget).\n"
-                  f"          File NON inviati:\n{elenco}\n"
-                  "          Un file NON inviato E' PRESENTE nel diff: semplicemente non lo vedi.\n"
-                  "          E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
-                  "          che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
-                  "          Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
-                  "          VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
-                  "          diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
-                  "          vedi solo l'inizio."
+                  f"File NON inviati:\n{elenco}\n"
+                  "Un file NON inviato E' PRESENTE nel diff: semplicemente non lo vedi.\n"
+                  "E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
+                  "che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
+                  "Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
+                  "VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
+                  "diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
+                  "vedi solo l'inizio."
               )
 
           def build_patch_payload(files):
