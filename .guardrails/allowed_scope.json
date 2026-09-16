@@ -1644,6 +1644,27 @@
       ],
       "max_files": 4,
       "description": "Due follow-up annotati sulla #462 e mai fatti. (1) Il guard sulle chiavi jq del workflow di readiness ispezionava solo la prima riga di ogni invocazione: 7 chiavi viste su 10, ciechi sui due programmi multi-riga del riepilogo. Ora legge il programma per intero e distingue chiavi di primo livello da chiavi dell'elemento iterato. (2) `_decisione_reale` installava lo stub di `flow.pr_view` assegnando il globale a mano: passa a `monkeypatch`, e un guardrail blocca la ricomparsa del pattern nei test."
+    },
+    "ritiro_famiglia_codex": {
+      "files": [
+        ".github/workflows/bootstrap-next-task.yml",
+        ".github/workflows/codex-activity-telegram.yml",
+        ".github/workflows/codex-bug-gate.yml",
+        ".github/workflows/codex-comment-on-pr-check-failure.yml",
+        ".github/workflows/codex-comment-on-pr-conflict.yml",
+        ".github/workflows/pr-codex-monitor.yml",
+        ".guardrails/allowed_scope.json",
+        "docs/cashout_overview.md",
+        "scripts/codex_bug_gate.py",
+        "scripts/normalize_ci_triggers.py",
+        "scripts/parse_codex_review_comments.py",
+        "scripts/post_codex_gate_comment.py",
+        "tests/guardrails/test_automazioni_ritirate.py",
+        "tests/testsuite/test_false_green_semantics.py",
+        "tests/unit/test_codex_gate_parser.py"
+      ],
+      "max_files": 15,
+      "description": "Ritiro della famiglia Codex, decisione owner del 2026-09-16. Codex era l'agente che scriveva il codice; oggi quel ruolo lo copre l'agente in sessione, e Codex e' in usage-limit permanente. I workflow continuavano a girare leggendo un servizio muto: `codex-bug-gate` in particolare girava 6273 volte pubblicando verde, ma con findings vuoti `codex_bug_gate.py --fail-on-real` esce 0 — verificato eseguendolo. Un gate il cui verde significa «il servizio tace», non «non ci sono bug». Ritirati anche `codex-comment-on-pr-conflict` (girava su `pull_request_target`, trigger privilegiato, per nessuno), `codex-activity-telegram`, `codex-comment-on-pr-check-failure` (sempre skipped), `pr-codex-monitor` (gia' disattivato) e `bootstrap-next-task` (zero run in assoluto). Registrati in test_automazioni_ritirate.py perche' non tornino; rimossi i tre script orfani col loro test, e i due test di test_false_green_semantics.py che iteravano su quei workflow — rimossi, non svuotati: un ciclo su una tupla vuota e' il test vacuo per definizione."
     }
   }
 }

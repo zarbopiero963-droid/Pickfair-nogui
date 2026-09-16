@@ -59,6 +59,16 @@ RITIRATI = [
     "vps-runner-health.yml",
     "runner-watchdog-dispatch.yml",
     "selfhosted-smoke.yml",
+    # 2026-09-16: la famiglia Codex. Codex era l'agente che scriveva il codice;
+    # oggi quel ruolo lo copre l'agente in sessione, e Codex e' in usage-limit
+    # permanente — pubblica "You have reached your Codex usage limits" su ogni
+    # PR. Questi workflow continuavano a girare LEGGENDO un servizio muto.
+    "codex-bug-gate.yml",
+    "codex-activity-telegram.yml",
+    "codex-comment-on-pr-conflict.yml",
+    "codex-comment-on-pr-check-failure.yml",
+    "pr-codex-monitor.yml",
+    "bootstrap-next-task.yml",
 ]
 
 
