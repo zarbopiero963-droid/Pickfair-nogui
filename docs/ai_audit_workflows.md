@@ -156,6 +156,18 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 > marcare `manual-review-required`. Il merge NON è deciso qui: l'automazione
 > dell'agente può eseguire un **auto-merge gated** solo dopo che tutti i gate
 > documentati sono passati (vedi la sezione «AUTO-MERGE» in `CLAUDE.md` /
-> `AGENTS.md`), con esclusione delle PR safety-critical (che restano merge
-> manuale dell'owner, salvo override esplicito nella issue) e blocco se i gate
-> forti sono in usage-quota.
+> `AGENTS.md`).
+>
+> Aggiornato con la decisione dell'owner del 16-09-2026 (#469): le PR
+> safety-critical **non sono più escluse** dall'auto-merge — restano
+> riconoscibili e vanno dichiarate nel verdetto, ma si mergiano ai cinque gate
+> come le altre, e l'override per-issue che serviva a toglierle caso per caso è
+> ritirato. L'esclusione a merge manuale dell'owner vale ora per ciò che
+> **definisce o applica i gate stessi**: i quattro file-policy e i sette
+> workflow-gate (i quattro `pr-review-*.yml`, `ci-quarantine-guard.yml`,
+> `pr-guard.yml`, `pr-merge-readiness.yml`). La lista autoritativa sta nella
+> sezione «AUTO-MERGE» di `CLAUDE.md` / `AGENTS.md`: se questa nota e quella
+> sezione divergono, vale la sezione.
+>
+> Resta il blocco se un reviewer **pagato** è in usage-quota sul head corrente:
+> uno qualsiasi dei quattro, non solo i due forti a label.
