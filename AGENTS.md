@@ -1409,6 +1409,39 @@ dutching, `order_manager`, config/secrets, and the rest of
 On these PRs the agent gets everything green and able-to-merge, declares it, and
 leaves the merge to the owner.
 
+**`.guardrails/allowed_scope.json` is NOT excluded — and the reason has to be
+written down, because three reviewers out of four asked for it to be.** Sol,
+Fugu and Fable, independently, on #469. The risk they name is real: the agent
+registers its own scope there, so in principle it can widen it.
+
+The exclusion is not the way to close it, for two measured reasons. First, that
+file gates nothing in CI — `guardrail_check.py` reads ONLY `tasks.keys()` from
+it to validate the `[TASK:]` marker, never `files` nor `max_files`; the only
+consumer of `files` is `_path_conflict_safety_gate`, with caps fixed **in code**
+(`scripts/` + `tests/scripts/`, deny on `.github/workflows/`, `core/`,
+`secrets/`, `config/`). Second, **14 PRs out of 14** touch it, because this same
+policy requires registering the task key in the same PR. Excluding it would mean
+no PR is ever auto-merged — a delegation that looks granted and never applies is
+worse than the risk it would close, because it stops being verifiable.
+
+It is closed with an invariant instead, which makes widening useless rather than
+forbidden:
+
+- the task key's `files` **match the files the PR actually touches**, no more and
+  no less. A declaration wider than the diff IS a scope widening: the PR becomes
+  need-manual, however green everything else is;
+- extending the `files` of your **own** task key mid-PR is allowed only if
+  declared **explicitly** — in the verdict to the owner AND in the key's
+  `description`. Never silently;
+- modifying or removing **another** task key's entry, or the `default` section,
+  rewrites the record of what was granted elsewhere: always need-manual, never
+  auto-merge.
+
+With the invariant, widening the declaration without widening the diff buys
+nothing, and widening the diff is visible in the diff — which every gate already
+reads.
+
+
 The per-issue override that used to lift the exclusion case by case is no longer
 needed and is withdrawn: the authorization is global and lives here.
 

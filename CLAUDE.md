@@ -529,6 +529,39 @@ dell'owner: esclusi i file-policy e i sette workflow-gate; tutto il resto —
 Su queste PR l'agente prepara tutto verde e able-to-merge, lo dichiara, e lascia
 il merge all'owner.
 
+**`.guardrails/allowed_scope.json` NON è in esclusione — e il perché va scritto,
+perché tre reviewer su quattro hanno chiesto di metterlo.** Sol, Fugu e Fable,
+indipendentemente, sulla #469. Il rischio che nominano è reale: l'agente
+registra lì il proprio scope, quindi in linea di principio può allargarselo.
+
+Non si chiude con l'esclusione, per due ragioni misurate. La prima: quel file
+non gatta niente in CI — `guardrail_check.py` ne legge SOLO `tasks.keys()` per
+validare il marker `[TASK:]`, mai `files` né `max_files`; l'unico consumatore di
+`files` è `_path_conflict_safety_gate`, con cap fissi **nel codice**
+(`scripts/` + `tests/scripts/`, deny su `.github/workflows/`, `core/`,
+`secrets/`, `config/`). La seconda: **14 PR su 14** lo toccano, perché questa
+stessa policy impone di registrarci la task key nello stesso PR. Metterlo in
+esclusione vorrebbe dire che nessuna PR viene mai auto-mergiata — una delega
+che sembra concessa e non si applica mai è peggio del rischio che vorrebbe
+chiudere, perché smette di essere verificabile.
+
+Si chiude invece con un invariante, che rende l'allargamento inutile invece che
+vietato:
+
+- i `files` della task key **coincidono con i file che la PR tocca davvero**, né
+  più né meno. Una dichiarazione più larga del diff È un allargamento di scope:
+  la PR diventa need-manual, anche se tutto il resto è verde;
+- estendere i `files` della **propria** task key in corso d'opera è ammesso solo
+  se dichiarato **esplicitamente** — nel verdetto all'owner E nella
+  `description` della chiave. Mai in silenzio;
+- modificare o rimuovere la entry di un'**altra** task key, o la sezione
+  `default`, riscrive il registro di ciò che era stato concesso altrove: è
+  sempre need-manual, mai auto-merge.
+
+Con l'invariante, allargare la dichiarazione senza allargare il diff non serve a
+niente, e allargare il diff è visibile nel diff — che ogni gate già guarda.
+
+
 L'override per-issue che serviva a togliere l'esclusione caso per caso non
 serve più ed è ritirato: l'autorizzazione è globale e sta qui.
 
