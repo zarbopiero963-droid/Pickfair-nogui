@@ -499,13 +499,22 @@ progressivamente la propria autorità**: ogni passo singolarmente gated, l'effet
 cumulativo senza limite. Un'autorizzazione che può riscrivere se stessa non è
 più un'autorizzazione dell'owner.
 
-Sui workflow-gate il meccanismo è lo stesso, ed è aggravato da come girano. Le
-review partono da `pull_request_target`, cioè dal branch **base**: una PR che
-indebolisce un reviewer viene revisionata dalla versione **vecchia** del
-workflow, quella che sta togliendo. Il controllo che dovrebbe fermarla è
-esattamente quello che la PR rimuove, e se ne accorge solo dal push successivo,
-quando è già su `main`. Nessuno degli altri quattro gate copre questo caso: i
-check CI girano col workflow nuovo, e la review col vecchio.
+Sui workflow-gate il meccanismo è lo stesso, ed è aggravato da come girano —
+per due strade opposte che portano allo stesso punto.
+
+I quattro reviewer e `ci-quarantine-guard` girano da `pull_request_target`, cioè
+dal branch **base**: una PR che indebolisce un reviewer viene revisionata dalla
+versione **vecchia** del workflow, quella che sta togliendo. Il controllo che
+dovrebbe fermarla è esattamente quello che la PR rimuove, e se ne accorge solo
+dal push successivo, quando è già su `main`.
+
+`pr-guard` e `pr-merge-readiness` girano invece da `pull_request`, cioè con la
+versione **della PR stessa**: una PR che li indebolisce fa girare su di sé il
+guard già indebolito, e passa verde perché il controllo non c'è più.
+
+Il primo caso non vede la modifica, il secondo la subisce. In nessuno dei due il
+gate può accorgersi del proprio indebolimento, ed è questo che lo distingue da
+una qualsiasi altra area safety-critical.
 
 Gli altri workflow — build, packaging, test, chaos, lockfile — NON sono in
 esclusione: non decidono se una PR può essere mergiata, la verificano soltanto.

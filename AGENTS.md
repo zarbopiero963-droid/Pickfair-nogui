@@ -1380,12 +1380,21 @@ each step individually gated, the cumulative effect unbounded. An authorization
 that can rewrite itself is no longer the owner's authorization.
 
 For the workflow gates the mechanism is the same, and how they run makes it
-worse. Reviews run on `pull_request_target`, i.e. from the **base** branch: a PR
-that weakens a reviewer is reviewed by the **old** version of the workflow — the
-one it is removing. The control that should stop it is exactly the one the PR
-takes out, and that only shows up on the next push, once it is already on
-`main`. None of the other four gates covers this case: CI checks run the new
-workflow, the review runs the old one.
+worse — by two opposite routes that land in the same place.
+
+The four reviewers and `ci-quarantine-guard` run on `pull_request_target`, i.e.
+from the **base** branch: a PR that weakens a reviewer is reviewed by the
+**old** version of the workflow — the one it is removing. The control that
+should stop it is exactly the one the PR takes out, and that only shows up on
+the next push, once it is already on `main`.
+
+`pr-guard` and `pr-merge-readiness` run on plain `pull_request`, i.e. with the
+**PR's own** version: a PR that weakens them runs the already-weakened guard
+against itself, and goes green because the control is no longer there.
+
+The first case cannot see the change, the second one is subject to it. In
+neither can the gate notice its own weakening — and that is what sets these
+apart from any other safety-critical area.
 
 The other workflows — build, packaging, tests, chaos, lockfile — are NOT
 excluded: they do not decide whether a PR may be merged, they only verify it.
