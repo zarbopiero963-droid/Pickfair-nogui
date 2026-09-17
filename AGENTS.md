@@ -1036,10 +1036,13 @@ workflows (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
 Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
 rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
 wait, do not count them in the check-completion gate, do not block DONE on them.
-Owner decision: **any** reviewer in rate-limit/usage-quota is absent immediately,
-no wait and no cap-timer (see "Skip on unavailability"). The only binding final
-gate is the two strong label reviewers (Fugu Ultra + Fable 5): see "Final label
-gate".
+Owner decision: an **advisory** reviewer (CodeRabbit, Codex, Sourcery) in
+rate-limit/usage-quota is absent immediately, no wait and no cap-timer (see
+"Skip on unavailability"). For the **four paid reviewers** "do not wait" does
+NOT mean "merge anyway": you do not wait on a timer, but if one of them is dry
+**on the current head** the PR is not merged — OUT OF CREDITS applies. The only
+binding final gate is the two strong label reviewers (Fugu Ultra + Fable 5): see
+"Final label gate".
 
 **Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
 reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
@@ -1047,10 +1050,10 @@ are NOT required CI checks and do NOT replace the binding gates. The BINDING gat
 are ALWAYS active and never skipped — (a) settled current-head CI checks and
 (b) the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated
 until a clean outcome). Late findings from reviewers marked absent are covered by
-post-merge tracking (Issue + fix PR). If a BINDING reviewer (Fugu/Fable via label)
-is in usage-quota, DONE is NOT declared by skipping it: the OUT OF CREDITS rule
-applies (do not merge, tell the owner credits are needed, stop the queue until
-they say "prosegui"). The owner can also always merge manually (human override).
+post-merge tracking (Issue + fix PR). If a PAID reviewer is in usage-quota on the current
+head — any of the four, not just Fugu/Fable via label — DONE is NOT declared by
+skipping it: the OUT OF CREDITS rule applies (do not merge, tell the owner
+credits are needed, stop the queue until they say "prosegui"). The owner can also always merge manually (human override).
 
 **Event-driven review window (no fixed timer).** The four synchronous reviewers
 answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
@@ -1092,10 +1095,15 @@ treat it as ABSENT and proceed (note that it did not review).
   = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
   settled CI checks + Fugu/Fable label); if it completes in time handle its real
   findings, else post-merge. If it has already completed, handle its real findings.
-- **The 4 API workflows** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): if a round
-  reports provider usage-quota / rate-limit, that reviewer is absent for that
-  push => do not wait for it, do not count it in the check-completion gate, do
-  not block DONE on it.
+- **The 4 API workflows** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): these
+  can NOT be downgraded to absent. If a round reports provider usage-quota /
+  rate-limit, do not wait for it on a timer and do not count it in the
+  check-completion gate (the check settles anyway), but **DONE stays blocked**:
+  OUT OF CREDITS applies. The criterion is the **current head**, not the
+  individual push: merge only if all four produced a real review of the head
+  being merged (for Fugu and Fable, the full-range label round). Quota on an
+  intermediate push blocks **nothing** if that reviewer then reviewed the final
+  head; quota on the final head blocks, even if earlier pushes were clean.
 
 **Reading findings is mandatory.** On every check-in read BOTH the inline
 comments (review comments on file:line) AND the review bodies AND the PR
@@ -1345,23 +1353,49 @@ config/secrets. On these the agent:
   not merge and goes through the need-manual cycle;
 - NEVER uses urgency or "it's green anyway" as a substitute for a missing gate.
 
-**THE ONE EXCLUSION: the documents that define what the agent may merge.**
-PRs touching these stay MANUAL owner merge:
+**THE ONE EXCLUSION: whatever defines or enforces the gates themselves.** PRs
+touching any of these files stay MANUAL owner merge. They are two layers of the
+same thing — the prose that declares the gates, and the code that runs them.
+
+The documents that define what the agent may merge:
 
 - `CLAUDE.md`
 - `AGENTS.md`
 - `docs/auto_pr_flow_spec.md`
 - `docs/hard_verify_spec.md`
 
+The workflows that ARE the gates the auto-merge decision rests on:
+
+- `.github/workflows/pr-review-openrouter-gpt56-sol.yml`
+- `.github/workflows/pr-review-xai-grok46.yml`
+- `.github/workflows/pr-review-openrouter-fugu-ultra.yml`
+- `.github/workflows/pr-review-claude-fable5.yml`
+- `.github/workflows/ci-quarantine-guard.yml`
+- `.github/workflows/pr-guard.yml`
+- `.github/workflows/pr-merge-readiness.yml`
+
 The reason is structural, not a risk category. If the agent could merge a change
 to these files on its own, it could **progressively widen its own authority**:
 each step individually gated, the cumulative effect unbounded. An authorization
 that can rewrite itself is no longer the owner's authorization.
 
-Flagged independently by GPT-5.6 Sol and Claude Fable 5 on #469 — the very PR
-granting the autonomy. Owner decision: exclude the policy files only; everything
-else (`core/`, `.github/workflows/*`, Betfair, dutching, `order_manager`,
-config/secrets) the agent merges on its own under the gates above.
+For the workflow gates the mechanism is the same, and how they run makes it
+worse. Reviews run on `pull_request_target`, i.e. from the **base** branch: a PR
+that weakens a reviewer is reviewed by the **old** version of the workflow — the
+one it is removing. The control that should stop it is exactly the one the PR
+takes out, and that only shows up on the next push, once it is already on
+`main`. None of the other four gates covers this case: CI checks run the new
+workflow, the review runs the old one.
+
+The other workflows — build, packaging, tests, chaos, lockfile — are NOT
+excluded: they do not decide whether a PR may be merged, they only verify it.
+The agent merges those on its own under the gates above.
+
+Flagged on #469 independently by GPT-5.6 Sol and Claude Fable 5 (the policy
+files) and by Fugu Ultra (the workflow gates). Owner decision: exclude the
+policy files and the seven workflow gates; everything else — `core/`, Betfair,
+dutching, `order_manager`, config/secrets, and the rest of
+`.github/workflows/` — the agent merges on its own under the gates above.
 
 On these PRs the agent gets everything green and able-to-merge, declares it, and
 leaves the merge to the owner.

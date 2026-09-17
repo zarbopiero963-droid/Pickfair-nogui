@@ -333,10 +333,13 @@ i 4 workflow API (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) + CodeRabbit. Code
 Sourcery **e CodeRabbit** NON sono un gate d'attesa: se pubblicano usage-limit /
 rate-limit / usage-quota, trattali come ASSENTI (non pending) — non aspettarli,
 non contarli nel check-completion gate, non bloccare il DONE su di loro; annota
-solo che non hanno revisionato. Decisione owner: **qualunque** reviewer in
-rate-limit/usage-quota è assente da SUBITO, nessuna attesa e nessun cap-timer
-(vedi «Skip per indisponibilità»). L'unico gate finale vincolante sono i due
-reviewer forti a label (Fugu Ultra + Fable 5): vedi «Gate finale a label».
+solo che non hanno revisionato. Decisione owner: un reviewer **advisory**
+(CodeRabbit, Codex, Sourcery) in rate-limit/usage-quota è assente da SUBITO,
+nessuna attesa e nessun cap-timer (vedi «Skip per indisponibilità»). Per i
+**quattro reviewer pagati** «non aspettare» non vuol dire «mergiare lo stesso»:
+non li si aspetta a timer, ma se uno di loro è a secco **sul head corrente** la
+PR non si mergia — vale CREDITI ESAURITI. L'unico gate finale vincolante sono i
+due reviewer forti a label (Fugu Ultra + Fable 5): vedi «Gate finale a label».
 
 **Fail-closed preservato (nota anti-regressione).** Declassare ad «assente» i
 reviewer ADVISORY non disponibili (CodeRabbit/Codex/Sourcery) NON indebolisce il
@@ -345,9 +348,9 @@ gate VINCOLANTI restano SEMPRE attivi e non si saltano mai — (a) i check CI
 current-head SETTLED e (b) i due reviewer forti a label Fugu Ultra + Fable 5
 (full-range, ripetuti fino a esito pulito). I rilievi tardivi dei reviewer
 advertiti come assenti sono coperti dal tracciamento post-merge (Issue + fix PR).
-Se un reviewer VINCOLANTE (Fugu/Fable a label) è in usage-quota, NON si dichiara
-DONE saltandolo: vale la regola CREDITI ESAURITI (non si mergia, si avvisa
-l'owner, si ferma la coda). L'owner può inoltre sempre mergiare a mano (override umano).
+Se un reviewer PAGATO è in usage-quota sul head corrente — uno qualsiasi dei
+quattro, non solo Fugu/Fable a label — NON si dichiara DONE saltandolo: vale la
+regola CREDITI ESAURITI (non si mergia, si avvisa l'owner, si ferma la coda). L'owner può inoltre sempre mergiare a mano (override umano).
 
 **Finestra review event-driven (non a timer).** I quattro reviewer sincroni
 rispondono in ~1 min. **CodeRabbit NON è un gate d'attesa**: se ha già COMPLETATO
@@ -386,10 +389,16 @@ trattalo come ASSENTE e prosegui (annota che non ha revisionato).
   vincolante (il DONE poggia su check CI settled + Fugu/Fable a label); se completa
   in tempo tratta i rilievi reali, altrimenti post-merge. Se ha già completato,
   tratta i rilievi reali.
-- **I 4 workflow API** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): se un giro
-  riporta usage-quota / rate-limit del provider, quel reviewer è assente per quel
-  push => non aspettarlo, non contarlo nel check-completion gate, non bloccare il
-  DONE su di lui.
+- **I 4 workflow API** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): NON sono
+  declassabili ad assenti. Se un giro riporta usage-quota / rate-limit del
+  provider, non lo si aspetta a timer e non lo si conta nel check-completion gate
+  (il check chiude comunque), ma **il DONE resta bloccato**: vale CREDITI
+  ESAURITI. Il criterio è il **head corrente**, non il singolo push: si mergia
+  solo se tutti e quattro hanno prodotto una review reale del head che si sta
+  mergiando (per Fugu e Fable, la full-range a label). Una quota su un push
+  intermedio **non** blocca nulla se poi quel reviewer ha revisionato il head
+  finale; una quota sul head finale blocca, anche se i push precedenti erano
+  puliti.
 
 **Lettura obbligatoria dei rilievi.** A ogni check-in leggi SIA i commenti inline
 (review comments su file:riga) SIA i corpi delle review (review bodies) SIA i
@@ -463,13 +472,26 @@ management, `betfair_client`/`betfair_market_api`, `dutching*`,
   mergia e passa dal ciclo need-manual;
 - non usa MAI l'urgenza o "tanto è verde" come sostituto di un gate mancante.
 
-**UNICA ESCLUSIONE: i documenti che definiscono cosa l'agente può mergiare.**
-Restano a merge MANUALE dell'owner le PR che toccano:
+**UNICA ESCLUSIONE: ciò che definisce o applica i gate stessi.** Restano a
+merge MANUALE dell'owner le PR che toccano uno di questi file. Sono due strati
+della stessa cosa — la prosa che dichiara i gate, e il codice che li esegue.
+
+I documenti che definiscono cosa l'agente può mergiare:
 
 - `CLAUDE.md`
 - `AGENTS.md`
 - `docs/auto_pr_flow_spec.md`
 - `docs/hard_verify_spec.md`
+
+I workflow che SONO i gate su cui poggia la decisione di auto-merge:
+
+- `.github/workflows/pr-review-openrouter-gpt56-sol.yml`
+- `.github/workflows/pr-review-xai-grok46.yml`
+- `.github/workflows/pr-review-openrouter-fugu-ultra.yml`
+- `.github/workflows/pr-review-claude-fable5.yml`
+- `.github/workflows/ci-quarantine-guard.yml`
+- `.github/workflows/pr-guard.yml`
+- `.github/workflows/pr-merge-readiness.yml`
 
 Il motivo è strutturale, non di categoria di rischio. Se l'agente potesse
 mergiare da solo una modifica a questi file, potrebbe **allargare
@@ -477,10 +499,23 @@ progressivamente la propria autorità**: ogni passo singolarmente gated, l'effet
 cumulativo senza limite. Un'autorizzazione che può riscrivere se stessa non è
 più un'autorizzazione dell'owner.
 
-Rilevato da GPT-5.6 Sol e Claude Fable 5, indipendentemente, sulla #469 —
-la PR che concedeva l'autonomia. Decisione dell'owner: esclusi i soli
-file-policy; tutto il resto (`core/`, `.github/workflows/*`, Betfair, dutching,
-`order_manager`, config/segreti) l'agente lo mergia da solo ai gate qui sopra.
+Sui workflow-gate il meccanismo è lo stesso, ed è aggravato da come girano. Le
+review partono da `pull_request_target`, cioè dal branch **base**: una PR che
+indebolisce un reviewer viene revisionata dalla versione **vecchia** del
+workflow, quella che sta togliendo. Il controllo che dovrebbe fermarla è
+esattamente quello che la PR rimuove, e se ne accorge solo dal push successivo,
+quando è già su `main`. Nessuno degli altri quattro gate copre questo caso: i
+check CI girano col workflow nuovo, e la review col vecchio.
+
+Gli altri workflow — build, packaging, test, chaos, lockfile — NON sono in
+esclusione: non decidono se una PR può essere mergiata, la verificano soltanto.
+L'agente li mergia da solo ai gate qui sopra.
+
+Rilevato da GPT-5.6 Sol e Claude Fable 5 sulla #469 (i file-policy),
+indipendentemente, e da Fugu Ultra sulla stessa PR (i workflow-gate). Decisione
+dell'owner: esclusi i file-policy e i sette workflow-gate; tutto il resto —
+`core/`, Betfair, dutching, `order_manager`, config/segreti, e il resto di
+`.github/workflows/` — l'agente lo mergia da solo ai gate qui sopra.
 
 Su queste PR l'agente prepara tutto verde e able-to-merge, lo dichiara, e lascia
 il merge all'owner.
