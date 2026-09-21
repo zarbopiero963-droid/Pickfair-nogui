@@ -28,18 +28,64 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          # Fail-closed sul ref di base (rilievo Claude Fable 5, #470): tutto lo
+          # step confronta contro `origin/$PR_BASE_REF`, e i `:-main` sparsi sotto
+          # farebbero ricadere il confronto su `main` anche per una PR con base
+          # diversa — indebolendo in SILENZIO l'anti-tampering sul registro. Su
+          # `pull_request` la variabile c'e' sempre; qui si pretende comunque, che
+          # e' il punto di questa PR: niente indebolimenti silenziosi.
+          if [ -z "${PR_BASE_REF:-}" ] || [ -z "${PR_BASE_SHA:-}" ]; then
+            echo "PR_BASE_REF/PR_BASE_SHA vuoto: impossibile determinare il branch base (fail-closed)" >&2
+            exit 1
+          fi
+          # --- fine guardia base_ref ---
+
+          # Gli input del guard NON possono arrivare dalla PR (P1 Codex, #470).
+          # Lo step scrive pr_meta.json / pr_files_raw.json / allowed_scope_base.json
+          # dentro il checkout, che e' contenuto della PR. Se la PR include uno di
+          # quei nomi come SYMLINK a scripts/guardrail_check.py, la scrittura segue
+          # il link e SOSTITUISCE il guard prima che venga eseguito: il JSON generato
+          # e' un dict display Python valido, quindi `python -I scripts/guardrail_check.py`
+          # esce 0 senza produrre il report ne' validare nulla. Riprodotto:
+          #
+          #   sha del guard PRIMA: c2773096b97c6a0c
+          #   sha del guard DOPO : b8f9276d1a700475   <- sovrascritto
+          #   python -I scripts/guardrail_check.py => EXIT=0, nessun report
+          #
+          # `python -I` non difende da questo: isola cio' che il guard IMPORTA, non
+          # impedisce che il guard stesso venga rimpiazzato. Vale per tutti e tre i
+          # file, incluso quello scritto con `>` (anche il redirect segue i symlink).
+          #
+          # Non si sposta la scrittura altrove: una PR non ha ragioni legittime di
+          # contenere gli input del guard, quindi trovarceli e' un attacco o un
+          # errore, e in entrambi i casi merita uno stop visibile invece di una
+          # scrittura dirottata in silenzio. -L prende anche i symlink rotti.
+          for GUARD_INPUT in pr_meta.json pr_files_raw.json allowed_scope_base.json; do
+            if [ -e "$GUARD_INPUT" ] || [ -L "$GUARD_INPUT" ]; then
+              echo "${GUARD_INPUT} esiste gia' nel checkout: gli input del guard non possono venire dalla PR (fail-closed)" >&2
+              exit 1
+            fi
+          done
+          # --- fine guardia input generati ---
           LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
           export LATEST_COMMIT_MESSAGE
-          python - <<'PY'
+          # `-I` anche qui (rilievo Fugu Ultra, #470): questo step gira PRIMA del
+          # guard e importa json/os/subprocess. Senza isolamento il cwd — cioe' il
+          # checkout della PR — entra in sys.path, quindi un `json.py` alla ROOT
+          # esegue codice prima ancora che il guard parta. Isolare il solo guard
+          # chiudeva la porta lasciando aperta la finestra.
+          python -I - <<'PY'
           import json, os, subprocess
-          base_ref = os.environ.get("PR_BASE_REF", "") or "main"
+          base_ref = os.environ["PR_BASE_REF"]
+          base_sha = os.environ["PR_BASE_SHA"]
           commit_messages = []
           try:
               out = subprocess.check_output(
-                  ["git", "log", "--pretty=%B%x1e", f"origin/{base_ref}...HEAD"],
+                  ["git", "log", "--pretty=%B%x1e", f"{base_sha}...HEAD"],
                   text=True,
               )
               commit_messages = [x.strip() for x in out.split("\x1e") if x.strip()]
@@ -58,11 +104,51 @@ jobs:
           with open("pr_meta.json", "w", encoding="utf-8") as f:
               json.dump(meta, f)
           PY
-          git diff --name-only "origin/${PR_BASE_REF:-main}"...HEAD \
+          # --no-renames (P1 Codex, #470): con la rilevazione delle rinomine
+          # attiva, `--name-only` emette SOLO la destinazione. Una PR poteva
+          # quindi "rinominare" un file critico altrove dichiarando il solo path
+          # di arrivo, e il confronto files==diff non vedeva sparire l'origine.
+          # Disattivandola la rinomina torna a essere una coppia cancella+aggiungi
+          # e i due path vanno dichiarati entrambi.
+          #
+          # $PR_BASE_SHA e non origin/$PR_BASE_REF (P2 Codex): il checkout e' il
+          # merge-ref calcolato dall'evento, quindi il confronto deve usare lo
+          # stesso SHA immutabile. Col tip mobile del branch, un merge su main
+          # arrivato dopo l'evento comparirebbe come "chiave rimossa" e farebbe
+          # arrossare una PR che non ha toccato niente.
+          git diff --no-renames --name-only "${PR_BASE_SHA}"...HEAD \
             | jq -R -s 'split("\n") | map(select(length > 0))' \
             > pr_files_raw.json
+
+          # Copia del registro di scope dal BASE, per il confronto che
+          # guardrail_check.py fa sull'invariante `files` == diff. La estrae il
+          # workflow (che ha gia' fetch-depth: 0) e non lo script, cosi' lo
+          # script resta puro e testabile con tmp_path, come per pr_meta.json e
+          # pr_files_raw.json.
+          #
+          # Registro assente sul base => SI BLOCCA (P2 Codex, #470). La prima
+          # versione scriveva `{}` credendolo fail-closed: non lo era. Con un
+          # registro base vuoto, una PR il cui head contiene SOLO la propria
+          # chiave (che registry_tampering salta) e nessun `default` passava
+          # entrambi i controlli — exit 0, riprodotto. Un confronto impossibile
+          # non si surroga con un confronto vuoto: si dichiara e si ferma.
+          SCOPE_PATH=".guardrails/allowed_scope.json"
+          if ! git cat-file -e "${PR_BASE_SHA}:${SCOPE_PATH}" 2>/dev/null; then
+            echo "${SCOPE_PATH} assente su ${PR_BASE_SHA}: confronto col base impossibile (fail-closed)" >&2
+            exit 1
+          fi
+          git show "${PR_BASE_SHA}:${SCOPE_PATH}" > allowed_scope_base.json
 
       - name: Run guardrail check
         run: |
           set -euo pipefail
-          python scripts/guardrail_check.py
+          # `python -I` (P1 Codex, #470): l'invocazione normale mette `scripts/`
+          # in sys.path[0], quindi una PR che aggiunge `scripts/json.py` — e lo
+          # dichiara regolarmente nei propri `files`, superando l'invariante —
+          # lo fa importare al posto dello stdlib al primo `import json`, con
+          # facolta' di uscire 0 prima di qualunque validazione. Riprodotto:
+          # "il guard non ha mai girato", exit=0, CI verde.
+          # Mettere guardrail_check.py fra i file a merge manuale proteggeva il
+          # file, non le sue dipendenze. La modalita' isolata toglie la directory
+          # dello script da sys.path e ignora le variabili d'ambiente Python.
+          python -I scripts/guardrail_check.py

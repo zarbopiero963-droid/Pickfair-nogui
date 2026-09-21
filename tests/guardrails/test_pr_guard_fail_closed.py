@@ -1,7 +1,14 @@
+import copy
 import json
+import os
+import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -29,25 +36,37 @@ def _run_guard(
         json.dumps(files),
         encoding="utf-8",
     )
+    # `files` di ogni task registrato = i file cambiati sopra: dall'invariante
+    # di scope (guardrail_check.validate_declared_scope) una dichiarazione che
+    # non coincide col diff blocca, e questi test non parlano di quello —
+    # parlano di QUALI marker vengono riconosciuti come task key valide.
+    scope_files = [f["filename"] for f in files]
+    # Le chiavi sono normalizzate in minuscolo da resolve_task, quindi le
+    # varianti mixed-case dei test risolvono a queste stesse entry. Registrarle
+    # e' ora obbligatorio: un task senza entry non ha scope dichiarato.
+    task_entry = {"files": scope_files, "max_files": len(scope_files), "allow_tests": False}
+    scope = {
+        "default": {"max_files": 8, "allow_tests": True},
+        "tasks": {
+            "pr_guard": dict(task_entry),
+            "workflow_hygiene_pr1_comment_noise": dict(task_entry),
+            "claude_bug_pr1a_telegram_sender_escape_queue": dict(task_entry),
+        },
+    }
     (tmp_path / ".guardrails" / "allowed_scope.json").write_text(
-        json.dumps(
-            {
-                "default": {"max_files": 8, "allow_tests": True},
-                "tasks": {
-                    "pr_guard": {
-                        "files": [
-                            ".github/workflows/pr-guard.yml",
-                            "scripts/guardrail_check.py",
-                            ".guardrails/allowed_scope.json",
-                            "tests/guardrails/test_pr_guard_fail_closed.py",
-                        ],
-                        "max_files": 4,
-                        "allow_tests": False,
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
+        json.dumps(scope), encoding="utf-8"
+    )
+    # Copia del registro dal branch base: come il head MA SENZA la entry del
+    # task sotto test, cioe' lo stato normale — la PR ha registrato la propria
+    # chiave. Una entry identica al base significherebbe "riuso di
+    # un'autorizzazione altrui" e bloccherebbe (P1 Codex, terzo giro). La
+    # manomissione del registro e' coperta in tests/scripts/test_guardrail_check.py.
+    base = copy.deepcopy(scope)
+    marker = re.search(r"\[TASK:\s*([^\]]+)\]", title, re.I)
+    if marker:
+        base["tasks"].pop(marker.group(1).strip().lower(), None)
+    (tmp_path / "allowed_scope_base.json").write_text(
+        json.dumps(base), encoding="utf-8"
     )
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)],
@@ -126,3 +145,291 @@ def test_unknown_claude_bug_like_task_fails_closed(tmp_path: Path):
     )
     assert result.returncode != 0
     assert "Unknown TASK tag" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# La guardia sul ref di base, ESEGUITA davvero (non asserita a stringhe)
+#
+# Rilievo di Claude Fable 5 sulla #470: tutto lo step di metadata confronta
+# contro `origin/$PR_BASE_REF`, e i `:-main` sparsi al suo interno farebbero
+# ricadere il confronto su `main` anche per una PR con base diversa —
+# indebolendo in silenzio l'anti-tampering sul registro.
+#
+# Il test estrae la guardia dal workflow REALE e la manda in esecuzione a bash:
+# se un giorno qualcuno la toglie, il test non "non trova piu' la stringa" —
+# esegue quel che resta e vede che non blocca piu'.
+# ---------------------------------------------------------------------------
+
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-guard.yml"
+SENTINELLA = "# --- fine guardia base_ref ---"
+
+
+def _guardia_base_ref() -> str:
+    """Le righe dello step di metadata fino alla sentinella, dal workflow vero."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        run = step.get("run", "")
+        if SENTINELLA in run:
+            return run.split(SENTINELLA)[0]
+    raise AssertionError(
+        f"nessuno step di pr-guard.yml contiene {SENTINELLA!r}: la guardia "
+        "sul ref di base e' stata rimossa o rinominata"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+@pytest.mark.parametrize(
+    "base_ref, base_sha, atteso_blocca",
+    [
+        ("", "abc123", True),
+        ("main", "", True),
+        ("", "", True),
+        ("   ", "abc123", False),
+        ("main", "abc123", False),
+        ("release/2.0", "abc123", False),
+    ],
+    ids=["ref-vuoto-blocca", "sha-vuoto-blocca", "entrambi-vuoti-blocca",
+         "spazi-passa", "main-passa", "base-diversa-passa"],
+)
+def test_guardia_base_ref_blocca_solo_il_valore_vuoto(tmp_path, base_ref, base_sha, atteso_blocca):
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_base_ref() + "\necho OK\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""),
+           "PR_BASE_REF": base_ref, "PR_BASE_SHA": base_sha}
+    res = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, env=env, check=False
+    )
+    if atteso_blocca:
+        assert res.returncode != 0, f"la guardia NON ha bloccato con PR_BASE_REF={base_ref!r}"
+        assert "fail-closed" in res.stderr
+    else:
+        assert res.returncode == 0, f"la guardia ha bloccato a torto: {res.stderr}"
+        assert "OK" in res.stdout
+
+
+def test_la_guardia_precede_ogni_uso_del_ref_di_base():
+    """La guardia e' inutile se arriva dopo il primo uso del base."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    run = next(s["run"] for s in wf["jobs"]["guard"]["steps"] if SENTINELLA in s.get("run", ""))
+    dopo = run.split(SENTINELLA, 1)[1]
+    assert "${PR_BASE_SHA}" in dopo, (
+        "nessun uso di $PR_BASE_SHA dopo la guardia: o il confronto col base e' "
+        "sparito, o e' tornato a un riferimento mobile"
+    )
+    prima = run.split(SENTINELLA, 1)[0]
+    for riferimento in ("${PR_BASE_SHA}", "origin/${PR_BASE_REF"):
+        righe_vive = [r for r in prima.splitlines() if not r.strip().startswith("#")]
+        assert riferimento not in "\n".join(righe_vive), (
+            f"{riferimento} e' usato PRIMA della guardia: la guardia non protegge nulla"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Il guard non deve poter essere scavalcato da un modulo fratello
+#
+# P1 di Codex sulla #470, riprodotto prima di essere corretto: il workflow
+# lanciava `python scripts/guardrail_check.py`, che mette `scripts/` in
+# sys.path[0]. Una PR altrimenti auto-mergiabile poteva aggiungere
+# `scripts/json.py` — dichiarandolo regolarmente nei propri `files`, quindi
+# passando l'invariante di scope — e quel file veniva importato al posto dello
+# stdlib al primo `import json`, con facolta' di uscire 0 prima di qualunque
+# validazione.
+#
+#     ### il guard non ha mai girato: sono json.py di scripts/ ###
+#     exit=0
+#
+# Mettere `guardrail_check.py` nell'esclusione a merge manuale non bastava:
+# proteggeva il file, non le sue dipendenze.
+#
+# Il test lancia il guard con l'invocazione REALE estratta dal workflow, dentro
+# un albero avvelenato. Se qualcuno toglie l'isolamento, il test non cerca una
+# stringa: vede il guard non girare.
+# ---------------------------------------------------------------------------
+
+def _comando_del_guard() -> list[str]:
+    """La riga con cui il workflow lancia davvero guardrail_check.py."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        for riga in step.get("run", "").splitlines():
+            riga = riga.strip()
+            # I commenti nominano lo script per spiegarsi: non sono il comando.
+            if riga.startswith("#") or "guardrail_check.py" not in riga:
+                continue
+            return riga.split()
+    raise AssertionError("nessuno step di pr-guard.yml lancia scripts/guardrail_check.py")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_un_modulo_fratello_ostile_non_scavalca_il_guard(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / ".guardrails").mkdir()
+    shutil.copy(REPO_ROOT / "scripts" / "guardrail_check.py", tmp_path / "scripts")
+
+    # Il modulo ostile: si chiama come una dipendenza del guard e sta accanto a lui.
+    (tmp_path / "scripts" / "json.py").write_text(
+        "import sys\nprint('SCAVALCATO')\nsys.exit(0)\n", encoding="utf-8"
+    )
+
+    scope = {"tasks": {"k": {"files": ["scripts/json.py"], "description": "d"}}}
+    (tmp_path / "pr_meta.json").write_text(json.dumps({"title": "[TASK: k] x"}), encoding="utf-8")
+    (tmp_path / "pr_files_raw.json").write_text(json.dumps(["scripts/json.py"]), encoding="utf-8")
+    (tmp_path / ".guardrails" / "allowed_scope.json").write_text(json.dumps(scope), encoding="utf-8")
+    (tmp_path / "allowed_scope_base.json").write_text(json.dumps(scope), encoding="utf-8")
+
+    comando = _comando_del_guard()
+    comando[0] = sys.executable          # `python` del workflow -> quello dei test
+    res = subprocess.run(comando, cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert "SCAVALCATO" not in res.stdout, (
+        "il modulo fratello ostile ha rimpiazzato una dipendenza del guard: "
+        f"l'invocazione {' '.join(comando[1:])} non isola sys.path"
+    )
+    assert "PR GUARD REPORT" in res.stdout, (
+        f"il guard non ha prodotto il proprio report: stdout={res.stdout!r}"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_anche_lo_step_metadata_gira_isolato(tmp_path):
+    """Rilievo di Fugu Ultra sulla #470: l'isolamento del solo guard non basta.
+
+    Lo step che costruisce i metadati gira PRIMA del guard e importa `json`,
+    `os`, `subprocess`. Con `python - <<'PY'` il cwd — cioe' il checkout della
+    PR — finisce in sys.path, quindi un `json.py` alla ROOT del repository
+    esegue codice prima ancora che il guard parta. Riprodotto:
+
+        ### lo step metadata e' stato avvelenato: sono json.py alla root ###
+        exit=0
+
+    Avevo chiuso la porta sul guard lasciando aperta la finestra uno step prima.
+    """
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    heredoc = [s["run"] for s in wf["jobs"]["guard"]["steps"]
+               if "<<'PY'" in s.get("run", "")]
+    assert heredoc, "nessuno step di pr-guard.yml usa un heredoc python"
+
+    for run in heredoc:
+        riga = next(r.strip() for r in run.splitlines()
+                    if "<<'PY'" in r and not r.strip().startswith("#"))
+        # L'isolamento e' vano se qualcosa ha gia' spostato il cwd o iniettato
+        # un PYTHONPATH nello stesso blocco `run` (rilievo Claude Fable 5).
+        prima = run.split("<<'PY'", 1)[0]
+        vive = [r for r in prima.splitlines() if not r.strip().startswith("#")]
+        for veleno in ("cd ", "PYTHONPATH=", "PYTHONHOME="):
+            assert veleno not in "\n".join(vive), (
+                f"{veleno!r} compare prima dell'heredoc: l'isolamento di -I "
+                "non protegge da un cwd spostato o da un path iniettato"
+            )
+        assert re.search(r"python3?\s+-I\s+-\s*<<'PY'", riga), (
+            f"lo step heredoc non gira isolato: {riga!r}. Senza -I il cwd "
+            "(il checkout della PR) entra in sys.path e un json.py alla root "
+            "esegue codice prima del guard."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Gli input del guard non possono arrivare dalla PR (P1 Codex, #470).
+#
+# Lo step di metadata scrive pr_meta.json / pr_files_raw.json /
+# allowed_scope_base.json DENTRO il checkout, che e' contenuto della PR. Una PR
+# che include uno di quei nomi come symlink a scripts/guardrail_check.py fa
+# seguire il link alla scrittura e SOSTITUISCE il guard prima che parta. Il JSON
+# generato e' un dict display Python valido, quindi l'esecuzione esce 0 senza
+# produrre il report: bypass totale, check verde.
+#
+# `python -I` non c'entra e non difende: isola cio' che il guard importa, non
+# impedisce che il guard venga rimpiazzato.
+#
+# I test qui sotto ESEGUONO la guardia estratta dal workflow reale, non cercano
+# una stringa.
+# ---------------------------------------------------------------------------
+
+SENTINELLA_INPUT = "# --- fine guardia input generati ---"
+INPUT_GENERATI = ("pr_meta.json", "pr_files_raw.json", "allowed_scope_base.json")
+
+
+def _guardia_input_generati() -> str:
+    """Il segmento dello step di metadata che rifiuta gli input preesistenti."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        run = step.get("run", "")
+        if SENTINELLA_INPUT in run and SENTINELLA in run:
+            fra = run.split(SENTINELLA, 1)[1].split(SENTINELLA_INPUT, 1)[0]
+            return "set -euo pipefail\n" + fra
+    raise AssertionError(
+        f"nessuno step di pr-guard.yml contiene {SENTINELLA_INPUT!r}: la guardia "
+        "sugli input generati e' stata rimossa o rinominata"
+    )
+
+
+def _albero_col_guard(tmp_path: Path) -> Path:
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(REPO_ROOT / "scripts" / "guardrail_check.py", tmp_path / "scripts")
+    return tmp_path / "scripts" / "guardrail_check.py"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+@pytest.mark.parametrize("nome", INPUT_GENERATI)
+@pytest.mark.parametrize("come", ["symlink", "file"])
+def test_un_input_del_guard_fornito_dalla_pr_blocca(tmp_path, nome, come):
+    guard = _albero_col_guard(tmp_path)
+    vittima = tmp_path / nome
+    if come == "symlink":
+        vittima.symlink_to(Path("scripts") / "guardrail_check.py")
+    else:
+        vittima.write_text("{}", encoding="utf-8")
+
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_input_generati() + "\necho NON_BLOCCATO\n", encoding="utf-8")
+    res = subprocess.run(
+        ["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+
+    assert res.returncode != 0, (
+        f"{nome} fornito dalla PR come {come} non ha bloccato lo step: "
+        f"stdout={res.stdout!r} stderr={res.stderr!r}. Con un symlink al guard, "
+        "la scrittura successiva lo sovrascrive e il check resta verde."
+    )
+    assert "NON_BLOCCATO" not in res.stdout
+    assert nome in res.stderr, f"lo stop non nomina il file incriminato: {res.stderr!r}"
+    # Il guard deve essere ancora il guard, non i metadati.
+    assert "PR GUARD REPORT" in guard.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_la_guardia_sugli_input_non_blocca_un_checkout_pulito(tmp_path):
+    _albero_col_guard(tmp_path)
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_input_generati() + "\necho OK\n", encoding="utf-8")
+    res = subprocess.run(
+        ["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    assert res.returncode == 0, f"checkout pulito bloccato: {res.stderr!r}"
+    assert "OK" in res.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_la_guardia_precede_la_scrittura_degli_input(tmp_path):
+    """Non basta che la guardia esista: deve stare PRIMA di ogni scrittura.
+
+    Questo e' il test che vede il danno invece di cercarlo: al segmento estratto
+    dal workflow si appende una scrittura identica a quella reale, e si verifica
+    che il guard non venga toccato. Se la guardia sparisse o finisse dopo, il
+    file finirebbe sovrascritto e questo test lo direbbe.
+    """
+    guard = _albero_col_guard(tmp_path)
+    prima = guard.read_bytes()
+    (tmp_path / "pr_meta.json").symlink_to(Path("scripts") / "guardrail_check.py")
+
+    script = tmp_path / "step.sh"
+    script.write_text(
+        _guardia_input_generati()
+        + "\nprintf '%s' '{\"number\": \"999\", \"title\": \"x\"}' > pr_meta.json\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert guard.read_bytes() == prima, (
+        "scripts/guardrail_check.py e' stato sovrascritto dalla scrittura dei "
+        "metadati attraverso il symlink: la guardia non precede la scrittura"
+    )
