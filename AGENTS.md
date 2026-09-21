@@ -1421,12 +1421,11 @@ written down, because three reviewers out of four asked for it to be.** Sol,
 Fugu and Fable, independently, on #469. The risk they name is real: the agent
 registers its own scope there, so in principle it can widen it.
 
-The exclusion is not the way to close it, for two measured reasons. First, that
-file gates nothing in CI — `guardrail_check.py` reads ONLY `tasks.keys()` from
-it to validate the `[TASK:]` marker, never `files` nor `max_files`; the only
-consumer of `files` is `_path_conflict_safety_gate`, with caps fixed **in code**
-(`scripts/` + `tests/scripts/`, deny on `.github/workflows/`, `core/`,
-`secrets/`, `config/`). Second, **14 PRs out of 14** touch it, because this same
+The exclusion is not the way to close it, for two measured reasons. First, on
+its own it would buy nothing, because the caps that matter live **in code** and
+not in the JSON — `_path_conflict_safety_gate` limits to `scripts/` +
+`tests/scripts/` and denies `.github/workflows/`, `core/`, `secrets/`,
+`config/` regardless. Second, **14 PRs out of 14** touch it, because this same
 policy requires registering the task key in the same PR. Excluding it would mean
 no PR is ever auto-merged — a delegation that looks granted and never applies is
 worse than the risk it would close, because it stops being verifiable.

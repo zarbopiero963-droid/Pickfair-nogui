@@ -192,11 +192,14 @@ def validate_task_selection(task: str | None, critical_touched: list[str], allow
 SCOPE_REGISTRY = ".guardrails/allowed_scope.json"
 SCOPE_REGISTRY_BASE = "allowed_scope_base.json"
 
-# `task_file_change` non e' una chiave del registro: e' il task sintetico delle
-# PR dedotte dai soli file-task, che validate_task_selection tiene gia' fuori
-# dai file critici. Non ha `files` da confrontare, quindi l'invariante di scope
-# non si applica — ma il controllo sul registro sotto si', ed e' quello che
-# impedisce di usarlo per allargare le chiavi altrui.
+# `task_file_change` e' il task sintetico delle PR dedotte dai soli file-task.
+# NON e' esente dall'invariante di scope, e la prima versione di questo guard
+# sbagliava a esentarlo (P1 Codex, #470): `validate_task_selection` lo tiene
+# fuori solo da CRITICAL_FILES, che NON contiene `.github/workflows/*` — quindi
+# una PR con un file sotto `ops/tasks/` piu' un workflow-gate risolveva al task
+# sintetico e saltava il controllo sull'INTERO diff. Proprio il caso che questo
+# guard esiste per chiudere. Ora non ha entry nel registro, quindi non ha scope
+# dichiarato, quindi blocca come qualunque altro task non registrato.
 SYNTHETIC_TASK = "task_file_change"
 
 
@@ -266,16 +269,18 @@ def validate_declared_scope(task: str | None, changed_files: list[str], allowed_
     vincolo affidato alla sola dichiarazione dell'agente, su un file che
     l'agente stesso scrive, non e' un vincolo.
     """
-    if task == SYNTHETIC_TASK:
-        info(f"Scope invariant: N/A per il task sintetico '{SYNTHETIC_TASK}'")
-        return
-
     declared = declared_scope_for(task, allowed_scope)
     if declared is None:
+        extra = (
+            f" Il task sintetico '{SYNTHETIC_TASK}' non fa eccezione: una PR "
+            "dedotta dai file-task puo' toccare qualunque altro file, inclusi i "
+            "workflow-gate, e deve dichiarare il proprio scope come ogni altra."
+            if task == SYNTHETIC_TASK else ""
+        )
         fail(
             f"TASK '{task}' non ha una entry in {SCOPE_REGISTRY}. "
             "Nessuno scope dichiarato = scope illimitato: registra la chiave "
-            "coi suoi `files` nello STESSO PR (fail-closed)."
+            f"coi suoi `files` nello STESSO PR (fail-closed).{extra}"
         )
 
     fuori, non_toccati = scope_mismatch(declared, changed_files)
@@ -297,15 +302,57 @@ def validate_declared_scope(task: str | None, changed_files: list[str], allowed_
     info(f"Scope invariant: `files` di '{task}' coincide col diff ({len(declared)} file)")
 
 
-def validate_registry_untouched_elsewhere(task: str | None, changed_files: list[str], allowed_scope: dict) -> None:
-    """Se la PR tocca il registro, il confronto col base e' obbligatorio."""
+def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict | None) -> None:
+    """Riscrivere i `files` della PROPRIA chiave va DICHIARATO, non fatto e basta.
+
+    `registry_tampering` salta la entry del task corrente — e deve, perche' la
+    policy impone a ogni PR di registrarsi li'. Ma cosi', da sola, bastava
+    mettere nel marker una chiave gia' esistente e sostituirne i `files` col
+    proprio diff: l'invariante vedeva coincidenza esatta e il guard passava
+    (P1 Codex, #470). La policy chiede gia' che un'estensione in corso d'opera
+    sia dichiarata nella `description` della chiave; qui quella richiesta
+    smette di essere prosa.
+
+    Limite dichiarato: il guard verifica che la `description` sia CAMBIATA
+    insieme ai `files`, non che dica il vero. Trasforma una riscrittura muta in
+    una dichiarata — che e' ispezionabile — non in una impossibile.
+    """
+    if base_scope is None or not task:
+        return
+    base_entry = (base_scope.get("tasks") or {}).get(task)
+    head_entry = (scope.get("tasks") or {}).get(task)
+    if not isinstance(base_entry, dict) or not isinstance(head_entry, dict):
+        # Chiave nuova: e' una registrazione, non un allargamento. Niente da
+        # dichiarare, perche' non c'e' nulla di precedente.
+        return
+    if base_entry.get("files") == head_entry.get("files"):
+        return
+    if base_entry.get("description") != head_entry.get("description"):
+        info(f"Scope di '{task}' esteso e dichiarato nella description: OK")
+        return
+    fail(
+        f"I `files` di '{task}' cambiano rispetto al base, ma la sua "
+        "`description` e' identica: un'estensione di scope non dichiarata. "
+        "Scrivi nella description cosa hai aggiunto e perche', oppure usa una "
+        "chiave nuova per un lavoro nuovo."
+    )
+
+
+def load_base_registry(changed_files: list[str]) -> dict | None:
+    """Il registro come sta sul branch base, o ``None`` se la PR non lo tocca."""
     if SCOPE_REGISTRY not in {str(c).strip() for c in changed_files}:
         info("Registro non toccato dalla PR: confronto col base non necessario")
-        return
-
+        return None
     base_scope = load_json(SCOPE_REGISTRY_BASE)
     if not isinstance(base_scope, dict):
         fail(f"{SCOPE_REGISTRY_BASE} deve contenere un oggetto JSON")
+    return base_scope
+
+
+def validate_registry_untouched_elsewhere(task: str | None, base_scope: dict | None, allowed_scope: dict) -> None:
+    """Il registro non si tocca fuori dalla entry del task corrente."""
+    if base_scope is None:
+        return
 
     violazioni = registry_tampering(task, allowed_scope, base_scope)
     if violazioni:
@@ -360,8 +407,10 @@ def main() -> int:
 
     print()
     scope_obj = allowed_scope if isinstance(allowed_scope, dict) else {}
+    base_scope = load_base_registry(changed_files)
     validate_declared_scope(task, changed_files, scope_obj)
-    validate_registry_untouched_elsewhere(task, changed_files, scope_obj)
+    validate_own_entry_declared(task, scope_obj, base_scope)
+    validate_registry_untouched_elsewhere(task, base_scope, scope_obj)
     if ignored_candidates:
         warn(f"Ignored placeholder/invalid TASK markers: {ignored_candidates}")
 

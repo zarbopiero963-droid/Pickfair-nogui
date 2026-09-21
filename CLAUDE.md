@@ -541,12 +541,11 @@ perché tre reviewer su quattro hanno chiesto di metterlo.** Sol, Fugu e Fable,
 indipendentemente, sulla #469. Il rischio che nominano è reale: l'agente
 registra lì il proprio scope, quindi in linea di principio può allargarselo.
 
-Non si chiude con l'esclusione, per due ragioni misurate. La prima: quel file
-non gatta niente in CI — `guardrail_check.py` ne legge SOLO `tasks.keys()` per
-validare il marker `[TASK:]`, mai `files` né `max_files`; l'unico consumatore di
-`files` è `_path_conflict_safety_gate`, con cap fissi **nel codice**
-(`scripts/` + `tests/scripts/`, deny su `.github/workflows/`, `core/`,
-`secrets/`, `config/`). La seconda: **14 PR su 14** lo toccano, perché questa
+Non si chiude con l'esclusione, per due ragioni misurate. La prima: da sola non
+servirebbe, perché i cap che contano stanno **nel codice** e non nel JSON —
+`_path_conflict_safety_gate` limita comunque a `scripts/` + `tests/scripts/` e
+nega `.github/workflows/`, `core/`, `secrets/`, `config/`. La seconda: **14 PR
+su 14** lo toccano, perché questa
 stessa policy impone di registrarci la task key nello stesso PR. Metterlo in
 esclusione vorrebbe dire che nessuna PR viene mai auto-mergiata — una delega
 che sembra concessa e non si applica mai è peggio del rischio che vorrebbe

@@ -1,8 +1,12 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
+import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -149,12 +153,6 @@ def test_unknown_claude_bug_like_task_fails_closed(tmp_path: Path):
 # esegue quel che resta e vede che non blocca piu'.
 # ---------------------------------------------------------------------------
 
-import shutil
-
-import pytest
-
-import yaml
-
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-guard.yml"
 SENTINELLA = "# --- fine guardia base_ref ---"
 
@@ -174,14 +172,23 @@ def _guardia_base_ref() -> str:
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
 @pytest.mark.parametrize(
-    "base_ref, atteso_blocca",
-    [("", True), ("   ", False), ("main", False), ("release/2.0", False)],
-    ids=["vuoto-blocca", "spazi-passa", "main-passa", "base-diversa-passa"],
+    "base_ref, base_sha, atteso_blocca",
+    [
+        ("", "abc123", True),
+        ("main", "", True),
+        ("", "", True),
+        ("   ", "abc123", False),
+        ("main", "abc123", False),
+        ("release/2.0", "abc123", False),
+    ],
+    ids=["ref-vuoto-blocca", "sha-vuoto-blocca", "entrambi-vuoti-blocca",
+         "spazi-passa", "main-passa", "base-diversa-passa"],
 )
-def test_guardia_base_ref_blocca_solo_il_valore_vuoto(tmp_path, base_ref, atteso_blocca):
+def test_guardia_base_ref_blocca_solo_il_valore_vuoto(tmp_path, base_ref, base_sha, atteso_blocca):
     script = tmp_path / "guardia.sh"
     script.write_text(_guardia_base_ref() + "\necho OK\n", encoding="utf-8")
-    env = {"PATH": os.environ.get("PATH", ""), "PR_BASE_REF": base_ref}
+    env = {"PATH": os.environ.get("PATH", ""),
+           "PR_BASE_REF": base_ref, "PR_BASE_SHA": base_sha}
     res = subprocess.run(
         ["bash", str(script)], capture_output=True, text=True, env=env, check=False
     )
@@ -194,9 +201,82 @@ def test_guardia_base_ref_blocca_solo_il_valore_vuoto(tmp_path, base_ref, atteso
 
 
 def test_la_guardia_precede_ogni_uso_del_ref_di_base():
-    """La guardia e' inutile se arriva dopo il primo `origin/$PR_BASE_REF`."""
+    """La guardia e' inutile se arriva dopo il primo uso del base."""
     wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
     run = next(s["run"] for s in wf["jobs"]["guard"]["steps"] if SENTINELLA in s.get("run", ""))
-    assert run.index(SENTINELLA) < run.index("origin/${PR_BASE_REF"), (
-        "la guardia sul ref di base arriva DOPO il primo uso di origin/$PR_BASE_REF"
+    dopo = run.split(SENTINELLA, 1)[1]
+    assert "${PR_BASE_SHA}" in dopo, (
+        "nessun uso di $PR_BASE_SHA dopo la guardia: o il confronto col base e' "
+        "sparito, o e' tornato a un riferimento mobile"
+    )
+    prima = run.split(SENTINELLA, 1)[0]
+    for riferimento in ("${PR_BASE_SHA}", "origin/${PR_BASE_REF"):
+        righe_vive = [r for r in prima.splitlines() if not r.strip().startswith("#")]
+        assert riferimento not in "\n".join(righe_vive), (
+            f"{riferimento} e' usato PRIMA della guardia: la guardia non protegge nulla"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Il guard non deve poter essere scavalcato da un modulo fratello
+#
+# P1 di Codex sulla #470, riprodotto prima di essere corretto: il workflow
+# lanciava `python scripts/guardrail_check.py`, che mette `scripts/` in
+# sys.path[0]. Una PR altrimenti auto-mergiabile poteva aggiungere
+# `scripts/json.py` — dichiarandolo regolarmente nei propri `files`, quindi
+# passando l'invariante di scope — e quel file veniva importato al posto dello
+# stdlib al primo `import json`, con facolta' di uscire 0 prima di qualunque
+# validazione.
+#
+#     ### il guard non ha mai girato: sono json.py di scripts/ ###
+#     exit=0
+#
+# Mettere `guardrail_check.py` nell'esclusione a merge manuale non bastava:
+# proteggeva il file, non le sue dipendenze.
+#
+# Il test lancia il guard con l'invocazione REALE estratta dal workflow, dentro
+# un albero avvelenato. Se qualcuno toglie l'isolamento, il test non cerca una
+# stringa: vede il guard non girare.
+# ---------------------------------------------------------------------------
+
+def _comando_del_guard() -> list[str]:
+    """La riga con cui il workflow lancia davvero guardrail_check.py."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        for riga in step.get("run", "").splitlines():
+            riga = riga.strip()
+            # I commenti nominano lo script per spiegarsi: non sono il comando.
+            if riga.startswith("#") or "guardrail_check.py" not in riga:
+                continue
+            return riga.split()
+    raise AssertionError("nessuno step di pr-guard.yml lancia scripts/guardrail_check.py")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_un_modulo_fratello_ostile_non_scavalca_il_guard(tmp_path):
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / ".guardrails").mkdir()
+    shutil.copy(REPO_ROOT / "scripts" / "guardrail_check.py", tmp_path / "scripts")
+
+    # Il modulo ostile: si chiama come una dipendenza del guard e sta accanto a lui.
+    (tmp_path / "scripts" / "json.py").write_text(
+        "import sys\nprint('SCAVALCATO')\nsys.exit(0)\n", encoding="utf-8"
+    )
+
+    scope = {"tasks": {"k": {"files": ["scripts/json.py"], "description": "d"}}}
+    (tmp_path / "pr_meta.json").write_text(json.dumps({"title": "[TASK: k] x"}), encoding="utf-8")
+    (tmp_path / "pr_files_raw.json").write_text(json.dumps(["scripts/json.py"]), encoding="utf-8")
+    (tmp_path / ".guardrails" / "allowed_scope.json").write_text(json.dumps(scope), encoding="utf-8")
+    (tmp_path / "allowed_scope_base.json").write_text(json.dumps(scope), encoding="utf-8")
+
+    comando = _comando_del_guard()
+    comando[0] = sys.executable          # `python` del workflow -> quello dei test
+    res = subprocess.run(comando, cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert "SCAVALCATO" not in res.stdout, (
+        "il modulo fratello ostile ha rimpiazzato una dipendenza del guard: "
+        f"l'invocazione {' '.join(comando[1:])} non isola sys.path"
+    )
+    assert "PR GUARD REPORT" in res.stdout, (
+        f"il guard non ha prodotto il proprio report: stdout={res.stdout!r}"
     )
