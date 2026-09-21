@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -55,12 +56,17 @@ def _run_guard(
     (tmp_path / ".guardrails" / "allowed_scope.json").write_text(
         json.dumps(scope), encoding="utf-8"
     )
-    # Copia del registro dal branch base. Identica al head: questi test non
-    # riguardano la manomissione del registro (quella e' coperta in
-    # tests/scripts/test_guardrail_check.py), ma senza la copia il confronto
-    # e' impossibile e il gate blocca fail-closed.
+    # Copia del registro dal branch base: come il head MA SENZA la entry del
+    # task sotto test, cioe' lo stato normale — la PR ha registrato la propria
+    # chiave. Una entry identica al base significherebbe "riuso di
+    # un'autorizzazione altrui" e bloccherebbe (P1 Codex, terzo giro). La
+    # manomissione del registro e' coperta in tests/scripts/test_guardrail_check.py.
+    base = copy.deepcopy(scope)
+    marker = re.search(r"\[TASK:\s*([^\]]+)\]", title, re.I)
+    if marker:
+        base["tasks"].pop(marker.group(1).strip().lower(), None)
     (tmp_path / "allowed_scope_base.json").write_text(
-        json.dumps(scope), encoding="utf-8"
+        json.dumps(base), encoding="utf-8"
     )
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)],

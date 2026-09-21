@@ -27,6 +27,7 @@ e cosa NON fa):
 from __future__ import annotations
 
 import json
+import re
 from unittest import TestCase
 
 import pytest
@@ -268,12 +269,18 @@ def _write_gate_inputs(tmp_path, *, meta, files, scope):
     guard_dir = tmp_path / ".guardrails"
     guard_dir.mkdir(exist_ok=True)
     (guard_dir / "allowed_scope.json").write_text(json.dumps(scope), encoding="utf-8")
-    # La copia base: identica al head, cioe' nessuna manomissione del registro.
-    # La scrive il helper perche' dal secondo giro di Codex la PR DEVE toccare
-    # il registro, quindi il confronto col base e' sempre richiesto. I test che
-    # parlano proprio di manomissione la sovrascrivono via
-    # `_write_gate_inputs_con_base`.
-    (tmp_path / "allowed_scope_base.json").write_text(json.dumps(scope), encoding="utf-8")
+    # La copia base: come il head MA SENZA la entry del task corrente, cioe' lo
+    # stato normale — questa PR ha registrato la propria chiave. Dal terzo giro
+    # di Codex una entry identica al base significa "sto riusando
+    # un'autorizzazione di qualcun altro" e blocca, quindi il default del helper
+    # deve rappresentare il caso legittimo. I test che parlano di manomissione o
+    # di riuso sovrascrivono via `_write_gate_inputs_con_base`.
+    import copy as _copy
+    base = _copy.deepcopy(scope)
+    marker = re.search(r"\[TASK:\s*([^\]]+)\]", str(meta.get("title", "")), re.I)
+    if marker and isinstance(base.get("tasks"), dict):
+        base["tasks"].pop(marker.group(1).strip().lower(), None)
+    (tmp_path / "allowed_scope_base.json").write_text(json.dumps(base), encoding="utf-8")
 
 
 def test_main_pass_with_registered_task(tmp_path, monkeypatch):
@@ -468,7 +475,10 @@ def test_main_passa_quando_files_coincide_col_diff(tmp_path, monkeypatch):
         meta={"title": "[TASK: k] x"},
         files=[".guardrails/allowed_scope.json", "a.py"],
         scope=coincide,
-        base_scope=coincide,
+        # Sul base la chiave non c'e': l'ha registrata questa PR, che e' il caso
+        # normale. Una entry identica al base sarebbe riuso di un'autorizzazione
+        # altrui e bloccherebbe (vedi test_main_blocca_la_entry_identica_al_base).
+        base_scope={"tasks": {}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
@@ -654,11 +664,42 @@ def test_main_blocca_il_riuso_di_una_chiave_storica_senza_registrarla(tmp_path, 
         "files": ["core/trading_engine.py", "core/runtime_controller.py", "order_manager.py"],
         "description": "autorizzazione di mesi fa",
     }}}
-    _write_gate_inputs(
+    _write_gate_inputs_con_base(
         tmp_path,
         meta={"title": "[TASK: lifecycle] lavoro tutt'altro"},
         files=["core/trading_engine.py", "core/runtime_controller.py", "order_manager.py"],
         scope=storica,
+        base_scope=storica,     # la chiave esiste da prima, e nessuno l'ha aggiornata
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_la_entry_identica_al_base(tmp_path, monkeypatch):
+    """P1 Codex (terzo giro): il path nel diff non prova una registrazione.
+
+    Avevo chiuso il riuso di chiavi storiche pretendendo che
+    `.guardrails/allowed_scope.json` fosse nel diff. Ma un cambio di soli
+    permessi — `chmod +x` — mette il path nel `git diff --name-only` senza
+    toccare un byte del contenuto: la entry resta identica al base e il riuso
+    passa lo stesso. Codex l'ha riprodotto con `exposure_total_clamp_m06`.
+
+    La verifica giusta e' semantica, non di presenza: la entry del task DEVE
+    differire dal base — o e' nuova, o e' stata aggiornata qui.
+    """
+    identica = {"tasks": {"exposure_total_clamp_m06": {
+        "files": [".guardrails/allowed_scope.json", "core/table_manager.py",
+                  "tests/unit/test_table_manager_exposure_clamp.py"],
+        "description": "autorizzazione di mesi fa, intatta",
+    }}}
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: exposure_total_clamp_m06] lavoro tutt'altro"},
+        files=[".guardrails/allowed_scope.json", "core/table_manager.py",
+               "tests/unit/test_table_manager_exposure_clamp.py"],
+        scope=identica,
+        base_scope=identica,          # byte per byte uguale: nessuna registrazione
     )
     monkeypatch.chdir(tmp_path)
     with ASSERTIONS.assertRaises(SystemExit):

@@ -321,6 +321,22 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict)
         return
     base_entry = (base_scope.get("tasks") or {}).get(task)
     head_entry = (scope.get("tasks") or {}).get(task)
+
+    # La registrazione dev'essere MATERIALE, non apparente (P1 Codex, terzo
+    # giro, #470). La versione precedente pretendeva che il path del registro
+    # fosse nel diff: ma un `chmod +x .guardrails/allowed_scope.json` lo mette
+    # nel `git diff --name-only` senza toccare un byte, e il riuso di una
+    # chiave storica passava lo stesso — riprodotto su `exposure_total_clamp_m06`.
+    # La domanda giusta non e' "il file e' nel diff" ma "questa chiave e' stata
+    # registrata o aggiornata QUI".
+    if base_entry == head_entry:
+        fail(
+            f"La entry di '{task}' e' identica a quella sul branch base: questa "
+            "PR non ha registrato ne' aggiornato la propria task key, sta "
+            "riusando un'autorizzazione concessa a un lavoro diverso. La policy "
+            "chiede di registrare la chiave NELLO STESSO PR."
+        )
+
     if not isinstance(base_entry, dict) or not isinstance(head_entry, dict):
         # Chiave nuova: e' una registrazione, non un allargamento. Niente da
         # dichiarare, perche' non c'e' nulla di precedente.
@@ -339,22 +355,7 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict)
 
 
 def load_base_registry(changed_files: list[str]) -> dict:
-    """Il registro come sta sul branch base.
-
-    La PR DEVE toccare il registro (P1 Codex, #470). Non e' una comodita' di
-    implementazione: e' la policy — «registra SEMPRE la task key in
-    `.guardrails/allowed_scope.json` NELLO STESSO PR». Senza questo vincolo
-    bastava mettere nel marker una chiave vecchia e toccare esattamente i file
-    che quella chiave si era fatta autorizzare mesi prima: nessuna copia base da
-    confrontare, coincidenza con la entry storica, e il gate approvava lavoro
-    che nessuno aveva autorizzato.
-    """
-    if SCOPE_REGISTRY not in {str(c).strip() for c in changed_files}:
-        fail(
-            f"La PR non tocca {SCOPE_REGISTRY}: la task key va registrata (o "
-            "aggiornata) NELLO STESSO PR, come impone la policy. Senza, la PR "
-            "starebbe riusando un'autorizzazione concessa a un lavoro diverso."
-        )
+    """Il registro come sta sul branch base. Sempre richiesto."""
     base_scope = load_json(SCOPE_REGISTRY_BASE)
     if not isinstance(base_scope, dict):
         fail(f"{SCOPE_REGISTRY_BASE} deve contenere un oggetto JSON")
