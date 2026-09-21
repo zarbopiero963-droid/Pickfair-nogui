@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -133,3 +134,69 @@ def test_unknown_claude_bug_like_task_fails_closed(tmp_path: Path):
     )
     assert result.returncode != 0
     assert "Unknown TASK tag" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# La guardia sul ref di base, ESEGUITA davvero (non asserita a stringhe)
+#
+# Rilievo di Claude Fable 5 sulla #470: tutto lo step di metadata confronta
+# contro `origin/$PR_BASE_REF`, e i `:-main` sparsi al suo interno farebbero
+# ricadere il confronto su `main` anche per una PR con base diversa —
+# indebolendo in silenzio l'anti-tampering sul registro.
+#
+# Il test estrae la guardia dal workflow REALE e la manda in esecuzione a bash:
+# se un giorno qualcuno la toglie, il test non "non trova piu' la stringa" —
+# esegue quel che resta e vede che non blocca piu'.
+# ---------------------------------------------------------------------------
+
+import shutil
+
+import pytest
+
+import yaml
+
+WORKFLOW = REPO_ROOT / ".github" / "workflows" / "pr-guard.yml"
+SENTINELLA = "# --- fine guardia base_ref ---"
+
+
+def _guardia_base_ref() -> str:
+    """Le righe dello step di metadata fino alla sentinella, dal workflow vero."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        run = step.get("run", "")
+        if SENTINELLA in run:
+            return run.split(SENTINELLA)[0]
+    raise AssertionError(
+        f"nessuno step di pr-guard.yml contiene {SENTINELLA!r}: la guardia "
+        "sul ref di base e' stata rimossa o rinominata"
+    )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+@pytest.mark.parametrize(
+    "base_ref, atteso_blocca",
+    [("", True), ("   ", False), ("main", False), ("release/2.0", False)],
+    ids=["vuoto-blocca", "spazi-passa", "main-passa", "base-diversa-passa"],
+)
+def test_guardia_base_ref_blocca_solo_il_valore_vuoto(tmp_path, base_ref, atteso_blocca):
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_base_ref() + "\necho OK\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", ""), "PR_BASE_REF": base_ref}
+    res = subprocess.run(
+        ["bash", str(script)], capture_output=True, text=True, env=env, check=False
+    )
+    if atteso_blocca:
+        assert res.returncode != 0, f"la guardia NON ha bloccato con PR_BASE_REF={base_ref!r}"
+        assert "fail-closed" in res.stderr
+    else:
+        assert res.returncode == 0, f"la guardia ha bloccato a torto: {res.stderr}"
+        assert "OK" in res.stdout
+
+
+def test_la_guardia_precede_ogni_uso_del_ref_di_base():
+    """La guardia e' inutile se arriva dopo il primo `origin/$PR_BASE_REF`."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    run = next(s["run"] for s in wf["jobs"]["guard"]["steps"] if SENTINELLA in s.get("run", ""))
+    assert run.index(SENTINELLA) < run.index("origin/${PR_BASE_REF"), (
+        "la guardia sul ref di base arriva DOPO il primo uso di origin/$PR_BASE_REF"
+    )

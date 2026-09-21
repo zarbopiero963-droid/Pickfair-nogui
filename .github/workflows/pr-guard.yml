@@ -31,6 +31,17 @@ jobs:
           PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          # Fail-closed sul ref di base (rilievo Claude Fable 5, #470): tutto lo
+          # step confronta contro `origin/$PR_BASE_REF`, e i `:-main` sparsi sotto
+          # farebbero ricadere il confronto su `main` anche per una PR con base
+          # diversa — indebolendo in SILENZIO l'anti-tampering sul registro. Su
+          # `pull_request` la variabile c'e' sempre; qui si pretende comunque, che
+          # e' il punto di questa PR: niente indebolimenti silenziosi.
+          if [ -z "${PR_BASE_REF:-}" ]; then
+            echo "PR_BASE_REF vuoto: impossibile determinare il branch base (fail-closed)" >&2
+            exit 1
+          fi
+          # --- fine guardia base_ref ---
           LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
           export LATEST_COMMIT_MESSAGE
           python - <<'PY'
