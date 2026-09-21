@@ -1732,6 +1732,16 @@
         "tests/testsuite/test_false_green_semantics.py"
       ],
       "max_files": 11
+    },
+    "pulizia_codice_morto_guard": {
+      "description": "Pulizia di codice morto richiesta dall'owner («dobbiamo togliere codice morto»), sui due item non bloccanti che Claude Fable 5 e Fugu Ultra avevano segnalato sulla #470 e che li' non erano stati patchati per non pagare un altro giro full-range ai due gate forti. (1) scripts/guardrail_check.py: load_base_registry() prendeva `changed_files` e non lo leggeva mai. Vestigio del controllo 'il path del registro e' nel diff', sostituito al giro 3 della #470 da una verifica semantica (la entry del task deve DIFFERIRE da quella sul base) dopo che Codex aveva dimostrato che un `chmod +x` mette il path nel diff senza toccare un byte. Il parametro suggeriva un legame col diff che non esiste piu': tolto, con la ragione scritta nel docstring. (2) tests/testsuite/test_false_green_semantics.py: i due lookbehind `(?<!-I )(?<!-I  )` nell'assert che cerca l'invocazione non isolata del guard erano INERTI. Dimostrato su tutti i casi: il pattern pretende il path SUBITO dopo `python`, quindi la forma isolata `python -I scripts/...` non puo' matchare comunque, e i lookbehind guardavano il testo PRIMA di `python`, dove `-I` non compare mai. Con e senza lookbehind il risultato e' identico su isolato, nudo, py3 e doppio spazio. PRECISAZIONE su meta' del rilievo di Fable, che NON e' stata accettata alla cieca: diceva «ridondanti/fragili (l'assert positivo letterale copre comunque)». La prima meta' e' vera per i lookbehind; la seconda e' falsa per l'assert. L'assert positivo dice che UNA invocazione isolata esiste, non che non ce ne sia anche una NUDA accanto. Verificato per sabotaggio: aggiungendo al workflow una seconda invocazione nuda accanto a quella isolata, il test cade — quindi l'assert negativo ha valore proprio e RESTA. Tolti solo i lookbehind morti. Il pattern e' stato estratto a costante di modulo `_INVOCAZIONE_NUDA` per poterlo esercitare da un test invece di lasciarlo vivere solo dentro un assert, dove un indebolimento non si vedrebbe: l'assert continuerebbe a non trovare nulla, e sembrerebbe un successo. Nuovo test parametrico (5 casi: isolato, isolato-py3, nudo, nudo-py3, nudo-doppio-spazio). BLOCK verificato: neutralizzando il pattern cadono 3 casi su 5. Nessun cambiamento di comportamento del guard: entrambi gli interventi tolgono codice che non veniva letto o non poteva agire. Docs: N/A motivato — nessuna doc cita load_base_registry ne' il pattern (verificato con grep su docs/, ops/, README.md); design handoff N/A, nessuna superficie visibile. PR safety-critical: tocca scripts/guardrail_check.py, che e' nella lista di esclusione => merge MANUALE dell'owner.",
+      "allow_tests": true,
+      "max_files": 3,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "scripts/guardrail_check.py",
+        "tests/testsuite/test_false_green_semantics.py"
+      ]
     }
   }
 }

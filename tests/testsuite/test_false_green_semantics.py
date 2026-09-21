@@ -184,6 +184,36 @@ def _righe_eseguibili_di_pr_guard() -> str:
     return "\n".join(righe)
 
 
+# `python` seguito SUBITO dal path: e' la forma NON isolata, l'unica che questo
+# pattern puo' descrivere. Estratto a costante per poterlo esercitare da un test
+# invece di lasciarlo vivere solo dentro un assert, dove un indebolimento non si
+# vedrebbe.
+_INVOCAZIONE_NUDA = re.compile(r"\bpython3?\s+scripts/guardrail_check\.py")
+
+
+@pytest.mark.parametrize(
+    "riga, deve_matchare",
+    [
+        ("python -I scripts/guardrail_check.py", False),
+        ("python3 -I scripts/guardrail_check.py", False),
+        ("python scripts/guardrail_check.py", True),
+        ("python3 scripts/guardrail_check.py", True),
+        ("python  scripts/guardrail_check.py", True),
+    ],
+    ids=["isolato", "isolato-py3", "nudo", "nudo-py3", "nudo-doppio-spazio"],
+)
+def test_il_pattern_riconosce_solo_l_invocazione_non_isolata(riga, deve_matchare):
+    """Inchioda cio' che il pattern deve distinguere, non come e' scritto.
+
+    Serve a questo: la pulizia dei due lookbehind inerti (#470, rilievo Fable 5)
+    tocca una regex che vive dentro un assert, dove un indebolimento passerebbe
+    inosservato — l'assert continuerebbe a non trovare nulla, e sembrerebbe un
+    successo. Con questo test, allargare il pattern fino a non vedere piu' la
+    forma nuda fa cadere un caso invece di produrre un verde.
+    """
+    assert bool(_INVOCAZIONE_NUDA.search(riga)) is deve_matchare
+
+
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 
@@ -202,7 +232,14 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
         "senza, un modulo fratello ostile lo scavalca. La verifica guarda le "
         "righe eseguibili: un commento che nomina `-I` non conta."
     )
-    assert not re.search(r"(?<!-I )(?<!-I  )\bpython3?\s+scripts/guardrail_check\.py", eseguibili), (
+    # L'assert positivo sopra non basta da solo: dice che UNA invocazione
+    # isolata esiste, non che non ce ne sia anche una nuda accanto. Questo la
+    # cerca. (Rilievo di Fable 5 sulla #470: i due lookbehind `(?<!-I )` che
+    # stavano qui erano inerti — il pattern pretende il path SUBITO dopo
+    # `python`, quindi la forma isolata non puo' matchare comunque, e i
+    # lookbehind guardavano il testo PRIMA di `python`, dove `-I` non compare
+    # mai. Tolti. Il resto dell'assert NON e' ridondante e resta.)
+    assert not _INVOCAZIONE_NUDA.search(eseguibili), (
         "pr-guard.yml lancia il guard SENZA isolamento da qualche parte"
     )
     assert "pr_meta.json" in workflow

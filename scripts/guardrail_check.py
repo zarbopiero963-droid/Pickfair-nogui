@@ -399,8 +399,16 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict)
     )
 
 
-def load_base_registry(changed_files: list[str]) -> dict:
-    """Il registro come sta sul branch base. Sempre richiesto."""
+def load_base_registry() -> dict:
+    """Il registro come sta sul branch base. Sempre richiesto.
+
+    Prendeva `changed_files` quando il controllo era "il path del registro e'
+    nel diff". Quella domanda e' stata sostituita al giro 3 della #470 da una
+    semantica — la entry del task deve DIFFERIRE da quella sul base — perche'
+    un `chmod +x` mette il path nel diff senza toccare un byte. Il parametro e'
+    rimasto senza lettori: lo tolgo invece di lasciarlo suggerire un legame
+    col diff che non esiste piu'.
+    """
     base_scope = load_json(SCOPE_REGISTRY_BASE)
     if not isinstance(base_scope, dict):
         fail(f"{SCOPE_REGISTRY_BASE} deve contenere un oggetto JSON")
@@ -462,7 +470,7 @@ def main() -> int:
 
     print()
     scope_obj = allowed_scope if isinstance(allowed_scope, dict) else {}
-    base_scope = load_base_registry(changed_files)
+    base_scope = load_base_registry()
     validate_declared_scope(task, changed_files, scope_obj)
     validate_own_entry_declared(task, scope_obj, base_scope)
     validate_registry_untouched_elsewhere(task, base_scope, scope_obj)
