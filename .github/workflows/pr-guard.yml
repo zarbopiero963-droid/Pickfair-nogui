@@ -43,6 +43,34 @@ jobs:
             exit 1
           fi
           # --- fine guardia base_ref ---
+
+          # Gli input del guard NON possono arrivare dalla PR (P1 Codex, #470).
+          # Lo step scrive pr_meta.json / pr_files_raw.json / allowed_scope_base.json
+          # dentro il checkout, che e' contenuto della PR. Se la PR include uno di
+          # quei nomi come SYMLINK a scripts/guardrail_check.py, la scrittura segue
+          # il link e SOSTITUISCE il guard prima che venga eseguito: il JSON generato
+          # e' un dict display Python valido, quindi `python -I scripts/guardrail_check.py`
+          # esce 0 senza produrre il report ne' validare nulla. Riprodotto:
+          #
+          #   sha del guard PRIMA: c2773096b97c6a0c
+          #   sha del guard DOPO : b8f9276d1a700475   <- sovrascritto
+          #   python -I scripts/guardrail_check.py => EXIT=0, nessun report
+          #
+          # `python -I` non difende da questo: isola cio' che il guard IMPORTA, non
+          # impedisce che il guard stesso venga rimpiazzato. Vale per tutti e tre i
+          # file, incluso quello scritto con `>` (anche il redirect segue i symlink).
+          #
+          # Non si sposta la scrittura altrove: una PR non ha ragioni legittime di
+          # contenere gli input del guard, quindi trovarceli e' un attacco o un
+          # errore, e in entrambi i casi merita uno stop visibile invece di una
+          # scrittura dirottata in silenzio. -L prende anche i symlink rotti.
+          for GUARD_INPUT in pr_meta.json pr_files_raw.json allowed_scope_base.json; do
+            if [ -e "$GUARD_INPUT" ] || [ -L "$GUARD_INPUT" ]; then
+              echo "${GUARD_INPUT} esiste gia' nel checkout: gli input del guard non possono venire dalla PR (fail-closed)" >&2
+              exit 1
+            fi
+          done
+          # --- fine guardia input generati ---
           LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
           export LATEST_COMMIT_MESSAGE
           # `-I` anche qui (rilievo Fugu Ultra, #470): questo step gira PRIMA del

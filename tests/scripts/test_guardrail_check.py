@@ -26,6 +26,7 @@ e cosa NON fa):
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from unittest import TestCase
@@ -700,6 +701,114 @@ def test_main_blocca_la_entry_identica_al_base(tmp_path, monkeypatch):
                "tests/unit/test_table_manager_exposure_clamp.py"],
         scope=identica,
         base_scope=identica,          # byte per byte uguale: nessuna registrazione
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_il_bump_di_un_campo_senza_autorizzazione(tmp_path, monkeypatch):
+    """P1 Codex (settimo giro, #470): `max_files` non e' una chiave d'accesso.
+
+    Il controllo d'identita' pretendeva `base_entry != head_entry`. Ma la entry
+    ha campi che NON portano autorizzazione — `max_files`, che la policy
+    dichiara esplicitamente non applicato, e `allow_tests`. Bumpare `max_files`
+    da 3 a 4 rende le entry diverse, il controllo passa, e subito dopo
+    `files == files` fa tornare la funzione: un'autorizzazione concessa mesi fa
+    a un lavoro diverso viene riusata senza dichiarare niente.
+
+    Riprodotto da Codex su `exposure_total_clamp_m06`, e qui: sbloccare un
+    controllo con l'unico campo che per ammissione non conta e' il caso
+    peggiore. NON e' l'asse indecidibile su cui mi ero fermato (la `description`
+    verificata come cambiata e non come vera): qui la proprieta' — *quale*
+    campo e' cambiato — e' decidibile, quindi si chiude.
+    """
+    FILES = [".guardrails/allowed_scope.json", "core/table_manager.py",
+             "tests/unit/test_table_manager_exposure_clamp.py"]
+    base = {"tasks": {"exposure_total_clamp_m06": {
+        "files": list(FILES),
+        "description": "autorizzazione di mesi fa",
+        "max_files": 3,
+    }}}
+    head = copy.deepcopy(base)
+    head["tasks"]["exposure_total_clamp_m06"]["max_files"] = 4   # l'unica differenza
+
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: exposure_total_clamp_m06] lavoro tutt'altro"},
+        files=list(FILES),
+        scope=head,
+        base_scope=base,
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_anche_il_bump_di_allow_tests(tmp_path, monkeypatch):
+    """Stessa falla dall'altro campo senza autorizzazione."""
+    FILES = [".guardrails/allowed_scope.json", "core/table_manager.py"]
+    base = {"tasks": {"exposure_total_clamp_m06": {
+        "files": list(FILES), "description": "vecchia", "allow_tests": True,
+    }}}
+    head = copy.deepcopy(base)
+    head["tasks"]["exposure_total_clamp_m06"]["allow_tests"] = False
+
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: exposure_total_clamp_m06] altro lavoro"},
+        files=list(FILES), scope=head, base_scope=base,
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_accetta_il_riuso_dichiarato_nella_description(tmp_path, monkeypatch):
+    """Il confine dall'altro lato: riusare una chiave DICHIARANDOLO resta lecito.
+
+    `files` invariati e `description` riscritta e' una ri-registrazione visibile
+    e ispezionabile. Il vincolo nuovo restringe *quali campi* contano, non
+    vieta il riuso dichiarato: senza questo test il fix potrebbe irrigidirsi
+    fino a bloccare il caso legittimo senza che nessuno se ne accorga.
+    """
+    FILES = [".guardrails/allowed_scope.json", "core/table_manager.py"]
+    base = {"tasks": {"exposure_total_clamp_m06": {
+        "files": list(FILES), "description": "autorizzazione di mesi fa",
+    }}}
+    head = copy.deepcopy(base)
+    head["tasks"]["exposure_total_clamp_m06"]["description"] = (
+        "riuso dichiarato in questa PR: stessi file, lavoro nuovo, ecco perche'"
+    )
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: exposure_total_clamp_m06] lavoro nuovo dichiarato"},
+        files=list(FILES), scope=head, base_scope=base,
+    )
+    monkeypatch.chdir(tmp_path)
+    g.main()          # non deve sollevare
+
+
+def test_main_blocca_il_solo_riordino_dei_files(tmp_path, monkeypatch):
+    """Variante dello stesso buco: riordinare `files` non e' cambiare scope.
+
+    Senza normalizzazione, `["a","b"]` vs `["b","a"]` renderebbe la vista
+    autorizzante diversa e sbloccherebbe il controllo d'identita' senza che lo
+    scope sia cambiato di un file. La vista normalizza `files` a insieme, come
+    fa gia' `declared_scope_for`: stesso scope scritto in altro ordine resta lo
+    stesso scope.
+    """
+    FILES = [".guardrails/allowed_scope.json", "core/table_manager.py"]
+    base = {"tasks": {"exposure_total_clamp_m06": {
+        "files": list(FILES), "description": "autorizzazione di mesi fa",
+    }}}
+    head = copy.deepcopy(base)
+    head["tasks"]["exposure_total_clamp_m06"]["files"] = list(reversed(FILES))
+
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: exposure_total_clamp_m06] riordino e basta"},
+        files=list(FILES), scope=head, base_scope=base,
     )
     monkeypatch.chdir(tmp_path)
     with ASSERTIONS.assertRaises(SystemExit):

@@ -325,3 +325,111 @@ def test_anche_lo_step_metadata_gira_isolato(tmp_path):
             "(il checkout della PR) entra in sys.path e un json.py alla root "
             "esegue codice prima del guard."
         )
+
+
+# ---------------------------------------------------------------------------
+# Gli input del guard non possono arrivare dalla PR (P1 Codex, #470).
+#
+# Lo step di metadata scrive pr_meta.json / pr_files_raw.json /
+# allowed_scope_base.json DENTRO il checkout, che e' contenuto della PR. Una PR
+# che include uno di quei nomi come symlink a scripts/guardrail_check.py fa
+# seguire il link alla scrittura e SOSTITUISCE il guard prima che parta. Il JSON
+# generato e' un dict display Python valido, quindi l'esecuzione esce 0 senza
+# produrre il report: bypass totale, check verde.
+#
+# `python -I` non c'entra e non difende: isola cio' che il guard importa, non
+# impedisce che il guard venga rimpiazzato.
+#
+# I test qui sotto ESEGUONO la guardia estratta dal workflow reale, non cercano
+# una stringa.
+# ---------------------------------------------------------------------------
+
+SENTINELLA_INPUT = "# --- fine guardia input generati ---"
+INPUT_GENERATI = ("pr_meta.json", "pr_files_raw.json", "allowed_scope_base.json")
+
+
+def _guardia_input_generati() -> str:
+    """Il segmento dello step di metadata che rifiuta gli input preesistenti."""
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    for step in wf["jobs"]["guard"]["steps"]:
+        run = step.get("run", "")
+        if SENTINELLA_INPUT in run and SENTINELLA in run:
+            fra = run.split(SENTINELLA, 1)[1].split(SENTINELLA_INPUT, 1)[0]
+            return "set -euo pipefail\n" + fra
+    raise AssertionError(
+        f"nessuno step di pr-guard.yml contiene {SENTINELLA_INPUT!r}: la guardia "
+        "sugli input generati e' stata rimossa o rinominata"
+    )
+
+
+def _albero_col_guard(tmp_path: Path) -> Path:
+    (tmp_path / "scripts").mkdir()
+    shutil.copy(REPO_ROOT / "scripts" / "guardrail_check.py", tmp_path / "scripts")
+    return tmp_path / "scripts" / "guardrail_check.py"
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+@pytest.mark.parametrize("nome", INPUT_GENERATI)
+@pytest.mark.parametrize("come", ["symlink", "file"])
+def test_un_input_del_guard_fornito_dalla_pr_blocca(tmp_path, nome, come):
+    guard = _albero_col_guard(tmp_path)
+    vittima = tmp_path / nome
+    if come == "symlink":
+        vittima.symlink_to(Path("scripts") / "guardrail_check.py")
+    else:
+        vittima.write_text("{}", encoding="utf-8")
+
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_input_generati() + "\necho NON_BLOCCATO\n", encoding="utf-8")
+    res = subprocess.run(
+        ["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+
+    assert res.returncode != 0, (
+        f"{nome} fornito dalla PR come {come} non ha bloccato lo step: "
+        f"stdout={res.stdout!r} stderr={res.stderr!r}. Con un symlink al guard, "
+        "la scrittura successiva lo sovrascrive e il check resta verde."
+    )
+    assert "NON_BLOCCATO" not in res.stdout
+    assert nome in res.stderr, f"lo stop non nomina il file incriminato: {res.stderr!r}"
+    # Il guard deve essere ancora il guard, non i metadati.
+    assert "PR GUARD REPORT" in guard.read_text(encoding="utf-8")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_la_guardia_sugli_input_non_blocca_un_checkout_pulito(tmp_path):
+    _albero_col_guard(tmp_path)
+    script = tmp_path / "guardia.sh"
+    script.write_text(_guardia_input_generati() + "\necho OK\n", encoding="utf-8")
+    res = subprocess.run(
+        ["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False
+    )
+    assert res.returncode == 0, f"checkout pulito bloccato: {res.stderr!r}"
+    assert "OK" in res.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_la_guardia_precede_la_scrittura_degli_input(tmp_path):
+    """Non basta che la guardia esista: deve stare PRIMA di ogni scrittura.
+
+    Questo e' il test che vede il danno invece di cercarlo: al segmento estratto
+    dal workflow si appende una scrittura identica a quella reale, e si verifica
+    che il guard non venga toccato. Se la guardia sparisse o finisse dopo, il
+    file finirebbe sovrascritto e questo test lo direbbe.
+    """
+    guard = _albero_col_guard(tmp_path)
+    prima = guard.read_bytes()
+    (tmp_path / "pr_meta.json").symlink_to(Path("scripts") / "guardrail_check.py")
+
+    script = tmp_path / "step.sh"
+    script.write_text(
+        _guardia_input_generati()
+        + "\nprintf '%s' '{\"number\": \"999\", \"title\": \"x\"}' > pr_meta.json\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["bash", str(script)], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+    assert guard.read_bytes() == prima, (
+        "scripts/guardrail_check.py e' stato sovrascritto dalla scrittura dei "
+        "metadati attraverso il symlink: la guardia non precede la scrittura"
+    )

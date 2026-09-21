@@ -302,6 +302,25 @@ def validate_declared_scope(task: str | None, changed_files: list[str], allowed_
     info(f"Scope invariant: `files` di '{task}' coincide col diff ({len(declared)} file)")
 
 
+CAMPI_CHE_AUTORIZZANO = ("files", "description")
+
+
+def _vista_autorizzante(entry: dict) -> tuple:
+    """I soli campi della entry che concedono qualcosa.
+
+    `files` normalizzato come in ``declared_scope_for`` — insieme di stringhe
+    ripulite — cosi' un semplice riordino della lista non si spaccia per una
+    modifica: e' lo stesso scope, scritto in un altro ordine.
+    """
+    files = entry.get("files")
+    normalizzati = (
+        frozenset(str(f).strip() for f in files if str(f).strip())
+        if isinstance(files, list)
+        else None
+    )
+    return (normalizzati, entry.get("description"))
+
+
 def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict) -> None:
     """Riscrivere i `files` della PROPRIA chiave va DICHIARATO, non fatto e basta.
 
@@ -341,6 +360,32 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict)
         # Chiave nuova: e' una registrazione, non un allargamento. Niente da
         # dichiarare, perche' non c'e' nulla di precedente.
         return
+
+    # Non basta che la entry sia DIVERSA: deve essere diversa in un campo che
+    # porta autorizzazione (P1 Codex, settimo giro, #470). La entry ne ha altri
+    # — `max_files`, che la policy dichiara esplicitamente NON applicato, e
+    # `allow_tests` — e bumpare uno di quelli rendeva le entry diverse, faceva
+    # passare il controllo d'identita', e subito dopo `files == files` faceva
+    # tornare la funzione. Riprodotto: `max_files` da 3 a 4 su
+    # `exposure_total_clamp_m06` bastava a riusare un'autorizzazione di mesi
+    # prima per un lavoro tutt'altro, exit 0. Sbloccare un controllo con
+    # l'unico campo che per ammissione non conta e' il caso peggiore.
+    #
+    # Il confronto sopra resta per il caso in cui le entry non siano dizionari:
+    # per due dizionari questo lo sussume, perche' entry identiche hanno vista
+    # identica.
+    #
+    # NON e' l'asse indecidibile dichiarato in #471 (la `description` verificata
+    # come CAMBIATA e non come VERA): qui la proprieta' — *quale* campo e'
+    # cambiato — e' decidibile, quindi si chiude invece di fermarsi.
+    if _vista_autorizzante(base_entry) == _vista_autorizzante(head_entry):
+        fail(
+            f"La entry di '{task}' cambia, ma in nessun campo che porti "
+            "autorizzazione (`files`, `description`): questa PR sta riusando "
+            "un'autorizzazione concessa a un lavoro diverso. `max_files` e "
+            "`allow_tests` non contano — il primo la policy lo dichiara non "
+            "applicato. Registra o aggiorna la chiave NELLO STESSO PR."
+        )
     if base_entry.get("files") == head_entry.get("files"):
         return
     if base_entry.get("description") != head_entry.get("description"):
