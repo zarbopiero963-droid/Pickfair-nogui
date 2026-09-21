@@ -189,6 +189,135 @@ def validate_task_selection(task: str | None, critical_touched: list[str], allow
         fail(f"Unknown TASK tag: {task}. Must be one of configured task keys.")
 
 
+SCOPE_REGISTRY = ".guardrails/allowed_scope.json"
+SCOPE_REGISTRY_BASE = "allowed_scope_base.json"
+
+# `task_file_change` non e' una chiave del registro: e' il task sintetico delle
+# PR dedotte dai soli file-task, che validate_task_selection tiene gia' fuori
+# dai file critici. Non ha `files` da confrontare, quindi l'invariante di scope
+# non si applica — ma il controllo sul registro sotto si', ed e' quello che
+# impedisce di usarlo per allargare le chiavi altrui.
+SYNTHETIC_TASK = "task_file_change"
+
+
+def declared_scope_for(task: str | None, allowed_scope: dict) -> set[str] | None:
+    """I `files` dichiarati dal task nel registro.
+
+    ``None`` = il task non ha una entry (nessuno scope dichiarato). Una entry
+    presente ma senza `files` vale come scope VUOTO, non come assenza: chi
+    scrive una entry vuota non sta dichiarando "tutto", sta dichiarando niente.
+    """
+    if not task:
+        return None
+    tasks = allowed_scope.get("tasks")
+    if not isinstance(tasks, dict):
+        return None
+    entry = tasks.get(task)
+    if not isinstance(entry, dict):
+        return None
+    files = entry.get("files")
+    if not isinstance(files, list):
+        return set()
+    return {str(f).strip() for f in files if str(f).strip()}
+
+
+def scope_mismatch(declared: set[str], changed_files: list[str]) -> tuple[list[str], list[str]]:
+    """(toccati non dichiarati, dichiarati non toccati).
+
+    La prima lista e' la falla vera — la #463 ha toccato cosi' un workflow-gate
+    e un file-policy fuori dal proprio scope. La seconda e' il cricchetto:
+    scope riservato e non usato, che resta nel registro per dopo.
+    """
+    changed = {str(c).strip() for c in changed_files if str(c).strip()}
+    return sorted(changed - declared), sorted(declared - changed)
+
+
+def registry_tampering(task: str | None, scope: dict, base_scope: dict) -> list[str]:
+    """Modifiche al registro FUORI dalla entry del task corrente.
+
+    Una PR puo' registrare (e aggiornare) la PROPRIA chiave: e' quello che la
+    policy le impone di fare. Non puo' toccare `default`, che vale per tutti,
+    ne' le entry di altri task, che riscrivono cio' che era stato concesso
+    altrove.
+    """
+    violazioni: list[str] = []
+    if scope.get("default") != base_scope.get("default"):
+        violazioni.append("la sezione `default` e' stata modificata")
+
+    tasks = scope.get("tasks") if isinstance(scope.get("tasks"), dict) else {}
+    base_tasks = base_scope.get("tasks") if isinstance(base_scope.get("tasks"), dict) else {}
+    for key in sorted(set(tasks) | set(base_tasks)):
+        if key == task:
+            continue
+        if key not in base_tasks:
+            violazioni.append(f"chiave aggiunta oltre a quella del task: {key}")
+        elif key not in tasks:
+            violazioni.append(f"chiave rimossa: {key}")
+        elif tasks[key] != base_tasks[key]:
+            violazioni.append(f"entry modificata di un altro task: {key}")
+    return violazioni
+
+
+def validate_declared_scope(task: str | None, changed_files: list[str], allowed_scope: dict) -> None:
+    """L'invariante: i `files` della task key coincidono col diff della PR.
+
+    Scritto nella policy dalla #469, non applicato da nessuna parte fino a qui.
+    Tutti e quattro i reviewer pagati l'hanno detto nello stesso giro: un
+    vincolo affidato alla sola dichiarazione dell'agente, su un file che
+    l'agente stesso scrive, non e' un vincolo.
+    """
+    if task == SYNTHETIC_TASK:
+        info(f"Scope invariant: N/A per il task sintetico '{SYNTHETIC_TASK}'")
+        return
+
+    declared = declared_scope_for(task, allowed_scope)
+    if declared is None:
+        fail(
+            f"TASK '{task}' non ha una entry in {SCOPE_REGISTRY}. "
+            "Nessuno scope dichiarato = scope illimitato: registra la chiave "
+            "coi suoi `files` nello STESSO PR (fail-closed)."
+        )
+
+    fuori, non_toccati = scope_mismatch(declared, changed_files)
+    if fuori:
+        rendered = "\n".join(f"   + {p}" for p in fuori)
+        fail(
+            f"File toccati FUORI dallo scope dichiarato di '{task}':\n{rendered}\n"
+            f"Dichiarali in {SCOPE_REGISTRY} o toglili dal diff. "
+            "E' il caso della #463: un workflow-gate e un file-policy toccati "
+            "fuori scope, mergiati senza che nessuno se ne accorgesse."
+        )
+    if non_toccati:
+        rendered = "\n".join(f"   - {p}" for p in non_toccati)
+        fail(
+            f"File dichiarati da '{task}' ma NON toccati dalla PR:\n{rendered}\n"
+            "Una dichiarazione piu' larga del diff e' scope riservato e non "
+            f"usato: allinea `files` in {SCOPE_REGISTRY} al diff reale."
+        )
+    info(f"Scope invariant: `files` di '{task}' coincide col diff ({len(declared)} file)")
+
+
+def validate_registry_untouched_elsewhere(task: str | None, changed_files: list[str], allowed_scope: dict) -> None:
+    """Se la PR tocca il registro, il confronto col base e' obbligatorio."""
+    if SCOPE_REGISTRY not in {str(c).strip() for c in changed_files}:
+        info("Registro non toccato dalla PR: confronto col base non necessario")
+        return
+
+    base_scope = load_json(SCOPE_REGISTRY_BASE)
+    if not isinstance(base_scope, dict):
+        fail(f"{SCOPE_REGISTRY_BASE} deve contenere un oggetto JSON")
+
+    violazioni = registry_tampering(task, allowed_scope, base_scope)
+    if violazioni:
+        rendered = "\n".join(f"   - {v}" for v in violazioni)
+        fail(
+            f"Il registro e' stato modificato oltre la entry di '{task}':\n{rendered}\n"
+            "Toccare `default` o le chiavi di altri task riscrive cio' che era "
+            "stato concesso altrove: e' sempre need-manual, mai auto-merge."
+        )
+    info("Registro: modificata solo la entry del task corrente")
+
+
 def main() -> int:
     pr_meta = load_json("pr_meta.json")
     pr_files_raw = load_json("pr_files_raw.json")
@@ -228,6 +357,11 @@ def main() -> int:
     print()
     validate_task_selection(task, critical_touched, allowed_tasks, unknown_candidates)
     info(f"TASK source found ({task_source}): {task}")
+
+    print()
+    scope_obj = allowed_scope if isinstance(allowed_scope, dict) else {}
+    validate_declared_scope(task, changed_files, scope_obj)
+    validate_registry_untouched_elsewhere(task, changed_files, scope_obj)
     if ignored_candidates:
         warn(f"Ignored placeholder/invalid TASK markers: {ignored_candidates}")
 

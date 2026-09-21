@@ -62,6 +62,21 @@ jobs:
             | jq -R -s 'split("\n") | map(select(length > 0))' \
             > pr_files_raw.json
 
+          # Copia del registro di scope dal branch BASE, per il confronto che
+          # guardrail_check.py fa sull'invariante `files` == diff. La estrae il
+          # workflow (che ha gia' fetch-depth: 0) e non lo script, cosi' lo
+          # script resta puro e testabile con tmp_path, come per pr_meta.json e
+          # pr_files_raw.json. Registro assente sul base (primo PR in assoluto)
+          # => oggetto vuoto: ogni chiave risultera' aggiunta e il gate bloccera',
+          # che e' l'esito fail-closed voluto.
+          SCOPE_PATH=".guardrails/allowed_scope.json"
+          if git cat-file -e "origin/${PR_BASE_REF:-main}:${SCOPE_PATH}" 2>/dev/null; then
+            git show "origin/${PR_BASE_REF:-main}:${SCOPE_PATH}" > allowed_scope_base.json
+          else
+            echo "::warning::${SCOPE_PATH} assente sul branch base: confronto su registro vuoto"
+            echo '{}' > allowed_scope_base.json
+          fi
+
       - name: Run guardrail check
         run: |
           set -euo pipefail

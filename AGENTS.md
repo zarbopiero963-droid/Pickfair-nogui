@@ -1373,6 +1373,13 @@ The workflows that ARE the gates the auto-merge decision rests on:
 - `.github/workflows/ci-quarantine-guard.yml`
 - `.github/workflows/pr-guard.yml`
 - `.github/workflows/pr-merge-readiness.yml`
+- `scripts/guardrail_check.py`
+
+`scripts/guardrail_check.py` is on the list for the same reason as the
+workflows, and GPT-5.6 Sol is who put it there: "a gate that is independent and
+**not modifiable within the delegated scope**". The `pr-guard` workflow was
+already excluded, but it runs the script from the PR's own checkout: excluding
+the container and leaving the content out would have closed nothing.
 
 The reason is structural, not a risk category. If the agent could merge a change
 to these files on its own, it could **progressively widen its own authority**:
@@ -1424,8 +1431,16 @@ policy requires registering the task key in the same PR. Excluding it would mean
 no PR is ever auto-merged — a delegation that looks granted and never applies is
 worse than the risk it would close, because it stops being verifiable.
 
-It is closed with an invariant instead, which makes widening useless rather than
-forbidden:
+It is closed instead with an invariant **enforced by the `guard` check** — not
+with a rule the agent applies to itself. The distinction is not formal: the
+first version of this section wrote it as prose, and all four paid reviewers
+blocked on the same point ("it is only prose", Grok; "leaving these constraints
+to the agent's own declaration does not close the hole", Sol). They were right,
+and not in the abstract: #463 had touched
+`.github/workflows/pr-merge-readiness.yml` and `docs/auto_pr_flow_spec.md`
+outside its declared scope, and was merged with nobody noticing.
+
+The invariant:
 
 - the task key's `files` **match the files the PR actually touches**, no more and
   no less. A declaration wider than the diff IS a scope widening: the PR becomes
@@ -1440,6 +1455,15 @@ forbidden:
 With the invariant, widening the declaration without widening the diff buys
 nothing, and widening the diff is visible in the diff — which every gate already
 reads.
+
+The three points are verified by `scripts/guardrail_check.py`
+(`validate_declared_scope` and `validate_registry_untouched_elsewhere`), which
+`pr-guard.yml` runs on every push: the workflow also hands it
+`allowed_scope_base.json`, the registry as of the base branch, so the comparison
+does not depend on what the PR says about itself. Registry touched but base copy
+missing => FAIL: a check you can silently skip is not a check. `max_files` stays
+documentation and is not enforced: with `files` == diff imposed, the number of
+files is already the number in the diff.
 
 
 The per-issue override that used to lift the exclusion case by case is no longer

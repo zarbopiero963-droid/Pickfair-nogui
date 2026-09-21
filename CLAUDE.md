@@ -492,6 +492,13 @@ I workflow che SONO i gate su cui poggia la decisione di auto-merge:
 - `.github/workflows/ci-quarantine-guard.yml`
 - `.github/workflows/pr-guard.yml`
 - `.github/workflows/pr-merge-readiness.yml`
+- `scripts/guardrail_check.py`
+
+`scripts/guardrail_check.py` e' in lista per la stessa ragione dei workflow, e
+ce l'ha messo GPT-5.6 Sol: «un gate indipendente e **non modificabile nello
+scope delegato**». Il workflow `pr-guard` era gia' escluso, ma esegue lo script
+dal checkout della PR: escludere il contenitore e lasciare fuori il contenuto
+non avrebbe chiuso niente.
 
 Il motivo è strutturale, non di categoria di rischio. Se l'agente potesse
 mergiare da solo una modifica a questi file, potrebbe **allargare
@@ -545,8 +552,17 @@ esclusione vorrebbe dire che nessuna PR viene mai auto-mergiata — una delega
 che sembra concessa e non si applica mai è peggio del rischio che vorrebbe
 chiudere, perché smette di essere verificabile.
 
-Si chiude invece con un invariante, che rende l'allargamento inutile invece che
-vietato:
+Si chiude invece con un invariante **applicato dal check `guard`** — non con
+una regola che l'agente applica a se stesso. La distinzione non e' formale: la
+prima versione di questa sezione lo scriveva come prosa, e tutti e quattro i
+reviewer pagati hanno bloccato sullo stesso punto («e' solo prosa», Grok;
+«affidare questi vincoli alla sola dichiarazione dell'agente non chiude la
+falla», Sol). Avevano ragione, e non in astratto: la #463 aveva toccato
+`.github/workflows/pr-merge-readiness.yml` e `docs/auto_pr_flow_spec.md` fuori
+dal proprio scope dichiarato, ed era stata mergiata senza che nessuno se ne
+accorgesse.
+
+L'invariante:
 
 - i `files` della task key **coincidono con i file che la PR tocca davvero**, né
   più né meno. Una dichiarazione più larga del diff È un allargamento di scope:
@@ -560,6 +576,15 @@ vietato:
 
 Con l'invariante, allargare la dichiarazione senza allargare il diff non serve a
 niente, e allargare il diff è visibile nel diff — che ogni gate già guarda.
+
+I tre punti sono verificati da `scripts/guardrail_check.py`
+(`validate_declared_scope` e `validate_registry_untouched_elsewhere`), che
+`pr-guard.yml` esegue a ogni push: il workflow gli passa anche
+`allowed_scope_base.json`, la copia del registro dal branch base, cosi' il
+confronto non dipende da cosa dice la PR di se stessa. Registro toccato ma
+copia base assente => FAIL: un controllo che si puo' saltare in silenzio non e'
+un controllo. `max_files` resta documentazione e non e' applicato: imposto
+`files` == diff, il numero dei file e' gia' il numero del diff.
 
 
 L'override per-issue che serviva a togliere l'esclusione caso per caso non

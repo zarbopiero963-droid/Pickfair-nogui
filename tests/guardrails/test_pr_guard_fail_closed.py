@@ -29,25 +29,32 @@ def _run_guard(
         json.dumps(files),
         encoding="utf-8",
     )
+    # `files` di ogni task registrato = i file cambiati sopra: dall'invariante
+    # di scope (guardrail_check.validate_declared_scope) una dichiarazione che
+    # non coincide col diff blocca, e questi test non parlano di quello —
+    # parlano di QUALI marker vengono riconosciuti come task key valide.
+    scope_files = [f["filename"] for f in files]
+    # Le chiavi sono normalizzate in minuscolo da resolve_task, quindi le
+    # varianti mixed-case dei test risolvono a queste stesse entry. Registrarle
+    # e' ora obbligatorio: un task senza entry non ha scope dichiarato.
+    task_entry = {"files": scope_files, "max_files": len(scope_files), "allow_tests": False}
+    scope = {
+        "default": {"max_files": 8, "allow_tests": True},
+        "tasks": {
+            "pr_guard": dict(task_entry),
+            "workflow_hygiene_pr1_comment_noise": dict(task_entry),
+            "claude_bug_pr1a_telegram_sender_escape_queue": dict(task_entry),
+        },
+    }
     (tmp_path / ".guardrails" / "allowed_scope.json").write_text(
-        json.dumps(
-            {
-                "default": {"max_files": 8, "allow_tests": True},
-                "tasks": {
-                    "pr_guard": {
-                        "files": [
-                            ".github/workflows/pr-guard.yml",
-                            "scripts/guardrail_check.py",
-                            ".guardrails/allowed_scope.json",
-                            "tests/guardrails/test_pr_guard_fail_closed.py",
-                        ],
-                        "max_files": 4,
-                        "allow_tests": False,
-                    }
-                },
-            }
-        ),
-        encoding="utf-8",
+        json.dumps(scope), encoding="utf-8"
+    )
+    # Copia del registro dal branch base. Identica al head: questi test non
+    # riguardano la manomissione del registro (quella e' coperta in
+    # tests/scripts/test_guardrail_check.py), ma senza la copia il confronto
+    # e' impossibile e il gate blocca fail-closed.
+    (tmp_path / "allowed_scope_base.json").write_text(
+        json.dumps(scope), encoding="utf-8"
     )
     return subprocess.run(
         [sys.executable, str(SCRIPT_PATH)],

@@ -268,19 +268,24 @@ def test_main_pass_with_registered_task(tmp_path, monkeypatch):
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
         files=[{"filename": "tests/scripts/test_x.py"}],
-        scope={"tasks": {"my_key": {"files": ["x.py"], "max_files": 8}}},
+        # `files` allineato al diff: dall'invariante di scope in fondo a questo
+        # file, una dichiarazione che NON coincide col diff blocca.
+        scope={"tasks": {"my_key": {"files": ["tests/scripts/test_x.py"], "max_files": 8}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
 
 
-def test_main_pass_with_approved_family_even_if_unregistered(tmp_path, monkeypatch):
-    # Una famiglia approvata (es. audit_) passa anche senza registrazione.
+def test_main_pass_with_approved_family_when_registered(tmp_path, monkeypatch):
+    """Una famiglia approvata (es. `audit_`) supera la validazione della task
+    key anche senza essere nel registro — quel ramo non e' cambiato. Ma per
+    passare il gate le serve comunque una entry, perche' senza `files` non c'e'
+    scope dichiarato: vedi `test_main_blocca_il_task_senza_entry_nel_registro`."""
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: audit_demo] x"},
         files=["tests/x.py"],
-        scope={"tasks": {}},
+        scope={"tasks": {"audit_demo": {"files": ["tests/x.py"]}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
@@ -322,30 +327,202 @@ def test_main_blocks_on_pr_files_not_a_list(tmp_path, monkeypatch):
 # CARATTERIZZAZIONE dei confini: cosa il gate NON enforce (by-design)
 # ---------------------------------------------------------------------------
 
-def test_main_does_not_enforce_per_task_files_or_max_files(tmp_path, monkeypatch):
-    """Boundary: guardrail_check.py valida la PRESENZA/registrazione della
-    task key, NON che i file cambiati siano dentro il ``files`` del task ne'
-    il ``max_files``. (L'enforcement di scope vive nel pr_automation_controller.)
-    Se un giorno questo gate iniziasse a bloccare qui, questo test lo segnala."""
+def test_main_ora_enforce_files_ma_ancora_non_max_files(tmp_path, monkeypatch):
+    """Il confine si e' spostato, ed e' il test che lo prevedeva.
+
+    La versione precedente affermava che il gate NON controlla il `files` del
+    task, e chiudeva con «se un giorno questo gate iniziasse a bloccare qui,
+    questo test lo segnala». E' successo: l'invariante `files` == diff e' ora
+    applicato (vedi in fondo al file). Quel che resta NON applicato e'
+    `max_files`, che una volta imposto `files` == diff e' pura documentazione:
+    se i file coincidono col diff, il loro numero e' il numero del diff."""
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
-        # file FUORI dal `files` del task e ben oltre max_files=1:
+        # `files` coincide col diff; `max_files` dichiara 1 su 20 file e NON blocca.
         files=[f"unrelated_{i}.py" for i in range(20)],
-        scope={"tasks": {"my_key": {"files": ["only_this.py"], "max_files": 1}}},
+        scope={"tasks": {"my_key": {"files": [f"unrelated_{i}.py" for i in range(20)],
+                                    "max_files": 1}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
 
 
-def test_main_does_not_block_workflow_paths_when_task_registered(tmp_path, monkeypatch):
-    """Boundary: toccare .github/workflows/* NON e' bloccato da questo gate
-    (non e' in CRITICAL_FILES); la difesa sui workflow e' altrove."""
+def test_main_does_not_block_workflow_paths_when_declared(tmp_path, monkeypatch):
+    """Boundary: toccare `.github/workflows/*` NON e' bloccato da questo gate in
+    quanto tale (non e' in CRITICAL_FILES) — ma va DICHIARATO come ogni altro
+    file. E' la differenza che alla #463 non c'era: li' il workflow-gate era
+    toccato e non dichiarato, e passava."""
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
         files=[".github/workflows/ci.yml"],
-        scope={"tasks": {"my_key": {}}},
+        scope={"tasks": {"my_key": {"files": [".github/workflows/ci.yml"]}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
+
+
+# ---------------------------------------------------------------------------
+# INVARIANTE DI SCOPE: `files` della task key == file cambiati dalla PR
+#
+# Chiude il bloccante su cui convergevano tutti e quattro i reviewer pagati
+# sulla #469: l'invariante era scritto nella policy ma non applicato da CI, su
+# un file che l'agente stesso scrive. Grok: «e' solo prosa». Sol: «affidare
+# questi vincoli alla sola dichiarazione dell'agente non chiude la falla».
+#
+# Non era teorico. Misurato sulle 14 PR precedenti: 13 rispettavano gia'
+# l'invariante, una no — la #463 (1b7b689d) dichiarava 8 file e ne toccava 12,
+# fra cui `.github/workflows/pr-merge-readiness.yml` (un workflow-gate) e
+# `docs/auto_pr_flow_spec.md` (un file-policy). Fuori scope dichiarato, mergiata,
+# e nessuno se n'e' accorto.
+# ---------------------------------------------------------------------------
+
+def _write_gate_inputs_con_base(tmp_path, *, meta, files, scope, base_scope=None):
+    """Come `_write_gate_inputs`, piu' la copia del registro dal branch base.
+
+    Il workflow `pr-guard.yml` la scrive accanto a `pr_meta.json` e
+    `pr_files_raw.json` (ha gia' `fetch-depth: 0`), cosi' il confronto col base
+    non costringe `guardrail_check.py` a lanciare git: resta puro e testabile.
+    """
+    _write_gate_inputs(tmp_path, meta=meta, files=files, scope=scope)
+    if base_scope is not None:
+        (tmp_path / "allowed_scope_base.json").write_text(
+            json.dumps(base_scope), encoding="utf-8"
+        )
+
+
+SCOPE_463 = {
+    "tasks": {
+        "gpt56sol_openrouter_migration": {
+            "files": [
+                ".guardrails/allowed_scope.json",
+                ".github/workflows/pr-review-openai-gpt56-sol.yml",
+            ],
+            "max_files": 8,
+        }
+    }
+}
+
+
+def test_main_blocca_il_file_toccato_e_non_dichiarato(tmp_path, monkeypatch):
+    """RED-FIRST — riproduce la #463: la PR tocca un workflow-gate e un
+    file-policy che non ha dichiarato. Prima di questo guard passava."""
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: gpt56sol_openrouter_migration] x"},
+        files=[
+            ".guardrails/allowed_scope.json",
+            ".github/workflows/pr-review-openai-gpt56-sol.yml",
+            ".github/workflows/pr-merge-readiness.yml",   # mai dichiarato
+            "docs/auto_pr_flow_spec.md",                  # mai dichiarato
+        ],
+        scope=SCOPE_463,
+        base_scope=SCOPE_463,
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_il_file_dichiarato_e_non_toccato(tmp_path, monkeypatch):
+    """L'altra direzione: scope riservato e non usato. Meno grave del caso
+    sopra, ma e' il cricchetto — la entry resta nel registro per dopo."""
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: k] x"},
+        files=["a.py"],
+        scope={"tasks": {"k": {"files": ["a.py", "core/money_management.py"]}}},
+        base_scope={"tasks": {"k": {"files": ["a.py", "core/money_management.py"]}}},
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_passa_quando_files_coincide_col_diff(tmp_path, monkeypatch):
+    """Il caso normale: 13 delle 14 PR misurate stanno gia' qui."""
+    coincide = {
+        "tasks": {"k": {"files": [".guardrails/allowed_scope.json", "a.py"], "max_files": 2}}
+    }
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: k] x"},
+        files=[".guardrails/allowed_scope.json", "a.py"],
+        scope=coincide,
+        base_scope=coincide,
+    )
+    monkeypatch.chdir(tmp_path)
+    ASSERTIONS.assertEqual(g.main(), 0)
+
+
+def test_main_blocca_la_entry_di_un_altro_task_modificata(tmp_path, monkeypatch):
+    """Riscrivere cio' che era stato concesso a un ALTRO task: need-manual,
+    mai auto-merge. Qui la PR si allarga di soppiatto un'altra chiave."""
+    base = {"tasks": {
+        "k": {"files": [".guardrails/allowed_scope.json"]},
+        "altro": {"files": ["solo_questo.py"]},
+    }}
+    head = {"tasks": {
+        "k": {"files": [".guardrails/allowed_scope.json"]},
+        "altro": {"files": ["solo_questo.py", "core/money_management.py"]},
+    }}
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: k] x"},
+        files=[".guardrails/allowed_scope.json"],
+        scope=head,
+        base_scope=base,
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_il_default_modificato(tmp_path, monkeypatch):
+    """`default` vale per tutti i task che non dichiarano il proprio: alzarlo
+    e' un allargamento globale, non locale alla PR."""
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: k] x"},
+        files=[".guardrails/allowed_scope.json"],
+        scope={"default": {"max_files": 999}, "tasks": {"k": {"files": [".guardrails/allowed_scope.json"]}}},
+        base_scope={"default": {"max_files": 8}, "tasks": {"k": {"files": [".guardrails/allowed_scope.json"]}}},
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_se_manca_la_copia_base_del_registro(tmp_path, monkeypatch):
+    """Fail-closed: la PR tocca il registro ma la copia base non c'e', quindi
+    il confronto e' impossibile. Un controllo che si puo' saltare in silenzio
+    non e' un controllo — era il punto di Sol."""
+    scope = {"tasks": {"k": {"files": [".guardrails/allowed_scope.json"]}}}
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: k] x"},
+        files=[".guardrails/allowed_scope.json"],
+        scope=scope,
+        base_scope=None,     # non scritta
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
+
+
+def test_main_blocca_il_task_senza_entry_nel_registro(tmp_path, monkeypatch):
+    """Nessuno scope dichiarato = scope illimitato. Vale anche per le
+    famiglie-prefisso (`audit_`, `ci_`, ...), che prima passavano senza
+    registrazione: misurate 0 volte su 31 commit con marker, quindi chiudere
+    la scappatoia non toglie niente a nessuno."""
+    _write_gate_inputs_con_base(
+        tmp_path,
+        meta={"title": "[TASK: audit_demo] x"},
+        files=["tests/x.py"],
+        scope={"tasks": {}},
+        base_scope={"tasks": {}},
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()
