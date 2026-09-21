@@ -158,7 +158,16 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     assert "guard_inputs" not in workflow
     assert "should_run_guard" not in workflow
     assert "Skipping scope guard for unknown task" not in workflow
-    assert "python scripts/guardrail_check.py" in workflow
+    # `-I` obbligatorio, non solo tollerato (P1 di Codex sulla #470): senza
+    # isolamento, `scripts/` finisce in sys.path[0] e una PR che aggiunge un
+    # `scripts/json.py` dichiarato nei propri `files` lo fa importare al posto
+    # dello stdlib, con facolta' di uscire 0 prima di ogni validazione. Il guard
+    # non girerebbe affatto, e il check sarebbe verde: un falso verde, che e'
+    # esattamente cio' che questo modulo esiste per impedire.
+    assert "python -I scripts/guardrail_check.py" in workflow, (
+        "pr-guard.yml deve lanciare il guard in modalita' isolata (`python -I`): "
+        "senza, un modulo fratello ostile lo scavalca"
+    )
     assert "pr_meta.json" in workflow
     assert "pr_files_raw.json" in workflow
 
@@ -278,7 +287,10 @@ def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
         assert required in types, f"pr-guard.yml: manca il tipo di evento {required!r}"
 
     assert "set -euo pipefail" in run_blocks
-    assert re.search(r"python\s+scripts/guardrail_check\.py", run_blocks)
+    assert re.search(r"python\s+-I\s+scripts/guardrail_check\.py", run_blocks), (
+        "il guard va lanciato con `python -I` (vedi nota in "
+        "test_pr_guard_workflow_uses_fail_closed_markers_only)"
+    )
     for marker in ["PR_TITLE", "PR_BODY", "PR_HEAD_REF", "LATEST_COMMIT_MESSAGE", "commit_messages", "pr_files_raw.json", "pr_meta.json"]:
         assert marker in raw
 
