@@ -398,6 +398,34 @@ marker è presente ma la chiave non è nel registro, fallisce con
 includerlo nei propri `files` e auto-registrarsi: il guard legge il
 registro dal merge-ref e passa sullo stesso head.
 
+**Dalla #470 il guard non si ferma al marker: applica anche lo scope.**
+Quattro vincoli, tutti fail-closed, tutti verificati contro la copia del
+registro estratta dal branch base (`allowed_scope_base.json`, che il
+workflow produce da `github.event.pull_request.base.sha`):
+
+1. i `files` della task key devono **coincidere esattamente** col diff
+   della PR — un file toccato e non dichiarato blocca, e blocca anche
+   uno dichiarato e non toccato (scope riservato per dopo);
+2. la task key deve avere una **entry nel registro**. Vale anche per il
+   task sintetico `task_file_change` e per le famiglie-prefisso
+   (`audit_`, `ci_`, …), che prima passavano senza registrazione:
+   nessuno scope dichiarato = scope illimitato;
+3. la entry del task deve **differire** da quella sul base — o è nuova,
+   o è aggiornata qui. Una entry identica significa riusare
+   un'autorizzazione concessa a un lavoro diverso;
+4. `default` e le entry di **altri** task non si toccano: riscrivono
+   ciò che era stato concesso altrove, quindi è sempre need-manual.
+
+Se i `files` della PROPRIA chiave cambiano rispetto al base, deve
+cambiare anche la `description`: l'estensione di scope va dichiarata.
+Limite noto e dichiarato: il guard verifica che la `description` sia
+cambiata, non che dica il vero, e per una chiave **nuova** il confronto
+non avviene fra un push e l'altro (Issue #471).
+
+`max_files` resta **non** applicato: imposto `files` == diff, è già il
+numero del diff. `.github/workflows/*` non è bloccato in quanto tale —
+va dichiarato come ogni altro file.
+
 Se AUTO_PUSH_ENABLED=false:
 
 ```
