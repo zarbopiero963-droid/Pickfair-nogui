@@ -311,6 +311,15 @@ def test_anche_lo_step_metadata_gira_isolato(tmp_path):
     for run in heredoc:
         riga = next(r.strip() for r in run.splitlines()
                     if "<<'PY'" in r and not r.strip().startswith("#"))
+        # L'isolamento e' vano se qualcosa ha gia' spostato il cwd o iniettato
+        # un PYTHONPATH nello stesso blocco `run` (rilievo Claude Fable 5).
+        prima = run.split("<<'PY'", 1)[0]
+        vive = [r for r in prima.splitlines() if not r.strip().startswith("#")]
+        for veleno in ("cd ", "PYTHONPATH=", "PYTHONHOME="):
+            assert veleno not in "\n".join(vive), (
+                f"{veleno!r} compare prima dell'heredoc: l'isolamento di -I "
+                "non protegge da un cwd spostato o da un path iniettato"
+            )
         assert re.search(r"python3?\s+-I\s+-\s*<<'PY'", riga), (
             f"lo step heredoc non gira isolato: {riga!r}. Senza -I il cwd "
             "(il checkout della PR) entra in sys.path e un json.py alla root "

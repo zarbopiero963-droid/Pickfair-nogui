@@ -165,7 +165,10 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 > ritirato. L'esclusione a merge manuale dell'owner vale ora per ciò che
 > **definisce o applica i gate stessi**: i quattro file-policy e i sette
 > workflow-gate (i quattro `pr-review-*.yml`, `ci-quarantine-guard.yml`,
-> `pr-guard.yml`, `pr-merge-readiness.yml`). La lista autoritativa sta nella
+> `pr-guard.yml`, `pr-merge-readiness.yml`), più `scripts/guardrail_check.py`
+> aggiunto dalla #470 — `pr-guard` era già escluso, ma esegue lo script dal
+> checkout della PR: escludere il contenitore lasciando fuori il contenuto non
+> chiudeva niente. La lista autoritativa sta nella
 > sezione «AUTO-MERGE» di `CLAUDE.md` / `AGENTS.md`: se questa nota e quella
 > sezione divergono, vale la sezione.
 >

@@ -171,7 +171,14 @@ def _righe_eseguibili_di_pr_guard() -> str:
     righe = []
     for step in wf["jobs"]["guard"]["steps"]:
         for riga in step.get("run", "").splitlines():
-            if riga.strip().startswith("#"):
+            # Anche i commenti INLINE, non solo quelli a riga intera (secondo
+            # rilievo di Sol sulla #470): `: # python -I scripts/...` passava la
+            # verifica precedente pur non eseguendo nulla. Si taglia al primo
+            # `#`. Limite dichiarato: un `#` dentro una stringa quotata verrebbe
+            # trattato come inizio di commento — qui non capita e non serve un
+            # parser di shell per una riga di invocazione.
+            riga = riga.split("#", 1)[0]
+            if not riga.strip():
                 continue
             righe.append(riga)
     return "\n".join(righe)
