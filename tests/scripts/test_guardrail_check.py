@@ -35,6 +35,8 @@ import scripts.guardrail_check as g
 
 ASSERTIONS = TestCase()
 
+R = ".guardrails/allowed_scope.json"
+
 
 # ---------------------------------------------------------------------------
 # load_json — MALFORMED / fail-closed
@@ -266,16 +268,24 @@ def _write_gate_inputs(tmp_path, *, meta, files, scope):
     guard_dir = tmp_path / ".guardrails"
     guard_dir.mkdir(exist_ok=True)
     (guard_dir / "allowed_scope.json").write_text(json.dumps(scope), encoding="utf-8")
+    # La copia base: identica al head, cioe' nessuna manomissione del registro.
+    # La scrive il helper perche' dal secondo giro di Codex la PR DEVE toccare
+    # il registro, quindi il confronto col base e' sempre richiesto. I test che
+    # parlano proprio di manomissione la sovrascrivono via
+    # `_write_gate_inputs_con_base`.
+    (tmp_path / "allowed_scope_base.json").write_text(json.dumps(scope), encoding="utf-8")
 
 
 def test_main_pass_with_registered_task(tmp_path, monkeypatch):
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
-        files=[{"filename": "tests/scripts/test_x.py"}],
+        # Il registro e' nel diff perche' la policy impone di registrare la task
+        # key NELLO STESSO PR, e dal secondo giro di Codex il guard lo pretende.
+        files=[{"filename": "tests/scripts/test_x.py"}, {"filename": R}],
         # `files` allineato al diff: dall'invariante di scope in fondo a questo
         # file, una dichiarazione che NON coincide col diff blocca.
-        scope={"tasks": {"my_key": {"files": ["tests/scripts/test_x.py"], "max_files": 8}}},
+        scope={"tasks": {"my_key": {"files": ["tests/scripts/test_x.py", R], "max_files": 8}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
@@ -289,8 +299,8 @@ def test_main_pass_with_approved_family_when_registered(tmp_path, monkeypatch):
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: audit_demo] x"},
-        files=["tests/x.py"],
-        scope={"tasks": {"audit_demo": {"files": ["tests/x.py"]}}},
+        files=["tests/x.py", R],
+        scope={"tasks": {"audit_demo": {"files": ["tests/x.py", R]}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
@@ -345,8 +355,8 @@ def test_main_ora_enforce_files_ma_ancora_non_max_files(tmp_path, monkeypatch):
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
         # `files` coincide col diff; `max_files` dichiara 1 su 20 file e NON blocca.
-        files=[f"unrelated_{i}.py" for i in range(20)],
-        scope={"tasks": {"my_key": {"files": [f"unrelated_{i}.py" for i in range(20)],
+        files=[f"unrelated_{i}.py" for i in range(20)] + [R],
+        scope={"tasks": {"my_key": {"files": [f"unrelated_{i}.py" for i in range(20)] + [R],
                                     "max_files": 1}}},
     )
     monkeypatch.chdir(tmp_path)
@@ -361,8 +371,8 @@ def test_main_does_not_block_workflow_paths_when_declared(tmp_path, monkeypatch)
     _write_gate_inputs(
         tmp_path,
         meta={"title": "[TASK: my_key] x"},
-        files=[".github/workflows/ci.yml"],
-        scope={"tasks": {"my_key": {"files": [".github/workflows/ci.yml"]}}},
+        files=[".github/workflows/ci.yml", R],
+        scope={"tasks": {"my_key": {"files": [".github/workflows/ci.yml", R]}}},
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
@@ -391,7 +401,10 @@ def _write_gate_inputs_con_base(tmp_path, *, meta, files, scope, base_scope=None
     non costringe `guardrail_check.py` a lanciare git: resta puro e testabile.
     """
     _write_gate_inputs(tmp_path, meta=meta, files=files, scope=scope)
-    if base_scope is not None:
+    if base_scope is None:
+        # Il caso "copia base assente": va TOLTA, perche' il helper la scrive.
+        (tmp_path / "allowed_scope_base.json").unlink()
+    else:
         (tmp_path / "allowed_scope_base.json").write_text(
             json.dumps(base_scope), encoding="utf-8"
         )
@@ -623,3 +636,30 @@ def test_main_passa_su_una_chiave_nuova_senza_pretendere_dichiarazioni(tmp_path,
     )
     monkeypatch.chdir(tmp_path)
     ASSERTIONS.assertEqual(g.main(), 0)
+
+
+def test_main_blocca_il_riuso_di_una_chiave_storica_senza_registrarla(tmp_path, monkeypatch):
+    """P1 Codex (secondo giro): riusare un'autorizzazione altrui e passata.
+
+    Se la PR NON tocca il registro, non c'e' copia base da confrontare e
+    `validate_own_entry_declared` non ha niente da dire — mentre
+    `validate_declared_scope` trova la coincidenza con la entry STORICA e
+    approva. Bastava quindi mettere nel marker una chiave vecchia e toccare
+    esattamente i file che quella chiave si era fatta autorizzare a suo tempo.
+
+    La policy dice gia' che ogni PR registra la propria task key NELLO STESSO
+    PR: se il registro non e' nel diff, la chiave non e' stata registrata qui.
+    """
+    storica = {"tasks": {"lifecycle": {
+        "files": ["core/trading_engine.py", "core/runtime_controller.py", "order_manager.py"],
+        "description": "autorizzazione di mesi fa",
+    }}}
+    _write_gate_inputs(
+        tmp_path,
+        meta={"title": "[TASK: lifecycle] lavoro tutt'altro"},
+        files=["core/trading_engine.py", "core/runtime_controller.py", "order_manager.py"],
+        scope=storica,
+    )
+    monkeypatch.chdir(tmp_path)
+    with ASSERTIONS.assertRaises(SystemExit):
+        g.main()

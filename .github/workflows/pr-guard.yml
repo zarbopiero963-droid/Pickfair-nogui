@@ -45,7 +45,12 @@ jobs:
           # --- fine guardia base_ref ---
           LATEST_COMMIT_MESSAGE="$(git log -1 --pretty=%B || true)"
           export LATEST_COMMIT_MESSAGE
-          python - <<'PY'
+          # `-I` anche qui (rilievo Fugu Ultra, #470): questo step gira PRIMA del
+          # guard e importa json/os/subprocess. Senza isolamento il cwd — cioe' il
+          # checkout della PR — entra in sys.path, quindi un `json.py` alla ROOT
+          # esegue codice prima ancora che il guard parta. Isolare il solo guard
+          # chiudeva la porta lasciando aperta la finestra.
+          python -I - <<'PY'
           import json, os, subprocess
           base_ref = os.environ["PR_BASE_REF"]
           base_sha = os.environ["PR_BASE_SHA"]

@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -280,3 +281,32 @@ def test_un_modulo_fratello_ostile_non_scavalca_il_guard(tmp_path):
     assert "PR GUARD REPORT" in res.stdout, (
         f"il guard non ha prodotto il proprio report: stdout={res.stdout!r}"
     )
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash non disponibile")
+def test_anche_lo_step_metadata_gira_isolato(tmp_path):
+    """Rilievo di Fugu Ultra sulla #470: l'isolamento del solo guard non basta.
+
+    Lo step che costruisce i metadati gira PRIMA del guard e importa `json`,
+    `os`, `subprocess`. Con `python - <<'PY'` il cwd — cioe' il checkout della
+    PR — finisce in sys.path, quindi un `json.py` alla ROOT del repository
+    esegue codice prima ancora che il guard parta. Riprodotto:
+
+        ### lo step metadata e' stato avvelenato: sono json.py alla root ###
+        exit=0
+
+    Avevo chiuso la porta sul guard lasciando aperta la finestra uno step prima.
+    """
+    wf = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    heredoc = [s["run"] for s in wf["jobs"]["guard"]["steps"]
+               if "<<'PY'" in s.get("run", "")]
+    assert heredoc, "nessuno step di pr-guard.yml usa un heredoc python"
+
+    for run in heredoc:
+        riga = next(r.strip() for r in run.splitlines()
+                    if "<<'PY'" in r and not r.strip().startswith("#"))
+        assert re.search(r"python3?\s+-I\s+-\s*<<'PY'", riga), (
+            f"lo step heredoc non gira isolato: {riga!r}. Senza -I il cwd "
+            "(il checkout della PR) entra in sys.path e un json.py alla root "
+            "esegue codice prima del guard."
+        )

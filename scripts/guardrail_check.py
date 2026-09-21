@@ -302,7 +302,7 @@ def validate_declared_scope(task: str | None, changed_files: list[str], allowed_
     info(f"Scope invariant: `files` di '{task}' coincide col diff ({len(declared)} file)")
 
 
-def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict | None) -> None:
+def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict) -> None:
     """Riscrivere i `files` della PROPRIA chiave va DICHIARATO, non fatto e basta.
 
     `registry_tampering` salta la entry del task corrente — e deve, perche' la
@@ -317,7 +317,7 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict 
     insieme ai `files`, non che dica il vero. Trasforma una riscrittura muta in
     una dichiarata — che e' ispezionabile — non in una impossibile.
     """
-    if base_scope is None or not task:
+    if not task:
         return
     base_entry = (base_scope.get("tasks") or {}).get(task)
     head_entry = (scope.get("tasks") or {}).get(task)
@@ -338,22 +338,31 @@ def validate_own_entry_declared(task: str | None, scope: dict, base_scope: dict 
     )
 
 
-def load_base_registry(changed_files: list[str]) -> dict | None:
-    """Il registro come sta sul branch base, o ``None`` se la PR non lo tocca."""
+def load_base_registry(changed_files: list[str]) -> dict:
+    """Il registro come sta sul branch base.
+
+    La PR DEVE toccare il registro (P1 Codex, #470). Non e' una comodita' di
+    implementazione: e' la policy — «registra SEMPRE la task key in
+    `.guardrails/allowed_scope.json` NELLO STESSO PR». Senza questo vincolo
+    bastava mettere nel marker una chiave vecchia e toccare esattamente i file
+    che quella chiave si era fatta autorizzare mesi prima: nessuna copia base da
+    confrontare, coincidenza con la entry storica, e il gate approvava lavoro
+    che nessuno aveva autorizzato.
+    """
     if SCOPE_REGISTRY not in {str(c).strip() for c in changed_files}:
-        info("Registro non toccato dalla PR: confronto col base non necessario")
-        return None
+        fail(
+            f"La PR non tocca {SCOPE_REGISTRY}: la task key va registrata (o "
+            "aggiornata) NELLO STESSO PR, come impone la policy. Senza, la PR "
+            "starebbe riusando un'autorizzazione concessa a un lavoro diverso."
+        )
     base_scope = load_json(SCOPE_REGISTRY_BASE)
     if not isinstance(base_scope, dict):
         fail(f"{SCOPE_REGISTRY_BASE} deve contenere un oggetto JSON")
     return base_scope
 
 
-def validate_registry_untouched_elsewhere(task: str | None, base_scope: dict | None, allowed_scope: dict) -> None:
+def validate_registry_untouched_elsewhere(task: str | None, base_scope: dict, allowed_scope: dict) -> None:
     """Il registro non si tocca fuori dalla entry del task corrente."""
-    if base_scope is None:
-        return
-
     violazioni = registry_tampering(task, allowed_scope, base_scope)
     if violazioni:
         rendered = "\n".join(f"   - {v}" for v in violazioni)
