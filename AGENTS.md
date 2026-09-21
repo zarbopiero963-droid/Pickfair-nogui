@@ -914,6 +914,16 @@ posture live in `docs/ai_audit_workflows.md`.
   safety_layer, reconciliation, runtime, catalog) — OR when the final label is
   added. On pushes touching only docs/tests both jobs start but exit without
   calling the model (zero cost); those are still covered by GPT-5.6 Sol/Grok.
+- **Since #475 the files that DEFINE or ENFORCE the gates are critical too**:
+  `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
+  `docs/hard_verify_spec.md` and `scripts/guardrail_check.py`. Five of the
+  twelve reserved for the owner's manual merge, and none of them triggered the
+  label or the strong reviewers: a PR touching only these was **silent**.
+  Observed on #473, which touched `guardrail_check.py` and produced nothing
+  until the agent applied the labels by hand — the gate was holding on a rule
+  the agent applies to itself. Cost consequence, stated rather than discovered:
+  **a push to `CLAUDE.md` or to either spec now pays the two strong reviewers.**
+  That is deliberate; it is where strong review matters most.
 
 ### Reviewer cost: do NOT truncate, do NOT burn credits
 

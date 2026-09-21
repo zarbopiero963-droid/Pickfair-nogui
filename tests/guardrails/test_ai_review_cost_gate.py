@@ -175,3 +175,123 @@ def test_block_niente_pattern_non_ancorati_sulle_tre_cartelle(workflow: str) -> 
             f"pattern non ancorato per {modulo}/ in {workflow}: prenderebbe di "
             f"nuovo tests/{modulo}/"
         )
+
+
+# I dodici file che la sezione AUTO-MERGE riserva al merge MANUALE dell'owner:
+# i quattro file-policy, i sette workflow-gate e `scripts/guardrail_check.py`.
+# I sette workflow erano gia' coperti da `(^|/)\.github/workflows/`; gli altri
+# cinque NO — e questo e' il buco che il test chiude.
+FILE_DI_GOVERNANCE = [
+    "CLAUDE.md",
+    "AGENTS.md",
+    "docs/auto_pr_flow_spec.md",
+    "docs/hard_verify_spec.md",
+    "scripts/guardrail_check.py",
+]
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+@pytest.mark.parametrize("governance", FILE_DI_GOVERNANCE)
+def test_pass_i_file_che_definiscono_i_gate_fanno_spendere(workflow: str, governance: str) -> None:
+    """Chi decide cosa l'agente puo' mergiare dev'essere revisionato, sempre.
+
+    Il difetto, osservato dal vivo sulla PR #473 e non dedotto: quella PR
+    toccava `scripts/guardrail_check.py` — uno dei dodici file a merge manuale
+    — e prima che l'agente applicasse le label a mano era **muta**. Nessuna
+    `manual-review-required`, e i due reviewer forti partiti e chiusi senza
+    pubblicare nulla: zero review a testa.
+
+    Il gate restava soddisfatto solo perche' l'agente si ricordava di mettere le
+    label, cioe' per una regola che l'agente applica a se stesso. Una PR che
+    toccasse SOLO questi cinque file passerebbe senza alcun segnale automatico
+    che il merge spetta all'owner.
+
+    Il seguito e' la contropartita di `test_pass_il_modulo_vero_continua_a_far
+    _spendere`: qui il costo si vuole, perche' cade esattamente sui file dove la
+    review forte conta di piu'.
+    """
+    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    assert _spenderebbe(testo, governance), (
+        f"{governance} NON fa scattare il reviewer forte in {workflow}: e' uno "
+        "dei dodici file a merge manuale, e una PR che tocca solo file come "
+        "questo resterebbe senza etichetta e senza review dei gate forti"
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS)
+@pytest.mark.parametrize(
+    "innocuo",
+    ["docs/design/design_handoff.md",
+     "ops/roadmap_go_live.md",
+     "README.md",
+     "scripts/pr_costo_review.py"],
+)
+def test_block_gli_altri_file_di_docs_e_scripts_non_fanno_spendere(workflow: str, innocuo: str) -> None:
+    """Il confine dall'altro lato: coprire i cinque non deve coprire tutto.
+
+    Senza questo, il modo piu' semplice di far passare il test sopra sarebbe un
+    pattern largo su `docs/` o `scripts/` — che farebbe spendere i due reviewer
+    forti su ogni ritocco alla roadmap o al README. Sarebbe un costo continuo
+    ottenuto per pigrizia, non una rete di sicurezza.
+    """
+    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    assert not _spenderebbe(testo, innocuo), (
+        f"{innocuo} fa scattare il reviewer forte in {workflow}: il pattern "
+        "sui file di governance e' troppo largo e fa spendere su file comuni"
+    )
+
+
+# I quattro workflow di review, non solo i due col gate di costo: la lista
+# `CRITICAL_PATTERNS` e' duplicata in tutti e quattro, ed e' la stessa in tutti
+# e quattro. E' un invariante vero oggi, quindi va inchiodato prima che smetta
+# di esserlo in silenzio.
+TUTTI_I_REVIEWER = [
+    ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+    ".github/workflows/pr-review-xai-grok46.yml",
+    ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+    ".github/workflows/pr-review-claude-fable5.yml",
+]
+
+
+def test_block_i_quattro_reviewer_condividono_gli_stessi_pattern_critici() -> None:
+    """Quattro copie della stessa lista divergono appena qualcuno ne tocca una.
+
+    La conseguenza non sarebbe un errore rumoroso ma un disallineamento muto:
+    un file considerato sensibile da due reviewer e ignorato dagli altri due,
+    con l'etichetta `manual-review-required` che compare o no a seconda di
+    quale workflow gira per primo. Confrontare le liste e' l'unico modo per
+    accorgersene senza leggerle a mano ogni volta.
+    """
+    liste = {}
+    for wf in TUTTI_I_REVIEWER:
+        testo = (ROOT / wf).read_text(encoding="utf-8")
+        liste[wf] = [p.pattern for p in _critical_patterns(testo)]
+
+    riferimento = liste[TUTTI_I_REVIEWER[0]]
+    for wf, pattern in liste.items():
+        assert pattern == riferimento, (
+            f"{wf} ha CRITICAL_PATTERNS diversi dagli altri reviewer.\n"
+            f"  solo qui : {[p for p in pattern if p not in riferimento]}\n"
+            f"  mancanti : {[p for p in riferimento if p not in pattern]}\n"
+            "Le quattro liste devono restare allineate: un file sensibile per "
+            "un reviewer e non per gli altri produce un gate a macchia di "
+            "leopardo."
+        )
+
+
+@pytest.mark.parametrize("workflow", TUTTI_I_REVIEWER)
+@pytest.mark.parametrize("governance", FILE_DI_GOVERNANCE)
+def test_pass_i_file_di_governance_sono_critici_per_tutti_e_quattro(
+    workflow: str, governance: str
+) -> None:
+    """`manual-review-required` la applicano tutti e quattro, non solo i forti.
+
+    Il test sopra sul gate di costo riguarda i due reviewer che possono NON
+    spendere; questo riguarda l'etichetta, che dipende da `CRITICAL_PATTERNS`
+    in ciascuno dei quattro workflow.
+    """
+    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    assert any(p.search(governance) for p in _critical_patterns(testo)), (
+        f"{governance} non e' critico per {workflow}: una PR che lo tocca "
+        "potrebbe non ricevere l'etichetta di controllo manuale"
+    )
