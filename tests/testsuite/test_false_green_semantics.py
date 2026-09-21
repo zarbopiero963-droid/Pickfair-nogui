@@ -152,6 +152,31 @@ def test_callable_validation_rejects_hasattr_only_false_green():
     ) is False
 
 
+def _righe_eseguibili_di_pr_guard() -> str:
+    """Le righe dei blocchi `run:` di pr-guard.yml, SENZA i commenti.
+
+    Rilievo di GPT-5.6 Sol sulla #470: asserire su `workflow` o su `run_blocks`
+    grezzi significa accettare l'invocazione isolata anche quando compare solo
+    dentro un commento. Si potrebbe cioe' rimettere `python scripts/...` non
+    isolato, lasciare da qualche parte un commento che nomina `python -I ...`,
+    e questi due guard resterebbero verdi — riaprendo l'import-shadowing con la
+    benedizione del modulo che esiste apposta per impedire i falsi verdi.
+
+    L'altro guard (tests/guardrails/test_pr_guard_fail_closed.py) i commenti
+    gia' li scartava: qui la stessa disciplina mancava.
+    """
+    import yaml as _yaml
+
+    wf = _yaml.safe_load(Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8"))
+    righe = []
+    for step in wf["jobs"]["guard"]["steps"]:
+        for riga in step.get("run", "").splitlines():
+            if riga.strip().startswith("#"):
+                continue
+            righe.append(riga)
+    return "\n".join(righe)
+
+
 def test_pr_guard_workflow_uses_fail_closed_markers_only():
     workflow = Path(".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
 
@@ -164,9 +189,14 @@ def test_pr_guard_workflow_uses_fail_closed_markers_only():
     # dello stdlib, con facolta' di uscire 0 prima di ogni validazione. Il guard
     # non girerebbe affatto, e il check sarebbe verde: un falso verde, che e'
     # esattamente cio' che questo modulo esiste per impedire.
-    assert "python -I scripts/guardrail_check.py" in workflow, (
-        "pr-guard.yml deve lanciare il guard in modalita' isolata (`python -I`): "
-        "senza, un modulo fratello ostile lo scavalca"
+    eseguibili = _righe_eseguibili_di_pr_guard()
+    assert "python -I scripts/guardrail_check.py" in eseguibili, (
+        "pr-guard.yml deve LANCIARE il guard in modalita' isolata (`python -I`): "
+        "senza, un modulo fratello ostile lo scavalca. La verifica guarda le "
+        "righe eseguibili: un commento che nomina `-I` non conta."
+    )
+    assert not re.search(r"(?<!-I )(?<!-I  )\bpython3?\s+scripts/guardrail_check\.py", eseguibili), (
+        "pr-guard.yml lancia il guard SENZA isolamento da qualche parte"
     )
     assert "pr_meta.json" in workflow
     assert "pr_files_raw.json" in workflow
@@ -287,9 +317,10 @@ def test_pr_guard_workflow_keeps_required_pr_metadata_and_shell_safety():
         assert required in types, f"pr-guard.yml: manca il tipo di evento {required!r}"
 
     assert "set -euo pipefail" in run_blocks
-    assert re.search(r"python\s+-I\s+scripts/guardrail_check\.py", run_blocks), (
+    assert re.search(r"python\s+-I\s+scripts/guardrail_check\.py",
+                     _righe_eseguibili_di_pr_guard()), (
         "il guard va lanciato con `python -I` (vedi nota in "
-        "test_pr_guard_workflow_uses_fail_closed_markers_only)"
+        "_righe_eseguibili_di_pr_guard): la verifica ignora i commenti"
     )
     for marker in ["PR_TITLE", "PR_BODY", "PR_HEAD_REF", "LATEST_COMMIT_MESSAGE", "commit_messages", "pr_files_raw.json", "pr_meta.json"]:
         assert marker in raw
