@@ -189,7 +189,20 @@ def test_block_typeerror_dopo_invio_non_produce_un_secondo_invio() -> None:
     """Il guasto nel post-processing non deve far ri-partire l'ordine.
 
     Il trasporto ha gia' spedito: ripetere significherebbe una seconda bet con
-    denaro reale. L'esito resta ambiguo e lo risolve la reconciliation.
+    denaro reale. Questo test prova ESATTAMENTE questo — un solo invio — e non
+    di piu'.
+
+    Nota onesta, da un rilievo P1 di Codex sulla #478: il ciclo di vita
+    AMBIGUO **non** e' garantito oggi per un'eccezione post-invio che non sia
+    un timeout. `_handle_submit_exception` classifica `ERROR_PERMANENT` tutto
+    cio' che non e' `TimeoutError` o non ha "timeout" nel messaggio, quindi
+    l'ordine viene finalizzato FAILED e il lock sul customer_ref viene
+    rilasciato: un retry successivo potrebbe ripetere un ordine live dall'esito
+    ignoto. Non e' una regressione di questa PR — su `main` vale identico per
+    `BetfairService.place_order`, che il mapping ce l'ha sempre avuto — ed e'
+    il mandato della scheda PR30 (pacchetto P25, «FSM AMBIGUOUS e replace senza
+    retry cieco»). Qui si pinna cio' che si prova; la promessa di ambiguita'
+    non si scrive finche' non e' vera.
     """
     client = ClientLiveStretto(
         errore_dopo_invio=TypeError("boom nel post-processing della risposta")
@@ -282,7 +295,7 @@ def test_block_in_simulazione_il_fallback_non_usa_un_client_live() -> None:
     eng.simulation_broker = None
     eng.order_manager = None
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="FALLBACK_NON_PROTETTO"):
         eng._submit_to_order_path(_ctx(), _richiesta())
     assert client.invii == 0, (
         f"bet REALE partita in SIMULATION: {client.invii} invii al client live"
@@ -365,3 +378,38 @@ def TradingEngine_kwargs(payload):
         ...
 
     return TradingEngine._kwargs_per_place_bet(place_bet, payload)
+
+
+@pytest.mark.parametrize("modo", ["LIVE", "MODO_IGNOTO", "simulation_x"])
+def test_block_ogni_modalita_dichiarata_chiude_il_fallback_al_client_non_sim(modo) -> None:
+    """Secondo P1 di Codex sulla #478: bastava una modalita' non riconosciuta.
+
+    Il primo guard controllava solo l'uguaglianza con `"SIMULATION"`, quindi un
+    runtime con modalita' malformata — o LIVE che non ha risolto il client nel
+    ramo protetto — passava comunque dal fallback e piazzava con un client
+    live, scavalcando `is_live_allowed`, il controllo di sessione e il circuit
+    breaker.
+
+    Modalita' NON dichiarata resta permessa di proposito: e' il percorso
+    normale dell'armatura di test, e in produzione non si verifica perche'
+    `headless_main.py:299` e `mini_gui.py:444` cablano il runtime subito dopo
+    aver costruito l'engine. Renderla fail-closed costerebbe 35 test della
+    suite chaos senza chiudere un rischio reale: misurato, non supposto.
+    """
+    class _RuntimeModo:
+        def get_effective_execution_mode(self): return modo
+        def is_live_allowed(self): return False
+        is_emergency_stopped = False
+        betfair_service = None
+
+    client = ClientLiveStretto()
+    eng = _engine(client)
+    eng.runtime_controller = _RuntimeModo()
+    eng.simulation_broker = None
+    eng.order_manager = None
+
+    with pytest.raises(RuntimeError):
+        eng._submit_to_order_path(_ctx(), _richiesta())
+    assert client.invii == 0, (
+        f"modalita' `{modo}`: {client.invii} invii a un client non di simulazione"
+    )

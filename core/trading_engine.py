@@ -1620,17 +1620,33 @@ class TradingEngine:
         if callable(self.client_getter) and not live_client_risolto:
             client = self.client_getter()
             if client is not None:
-                # Fail-closed: in SIMULATION questo fallback puo' usare SOLO un
-                # client dimostrabilmente di simulazione. Ci si arriva quando il
-                # gate live ha negato e non c'e' ne' sim broker ne' order
-                # manager: senza questo controllo il getter restituisce il
-                # client LIVE e parte una bet REALE con `is_live_allowed()`
-                # falso, scavalcando breaker e gestione sessione. Su `main` lo
-                # impediva per caso il `TypeError` del payload non mappato;
-                # l'adattatore della PR02 lo ha reso una chiamata valida.
-                # Rilievo P1 di Codex sulla #478, riprodotto prima/dopo.
-                if modalita_dichiarata == "SIMULATION" and not self._e_il_broker_di_simulazione(client):
-                    raise RuntimeError("SIMULATION_FALLBACK_CLIENT_NOT_SIM")
+                # Fail-closed: se la modalita' e' DICHIARATA, questo fallback
+                # puo' usare solo un client dimostrabilmente di simulazione.
+                # Ci si arriva per tre strade, tutte pericolose:
+                #   SIMULATION  il gate live ha negato e non c'e' ne' sim broker
+                #               ne' order manager => il getter restituisce il
+                #               client LIVE e parte una bet REALE con
+                #               `is_live_allowed()` falso;
+                #   LIVE        il ramo protetto non ha risolto il client, ma un
+                #               client comparso nel frattempo (connessione
+                #               appena stabilita) piazzerebbe senza breaker ne'
+                #               gestione sessione — la TOCTOU che
+                #               `_resolve_live_client` descrive;
+                #   altro       modalita' non riconosciuta: non si puo' sapere
+                #               se piazzare sia lecito, quindi non si piazza.
+                # Su `main` tutto questo lo impediva per caso il `TypeError` del
+                # payload non mappato; l'adattatore della PR02 ha reso quella
+                # chiamata valida e ha tolto la rete. Rilievi P1 di Codex sulla
+                # #478 (SIMULATION, poi modalita' non riconosciuta), riprodotti.
+                #
+                # Modalita' NON dichiarata (nessun runtime_controller) resta
+                # permessa: e' il percorso normale dell'armatura di test, e in
+                # produzione non si verifica — `headless_main.py:299` e
+                # `mini_gui.py:444` cablano il runtime subito dopo l'engine.
+                if modalita_dichiarata and not self._e_il_broker_di_simulazione(client):
+                    raise RuntimeError(
+                        f"FALLBACK_NON_PROTETTO_IN_MODO_{modalita_dichiarata}"
+                    )
                 place = getattr(client, "place_bet", None)
                 if callable(place):
                     return place(**self._kwargs_per_place_bet(place, payload))
