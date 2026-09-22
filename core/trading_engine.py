@@ -1549,12 +1549,39 @@ class TradingEngine:
         sim = getattr(servizio, "simulation_broker", None)
         return sim is not None and client is sim
 
-    # Errori che `BetfairClient.place_bet` solleva PRIMA di costruire la
-    # richiesta (validazione degli argomenti): il trasporto non e' stato
-    # toccato. Sono gli unici che provano che nulla e' partito.
+    # Errori sollevati PRIMA che il trasporto sia toccato: la validazione degli
+    # argomenti di `BetfairClient.place_bet`, prima di costruire la richiesta,
+    # e quella del lato in `_con_lato_valido`, prima di chiamare il client.
+    # Sono gli unici che provano che nulla e' partito.
     _ERRORI_PRIMA_DELL_INVIO = frozenset({
         "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
+        "INVALID_SIDE",
     })
+
+    @staticmethod
+    def _con_lato_valido(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Il lato che va al client reale: BACK o LAY, altrimenti niente invio.
+
+        Il client un lato invalido non lo rifiuta, lo CONVERTE (`safe_side`:
+        tutto cio' che non e' BACK/LAY diventa BACK), e sul ramo LIVE questo
+        vuol dire la scommessa opposta con denaro vero. `bet_type or side`
+        copriva solo l'alias vuoto; un refuso valorizzato vinceva comunque su
+        un `side` valido. Rilievo di GPT-5.6 Sol sulla #478.
+
+        Alias vuoti o di soli spazi valgono come assenti; i due alias, se
+        entrambi presenti, devono coincidere. Si valida qui e solo sul ramo
+        LIVE: il fallback non raggiunge mai il client reale, e validare anche
+        li' rompe 12 test di ciclo di vita che usano di proposito payload senza
+        lato (misurato).
+        """
+        lati = {
+            str(valore).strip().upper()
+            for valore in (payload.get("bet_type"), payload.get("side"))
+            if valore is not None and str(valore).strip()
+        }
+        if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
+            raise RuntimeError("INVALID_SIDE")
+        return {**payload, "bet_type": lati.pop()}
 
     @classmethod
     def _esito_certo_o_gia_classificato(cls, exc: Exception) -> bool:
@@ -1642,7 +1669,8 @@ class TradingEngine:
                         # `_kwargs_per_place_bet`. Lo splat diretto del payload
                         # rompeva il ramo LIVE (PR02/#461).
                         place_fn = (
-                            (lambda p: place_bet(**self._kwargs_per_place_bet(place_bet, p)))
+                            (lambda p: place_bet(**self._kwargs_per_place_bet(
+                                place_bet, self._con_lato_valido(p))))
                             if callable(place_bet) else None
                         )
 

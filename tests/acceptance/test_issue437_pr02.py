@@ -768,3 +768,66 @@ def test_premessa_dello_sbarramento_solo_due_classi_definiscono_place_bet() -> N
         f"nuove classi con place_bet fuori dai test: {sorted(trovati)}. "
         f"Lo sbarramento per classe non riconosce i wrapper: decidi come trattarle"
     )
+
+
+# --------------------------------------------------------------------------
+# Il LATO sul ramo LIVE: BACK o LAY, altrimenti nessun invio
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("campi", [
+    {"bet_type": "LAYY", "side": "LAY"},     # refuso che copre un side valido
+    {"bet_type": "SELL"},                     # valore sconosciuto
+    {"bet_type": None},                       # nessun lato
+    {"bet_type": "BACK", "side": "LAY"},      # alias in conflitto
+], ids=["refuso_copre_side", "sconosciuto", "assente", "conflitto"])
+def test_block_lato_invalido_non_parte_dal_ramo_live(campi) -> None:
+    """Rilievo di GPT-5.6 Sol su `841c552`: vero.
+
+    Il client non rifiuta un lato invalido, lo CONVERTE: `safe_side` fa BACK di
+    tutto cio' che non e' BACK/LAY. `bet_type or side` copriva solo l'alias
+    vuoto; un refuso valorizzato vinceva comunque su `side="LAY"` e diventava
+    la scommessa opposta. Sul ramo LIVE il lato si valida prima dell'invio.
+    """
+    client = ClientLiveStretto()
+    richiesta = _richiesta()
+    richiesta.pop("bet_type")
+    richiesta.update(campi)
+
+    with pytest.raises(RuntimeError, match="INVALID_SIDE"):
+        _engine(client)._submit_to_order_path(_ctx(), richiesta)
+    assert client.invii == 0, f"{campi}: un lato invalido e' arrivato al trasporto"
+
+
+@pytest.mark.parametrize("campi,atteso", [
+    ({"bet_type": " lay "}, "LAY"),
+    ({"bet_type": None, "side": "LAY"}, "LAY"),
+    ({"bet_type": "back", "side": "BACK"}, "BACK"),
+], ids=["spazi_e_minuscolo", "alias_vuoto", "stessi_valori"])
+def test_lato_valido_normalizzato_continua_a_partire(campi, atteso) -> None:
+    """Il contrario: un lato valido scritto in modo diverso non va rifiutato."""
+    client = ClientLiveStretto()
+    richiesta = _richiesta()
+    richiesta.pop("bet_type")
+    richiesta.update(campi)
+
+    _engine(client)._submit_to_order_path(_ctx(), richiesta)
+    assert client.invii == 1
+    assert client.ricevuti[0]["side"] == atteso
+
+
+def test_lato_invalido_dal_percorso_pubblico_e_failed_non_ambiguo() -> None:
+    """L'errore sul lato nasce PRIMA dell'invio: FAILED e lock libero.
+
+    Se finisse fra le eccezioni di posizione ignota diventerebbe una falsa
+    ambiguita' — lock tenuto su un ordine che non e' mai partito.
+    """
+    sessione = _SessioneContaInvii(_RISPOSTA_MALFORMATA)
+    ric = _Riconciliazione()
+    eng = _engine_client_reale(sessione, ric)
+
+    esito = eng.submit_quick_bet({"customer_ref": "PFREF0004", **_richiesta(bet_type="SELL")})
+
+    assert sessione.post_inviati == 0
+    assert esito["status"] == "FAILED", esito
+    assert "INVALID_SIDE" in str(esito.get("error"))
+    assert ric.accodati == []
+    assert "PFREF0004" not in eng._inflight_keys

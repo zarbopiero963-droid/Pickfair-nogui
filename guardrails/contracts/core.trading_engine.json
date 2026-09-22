@@ -34,7 +34,8 @@
     "mappatura_dominio_verso_client": {
       "bet_type": "side",
       "stake": "size",
-      "alias_vuoto": "`bet_type` vuoto o None e' ASSENZA: ricade su `side` (`bet_type or side`, come BetfairService.place_order). Il client non rifiuta un lato invalido, lo converte in BACK (`safe_side`): un alias vuoto che copre un `side` valido sarebbe la scommessa opposta."
+      "alias_vuoto": "`bet_type` vuoto o None e' ASSENZA: ricade su `side` (`bet_type or side`, come BetfairService.place_order). Il client non rifiuta un lato invalido, lo converte in BACK (`safe_side`): un alias vuoto che copre un `side` valido sarebbe la scommessa opposta.",
+      "lato_sul_ramo_live": "Sul ramo LIVE il lato si VALIDA prima dell'invio (`_con_lato_valido`): BACK o LAY dopo strip/upper, alias vuoti o di soli spazi come assenti, alias presenti e in conflitto rifiutati. Altrimenti `INVALID_SIDE`, errore pre-invio: FAILED, zero POST, lock libero. Il client un lato invalido non lo rifiuta, lo converte in BACK (`safe_side`)."
     },
     "kwargs_fuori_firma": "filtrati per firma, MAI inoltrati: uno splat diretto del payload interno solleva TypeError e l'ordine non parte. Il payload dell'engine porta correlation_id e i campi di audit, che sul wire non esistono.",
     "customer_ref_sul_wire": "top-level `customerRef` dei params di placeOrders, DISTINTO da `customerOrderRef` per-istruzione. Ref non conforme o assente => chiave OMESSA e payload identico al legacy: fail-closed sul REF, non sull'ORDINE.",
