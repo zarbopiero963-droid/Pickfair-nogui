@@ -48,6 +48,16 @@ SEGRETI_DA_REDIGERE = (
     '"appKey":"SEGRETISSIMO"',
     '"api_key": "SEGRETISSIMO"',
     '"password": "SEGRETISSIMO"',
+    # Valore quotato CON SPAZI. Rilievo convergente di Claude Fable 5.1 e Fugu
+    # Ultra sulla #477: la classe del valore era `[^"'\s,;]+`, quindi si
+    # fermava al primo spazio e lasciava in chiaro il resto —
+    # `"password": "SEGRETISSIMO con spazi"` diventava
+    # `"password=[REDACTED] con spazi"`. Una fuga PARZIALE su un gate di
+    # redazione e' peggio di nessuna redazione, perche' il commento sembra
+    # ripulito. I campioni senza spazi passavano, quindi il test era verde.
+    '"password": "prefisso SEGRETISSIMO"',
+    '"app_key": "abc SEGRETISSIMO"',
+    "'token': 'x SEGRETISSIMO'",
 )
 VALORE = "SEGRETISSIMO"
 
