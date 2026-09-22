@@ -635,3 +635,33 @@ def test_block_modalita_vuota_o_assente_vale_simulazione(modo) -> None:
     assert client.invii == 0, (
         f"modalita' {modo!r}: {client.invii} invii a un client non di simulazione"
     )
+
+
+def test_block_lo_sbarramento_non_dipende_dall_import_del_client(monkeypatch) -> None:
+    """Il riconoscimento del client reale non deve importare niente.
+
+    Il job `trading-engine-hard-tests` installa solo pytest: senza `requests`,
+    `betfair_client` non si importa. La prima versione dello sbarramento
+    rispondeva «reale» a import fallito e cosi' bloccava anche i doppi — 10
+    rossi in CI su `6dda2b3`, 52 verdi su `main` con lo stesso comando.
+
+    Il ragionamento era sbagliato, non l'ambiente: se la classe non si puo'
+    caricare, nessun oggetto puo' esserne istanza, quindi la risposta giusta
+    e' no. E un client reale gia' creato va riconosciuto anche cosi'.
+    """
+    import sys
+
+    from betfair_client import BetfairClient
+
+    reale = BetfairClient.__new__(BetfairClient)      # creato prima del blocco
+    monkeypatch.setitem(sys.modules, "betfair_client", None)   # import => ImportError
+
+    assert TradingEngine._e_il_client_betfair_reale(reale) is True
+    doppio = ClientLiveStretto()
+    assert TradingEngine._e_il_client_betfair_reale(doppio) is False
+
+    eng = _engine(doppio)
+    eng.runtime_controller = None          # modalita' non dichiarata: doppio ammesso
+    esito = eng._submit_to_order_path(_ctx(), _richiesta())
+    assert doppio.invii == 1
+    assert esito == {"ok": True, "bet_id": "BET-1"}

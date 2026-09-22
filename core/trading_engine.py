@@ -1504,16 +1504,23 @@ class TradingEngine:
 
         Identificazione per CLASSE, non per comportamento: `BetfairClient` e'
         l'unico oggetto che parla davvero con Betfair, e riconoscerlo non
-        dipende da come e' cablato il runtime. Import pigro per non legare
-        l'engine al client al momento dell'import; se il modulo non si carica,
-        la risposta prudente e' "si'" — meglio rifiutare un piazzamento che
-        lasciarne passare uno non protetto.
+        dipende da come e' cablato il runtime. Si guarda la gerarchia della
+        classe dell'oggetto (sottoclassi comprese, come `MarketBetfairClient`)
+        senza importare nulla.
+
+        La prima versione importava `betfair_client` e, a import fallito,
+        rispondeva "si'". Era un ragionamento sbagliato: se la classe non si
+        puo' caricare nessun oggetto puo' esserne istanza, quindi la risposta
+        giusta e' no. Nel job `trading-engine-hard-tests`, che installa solo
+        pytest e quindi non ha `requests`, bloccava anche i doppi dei test.
         """
-        try:
-            from betfair_client import BetfairClient
-        except Exception:  # pragma: no cover - ambiente senza il client
-            return True
-        return isinstance(client, BetfairClient)
+        for classe in type(client).__mro__:
+            modulo = getattr(classe, "__module__", "") or ""
+            if classe.__name__ == "BetfairClient" and (
+                modulo == "betfair_client" or modulo.endswith(".betfair_client")
+            ):
+                return True
+        return False
 
     def _e_il_broker_di_simulazione(self, client: Any) -> bool:
         """Il client risolto e' DIMOSTRABILMENTE il broker di simulazione?
