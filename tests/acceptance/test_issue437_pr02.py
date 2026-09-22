@@ -831,3 +831,24 @@ def test_lato_invalido_dal_percorso_pubblico_e_failed_non_ambiguo() -> None:
     assert "INVALID_SIDE" in str(esito.get("error"))
     assert ric.accodati == []
     assert "PFREF0004" not in eng._inflight_keys
+
+
+@pytest.mark.parametrize("testo", ["INVALID_SIDE", "INVALID_PRICE"])
+def test_block_il_testo_di_un_errore_non_prova_che_nulla_sia_partito(testo) -> None:
+    """Rilievo di GPT-5.6 Sol su `7613a7f`: vero sulla forma.
+
+    `INVALID_SIDE` era riconosciuto come pre-invio dal solo TESTO: un client
+    che sollevasse la stessa stringa DOPO il POST sarebbe passato per «nulla
+    e' partito» — FAILED, lock rilasciato, retry, doppia bet. Lo stesso vale
+    per i quattro codici di validazione del client: sono prova solo per il
+    `BetfairClient`, di cui si e' verificato che li solleva prima di costruire
+    la richiesta. Da qualunque altro client, dopo l'invio, l'esito e' ignoto.
+    """
+    client = ClientLiveStretto(errore_dopo_invio=RuntimeError(testo))
+
+    with pytest.raises(ExecutionError) as preso:
+        _engine(client)._submit_to_order_path(_ctx(), _richiesta())
+    assert client.invii == 1
+    assert preso.value.error_type == ERROR_AMBIGUOUS, (
+        f"'{testo}' dopo l'invio da un client non verificato preso per errore pre-invio"
+    )

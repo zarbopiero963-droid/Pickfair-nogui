@@ -94,6 +94,15 @@ class ExecutionError(Exception):
         self.ambiguity_reason = ambiguity_reason
 
 
+class _ErrorePrimaDellInvio(RuntimeError):
+    """Sollevata dall'engine stesso PRIMA di chiamare il client: nulla e' partito.
+
+    Riconosciuta per TIPO, non per testo: un client che sollevasse la stessa
+    stringa dopo il POST non puo' farsi passare per un errore pre-invio.
+    Rilievo di GPT-5.6 Sol sulla #478.
+    """
+
+
 # =========================================================
 # NO-OP FALLBACKS
 # =========================================================
@@ -1549,13 +1558,13 @@ class TradingEngine:
         sim = getattr(servizio, "simulation_broker", None)
         return sim is not None and client is sim
 
-    # Errori sollevati PRIMA che il trasporto sia toccato: la validazione degli
-    # argomenti di `BetfairClient.place_bet`, prima di costruire la richiesta,
-    # e quella del lato in `_con_lato_valido`, prima di chiamare il client.
-    # Sono gli unici che provano che nulla e' partito.
+    # Errori che `BetfairClient.place_bet` solleva PRIMA di costruire la
+    # richiesta (validazione degli argomenti): verificato sul codice del client
+    # e pinnato da un test che usa il client vero. Sono prova che nulla e'
+    # partito SOLO se a sollevarli e' quel client: lo stesso testo da un altro
+    # oggetto, dopo l'invio, non prova niente.
     _ERRORI_PRIMA_DELL_INVIO = frozenset({
         "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
-        "INVALID_SIDE",
     })
 
     @staticmethod
@@ -1580,18 +1589,22 @@ class TradingEngine:
             if valore is not None and str(valore).strip()
         }
         if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
-            raise RuntimeError("INVALID_SIDE")
+            raise _ErrorePrimaDellInvio("INVALID_SIDE")
         return {**payload, "bet_type": lati.pop()}
 
     @classmethod
-    def _esito_certo_o_gia_classificato(cls, exc: Exception) -> bool:
+    def _esito_certo_o_gia_classificato(cls, exc: Exception, client: Any = None) -> bool:
         """L'eccezione del client live puo' arrivare al gestore cosi' com'e'?
 
-        Si', in due casi. Se il gestore la classifica gia' AMBIGUA — un
+        Si', in tre casi. Se il gestore la classifica gia' AMBIGUA — un
         `error_type` AMBIGUOUS dichiarato, un `TimeoutError`, "timeout" nel
         testo: `_handle_submit_exception` le tratta cosi', con la ragione
-        giusta. Oppure se e' un errore che il client solleva prima di
-        costruire la richiesta: li' FAILED e' la verita'.
+        giusta. Se l'ha sollevata l'engine stesso prima di chiamare il client
+        (`_ErrorePrimaDellInvio`, riconosciuta per tipo). Oppure se e' uno
+        degli errori che il `BetfairClient` reale solleva prima di costruire
+        la richiesta — e solo se `client` e' davvero quel client: il testo da
+        solo non e' una prova (GPT-5.6 Sol sulla #478). In questi casi FAILED
+        e' la verita'.
 
         Tutto il resto ha posizione IGNOTA rispetto all'invio: un `TypeError`
         nel post-processing di una risposta arrivata, un `AttributeError` su un
@@ -1606,7 +1619,13 @@ class TradingEngine:
             return True
         if isinstance(exc, TimeoutError) or "timeout" in str(exc).lower():
             return True
-        return isinstance(exc, RuntimeError) and str(exc) in cls._ERRORI_PRIMA_DELL_INVIO
+        if isinstance(exc, _ErrorePrimaDellInvio):
+            return True
+        return (
+            isinstance(exc, RuntimeError)
+            and str(exc) in cls._ERRORI_PRIMA_DELL_INVIO
+            and cls._e_il_client_betfair_reale(client)
+        )
 
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
         self._assert_valid_ctx(ctx)
@@ -1679,7 +1698,7 @@ class TradingEngine:
                             result = place_fn(payload)
                         except Exception as _exc:
                             self._order_submission_breaker.record_failure(_exc)
-                            if self._esito_certo_o_gia_classificato(_exc):
+                            if self._esito_certo_o_gia_classificato(_exc, live_client):
                                 raise
                             # Esito IGNOTO: il trasporto puo' aver gia'
                             # spedito. AMBIGUOUS tiene il lock sul
