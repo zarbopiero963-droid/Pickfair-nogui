@@ -1758,6 +1758,15 @@
         "docs/ai_audit_workflows.md",
         "tests/guardrails/test_ai_review_cost_gate.py"
       ]
+    },
+    "pattern_invocazione_nuda_versioni_puntate": {
+      "description": "Issue #474. Rilievo non bloccante di Claude Fable 5 sulla #473, verificato e DIFFERITO per decisione dell'owner (opzione B: «mergi cosi' e lo prendo nella prossima PR che tocca quel file»), ora eseguito. IL BUCO: `_INVOCAZIONE_NUDA` in tests/testsuite/test_false_green_semantics.py e' il pattern del guard anti-falso-verde che verifica che pr-guard.yml non lanci MAI scripts/guardrail_check.py senza isolamento. Era `\\bpython3?\\s+scripts/guardrail_check\\.py`: `\\bpython3?` si ferma a `python3`, poi `\\s+` pretende uno spazio e trova un `.`, quindi nessun match. Una invocazione NUDA scritta `python3.12 scripts/guardrail_check.py` sfuggiva del tutto. Riprodotto su main aggiornato (3f82881): nudo/nudo-py3 catturati, python3.11 e python3.12 NO. NON E' UN CASO DI SCUOLA IN QUESTO REPO: CLAUDE.md §GATE DI CONSEGNA prescrive /usr/bin/python3.12 per la procedura screenshot sotto Xvfb, quindi la grafia puntata e' gia' nelle pratiche del progetto. FIX: `[0-9.]*` al posto di `3?`. Il ramo isolato resta escluso esattamente come prima — in `python3.12 -I scripts/...` la classe consuma `3.12`, poi `\\s+` consuma lo spazio e trova `-I` e non `scripts/`, quindi nessun match, che e' il comportamento voluto. TEST red-first: 3 casi nuovi aggiunti al parametrico esistente (python3.11 nudo, python3.12 nudo, /usr/bin/python3.12 nudo) piu' un caso di CONFINE dall'altro lato (python3.12 -I NON deve matchare). 3 failed + 6 passed prima del fix, 9 passed dopo. BLOCK verificato in DUE direzioni, e la prima e' quella che conta: (1) aggiungendo `python3.12 scripts/guardrail_check.py` al workflow accanto all'invocazione isolata, il guard ORA CADE — prima passava in silenzio: e' il bug chiuso, osservato invece che asserito; (2) ripristinando `3?` cadono i 3 casi puntati. IMPATTO REALE, senza gonfiarlo: nessun workflow usa oggi quella grafia per lanciare il guard — pr-guard.yml usa `python -I`, forma corretta e verificata dall'assert positivo. Il buco era nella RETE DI SICUREZZA, non nel comportamento corrente. Preesistente, non introdotto dalla #473; anzi e' la #473 che ha reso il pattern VISIBILE estraendolo a costante con un test parametrico sopra, e Fable ha usato quella visibilita' lo stesso giorno. Docs: N/A motivato — nessuna doc cita `_INVOCAZIONE_NUDA` ne' il pattern (grep su docs/, ops/, README.md). Design handoff N/A: nessuna superficie visibile. PR NON safety-critical per i file toccati (un modulo di test e il registro): nessuno dei due e' nella lista di esclusione, quindi rientra nell'auto-merge gated.",
+      "allow_tests": true,
+      "max_files": 2,
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "tests/testsuite/test_false_green_semantics.py"
+      ]
     }
   }
 }

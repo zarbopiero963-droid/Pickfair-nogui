@@ -188,7 +188,19 @@ def _righe_eseguibili_di_pr_guard() -> str:
 # pattern puo' descrivere. Estratto a costante per poterlo esercitare da un test
 # invece di lasciarlo vivere solo dentro un assert, dove un indebolimento non si
 # vedrebbe.
-_INVOCAZIONE_NUDA = re.compile(r"\bpython3?\s+scripts/guardrail_check\.py")
+#
+# `[0-9.]*` e non `3?` (#474, rilievo di Fable 5 sulla #473): la versione
+# puntata sfuggiva. `\bpython3?` si fermava a `python3`, poi `\s+` pretendeva
+# uno spazio e trovava un `.` — nessun match, quindi
+# `python3.12 scripts/guardrail_check.py`, che e' NUDA, passava inosservata.
+# Non e' un caso di scuola in questo repo: CLAUDE.md prescrive
+# `/usr/bin/python3.12` per la procedura screenshot sotto Xvfb, quindi quella
+# grafia e' gia' nelle sue pratiche.
+#
+# Il ramo isolato resta escluso come prima: in `python3.12 -I scripts/...`
+# la classe consuma `3.12`, poi `\s+` consuma lo spazio e trova `-I`, non
+# `scripts/` — nessun match, che e' il comportamento voluto.
+_INVOCAZIONE_NUDA = re.compile(r"\bpython[0-9.]*\s+scripts/guardrail_check\.py")
 
 
 @pytest.mark.parametrize(
@@ -196,11 +208,21 @@ _INVOCAZIONE_NUDA = re.compile(r"\bpython3?\s+scripts/guardrail_check\.py")
     [
         ("python -I scripts/guardrail_check.py", False),
         ("python3 -I scripts/guardrail_check.py", False),
+        ("python3.12 -I scripts/guardrail_check.py", False),
         ("python scripts/guardrail_check.py", True),
         ("python3 scripts/guardrail_check.py", True),
         ("python  scripts/guardrail_check.py", True),
+        # Versione puntata (#474, rilievo Fable 5 sulla #473): `\bpython3?` si
+        # fermava a `python3`, poi `\s+` pretendeva uno spazio e trovava un `.`
+        # — nessun match, quindi una invocazione NUDA scritta cosi' sfuggiva.
+        # Non e' ipotetica qui: CLAUDE.md prescrive /usr/bin/python3.12 per la
+        # procedura screenshot sotto Xvfb, quindi la grafia e' gia' in uso.
+        ("python3.11 scripts/guardrail_check.py", True),
+        ("python3.12 scripts/guardrail_check.py", True),
+        ("/usr/bin/python3.12 scripts/guardrail_check.py", True),
     ],
-    ids=["isolato", "isolato-py3", "nudo", "nudo-py3", "nudo-doppio-spazio"],
+    ids=["isolato", "isolato-py3", "isolato-py312", "nudo", "nudo-py3",
+         "nudo-doppio-spazio", "nudo-py311", "nudo-py312", "nudo-path-assoluto"],
 )
 def test_il_pattern_riconosce_solo_l_invocazione_non_isolata(riga, deve_matchare):
     """Inchioda cio' che il pattern deve distinguere, non come e' scritto.
