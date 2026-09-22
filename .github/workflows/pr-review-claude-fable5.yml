@@ -1,6 +1,6 @@
-name: PR Review Claude Fable 5
+name: PR Review Claude Fable 5.1
 
-# Review AI FORTE con Claude Fable 5 (Anthropic Messages API). Costa, quindi
+# Review AI FORTE con Claude Fable 5.1 (Anthropic Messages API). Costa, quindi
 # chiama il modello SOLO quando serve davvero:
 # - automaticamente su un push che tocca file CORE di Pickfair (moduli root,
 #   core/, services/, controllers/, dipendenze) → analizza il push-range;
@@ -33,7 +33,7 @@ concurrency:
 
 jobs:
   review:
-    name: Claude Fable 5 final review
+    name: Claude Fable 5.1 final review
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -50,7 +50,7 @@ jobs:
 
     env:
       ANTHROPIC_API_KEY: ${{ secrets.CLAUDE_PICKFAIR }}
-      ANTHROPIC_MODEL: claude-fable-5
+      ANTHROPIC_MODEL: claude-fable-5-1
       ANTHROPIC_VERSION: "2023-06-01"
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,8 +66,10 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
+      # `claude-fable5` resta com'e' anche dopo il passaggio a 5.1:
+      # identificatore nei done_marker gia' pubblicati, non descrizione.
       REVIEW_ID: claude-fable5
-      MODEL_LABEL: Claude Fable 5
+      MODEL_LABEL: Claude Fable 5.1
 
       MAX_PATCH_PER_FILE_CHARS: "5000"
       MAX_TOTAL_PATCH_CHARS: "16000"
@@ -90,13 +92,17 @@ jobs:
 
       PRICE_INPUT_PER_MILLION: "10.00"
       PRICE_CACHE_CREATION_PER_MILLION: "12.50"
-      PRICE_CACHE_READ_PER_MILLION: "1.00"
+      # 0.25 e non 1.00: il listino di Fable 5.1 abbassa il cache-read
+      # rispetto a Fable 5. Lasciare il vecchio valore non avrebbe rotto
+      # nulla, avrebbe fatto MENTIRE il report costi — che e' peggio,
+      # perche' un totale sbagliato si legge come un totale.
+      PRICE_CACHE_READ_PER_MILLION: "0.25"
       PRICE_OUTPUT_PER_MILLION: "50.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with Claude Fable 5
+      - name: Review pushed commit range with Claude Fable 5.1
         shell: bash
         run: |
           set -euo pipefail
@@ -110,7 +116,7 @@ jobs:
               echo "::error::Gate finale a label ma ANTHROPIC_API_KEY assente: review non eseguibile → job fallito (il gate non deve risultare verde)."
               exit 1
             fi
-            echo "::notice::ANTHROPIC_API_KEY non configurato: reviewer Claude Fable 5 saltato (push automatico, nessun check rosso)."
+            echo "::notice::ANTHROPIC_API_KEY non configurato: reviewer Claude Fable 5.1 saltato (push automatico, nessun check rosso)."
             exit 0
           fi
 
@@ -136,7 +142,7 @@ jobs:
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header x-api-key (...\n) -> request fallita.
           ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"].strip()
-          ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-fable-5")
+          ANTHROPIC_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-fable-5-1")
           ANTHROPIC_VERSION = os.environ.get("ANTHROPIC_VERSION", "2023-06-01")
           REVIEW_ID = os.environ.get("REVIEW_ID", "claude-fable5")
           MODEL_LABEL = os.environ.get("MODEL_LABEL", ANTHROPIC_MODEL)
@@ -150,7 +156,7 @@ jobs:
 
           PRICE_INPUT_PER_MILLION = float(os.environ.get("PRICE_INPUT_PER_MILLION", "10"))
           PRICE_CACHE_CREATION_PER_MILLION = float(os.environ.get("PRICE_CACHE_CREATION_PER_MILLION", "12.5"))
-          PRICE_CACHE_READ_PER_MILLION = float(os.environ.get("PRICE_CACHE_READ_PER_MILLION", "1"))
+          PRICE_CACHE_READ_PER_MILLION = float(os.environ.get("PRICE_CACHE_READ_PER_MILLION", "0.25"))
           PRICE_OUTPUT_PER_MILLION = float(os.environ.get("PRICE_OUTPUT_PER_MILLION", "50"))
 
           MANUAL_REVIEW_LABEL = os.environ.get("MANUAL_REVIEW_LABEL", "manual-review-required")
@@ -199,7 +205,17 @@ jobs:
               (re.compile(r"\bgh[pousr]_[A-Za-z0-9_]{30,}\b"), "[REDACTED_GITHUB_TOKEN]"),
               (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
               (re.compile(r"\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b"), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
-              (re.compile(r"(?i)(api[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)\s*[:=]\s*[\"']?[^\"'\s,;]+"), r"\1=[REDACTED]"),
+              # Regola generica chiave/valore. Copre: valore nudo, quotato,
+              # con spazi, con delimitatore escapato, e quotato NON chiuso
+              # (li' il ramo quotato consuma fino a fine riga — `\n` escluso
+              # apposta, altrimenti divorerebbe il resto del diff e la review
+              # diventerebbe cieca). LIMITE NOTO E ACCETTATO: un valore NON
+              # quotato con spazi resta troncato al primo spazio. Allargarlo
+              # vorrebbe dire consumare fino a fine riga anche senza
+              # delimitatori, cioe' sopra-redigere testo qualsiasi che segue
+              # un `=`. Rilevato da Fugu Ultra sulla #477 e classificato da
+              # lui stesso come residuo minore non bloccante.
+              (re.compile(r"(?i)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?\s*[:=]\s*(?:\"(?:\\.|[^\"\\\n])*\"?|'(?:\\.|[^'\\\n])*'?|[^\"'\s,;]+)"), r"\1=[REDACTED]"),
           ]
 
           def redact(text: str) -> str:
@@ -857,7 +873,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # Claude Fable 5 PR Review
+          # Claude Fable 5.1 PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -920,7 +936,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review Claude Fable 5 non completata\n\n"
+                  "## Review Claude Fable 5.1 non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -945,7 +961,7 @@ jobs:
           done_line = "" if model_failed else done_marker
 
           body = f"""{marker}{done_line}
-          # Claude Fable 5 PR Review
+          # Claude Fable 5.1 PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
@@ -979,7 +995,7 @@ jobs:
           # resta fail-open: reviewer opzionale che non blocca la PR (Codex P2).
           if model_failed and EVENT_ACTION == "labeled":
               print(
-                  "::error::Gate finale a label: la review Claude Fable 5 non è stata "
+                  "::error::Gate finale a label: la review Claude Fable 5.1 non è stata "
                   "completata (errore provider) → job fallito di proposito."
               )
               sys.exit(1)

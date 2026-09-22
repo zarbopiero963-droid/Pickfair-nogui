@@ -1,10 +1,10 @@
-name: PR Review OpenRouter Fugu Ultra
+name: PR Review OpenRouter GPT-6 Astra
 
-# Review AI FORTE con Sakana Fugu Ultra via OpenRouter (endpoint chat/completions
+# Review AI FORTE con OpenAI GPT-6 Astra via OpenRouter (endpoint chat/completions
 # stile OpenAI). È caro, quindi chiama il modello SOLO quando serve davvero:
 # - automaticamente su un push che tocca file CORE di Pickfair (moduli root,
 #   core/, services/, controllers/, dipendenze) → analizza il push-range;
-# - oppure quando viene aggiunta la label `final-fugu-review` (gate finale
+# - oppure quando viene aggiunta la label `final-astra-review` (gate finale
 #   pre-merge) → analizza l'intera PR (base...head).
 # Su push che toccano solo workflow/docs/test il job parte ma NON spende (gate
 # costo nello script). Diff-only: niente checkout, niente esecuzione del codice
@@ -28,29 +28,34 @@ permissions:
   issues: write
 
 concurrency:
-  group: pr-review-fugu-ultra-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  group: pr-review-gpt-astra-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
   cancel-in-progress: false
 
 jobs:
   review:
-    name: Fugu Ultra final review
+    name: GPT-6 Astra final review
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     # Parte su ogni push della PR interna non-draft, MA la chiamata al modello
     # (il costo) avviene solo se il push tocca file CORE o CRITICI di Pickfair oppure se è
     # stata aggiunta la label finale (gate costo nello script). Sui trigger a
-    # label accetta solo `final-fugu-review` (ignora altre label come
+    # label accetta solo `final-astra-review` (ignora altre label come
     # manual-review-required per non rilanciare inutilmente).
     if: >
       github.event.pull_request.draft == false &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       ( github.event.action != 'labeled' ||
-        github.event.label.name == 'final-fugu-review' )
+        github.event.label.name == 'final-astra-review' )
 
     env:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
-      OPENROUTER_MODEL: sakana/fugu-ultra
+      # PINNATO, non `~openai/gpt-astra-latest` (decisione owner, 22-09-2026):
+      # il tag `latest` si aggiorna da solo, e un upgrade silenzioso
+      # cambierebbe il comportamento di un GATE di sicurezza senza che
+      # nessuno lo abbia deciso. Stesso prezzo, nessun vantaggio a
+      # lasciarlo mobile.
+      OPENROUTER_MODEL: openai/gpt-6-astra
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -65,8 +70,8 @@ jobs:
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
-      REVIEW_ID: fugu-ultra
-      MODEL_LABEL: Sakana Fugu Ultra
+      REVIEW_ID: gpt-astra
+      MODEL_LABEL: OpenAI GPT-6 Astra
 
       MAX_PATCH_PER_FILE_CHARS: "4000"
       MAX_TOTAL_PATCH_CHARS: "14000"
@@ -106,13 +111,17 @@ jobs:
       # review, e REVIEW_EFFORT qui sopra lo ferma cambiando una riga.
       MAX_OUTPUT_TOKENS: "25000"
 
-      PRICE_INPUT_PER_MILLION: "5.00"
-      PRICE_OUTPUT_PER_MILLION: "30.00"
+      # Listino OpenRouter per openai/gpt-6-astra, verificato su
+      # /api/v1/models il 22-09-2026: prompt 0.00001/token = $10/MTok,
+      # completion 0.00005/token = $50/MTok. Stesso prezzo di Fable 5.1,
+      # il doppio di Fugu Ultra: il terzo forte NON e' gratis.
+      PRICE_INPUT_PER_MILLION: "10.00"
+      PRICE_OUTPUT_PER_MILLION: "50.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with Fugu Ultra
+      - name: Review pushed commit range with GPT-6 Astra
         shell: bash
         run: |
           set -euo pipefail
@@ -126,7 +135,7 @@ jobs:
               echo "::error::Gate finale a label ma OPENROUTER_API_KEY assente: review non eseguibile → job fallito (il gate non deve risultare verde)."
               exit 1
             fi
-            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer Fugu Ultra saltato (push automatico, nessun check rosso)."
+            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GPT-6 Astra saltato (push automatico, nessun check rosso)."
             exit 0
           fi
 
@@ -152,8 +161,8 @@ jobs:
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
           OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"].strip()
-          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "sakana/fugu-ultra")
-          REVIEW_ID = os.environ.get("REVIEW_ID", "fugu-ultra")
+          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-6-astra")
+          REVIEW_ID = os.environ.get("REVIEW_ID", "gpt-astra")
           MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENROUTER_MODEL)
 
           MAX_PATCH_PER_FILE_CHARS = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS", "4000"))
@@ -598,7 +607,7 @@ jobs:
                           "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                           "Content-Type": "application/json",
                           "HTTP-Referer": f"https://github.com/{REPO}",
-                          "X-Title": "Pickfair Fugu Ultra PR Review",
+                          "X-Title": "Pickfair GPT-6 Astra PR Review",
                           "User-Agent": f"{REVIEW_ID}-push-range-review",
                       },
                   )
@@ -684,7 +693,6 @@ jobs:
                   f"- Completion token: `{completion_tokens}`\n"
                   f"- Total token: `{total}`\n"
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
-                  "- Nota Fugu: eventuali token di orchestrazione possono essere fatturati come token standard.\n"
               )
 
           try:
@@ -899,7 +907,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # OpenRouter Fugu Ultra PR Review
+          # OpenRouter GPT-6 Astra PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -962,7 +970,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review Fugu Ultra non completata\n\n"
+                  "## Review GPT-6 Astra non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -991,7 +999,7 @@ jobs:
           done_line = "" if model_failed else done_marker
 
           body = f"""{marker}{done_line}
-          # OpenRouter Fugu Ultra PR Review
+          # OpenRouter GPT-6 Astra PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`
@@ -1025,7 +1033,7 @@ jobs:
           # resta fail-open: reviewer opzionale che non blocca la PR (Codex P2).
           if model_failed and EVENT_ACTION == "labeled":
               print(
-                  "::error::Gate finale a label: la review Fugu Ultra non è stata "
+                  "::error::Gate finale a label: la review GPT-6 Astra non è stata "
                   "completata (errore provider) → job fallito di proposito."
               )
               sys.exit(1)

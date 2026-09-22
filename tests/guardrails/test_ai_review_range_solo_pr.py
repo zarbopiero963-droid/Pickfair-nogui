@@ -34,6 +34,7 @@ WORKFLOWS = [
     ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
     ".github/workflows/pr-review-xai-grok46.yml",
     ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+    ".github/workflows/pr-review-openrouter-gpt-astra.yml",
 ]
 
 FUNZIONE = "solo_file_della_pr"
@@ -431,3 +432,32 @@ def test_block_non_si_scambia_un_patch_presente_con_uno_assente(
     # Dove il patch vs base c'e', si scambia comunque: la protezione non deve
     # spegnere la correzione.
     assert per_nome["core/piccolo.py"]["patch"] == "PATCH_VS_BASE"
+
+
+# ---------------------------------------------------------------------------
+# Le liste di reviewer qui sopra sono scritte a mano. Finche' restano tali,
+# aggiungere un reviewer significa ricordarsi di QUATTRO moduli diversi
+# (cost_gate, range_solo_pr, copertura_diff, effort): dimenticarne uno fa
+# sfuggire quel reviewer a un invariante IN SILENZIO, che e' il modo peggiore.
+#
+# Osservato aggiungendo GPT-6 Astra come terzo reviewer forte: quattro liste
+# da toccare, nessuna che si lamenti se te ne scordi. Questo guard confronta
+# l'elenco scritto con i file che esistono davvero, cosi' la dimenticanza
+# diventa un test rosso invece di un buco.
+# ---------------------------------------------------------------------------
+
+def _reviewer_su_disco() -> set:
+    return {
+        f"{'.github/workflows'}/{p.name}"
+        for p in (ROOT / ".github" / "workflows").glob("pr-review-*.yml")
+    }
+
+
+def test_block_la_lista_dei_reviewer_e_completa() -> None:
+    """Ogni workflow di review che esiste deve stare in `WORKFLOWS`."""
+    scritti, su_disco = set(WORKFLOWS), _reviewer_su_disco()
+    assert scritti == su_disco, (
+        f"WORKFLOWS non coincide coi file reali.\n"
+        f"  mancanti nella lista : {sorted(su_disco - scritti)}\n"
+        f"  elencati ma assenti  : {sorted(scritti - su_disco)}"
+    )

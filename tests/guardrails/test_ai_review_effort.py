@@ -1,7 +1,7 @@
 """Un effort alto senza tetto di output adeguato falsa la review, non la migliora.
 
-I tre reviewer non-Anthropic giravano a `reasoning effort: low`, cioe' sotto il
-default del loro stesso modello (per grok-4.6 il default e' `high`). L'unico a
+I reviewer non-Anthropic giravano a `reasoning effort: low`, cioe' sotto il
+default del loro stesso modello (per grok-4.7 il default e' `high`). L'unico a
 piena profondita', Fable, era anche l'unico che trovava difetti veri. Da qui
 l'esperimento: alzarli a `high` e confrontare costo e reperti.
 
@@ -28,11 +28,12 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# I tre che l'esperimento tocca. Fable e' escluso di proposito: vedi in fondo.
+# I quattro che l'esperimento tocca. Fable e' escluso di proposito: vedi in fondo.
 WORKFLOWS_ESPERIMENTO = [
     ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
     ".github/workflows/pr-review-xai-grok46.yml",
     ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+    ".github/workflows/pr-review-openrouter-gpt-astra.yml",
 ]
 WORKFLOW_FABLE = ".github/workflows/pr-review-claude-fable5.yml"
 
@@ -177,4 +178,39 @@ def test_block_fable_resta_a_piena_profondita() -> None:
     codice = _senza_commenti(_testo(WORKFLOW_FABLE))
     assert '"effort"' not in codice, (
         "Fable ha guadagnato un parametro effort: senza, gira al default del modello"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Le liste di reviewer qui sopra sono scritte a mano. Finche' restano tali,
+# aggiungere un reviewer significa ricordarsi di QUATTRO moduli diversi
+# (cost_gate, range_solo_pr, copertura_diff, effort): dimenticarne uno fa
+# sfuggire quel reviewer a un invariante IN SILENZIO, che e' il modo peggiore.
+#
+# Osservato aggiungendo GPT-6 Astra come terzo reviewer forte: quattro liste
+# da toccare, nessuna che si lamenti se te ne scordi. Questo guard confronta
+# l'elenco scritto con i file che esistono davvero, cosi' la dimenticanza
+# diventa un test rosso invece di un buco.
+# ---------------------------------------------------------------------------
+
+def _reviewer_su_disco() -> set:
+    return {
+        f"{'.github/workflows'}/{p.name}"
+        for p in (ROOT / ".github" / "workflows").glob("pr-review-*.yml")
+    }
+
+
+def test_block_i_due_bucket_coprono_tutti_i_reviewer() -> None:
+    """`WORKFLOWS_ESPERIMENTO` + `WORKFLOW_FABLE` devono coprire tutto.
+
+    Qui i reviewer sono divisi in due gruppi con regole diverse sull'effort.
+    Un reviewer nuovo che non finisse in NESSUNO dei due non verrebbe
+    verificato da questo modulo, e nessuno se ne accorgerebbe.
+    """
+    coperti = set(WORKFLOWS_ESPERIMENTO) | {WORKFLOW_FABLE}
+    su_disco = _reviewer_su_disco()
+    assert coperti == su_disco, (
+        f"i due bucket non coprono i reviewer reali.\n"
+        f"  in nessun bucket   : {sorted(su_disco - coperti)}\n"
+        f"  elencati ma assenti: {sorted(coperti - su_disco)}"
     )

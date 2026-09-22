@@ -898,31 +898,32 @@ with real evidence.
 
 ## AI PR review — reviewers and final label gate
 
-Every PR is covered by four AI review workflows (GitHub Actions driven by API
+Every PR is covered by five AI review workflows (GitHub Actions driven by API
 keys in the repo Secrets) plus CodeRabbit. Operational detail and security
 posture live in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.6 Sol** and **Grok 4.6** run on every push. Output is TARGETED and short
+- **GPT-5.6 Sol** and **Grok 4.7** run on every push. Output is TARGETED and short
   (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
   they never truncate — only generated tokens are billed.
-- **Fugu Ultra** and **Claude Fable 5** (strong, costly reviewers) fire on
-  their own ONLY when a push touches **core or critical** Pickfair files —
+- **Fugu Ultra**, **Claude Fable 5.1** and **GPT-6 Astra** (strong, costly
+  reviewers) fire on their own ONLY when a push touches **core or critical**
+  Pickfair files —
   `core/`, `services/`, `controllers/`, the root modules (`headless_main`,
   `mini_gui`, `betfair_client`, `betfair_market_api`, `order_manager`,
   `dutching`, `database`, `database_schema`, `trading_config`), dependencies,
   workflows, config/secrets, or the safety areas (money management, dutching,
   safety_layer, reconciliation, runtime, catalog) — OR when the final label is
-  added. On pushes touching only docs/tests both jobs start but exit without
+  added. On pushes touching only docs/tests all three jobs start but exit without
   calling the model (zero cost); those are still covered by GPT-5.6 Sol/Grok.
 - **Since #475 the files that DEFINE or ENFORCE the gates are critical too**:
   `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
   `docs/hard_verify_spec.md` and `scripts/guardrail_check.py`. Five of the
-  twelve reserved for the owner's manual merge, and none of them triggered the
+  thirteen reserved for the owner's manual merge, and none of them triggered the
   label or the strong reviewers: a PR touching only these was **silent**.
   Observed on #473, which touched `guardrail_check.py` and produced nothing
   until the agent applied the labels by hand — the gate was holding on a rule
   the agent applies to itself. Cost consequence, stated rather than discovered:
-  **a push to `CLAUDE.md` or to either spec now pays the two strong reviewers.**
+  **a push to `CLAUDE.md` or to either spec now pays the three strong reviewers.**
   That is deliberate; it is where strong review matters most.
 
 ### Reviewer cost: do NOT truncate, do NOT burn credits
@@ -941,23 +942,29 @@ So when a review comes back truncated, **raise the ceiling**; do not shorten the
 prompt and hope.
 
 **Levers that actually save** (by yield): (1) never pay twice for the same range
-— the per-range `done_marker` is already wired into all 4 workflows, do not
+— the per-range `done_marker` is already wired into all 5 workflows, do not
 remove it and do not force a re-fire; (2) fewer pushes, not smaller ones — each
-push pays TWO calls (GPT-5.6 Sol + Grok 4.6), so batch the fixes; (3) owner
-authorization on the two labels (below) — the biggest lever, since Fugu and Fable
-are the expensive pair; (4) low `reasoning_effort` where the model reasons —
-reasoning tokens are billed as output, so Grok 4.6 (default `high`) is set to
-`low` and GPT-5.6 Sol to effort `low`.
+push pays TWO calls (GPT-5.6 Sol + Grok 4.7), so batch the fixes; (3) owner
+authorization on the three labels (below) — the biggest lever, since Fugu,
+Fable and Astra are the expensive ones; (4) `reasoning_effort`, where the model
+reasons — reasoning tokens are billed as output, so lowering it IS a real lever,
+but it is **not in use today**: the four non-Anthropic reviewers (Sol, Grok,
+Fugu, Astra) run at `REVIEW_EFFORT: high` for the experiment declared in their
+workflows, and Fable has no such knob (the Anthropic API does not expose one).
+While the experiment is open the lever stays suspended and its cost is visible
+in every review's cost lines. Do not write a value here that differs from what
+the workflows actually set: `tests/guardrails/test_policy_reviewer_consistency.py`
+compares the two and goes red if they diverge.
 
 **Forbidden fake savings:** lowering output ceilings (above); tightening
 `MAX_TOTAL_PATCH_CHARS` until the reviewer stops seeing the code (a reviewer that
 cannot see is a false green, not a saving); disabling a reviewer to go faster. If
 budget is the problem, cut the NUMBER of calls, never the quality of one.
 
-### The two labels are ALWAYS applied — standing owner authorization
+### The three labels are ALWAYS applied — standing owner authorization
 
 **Owner decision, 2026-09-16, REPLACING the earlier "only on owner
-authorization, never unprompted".** `final-fugu-review` and `final-fable-review`
+authorization, never unprompted".** `final-fugu-review`, `final-fable-review` and `final-astra-review`
 are applied to EVERY PR, always, without asking.
 
 The reason is not cost, it is **gate legibility**. A PR whose labels are missing
@@ -971,7 +978,7 @@ label already there). Keep the `manual-review-required` label the workflows add
 on their own.
 
 **What it costs: almost always nothing.** The `done_marker` is per range: if the
-two strong reviewers already published for that range — which happens by itself
+three strong reviewers already published for that range — which happens by itself
 when the push touches critical files — the runs fired by the label event finish
 `success` without calling the model. Measured on #468: labels applied, **exactly
 one published review per reviewer**, zero extra spend. When the range is new,
@@ -979,56 +986,65 @@ the cost is the label round's, and it is budgeted: you pay for the gate, not for
 waste.
 
 It remains true that **fewer pushes cost less**: every push pays the per-push
-reviewers, and one extra push on critical files also pays the two strong ones.
+reviewers, and one extra push on critical files also pays the three strong ones.
 Batching fixes is still the real lever. Measured in one session: `$0.42` with a
 single push (#468), `$1.35` with three (#467), `$1.81` with five (#466) — the
 same order of work.
 
 **The automatic critical-files fire stays.** When a push touches `core/`,
 `services/`, `controllers/`, the root modules, dependencies, workflows,
-config/secrets or the safety areas, Fugu and Fable fire on their own: that is
+config/secrets or the safety areas, Fugu, Fable and Astra fire on their own:
+that is
 not agent initiative, it is the safety net. Do not disable it, do not work
 around it.
 
-**Repeat the fire until Fugu/Fable come back with NO blockers (owner decision).**
+**Repeat the fire until Fugu/Fable/Astra come back with NO blockers (owner
+decision).**
 Every time the head changes (a fix, an alignment) another round is needed: declare
-it, **get authorization**, re-fire the two labels on the new stable head and wait
-for their full-range outcome. The gate is satisfied ONLY
-when BOTH come back with no real blockers. A persistent false positive is NOT a
+it and **re-fire the three labels** on the new stable head — always, without
+asking (owner decision 16-09-2026) — then wait for their full-range outcome. The gate is satisfied ONLY
+when ALL THREE come back with no real blockers. A persistent false positive is
+NOT a
 real blocker (see the diff-only note): answer it with evidence, do not loop
 forever — if after the full-range fire only a structural false positive remains,
-declare ready and document it. If Fugu/Fable are in usage-quota (the workflow
+declare ready and document it. If Fugu, Fable or Astra are in usage-quota (the
+workflow
 starts but the model does not answer), the OUT OF CREDITS rule applies: do not
 merge, tell the owner credits are needed, stop the queue until they say
 "prosegui".
 
 **Diff-only / push-range vs full-range note (learned on #393).** The reviewers
 are diff-only (no checkout, no execution). The **per-push** reviews (auto on every
-push: GPT/Grok always; Fugu/Fable on core files) see ONLY the latest commit of the
+push: GPT/Grok always; Fugu/Fable/Astra on core files) see ONLY the latest commit
+of the
 range, so they can produce false positives on imports/consistency/"missing code"
 when the cited code lives in earlier commits. The **label** reviews instead run
 over the WHOLE PR range (`base…head`) and see the full diff, so they resolve those
-false positives. For the final verdict what counts is Fugu/Fable's **full-range
+false positives. For the final verdict what counts is Fugu/Fable/Astra's **full-range
 label** review, not the per-push ones. Do not chase a push-range false positive
 with a commit: re-fire the labels and read the full-range.
 
-**Timing: the strong gates are the LAST pre-merge step.** Fire the two labels
+**Timing: the strong gates are the LAST pre-merge step.** Fire the three labels
 when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-5.6 Sol, Grok 4.6) have COMPLETED and their real findings are handled (patched
+(GPT-5.6 Sol, Grok 4.7) have COMPLETED and their real findings are handled (patched
 or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
 completed handle its real findings; if it is in rate-limit/usage-quota it is
 absent and is NOT awaited; if it is "processing" it is still reviewing — not
 awaited as a binding gate, but its real findings (if they arrive before you
-finalize) are handled, else deferred to post-merge. This way Fugu Ultra and
-Fable 5 review a STABLE head and are not wasted on versions that will still
+finalize) are handled, else deferred to post-merge. This way Fugu Ultra,
+Fable 5.1 and GPT-6 Astra review a STABLE head and are not wasted on versions that will still
 change (each push to the strong reviewers costs). Sequence: work complete →
 push → GPT/Grok done and findings handled (CodeRabbit only if available) →
-stable head → **deliver the merge-readiness verdict to the owner and WAIT for
-authorization** → only then fire
-`final-fugu-review` + `final-fable-review` → wait for the **full-range**
-outcome → if real blockers remain: fix, re-push, **re-deliver the verdict and
-request a NEW authorization** before re-firing the labels, repeat until
-both come back clean → merge per the "Auto-merge" section.
+stable head → fire `final-fugu-review` + `final-fable-review` +
+`final-astra-review` → wait for the **full-range** outcome → **deliver the
+verdict to the owner**, which comes AFTER the label round and never before →
+if real blockers remain: fix, re-push, re-fire the labels on the new head and
+re-deliver the verdict, until all three come back clean → merge per the
+"Auto-merge" section.
+
+The labels are NOT requested: the owner's 16-09-2026 decision makes them
+automatic on EVERY PR. What is delivered to the owner is the VERDICT, not a
+request for permission — and it is delivered once the label round is done.
 
 **The agent never sees the API keys**: it only adds the label; secrets stay in
 GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout
@@ -1041,31 +1057,35 @@ which blocker is still open and why. With blockers, auto-merge is forbidden
 (fail-closed); otherwise auto-merge follows the gated policy in "Auto-merge
 (owner-authorized, gated)" below.
 
-**Who to wait for / not wait for.** Default coverage on every PR is the four API
-workflows (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5) plus CodeRabbit. Codex,
+**Who to wait for / not wait for.** Default coverage on every PR is the five API
+workflows (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) plus
+CodeRabbit. Codex,
 Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
 rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
 wait, do not count them in the check-completion gate, do not block DONE on them.
 Owner decision: an **advisory** reviewer (CodeRabbit, Codex, Sourcery) in
 rate-limit/usage-quota is absent immediately, no wait and no cap-timer (see
-"Skip on unavailability"). For the **four paid reviewers** "do not wait" does
+"Skip on unavailability"). For the **five paid reviewers** "do not wait" does
 NOT mean "merge anyway": you do not wait on a timer, but if one of them is dry
 **on the current head** the PR is not merged — OUT OF CREDITS applies. The only
-binding final gate is the two strong label reviewers (Fugu Ultra + Fable 5): see
+binding final gate is the three strong label reviewers (Fugu Ultra + Fable 5.1
++ GPT-6 Astra): see
 "Final label gate".
 
 **Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
 reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
 are NOT required CI checks and do NOT replace the binding gates. The BINDING gates
 are ALWAYS active and never skipped — (a) settled current-head CI checks and
-(b) the two strong label reviewers Fugu Ultra + Fable 5 (full-range, repeated
+(b) the three strong label reviewers Fugu Ultra + Fable 5.1 + GPT-6 Astra
+(full-range, repeated
 until a clean outcome). Late findings from reviewers marked absent are covered by
 post-merge tracking (Issue + fix PR). If a PAID reviewer is in usage-quota on the current
-head — any of the four, not just Fugu/Fable via label — DONE is NOT declared by
+head — any of the five, not just Fugu/Fable/Astra via label — DONE is NOT
+declared by
 skipping it: the OUT OF CREDITS rule applies (do not merge, tell the owner
 credits are needed, stop the queue until they say "prosegui"). The owner can also always merge manually (human override).
 
-**Event-driven review window (no fixed timer).** The four synchronous reviewers
+**Event-driven review window (no fixed timer).** The five synchronous reviewers
 answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
 COMPLETED, read and handle its real findings (inline + review body); if it is in
 rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer
@@ -1074,11 +1094,12 @@ awaited as a binding gate, but not "absent" either — if it completes before
 you finalize handle its findings, else post-merge; do not stall on it. The
 AGENT's verdict (ready / DONE) does NOT depend on CodeRabbit: it depends on
 settled CI checks and the strong
-label gates (Fugu/Fable). The owner may merge manually at
+label gates (Fugu/Fable/Astra). The owner may merge manually at
 any time.
 
 **Be frugal with pushes (API + CI cost).** Every push that updates the head pays
-the models (GPT/Grok always; Fugu/Fable on core/critical pushes). Batch review
+the models (GPT/Grok always; Fugu/Fable/Astra on core/critical pushes). Batch
+review
 fixes into ONE push per round; never push for cosmetic cleanups or to chase
 per-push-range false positives — answer those in-thread with evidence, not a
 commit.
@@ -1103,15 +1124,17 @@ treat it as ABSENT and proceed (note that it did not review).
 - **CodeRabbit**: rate-limit / usage-quota => absent, skipped (like Codex/
   Sourcery); do not wait, no cap-timer, defer to post-merge tracking. "processing"
   = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
-  settled CI checks + Fugu/Fable label); if it completes in time handle its real
+  settled CI checks + Fugu/Fable/Astra label); if it completes in time handle its
+  real
   findings, else post-merge. If it has already completed, handle its real findings.
-- **The 4 API workflows** (GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5): these
+- **The 5 API workflows** (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
+  Astra): these
   can NOT be downgraded to absent. If a round reports provider usage-quota /
   rate-limit, do not wait for it on a timer and do not count it in the
   check-completion gate (the check settles anyway), but **DONE stays blocked**:
   OUT OF CREDITS applies. The criterion is the **current head**, not the
-  individual push: merge only if all four produced a real review of the head
-  being merged (for Fugu and Fable, the full-range label round). Quota on an
+  individual push: merge only if all five produced a real review of the head
+  being merged (for Fugu, Fable and Astra, the full-range label round). Quota on an
   intermediate push blocks **nothing** if that reviewer then reviewed the final
   head; quota on the final head blocks, even if earlier pushes were clean.
 
@@ -1332,8 +1355,11 @@ them, merge stays manual and owner-only.
 **Conditions to auto-merge (ALL required, fail-closed):**
 
 1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 4 AI reviewers (GPT-5.6 Sol, Grok 4.6, Fugu Ultra,
-   Fable 5) and from CodeRabbit; CodeRabbit COMPLETED (or the ~15-min cap elapsed).
+2. Zero blockers from the 5 AI reviewers (GPT-5.6 Sol, Grok 4.7, Fugu Ultra,
+   Fable 5.1, GPT-6 Astra) and — if it completed its review — from CodeRabbit.
+   CodeRabbit is NEVER a waiting gate (no cap-timer): rate-limit / usage-quota /
+   unavailable = ABSENT immediately, proceed and defer late findings to
+   post-merge tracking; "processing" is not absent but is not awaited either.
 3. No `manual-review-required` label, no unresolved blocking thread, no open
    `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.
 4. The PR is "able to merge" on GitHub (mergeable, no conflicts, branch
@@ -1380,6 +1406,7 @@ The workflows that ARE the gates the auto-merge decision rests on:
 - `.github/workflows/pr-review-xai-grok46.yml`
 - `.github/workflows/pr-review-openrouter-fugu-ultra.yml`
 - `.github/workflows/pr-review-claude-fable5.yml`
+- `.github/workflows/pr-review-openrouter-gpt-astra.yml`
 - `.github/workflows/ci-quarantine-guard.yml`
 - `.github/workflows/pr-guard.yml`
 - `.github/workflows/pr-merge-readiness.yml`
@@ -1399,7 +1426,7 @@ that can rewrite itself is no longer the owner's authorization.
 For the workflow gates the mechanism is the same, and how they run makes it
 worse — by two opposite routes that land in the same place.
 
-The four reviewers and `ci-quarantine-guard` run on `pull_request_target`, i.e.
+The five reviewers and `ci-quarantine-guard` run on `pull_request_target`, i.e.
 from the **base** branch: a PR that weakens a reviewer is reviewed by the
 **old** version of the workflow — the one it is removing. The control that
 should stop it is exactly the one the PR takes out, and that only shows up on
@@ -1417,9 +1444,10 @@ The other workflows — build, packaging, tests, chaos, lockfile — are NOT
 excluded: they do not decide whether a PR may be merged, they only verify it.
 The agent merges those on its own under the gates above.
 
-Flagged on #469 independently by GPT-5.6 Sol and Claude Fable 5 (the policy
+Flagged on #469 independently by GPT-5.6 Sol and Claude Fable 5.1 (the policy
 files) and by Fugu Ultra (the workflow gates). Owner decision: exclude the
-policy files and the seven workflow gates; everything else — `core/`, Betfair,
+policy files and the workflow gates — seven then, eight since Astra; everything
+else — `core/`, Betfair,
 dutching, `order_manager`, config/secrets, and the rest of
 `.github/workflows/` — the agent merges on its own under the gates above.
 
@@ -1494,8 +1522,9 @@ need-manual goes through this cycle (stop → ask → record in the dedicated is
 → wait for the owner's decision → proceed).
 
 **OUT OF CREDITS => DO NOT MERGE, STOP AND TELL THE OWNER.** This is the only
-exception to the autonomy, and it applies to the **four reviewers the owner pays
-for**: GPT-5.6 Sol, Grok 4.6, Fugu Ultra, Fable 5. If any of them cannot review
+exception to the autonomy, and it applies to the **five reviewers the owner pays
+for**: GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. If any of them
+cannot review
 because the provider answers usage-quota / rate-limit / out of credits — the
 workflow starts but the model does not answer — then that PR **has not been
 reviewed**, and a merge without review is not an authorized merge. The agent:
@@ -1514,7 +1543,7 @@ on would mean stacking unreviewed work behind a stuck PR.
 they are third parties on limited availability (Codex permanently usage-limited,
 CodeRabbit stopped at `<10 stars`). They stay **absent immediately**, block
 nothing and do not stop the queue — otherwise the queue would never restart. The
-stop rule above concerns **only** the four API workflows.
+stop rule above concerns **only** the five API workflows.
 
 ---
 
@@ -1583,7 +1612,7 @@ Inline comments checked:
 Unresolved threads checked:
 - YES / NO
 
-Final labels fired + strong reviewers (Fugu/Fable) full-range outcome read:
+Final labels fired + strong reviewers (Fugu/Fable/Astra) full-range outcome read:
 - YES / NO
 
 Last-5 PR post-merge sweep:
