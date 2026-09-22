@@ -1454,10 +1454,16 @@ class TradingEngine:
         # errori a `KeyError('market_id')` e rompe 12 test di ciclo di vita
         # dell'engine che usano payload parziali di proposito. Un ordine
         # incompleto non raggiunge comunque Betfair.
+        #
+        # Il LATO no: il client non lo rifiuta, lo converte (`safe_side`: tutto
+        # cio' che non e' BACK/LAY diventa BACK). Quindi un `bet_type` presente
+        # ma vuoto non deve coprire un `side` valido — sarebbe la scommessa
+        # opposta. `bet_type or side`, come `BetfairService.place_order`.
+        # Rilievo P2 di Codex sulla #478.
         completi = {
             "market_id": payload.get("market_id"),
             "selection_id": payload.get("selection_id"),
-            "side": payload.get("bet_type", payload.get("side")),
+            "side": payload.get("bet_type") or payload.get("side"),
             "price": payload.get("price"),
             "size": payload.get("stake", payload.get("size")),
             "customer_ref": payload.get("customer_ref", ""),
@@ -1513,6 +1519,14 @@ class TradingEngine:
         puo' caricare nessun oggetto puo' esserne istanza, quindi la risposta
         giusta e' no. Nel job `trading-engine-hard-tests`, che installa solo
         pytest e quindi non ha `requests`, bloccava anche i doppi dei test.
+
+        Limite dichiarato (GPT-5.6 Sol e Claude Fable 5.1 sulla #478): un
+        oggetto che AVVOLGE il client non e' riconosciuto. Oggi e' teorico —
+        fuori dai test solo `BetfairClient` e `SimulationBroker` definiscono
+        `place_bet`, e `test_premessa_dello_sbarramento_...` diventa rosso se
+        ne compare una terza — e un wrapper incontrerebbe comunque il guard
+        per modalita' dichiarata, che in produzione c'e' sempre. Riconoscerlo
+        per struttura sarebbe duck-typing, il criterio che qui si evita.
         """
         for classe in type(client).__mro__:
             modulo = getattr(classe, "__module__", "") or ""

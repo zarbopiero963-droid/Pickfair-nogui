@@ -422,3 +422,26 @@ def test_adattatore_engine_accetta_anche_i_nomi_gia_del_client():
          "size": 5.0, "customer_ref": "R1"},
     )
     assert kw["side"] == "BACK" and kw["size"] == 5.0
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.parametrize("vuoto", [None, ""])
+def test_adattatore_engine_bet_type_vuoto_non_copre_un_side_valido(vuoto):
+    """Un `bet_type` vuoto e' ASSENZA, non un valore: deve vincere `side`.
+
+    Rilievo P2 di Codex sulla #478. Con `payload.get("bet_type", side)` una
+    chiave `bet_type` presente ma vuota copriva un `side="LAY"` valido; il
+    client riceve `None`/`""`, `safe_side` lo converte in BACK, e dove il
+    risk gate non e' cablato parte la scommessa OPPOSTA. Stessa semantica
+    gia' usata da `BetfairService.place_order` (`bet_type or side`).
+    """
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    payload = {"market_id": "1.1", "selection_id": 1, "bet_type": vuoto,
+               "side": "LAY", "price": 2.0, "stake": 5.0, "customer_ref": "R1"}
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, payload)
+    assert kw["side"] == "LAY", f"bet_type={vuoto!r} ha coperto side='LAY': {kw['side']!r}"

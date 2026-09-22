@@ -237,13 +237,14 @@ class _RispostaHttp:
 class _SessioneContaInvii:
     """Il contatore del TRASPORTO: ogni `post` e' un invio a Betfair."""
 
-    def __init__(self, corpo: Any) -> None:
+    def __init__(self, corpo: Any, *, risposta: Any = None) -> None:
         self.corpo = corpo
+        self.risposta = risposta
         self.post_inviati = 0
 
-    def post(self, _url: str, **_kw: Any) -> _RispostaHttp:
+    def post(self, _url: str, **_kw: Any) -> Any:
         self.post_inviati += 1
-        return _RispostaHttp(self.corpo)
+        return self.risposta if self.risposta is not None else _RispostaHttp(self.corpo)
 
 
 class _Riconciliazione:
@@ -665,3 +666,105 @@ def test_block_lo_sbarramento_non_dipende_dall_import_del_client(monkeypatch) ->
     esito = eng._submit_to_order_path(_ctx(), _richiesta())
     assert doppio.invii == 1
     assert esito == {"ok": True, "bet_id": "BET-1"}
+
+
+# --------------------------------------------------------------------------
+# Risposta ARRIVATA ma illeggibile: stesso esito ignoto, altra strada
+# --------------------------------------------------------------------------
+class _RispostaJsonRotto(_RispostaHttp):
+    """Corpo 200 che non e' JSON: il POST e' partito, la risposta non si legge."""
+
+    def json(self) -> Any:
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+@pytest.mark.parametrize("risposta,codice", [
+    (_RispostaJsonRotto(None), "INVALID_JSON"),
+    (_RispostaHttp({"result": {}}), "INVALID_JSON_RPC"),
+    (_RispostaHttp([{"result": {"status": "SUCCESS", "instructionReports": []}}]),
+     "BET_NO_REPORT"),
+], ids=["corpo_non_json", "json_rpc_malformato", "success_senza_report"])
+def test_block_risposta_illeggibile_dopo_invio_e_ambigua(risposta, codice) -> None:
+    """Rilievo P1 di Codex sulla #478, sul head `6dda2b3`: vero.
+
+    Il client queste tre NON le solleva: le cattura e le restituisce come
+    `{"ok": False, "order_unknown": False}`. Il POST pero' e' partito — nel
+    terzo caso Betfair ha perfino risposto SUCCESS — quindi l'esito e' ignoto
+    esattamente come per il TypeError. Riprodotto su `6dda2b3`: FAILED, zero
+    riconciliazioni, lock rilasciato e un secondo POST al tentativo successivo.
+
+    Nel primo giro l'avevo assegnato alla PR30. Era incoerente con
+    l'argomento usato per il TypeError — il percorso lo rende raggiungibile
+    questa PR — e il protocollo delle schede chiede di soddisfare il contratto,
+    «non soltanto rimuovere il singolo sintomo citato».
+    """
+    sessione = _SessioneContaInvii(None, risposta=risposta)
+    ric = _Riconciliazione()
+    eng = _engine_client_reale(sessione, ric)
+    richiesta = {"customer_ref": "PFREF0003", **_richiesta()}
+
+    primo = eng.submit_quick_bet(dict(richiesta))
+
+    assert sessione.post_inviati == 1
+    assert primo["status"] == "AMBIGUOUS", (
+        f"{codice} dopo l'invio dichiarato {primo['status']!r}: {primo.get('error')}"
+    )
+    assert primo["ambiguity_reason"] == AMBIGUITY_SUBMIT_UNKNOWN
+    assert len(ric.accodati) == 1, "ordine dall'esito ignoto mai mandato in riconciliazione"
+    assert "PFREF0003" in eng._inflight_keys, "lock rilasciato su un esito ignoto"
+
+    secondo = eng.submit_quick_bet(dict(richiesta))
+
+    assert secondo["status"] == "DUPLICATE_BLOCKED"
+    assert sessione.post_inviati == 1, "secondo POST su un ordine forse gia' vivo"
+
+
+def test_rifiuto_esplicito_di_betfair_resta_definitivo() -> None:
+    """Il contrario: se Betfair risponde con un errore, l'ordine NON e' passato.
+
+    Un elemento `error` nel JSON-RPC e' un rifiuto esplicito, non una risposta
+    illeggibile: deve restare `order_unknown=False`, altrimenti ogni rifiuto
+    intaserebbe la riconciliazione e terrebbe bloccato un ordine mai piazzato.
+    """
+    rifiuto = _RispostaHttp([{"error": {"code": -32602, "message": "DSC-0018"}}])
+    sessione = _SessioneContaInvii(None, risposta=rifiuto)
+    reale = betfair_client.BetfairClient(
+        username="u", app_key="a", cert_pem="c.pem", key_pem="k.pem", session=sessione,
+    )
+    reale.session_token = "TOK"
+
+    esito = reale.place_bet(market_id="1.234", selection_id=5678, side="BACK",
+                            price=2.0, size=5.0)
+
+    assert sessione.post_inviati == 1
+    assert esito["ok"] is False
+    assert esito["error"].startswith("API_ERROR"), esito
+    assert esito["order_unknown"] is False, "rifiuto esplicito trattato come esito ignoto"
+
+
+def test_premessa_dello_sbarramento_solo_due_classi_definiscono_place_bet() -> None:
+    """Il limite dichiarato dello sbarramento, reso verificabile.
+
+    Lo sbarramento riconosce il client reale per CLASSE, quindi un oggetto che
+    lo AVVOLGESSE non verrebbe riconosciuto (GPT-5.6 Sol e Claude Fable 5.1
+    sulla #478). Oggi e' teorico perche' fuori dai test solo due classi
+    definiscono `place_bet`. Se ne compare una terza — un wrapper, un adapter
+    — questo test diventa rosso e obbliga a decidere come la tratta lo
+    sbarramento, invece di scoprirlo con denaro vero.
+    """
+    import pathlib
+    import re
+
+    radice = pathlib.Path(betfair_client.__file__).resolve().parent
+    trovati = set()
+    for percorso in radice.rglob("*.py"):
+        rel = percorso.relative_to(radice).as_posix()
+        if rel.startswith(("tests/", ".venv/", "venv/", "build/", "dist/", ".git/")):
+            continue
+        testo = percorso.read_text(encoding="utf-8", errors="ignore")
+        if re.search(r"^\s*def place_bet\(", testo, re.M):
+            trovati.add(rel)
+    assert trovati == {"betfair_client.py", "simulation_broker.py"}, (
+        f"nuove classi con place_bet fuori dai test: {sorted(trovati)}. "
+        f"Lo sbarramento per classe non riconosce i wrapper: decidi come trattarle"
+    )
