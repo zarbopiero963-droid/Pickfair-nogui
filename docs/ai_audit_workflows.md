@@ -153,11 +153,15 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 
 - `final-fugu-review` / `final-fable-review` / `final-astra-review`:
   attivano il gate finale del
-  rispettivo reviewer forte sull'intera PR (pre-merge). **Le mette solo l'owner,
-  o l'agente su sua autorizzazione esplicita, mai di iniziativa**: sono i due
-  reviewer costosi e ogni lancio è spesa (vedi CLAUDE.md / AGENTS.md). Resta
-  invece automatica — e non richiede autorizzazione — la partenza sui push che
-  toccano file **core o critici**: quella è la rete di sicurezza.
+  rispettivo reviewer forte sull'intera PR (pre-merge). **Si applicano a OGNI
+  PR, sempre, senza chiedere** (decisione dell'owner del 16-09-2026): il
+  motivo non è il costo ma la leggibilità del gate — una PR dove le label non
+  compaiono non si distingue, guardandola su GitHub, da una dove il gate è
+  stato saltato. Sono i tre reviewer costosi e ogni lancio è spesa, ma grazie
+  al `done_marker` per range il giro a label costa quasi sempre zero quando i
+  forti hanno già pubblicato su quel range (vedi CLAUDE.md / AGENTS.md, che
+  restano autoritativi). Resta automatica la partenza sui push che toccano
+  file **core o critici**: quella è la rete di sicurezza.
 - `manual-review-required`: applicata automaticamente quando il diff tocca aree
   sensibili o la Compare API è troncata.
 

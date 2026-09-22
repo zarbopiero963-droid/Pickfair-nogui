@@ -31,6 +31,29 @@ ROOT = Path(__file__).resolve().parents[2]
 
 DOCUMENTI_DI_POLICY = ("CLAUDE.md", "AGENTS.md")
 
+# Il doc d'audit non e' autoritativo sui gate (lo dice lui stesso: «se questa
+# nota e quella sezione divergono, vale la sezione»), ma resta un documento che
+# si legge: se conta i reviewer sbagliando, disinforma. Rilievo di Claude
+# Fable 5.1 sulla #477, dove diceva ancora «sono i due reviewer costosi» con
+# tre label gia' attive — la stessa classe di difetto che questa PR sanava
+# altrove, sopravvissuta in un terzo file che il controllo non guardava.
+DOCUMENTI_CON_CONTEGGI = DOCUMENTI_DI_POLICY + ("docs/ai_audit_workflows.md",)
+
+# Numerali usati dai documenti, nelle due lingue. Il valore giusto si calcola
+# dai workflow su disco: l'elenco serve solo a sapere cosa cercare.
+NUMERALI = {2: ("due", "two"), 3: ("tre", "three"), 4: ("quattro", "four"),
+            5: ("cinque", "five"), 6: ("sei", "six")}
+
+# Le cose che si contano, col sostantivo con cui compaiono. La chiave dice
+# QUALE conteggio deve uscire: "forti" = i reviewer con una label finale,
+# "pagati" = tutti i workflow di review.
+COSE_CONTATE = {
+    "forti": (r"labels?\b", r"reviewer\s+forti\b", r"reviewer\s+costosi\b",
+              r"strong\s+(?:label\s+)?reviewers?\b", r"reviewer\s+a\s+label\b"),
+    "pagati": (r"reviewer\s+pagati\b", r"paid\s+reviewers?\b",
+               r"workflows?\s+API\b", r"reviewer\s+AI\b", r"AI\s+reviewers?\b"),
+}
+
 # Nome corto con cui ogni reviewer forte compare nella prosa. La chiave e' il
 # workflow, cosi' il legame e' col file che gira e non con una convenzione.
 NOME_NELLA_PROSA = {
@@ -53,6 +76,9 @@ RACCONTI_STORICI = (
     # #469, la prima stesura a sola prosa: bloccarono tutti e quattro i pagati.
     "prima versione di questa sezione lo scriveva come prosa",
     "first version of this section wrote it as prose",
+    # #465/#466, tabella in docs/ai_audit_workflows.md: registra chi disse cosa
+    # su quel diff. Astra non esisteva; aggiungerlo sarebbe un falso.
+    "| #465 | 15 |",
 )
 
 # I reviewer che NON passano dall'API Anthropic: sono i soli con la manopola
@@ -218,7 +244,7 @@ def _enumerazioni(testo: str, alias: dict) -> list:
     return trovate
 
 
-@pytest.mark.parametrize("documento", DOCUMENTI_DI_POLICY)
+@pytest.mark.parametrize("documento", DOCUMENTI_CON_CONTEGGI)
 def test_block_nessuna_enumerazione_lascia_fuori_un_forte(documento: str) -> None:
     """Il difetto della #477: «i tre reviewer forti (Fugu Ultra + Fable 5.1)».
 
@@ -308,4 +334,43 @@ def test_block_leffort_scritto_nei_doc_e_quello_dei_workflow(documento: str) -> 
         f"{documento} dichiara {CHIAVE_EFFORT} {sorted(dichiarati)} ma i "
         f"workflow impostano {sorted(reali)}: "
         f"{ {k: v for k, v in _effort_dei_workflow().items()} }"
+    )
+
+
+@pytest.mark.parametrize("documento", DOCUMENTI_CON_CONTEGGI)
+def test_block_nessun_numerale_stantio_accanto_ai_reviewer(documento: str) -> None:
+    """«sono i due reviewer costosi» con tre label attive.
+
+    E' il gemello del controllo sulle enumerazioni: li' era la lista a restare
+    indietro, qui e' il numerale. Il valore atteso non e' scritto da nessuna
+    parte — si conta dai workflow su disco, cosi' aggiungere o togliere un
+    reviewer fa diventare rossi i documenti che non se ne sono accorti.
+    """
+    giusti = {"forti": len(_forti_su_disco()), "pagati": len(_reviewer_su_disco())}
+    # Un racconto storico dice quanti erano ALLORA: correggerlo sarebbe
+    # falsificarlo. Stessa esenzione delle enumerazioni, stesso elenco.
+    testo = "\n\n".join(par for par in _paragrafi(_testo(documento))
+                        if not any(s in par for s in RACCONTI_STORICI))
+    stantii = []
+    for cosa, sostantivi in COSE_CONTATE.items():
+        atteso = giusti[cosa]
+        assert atteso in NUMERALI, (
+            f"{atteso} reviewer '{cosa}' su disco, ma NUMERALI non ha la parola "
+            f"per {atteso}: aggiungila, altrimenti questo controllo smette di "
+            f"cercare qualcosa senza dirlo"
+        )
+        sbagliati = {n: parole for n, parole in NUMERALI.items() if n != atteso}
+        for _, parole in sbagliati.items():
+            for parola in parole:
+                for sost in sostantivi:
+                    for m in re.finditer(rf"\b{parola}\s+{sost}", testo, re.I):
+                        riga = testo[:m.start()].count("\n") + 1
+                        stantii.append(
+                            f"  riga {riga}: {m.group(0)!r} — i reviewer "
+                            f"'{cosa}' su disco sono {atteso} "
+                            f"({'/'.join(NUMERALI[atteso])})"
+                        )
+    assert not stantii, (
+        f"{documento}: numerali che non corrispondono ai workflow reali —\n"
+        + "\n".join(stantii)
     )

@@ -271,7 +271,7 @@ presenti si **rimuove e si riaggiunge** (GitHub non emette un nuovo evento
 `labeled` per una label già presente). Il `manual-review-required` che i
 workflow aggiungono da soli si conserva.
 
-**Quanto costa: quasi sempre zero.** Il `done_marker` è per range: se i due
+**Quanto costa: quasi sempre zero.** Il `done_marker` è per range: se i tre
 reviewer forti hanno già pubblicato su quel range — cosa che succede da sé
 quando il push tocca file critici — i job ripartiti dall'evento label si
 chiudono `success` senza chiamare il modello. Misurato sulla #468: label
