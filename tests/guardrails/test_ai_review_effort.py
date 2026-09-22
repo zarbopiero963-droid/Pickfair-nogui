@@ -1,7 +1,7 @@
 """Un effort alto senza tetto di output adeguato falsa la review, non la migliora.
 
-I tre reviewer non-Anthropic giravano a `reasoning effort: low`, cioe' sotto il
-default del loro stesso modello (per grok-4.6 il default e' `high`). L'unico a
+I reviewer non-Anthropic giravano a `reasoning effort: low`, cioe' sotto il
+default del loro stesso modello (per grok-4.7 il default e' `high`). L'unico a
 piena profondita', Fable, era anche l'unico che trovava difetti veri. Da qui
 l'esperimento: alzarli a `high` e confrontare costo e reperti.
 
@@ -28,7 +28,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 
-# I tre che l'esperimento tocca. Fable e' escluso di proposito: vedi in fondo.
+# I quattro che l'esperimento tocca. Fable e' escluso di proposito: vedi in fondo.
 WORKFLOWS_ESPERIMENTO = [
     ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
     ".github/workflows/pr-review-xai-grok46.yml",
