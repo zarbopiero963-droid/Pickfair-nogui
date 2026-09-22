@@ -809,15 +809,23 @@ cioè i singoli delta, non il diff assemblato. Si controlla la riga `Range:`
 nell'intestazione di ogni review: solo `Scope: current PR range` copre la PR
 intera.
 
-- più di un push => `final-fable-review` e `final-fugu-review`, e si attende
-  l'esito PRIMA di dichiarare qualsiasi verdetto;
-- un push solo, con `Range:` che copre `base...head` => le label sono una
-  fotocopia a pagamento: si dichiara, e non si lanciano;
-- le label costano, ma si applicano lo stesso: la decisione dell'owner del
-  16-09-2026 le rende automatiche su OGNI PR, perché un gate che non si vede
-  su GitHub non si distingue da un gate saltato. Il `done_marker` per range
-  rende quasi sempre nullo il costo aggiuntivo quando i forti hanno già
-  pubblicato su quel range.
+- le tre label si lanciano SEMPRE, anche con un push solo: la decisione
+  dell'owner del 16-09-2026 le rende automatiche su OGNI PR, perché un gate
+  che non si vede su GitHub non si distingue da un gate saltato;
+- più di un push => si attende l'esito full-range PRIMA di dichiarare
+  qualsiasi verdetto: è quella review, non le per-push, che ha visto il diff
+  assemblato;
+- un push solo, con `Range:` che copre già `base...head` => le label si
+  lanciano lo stesso e non costano: il `done_marker` è per range, quindi i
+  forti che hanno già pubblicato su quel range chiudono `success` senza
+  chiamare il modello. Il gate diventa visibile a spesa zero.
+
+Qui c'era, fino alla #477, l'eccezione «un push solo => si dichiara, e non si
+lanciano», che contraddiceva la decisione del 16-09-2026 poche righe più sotto.
+L'ha rilevata Fugu Ultra sulla full-range come bloccante; Claude Fable 5.1
+aveva segnalato la stessa coesistenza sullo stesso head come nota da confermare
+prima del merge. Su un gate una policy ambigua è fail-open, perché la lettura
+che salta il gate è sempre la più comoda.
 
 Violato su #427: tre push, verdetto «PRONTA PER MERGE» dichiarato senza il
 giro a range completo. L'ha notato l'owner, non il processo.
