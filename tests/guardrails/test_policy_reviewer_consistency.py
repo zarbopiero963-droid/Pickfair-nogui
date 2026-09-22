@@ -128,19 +128,25 @@ def _voci_della_lista_di_esclusione(testo: str) -> Set[str]:
     bullet = re.compile(r"^- `([^`]+)`\s*$")
     ancora = [i for i, r in enumerate(righe)
               if (m := bullet.match(r)) and m.group(1) == ANCORA_ESCLUSIONE]
-    assert ancora, (
-        f"la lista di esclusione non e' individuabile: nessun bullet "
-        f"`- \u0060{ANCORA_ESCLUSIONE}\u0060`. Se la forma della lista e' cambiata, "
-        f"questo controllo va aggiornato nella stessa PR invece di passare "
-        f"guardando un documento che non capisce piu'"
+    assert len(ancora) == 1, (
+        f"la lista di esclusione deve essere UNA e individuabile senza "
+        f"ambiguita': trovate {len(ancora)} righe `- \u0060{ANCORA_ESCLUSIONE}\u0060` "
+        f"(righe {[i + 1 for i in ancora]}).\n"
+        f"Zero: la forma della lista e' cambiata, e questo controllo va "
+        f"aggiornato nella stessa PR invece di passare guardando un documento "
+        f"che non capisce piu'.\n"
+        f"Piu' di una: rilievo di GPT-5.6 Sol sulla #477 — unendo i blocchi di "
+        f"piu' ancore, un secondo elenco potrebbe contenere i reviewer e far "
+        f"passare il test mentre la lista di esclusione VERA li omette. "
+        f"Il gate resterebbe fail-open guardando la lista sbagliata."
     )
     voci: Set[str] = set()
-    for i in ancora:
-        for passo in (-1, 1):                       # risalgo e scendo dal bullet
-            j = i + (passo if passo > 0 else 0)
-            while 0 <= j < len(righe) and (m := bullet.match(righe[j])):
-                voci.add(m.group(1))
-                j += passo
+    i = ancora[0]
+    for passo in (-1, 1):                           # risalgo e scendo dal bullet
+        j = i + (passo if passo > 0 else 0)
+        while 0 <= j < len(righe) and (m := bullet.match(righe[j])):
+            voci.add(m.group(1))
+            j += passo
     return voci
 
 
