@@ -20,5 +20,36 @@
   "must_include_on_ambiguous": [
     "reason",
     "correlation_id"
-  ]
+  ],
+  "place_bet_wire_contract": {
+    "verificato_su": "betfair_client.place_bet + BetfairClient._post_jsonrpc (PR02/#461)",
+    "firma_accettata_dal_client": [
+      "market_id",
+      "selection_id",
+      "side",
+      "price",
+      "size",
+      "customer_ref"
+    ],
+    "mappatura_dominio_verso_client": {
+      "bet_type": "side",
+      "stake": "size"
+    },
+    "kwargs_fuori_firma": "filtrati per firma, MAI inoltrati: uno splat diretto del payload interno solleva TypeError e l'ordine non parte. Il payload dell'engine porta correlation_id e i campi di audit, che sul wire non esistono.",
+    "customer_ref_sul_wire": "top-level `customerRef` dei params di placeOrders, DISTINTO da `customerOrderRef` per-istruzione. Ref non conforme o assente => chiave OMESSA e payload identico al legacy: fail-closed sul REF, non sull'ORDINE.",
+    "single_shot": "placeOrders resta single_shot=True: un timeout non prova che l'ordine non sia passato. Esito incerto => order_unknown, lo risolve la reconciliation.",
+    "order_unknown": [
+      "TIMEOUT",
+      "NETWORK_ERROR",
+      "HTTP_5",
+      "UNKNOWN_ERROR",
+      "DUPLICATE_TRANSACTION"
+    ],
+    "adattatori_che_rispettano_il_contratto": [
+      "order_manager.OrderManager._raw_place_bet",
+      "core.order_router.OrderRouter.place",
+      "services.betfair_service.BetfairService.place_order",
+      "core.trading_engine.TradingEngine._kwargs_per_place_bet"
+    ]
+  }
 }

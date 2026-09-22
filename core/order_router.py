@@ -37,13 +37,18 @@ class OrderRouter:
     - gli errori downstream del broker si propagano (non mascherati);
     - shape di output sempre identico.
 
-    Perché il filtro dei kwargs: ``BetfairClient.place_bet`` accetta solo
-    ``(market_id, selection_id, side, price, size)`` keyword-only, mentre
-    ``SimulationBroker.place_bet`` accetta anche i campi di audit/reconciliation
-    (``customer_ref``/``event_key``/``table_id``/``batch_id``/``event_name``/
-    ``market_name``/``runner_name``). Inoltrare i kwargs extra al client live
-    solleverebbe ``TypeError``: il router passa a ciascun broker solo i
-    parametri che la sua firma dichiara, senza perdere metadata per il sim.
+    Perché il filtro dei kwargs: ``BetfairClient.place_bet`` accetta i cinque
+    campi core keyword-only **più ``customer_ref``** (dalla #452/#PR-C: finisce
+    sul wire come ``customerRef`` top-level, chiave di de-dup Betfair a 60s),
+    mentre ``SimulationBroker.place_bet`` accetta anche i campi di
+    audit/reconciliation (``event_key``/``table_id``/``batch_id``/
+    ``event_name``/``market_name``/``runner_name``). Inoltrare i kwargs extra al
+    client live solleverebbe ``TypeError``: il router passa a ciascun broker solo
+    i parametri che la sua firma dichiara, senza perdere metadata per il sim.
+
+    Questa frase diceva il falso fino alla PR02/#461 — dichiarava il client live
+    limitato ai soli cinque core, cosa non più vera dalla #452. Il contratto wire
+    effettivo sta in ``guardrails/contracts/core.trading_engine.json``.
     """
 
     #: Campi richiesti nel payload (fail-closed: assenza => KeyError).

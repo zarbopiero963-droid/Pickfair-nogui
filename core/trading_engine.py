@@ -1422,6 +1422,56 @@ class TradingEngine:
     # ==================================================================
     # SUBMIT PATH
     # ==================================================================
+    @staticmethod
+    def _kwargs_per_place_bet(place_bet: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Adatta il payload interno alla firma dichiarata da ``place_bet``.
+
+        Il payload che gira dentro l'engine usa i nomi del DOMINIO
+        (``bet_type``, ``stake``) e porta con se' chiavi di servizio
+        (``correlation_id``) e di audit. La firma del client vero e' un'altra
+        cosa — la firma keyword-only del client Betfair::
+
+            (*, market_id, selection_id, side, price, size, customer_ref="")
+
+        Senza adattamento `place_bet(**payload)` solleva ``TypeError`` sul
+        PRIMO kwarg fuori contratto e l'ordine non parte: in produzione
+        entrambi gli entrypoint passano ``client_getter=betfair_service.get_client``,
+        che in LIVE restituisce proprio il ``BetfairClient`` — privo di
+        ``place_order``, quindi la submission cade qui. Riprodotto in Phase 0
+        della PR02/#461: con il client reale zero invii al trasporto, con i
+        doppi ``place_bet(**payload)`` dei test il percorso sembrava sano.
+
+        Stessa forma gia' usata da ``OrderManager._raw_place_bet`` e da
+        ``OrderRouter.place``: mappa i nomi e taglia per firma, cosi' il client
+        live riceve i suoi kwargs e un broker di simulazione non perde i
+        metadata di audit. La riscrittura degli adapter NON si fa qui: e' PR26.
+        """
+        completi = {
+            "market_id": payload.get("market_id"),
+            "selection_id": payload.get("selection_id"),
+            "side": payload.get("bet_type", payload.get("side")),
+            "price": payload.get("price"),
+            "size": payload.get("stake", payload.get("size")),
+            "customer_ref": payload.get("customer_ref", ""),
+            "event_key": payload.get("event_key", ""),
+            "table_id": payload.get("table_id"),
+            "batch_id": payload.get("batch_id", ""),
+            "event_name": payload.get("event_name", ""),
+            "market_name": payload.get("market_name", ""),
+            "runner_name": payload.get("runner_name", ""),
+        }
+        try:
+            parametri = inspect.signature(place_bet).parameters
+        except (TypeError, ValueError):
+            # Firma non ispezionabile: si mandano i soli campi del contratto
+            # minimo. Inoltrare tutto rischierebbe il TypeError che questa
+            # funzione esiste per evitare.
+            return {k: completi[k] for k in
+                    ("market_id", "selection_id", "side", "price", "size")}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parametri.values()):
+            return dict(completi)
+        return {k: v for k, v in completi.items() if k in parametri}
+
     def _resolve_live_client(self) -> Any:
         """Client live per la submission: override esplicito se impostato
         (test/injection), altrimenti risoluzione LAZY dal getter — il client
@@ -1491,7 +1541,13 @@ class TradingEngine:
                     place_fn = place_order if callable(place_order) else None
                     if place_fn is None:
                         place_bet = getattr(live_client, "place_bet", None)
-                        place_fn = (lambda p: place_bet(**p)) if callable(place_bet) else None
+                        # Adattamento alla firma del client: vedi
+                        # `_kwargs_per_place_bet`. Lo splat diretto del payload
+                        # rompeva il ramo LIVE (PR02/#461).
+                        place_fn = (
+                            (lambda p: place_bet(**self._kwargs_per_place_bet(place_bet, p)))
+                            if callable(place_bet) else None
+                        )
 
                     if place_fn is not None:
                         try:
@@ -1539,7 +1595,7 @@ class TradingEngine:
             if client is not None:
                 place = getattr(client, "place_bet", None)
                 if callable(place):
-                    return place(**payload)
+                    return place(**self._kwargs_per_place_bet(place, payload))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
 

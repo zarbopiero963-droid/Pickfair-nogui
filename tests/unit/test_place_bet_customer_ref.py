@@ -17,7 +17,10 @@ Invarianti di sicurezza pinnate qui (PASS+BLOCK):
   sul REF, non sull'ordine — un ref sporco non deve rompere il piazzamento reale);
 - `single_shot` resta True (posture di retry invariata);
 - il `customer_ref` viene THREADATO fino al client dai percorsi vivi
-  (OrderManager._raw_place_bet fallback; BetfairService.place_order).
+  (OrderManager._raw_place_bet fallback; BetfairService.place_order;
+  TradingEngine._kwargs_per_place_bet, aggiunto dalla PR02/#461 — fino ad
+  allora il ramo LIVE dell'engine faceva lo splat diretto del payload e
+  sollevava TypeError prima di spedire).
 """
 
 from __future__ import annotations
@@ -320,3 +323,84 @@ def test_customer_ref_stable_across_normalize_retries():
     assert ref  # generato
     n2 = om._normalize_payload(dict(n1))  # ri-normalizzazione (come un retry)
     assert n2["customer_ref"] == ref  # STABILE
+
+
+# ---------------------------------------------------------------------------
+# PR02/#461 — rami dell'adattatore dell'engine che il test di accettazione
+# (tests/acceptance/test_issue437_pr02.py) non attraversa: li' si prova il
+# percorso vivo con un client a firma stretta, qui la funzione in isolamento.
+# ---------------------------------------------------------------------------
+def _payload_engine():
+    return {
+        "market_id": "1.23456789", "selection_id": 47999, "bet_type": "LAY",
+        "price": 3.0, "stake": 7.5, "customer_ref": "PFREF1",
+        "correlation_id": "CORR-9", "event_key": "EV-1", "table_id": 3,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_adattatore_engine_mappa_e_taglia_per_firma_stretta():
+    """Client a firma fissa: mappa `bet_type`/`stake` e butta il resto."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, _payload_engine())
+    assert kw == {
+        "market_id": "1.23456789", "selection_id": 47999, "side": "LAY",
+        "price": 3.0, "size": 7.5, "customer_ref": "PFREF1",
+    }
+    assert "correlation_id" not in kw, "chiave di servizio spedita al wire"
+    assert "bet_type" not in kw and "stake" not in kw, "nomi di dominio non mappati"
+
+
+@pytest.mark.unit
+def test_adattatore_engine_conserva_gli_audit_kwargs_per_il_sim():
+    """Broker con **kwargs (il sim): i metadata di audit non si perdono."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(**kwargs):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, _payload_engine())
+    assert kw["event_key"] == "EV-1" and kw["table_id"] == 3
+    assert kw["side"] == "LAY" and kw["size"] == 7.5
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_adattatore_engine_firma_non_ispezionabile_manda_solo_il_core():
+    """Firma illeggibile => si spedisce il contratto minimo, non tutto.
+
+    Inoltrare tutto "tanto il broker validera'" e' proprio il TypeError che
+    questo adattatore esiste per evitare: meglio i cinque campi core che una
+    chiamata che non parte.
+    """
+    from core.trading_engine import TradingEngine
+
+    # Serve un callable la cui firma inspect NON sappia leggere. `print` non
+    # va bene: in CPython 3.11 una firma ce l'ha. `time.time` e' un built-in C
+    # senza firma e fa sollevare ValueError: sta qui come sostituto realistico
+    # di un client avvolto/nativo, senza dover truccare `inspect`.
+    import time as _time
+    kw = TradingEngine._kwargs_per_place_bet(_time.time, _payload_engine())
+    assert set(kw) == {"market_id", "selection_id", "side", "price", "size"}
+    assert kw["side"] == "LAY" and kw["size"] == 7.5
+
+
+@pytest.mark.unit
+def test_adattatore_engine_accetta_anche_i_nomi_gia_del_client():
+    """Payload gia' in forma client (`side`/`size`): nessuna doppia mappatura."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(
+        place_bet,
+        {"market_id": "1.1", "selection_id": 1, "side": "BACK", "price": 2.0,
+         "size": 5.0, "customer_ref": "R1"},
+    )
+    assert kw["side"] == "BACK" and kw["size"] == 5.0
