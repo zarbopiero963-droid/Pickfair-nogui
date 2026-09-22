@@ -1001,8 +1001,8 @@ around it.
 **Repeat the fire until Fugu/Fable/Astra come back with NO blockers (owner
 decision).**
 Every time the head changes (a fix, an alignment) another round is needed: declare
-it, **get authorization**, re-fire the three labels on the new stable head and wait
-for their full-range outcome. The gate is satisfied ONLY
+it and **re-fire the three labels** on the new stable head — always, without
+asking (owner decision 16-09-2026) — then wait for their full-range outcome. The gate is satisfied ONLY
 when ALL THREE come back with no real blockers. A persistent false positive is
 NOT a
 real blocker (see the diff-only note): answer it with evidence, do not loop
@@ -1035,13 +1035,16 @@ finalize) are handled, else deferred to post-merge. This way Fugu Ultra,
 Fable 5.1 and GPT-6 Astra review a STABLE head and are not wasted on versions that will still
 change (each push to the strong reviewers costs). Sequence: work complete →
 push → GPT/Grok done and findings handled (CodeRabbit only if available) →
-stable head → **deliver the merge-readiness verdict to the owner and WAIT for
-authorization** → only then fire
-`final-fugu-review` + `final-fable-review` + `final-astra-review` → wait
-for the **full-range**
-outcome → if real blockers remain: fix, re-push, **re-deliver the verdict and
-request a NEW authorization** before re-firing the labels, repeat until
-all three come back clean → merge per the "Auto-merge" section.
+stable head → fire `final-fugu-review` + `final-fable-review` +
+`final-astra-review` → wait for the **full-range** outcome → **deliver the
+verdict to the owner**, which comes AFTER the label round and never before →
+if real blockers remain: fix, re-push, re-fire the labels on the new head and
+re-deliver the verdict, until all three come back clean → merge per the
+"Auto-merge" section.
+
+The labels are NOT requested: the owner's 16-09-2026 decision makes them
+automatic on EVERY PR. What is delivered to the owner is the VERDICT, not a
+request for permission — and it is delivered once the label round is done.
 
 **The agent never sees the API keys**: it only adds the label; secrets stay in
 GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout

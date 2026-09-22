@@ -298,8 +298,9 @@ si tratta con evidenza e si documenta, non si cicla all'infinito.
 
 **Ripeti il lancio finché Fugu/Fable/Astra non tornano SENZA bloccanti (decisione
 owner).** Ogni volta che il head cambia (un fix, un allineamento) serve un nuovo
-giro: dichiaralo, **fatti autorizzare** e ri-lancia le tre label sul nuovo head
-stabile, poi attendi il loro esito full-range. Il gate è
+giro: dichiaralo e **ri-lancia le tre label** sul nuovo head stabile — sempre,
+senza chiedere (decisione owner 16-09-2026) — poi attendi il loro esito
+full-range. Il gate è
 soddisfatto SOLO quando TUTTI E TRE tornano senza bloccanti reali. Un falso positivo
 persistente NON è un bloccante reale (vedi nota diff-only): trattalo con evidenza,
 non ciclare all'infinito — se dopo il lancio full-range resta solo un falso
@@ -330,13 +331,16 @@ trattano, altrimenti post-merge tracking. Così Fugu Ultra, Fable 5.1 e GPT-6
 Astra revisionano un head
 STABILE e non si sprecano su versioni che cambieranno ancora (ogni push ai forti
 costa). Sequenza: lavoro completo → push → GPT/Grok finiti e finding trattati
-(CodeRabbit solo se disponibile) → head stabile → **consegna il verdetto di
-merge-readiness all'owner e ATTENDI la sua autorizzazione** → solo dopo fai
-partire `final-fugu-review` + `final-fable-review` + `final-astra-review`
-→ attendi l'esito
-**full-range** → se restano bloccanti reali: fixa, ri-pusha, **ri-consegna il
-verdetto e richiedi una NUOVA autorizzazione** prima di ri-lanciare le label,
-ripeti finché tutti e tre tornano puliti → merge secondo la sezione AUTO-MERGE.
+(CodeRabbit solo se disponibile) → head stabile → fai partire
+`final-fugu-review` + `final-fable-review` + `final-astra-review` → attendi
+l'esito **full-range** → **consegna il verdetto all'owner**, che arriva DOPO
+il giro a label e mai prima → se restano bloccanti reali: fixa, ri-pusha,
+ri-lancia le label sul nuovo head e ri-consegna il verdetto, finché tutti e
+tre tornano puliti → merge secondo la sezione AUTO-MERGE.
+
+Le label NON si chiedono: la decisione dell'owner del 16-09-2026 le rende
+automatiche su OGNI PR. Quel che si consegna all'owner è il VERDETTO, non la
+richiesta di permesso — e lo si consegna quando il giro a label è finito.
 
 **L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
 nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente
@@ -809,7 +813,11 @@ intera.
   l'esito PRIMA di dichiarare qualsiasi verdetto;
 - un push solo, con `Range:` che copre `base...head` => le label sono una
   fotocopia a pagamento: si dichiara, e non si lanciano;
-- le label costano: si chiedono all'owner, non si applicano d'iniziativa.
+- le label costano, ma si applicano lo stesso: la decisione dell'owner del
+  16-09-2026 le rende automatiche su OGNI PR, perché un gate che non si vede
+  su GitHub non si distingue da un gate saltato. Il `done_marker` per range
+  rende quasi sempre nullo il costo aggiuntivo quando i forti hanno già
+  pubblicato su quel range.
 
 Violato su #427: tre push, verdetto «PRONTA PER MERGE» dichiarato senza il
 giro a range completo. L'ha notato l'owner, non il processo.
