@@ -58,6 +58,23 @@ SEGRETI_DA_REDIGERE = (
     '"password": "prefisso SEGRETISSIMO"',
     '"app_key": "abc SEGRETISSIMO"',
     "'token': 'x SEGRETISSIMO'",
+    # Delimitatore ESCAPATO dentro il valore, e valore NON CHIUSO. Rilievo
+    # convergente di GPT-5.6 Sol e Fugu Ultra sulla #477. Il secondo e' il
+    # peggiore dei due: con un apice non chiuso il ramo quotato falliva, il
+    # fallback escludeva le virgolette, e la regola non redigeva NIENTE — non
+    # una fuga parziale, una fuga intera su un gate di segreti.
+    '"password": "abc\\" SEGRETISSIMO"',
+    '"password": "abc SEGRETISSIMO',
+    "'token': 'abc\\' SEGRETISSIMO'",
+)
+
+
+# Righe che devono sopravvivere intatte: una redazione che divora il resto del
+# diff rende la review cieca, ed e' il modo opposto di rompere lo stesso gate.
+NON_DA_DIVORARE = (
+    ('"password": "x"\nquota = 3.5\n', "quota = 3.5"),
+    ('"password": "aperto\nselezione = 2\n', "selezione = 2"),
+    ('password=x  e poi altro_campo=visibile', "altro_campo=visibile"),
 )
 VALORE = "SEGRETISSIMO"
 
@@ -146,4 +163,23 @@ def test_block_ogni_chiave_critica_dichiarata_e_anche_redatta() -> None:
     assert not mancanti, (
         "chiavi dichiarate critiche che la redazione non copre —\n"
         + "\n".join(mancanti)
+    )
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("campione,deve_restare", NON_DA_DIVORARE)
+def test_block_la_redazione_non_divora_il_resto_del_diff(
+    workflow: str, campione: str, deve_restare: str
+) -> None:
+    """Un ramo quotato troppo avido mangerebbe le righe successive.
+
+    Il valore non chiuso e' il caso rischioso: per redigerlo bisogna
+    consumare fino a fine riga, e se si dimentica di escludere il newline si
+    divora il diff da li' in poi. Un reviewer che non vede il codice e' un
+    check verde falso, cioe' lo stesso danno visto dall'altra parte.
+    """
+    redatto = _regex_generica(workflow).sub(r"\1=[REDACTED]", campione)
+    assert deve_restare in redatto, (
+        f"{workflow}: la redazione ha divorato {deve_restare!r} "
+        f"({redatto!r}). Sopra-redigere acceca la review"
     )
