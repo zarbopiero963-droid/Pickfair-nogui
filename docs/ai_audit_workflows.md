@@ -1,20 +1,21 @@
 # AI PR-review workflows
 
-Quattro workflow GitHub Actions eseguono una review AI automatica delle Pull
+Cinque workflow GitHub Actions eseguono una review AI automatica delle Pull
 Request di Pickfair-nogui. Sono **reviewer opzionali e diff-only**: aiutano a
 individuare bug, regressioni e problemi di sicurezza, ma **non sostituiscono il
 controllo umano** e **non approvano né mergiano** nulla.
 
-## I quattro reviewer
+## I cinque reviewer
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
 |---|---|---|---|
 | `pr-review-openrouter-gpt56-sol.yml` | GPT-5.6 Sol | OpenRouter `chat/completions` | ogni push della PR |
-| `pr-review-xai-grok46.yml` | Grok 4.6 | xAI API | ogni push della PR |
+| `pr-review-xai-grok46.yml` | Grok 4.7 | xAI API | ogni push della PR |
 | `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-fugu-review` |
-| `pr-review-claude-fable5.yml` | Claude Fable 5 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
+| `pr-review-claude-fable5.yml` | Claude Fable 5.1 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
+| `pr-review-openrouter-gpt-astra.yml` | OpenAI GPT-6 Astra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-astra-review` |
 
-I due reviewer "forti" (Fugu Ultra, Fable 5) sono più costosi: il gate di costo
+I due reviewer "forti" (Fugu Ultra, Fable 5.1) sono più costosi: il gate di costo
 nello script chiama il modello **solo** quando il push tocca i file **core o
 critici** del progetto, oppure quando si aggiunge la label finale (gate pre-merge
 sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
@@ -81,8 +82,8 @@ Configurare in *Settings → Secrets and variables → Actions*:
 | Secret (nome nel repo) | Provider | Usato da |
 |---|---|---|
 | `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra **e** GPT-5.6 Sol |
-| `GROK_PICKFAIR` | xAI API | Grok 4.6 |
-| `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5 |
+| `GROK_PICKFAIR` | xAI API | Grok 4.7 |
+| `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5.1 |
 
 > `PICKFAIR_OPENAI` **non serve più**: dal 2026-09-14 GPT-5.6 Sol gira su
 > OpenRouter con la chiave che già esisteva per Fugu Ultra. La chiave OpenAI
@@ -117,7 +118,7 @@ ha dedotto che il codice mancasse:
 | #466 | 6 | `tests/testsuite/test_false_green_semantics.py` | Grok, come **bloccante**: «non è nel range […] fail-closed non shippato» |
 
 In tutti e due i casi il file c'era. Un bloccante falso non è gratis: va
-smentito con l'evidenza, e se arriva dai due reviewer forti costa un altro giro
+smentito con l'evidenza, e se arriva dai tre reviewer forti costa un altro giro
 a label, a pagamento.
 
 Per questo `blocco_copertura()` mette la stessa informazione **nel prompt**,
@@ -149,7 +150,8 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 
 ## Label
 
-- `final-fugu-review` / `final-fable-review`: attivano il gate finale del
+- `final-fugu-review` / `final-fable-review` / `final-astra-review`:
+  attivano il gate finale del
   rispettivo reviewer forte sull'intera PR (pre-merge). **Le mette solo l'owner,
   o l'agente su sua autorizzazione esplicita, mai di iniziativa**: sono i due
   reviewer costosi e ogni lancio è spesa (vedi CLAUDE.md / AGENTS.md). Resta

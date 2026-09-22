@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = [
     ".github/workflows/pr-review-claude-fable5.yml",
     ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+    ".github/workflows/pr-review-openrouter-gpt-astra.yml",
 ]
 
 # I tre moduli reali stanno SOLO alla radice: se un giorno comparissero
@@ -250,6 +251,7 @@ TUTTI_I_REVIEWER = [
     ".github/workflows/pr-review-xai-grok46.yml",
     ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
     ".github/workflows/pr-review-claude-fable5.yml",
+    ".github/workflows/pr-review-openrouter-gpt-astra.yml",
 ]
 
 
@@ -294,4 +296,53 @@ def test_pass_i_file_di_governance_sono_critici_per_tutti_e_quattro(
     assert any(p.search(governance) for p in _critical_patterns(testo)), (
         f"{governance} non e' critico per {workflow}: una PR che lo tocca "
         "potrebbe non ricevere l'etichetta di controllo manuale"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Le liste di reviewer qui sopra sono scritte a mano. Finche' restano tali,
+# aggiungere un reviewer significa ricordarsi di QUATTRO moduli diversi
+# (cost_gate, range_solo_pr, copertura_diff, effort): dimenticarne uno fa
+# sfuggire quel reviewer a un invariante IN SILENZIO, che e' il modo peggiore.
+#
+# Osservato aggiungendo GPT-6 Astra come terzo reviewer forte: quattro liste
+# da toccare, nessuna che si lamenti se te ne scordi. Questo guard confronta
+# l'elenco scritto con i file che esistono davvero, cosi' la dimenticanza
+# diventa un test rosso invece di un buco.
+# ---------------------------------------------------------------------------
+
+def _reviewer_su_disco() -> set:
+    return {
+        f"{'.github/workflows'}/{p.name}"
+        for p in (ROOT / ".github" / "workflows").glob("pr-review-*.yml")
+    }
+
+
+def test_block_la_lista_di_tutti_i_reviewer_e_completa() -> None:
+    """`TUTTI_I_REVIEWER` deve elencare OGNI workflow di review che esiste."""
+    scritti, su_disco = set(TUTTI_I_REVIEWER), _reviewer_su_disco()
+    assert scritti == su_disco, (
+        f"TUTTI_I_REVIEWER non coincide coi file reali.\n"
+        f"  mancanti nella lista : {sorted(su_disco - scritti)}\n"
+        f"  elencati ma assenti  : {sorted(scritti - su_disco)}"
+    )
+
+
+def test_block_la_lista_col_gate_di_costo_e_completa() -> None:
+    """`WORKFLOWS` deve elencare TUTTI e SOLI i reviewer che hanno un gate di costo.
+
+    Il criterio non e' "i forti" per convenzione: e' la presenza di
+    `CORE_TRIGGER_PATTERNS`, cioe' del meccanismo che puo' decidere di NON
+    chiamare il modello. Derivarlo dal file invece che dalla memoria e' il
+    punto: un reviewer nuovo col gate di costo entra da solo, e se non entra
+    questo test lo dice.
+    """
+    con_gate = {
+        w for w in _reviewer_su_disco()
+        if "CORE_TRIGGER_PATTERNS = [" in (ROOT / w).read_text(encoding="utf-8")
+    }
+    assert set(WORKFLOWS) == con_gate, (
+        f"WORKFLOWS non coincide coi reviewer che hanno il gate di costo.\n"
+        f"  col gate ma non elencati: {sorted(con_gate - set(WORKFLOWS))}\n"
+        f"  elencati ma senza gate  : {sorted(set(WORKFLOWS) - con_gate)}"
     )

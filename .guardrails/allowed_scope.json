@@ -1767,6 +1767,24 @@
         ".guardrails/allowed_scope.json",
         "tests/testsuite/test_false_green_semantics.py"
       ]
+    },
+    "reviewer_bump_e_terzo_forte_astra": {
+      "description": "Richiesta dell'owner 22-09-2026: aggiornare i modelli dei reviewer usciti nuovi e aggiungere un TERZO reviewer forte. Quattro scelte messe all'owner e tutte approvate: (1) Astra PINNATO e non `~openai/gpt-astra-latest`, perche' il tag latest si aggiorna da solo e un upgrade silenzioso cambierebbe il comportamento di un GATE di sicurezza senza che nessuno lo decida (stesso prezzo, nessun vantaggio a lasciarlo mobile); (2) NIENTE rinomina dei file (grok46/fable5 restano): il nome-file e' un identificatore, non documentazione, e rinominarlo toccherebbe 9 file che lo referenziano; (3) label `final-astra-review`, in linea con le altre due; (4) Astra parte come i forti (push su file core/critici OPPURE label), non a ogni push, altrimenti triplicherebbe il costo per-push. BUMP 1 — GROK 4.6 -> 4.7 (`grok-4.7`). Prezzi gia' corretti: il workflow aveva 2.00/6.00, che e' esattamente il listino 4.7. `reasoning_effort` resta `low` (default del modello e' `high`): qui il reviewer deve produrre 150 parole, e i token di ragionamento si pagano come output. BUMP 2 — FABLE 5 -> 5.1 (`claude-fable-5-1`). TROVATO IN PHASE 0 E CORRETTO: il listino 5.1 abbassa il cache-read da 1.00 a 0.25 per MTok. Cambiare modello senza quello non avrebbe rotto niente — avrebbe fatto MENTIRE il report costi, che e' peggio, perche' un totale sbagliato si legge come un totale. TERZO FORTE — GPT-6 Astra via OpenRouter (`openai/gpt-6-astra`), copia templata del workflow di Fugu (stesso provider, stessa key OPENROUTER_PICKFAIR, stessa forma API). Prezzi 10.00/50.00 verificati su /api/v1/models il 22-09: prompt 0.00001/token, completion 0.00005/token — stesso prezzo di Fable 5.1, il DOPPIO di Fugu. Il terzo forte non e' gratis e sta scritto nel workflow. Tolta la nota sui token di orchestrazione, che e' specifica di Fugu; lasciato verbatim il racconto storico della #465 che nomina Fugu e Fable, perche' e' un fatto accaduto. POLICY — il nuovo workflow e' un GATE, quindi ENTRA NELLA LISTA DI ESCLUSIONE dall'auto-merge: senza, l'agente potrebbe mergiare da solo le modifiche a un gate, che e' esattamente il buco che l'esclusione chiude. Con lui: «quattro reviewer pagati» -> CINQUE (la regola CREDITI ESAURITI vale anche per Astra) e «le due label» -> LE TRE. 18 conteggi corretti in CLAUDE.md, 14 in AGENTS.md, 8 in docs/ai_audit_workflows.md, piu' 17+17+8 occorrenze dei nomi-modello. Verificato per grep che non resti un solo residuo. TEST — Astra aggiunto a TUTTE E QUATTRO le liste di reviewer (cost_gate x2, range_solo_pr, copertura_diff, effort), cosi' gli invarianti gia' esistenti valgono anche per lui. E soprattutto 4 GUARD DI COMPLETEZZA NUOVI, nati da un attrito osservato facendo proprio questo lavoro: le liste sono cablate a mano in quattro moduli, quindi aggiungere un reviewer significa ricordarsi di quattro posti e dimenticarne uno lo fa sfuggire a un invariante IN SILENZIO. I guard confrontano l'elenco scritto coi file che esistono davvero (glob di .github/workflows/pr-review-*.yml), e per cost_gate derivano il sottoinsieme col gate di costo dalla presenza di CORE_TRIGGER_PATTERNS invece che dalla memoria. BLOCK verificato su tutti e quattro: togliendo Astra da una lista qualsiasi, quel modulo va rosso. E il guard ha gia' pagato: ha beccato un MIO errore reale durante il ripristino (cost_gate ha due liste, ne avevo rimessa una sola). PR safety-critical: tocca tre workflow-gate piu' CLAUDE.md e AGENTS.md (file-policy) => merge MANUALE dell'owner. Design handoff N/A: nessuna superficie visibile.",
+      "allow_tests": true,
+      "max_files": 11,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-gpt-astra.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_copertura_diff.py",
+        "tests/guardrails/test_ai_review_cost_gate.py",
+        "tests/guardrails/test_ai_review_effort.py",
+        "tests/guardrails/test_ai_review_range_solo_pr.py"
+      ]
     }
   }
 }
