@@ -76,10 +76,33 @@ RACCONTI_STORICI = (
     # #469, la prima stesura a sola prosa: bloccarono tutti e quattro i pagati.
     "prima versione di questa sezione lo scriveva come prosa",
     "first version of this section wrote it as prose",
-    # #465/#466, tabella in docs/ai_audit_workflows.md: registra chi disse cosa
-    # su quel diff. Astra non esisteva; aggiungerlo sarebbe un falso.
+)
+
+# Esenzioni a grana di RIGA, per i racconti che stanno dentro una tabella.
+# Rilievo di GPT-5.6 Sol sulla #477: una tabella Markdown e' UN paragrafo,
+# quindi esentarla come paragrafo avrebbe spento i controlli su TUTTE le sue
+# righe — comprese quelle future e quelle non storiche. Fail-open esattamente
+# dove il controllo serve. Qui cade solo la riga ancorata.
+RIGHE_STORICHE = (
+    # #465, tabella in docs/ai_audit_workflows.md: registra chi disse cosa su
+    # quel diff. Astra non esisteva; aggiungerlo sarebbe un falso.
     "| #465 | 15 |",
 )
+
+
+def _senza_racconti_storici(testo: str) -> str:
+    """Il documento meno i passaggi che raccontano un fatto passato.
+
+    Due grane, e la distinzione non e' un dettaglio: la prosa avvolge su piu'
+    righe e va tolta a paragrafi, una riga di tabella va tolta da sola. Toglierla
+    a paragrafi porterebbe via l'intera tabella.
+    """
+    senza_righe = "\n".join(
+        r for r in testo.splitlines()
+        if not any(s in r for s in RIGHE_STORICHE)
+    )
+    return "\n\n".join(par for par in _paragrafi(senza_righe)
+                        if not any(s in par for s in RACCONTI_STORICI))
 
 # I reviewer che NON passano dall'API Anthropic: sono i soli con la manopola
 # `REVIEW_EFFORT`. Derivato dal file, non dall'elenco: vedi il test in fondo.
@@ -264,9 +287,7 @@ def test_block_nessuna_enumerazione_lascia_fuori_un_forte(documento: str) -> Non
     alias = {w: a for w, a in ALIAS_NELLA_PROSA.items() if w in forti}
 
     incomplete = []
-    for par in _paragrafi(_testo(documento)):
-        if any(s in par for s in RACCONTI_STORICI):
-            continue
+    for par in _paragrafi(_senza_racconti_storici(_testo(documento))):
         for catena, presenti in _enumerazioni(par, alias):
             if 2 <= len(presenti) < len(alias):
                 mancanti = sorted(NOME_NELLA_PROSA[w] for w in set(alias) - presenti)
@@ -348,9 +369,8 @@ def test_block_nessun_numerale_stantio_accanto_ai_reviewer(documento: str) -> No
     """
     giusti = {"forti": len(_forti_su_disco()), "pagati": len(_reviewer_su_disco())}
     # Un racconto storico dice quanti erano ALLORA: correggerlo sarebbe
-    # falsificarlo. Stessa esenzione delle enumerazioni, stesso elenco.
-    testo = "\n\n".join(par for par in _paragrafi(_testo(documento))
-                        if not any(s in par for s in RACCONTI_STORICI))
+    # falsificarlo. Stessa esenzione delle enumerazioni, stessa funzione.
+    testo = _senza_racconti_storici(_testo(documento))
     stantii = []
     for cosa, sostantivi in COSE_CONTATE.items():
         atteso = giusti[cosa]
