@@ -109,6 +109,41 @@ def test_block_ogni_label_finale_e_documentata(documento: str) -> None:
     )
 
 
+# Voce che sta nella lista di esclusione per definizione e non e' un reviewer:
+# serve ad ANCORARE la lista, cosi' la si trova senza dipendere dal titolo della
+# sezione, che e' prosa e cambia.
+ANCORA_ESCLUSIONE = "scripts/guardrail_check.py"
+
+
+def _voci_della_lista_di_esclusione(testo: str) -> Set[str]:
+    """I path elencati nel blocco di bullet che contiene l'ancora.
+
+    Rilievo di Claude Fable 5.1 sulla #477: cercare il path in TUTTO il
+    documento e' piu' debole di quel che sembra — un path nominato in una nota
+    qualsiasi soddisfarebbe il controllo senza stare nell'esclusione. Qui si
+    ritaglia il blocco contiguo di bullet che contiene l'ancora e si guarda solo
+    dentro quello.
+    """
+    righe = testo.splitlines()
+    bullet = re.compile(r"^- `([^`]+)`\s*$")
+    ancora = [i for i, r in enumerate(righe)
+              if (m := bullet.match(r)) and m.group(1) == ANCORA_ESCLUSIONE]
+    assert ancora, (
+        f"la lista di esclusione non e' individuabile: nessun bullet "
+        f"`- \u0060{ANCORA_ESCLUSIONE}\u0060`. Se la forma della lista e' cambiata, "
+        f"questo controllo va aggiornato nella stessa PR invece di passare "
+        f"guardando un documento che non capisce piu'"
+    )
+    voci: Set[str] = set()
+    for i in ancora:
+        for passo in (-1, 1):                       # risalgo e scendo dal bullet
+            j = i + (passo if passo > 0 else 0)
+            while 0 <= j < len(righe) and (m := bullet.match(righe[j])):
+                voci.add(m.group(1))
+                j += passo
+    return voci
+
+
 @pytest.mark.parametrize("documento", DOCUMENTI_DI_POLICY)
 def test_block_ogni_reviewer_e_nella_lista_di_esclusione(documento: str) -> None:
     """Un reviewer fuori dall'esclusione sarebbe auto-mergiabile dall'agente.
@@ -116,8 +151,8 @@ def test_block_ogni_reviewer_e_nella_lista_di_esclusione(documento: str) -> None
     E' il buco che l'esclusione chiude: se l'agente potesse mergiare da solo una
     modifica a un reviewer, potrebbe indebolire il proprio gate.
     """
-    testo = _testo(documento)
-    fuori = sorted(w for w in _reviewer_su_disco() if f"`{w}`" not in testo)
+    elencati = _voci_della_lista_di_esclusione(_testo(documento))
+    fuori = sorted(w for w in _reviewer_su_disco() if w not in elencati)
     assert not fuori, (
         f"{documento}: {fuori} non compare nella lista dei file a merge manuale "
         f"dell'owner. Un gate che l'agente puo' mergiare da solo non e' un gate"
@@ -213,18 +248,37 @@ def test_block_nessuna_enumerazione_lascia_fuori_un_forte(documento: str) -> Non
 
 
 def _effort_dei_workflow() -> Dict[str, str]:
-    """`REVIEW_EFFORT` del job-env, per ogni reviewer che ce l'ha.
+    """`REVIEW_EFFORT` del job-env, per ogni reviewer che la manopola ce l'ha.
 
     Si legge la riga a sei spazi (`      REVIEW_EFFORT: "high"`), non le
     occorrenze nel corpo Python: quelle sono default di lettura, non il valore
     impostato.
+
+    Rilievo di Claude Fable 5.1 sulla #477: un parser ancorato a sei spazi e'
+    fragile a una riformattazione YAML. Misurato, e la prima stesura FALLIVA
+    proprio qui — portando l'indentazione di un workflow da 6 a 8 spazi il test
+    restava VERDE, perche' il confronto e' fra INSIEMI di valori e gli altri tre
+    workflow bastavano a produrre `{"high"}`. Il workflow riformattato usciva
+    dalla copertura in silenzio. Da qui il controllo di completezza qui sotto:
+    chi ha un modello non-Anthropic DEVE dare un valore, altrimenti si ferma.
     """
     valori: Dict[str, str] = {}
+    senza_valore = []
     for w in sorted(_reviewer_su_disco()):
-        m = re.search(rf'^      {CHIAVE_EFFORT}: +(.*?)\s*$',
-                      _testo(w), re.MULTILINE)
+        testo = _testo(w)
+        # L'API Anthropic non espone la manopola: Fable non deve averla.
+        ha_manopola = not re.search(r"^      ANTHROPIC_MODEL:", testo, re.MULTILINE)
+        m = re.search(rf'^      {CHIAVE_EFFORT}: +(.*?)\s*$', testo, re.MULTILINE)
         if m:
             valori[w] = m.group(1).strip().strip('"').strip("'")
+        elif ha_manopola:
+            senza_valore.append(w)
+    assert not senza_valore, (
+        f"{CHIAVE_EFFORT} non letto da {senza_valore}: o la chiave e' sparita "
+        f"dal job-env, o l'indentazione non e' piu' quella attesa e il parser "
+        f"va aggiornato nella stessa PR. Un workflow che esce dalla copertura "
+        f"in silenzio lascerebbe il test verde su una divergenza reale"
+    )
     return valori
 
 
