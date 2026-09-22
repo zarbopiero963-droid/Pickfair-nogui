@@ -38,6 +38,16 @@ SEGRETI_DA_REDIGERE = (
     "token=SEGRETISSIMO",
     "secret=SEGRETISSIMO",
     "password=SEGRETISSIMO",
+    # Forma QUOTATA, ed e' quella che conta di piu': una app key Betfair vive
+    # in `config.json`, non in una riga shell. Rilievo di Claude Fable 5.1
+    # sulla #477 — la prima versione di questo test non aveva un campione JSON
+    # e restava VERDE sul buco, perche' la `"` fra chiave e `:` rompeva il
+    # pattern. Il fix copriva la forma meno probabile delle due.
+    '"app_key": "SEGRETISSIMO"',
+    "'app_key': 'SEGRETISSIMO'",
+    '"appKey":"SEGRETISSIMO"',
+    '"api_key": "SEGRETISSIMO"',
+    '"password": "SEGRETISSIMO"',
 )
 VALORE = "SEGRETISSIMO"
 
@@ -81,6 +91,31 @@ def test_block_il_valore_del_segreto_non_sopravvive_alla_redazione(
     )
 
 
+def _chiavi_critiche(workflow: str) -> Set[str]:
+    """Le chiavi-segreto nominate DENTRO `CRITICAL_PATTERNS`, non nel file.
+
+    Rilievo di Claude Fable 5.1 sulla #477: cercare `[a-z]+key` in tutto il
+    testo pescava qualunque parola che finisce per "key" — `hotkey`, `monkey`
+    in un commento futuro — e avrebbe fatto diventare rosso un gate per
+    rumore. Un gate che grida al lupo si smette di leggerlo, quindi il difetto
+    era reale anche se il verso era l'opposto (falso allarme, non falsa calma).
+
+    Qui si ritaglia il blocco `CRITICAL_PATTERNS = [ ... ]`, si buttano via le
+    righe di solo commento e si prendono i membri di alternanza che finiscono
+    per `key`.
+    """
+    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    m = re.search(r"CRITICAL_PATTERNS = \[(.*?)\n          \]", testo, re.S)
+    assert m, (
+        f"{workflow}: blocco CRITICAL_PATTERNS non trovato. Se la forma e' "
+        f"cambiata, questo test va aggiornato nella stessa PR invece di "
+        f"smettere di controllare in silenzio"
+    )
+    blocco = "\n".join(r for r in m.group(1).splitlines()
+                       if not r.strip().startswith("#"))
+    return set(re.findall(r"[a-z]+[_-]?\??key\b", blocco.lower()))
+
+
 def test_block_ogni_chiave_critica_dichiarata_e_anche_redatta() -> None:
     """`CRITICAL_PATTERNS` e `REDACTIONS` non devono dire cose diverse.
 
@@ -90,8 +125,7 @@ def test_block_ogni_chiave_critica_dichiarata_e_anche_redatta() -> None:
     """
     mancanti = []
     for workflow in sorted(_reviewer_su_disco()):
-        testo = (ROOT / workflow).read_text(encoding="utf-8")
-        critiche = set(re.findall(r"\b([a-z]+[_-]?\??key)\b", testo.lower()))
+        critiche = _chiavi_critiche(workflow)
         generica = _regex_generica(workflow).pattern
         for chiave in sorted(critiche):
             # `app_?key` nel sorgente e' una regex: il caso concreto e' `app_key`
