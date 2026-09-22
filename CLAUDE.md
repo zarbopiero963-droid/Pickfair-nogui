@@ -199,6 +199,16 @@ sicurezza in `docs/ai_audit_workflows.md`.
   config/segreti, o le aree safety (money management, dutching, safety_layer,
   reconciliation, runtime, catalog) — OPPURE con la label finale. Su push di
   soli docs/test i due job partono ma NON spendono (costo zero).
+- **Dalla #475 sono critici anche i file che DEFINISCONO o APPLICANO i gate**:
+  `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
+  `docs/hard_verify_spec.md` e `scripts/guardrail_check.py`. Sono cinque dei
+  dodici a merge manuale dell'owner, e nessuno di loro faceva scattare né
+  l'etichetta né i reviewer forti: una PR che toccasse solo questi era **muta**.
+  Visto dal vivo sulla #473, che toccava `guardrail_check.py` e non ha prodotto
+  nulla finché l'agente non ha applicato le label a mano — cioè il gate reggeva
+  su una regola che l'agente applica a se stesso. Conseguenza da mettere in
+  conto: **un push a `CLAUDE.md` o alle due spec ora paga i due reviewer forti**.
+  È voluto, ed è il posto dove la review forte conta di più.
 
 ### Costo dei reviewer: NON troncare, ma non bruciare crediti
 

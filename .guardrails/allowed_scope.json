@@ -1742,6 +1742,22 @@
         "scripts/guardrail_check.py",
         "tests/testsuite/test_false_green_semantics.py"
       ]
+    },
+    "gate_files_sempre_critici": {
+      "description": "Primo passo dell'opzione (a) scelta dall'owner su Issue #472, fatto nell'ordine che non dipende dal suo setup. #472 chiede un'identita' separata per l'agente perche' l'esclusione dall'auto-merge non e' applicata da niente; i quattro passi di setup (GitHub App, permessi minimi, token, branch protection) spettano all'owner e non sono automatizzabili da qui. Questo PR fa la META' che vale comunque, anche se il setup non arrivasse mai: rendere VISIBILE il gate. IL DIFETTO, OSSERVATO DAL VIVO E NON DEDOTTO: la PR #473 toccava scripts/guardrail_check.py — uno dei dodici file che la sezione AUTO-MERGE riserva al merge manuale dell'owner — ed era MUTA. Nessuna manual-review-required, e i due reviewer forti partiti e chiusi senza pubblicare nulla: zero review a testa, verificato contando i commenti. Il gate e' stato soddisfatto solo perche' l'agente si e' ricordato di applicare le label a mano, cioe' per una regola che l'agente applica a se stesso — esattamente cio' che l'esclusione dovrebbe togliere di mezzo. Misurato: 5 dei 12 file esclusi (CLAUDE.md, AGENTS.md, docs/auto_pr_flow_spec.md, docs/hard_verify_spec.md, scripts/guardrail_check.py) non matchavano ne' CORE_TRIGGER_PATTERNS ne' CRITICAL_PATTERNS; i sette workflow-gate erano gia' coperti da (^|/)\\.github/workflows/. FIX: tre pattern ancorati con ^ aggiunti a CRITICAL_PATTERNS in TUTTI E QUATTRO i workflow di review (le quattro liste erano identiche, verificato per md5, e devono restarlo). Ancorati e non larghi di proposito: un pattern su docs/ o scripts/ farebbe spendere i due reviewer forti a ogni ritocco di README o roadmap, che sarebbe un costo continuo ottenuto per pigrizia. CONSEGUENZA DI COSTO, dichiarata e non scoperta dopo: un push a CLAUDE.md o alle due spec ora paga i due reviewer forti. E' voluto — e' il posto dove la review forte conta di piu' — e in pratica e' quasi neutro, perche' la policy impone comunque il giro a label su ogni PR: il done_marker per range fa saltare il secondo giro. Cio' che cambia davvero e' che il gate smette di dipendere dall'agente. TEST red-first: 10 failed prima del fix (5 file x 2 reviewer col gate di costo), 10 passed dopo. Piu' il CONFINE dall'altro lato (8 test): docs/design/design_handoff.md, ops/roadmap_go_live.md, README.md e scripts/pr_costo_review.py NON devono far spendere — senza quello, il modo piu' semplice di far passare il primo test sarebbe un pattern largo. Piu' l'invariante che le quattro liste restino ALLINEATE (BLOCK verificato: togliendo un pattern da un solo workflow cadono 2 test), perche' quattro copie della stessa lista divergono appena qualcuno ne tocca una, e la conseguenza non sarebbe un errore rumoroso ma un gate a macchia di leopardo. NON FATTO QUI, e perche': restringere il CODEOWNERS ai dodici path. Ha senso solo INSIEME all'identita' separata e alla branch protection, che sono dell'owner; farlo adesso toglierebbe una ownership che oggi non morde senza aggiungere nulla. Entra nella PR successiva, quando l'owner ha fatto il setup. L'owner ha anche prescritto che il merge autonomo dell'agente RESTI: con il CODEOWNERS ristretto ai dodici path la review obbligatoria scatta solo su quelli, quindi resta. PR safety-critical: tocca i quattro workflow di review (workflow-gate) e CLAUDE.md/AGENTS.md (file-policy) => merge MANUALE dell'owner. Docs allineate nello stesso PR (CLAUDE.md, AGENTS.md, docs/ai_audit_workflows.md). Design handoff N/A: nessuna superficie visibile.",
+      "allow_tests": true,
+      "max_files": 9,
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_cost_gate.py"
+      ]
     }
   }
 }

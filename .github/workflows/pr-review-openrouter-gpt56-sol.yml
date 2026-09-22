@@ -179,6 +179,26 @@ jobs:
 
           CRITICAL_PATTERNS = [
               r"(^|/)\.github/workflows/",
+              # I file che DEFINISCONO o APPLICANO i gate (#472). La sezione
+              # AUTO-MERGE ne riserva dodici al merge MANUALE dell'owner: i
+              # sette workflow-gate erano gia' coperti dalla riga sopra, i
+              # quattro file-policy e `scripts/guardrail_check.py` NO.
+              #
+              # Osservato dal vivo sulla #473, non dedotto: quella PR toccava
+              # `scripts/guardrail_check.py`, e finche' l'agente non ha
+              # applicato le label a mano era MUTA — nessuna
+              # manual-review-required, e i due reviewer forti partiti e chiusi
+              # senza pubblicare nulla, zero review a testa. Il gate reggeva
+              # solo perche' l'agente si ricordava delle label, cioe' su una
+              # regola che l'agente applica a se stesso: esattamente cio' che
+              # l'esclusione dovrebbe togliere di mezzo.
+              #
+              # Ancorati con `^`: sono file precisi, non famiglie. Un pattern
+              # largo su `docs/` o `scripts/` farebbe spendere i due reviewer
+              # forti a ogni ritocco della roadmap o del README.
+              r"^(CLAUDE|AGENTS)\.md$",
+              r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
+              r"^scripts/guardrail_check\.py$",
               r"(^|/)requirements[^/]*\.(txt|in|lock)$",
               r"(^|/)pyproject\.toml$",
               r"(^|/)poetry\.lock$",

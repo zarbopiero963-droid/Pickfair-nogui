@@ -30,6 +30,13 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   betfair/telegram/parser, money management, dutching, safety, reconciliation,
   runtime, order_manager, catalog, e i pattern segreti/credenziali
   (secret/token/auth/certlogin/app_key/config/`.env`/chiavi private).
+- **File di governance** (dalla #475): `CLAUDE.md`, `AGENTS.md`,
+  `docs/auto_pr_flow_spec.md`, `docs/hard_verify_spec.md` e
+  `scripts/guardrail_check.py`. Sono cinque dei dodici file a merge manuale
+  dell'owner e prima non erano coperti da nessun pattern: una PR che toccasse
+  solo loro non riceveva l'etichetta e non faceva girare i reviewer forti.
+  Ancorati con `^` perché sono file precisi, non famiglie — un pattern largo
+  su `docs/` o `scripts/` farebbe spendere a ogni ritocco di README o roadmap.
 
 ## Postura di sicurezza (comune a tutti e 4)
 
