@@ -1446,6 +1446,14 @@ class TradingEngine:
         live riceve i suoi kwargs e un broker di simulazione non perde i
         metadata di audit. La riscrittura degli adapter NON si fa qui: e' PR26.
         """
+        # Campi core assenti: si passano come `None` e li RIFIUTA il client, che
+        # e' gia' fail-closed e con errori piu' precisi di un KeyError generico
+        # (`INVALID_MARKET_ID`, `INVALID_SELECTION_ID`, `INVALID_PRICE`,
+        # `INVALID_SIZE`). Claude Fable 5.1 sulla #478 chiedeva di alzare il
+        # controllo qui; misurato, costa piu' di quanto rende: degrada quegli
+        # errori a `KeyError('market_id')` e rompe 12 test di ciclo di vita
+        # dell'engine che usano payload parziali di proposito. Un ordine
+        # incompleto non raggiunge comunque Betfair.
         completi = {
             "market_id": payload.get("market_id"),
             "selection_id": payload.get("selection_id"),
@@ -1463,11 +1471,15 @@ class TradingEngine:
         try:
             parametri = inspect.signature(place_bet).parameters
         except (TypeError, ValueError):
-            # Firma non ispezionabile: si mandano i soli campi del contratto
-            # minimo. Inoltrare tutto rischierebbe il TypeError che questa
-            # funzione esiste per evitare.
+            # Firma non ispezionabile: si manda il contratto minimo. Inoltrare
+            # tutto rischierebbe il TypeError che questa funzione esiste per
+            # evitare. `customer_ref` RESTA: e' la chiave di de-dup Betfair
+            # (60s) e scartarla proprio su un client avvolto/nativo
+            # riaprirebbe la doppia bet che la #452 ha chiuso. Rilievo
+            # convergente di GPT-5.6 Sol e Fugu Ultra sulla #478.
             return {k: completi[k] for k in
-                    ("market_id", "selection_id", "side", "price", "size")}
+                    ("market_id", "selection_id", "side", "price", "size",
+                     "customer_ref")}
         if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parametri.values()):
             return dict(completi)
         return {k: v for k, v in completi.items() if k in parametri}
@@ -1485,6 +1497,19 @@ class TradingEngine:
         if callable(self.client_getter):
             return self.client_getter()
         return None
+
+    def _e_il_broker_di_simulazione(self, client: Any) -> bool:
+        """Il client risolto e' DIMOSTRABILMENTE il broker di simulazione?
+
+        Identita', non duck-typing: un oggetto che "sembra" un sim e invece
+        parla con Betfair piazzerebbe denaro vero. Se non lo si puo'
+        dimostrare, la risposta e' no.
+        """
+        if self.simulation_broker is not None and client is self.simulation_broker:
+            return True
+        servizio = getattr(self.runtime_controller, "betfair_service", None)
+        sim = getattr(servizio, "simulation_broker", None)
+        return sim is not None and client is sim
 
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
         self._assert_valid_ctx(ctx)
@@ -1516,8 +1541,10 @@ class TradingEngine:
             elif getattr(runtime, "is_emergency_stopped", False) is True:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
 
+        modalita_dichiarata = ""
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            modalita_dichiarata = mode
             if mode == "SIMULATION":
                 if self.simulation_broker is not None and callable(getattr(self.simulation_broker, "execute", None)):
                     return self.simulation_broker.execute(payload)
@@ -1593,6 +1620,17 @@ class TradingEngine:
         if callable(self.client_getter) and not live_client_risolto:
             client = self.client_getter()
             if client is not None:
+                # Fail-closed: in SIMULATION questo fallback puo' usare SOLO un
+                # client dimostrabilmente di simulazione. Ci si arriva quando il
+                # gate live ha negato e non c'e' ne' sim broker ne' order
+                # manager: senza questo controllo il getter restituisce il
+                # client LIVE e parte una bet REALE con `is_live_allowed()`
+                # falso, scavalcando breaker e gestione sessione. Su `main` lo
+                # impediva per caso il `TypeError` del payload non mappato;
+                # l'adattatore della PR02 lo ha reso una chiamata valida.
+                # Rilievo P1 di Codex sulla #478, riprodotto prima/dopo.
+                if modalita_dichiarata == "SIMULATION" and not self._e_il_broker_di_simulazione(client):
+                    raise RuntimeError("SIMULATION_FALLBACK_CLIENT_NOT_SIM")
                 place = getattr(client, "place_bet", None)
                 if callable(place):
                     return place(**self._kwargs_per_place_bet(place, payload))

@@ -241,3 +241,127 @@ def test_duplicate_transaction_resta_order_unknown_non_failed() -> None:
         f"DUPLICATE_TRANSACTION degradato a fallimento definitivo: {esito}"
     )
     assert esito.get("ok") is False
+
+
+# ==========================================================================
+# Rilievi della review #478, riprodotti prima di correggerli.
+# ==========================================================================
+class _RuntimeSimulazione:
+    """Mode SIMULATION perche' il gate live ha negato. Live NON permesso."""
+
+    def get_effective_execution_mode(self) -> str:
+        return "SIMULATION"
+
+    def is_live_allowed(self) -> bool:
+        return False
+
+    is_emergency_stopped = False
+    betfair_service = None
+
+
+def test_block_in_simulazione_il_fallback_non_usa_un_client_live() -> None:
+    """P1 di Codex sulla #478, ed e' una REGRESSIONE di questa PR.
+
+    In SIMULATION senza sim broker ne' order_manager, il fallback in coda
+    prende comunque il client dal getter. Su `main` il payload in forma di
+    dominio sollevava `TypeError` e faceva da rete per caso; con l'adattatore
+    la chiamata e' valida e una bet REALE parte in SIMULATION, con
+    `is_live_allowed()` falso e scavalcando breaker e gestione sessione.
+
+    Misurato su `3dfa8b3` vs il primo head della PR::
+
+        origin/main : TypeError            -> invii al client live: 0
+        con patch   : {'ok': True, ...}    -> invii al client live: 1
+
+    Fail-closed: in SIMULATION questo fallback puo' usare SOLO un client
+    dimostrabilmente di simulazione.
+    """
+    client = ClientLiveStretto()
+    eng = _engine(client)
+    eng.runtime_controller = _RuntimeSimulazione()
+    eng.simulation_broker = None
+    eng.order_manager = None
+
+    with pytest.raises(RuntimeError):
+        eng._submit_to_order_path(_ctx(), _richiesta())
+    assert client.invii == 0, (
+        f"bet REALE partita in SIMULATION: {client.invii} invii al client live"
+    )
+
+
+def test_block_il_fallback_in_simulazione_resta_aperto_al_vero_sim_broker() -> None:
+    """Il fail-closed non deve rompere il caso legittimo.
+
+    Se il client risolto E' il broker di simulazione dell'engine, il
+    piazzamento in SIMULATION e' corretto e deve passare.
+    """
+    sim = ClientLiveStretto()
+    eng = _engine(sim)
+    eng.runtime_controller = _RuntimeSimulazione()
+    eng.simulation_broker = sim          # identita' dimostrabile
+    eng.order_manager = None
+
+    # `simulation_broker.execute` non esiste su questo doppio: il ramo
+    # SIMULATION cade nel fallback, che ora deve riconoscere il sim.
+    esito = eng._submit_to_order_path(_ctx(), _richiesta())
+    assert sim.invii == 1
+    assert esito == {"ok": True, "bet_id": "BET-1"}
+
+
+def test_block_firma_non_ispezionabile_conserva_il_customer_ref() -> None:
+    """Rilievo convergente di GPT-5.6 Sol e Fugu Ultra sulla #478.
+
+    Scartare `customer_ref` quando la firma non e' leggibile toglie la chiave
+    di de-dup Betfair (60s) proprio dove serve: un client avvolto o nativo.
+    Perdere quella chiave significa rischiare la doppia bet reale su un
+    retry — cioe' il difetto che la #452 aveva chiuso.
+    """
+    from core.trading_engine import TradingEngine
+
+    import time as _time  # built-in C: `inspect.signature` solleva ValueError
+    kw = TradingEngine._kwargs_per_place_bet(_time.time, _richiesta(customer_ref="PFDEDUP"))
+    assert "customer_ref" in kw, f"chiave de-dup persa: {sorted(kw)}"
+    assert kw["customer_ref"] == "PFDEDUP"
+
+
+def test_block_un_payload_incompleto_non_diventa_un_ordine_piazzato() -> None:
+    """Rilievo di Claude Fable 5.1 sulla #478, trattato dove la prova sta.
+
+    Fable chiedeva il fail-closed (KeyError) sui cinque core dentro
+    l'adattatore, perche' con `payload.get(...)` un campo assente diventa
+    `None` e "raggiunge il trasporto". Misurato: il client lo rifiuta gia',
+    con errori piu' precisi di un KeyError generico::
+
+        market_id=None    -> RuntimeError: INVALID_MARKET_ID
+        selection_id=None -> RuntimeError: INVALID_SELECTION_ID
+        price=None        -> RuntimeError: INVALID_PRICE
+        size=None         -> RuntimeError: INVALID_SIZE
+
+    Alzare il controllo nell'adattatore degraderebbe quei messaggi e
+    romperebbe 12 test di ciclo di vita dell'engine che usano payload
+    parziali di proposito. Qui si pinna cio' che conta davvero: un ordine
+    incompleto non diventa una bet piazzata.
+    """
+    from betfair_client import BetfairClient
+
+    client = BetfairClient.__new__(BetfairClient)   # nessuna sessione: non deve servire
+    for mancante in ("market_id", "selection_id", "price", "stake"):
+        payload = _richiesta()
+        payload.pop(mancante)
+        kw = TradingEngine_kwargs(payload)
+        with pytest.raises(RuntimeError) as err:
+            BetfairClient.place_bet(client, **kw)
+        assert "INVALID" in str(err.value), (
+            f"campo `{mancante}` assente: atteso un rifiuto INVALID_*, "
+            f"ottenuto {err.value!r}"
+        )
+
+
+def TradingEngine_kwargs(payload):
+    """Scorciatoia leggibile sull'adattatore reale dell'engine."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    return TradingEngine._kwargs_per_place_bet(place_bet, payload)

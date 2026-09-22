@@ -371,12 +371,15 @@ def test_adattatore_engine_conserva_gli_audit_kwargs_per_il_sim():
 
 @pytest.mark.unit
 @pytest.mark.safety
-def test_adattatore_engine_firma_non_ispezionabile_manda_solo_il_core():
-    """Firma illeggibile => si spedisce il contratto minimo, non tutto.
+def test_adattatore_engine_firma_non_ispezionabile_tiene_core_e_customer_ref():
+    """Firma illeggibile => contratto minimo, MA con `customer_ref`.
 
     Inoltrare tutto "tanto il broker validera'" e' proprio il TypeError che
-    questo adattatore esiste per evitare: meglio i cinque campi core che una
-    chiamata che non parte.
+    questo adattatore esiste per evitare. Scartare anche `customer_ref`
+    sarebbe pero' peggio: e' la chiave di de-dup Betfair (60s), e proprio un
+    client avvolto/nativo e' il caso in cui un retry rischia la doppia bet
+    reale. Rilievo convergente di GPT-5.6 Sol e Fugu Ultra sulla #478: la
+    prima versione di questo test fissava il comportamento sbagliato.
     """
     from core.trading_engine import TradingEngine
 
@@ -386,8 +389,10 @@ def test_adattatore_engine_firma_non_ispezionabile_manda_solo_il_core():
     # di un client avvolto/nativo, senza dover truccare `inspect`.
     import time as _time
     kw = TradingEngine._kwargs_per_place_bet(_time.time, _payload_engine())
-    assert set(kw) == {"market_id", "selection_id", "side", "price", "size"}
+    assert set(kw) == {"market_id", "selection_id", "side", "price", "size",
+                       "customer_ref"}
     assert kw["side"] == "LAY" and kw["size"] == 7.5
+    assert kw["customer_ref"] == "PFREF1", "chiave de-dup persa sul ramo peggiore"
 
 
 @pytest.mark.unit
