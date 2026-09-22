@@ -383,12 +383,25 @@ def test_adattatore_engine_firma_non_ispezionabile_tiene_core_e_customer_ref():
     """
     from core.trading_engine import TradingEngine
 
-    # Serve un callable la cui firma inspect NON sappia leggere. `print` non
-    # va bene: in CPython 3.11 una firma ce l'ha. `time.time` e' un built-in C
-    # senza firma e fa sollevare ValueError: sta qui come sostituto realistico
-    # di un client avvolto/nativo, senza dover truccare `inspect`.
-    import time as _time
-    kw = TradingEngine._kwargs_per_place_bet(_time.time, _payload_engine())
+    # Serve un callable la cui firma `inspect` NON sappia leggere, su OGNI
+    # versione. La prima versione usava `time.time`: su 3.11 e 3.12 solleva,
+    # ma su 3.13 `inspect.signature(time.time)` restituisce `()` e il test
+    # avrebbe esercitato l'altro ramo restando rosso per la ragione sbagliata.
+    # Rilievo di Claude Fable 5.1 sulla #478, misurato su 3.11/3.12/3.13. Un
+    # `__signature__` che non e' una Signature fa sollevare `inspect`
+    # (TypeError su 3.11, ValueError da 3.12): entrambi sono il ramo voluto.
+    import inspect as _inspect
+
+    class _ClientNativo:
+        __signature__ = "firma illeggibile"
+
+        def __call__(self, **_kw):
+            return None
+
+    nativo = _ClientNativo()
+    with pytest.raises((TypeError, ValueError)):
+        _inspect.signature(nativo)          # precondizione: ramo non ispezionabile
+    kw = TradingEngine._kwargs_per_place_bet(nativo, _payload_engine())
     assert set(kw) == {"market_id", "selection_id", "side", "price", "size",
                        "customer_ref"}
     assert kw["side"] == "LAY" and kw["size"] == 7.5

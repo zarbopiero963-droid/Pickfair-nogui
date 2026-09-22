@@ -171,7 +171,16 @@ def test_live_exception_is_handled_safely():
 
     result = _submit(engine, "REF-SAFE-3")
 
-    assert result["status"] == "FAILED"
+    # Il client ha gia' contato la chiamata quando solleva: l'ordine puo' essere
+    # partito. Fino alla PR02 di #461 qui si pretendeva FAILED, che rilascia il
+    # lock sul customer_ref e lascia ripartire lo stesso ordine. "Gestita in
+    # sicurezza" vuol dire AMBIGUOUS: lock tenuto e nessun secondo invio.
+    assert result["status"] == "AMBIGUOUS"
+    assert live_client.calls == 1
+
+    retry = _submit(engine, "REF-SAFE-3")
+
+    assert retry["status"] == "DUPLICATE_BLOCKED"
     assert live_client.calls == 1
 
 

@@ -50,6 +50,8 @@
       "core.order_router.OrderRouter.place",
       "services.betfair_service.BetfairService.place_order",
       "core.trading_engine.TradingEngine._kwargs_per_place_bet"
-    ]
+    ],
+    "eccezioni_dal_client_live": "Nel ramo LIVE protetto un'eccezione sollevata dal client e' AMBIGUA (lock sul customer_ref tenuto, ordine in riconciliazione, nessun secondo invio) salvo PROVA che nulla sia partito. La prova c'e' solo per i quattro errori che `BetfairClient.place_bet` solleva prima di costruire la richiesta: INVALID_MARKET_ID, INVALID_SELECTION_ID, INVALID_PRICE, INVALID_SIZE — restano FAILED e liberano il lock. Timeout ed eccezioni con `error_type` AMBIGUOUS passano invariati: il gestore le classifica gia' ambigue. Un TypeError nel post-processing di una risposta arrivata finiva FAILED col lock rilasciato, e il tentativo successivo spediva un secondo POST: riprodotto su e2b2acf col client reale (PR02/#461).",
+    "fallback_non_protetto": "Il fallback in coda (`client_getter` grezzo) non ha is_live_allowed, controllo di sessione ne' circuit breaker. Il `BetfairClient` reale non ci passa MAI, in nessuna modalita' e anche senza runtime_controller: riconosciuto per CLASSE, non per cablaggio. Con modalita' dichiarata, solo il broker di simulazione, riconosciuto per IDENTITA'."
   }
 }

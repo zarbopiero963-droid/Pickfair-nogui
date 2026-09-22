@@ -39,7 +39,8 @@ from typing import Any, Dict, List
 import pytest
 
 import betfair_client
-from core.trading_engine import TradingEngine, _ExecutionContext
+from core.trading_constants import AMBIGUITY_SUBMIT_UNKNOWN, ERROR_AMBIGUOUS
+from core.trading_engine import ExecutionError, TradingEngine, _ExecutionContext
 
 # Firma autorevole: NON ricopiata: letta dal client reale. Se il client cambia
 # firma e questo doppio non la segue, il test lo dice invece di restare verde.
@@ -183,35 +184,193 @@ def test_block_il_doppio_ha_la_stessa_firma_del_client_reale() -> None:
 
 
 # --------------------------------------------------------------------------
-# TypeError DOPO l'invio — un solo invio, esito ambiguo, nessun retry
+# TypeError DOPO l'invio — un solo invio, esito ambiguo da riconciliare
 # --------------------------------------------------------------------------
-def test_block_typeerror_dopo_invio_non_produce_un_secondo_invio() -> None:
-    """Il guasto nel post-processing non deve far ri-partire l'ordine.
+def test_block_typeerror_dopo_invio_e_ambiguo_non_fallimento() -> None:
+    """Guasto nel post-processing: un solo invio, e un esito AMBIGUO.
 
-    Il trasporto ha gia' spedito: ripetere significherebbe una seconda bet con
-    denaro reale. Questo test prova ESATTAMENTE questo — un solo invio — e non
-    di piu'.
+    Il trasporto ha gia' spedito, quindi l'ordine puo' essere vivo su Betfair.
+    Si provano due cose, non una: nessun secondo invio, e un'eccezione che il
+    gestore della submission classifica AMBIGUA — non `ERROR_PERMANENT`, che
+    finalizzerebbe FAILED e rilascerebbe il lock sul customer_ref.
 
-    Nota onesta, da un rilievo P1 di Codex sulla #478: il ciclo di vita
-    AMBIGUO **non** e' garantito oggi per un'eccezione post-invio che non sia
-    un timeout. `_handle_submit_exception` classifica `ERROR_PERMANENT` tutto
-    cio' che non e' `TimeoutError` o non ha "timeout" nel messaggio, quindi
-    l'ordine viene finalizzato FAILED e il lock sul customer_ref viene
-    rilasciato: un retry successivo potrebbe ripetere un ordine live dall'esito
-    ignoto. Non e' una regressione di questa PR — su `main` vale identico per
-    `BetfairService.place_order`, che il mapping ce l'ha sempre avuto — ed e'
-    il mandato della scheda PR30 (pacchetto P25, «FSM AMBIGUOUS e replace senza
-    retry cieco»). Qui si pinna cio' che si prova; la promessa di ambiguita'
-    non si scrive finche' non e' vera.
+    La prima versione di questo test provava solo il primo punto e rinviava il
+    secondo alla scheda PR30. GPT-6 Astra, Claude Fable 5.1, Fugu Ultra e Codex
+    sulla #478 hanno obiettato la stessa cosa, e avevano ragione: il ramo LIVE
+    lo rende raggiungibile QUESTA PR, e la scheda PR02 chiede testualmente
+    «risultato ambiguo da riconciliare».
     """
     client = ClientLiveStretto(
         errore_dopo_invio=TypeError("boom nel post-processing della risposta")
     )
-    with pytest.raises(TypeError):
+    with pytest.raises(ExecutionError) as preso:
         _engine(client)._submit_to_order_path(_ctx(), _richiesta())
     assert client.invii == 1, (
         f"invii al trasporto: {client.invii}. Piu' di 1 = ordine duplicato con "
         f"denaro reale; 0 = l'invio non e' mai partito e il caso non e' quello atteso"
+    )
+    assert preso.value.error_type == ERROR_AMBIGUOUS, (
+        f"eccezione post-invio classificata {preso.value.error_type!r}: il gestore "
+        f"la finalizzerebbe FAILED su un ordine forse vivo"
+    )
+    assert isinstance(preso.value.__cause__, TypeError), "causa originale persa"
+
+
+# --------------------------------------------------------------------------
+# Ciclo di vita COMPLETO sul client Betfair REALE — la scheda PR02 alla lettera
+# --------------------------------------------------------------------------
+class _RispostaHttp:
+    """Risposta HTTP arrivata: il POST e' gia' partito."""
+
+    status_code = 200
+
+    def __init__(self, corpo: Any) -> None:
+        self._corpo = corpo
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> Any:
+        return self._corpo
+
+
+class _SessioneContaInvii:
+    """Il contatore del TRASPORTO: ogni `post` e' un invio a Betfair."""
+
+    def __init__(self, corpo: Any) -> None:
+        self.corpo = corpo
+        self.post_inviati = 0
+
+    def post(self, _url: str, **_kw: Any) -> _RispostaHttp:
+        self.post_inviati += 1
+        return _RispostaHttp(self.corpo)
+
+
+class _Riconciliazione:
+    def __init__(self) -> None:
+        self.accodati: List[Dict[str, Any]] = []
+
+    def enqueue(self, **meta: Any) -> None:
+        self.accodati.append(meta)
+
+
+class _DbMinimo:
+    def insert_order(self, _payload: Dict[str, Any]) -> str:
+        return "OID-PR02"
+
+    def update_order(self, *_a: Any, **_k: Any) -> None:
+        return None
+
+
+# `instructionReports` che non e' una lista: `place_bet` lo itera DOPO che
+# `_post_jsonrpc` e' tornato, e `for report in 5` solleva TypeError. Il
+# trasporto l'ordine l'ha gia' spedito.
+_RISPOSTA_MALFORMATA = [{"result": {"status": "SUCCESS", "instructionReports": 5}}]
+
+
+def _engine_client_reale(sessione: _SessioneContaInvii,
+                         riconciliazione: _Riconciliazione) -> TradingEngine:
+    """Engine sul percorso pubblico, col `BetfairClient` vero.
+
+    `executor=None` e' voluto: un executor stub che restituisce `None`
+    produrrebbe `EXECUTOR_RETURNED_NONE`, cioe' un AMBIGUOUS per la ragione
+    sbagliata, e il test passerebbe senza aver mai toccato il client. Il
+    contatore del trasporto a 1 prova che il percorso e' stato percorso.
+    """
+    reale = betfair_client.BetfairClient(
+        username="u", app_key="a", cert_pem="c.pem", key_pem="k.pem",
+        session=sessione, max_retries=2,
+    )
+    reale.session_token = "TOK"
+    eng = TradingEngine(bus=_Nulla(), db=_DbMinimo(), client_getter=lambda: reale,
+                        executor=None, reconciliation_engine=riconciliazione)
+    eng._runtime_state = "READY"
+    eng.runtime_controller = _RuntimeLive()
+    return eng
+
+
+def test_block_typeerror_dopo_invio_client_reale_ciclo_ambiguo_completo() -> None:
+    """Scheda PR02: «Simula TypeError dopo l'invio: contatore trasporto
+    esattamente 1 e risultato ambiguo da riconciliare».
+
+    Client Betfair REALE, percorso pubblico `submit_quick_bet`, contatore sul
+    trasporto (la sessione HTTP). Riprodotto sul head `e2b2acf`, prima della
+    patch::
+
+        1o tentativo  : status=FAILED reason=SUBMIT_FAILED error='int' object is not iterable
+        POST inviati  : 1
+        riconciliazioni accodate: 0
+        lock customer_ref ancora tenuto: False
+        2o tentativo (stesso customer_ref): status=FAILED
+        POST inviati dopo il 2o tentativo: 2
+
+    Un ordine forse vivo su Betfair veniva dichiarato fallito, il lock
+    rilasciato, e il secondo tentativo spediva un secondo POST: la doppia bet
+    reale che la de-dup esiste per impedire. Su `main` il caso non si
+    presentava solo perche' il ramo LIVE non arrivava mai al trasporto.
+    """
+    sessione = _SessioneContaInvii(_RISPOSTA_MALFORMATA)
+    ric = _Riconciliazione()
+    eng = _engine_client_reale(sessione, ric)
+    richiesta = {"customer_ref": "PFREF0001", **_richiesta()}
+
+    primo = eng.submit_quick_bet(dict(richiesta))
+
+    assert sessione.post_inviati == 1, (
+        f"contatore trasporto: {sessione.post_inviati}, atteso esattamente 1"
+    )
+    assert primo["status"] == "AMBIGUOUS", (
+        f"esito ignoto dichiarato {primo['status']!r}: {primo.get('error')}"
+    )
+    assert primo["ambiguity_reason"] == AMBIGUITY_SUBMIT_UNKNOWN
+    assert len(ric.accodati) == 1, "ordine ambiguo mai mandato in riconciliazione"
+    assert ric.accodati[0]["ambiguity_reason"] == AMBIGUITY_SUBMIT_UNKNOWN
+    assert "PFREF0001" in eng._inflight_keys, (
+        "lock sul customer_ref rilasciato su un ordine dall'esito ignoto"
+    )
+
+    secondo = eng.submit_quick_bet(dict(richiesta))
+
+    assert secondo["status"] == "DUPLICATE_BLOCKED", (
+        f"secondo tentativo sullo stesso customer_ref: {secondo['status']!r}"
+    )
+    assert sessione.post_inviati == 1, (
+        f"POST dopo il secondo tentativo: {sessione.post_inviati}. Un secondo "
+        f"invio e' una seconda bet reale su un ordine forse gia' vivo"
+    )
+
+
+@pytest.mark.parametrize("campo,valore,codice", [
+    ("market_id", "", "INVALID_MARKET_ID"),
+    ("selection_id", 0, "INVALID_SELECTION_ID"),
+    ("price", 1.0, "INVALID_PRICE"),
+    ("stake", 0.0, "INVALID_SIZE"),
+])
+def test_errore_di_validazione_pre_invio_resta_failed_e_libera_il_lock(
+        campo, valore, codice) -> None:
+    """Il contrario, perche' l'ambiguita' non diventi la risposta a tutto.
+
+    Questi quattro errori il client li solleva PRIMA di costruire la
+    richiesta: il trasporto non e' stato toccato e l'esito e' certo. Restano
+    FAILED, senza riconciliazione, e il customer_ref si libera — una falsa
+    ambiguita' terrebbe bloccato un ordine mai partito. Il test usa il client
+    vero: se il client cambiasse il testo di uno di questi errori, l'elenco
+    dell'engine smetterebbe di riconoscerlo e il test lo direbbe.
+    """
+    sessione = _SessioneContaInvii(_RISPOSTA_MALFORMATA)
+    ric = _Riconciliazione()
+    eng = _engine_client_reale(sessione, ric)
+
+    esito = eng.submit_quick_bet(
+        {"customer_ref": "PFREF0002", **_richiesta(**{campo: valore})}
+    )
+
+    assert sessione.post_inviati == 0, "la validazione doveva fermarsi prima del trasporto"
+    assert esito["status"] == "FAILED", esito
+    assert codice in str(esito.get("error")), esito.get("error")
+    assert ric.accodati == [], "falsa ambiguita' su un ordine mai partito"
+    assert "PFREF0002" not in eng._inflight_keys, (
+        "lock tenuto su un ordine che non e' mai partito"
     )
 
 
@@ -412,4 +571,67 @@ def test_block_ogni_modalita_dichiarata_chiude_il_fallback_al_client_non_sim(mod
         eng._submit_to_order_path(_ctx(), _richiesta())
     assert client.invii == 0, (
         f"modalita' `{modo}`: {client.invii} invii a un client non di simulazione"
+    )
+
+
+def test_block_il_client_betfair_reale_non_passa_mai_dal_fallback() -> None:
+    """La sicurezza non deve dipendere dal cablaggio del runtime.
+
+    GPT-5.6 Sol e Claude Fable 5.1 sulla #478: il guard per-modalita' lasciava
+    scoperto il caso senza `runtime_controller`, e Fable lo ha detto senza
+    sconti — regressione «non chiusa, solo mitigata dal cablaggio». Legare la
+    sicurezza a come qualcun altro ha cablato l'engine era il punto debole.
+
+    Qui la si lega alla CLASSE: il `BetfairClient` e' l'unico oggetto che parla
+    davvero con Betfair, e da questo ramo — privo di `is_live_allowed`,
+    controllo di sessione e circuit breaker — non passa mai. Nemmeno senza
+    runtime, nemmeno con modalita' non dichiarata.
+    """
+    from betfair_client import BetfairClient
+
+    # Client reale, mai connesso: se venisse chiamato sarebbe denaro vero.
+    reale = BetfairClient.__new__(BetfairClient)
+    eng = _engine(reale)
+    eng.runtime_controller = None          # nessuna modalita' dichiarata
+    eng.simulation_broker = None
+    eng.order_manager = None
+
+    with pytest.raises(RuntimeError, match="CLIENT_BETFAIR_REALE"):
+        eng._submit_to_order_path(_ctx(), _richiesta())
+
+
+class _RuntimeModalitaGrezza:
+    """Il runtime restituisce la modalita' cosi' com'e', anche vuota."""
+
+    def __init__(self, modo: Any) -> None:
+        self._modo = modo
+
+    def get_effective_execution_mode(self) -> Any:
+        return self._modo
+
+    def is_live_allowed(self) -> bool:
+        return False
+
+    is_emergency_stopped = False
+    betfair_service = None
+
+
+@pytest.mark.parametrize("modo", ["", None])
+def test_block_modalita_vuota_o_assente_vale_simulazione(modo) -> None:
+    """GPT-5.6 Sol sulla #478: e se la modalita' torna vuota?
+
+    Una stringa vuota e' falsa: se diventasse la `modalita_dichiarata`, il
+    guard del fallback la leggerebbe come «nessuna modalita'» e lascerebbe
+    passare il client. Il codice la normalizza a SIMULATION prima di usarla;
+    questo test lo pinna, perche' e' esattamente il genere di riga che una
+    ripulitura toglie credendola ridondante.
+    """
+    client = ClientLiveStretto()
+    eng = _engine(client)
+    eng.runtime_controller = _RuntimeModalitaGrezza(modo)
+
+    with pytest.raises(RuntimeError, match="FALLBACK_NON_PROTETTO_IN_MODO_SIMULATION"):
+        eng._submit_to_order_path(_ctx(), _richiesta())
+    assert client.invii == 0, (
+        f"modalita' {modo!r}: {client.invii} invii a un client non di simulazione"
     )

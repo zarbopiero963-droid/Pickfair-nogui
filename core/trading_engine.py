@@ -1498,6 +1498,23 @@ class TradingEngine:
             return self.client_getter()
         return None
 
+    @staticmethod
+    def _e_il_client_betfair_reale(client: Any) -> bool:
+        """E' il client che muove denaro vero?
+
+        Identificazione per CLASSE, non per comportamento: `BetfairClient` e'
+        l'unico oggetto che parla davvero con Betfair, e riconoscerlo non
+        dipende da come e' cablato il runtime. Import pigro per non legare
+        l'engine al client al momento dell'import; se il modulo non si carica,
+        la risposta prudente e' "si'" — meglio rifiutare un piazzamento che
+        lasciarne passare uno non protetto.
+        """
+        try:
+            from betfair_client import BetfairClient
+        except Exception:  # pragma: no cover - ambiente senza il client
+            return True
+        return isinstance(client, BetfairClient)
+
     def _e_il_broker_di_simulazione(self, client: Any) -> bool:
         """Il client risolto e' DIMOSTRABILMENTE il broker di simulazione?
 
@@ -1510,6 +1527,38 @@ class TradingEngine:
         servizio = getattr(self.runtime_controller, "betfair_service", None)
         sim = getattr(servizio, "simulation_broker", None)
         return sim is not None and client is sim
+
+    # Errori che `BetfairClient.place_bet` solleva PRIMA di costruire la
+    # richiesta (validazione degli argomenti): il trasporto non e' stato
+    # toccato. Sono gli unici che provano che nulla e' partito.
+    _ERRORI_PRIMA_DELL_INVIO = frozenset({
+        "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
+    })
+
+    @classmethod
+    def _esito_certo_o_gia_classificato(cls, exc: Exception) -> bool:
+        """L'eccezione del client live puo' arrivare al gestore cosi' com'e'?
+
+        Si', in due casi. Se il gestore la classifica gia' AMBIGUA — un
+        `error_type` AMBIGUOUS dichiarato, un `TimeoutError`, "timeout" nel
+        testo: `_handle_submit_exception` le tratta cosi', con la ragione
+        giusta. Oppure se e' un errore che il client solleva prima di
+        costruire la richiesta: li' FAILED e' la verita'.
+
+        Tutto il resto ha posizione IGNOTA rispetto all'invio: un `TypeError`
+        nel post-processing di una risposta arrivata, un `AttributeError` su un
+        report malformato. Il gestore lo chiamerebbe `ERROR_PERMANENT`,
+        finalizzerebbe FAILED e rilascerebbe il lock sul customer_ref — su un
+        ordine che puo' essere vivo su Betfair. Senza la prova che nulla sia
+        partito, l'esito non si dichiara fallito. Rilievo convergente di GPT-6
+        Astra, Claude Fable 5.1, Fugu Ultra e Codex sulla #478; e' la scheda
+        PR02 di #461: «risultato ambiguo da riconciliare».
+        """
+        if getattr(exc, "error_type", None) == ERROR_AMBIGUOUS:
+            return True
+        if isinstance(exc, TimeoutError) or "timeout" in str(exc).lower():
+            return True
+        return isinstance(exc, RuntimeError) and str(exc) in cls._ERRORI_PRIMA_DELL_INVIO
 
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
         self._assert_valid_ctx(ctx)
@@ -1581,7 +1630,18 @@ class TradingEngine:
                             result = place_fn(payload)
                         except Exception as _exc:
                             self._order_submission_breaker.record_failure(_exc)
-                            raise
+                            if self._esito_certo_o_gia_classificato(_exc):
+                                raise
+                            # Esito IGNOTO: il trasporto puo' aver gia'
+                            # spedito. AMBIGUOUS tiene il lock sul
+                            # customer_ref e manda l'ordine in riconciliazione;
+                            # FAILED lo rilascerebbe e un nuovo tentativo
+                            # potrebbe piazzare una seconda bet reale.
+                            raise ExecutionError(
+                                f"LIVE_SUBMIT_ESITO_IGNOTO:{type(_exc).__name__}:{_exc}",
+                                error_type=ERROR_AMBIGUOUS,
+                                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                            ) from _exc
 
                         # Any ok=False is a submission failure for the breaker.
                         # Session-expiry errors additionally trigger session recovery.
@@ -1643,6 +1703,19 @@ class TradingEngine:
                 # permessa: e' il percorso normale dell'armatura di test, e in
                 # produzione non si verifica — `headless_main.py:299` e
                 # `mini_gui.py:444` cablano il runtime subito dopo l'engine.
+                # Sbarramento che non dipende dal cablaggio: il client che
+                # muove denaro vero non passa MAI di qui, in nessuna modalita'
+                # e anche senza `runtime_controller`. Questo ramo e' privo di
+                # `is_live_allowed`, controllo di sessione e circuit breaker:
+                # il `BetfairClient` reale deve arrivare all'ordine solo dal
+                # ramo protetto. GPT-5.6 Sol e Claude Fable 5.1 sulla #478
+                # hanno osservato che il guard per-modalita' lasciava scoperto
+                # il caso senza runtime; legare la sicurezza al cablaggio era
+                # il punto debole, qui la si lega alla CLASSE.
+                if self._e_il_client_betfair_reale(client):
+                    raise RuntimeError("FALLBACK_NON_PROTETTO_CLIENT_BETFAIR_REALE")
+                # In piu': se la modalita' e' DICHIARATA, solo un client
+                # dimostrabilmente di simulazione puo' piazzare da qui.
                 if modalita_dichiarata and not self._e_il_broker_di_simulazione(client):
                     raise RuntimeError(
                         f"FALLBACK_NON_PROTETTO_IN_MODO_{modalita_dichiarata}"
