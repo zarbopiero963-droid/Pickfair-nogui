@@ -1464,11 +1464,13 @@ class TradingEngine:
         # dell'engine che usano payload parziali di proposito. Un ordine
         # incompleto non raggiunge comunque Betfair.
         #
-        # Il LATO no: il client non lo rifiuta, lo converte (`safe_side`: tutto
-        # cio' che non e' BACK/LAY diventa BACK). Quindi un `bet_type` presente
-        # ma vuoto non deve coprire un `side` valido — sarebbe la scommessa
-        # opposta. `bet_type or side`, come `BetfairService.place_order`.
-        # Rilievo P2 di Codex sulla #478.
+        # Il LATO no. Alla #478 il client non lo rifiutava, lo convertiva
+        # (`safe_side`: tutto cio' che non e' BACK/LAY diventava BACK); dalla
+        # DECISIONE-426 P13 lo rifiuta (`INVALID_SIDE`). In entrambi i casi un
+        # `bet_type` presente ma vuoto non deve coprire un `side` valido: prima
+        # era la scommessa opposta, ora sarebbe un ordine valido che non parte.
+        # `bet_type or side`, come `BetfairService.place_order`. Rilievo P2 di
+        # Codex sulla #478.
         completi = {
             "market_id": payload.get("market_id"),
             "selection_id": payload.get("selection_id"),
@@ -1560,22 +1562,30 @@ class TradingEngine:
 
     # Errori che `BetfairClient.place_bet` solleva PRIMA di costruire la
     # richiesta (validazione degli argomenti): verificato sul codice del client
-    # e pinnato da un test che usa il client vero. Sono prova che nulla e'
-    # partito SOLO se a sollevarli e' quel client: lo stesso testo da un altro
-    # oggetto, dopo l'invio, non prova niente.
+    # e pinnato da un test che ricava l'elenco eseguendo il client vero. Sono
+    # prova che nulla e' partito SOLO se a sollevarli e' quel client: lo stesso
+    # testo da un altro oggetto, dopo l'invio, non prova niente. `INVALID_SIDE`
+    # e' entrato con la DECISIONE-426 P13. Sul ramo LIVE oggi non arriva dal
+    # client, perche' il lato lo valida prima l'engine (`_con_lato_valido`); sta
+    # nell'elenco perche' l'elenco e' quello del client, non dei casi oggi
+    # raggiungibili: altrimenti un ordine mai spedito resterebbe AMBIGUO.
     _ERRORI_PRIMA_DELL_INVIO = frozenset({
         "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
+        "INVALID_SIDE",
     })
 
     @staticmethod
     def _con_lato_valido(payload: Dict[str, Any]) -> Dict[str, Any]:
         """Il lato che va al client reale: BACK o LAY, altrimenti niente invio.
 
-        Il client un lato invalido non lo rifiuta, lo CONVERTE (`safe_side`:
-        tutto cio' che non e' BACK/LAY diventa BACK), e sul ramo LIVE questo
-        vuol dire la scommessa opposta con denaro vero. `bet_type or side`
-        copriva solo l'alias vuoto; un refuso valorizzato vinceva comunque su
-        un `side` valido. Rilievo di GPT-5.6 Sol sulla #478.
+        Alla #478 il client un lato invalido non lo rifiutava, lo CONVERTIVA
+        (`safe_side`: tutto cio' che non e' BACK/LAY diventava BACK), e sul ramo
+        LIVE questo voleva dire la scommessa opposta con denaro vero. `bet_type
+        or side` copriva solo l'alias vuoto; un refuso valorizzato vinceva
+        comunque su un `side` valido. Rilievo di GPT-5.6 Sol sulla #478. Dalla
+        DECISIONE-426 P13 il client lo rifiuta (`INVALID_SIDE`), ma la
+        validazione resta qui: decide fra i DUE alias, che il client non vede,
+        e l'errore nasce tipizzato (`_ErrorePrimaDellInvio`) prima di chiamarlo.
 
         Alias vuoti o di soli spazi valgono come assenti; i due alias, se
         entrambi presenti, devono coincidere. Si valida qui e solo sul ramo

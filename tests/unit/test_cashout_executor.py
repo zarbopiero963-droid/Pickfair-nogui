@@ -223,8 +223,9 @@ def test_non_finite_rejected_even_with_permissive_safety_layer():
 
 def test_invalid_side_rejected_even_with_safety_layer():
     # Codex P2: il SafetyLayer verifica solo che side sia stringa, non la
-    # allow-list. side='NOPE' verrebbe coerciato a BACK dal client live =>
-    # l'invariante hard (sempre attiva) deve rigettarlo.
+    # allow-list. side='NOPE' il client live lo coerciva a BACK (dalla
+    # DECISIONE-426 P13 lo rifiuta con INVALID_SIDE) => l'invariante hard
+    # (sempre attiva) deve rigettarlo prima del router.
     class _PermissiveSafety:
         def validate_cashout_request(self, payload):
             return True
