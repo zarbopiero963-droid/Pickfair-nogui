@@ -17,7 +17,10 @@ Invarianti di sicurezza pinnate qui (PASS+BLOCK):
   sul REF, non sull'ordine — un ref sporco non deve rompere il piazzamento reale);
 - `single_shot` resta True (posture di retry invariata);
 - il `customer_ref` viene THREADATO fino al client dai percorsi vivi
-  (OrderManager._raw_place_bet fallback; BetfairService.place_order).
+  (OrderManager._raw_place_bet fallback; BetfairService.place_order;
+  TradingEngine._kwargs_per_place_bet, aggiunto dalla PR02/#461 — fino ad
+  allora il ramo LIVE dell'engine faceva lo splat diretto del payload e
+  sollevava TypeError prima di spedire).
 """
 
 from __future__ import annotations
@@ -320,3 +323,125 @@ def test_customer_ref_stable_across_normalize_retries():
     assert ref  # generato
     n2 = om._normalize_payload(dict(n1))  # ri-normalizzazione (come un retry)
     assert n2["customer_ref"] == ref  # STABILE
+
+
+# ---------------------------------------------------------------------------
+# PR02/#461 — rami dell'adattatore dell'engine che il test di accettazione
+# (tests/acceptance/test_issue437_pr02.py) non attraversa: li' si prova il
+# percorso vivo con un client a firma stretta, qui la funzione in isolamento.
+# ---------------------------------------------------------------------------
+def _payload_engine():
+    return {
+        "market_id": "1.23456789", "selection_id": 47999, "bet_type": "LAY",
+        "price": 3.0, "stake": 7.5, "customer_ref": "PFREF1",
+        "correlation_id": "CORR-9", "event_key": "EV-1", "table_id": 3,
+    }
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_adattatore_engine_mappa_e_taglia_per_firma_stretta():
+    """Client a firma fissa: mappa `bet_type`/`stake` e butta il resto."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, _payload_engine())
+    assert kw == {
+        "market_id": "1.23456789", "selection_id": 47999, "side": "LAY",
+        "price": 3.0, "size": 7.5, "customer_ref": "PFREF1",
+    }
+    assert "correlation_id" not in kw, "chiave di servizio spedita al wire"
+    assert "bet_type" not in kw and "stake" not in kw, "nomi di dominio non mappati"
+
+
+@pytest.mark.unit
+def test_adattatore_engine_conserva_gli_audit_kwargs_per_il_sim():
+    """Broker con **kwargs (il sim): i metadata di audit non si perdono."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(**kwargs):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, _payload_engine())
+    assert kw["event_key"] == "EV-1" and kw["table_id"] == 3
+    assert kw["side"] == "LAY" and kw["size"] == 7.5
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+def test_adattatore_engine_firma_non_ispezionabile_tiene_core_e_customer_ref():
+    """Firma illeggibile => contratto minimo, MA con `customer_ref`.
+
+    Inoltrare tutto "tanto il broker validera'" e' proprio il TypeError che
+    questo adattatore esiste per evitare. Scartare anche `customer_ref`
+    sarebbe pero' peggio: e' la chiave di de-dup Betfair (60s), e proprio un
+    client avvolto/nativo e' il caso in cui un retry rischia la doppia bet
+    reale. Rilievo convergente di GPT-5.6 Sol e Fugu Ultra sulla #478: la
+    prima versione di questo test fissava il comportamento sbagliato.
+    """
+    from core.trading_engine import TradingEngine
+
+    # Serve un callable la cui firma `inspect` NON sappia leggere, su OGNI
+    # versione. La prima versione usava `time.time`: su 3.11 e 3.12 solleva,
+    # ma su 3.13 `inspect.signature(time.time)` restituisce `()` e il test
+    # avrebbe esercitato l'altro ramo restando rosso per la ragione sbagliata.
+    # Rilievo di Claude Fable 5.1 sulla #478, misurato su 3.11/3.12/3.13. Un
+    # `__signature__` che non e' una Signature fa sollevare `inspect`
+    # (TypeError su 3.11, ValueError da 3.12): entrambi sono il ramo voluto.
+    import inspect as _inspect
+
+    class _ClientNativo:
+        __signature__ = "firma illeggibile"
+
+        def __call__(self, **_kw):
+            return None
+
+    nativo = _ClientNativo()
+    with pytest.raises((TypeError, ValueError)):
+        _inspect.signature(nativo)          # precondizione: ramo non ispezionabile
+    kw = TradingEngine._kwargs_per_place_bet(nativo, _payload_engine())
+    assert set(kw) == {"market_id", "selection_id", "side", "price", "size",
+                       "customer_ref"}
+    assert kw["side"] == "LAY" and kw["size"] == 7.5
+    assert kw["customer_ref"] == "PFREF1", "chiave de-dup persa sul ramo peggiore"
+
+
+@pytest.mark.unit
+def test_adattatore_engine_accetta_anche_i_nomi_gia_del_client():
+    """Payload gia' in forma client (`side`/`size`): nessuna doppia mappatura."""
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    kw = TradingEngine._kwargs_per_place_bet(
+        place_bet,
+        {"market_id": "1.1", "selection_id": 1, "side": "BACK", "price": 2.0,
+         "size": 5.0, "customer_ref": "R1"},
+    )
+    assert kw["side"] == "BACK" and kw["size"] == 5.0
+
+
+@pytest.mark.unit
+@pytest.mark.safety
+@pytest.mark.parametrize("vuoto", [None, ""])
+def test_adattatore_engine_bet_type_vuoto_non_copre_un_side_valido(vuoto):
+    """Un `bet_type` vuoto e' ASSENZA, non un valore: deve vincere `side`.
+
+    Rilievo P2 di Codex sulla #478. Con `payload.get("bet_type", side)` una
+    chiave `bet_type` presente ma vuota copriva un `side="LAY"` valido; il
+    client riceve `None`/`""`, `safe_side` lo converte in BACK, e dove il
+    risk gate non e' cablato parte la scommessa OPPOSTA. Stessa semantica
+    gia' usata da `BetfairService.place_order` (`bet_type or side`).
+    """
+    from core.trading_engine import TradingEngine
+
+    def place_bet(*, market_id, selection_id, side, price, size, customer_ref=""):
+        ...
+
+    payload = {"market_id": "1.1", "selection_id": 1, "bet_type": vuoto,
+               "side": "LAY", "price": 2.0, "stake": 5.0, "customer_ref": "R1"}
+    kw = TradingEngine._kwargs_per_place_bet(place_bet, payload)
+    assert kw["side"] == "LAY", f"bet_type={vuoto!r} ha coperto side='LAY': {kw['side']!r}"

@@ -33,6 +33,12 @@ logger = logging.getLogger(__name__)
 #: finale — un ref con `\n` in coda passerebbe erroneamente).
 _CUSTOMER_REF_RE = re.compile(r"[A-Za-z0-9\-._+*:;~]{1,32}")
 
+#: Errori di `placeOrders` con la risposta GIA' arrivata ma illeggibile: il
+#: POST e' partito, quindi l'esito e' ignoto (`order_unknown`), mai FAILED.
+_RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO = frozenset({
+    "INVALID_JSON", "INVALID_JSON_RPC", "BET_NO_REPORT",
+})
+
 #: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
 #: in un percorso non standard, e ai test.
 ENV_PERCORSO_CONFIG = "PICKFAIR_CONFIG_PATH"
@@ -1665,13 +1671,19 @@ class BetfairClient:
                 # - DUPLICATE_TRANSACTION: Betfair ha deduplicato un customerRef gia'
                 #   visto (60s) => la PRIMA bet e' VIVA. Marcarla FAILED sarebbe un
                 #   falso-negativo su una bet reale: la reconciliation la ritrova.
+                # - risposta ARRIVATA ma illeggibile (corpo 2xx non JSON, JSON-RPC
+                #   malformato, SUCCESS senza instruction report): il POST e'
+                #   partito, e nel terzo caso Betfair ha perfino detto SUCCESS.
+                #   Confronto ESATTO sul codice, non per sottostringa: un rifiuto
+                #   esplicito (`API_ERROR: ...`) resta definitivo. PR02/#461,
+                #   rilievo P1 di Codex sulla #478.
                 "order_unknown": any(
                     marker in error_upper
                     for marker in (
                         "TIMEOUT", "NETWORK_ERROR", "HTTP_5", "UNKNOWN_ERROR",
                         "DUPLICATE_TRANSACTION",
                     )
-                ),
+                ) or error_text in _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO,
             }
 
     # =========================================================

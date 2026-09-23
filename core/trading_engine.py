@@ -94,6 +94,15 @@ class ExecutionError(Exception):
         self.ambiguity_reason = ambiguity_reason
 
 
+class _ErrorePrimaDellInvio(RuntimeError):
+    """Sollevata dall'engine stesso PRIMA di chiamare il client: nulla e' partito.
+
+    Riconosciuta per TIPO, non per testo: un client che sollevasse la stessa
+    stringa dopo il POST non puo' farsi passare per un errore pre-invio.
+    Rilievo di GPT-5.6 Sol sulla #478.
+    """
+
+
 # =========================================================
 # NO-OP FALLBACKS
 # =========================================================
@@ -1422,6 +1431,74 @@ class TradingEngine:
     # ==================================================================
     # SUBMIT PATH
     # ==================================================================
+    @staticmethod
+    def _kwargs_per_place_bet(place_bet: Any, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Adatta il payload interno alla firma dichiarata da ``place_bet``.
+
+        Il payload che gira dentro l'engine usa i nomi del DOMINIO
+        (``bet_type``, ``stake``) e porta con se' chiavi di servizio
+        (``correlation_id``) e di audit. La firma del client vero e' un'altra
+        cosa — la firma keyword-only del client Betfair::
+
+            (*, market_id, selection_id, side, price, size, customer_ref="")
+
+        Senza adattamento `place_bet(**payload)` solleva ``TypeError`` sul
+        PRIMO kwarg fuori contratto e l'ordine non parte: in produzione
+        entrambi gli entrypoint passano ``client_getter=betfair_service.get_client``,
+        che in LIVE restituisce proprio il ``BetfairClient`` — privo di
+        ``place_order``, quindi la submission cade qui. Riprodotto in Phase 0
+        della PR02/#461: con il client reale zero invii al trasporto, con i
+        doppi ``place_bet(**payload)`` dei test il percorso sembrava sano.
+
+        Stessa forma gia' usata da ``OrderManager._raw_place_bet`` e da
+        ``OrderRouter.place``: mappa i nomi e taglia per firma, cosi' il client
+        live riceve i suoi kwargs e un broker di simulazione non perde i
+        metadata di audit. La riscrittura degli adapter NON si fa qui: e' PR26.
+        """
+        # Campi core assenti: si passano come `None` e li RIFIUTA il client, che
+        # e' gia' fail-closed e con errori piu' precisi di un KeyError generico
+        # (`INVALID_MARKET_ID`, `INVALID_SELECTION_ID`, `INVALID_PRICE`,
+        # `INVALID_SIZE`). Claude Fable 5.1 sulla #478 chiedeva di alzare il
+        # controllo qui; misurato, costa piu' di quanto rende: degrada quegli
+        # errori a `KeyError('market_id')` e rompe 12 test di ciclo di vita
+        # dell'engine che usano payload parziali di proposito. Un ordine
+        # incompleto non raggiunge comunque Betfair.
+        #
+        # Il LATO no: il client non lo rifiuta, lo converte (`safe_side`: tutto
+        # cio' che non e' BACK/LAY diventa BACK). Quindi un `bet_type` presente
+        # ma vuoto non deve coprire un `side` valido — sarebbe la scommessa
+        # opposta. `bet_type or side`, come `BetfairService.place_order`.
+        # Rilievo P2 di Codex sulla #478.
+        completi = {
+            "market_id": payload.get("market_id"),
+            "selection_id": payload.get("selection_id"),
+            "side": payload.get("bet_type") or payload.get("side"),
+            "price": payload.get("price"),
+            "size": payload.get("stake", payload.get("size")),
+            "customer_ref": payload.get("customer_ref", ""),
+            "event_key": payload.get("event_key", ""),
+            "table_id": payload.get("table_id"),
+            "batch_id": payload.get("batch_id", ""),
+            "event_name": payload.get("event_name", ""),
+            "market_name": payload.get("market_name", ""),
+            "runner_name": payload.get("runner_name", ""),
+        }
+        try:
+            parametri = inspect.signature(place_bet).parameters
+        except (TypeError, ValueError):
+            # Firma non ispezionabile: si manda il contratto minimo. Inoltrare
+            # tutto rischierebbe il TypeError che questa funzione esiste per
+            # evitare. `customer_ref` RESTA: e' la chiave di de-dup Betfair
+            # (60s) e scartarla proprio su un client avvolto/nativo
+            # riaprirebbe la doppia bet che la #452 ha chiuso. Rilievo
+            # convergente di GPT-5.6 Sol e Fugu Ultra sulla #478.
+            return {k: completi[k] for k in
+                    ("market_id", "selection_id", "side", "price", "size",
+                     "customer_ref")}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parametri.values()):
+            return dict(completi)
+        return {k: v for k, v in completi.items() if k in parametri}
+
     def _resolve_live_client(self) -> Any:
         """Client live per la submission: override esplicito se impostato
         (test/injection), altrimenti risoluzione LAZY dal getter — il client
@@ -1435,6 +1512,120 @@ class TradingEngine:
         if callable(self.client_getter):
             return self.client_getter()
         return None
+
+    @staticmethod
+    def _e_il_client_betfair_reale(client: Any) -> bool:
+        """E' il client che muove denaro vero?
+
+        Identificazione per CLASSE, non per comportamento: `BetfairClient` e'
+        l'unico oggetto che parla davvero con Betfair, e riconoscerlo non
+        dipende da come e' cablato il runtime. Si guarda la gerarchia della
+        classe dell'oggetto (sottoclassi comprese, come `MarketBetfairClient`)
+        senza importare nulla.
+
+        La prima versione importava `betfair_client` e, a import fallito,
+        rispondeva "si'". Era un ragionamento sbagliato: se la classe non si
+        puo' caricare nessun oggetto puo' esserne istanza, quindi la risposta
+        giusta e' no. Nel job `trading-engine-hard-tests`, che installa solo
+        pytest e quindi non ha `requests`, bloccava anche i doppi dei test.
+
+        Limite dichiarato (GPT-5.6 Sol e Claude Fable 5.1 sulla #478): un
+        oggetto che AVVOLGE il client non e' riconosciuto. Oggi e' teorico —
+        fuori dai test solo `BetfairClient` e `SimulationBroker` definiscono
+        `place_bet`, e `test_premessa_dello_sbarramento_...` diventa rosso se
+        ne compare una terza — e un wrapper incontrerebbe comunque il guard
+        per modalita' dichiarata, che in produzione c'e' sempre. Riconoscerlo
+        per struttura sarebbe duck-typing, il criterio che qui si evita.
+        """
+        for classe in type(client).__mro__:
+            modulo = getattr(classe, "__module__", "") or ""
+            if classe.__name__ == "BetfairClient" and (
+                modulo == "betfair_client" or modulo.endswith(".betfair_client")
+            ):
+                return True
+        return False
+
+    def _e_il_broker_di_simulazione(self, client: Any) -> bool:
+        """Il client risolto e' DIMOSTRABILMENTE il broker di simulazione?
+
+        Identita', non duck-typing: un oggetto che "sembra" un sim e invece
+        parla con Betfair piazzerebbe denaro vero. Se non lo si puo'
+        dimostrare, la risposta e' no.
+        """
+        if self.simulation_broker is not None and client is self.simulation_broker:
+            return True
+        servizio = getattr(self.runtime_controller, "betfair_service", None)
+        sim = getattr(servizio, "simulation_broker", None)
+        return sim is not None and client is sim
+
+    # Errori che `BetfairClient.place_bet` solleva PRIMA di costruire la
+    # richiesta (validazione degli argomenti): verificato sul codice del client
+    # e pinnato da un test che usa il client vero. Sono prova che nulla e'
+    # partito SOLO se a sollevarli e' quel client: lo stesso testo da un altro
+    # oggetto, dopo l'invio, non prova niente.
+    _ERRORI_PRIMA_DELL_INVIO = frozenset({
+        "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
+    })
+
+    @staticmethod
+    def _con_lato_valido(payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Il lato che va al client reale: BACK o LAY, altrimenti niente invio.
+
+        Il client un lato invalido non lo rifiuta, lo CONVERTE (`safe_side`:
+        tutto cio' che non e' BACK/LAY diventa BACK), e sul ramo LIVE questo
+        vuol dire la scommessa opposta con denaro vero. `bet_type or side`
+        copriva solo l'alias vuoto; un refuso valorizzato vinceva comunque su
+        un `side` valido. Rilievo di GPT-5.6 Sol sulla #478.
+
+        Alias vuoti o di soli spazi valgono come assenti; i due alias, se
+        entrambi presenti, devono coincidere. Si valida qui e solo sul ramo
+        LIVE: il fallback non raggiunge mai il client reale, e validare anche
+        li' rompe 12 test di ciclo di vita che usano di proposito payload senza
+        lato (misurato).
+        """
+        lati = {
+            str(valore).strip().upper()
+            for valore in (payload.get("bet_type"), payload.get("side"))
+            if valore is not None and str(valore).strip()
+        }
+        if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
+            raise _ErrorePrimaDellInvio("INVALID_SIDE")
+        return {**payload, "bet_type": lati.pop()}
+
+    @classmethod
+    def _esito_certo_o_gia_classificato(cls, exc: Exception, client: Any = None) -> bool:
+        """L'eccezione del client live puo' arrivare al gestore cosi' com'e'?
+
+        Si', in tre casi. Se il gestore la classifica gia' AMBIGUA — un
+        `error_type` AMBIGUOUS dichiarato, un `TimeoutError`, "timeout" nel
+        testo: `_handle_submit_exception` le tratta cosi', con la ragione
+        giusta. Se l'ha sollevata l'engine stesso prima di chiamare il client
+        (`_ErrorePrimaDellInvio`, riconosciuta per tipo). Oppure se e' uno
+        degli errori che il `BetfairClient` reale solleva prima di costruire
+        la richiesta — e solo se `client` e' davvero quel client: il testo da
+        solo non e' una prova (GPT-5.6 Sol sulla #478). In questi casi FAILED
+        e' la verita'.
+
+        Tutto il resto ha posizione IGNOTA rispetto all'invio: un `TypeError`
+        nel post-processing di una risposta arrivata, un `AttributeError` su un
+        report malformato. Il gestore lo chiamerebbe `ERROR_PERMANENT`,
+        finalizzerebbe FAILED e rilascerebbe il lock sul customer_ref — su un
+        ordine che puo' essere vivo su Betfair. Senza la prova che nulla sia
+        partito, l'esito non si dichiara fallito. Rilievo convergente di GPT-6
+        Astra, Claude Fable 5.1, Fugu Ultra e Codex sulla #478; e' la scheda
+        PR02 di #461: «risultato ambiguo da riconciliare».
+        """
+        if getattr(exc, "error_type", None) == ERROR_AMBIGUOUS:
+            return True
+        if isinstance(exc, TimeoutError) or "timeout" in str(exc).lower():
+            return True
+        if isinstance(exc, _ErrorePrimaDellInvio):
+            return True
+        return (
+            isinstance(exc, RuntimeError)
+            and str(exc) in cls._ERRORI_PRIMA_DELL_INVIO
+            and cls._e_il_client_betfair_reale(client)
+        )
 
     def _submit_to_order_path(self, ctx: _ExecutionContext, request: Dict[str, Any]) -> Any:
         self._assert_valid_ctx(ctx)
@@ -1466,8 +1657,10 @@ class TradingEngine:
             elif getattr(runtime, "is_emergency_stopped", False) is True:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
 
+        modalita_dichiarata = ""
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            modalita_dichiarata = mode
             if mode == "SIMULATION":
                 if self.simulation_broker is not None and callable(getattr(self.simulation_broker, "execute", None)):
                     return self.simulation_broker.execute(payload)
@@ -1491,14 +1684,32 @@ class TradingEngine:
                     place_fn = place_order if callable(place_order) else None
                     if place_fn is None:
                         place_bet = getattr(live_client, "place_bet", None)
-                        place_fn = (lambda p: place_bet(**p)) if callable(place_bet) else None
+                        # Adattamento alla firma del client: vedi
+                        # `_kwargs_per_place_bet`. Lo splat diretto del payload
+                        # rompeva il ramo LIVE (PR02/#461).
+                        place_fn = (
+                            (lambda p: place_bet(**self._kwargs_per_place_bet(
+                                place_bet, self._con_lato_valido(p))))
+                            if callable(place_bet) else None
+                        )
 
                     if place_fn is not None:
                         try:
                             result = place_fn(payload)
                         except Exception as _exc:
                             self._order_submission_breaker.record_failure(_exc)
-                            raise
+                            if self._esito_certo_o_gia_classificato(_exc, live_client):
+                                raise
+                            # Esito IGNOTO: il trasporto puo' aver gia'
+                            # spedito. AMBIGUOUS tiene il lock sul
+                            # customer_ref e manda l'ordine in riconciliazione;
+                            # FAILED lo rilascerebbe e un nuovo tentativo
+                            # potrebbe piazzare una seconda bet reale.
+                            raise ExecutionError(
+                                f"LIVE_SUBMIT_ESITO_IGNOTO:{type(_exc).__name__}:{_exc}",
+                                error_type=ERROR_AMBIGUOUS,
+                                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                            ) from _exc
 
                         # Any ok=False is a submission failure for the breaker.
                         # Session-expiry errors additionally trigger session recovery.
@@ -1537,9 +1748,49 @@ class TradingEngine:
         if callable(self.client_getter) and not live_client_risolto:
             client = self.client_getter()
             if client is not None:
+                # Fail-closed: se la modalita' e' DICHIARATA, questo fallback
+                # puo' usare solo un client dimostrabilmente di simulazione.
+                # Ci si arriva per tre strade, tutte pericolose:
+                #   SIMULATION  il gate live ha negato e non c'e' ne' sim broker
+                #               ne' order manager => il getter restituisce il
+                #               client LIVE e parte una bet REALE con
+                #               `is_live_allowed()` falso;
+                #   LIVE        il ramo protetto non ha risolto il client, ma un
+                #               client comparso nel frattempo (connessione
+                #               appena stabilita) piazzerebbe senza breaker ne'
+                #               gestione sessione — la TOCTOU che
+                #               `_resolve_live_client` descrive;
+                #   altro       modalita' non riconosciuta: non si puo' sapere
+                #               se piazzare sia lecito, quindi non si piazza.
+                # Su `main` tutto questo lo impediva per caso il `TypeError` del
+                # payload non mappato; l'adattatore della PR02 ha reso quella
+                # chiamata valida e ha tolto la rete. Rilievi P1 di Codex sulla
+                # #478 (SIMULATION, poi modalita' non riconosciuta), riprodotti.
+                #
+                # Modalita' NON dichiarata (nessun runtime_controller) resta
+                # permessa: e' il percorso normale dell'armatura di test, e in
+                # produzione non si verifica — `headless_main.py:299` e
+                # `mini_gui.py:444` cablano il runtime subito dopo l'engine.
+                # Sbarramento che non dipende dal cablaggio: il client che
+                # muove denaro vero non passa MAI di qui, in nessuna modalita'
+                # e anche senza `runtime_controller`. Questo ramo e' privo di
+                # `is_live_allowed`, controllo di sessione e circuit breaker:
+                # il `BetfairClient` reale deve arrivare all'ordine solo dal
+                # ramo protetto. GPT-5.6 Sol e Claude Fable 5.1 sulla #478
+                # hanno osservato che il guard per-modalita' lasciava scoperto
+                # il caso senza runtime; legare la sicurezza al cablaggio era
+                # il punto debole, qui la si lega alla CLASSE.
+                if self._e_il_client_betfair_reale(client):
+                    raise RuntimeError("FALLBACK_NON_PROTETTO_CLIENT_BETFAIR_REALE")
+                # In piu': se la modalita' e' DICHIARATA, solo un client
+                # dimostrabilmente di simulazione puo' piazzare da qui.
+                if modalita_dichiarata and not self._e_il_broker_di_simulazione(client):
+                    raise RuntimeError(
+                        f"FALLBACK_NON_PROTETTO_IN_MODO_{modalita_dichiarata}"
+                    )
                 place = getattr(client, "place_bet", None)
                 if callable(place):
-                    return place(**payload)
+                    return place(**self._kwargs_per_place_bet(place, payload))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
 
