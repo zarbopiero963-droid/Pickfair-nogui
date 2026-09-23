@@ -782,10 +782,14 @@ def test_premessa_dello_sbarramento_solo_due_classi_definiscono_place_bet() -> N
 def test_block_lato_invalido_non_parte_dal_ramo_live(campi) -> None:
     """Rilievo di GPT-5.6 Sol su `841c552`: vero.
 
-    Il client non rifiuta un lato invalido, lo CONVERTE: `safe_side` fa BACK di
-    tutto cio' che non e' BACK/LAY. `bet_type or side` copriva solo l'alias
-    vuoto; un refuso valorizzato vinceva comunque su `side="LAY"` e diventava
-    la scommessa opposta. Sul ramo LIVE il lato si valida prima dell'invio.
+    Alla #478 il client un lato invalido non lo rifiutava, lo CONVERTIVA:
+    `safe_side` faceva BACK di tutto cio' che non e' BACK/LAY. `bet_type or
+    side` copriva solo l'alias vuoto; un refuso valorizzato vinceva comunque su
+    `side="LAY"` e diventava la scommessa opposta. Sul ramo LIVE il lato si
+    valida prima dell'invio. Dalla DECISIONE-426 P13 anche il client rifiuta
+    un lato invalido (`INVALID_SIDE`); la validazione dell'engine resta, perche'
+    solo l'engine vede i DUE alias: il caso `conflitto`, due lati validi ma
+    diversi, il client non puo' riconoscerlo.
     """
     client = ClientLiveStretto()
     richiesta = _richiesta()

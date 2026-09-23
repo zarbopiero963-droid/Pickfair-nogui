@@ -1807,16 +1807,18 @@
     "decisione426-p13-lato-client": {
       "files": [
         ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
         "betfair_client.py",
         "cashout_executor.py",
         "core/trading_engine.py",
         "guardrails/contracts/core.trading_engine.json",
+        "tests/acceptance/test_issue437_pr02.py",
         "tests/unit/test_betfair_client_lato.py",
         "tests/unit/test_cashout_executor.py",
         "tests/unit/test_place_bet_customer_ref.py"
       ],
-      "max_files": 8,
-      "description": "PR dedicata al lato BACK/LAY nel client Betfair, decisa dall'owner in DECISIONE-426 P13 (#426, scelta B del 22/09) e ristretta al solo client il 23/09 (la parte OrderManager passa alla PR26). PHASE 0 SUL MAIN `ad9ce64`, falso successo RIPRODOTTO: `BetfairClient.place_bet` costruiva l'istruzione con `safe_side`, che trasforma in BACK qualsiasi valore fuori da BACK/LAY, None compreso; SELL, L, LAYY, vuoto, spazi, None e 1 partivano come BACK con ok=True e una POST, anche da OrderRouter.place (seam del cashout) e da BetfairService.place_order. PATCH: il client valida il lato come gli altri argomenti (solo stringhe, BACK o LAY dopo strip/upper), altrimenti RuntimeError INVALID_SIDE prima di costruire la richiesta, zero POST; `_safe_side` resta permissivo per calculate_cashout, fuori dalla decisione. L'engine aggiunge INVALID_SIDE fra gli errori pre-invio del client reale (`_ERRORI_PRIMA_DELL_INVIO`), pinnato da un test che ricava l'elenco eseguendo il client. DOCS nello stesso PR: registry core.trading_engine (voce `lato_nel_client` e tre frasi che descrivevano la vecchia conversione), commenti dell'engine, docstring di cashout_executor e due commenti di test che affermavano la conversione come comportamento attuale. Red-first: 19 rossi prima della patch, 2 rossi col solo client patchato (coerenza con l'engine), 25 verdi dopo."
+      "max_files": 10,
+      "description": "PR dedicata al lato BACK/LAY nel client Betfair: DECISIONE-426 P13 (#426), ristretta al solo client il 23/09 (OrderManager alla PR26). `BetfairClient.place_bet` convertiva in BACK ogni lato fuori da BACK/LAY, None compreso, con ok=True e una POST (riprodotto su ad9ce64, anche da OrderRouter.place e BetfairService.place_order); ora solleva RuntimeError INVALID_SIDE prima di costruire la richiesta, zero POST, e l'engine lo conta fra gli errori pre-invio del client reale. `_safe_side` resta per calculate_cashout. ESTENSIONE DI SCOPE DICHIARATA, da 8 a 10 file, su rilievo di Codex: `tests/acceptance/test_issue437_pr02.py` (docstring che dava la conversione come comportamento attuale) e `CHANGELOG.md` (cambio di comportamento notevole, AGENTS.md). Prove e matrice nel corpo della #480."
     }
   }
 }

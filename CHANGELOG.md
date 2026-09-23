@@ -52,3 +52,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - GitHub Actions: removed `|| true` from `pip install` steps (fail-closed CI).
 - `core/reconciliation_engine.py`: -325 lines (-15%) after type extraction.
 - `database.py`: -262 lines (-19%) after schema extraction.
+
+### Fixed
+- `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
+  BACK/LAY (checked after strip/upper; empty, `None` and non-string values
+  included) with `RuntimeError("INVALID_SIDE")` before building the request,
+  so nothing is sent. It used to turn any such value into BACK and report
+  `ok=True`: a typo or a missing side became a real BACK bet. Callers that
+  relied on the implicit BACK now get the error instead. `TradingEngine`
+  treats `INVALID_SIDE` from the real client as a pre-send error (FAILED, not
+  AMBIGUOUS). `_safe_side` stays permissive for `calculate_cashout`.
+  (DECISIONE-426 P13, #480)
