@@ -432,9 +432,11 @@ def test_adattatore_engine_bet_type_vuoto_non_copre_un_side_valido(vuoto):
 
     Rilievo P2 di Codex sulla #478. Con `payload.get("bet_type", side)` una
     chiave `bet_type` presente ma vuota copriva un `side="LAY"` valido; il
-    client riceve `None`/`""`, `safe_side` lo converte in BACK, e dove il
-    risk gate non e' cablato parte la scommessa OPPOSTA. Stessa semantica
-    gia' usata da `BetfairService.place_order` (`bet_type or side`).
+    client riceveva `None`/`""` e `safe_side` lo convertiva in BACK: dove il
+    risk gate non e' cablato partiva la scommessa OPPOSTA. Dalla
+    DECISIONE-426 P13 il client lo rifiuta (`INVALID_SIDE`): senza questa
+    semantica l'ordine LAY valido non partirebbe. Stessa semantica gia' usata
+    da `BetfairService.place_order` (`bet_type or side`).
     """
     from core.trading_engine import TradingEngine
 

@@ -111,8 +111,10 @@ class CashoutExecutor:
         """Invarianti real-money applicate SEMPRE, anche col SafetyLayer.
 
         Lo schema del SafetyLayer verifica i bound price/stake e i tipi, ma NON
-        la side allow-list (un ``side`` arbitrario verrebbe coerciato dal client
-        live), NON la finitezza (NaN/Inf passano i confronti ``<=``) e NON è
+        la side allow-list (un ``side`` arbitrario il client live lo coerciva
+        in BACK; dalla DECISIONE-426 P13 lo rifiuta con ``INVALID_SIDE``, ma
+        qui si ferma prima del router, come REJECTED e non come ERROR), NON la
+        finitezza (NaN/Inf passano i confronti ``<=``) e NON è
         garantita la presenza di ``green_up`` (un cashout senza green_up
         riporterebbe un P&L falso). Difesa in profondità, indipendente
         dall'injection.

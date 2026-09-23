@@ -39,6 +39,10 @@ _RISPOSTA_ILLEGGIBILE_DOPO_L_INVIO = frozenset({
     "INVALID_JSON", "INVALID_JSON_RPC", "BET_NO_REPORT",
 })
 
+#: I soli lati che `placeOrders` accetta. Un valore fuori da qui e' un errore
+#: PRIMA dell'invio (`INVALID_SIDE`), mai un BACK di ripiego.
+_LATI_VALIDI = frozenset({"BACK", "LAY"})
+
 #: Se valorizzata, ha la precedenza su tutto: serve a chi installa il programma
 #: in un percorso non standard, e ai test.
 ENV_PERCORSO_CONFIG = "PICKFAIR_CONFIG_PATH"
@@ -1603,11 +1607,20 @@ class BetfairClient:
         if size_f <= 0.0:
             raise RuntimeError("INVALID_SIZE")
 
+        # Il lato si VALIDA come gli altri argomenti, non si converte.
+        # `_safe_side` trasforma in BACK qualsiasi valore che non sia BACK/LAY,
+        # `None` compreso: un refuso o un lato mancante partivano come BACK, con
+        # `ok=True`. DECISIONE-426 P13. `_safe_side` resta per
+        # `calculate_cashout`, che la decisione lascia fuori.
+        side_s = side.strip().upper() if isinstance(side, str) else ""
+        if side_s not in _LATI_VALIDI:
+            raise RuntimeError("INVALID_SIDE")
+
         params: Dict[str, Any] = {
             "marketId": market_id_s,
             "instructions": [{
                 "selectionId": selection_id_i,
-                "side": self._safe_side(side),
+                "side": side_s,
                 "orderType": "LIMIT",
                 "limitOrder": {
                     "size": size_f,
