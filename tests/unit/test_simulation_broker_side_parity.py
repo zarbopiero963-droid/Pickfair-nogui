@@ -37,7 +37,8 @@ def test_valid_side_is_normalized_before_recording(side, expected):
     {"selectionId": 10, "price": 2.0, "size": 1.0},
     {"selectionId": 10, "side": None, "price": 2.0, "size": 1.0},
     {"selectionId": 10, "side": "SELL", "price": 2.0, "size": 1.0},
-    {"selectionId": 10, "side": "", "bet_type": "BACK", "price": 2.0, "size": 1.0},
+    {"selectionId": 10, "side": "LAY", "bet_type": "BACK", "price": 2.0, "size": 1.0},
+    {"selectionId": 10, "side": "SELL", "bet_type": "BACK", "price": 2.0, "size": 1.0},
 ])
 def test_invalid_batch_instruction_has_no_order_or_implicit_back(instruction):
     broker = SimulationBroker()
@@ -50,6 +51,23 @@ def test_invalid_batch_instruction_has_no_order_or_implicit_back(instruction):
         "averagePriceMatched": 0.0,
     }]
     assert broker.state.orders == {}
+
+
+@pytest.mark.parametrize("instruction,expected", [
+    ({"side": "", "bet_type": "BACK"}, "BACK"),
+    ({"side": "  ", "bet_type": " lay "}, "LAY"),
+    ({"side": None, "bet_type": "BACK"}, "BACK"),
+    ({"side": "lay", "bet_type": "LAY"}, "LAY"),
+])
+def test_batch_accepts_one_unambiguous_side_from_either_alias(instruction, expected):
+    broker = SimulationBroker()
+    response = broker.place_orders(market_id="1.100", instructions=[{
+        "selectionId": 10, "price": 2.0, "size": 1.0, **instruction,
+    }])
+
+    order_id = response["instructionReports"][0]["betId"]
+    assert order_id in broker.state.orders
+    assert broker.state.orders[order_id].side == expected
 
 
 def test_invalid_batch_leg_does_not_block_independent_valid_leg():

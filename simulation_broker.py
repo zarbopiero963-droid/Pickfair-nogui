@@ -565,14 +565,20 @@ class SimulationBroker:
             selection_id = _to_int(raw_selection_id, 0)
             # An invalid leg cannot silently become BACK or leave an order
             # behind. A batch is intentionally non-atomic: other legs proceed.
-            side = item.get("side", item.get("bet_type"))
-            normalized_side = side.strip().upper() if isinstance(side, str) else ""
-            if normalized_side not in {"BACK", "LAY"}:
+            # Follow the LIVE engine's alias contract: empty aliases are
+            # absent, but two non-empty, conflicting aliases are invalid.
+            sides = {
+                str(value).strip().upper()
+                for value in (item.get("side"), item.get("bet_type"))
+                if value is not None and str(value).strip()
+            }
+            if len(sides) != 1 or not sides <= {"BACK", "LAY"}:
                 reports.append({
                     "status": "FAILURE", "betId": "", "sizeMatched": 0.0,
                     "averagePriceMatched": 0.0,
                 })
                 continue
+            normalized_side = sides.pop()
             result = self.place_bet(
                 market_id=str(market_id),
                 selection_id=selection_id,

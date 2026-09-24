@@ -58,8 +58,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   and surrounding spaces before recording a PAPER order. Missing, malformed,
   or non-string sides raise `INVALID_SIDE` without changing simulated orders
   or funds. `place_orders` rejects just the invalid instruction without an
-  implicit BACK; independent valid batch instructions still run. This aligns
-  the simulation boundary with the live client (#426 P15).
+  implicit BACK; empty `side` permits a valid `bet_type`, while conflicting
+  non-empty aliases fail. Independent valid batch instructions still run.
+  This aligns the simulation boundary with the live client (#426 P15).
 - `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
   BACK/LAY (checked after strip/upper; empty, `None` and non-string values
   included) with `RuntimeError("INVALID_SIDE")` before building the request,
