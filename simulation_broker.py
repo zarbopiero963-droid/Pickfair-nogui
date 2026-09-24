@@ -567,12 +567,14 @@ class SimulationBroker:
             # behind. A batch is intentionally non-atomic: other legs proceed.
             # Follow the LIVE engine's alias contract: empty aliases are
             # absent, but two non-empty, conflicting aliases are invalid.
-            sides = {
-                str(value).strip().upper()
-                for value in (item.get("side"), item.get("bet_type"))
-                if value is not None and str(value).strip()
-            }
-            if len(sides) != 1 or not sides <= {"BACK", "LAY"}:
+            aliases = (item.get("side"), item.get("bet_type"))
+            # The live Betfair client rejects non-string sides, including
+            # objects whose __str__ happens to produce "BACK" or "LAY".
+            invalid_type = any(value is not None and not isinstance(value, str)
+                               for value in aliases)
+            sides = {value.strip().upper() for value in aliases
+                     if isinstance(value, str) and value.strip()}
+            if invalid_type or len(sides) != 1 or not sides <= {"BACK", "LAY"}:
                 reports.append({
                     "status": "FAILURE", "betId": "", "sizeMatched": 0.0,
                     "averagePriceMatched": 0.0,

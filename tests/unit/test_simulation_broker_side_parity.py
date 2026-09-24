@@ -5,6 +5,11 @@ import pytest
 from simulation_broker import SimulationBroker
 
 
+class _LooksLikeBack:
+    def __str__(self):
+        return "BACK"
+
+
 @pytest.mark.parametrize("side", [None, "", "  ", "SELL", "backk", 0, False])
 def test_invalid_side_cannot_create_a_simulated_order(side):
     broker = SimulationBroker()
@@ -39,6 +44,9 @@ def test_valid_side_is_normalized_before_recording(side, expected):
     {"selectionId": 10, "side": "SELL", "price": 2.0, "size": 1.0},
     {"selectionId": 10, "side": "LAY", "bet_type": "BACK", "price": 2.0, "size": 1.0},
     {"selectionId": 10, "side": "SELL", "bet_type": "BACK", "price": 2.0, "size": 1.0},
+    {"selectionId": 10, "side": _LooksLikeBack(), "price": 2.0, "size": 1.0},
+    {"selectionId": 10, "side": 0, "bet_type": "BACK", "price": 2.0, "size": 1.0},
+    {"selectionId": 10, "side": _LooksLikeBack(), "bet_type": "BACK", "price": 2.0, "size": 1.0},
 ])
 def test_invalid_batch_instruction_has_no_order_or_implicit_back(instruction):
     broker = SimulationBroker()
