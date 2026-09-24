@@ -60,7 +60,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   or funds. `place_orders` rejects just the invalid instruction without an
   implicit BACK; empty `side` permits a valid `bet_type`, while conflicting
   non-empty aliases and non-string aliases fail. Independent valid batch
-  instructions still run.
+  instructions still run. A regression test exercises the actual PAPER
+  OrderRouter, OrderManager and CashoutExecutor against the broker.
   This aligns the simulation boundary with the live client (#426 P15).
 - `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
   BACK/LAY (checked after strip/upper; empty, `None` and non-string values
