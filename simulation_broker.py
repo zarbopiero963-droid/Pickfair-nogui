@@ -491,11 +491,17 @@ class SimulationBroker:
         market_name: str = "",
         runner_name: str = "",
     ) -> Dict[str, Any]:
+        # DECISIONE-426 P15: the PAPER boundary has the same side contract as
+        # BetfairClient.place_bet. Reject before matching, storage, or writes.
+        normalized_side = side.strip().upper() if isinstance(side, str) else ""
+        if normalized_side not in {"BACK", "LAY"}:
+            raise RuntimeError("INVALID_SIDE")
+
         order = SimOrder(
             bet_id="SIMBET-" + uuid.uuid4().hex[:14],
             market_id=str(market_id),
             selection_id=int(selection_id),
-            side=str(side or "BACK").upper(),
+            side=normalized_side,
             price=float(price),
             size=float(size),
             customer_ref=str(customer_ref or ""),
@@ -557,10 +563,20 @@ class SimulationBroker:
             raw_price = item.get("price")
             raw_size = item.get("size", item.get("stake"))
             selection_id = _to_int(raw_selection_id, 0)
+            # An invalid leg cannot silently become BACK or leave an order
+            # behind. A batch is intentionally non-atomic: other legs proceed.
+            side = item.get("side", item.get("bet_type"))
+            normalized_side = side.strip().upper() if isinstance(side, str) else ""
+            if normalized_side not in {"BACK", "LAY"}:
+                reports.append({
+                    "status": "FAILURE", "betId": "", "sizeMatched": 0.0,
+                    "averagePriceMatched": 0.0,
+                })
+                continue
             result = self.place_bet(
                 market_id=str(market_id),
                 selection_id=selection_id,
-                side=str(item.get("side") or item.get("bet_type") or "BACK"),
+                side=normalized_side,
                 price=_to_float(raw_price, 0.0),
                 size=_to_float(raw_size, 0.0),
                 customer_ref=customer_ref,
