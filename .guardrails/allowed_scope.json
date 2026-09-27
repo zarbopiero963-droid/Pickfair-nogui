@@ -1819,6 +1819,15 @@
       ],
       "max_files": 10,
       "description": "PR dedicata al lato BACK/LAY nel client Betfair: DECISIONE-426 P13 (#426), ristretta al solo client il 23/09 (OrderManager alla PR26). `BetfairClient.place_bet` convertiva in BACK ogni lato fuori da BACK/LAY, None compreso, con ok=True e una POST (riprodotto su ad9ce64, anche da OrderRouter.place e BetfairService.place_order); ora solleva RuntimeError INVALID_SIDE prima di costruire la richiesta, zero POST, e l'engine lo conta fra gli errori pre-invio del client reale. `_safe_side` resta per calculate_cashout. ESTENSIONE DI SCOPE DICHIARATA, da 8 a 10 file, su rilievo di Codex: `tests/acceptance/test_issue437_pr02.py` (docstring che dava la conversione come comportamento attuale) e `CHANGELOG.md` (cambio di comportamento notevole, AGENTS.md). Prove e matrice nel corpo della #480."
+    },
+    "decisione426-p18-tetto-fable": {
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".guardrails/allowed_scope.json",
+        "tests/guardrails/test_ai_review_effort.py"
+      ],
+      "max_files": 3,
+      "description": "DECISIONE-426 P18 (owner, 27/09/2026): il tetto di output di Claude Fable 5.1 passa da 3000 a 8000. Sulla #481 il giro a label sull'intera PR si e' fermato a 3000 token (stop_reason=max_tokens): review parziale, check rosso, gate finale senza verdetto. Il tetto e' un massimale, non un addebito: si paga cio' che il modello genera. Workflow-gate: il merge dell'agente e' autorizzato da DECISIONE-426 P19. Seconda PR aperta per eccezione autorizzata solo qui (P18), quindi il controllo della PR unica resta rosso finche' la #481 e' aperta. Test red-first in tests/guardrails/test_ai_review_effort.py: 1 failed a 3000, verde a 8000; controlla anche il valore di riserva nel codice del job."
     }
   }
 }
