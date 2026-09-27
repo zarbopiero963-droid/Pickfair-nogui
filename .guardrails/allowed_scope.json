@@ -1808,11 +1808,12 @@
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "core/trading_engine.py",
         "simulation_broker.py",
         "tests/unit/test_simulation_broker_side_parity.py"
       ],
-      "max_files": 4,
-      "description": "Decisione owner #426 P15 e follow-up #453: dopo la #480, parita' PAPER/LIVE su BACK/LAY. Phase 0 su main 1167d3e: SELL e lato mancante producevano un ordine simulato (falso successo). Il broker rifiuta INVALID_SIDE prima della registrazione e normalizza i valori validi; il batch riporta il fallimento della sola istruzione invalida senza registrarla. OrderManager e calculate_cashout restano fuori scope. Test red-first, positivo, negativo e batch nel file dedicato; collaudo installato #351 T09 ancora da eseguire."
+      "max_files": 5,
+      "description": "Decisione owner #426 P15 e follow-up #453: dopo la #480, parita' PAPER/LIVE su BACK/LAY. Phase 0 su main 1167d3e: SELL e lato mancante producevano un ordine simulato (falso successo). Il broker rifiuta INVALID_SIDE prima della registrazione e normalizza i valori validi; il batch riporta il fallimento della sola istruzione invalida senza registrarla. OrderManager e calculate_cashout restano fuori scope. Test red-first, positivo, negativo e batch nel file dedicato; collaudo installato #351 T09 ancora da eseguire. ESTENSIONE DI SCOPE DICHIARATA (DECISIONE-426 P17), da 4 a 5 file: + core/trading_engine.py, dove il fallback PAPER valida gli alias come il LIVE (P2 di Codex: bet_type=BACK e side=LAY registravano un BACK)."
     },
     "decisione426-p13-lato-client": {
       "files": [

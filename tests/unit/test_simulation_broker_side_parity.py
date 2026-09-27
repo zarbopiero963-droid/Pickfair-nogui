@@ -4,6 +4,8 @@ import pytest
 
 from cashout_executor import CashoutExecutor
 from core.order_router import OrderRouter
+from core.trading_constants import STATUS_FAILED
+from core.trading_engine import TradingEngine
 from order_manager import OrderManager
 from simulation_broker import SimulationBroker
 
@@ -173,3 +175,132 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
     assert len(bus.events) == 1
     assert bus.events[0][0] == "CASHOUT_SUCCESS"
     assert broker.state.orders[bus.events[0][1]["bet_id"]].side == "LAY"
+
+
+# ---------------------------------------------------------------------------
+# Engine PAPER path (Codex P2 on #481, #426 P17): production wires neither
+# `simulation_broker` nor `order_manager`, so a PAPER order reaches the broker
+# through the `client_getter` fallback.
+# ---------------------------------------------------------------------------
+class _EngineBus:
+    def subscribe(self, *_args):
+        return None
+
+    def publish(self, *_args, **_kwargs):
+        return None
+
+
+class _EngineDB:
+    """Just enough persistence for `submit_quick_bet` to reach the client."""
+
+    def __init__(self):
+        self.orders = {}
+
+    def is_ready(self):
+        return True
+
+    def insert_order(self, payload):
+        order_id = f"ORD-{len(self.orders) + 1}"
+        self.orders[order_id] = dict(payload)
+        return order_id
+
+    def update_order(self, order_id, update):
+        self.orders.setdefault(order_id, {}).update(dict(update or {}))
+
+    def get_order(self, order_id):
+        return self.orders.get(order_id)
+
+    def insert_audit_event(self, _event):
+        return None
+
+    def load_pending_customer_refs(self):
+        return []
+
+    def load_pending_correlation_ids(self):
+        return []
+
+    def order_exists_inflight(self, **_kwargs):
+        return False
+
+
+class _InlineExecutor:
+    def is_ready(self):
+        return True
+
+    def submit(self, _name, fn):
+        return fn()
+
+
+class _Runtime:
+    """As in production, the broker is known only through the Betfair service."""
+
+    is_emergency_stopped = False
+
+    def __init__(self, mode, broker=None):
+        self.mode = mode
+        self.betfair_service = type("Service", (), {"simulation_broker": broker})()
+
+    def get_effective_execution_mode(self):
+        return self.mode
+
+    def is_live_allowed(self):
+        return self.mode == "LIVE"
+
+
+class _StrictLiveClient:
+    """The keyword-only signature of `BetfairClient.place_bet`."""
+
+    def __init__(self):
+        self.sent = []
+
+    def place_bet(self, *, market_id, selection_id, side, price, size, customer_ref=""):
+        self.sent.append(side)
+        return {"ok": True, "bet_id": f"LIVE-{len(self.sent)}"}
+
+
+def _submit(mode, client, aliases, broker=None):
+    engine = TradingEngine(bus=_EngineBus(), db=_EngineDB(),
+                           client_getter=lambda: client, executor=_InlineExecutor())
+    engine.runtime_controller = _Runtime(mode, broker)
+    engine.simulation_broker = None
+    engine.order_manager = None
+    result = engine.submit_quick_bet({
+        "customer_ref": "P17-REF", "correlation_id": "P17-CID", "market_id": "1.1",
+        "selection_id": 7, "price": 2.0, "stake": 1.0, **aliases,
+    })
+    return result["status"], result.get("error")
+
+
+DISCORDANT_ALIASES = [
+    {"bet_type": "BACK", "side": "LAY"},
+    {"bet_type": "LAY", "side": "BACK"},
+    {"bet_type": "BACK", "side": "SELL"},
+    {"bet_type": "BACK", "side": "LAYY"},
+]
+
+
+@pytest.mark.parametrize("aliases", DISCORDANT_ALIASES)
+def test_paper_engine_rejects_discordant_aliases_before_the_broker(aliases):
+    broker = SimulationBroker()
+    before = broker.get_account_funds()
+
+    outcome = _submit("SIMULATION", broker, aliases, broker)
+
+    assert outcome == (STATUS_FAILED, "INVALID_SIDE")
+    assert broker.state.orders == {}
+    assert broker.get_account_funds() == before
+
+
+@pytest.mark.parametrize("aliases", DISCORDANT_ALIASES + [
+    {"bet_type": "BACK"}, {"side": " lay "}, {"bet_type": "", "side": "LAY"},
+    {"bet_type": "back", "side": "BACK"}, {"bet_type": None, "side": None},
+    {"bet_type": 1},
+])
+def test_paper_and_live_engine_give_the_same_answer_for_the_same_side(aliases):
+    broker, live = SimulationBroker(), _StrictLiveClient()
+
+    paper_outcome = _submit("SIMULATION", broker, aliases, broker)
+    live_outcome = _submit("LIVE", live, aliases)
+
+    assert paper_outcome == live_outcome
+    assert [order.side for order in broker.state.orders.values()] == live.sent

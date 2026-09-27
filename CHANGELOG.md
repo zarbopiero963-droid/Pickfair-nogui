@@ -63,6 +63,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   instructions still run. A regression test exercises the actual PAPER
   OrderRouter, OrderManager and CashoutExecutor against the broker.
   This aligns the simulation boundary with the live client (#426 P15).
+  The engine's PAPER path now checks the two side aliases (`bet_type` and
+  `side`) the same way as the LIVE branch before calling the simulation
+  broker: discordant aliases, such as `bet_type=BACK` with `side=LAY`, fail
+  with `INVALID_SIDE` instead of recording a `bet_type` order (#426 P17).
 - `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
   BACK/LAY (checked after strip/upper; empty, `None` and non-string values
   included) with `RuntimeError("INVALID_SIDE")` before building the request,
