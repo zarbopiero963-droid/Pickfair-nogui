@@ -88,7 +88,11 @@ jobs:
       # gate a label diventava ROSSO per troncamento (falso-negativo, osservato su #322,
       # nessun bloccante reale). Alzarlo a 3000 elimina quel taglio a costo ~invariato:
       # il PROMPT controlla la lunghezza reale, il tetto previene solo il cutoff.
-      MAX_OUTPUT_TOKENS: "3000"
+      # Alla #481 anche 3000 non e' bastato: il giro a label sull'intera PR ha scritto
+      # piu' di 3000 token di bloccanti, si e' fermato a meta' (stop_reason=max_tokens)
+      # e il gate finale e' rimasto senza verdetto. 8000 per DECISIONE-426 P18, pinnato
+      # da tests/guardrails/test_ai_review_effort.py.
+      MAX_OUTPUT_TOKENS: "8000"
 
       PRICE_INPUT_PER_MILLION: "10.00"
       PRICE_CACHE_CREATION_PER_MILLION: "12.50"
@@ -152,7 +156,7 @@ jobs:
           # Tier-2: usati SOLO se il tetto basso ha troncato il diff (vedi build_patch_payload).
           MAX_PATCH_PER_FILE_CHARS_ESCALATED = int(os.environ.get("MAX_PATCH_PER_FILE_CHARS_ESCALATED", "15000"))
           MAX_TOTAL_PATCH_CHARS_ESCALATED = int(os.environ.get("MAX_TOTAL_PATCH_CHARS_ESCALATED", "60000"))
-          MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "3000"))
+          MAX_OUTPUT_TOKENS = int(os.environ.get("MAX_OUTPUT_TOKENS", "8000"))
 
           PRICE_INPUT_PER_MILLION = float(os.environ.get("PRICE_INPUT_PER_MILLION", "10"))
           PRICE_CACHE_CREATION_PER_MILLION = float(os.environ.get("PRICE_CACHE_CREATION_PER_MILLION", "12.5"))
