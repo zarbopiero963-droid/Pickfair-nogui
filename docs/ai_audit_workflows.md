@@ -61,8 +61,9 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   token Telegram e coppie `key=value` sensibili vengono redatte **prima**
   dell'invio al modello e **prima** della pubblicazione del commento — inclusi i
   nomi file e l'**output** del modello.
-  Quando la chiave apre la riga (`.env`, YAML, INI, properties, `export`, liste,
-  commenti), un valore **non quotato** viene redatto fino a fine riga, spazi
+  Quando la chiave apre la riga (`.env`, YAML, INI, properties, `export`/`set`,
+  liste, commenti con `#`, `//`, `;`, `!`, `--`, `/*`, `<!--`), un valore
+  **non quotato** viene redatto fino a fine riga, spazi
   compresi: prima si fermava al primo spazio e il resto del segreto usciva
   (DECISIONE-426 P14, #479). Resta la regola generica, che si ferma al primo
   spazio, dove dopo il valore c'è codice e toglierlo al reviewer sarebbe un
@@ -72,13 +73,19 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   da `(`/`[` o da `,`/`;` a fine riga; dopo `:` anche un tipo built-in come
   `str`, `int`, `bool` seguito da ` = ` o ` | `). Gli operatori `+ - * / %`, e
   ` = `/` | ` dopo un nome qualsiasi, non contano come codice, perché stanno
-  nei segreti codificati (base64, URL) e nelle passphrase. Misurato sul repo
-  intero: 18 righe su 219.588 redatte più di prima (commenti, esempi, percorsi
-  di test con `/`), nessuna di codice di produzione. Residui dichiarati: valore
-  non quotato con spazi a metà riga, o che comincia con una di quelle forme di
-  codice; valori su righe successive (blocchi YAML `|`); tabelle senza
-  separatore; e una riga dell'output del modello che comincia con una di queste
-  chiavi seguita da `:` viene redatta per intero.
+  nei segreti codificati (base64, URL) e nelle passphrase. `==`, `:=` e `=>`
+  non sono separatori: confronti e predicati restano alla regola generica.
+  Misurato sul repo intero: 18 righe su 219.588 redatte più di prima (commenti,
+  esempi, percorsi di test con `/`), nessuna di codice di produzione. Residui
+  dichiarati: valore non quotato con spazi a metà riga, o che comincia con una
+  di quelle forme di codice (per esempio un tipo built-in seguito da ` = `);
+  valori su righe successive (blocchi YAML `|`); tabelle senza separatore.
+  Accettati dall'owner (DECISIONE-426 P22 e P23), perché su una riga sola sono
+  indistinguibili da un valore: a inizio istruzione vengono redatti per intero
+  un'annotazione con tipo custom, un'espressione che comincia con un letterale
+  o una f-string, una fixture quotata e un'assegnazione temporanea della shell
+  prima di un comando. Anche una riga dell'output del modello che comincia con
+  una di queste chiavi seguita da `:` viene redatta per intero.
 - **Il diff è trattato come contenuto non attendibile**: il prompt istruisce il
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono

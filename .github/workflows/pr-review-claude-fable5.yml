@@ -210,7 +210,8 @@ jobs:
               (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "[REDACTED_AWS_ACCESS_KEY]"),
               (re.compile(r"\b\d{8,12}:[A-Za-z0-9_\-]{30,}\b"), "[REDACTED_TELEGRAM_BOT_TOKEN]"),
               # Valore NON quotato con la chiave che APRE la riga (.env, YAML,
-              # INI, properties, `export`, liste, commenti): li' tutto cio' che
+              # INI, properties, `export`/`set`, liste, commenti con `#`, `//`,
+              # `;`, `!`, `--`, `/*`, `<!--`): li' tutto cio' che
               # segue il separatore e' il valore, quindi si redige fino a fine
               # riga, mai oltre il `\n`. La regola generica qui sotto si fermava
               # al primo spazio e il resto del segreto usciva in chiaro, verso il
@@ -227,10 +228,12 @@ jobs:
               # annotazioni, argomenti (Claude Fable 5.1 e Codex sulla #483). Gli
               # operatori `+ - * / %` NON contano come codice: stanno nei segreti
               # codificati (base64, URL) e nelle passphrase (GPT-5.6 Sol, GPT-6
-              # Astra e Fugu Ultra sulla #483). Misurato sul repo intero: 18 righe
-              # su 219.588 redatte piu' di prima (commenti, esempi, percorsi di
-              # test con `/`), nessuna di codice di produzione.
-              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:[-*]|#+|//+|;+)[ \t]*)?(?:export[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*(?:=[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$))|:[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$)|(?:str|int|float|bool|bytes|dict|list|tuple|set|object|Any)[ \t]+(?:=(?!=)|\|)[ \t]))(?!\$\{\{)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
+              # Astra e Fugu Ultra sulla #483). `==`, `:=` e `=>` non sono
+              # separatori: confronti e predicati restano alla generica (Codex
+              # sulla #483). Misurato sul repo intero: 18 righe su 219.588
+              # redatte piu' di prima (commenti, esempi, percorsi di test con
+              # `/`), nessuna di codice di produzione.
+              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:--|[-*!]|#+|//+|;+|/\*+|<!--)[ \t]*)?(?:(?:export|set)[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*(?:=(?![=>])[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$))|:(?!=)[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$)|(?:str|int|float|bool|bytes|dict|list|tuple|set|object|Any)[ \t]+(?:=(?!=)|\|)[ \t]))(?!\$\{\{)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
               # Regola generica chiave/valore. Copre: valore nudo, quotato,
               # con spazi, con delimitatore escapato, e quotato NON chiuso
               # (li' il ramo quotato consuma fino a fine riga — `\n` escluso

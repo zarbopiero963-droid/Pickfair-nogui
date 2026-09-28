@@ -213,7 +213,8 @@ VALORI = ("{0} {1} {2}", "{0}, {1} {2}", "{0} ({1}) {2}", "{0}.{1} {2}",
           "{0} = {1} {2}", "{0} | {1} {2}")
 FORME_DI_RIGA = ("{c}={v}", "{c}: {v}", "{c} = {v}", "export {C}={v}",
                  "db.{c}={v}", "DB_{C}={v}", "  - {C}={v}", "* {c}: {v}",
-                 "# {c}: {v}", '"{c}": {v}')
+                 "# {c}: {v}", '"{c}": {v}', "set {C}={v}", "! {c} = {v}",
+                 "-- {c} = {v}", "/* {c} = {v} */", "<!-- {c}: {v} -->")
 
 
 def _chiavi(workflow: str) -> List[str]:
@@ -249,6 +250,7 @@ RIGHE_CHE_RESTANO = (
     '    {c}: Optional[str] = "predefinito"', "    {c}: str | None = None,",
     "            {c}=config.valore,", '    "{c}": valore,', '    "{c}": bool(x),',
     '    {c} = (chiedi("x") or "").strip()', '    {c}=lambda p: "",',
+    "        {c} == atteso and utente.admin", "    {c} := calcola()", "    '{c}' => $x,",
 )
 
 
