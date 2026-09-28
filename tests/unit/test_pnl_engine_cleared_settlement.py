@@ -531,3 +531,61 @@ def test_sim_settlement_rimuove_le_posizioni_tracked_del_mercato():
     assert payload["cleared_positions"] == ["e-sim"]
     assert "e-sim" not in engine._positions
     assert "e-altro" in engine._positions
+
+
+class _BusCheCadeUnaVolta(_Bus):
+    """Il primo publish solleva: il settlement e' gia' applicato ma non
+    consegnato."""
+
+    def __init__(self):
+        super().__init__()
+        self.cadute = 1
+
+    def publish(self, topic, payload=None):
+        if self.cadute:
+            self.cadute -= 1
+            raise RuntimeError("BUS_NON_DISPONIBILE")
+        super().publish(topic, payload)
+
+
+@pytest.mark.unit
+def test_sim_settlement_publish_fallito_si_riconsegna_senza_riapplicare():
+    """GPT-6 Astra sulla #485: la dedupe registrata prima del publish faceva
+    rispondere DUPLICATE al ritento, e il settlement non arrivava piu' al
+    ciclo. Applicazione contabile e consegna sono separate: il ritento
+    ripubblica lo STESSO payload, senza riapplicare commissione o netto."""
+    bus = _BusCheCadeUnaVolta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.8", "gross_pnl": 25.0, "settlement_ref": "SIMSET-8"}
+
+    with pytest.raises(RuntimeError, match="BUS_NON_DISPONIBILE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    riga = dict(engine._sim_market_net_realized_aggregator.ledger["1.8"])
+    assert _close_events(bus) == []
+
+    payload = engine.apply_simulated_market_settlement(**kwargs)
+
+    assert _close_events(bus) == [payload]
+    assert payload["commission_amount"] == pytest.approx(1.125)
+    assert payload["net_pnl"] == pytest.approx(23.875)
+    assert engine._sim_market_net_realized_aggregator.ledger["1.8"] == riga
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_DUPLICATE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    assert len(_close_events(bus)) == 1
+
+
+@pytest.mark.unit
+def test_sim_settlement_ritento_con_lordo_diverso_rifiutato():
+    """Un ritento con lo stesso riferimento ma un lordo diverso non e' lo
+    stesso settlement: errore, mai un payload diverso sotto la stessa chiave."""
+    bus = _BusCheCadeUnaVolta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    with pytest.raises(RuntimeError):
+        engine.apply_simulated_market_settlement(
+            market_id="1.9", gross_pnl=25.0, settlement_ref="SIMSET-9",
+        )
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_CONFLICT"):
+        engine.apply_simulated_market_settlement(
+            market_id="1.9", gross_pnl=30.0, settlement_ref="SIMSET-9",
+        )
+    assert _close_events(bus) == []

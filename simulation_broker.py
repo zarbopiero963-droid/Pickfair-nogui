@@ -408,6 +408,18 @@ class SimulationBroker:
         status = market_book.get("status")
         return isinstance(status, str) and status.strip().upper() == "CLOSED"
 
+    @staticmethod
+    def _vincitori_attesi(market_book: Dict[str, Any]) -> Optional[int]:
+        """``numberOfWinners`` dichiarato dal mercato: al livello alto nel
+        book REST, dentro ``marketDefinition`` nel book dello stream. None se
+        assente o non valido."""
+        for fonte in (market_book, market_book.get("marketDefinition")):
+            if isinstance(fonte, dict):
+                valore = fonte.get("numberOfWinners")
+                if isinstance(valore, int) and not isinstance(valore, bool) and valore > 0:
+                    return valore
+        return None
+
     def _ricostruisci_fill_mercato_locked(self, market_id: str) -> Tuple[float, Dict[int, float]]:
         """Effetto di cassa gia' applicato al saldo dai fill del mercato, ed
         esposizione residua per selezione, ricostruiti dagli ordini.
@@ -535,14 +547,12 @@ class SimulationBroker:
                 "REDUCTION_FACTOR_UNSUPPORTED",
                 f"runner rimossi {sorted(rimossi)} con puntate su altri runner",
             )
-        vincitori_attesi = market_book.get("numberOfWinners")
+        # Piu' di un WINNER e' regolabile solo se il mercato dichiara quanti
+        # vincitori prevede e non li supera: altrimenti puo' essere un dead
+        # heat, che Betfair paga ridotto (Fugu Ultra sulla #485).
         vincitori = sum(1 for st in stati.values() if st == "WINNER")
-        if (
-            isinstance(vincitori_attesi, int)
-            and not isinstance(vincitori_attesi, bool)
-            and vincitori_attesi > 0
-            and vincitori > vincitori_attesi
-        ):
+        vincitori_attesi = self._vincitori_attesi(market_book)
+        if vincitori > 1 and (vincitori_attesi is None or vincitori > vincitori_attesi):
             return _rifiuto(
                 "DEAD_HEAT_UNSUPPORTED",
                 f"{vincitori} vincitori su {vincitori_attesi} attesi",

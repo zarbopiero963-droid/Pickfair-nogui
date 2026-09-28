@@ -1147,6 +1147,38 @@ def test_sim_giro_errore_del_registro_round_abortito_e_ritentato():
     assert len(_closes(rc)) == 1
 
 
+class _BusCheCadeUnaVolta(_Bus):
+    def __init__(self):
+        super().__init__()
+        self.cadute = 1
+
+    def publish(self, topic, payload=None):
+        if topic == "RUNTIME_CLOSE_POSITION" and self.cadute:
+            self.cadute -= 1
+            raise RuntimeError("BUS_NON_DISPONIBILE")
+        super().publish(topic, payload)
+
+
+@pytest.mark.integration
+def test_sim_giro_publish_fallito_ritentato_al_giro_dopo():
+    """GPT-6 Astra sulla #485: se la consegna al bus fallisce, il giro dopo
+    deve riconsegnare il settlement (una volta sola), non marcarlo visto."""
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
+    rc.bus = _BusCheCadeUnaVolta()
+    rc.pnl_engine.bus = rc.bus
+
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert "sim:1.500:SIMSET-a1" not in rc._settlement_emitted_keys
+
+    rc._poll_cleared_settlements()
+    rc._poll_cleared_settlements()
+    closes = _closes(rc)
+    assert len(closes) == 1
+    assert closes[0]["net_pnl"] == pytest.approx(23.875)
+    assert "sim:1.500:SIMSET-a1" in rc._settlement_emitted_keys
+
+
 @pytest.mark.integration
 def test_sim_giro_duplicato_nel_motore_marcato_visto_senza_doppia_chiusura():
     rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))

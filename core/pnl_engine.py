@@ -169,7 +169,11 @@ class PnLEngine:
             commission_pct=(self.commission * 100.0),
             context="core_pnl_engine_sim_settlement",
         )
-        self._applied_simulated_settlements: set[str] = set()
+        # Applicazione contabile e consegna separate (GPT-6 Astra sulla #485):
+        # un settlement applicato ma non consegnato (publish fallito) resta qui
+        # e il ritento ripubblica lo stesso payload, senza riapplicarlo.
+        self._pending_simulated_settlements: Dict[str, Dict[str, Any]] = {}
+        self._delivered_simulated_settlements: set[str] = set()
 
         if self.bus:
             self.bus.subscribe("QUICK_BET_FILLED", self._on_filled)
@@ -583,9 +587,16 @@ class PnLEngine:
 
         Fail-closed: mercato o riferimento vuoti, lordo non numerico o non
         finito (bool compreso) => raise senza stato ne' publish. Idempotente
-        nel motore sulla chiave ``sim:<market_id>:<settlement_ref>``
-        (``SIM_SETTLEMENT_DUPLICATE``), oltre alla dedupe del poller e al
-        checkpoint durevole del consumer.
+        nel motore sulla chiave ``sim:<market_id>:<settlement_ref>``, oltre
+        alla dedupe del poller e al checkpoint durevole del consumer:
+
+        - la commissione e il netto si calcolano UNA volta, alla prima
+          chiamata;
+        - se il publish fallisce il settlement resta applicato ma non
+          consegnato: la chiamata successiva ripubblica lo stesso payload
+          (stesso lordo obbligatorio, altrimenti ``SIM_SETTLEMENT_CONFLICT``);
+        - dopo una consegna riuscita ogni ripetizione solleva
+          ``SIM_SETTLEMENT_DUPLICATE``.
         """
         market_key = str(market_id or "").strip()
         if not market_key:
@@ -609,62 +620,86 @@ class PnLEngine:
 
         event_key = self.simulated_settlement_key(market_key, ref)
         with self._state_lock:
-            if event_key in self._applied_simulated_settlements:
+            if event_key in self._delivered_simulated_settlements:
                 raise ValueError(
-                    f"SIM_SETTLEMENT_DUPLICATE: settlement {event_key} gia' realizzato"
+                    f"SIM_SETTLEMENT_DUPLICATE: settlement {event_key} gia' consegnato"
                 )
-            realized = self._sim_market_net_realized_aggregator.apply(
-                market_id=market_key, gross_pnl=gross
-            )
-            self._applied_simulated_settlements.add(event_key)
-            net_pnl = float(realized["net_pnl"])
-
-            cleared_positions = [
-                key
-                for key, pos in list(self._positions.items())
-                if str(pos.get("market_id") or "") == market_key
-            ]
-            for key in cleared_positions:
-                self._positions.pop(key, None)
-                self._position_ledgers.pop(key, None)
-
-            payload: Dict[str, Any] = {
-                "event_key": event_key,
-                "market_id": market_key,
-                "table_id": None,
-                "batch_id": "",
-                # legacy alias (net pnl) kept for compatibility
-                "pnl": net_pnl,
-                "gross_pnl": gross,
-                "commission_amount": float(realized["commission_amount"]),
-                "net_pnl": net_pnl,
-                "commission_pct": float(realized["commission_pct"]),
-                "market_net_gross": float(realized["market_net_gross"]),
-                "market_commission_amount_total": float(
-                    realized["market_commission_amount_total"]
-                ),
-                "settlement_basis": str(realized["settlement_basis"]),
-                "settlement_source": "simulation_broker",
-                "settlement_kind": "realized_settlement",
-                "settled_date": str(settled_date or ""),
-                "settlement_ref": ref,
-                "cleared_positions": list(cleared_positions),
-            }
-
-            logger.info(
-                "[PnL] SIM settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
-                market_key,
-                ref,
-                gross,
-                net_pnl,
-                len(cleared_positions),
-            )
+            payload = self._pending_simulated_settlements.get(event_key)
+            if payload is not None:
+                if payload["gross_pnl"] != gross:
+                    raise ValueError(
+                        f"SIM_SETTLEMENT_CONFLICT: {event_key} gia' applicato con lordo "
+                        f"{payload['gross_pnl']!r}, ritento con {gross!r}"
+                    )
+            else:
+                payload = self._apply_simulated_settlement_locked(
+                    market_key=market_key,
+                    ref=ref,
+                    event_key=event_key,
+                    gross=gross,
+                    settled_date=settled_date,
+                )
+                self._pending_simulated_settlements[event_key] = payload
 
         # Publish fuori dalla sezione critica, come per il settlement LIVE.
+        # Consegnato solo se il publish non solleva: altrimenti resta pendente
+        # e il prossimo giro del poller lo ripubblica.
         if self.bus:
-            self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+            self.bus.publish("RUNTIME_CLOSE_POSITION", dict(payload))
+        with self._state_lock:
+            self._pending_simulated_settlements.pop(event_key, None)
+            self._delivered_simulated_settlements.add(event_key)
+        return dict(payload)
 
-        return payload
+    def _apply_simulated_settlement_locked(
+        self, *, market_key: str, ref: str, event_key: str, gross: float, settled_date: str
+    ) -> Dict[str, Any]:
+        """Parte contabile del settlement SIM, sotto ``_state_lock``: commissione
+        di policy sul netto del mercato, posizioni tracked rimosse, payload."""
+        realized = self._sim_market_net_realized_aggregator.apply(
+            market_id=market_key, gross_pnl=gross
+        )
+        net_pnl = float(realized["net_pnl"])
+
+        cleared_positions = [
+            key
+            for key, pos in list(self._positions.items())
+            if str(pos.get("market_id") or "") == market_key
+        ]
+        for key in cleared_positions:
+            self._positions.pop(key, None)
+            self._position_ledgers.pop(key, None)
+
+        logger.info(
+            "[PnL] SIM settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
+            market_key,
+            ref,
+            gross,
+            net_pnl,
+            len(cleared_positions),
+        )
+        return {
+            "event_key": event_key,
+            "market_id": market_key,
+            "table_id": None,
+            "batch_id": "",
+            # legacy alias (net pnl) kept for compatibility
+            "pnl": net_pnl,
+            "gross_pnl": gross,
+            "commission_amount": float(realized["commission_amount"]),
+            "net_pnl": net_pnl,
+            "commission_pct": float(realized["commission_pct"]),
+            "market_net_gross": float(realized["market_net_gross"]),
+            "market_commission_amount_total": float(
+                realized["market_commission_amount_total"]
+            ),
+            "settlement_basis": str(realized["settlement_basis"]),
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
+            "settled_date": str(settled_date or ""),
+            "settlement_ref": ref,
+            "cleared_positions": list(cleared_positions),
+        }
 
     # =========================================================
     # STATUS

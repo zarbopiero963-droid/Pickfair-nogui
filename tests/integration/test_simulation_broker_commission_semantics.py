@@ -565,3 +565,54 @@ def test_settlement_sim_commissione_fuori_policy_fail_closed():
 
     assert esito["settlement_status"] == "COMMISSION_POLICY_VIOLATION"
     assert _fotografia(broker) == prima
+
+
+@pytest.mark.integration
+def test_settlement_sim_piu_vincitori_senza_numero_atteso_fail_closed():
+    """Fugu Ultra sulla #485: due WINNER e nessun ``numberOfWinners`` non
+    distinguono un dead heat da un mercato a piu' vincitori. Pagarli entrambi
+    per intero gonfierebbe il PnL: nessun settlement."""
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    _tre_selezioni(broker)
+    prima = _fotografia(broker)
+
+    esito = broker.update_market_book(_chiuso("2.1", {11: "WINNER", 22: "WINNER", 33: "LOSER"}))
+
+    assert esito["settlement_status"] == "DEAD_HEAT_UNSUPPORTED"
+    assert _fotografia(broker) == prima
+
+
+@pytest.mark.integration
+def test_settlement_sim_dead_heat_dal_market_definition_dello_stream_fail_closed():
+    """Nei book dello stream (``StreamingFeed``) ``numberOfWinners`` sta in
+    ``marketDefinition``, non al livello alto del book."""
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    _tre_selezioni(broker)
+    prima = _fotografia(broker)
+
+    esito = broker.update_market_book(
+        _chiuso("2.1", {11: "WINNER", 22: "WINNER", 33: "LOSER"},
+                marketDefinition={"status": "CLOSED", "numberOfWinners": 1})
+    )
+
+    assert esito["settlement_status"] == "DEAD_HEAT_UNSUPPORTED"
+    assert _fotografia(broker) == prima
+
+
+@pytest.mark.integration
+def test_settlement_sim_piu_vincitori_attesi_regolati():
+    """Mercato a due vincitori dichiarati (``marketDefinition``): nessun
+    dead heat. Calcolo indipendente: BACK 10 @ 3.0 sulla 11 vince +20; LAY
+    5 @ 2.0 sulla 22 che vince -5; BACK 4 @ 5.0 sulla 33 perde -4. Lordo +11,
+    commissione 0,495, netto 10,505."""
+    broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
+    _tre_selezioni(broker)
+
+    esito = broker.update_market_book(
+        _chiuso("2.1", {11: "WINNER", 22: "WINNER", 33: "LOSER"},
+                marketDefinition={"numberOfWinners": 2})
+    )
+
+    assert esito["settlement_status"] == "SETTLED"
+    assert broker.list_settlements()[0]["net_pnl"] == pytest.approx(10.505)
+    assert broker.get_account_funds()["available"] == pytest.approx(1010.505)

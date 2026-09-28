@@ -79,15 +79,20 @@ Regole del settlement nel broker:
 - **Fail-closed, senza toccare nulla** (posizioni aperte, nessun effetto sul
   saldo): runner con puntate senza stato terminale noto (`ACTIVE`, `HIDDEN`,
   `PLACED` each-way, assente); runner rimosso con puntate su ALTRI runner
-  (fattori di riduzione non modellati); dead heat (`numberOfWinners`
-  superato); ordini incoerenti coi ledger; valori non validi; commissione
-  fuori policy.
+  (fattori di riduzione non modellati); piu' di un `WINNER` senza un
+  `numberOfWinners` dichiarato (al livello alto nel book REST, dentro
+  `marketDefinition` nel book dello stream) o oltre quel numero, cioe' un
+  possibile dead heat; ordini incoerenti coi ledger; valori non validi;
+  commissione fuori policy.
 
 Idempotenza sulla chiave `sim:<market_id>:<settlement_id>`, a tre livelli
 piu' il registro: il broker non regola due volte lo stesso mercato (book
 CHIUSO ripetuto o riavvio); il poller deduplica in memoria e sul checkpoint
 durevole del consumer (stato illeggibile ⇒ emissione sospesa senza marcare);
-il motore rifiuta `SIM_SETTLEMENT_DUPLICATE`. Il giro emette in ordine
+il motore rifiuta `SIM_SETTLEMENT_DUPLICATE`. Nel motore applicazione
+contabile e consegna sono separate: se il publish fallisce il settlement
+resta applicato ma non consegnato, e il giro dopo ripubblica lo stesso
+payload senza ricalcolare la commissione. Il giro emette in ordine
 cronologico di chiusura.
 
 **Riavvio fra persistenza e aggiornamento del ciclo**: il service salva lo
