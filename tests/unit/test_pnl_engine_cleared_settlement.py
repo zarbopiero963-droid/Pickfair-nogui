@@ -589,3 +589,75 @@ def test_sim_settlement_ritento_con_lordo_diverso_rifiutato():
             market_id="1.9", gross_pnl=30.0, settlement_ref="SIMSET-9",
         )
     assert _close_events(bus) == []
+
+
+class _BusCheAspetta(_Bus):
+    """Il publish resta dentro finche' il test non lo rilascia: simula una
+    consegna lenta durante la quale arriva una seconda chiamata."""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+
+        self.dentro = threading.Event()
+        self.rilascia = threading.Event()
+
+    def publish(self, topic, payload=None):
+        self.dentro.set()
+        assert self.rilascia.wait(timeout=5.0)
+        super().publish(topic, payload)
+
+
+@pytest.mark.unit
+def test_sim_settlement_chiamate_sovrapposte_una_sola_consegna():
+    """GPT-5.6 Sol, Claude Fable 5.1, GPT-6 Astra e Fugu Ultra sulla #485
+    (secondo giro): con la sola separazione applicato/consegnato, una seconda
+    chiamata durante il primo publish trovava il payload pendente e
+    ripubblicava. Ora la consegna e' prenotata sotto lock: la seconda
+    chiamata riceve SIM_SETTLEMENT_IN_FLIGHT e non pubblica nulla."""
+    import threading
+
+    bus = _BusCheAspetta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.10", "gross_pnl": 25.0, "settlement_ref": "SIMSET-10"}
+    esiti = []
+    prima = threading.Thread(
+        target=lambda: esiti.append(engine.apply_simulated_market_settlement(**kwargs)),
+        daemon=True,
+    )
+    prima.start()
+    assert bus.dentro.wait(timeout=5.0)
+
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_IN_FLIGHT"):
+        engine.apply_simulated_market_settlement(**kwargs)
+
+    bus.rilascia.set()
+    prima.join(timeout=5.0)
+    assert len(esiti) == 1
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_DUPLICATE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    assert len(_close_events(bus)) == 1
+
+
+@pytest.mark.unit
+def test_sim_settlement_chiamata_rientrante_dal_subscriber_non_ripubblica():
+    """Un subscriber sincrono che richiama il motore sulla stessa chiave
+    durante il publish non provoca una seconda consegna."""
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.11", "gross_pnl": -5.0, "settlement_ref": "SIMSET-11"}
+    rientri = []
+    pubblica = bus.publish
+
+    def _publish_rientrante(topic, payload=None):
+        pubblica(topic, payload)
+        try:
+            engine.apply_simulated_market_settlement(**kwargs)
+        except ValueError as exc:
+            rientri.append(str(exc))
+
+    bus.publish = _publish_rientrante
+    engine.apply_simulated_market_settlement(**kwargs)
+
+    assert len(_close_events(bus)) == 1
+    assert len(rientri) == 1 and "SIM_SETTLEMENT_IN_FLIGHT" in rientri[0]

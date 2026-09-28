@@ -92,8 +92,12 @@ durevole del consumer (stato illeggibile ⇒ emissione sospesa senza marcare);
 il motore rifiuta `SIM_SETTLEMENT_DUPLICATE`. Nel motore applicazione
 contabile e consegna sono separate: se il publish fallisce il settlement
 resta applicato ma non consegnato, e il giro dopo ripubblica lo stesso
-payload senza ricalcolare la commissione. Il giro emette in ordine
-cronologico di chiusura.
+payload senza ricalcolare la commissione. La consegna in corso e' prenotata
+sotto lock: una chiamata concorrente o rientrante sulla stessa chiave riceve
+`SIM_SETTLEMENT_IN_FLIGHT` e non pubblica. L'ultima difesa resta il
+consumer: una seconda consegna dello stesso payload non cambia saldo,
+realizzato, bankroll e checkpoint (provato sull'app vera). Il giro emette in
+ordine cronologico di chiusura.
 
 **Riavvio fra persistenza e aggiornamento del ciclo**: il service salva lo
 stato SIM subito dopo il book CHIUSO, quindi saldo e registro sopravvivono

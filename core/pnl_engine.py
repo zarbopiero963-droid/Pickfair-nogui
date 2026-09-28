@@ -171,8 +171,11 @@ class PnLEngine:
         )
         # Applicazione contabile e consegna separate (GPT-6 Astra sulla #485):
         # un settlement applicato ma non consegnato (publish fallito) resta qui
-        # e il ritento ripubblica lo stesso payload, senza riapplicarlo.
+        # e il ritento ripubblica lo stesso payload, senza riapplicarlo. La
+        # consegna in corso e' prenotata sotto lock (secondo giro di review):
+        # una chiamata concorrente o rientrante non ripubblica.
         self._pending_simulated_settlements: Dict[str, Dict[str, Any]] = {}
+        self._inflight_simulated_settlements: set[str] = set()
         self._delivered_simulated_settlements: set[str] = set()
 
         if self.bus:
@@ -592,6 +595,9 @@ class PnLEngine:
 
         - la commissione e il netto si calcolano UNA volta, alla prima
           chiamata;
+        - la consegna e' prenotata sotto lock: mentre il publish e' in corso
+          ogni altra chiamata sulla stessa chiave, concorrente o rientrante,
+          solleva ``SIM_SETTLEMENT_IN_FLIGHT`` senza pubblicare;
         - se il publish fallisce il settlement resta applicato ma non
           consegnato: la chiamata successiva ripubblica lo stesso payload
           (stesso lordo obbligatorio, altrimenti ``SIM_SETTLEMENT_CONFLICT``);
@@ -624,6 +630,10 @@ class PnLEngine:
                 raise ValueError(
                     f"SIM_SETTLEMENT_DUPLICATE: settlement {event_key} gia' consegnato"
                 )
+            if event_key in self._inflight_simulated_settlements:
+                raise ValueError(
+                    f"SIM_SETTLEMENT_IN_FLIGHT: consegna di {event_key} in corso"
+                )
             payload = self._pending_simulated_settlements.get(event_key)
             if payload is not None:
                 if payload["gross_pnl"] != gross:
@@ -640,13 +650,21 @@ class PnLEngine:
                     settled_date=settled_date,
                 )
                 self._pending_simulated_settlements[event_key] = payload
+            self._inflight_simulated_settlements.add(event_key)
 
-        # Publish fuori dalla sezione critica, come per il settlement LIVE.
-        # Consegnato solo se il publish non solleva: altrimenti resta pendente
-        # e il prossimo giro del poller lo ripubblica.
-        if self.bus:
-            self.bus.publish("RUNTIME_CLOSE_POSITION", dict(payload))
+        # Publish fuori dalla sezione critica, come per il settlement LIVE,
+        # con la consegna prenotata. Consegnato solo se il publish non
+        # solleva: altrimenti torna pendente e il prossimo giro del poller lo
+        # ripubblica.
+        try:
+            if self.bus:
+                self.bus.publish("RUNTIME_CLOSE_POSITION", dict(payload))
+        except BaseException:
+            with self._state_lock:
+                self._inflight_simulated_settlements.discard(event_key)
+            raise
         with self._state_lock:
+            self._inflight_simulated_settlements.discard(event_key)
             self._pending_simulated_settlements.pop(event_key, None)
             self._delivered_simulated_settlements.add(event_key)
         return dict(payload)

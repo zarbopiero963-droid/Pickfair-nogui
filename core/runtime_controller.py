@@ -983,6 +983,15 @@ class RuntimeController:
                 if "SIM_SETTLEMENT_DUPLICATE" in str(exc):
                     self._settlement_emitted_keys.add(settlement_key)
                     continue
+                if "SIM_SETTLEMENT_IN_FLIGHT" in str(exc):
+                    # Consegna gia' in corso altrove: non marcare, il giro dopo
+                    # trova il settlement consegnato o lo ritenta.
+                    logger.warning(
+                        "Settlement SIM: consegna di %s gia' in corso, ritentata "
+                        "al prossimo giro",
+                        settlement_key,
+                    )
+                    continue
                 logger.exception(
                     "Settlement SIM: emissione fallita per %s (ritentata al prossimo giro)",
                     settlement_key,

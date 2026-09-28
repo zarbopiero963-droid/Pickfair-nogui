@@ -98,7 +98,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   runners, possible dead heats (several winners without a declared number
   of winners, or more than declared) and ledgers inconsistent with the
   orders leave the positions open. If handing the settlement to the event
-  bus fails, the next poll round delivers it again without re-applying it. In production SIM still receives no market books until
+  bus fails, the next poll round delivers it again without re-applying it;
+  a delivery in progress is never repeated by a concurrent call. In production SIM still receives no market books until
   the SIM feed arrives (#461 PR11).
 - `SimulationBroker.place_bet` now requires BACK or LAY and normalizes case
   and surrounding spaces before recording a PAPER order. Missing, malformed,

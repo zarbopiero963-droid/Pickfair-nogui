@@ -237,6 +237,39 @@ def test_replay_e_duplicati_non_cambiano_saldo_netto_ciclo(app):
     assert dopo[2]["checkpoint_stage"] == prima[2]["checkpoint_stage"]
 
 
+def test_seconda_consegna_dello_stesso_settlement_senza_effetti(app):
+    """Fugu Ultra sulla #485: l'ultima difesa contro una doppia consegna e'
+    il consumer. Stesso payload ripubblicato sul bus VERO: saldo SIM,
+    realizzato, bankroll e checkpoint del ciclo non cambiano."""
+    app.avvia()
+    _tre_selezioni(app, "5.5")
+    app.book(_chiuso("5.5", ESITO_TRE))
+    app.giro()
+    assert len(app.chiusure) == 1
+    chiave = _chiave(app, "5.5")
+    prima = (
+        app.broker.get_account_funds()["available"],
+        app.rt.risk_desk.realized_pnl,
+        app.rt.risk_desk.bankroll_current,
+        app.rt.db.get_cycle_recovery_state(chiave),
+    )
+
+    app.app.bus.publish("RUNTIME_CLOSE_POSITION", dict(app.chiusure[0]))
+    app.svuota_bus()
+
+    assert len(app.chiusure) == 2  # la ripubblicazione e' arrivata al consumer
+    dopo = (
+        app.broker.get_account_funds()["available"],
+        app.rt.risk_desk.realized_pnl,
+        app.rt.risk_desk.bankroll_current,
+        app.rt.db.get_cycle_recovery_state(chiave),
+    )
+    assert dopo[0] == pytest.approx(prima[0])
+    assert dopo[1] == pytest.approx(prima[1]) == pytest.approx(NETTO_TRE)
+    assert dopo[2] == pytest.approx(prima[2])
+    assert dopo[3]["bankroll_synced"] and dopo[3]["processed"]
+
+
 def test_mercati_chiusi_fuori_ordine_ognuno_una_volta(app):
     """Il mercato B chiude prima di A. Calcolo indipendente: A come sopra
     (+20,055); B = BACK 6 @ 2.0 perdente = -6 (commissione 0). Totale

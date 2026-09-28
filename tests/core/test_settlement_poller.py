@@ -1180,6 +1180,30 @@ def test_sim_giro_publish_fallito_ritentato_al_giro_dopo():
 
 
 @pytest.mark.integration
+def test_sim_giro_consegna_in_corso_non_marcata_e_ritentata():
+    """Se il motore risponde che la consegna e' in corso, il giro non marca
+    il settlement come visto: il giro dopo lo ritenta."""
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
+    originale = rc.pnl_engine.apply_simulated_market_settlement
+    chiamate = []
+
+    def _in_corso_una_volta(**kwargs):
+        chiamate.append(kwargs)
+        if len(chiamate) == 1:
+            raise ValueError("SIM_SETTLEMENT_IN_FLIGHT: consegna in corso")
+        return originale(**kwargs)
+
+    rc.pnl_engine.apply_simulated_market_settlement = _in_corso_una_volta
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert "sim:1.500:SIMSET-a1" not in rc._settlement_emitted_keys
+
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+    assert "sim:1.500:SIMSET-a1" in rc._settlement_emitted_keys
+
+
+@pytest.mark.integration
 def test_sim_giro_duplicato_nel_motore_marcato_visto_senza_doppia_chiusura():
     rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
     rc.pnl_engine.apply_simulated_market_settlement(
