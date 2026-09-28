@@ -206,7 +206,10 @@ def _redazione(workflow: str) -> Callable[[str], str]:
 # P14 (#479): valore nudo con spazi, chiave a inizio riga. Campioni montati per
 # pezzi: per esteso li mutilerebbe la redazione dei reviewer (branch base).
 PAROLE = ("PRIMOPEZZO", "SECONDOPEZZO", "TERZOPEZZO")
-VALORI = ("{0} {1} {2}", "{0}, {1} {2}", "{0} ({1}) {2}", "{0}.{1} {2}")
+# Anche segreti codificati (base64, URL) e passphrase con operatori: la forma
+# di codice non deve inghiottirli (GPT-5.6 Sol, GPT-6 Astra, Fugu Ultra, #483).
+VALORI = ("{0} {1} {2}", "{0}, {1} {2}", "{0} ({1}) {2}", "{0}.{1} {2}",
+          "{0}+{1}/{2}== {1}", "{0}%2F{1} {2}", "{0} + {1} {2}", "{0}={1} {2}", "{0}|{1} {2}")
 FORME_DI_RIGA = ("{c}={v}", "{c}: {v}", "{c} = {v}", "export {C}={v}",
                  "db.{c}={v}", "DB_{C}={v}", "  - {C}={v}", "* {c}: {v}",
                  "# {c}: {v}", '"{c}": {v}')
@@ -243,7 +246,7 @@ RIGHE_CHE_RESTANO = (
     "{c}: ${{{{ secrets.X }}}}", "    {c}izer = crea(a, b)", "    {c}_hash = hash(pw, salt)",
     "    {c} = calcola(a, b)", '    self.{c} = dati["chiave"]', "    {c}: str = None",
     '    {c}: Optional[str] = "predefinito"', "    {c}: str | None = None,",
-    "            {c}=config.valore,", '    "{c}": valore,', '    {c} = base / "file.crt"',
+    "            {c}=config.valore,", '    "{c}": valore,', '    "{c}": bool(x),',
     '    {c} = (chiedi("x") or "").strip()', '    {c}=lambda p: "",',
 )
 

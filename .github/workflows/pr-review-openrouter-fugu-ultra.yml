@@ -236,12 +236,16 @@ jobs:
               # Restano alla generica, quindi visibili come prima: il valore
               # quotato, il riferimento a un'espressione di Actions (dollaro e
               # doppia graffa) e il valore con forma di CODICE, che comincia con
-              # `(`, `lambda`, `await`, o con un nome (anche puntato) seguito da
-              # `(`/`[`, da `=`, `|`, `+`, `*`, `/`, `%`, o da `,`/`;` a fine riga:
-              # assegnazioni, annotazioni, chiamate (Claude Fable 5.1 e Codex
-              # sulla #483). Misurato sul repo intero: 11 righe su 219.588
-              # redatte piu' di prima, commenti ed esempi; nessuna di codice.
-              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:[-*]|#+|//+|;+)[ \t]*)?(?:export[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*[:=][ \t]*(?!\$\{\{)(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*(?:=(?!=)|[|+*/%]|[,;][ \t]*$)))(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
+              # `(`, `lambda`, `await`, o con un nome (anche puntato) seguito
+              # subito da `(`/`[` o da `,`/`;` a fine riga; dopo `:`, anche un nome
+              # seguito da ` = ` o ` | ` (annotazione di tipo). Chiamate, indici,
+              # annotazioni, argomenti (Claude Fable 5.1 e Codex sulla #483). Gli
+              # operatori `+ - * / %` NON contano come codice: stanno nei segreti
+              # codificati (base64, URL) e nelle passphrase (GPT-5.6 Sol, GPT-6
+              # Astra e Fugu Ultra sulla #483). Misurato sul repo intero: 18 righe
+              # su 219.588 redatte piu' di prima (commenti, esempi, percorsi di
+              # test con `/`), nessuna di codice di produzione.
+              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:[-*]|#+|//+|;+)[ \t]*)?(?:export[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*(?:=[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$))|:[ \t]*(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*[,;][ \t]*$)|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*[ \t]+(?:=(?!=)|\|)[ \t]))(?!\$\{\{)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
               # Regola generica chiave/valore. Copre: valore nudo, quotato,
               # con spazi, con delimitatore escapato, e quotato NON chiuso
               # (li' il ramo quotato consuma fino a fine riga — `\n` escluso
