@@ -17,6 +17,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`telegram.api_hash`, `betfair.password`, …).
 - `.gitignore` now covers `*.pem`, `*.key`, `.pickfair/`, `.env.*` and common
   secret file patterns.
+- AI review workflows (the five `pr-review-*.yml`): when a secret key starts
+  the line (`.env`, YAML, INI, properties, `export`/`set`, list items, comments
+  with `#`, `//`, `;`, `!`, `--`, `/*` or `<!--`), an
+  unquoted value is now redacted up to the end of the line, spaces included,
+  before the diff reaches the provider and before the review is published. It
+  used to stop at the first space, so the rest of the value leaked. Mid-line
+  matches (arguments, comparisons, signatures) and code-shaped values at the
+  start of a statement (calls, subscripts, built-in type annotations,
+  arguments) keep the previous rule, so the reviewer still sees the code.
+  Arithmetic operators do not count as code, since encoded secrets and
+  passphrases contain them; `==`, `:=` and `=>` are not separators, so
+  comparisons stay visible.
+  Across the whole repo, 18 of 219,588 lines are now redacted more than before
+  (comments, examples, test paths joined with `/`), none of them production
+  code. Quoted values and GitHub Actions expressions are unchanged.
+  (DECISIONE-426 P14, #479)
 
 ### Added
 - `core/duplication_guard.py`: concrete `is_duplicate()` / `register()` two-phase
