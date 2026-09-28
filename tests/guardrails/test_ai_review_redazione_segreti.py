@@ -206,6 +206,7 @@ def _redazione(workflow: str) -> Callable[[str], str]:
 # P14 (#479): valore nudo con spazi, chiave a inizio riga. Campioni montati per
 # pezzi: per esteso li mutilerebbe la redazione dei reviewer (branch base).
 PAROLE = ("PRIMOPEZZO", "SECONDOPEZZO", "TERZOPEZZO")
+VALORI = ("{0} {1} {2}", "{0}, {1} {2}", "{0} ({1}) {2}", "{0}.{1} {2}")
 FORME_DI_RIGA = ("{c}={v}", "{c}: {v}", "{c} = {v}", "export {C}={v}",
                  "db.{c}={v}", "DB_{C}={v}", "  - {C}={v}", "* {c}: {v}",
                  "# {c}: {v}", '"{c}": {v}')
@@ -224,32 +225,39 @@ def test_block_un_valore_nudo_con_spazi_sparisce_per_intero(workflow: str) -> No
     assert "password" in chiavi and "app_key" in chiavi
     for c in chiavi:
         for forma in FORME_DI_RIGA:
-            for marcatore in ("", "+", "-", " "):
-                riga = marcatore + forma.format(c=c, C=c.upper(), v=" ".join(PAROLE))
-                redatta = redigi(riga + "\nquota = 3.5")
-                if any(p in redatta for p in PAROLE) or not redatta.endswith("\nquota = 3.5"):
-                    fughe.append(f"  {riga!r} -> {redatta!r}")
+            for valore in VALORI:
+                for marcatore in ("", "+", "-", " "):
+                    riga = marcatore + forma.format(c=c, C=c.upper(), v=valore.format(*PAROLE))
+                    redatta = redigi(riga + "\nquota = 3.5")
+                    if any(p in redatta for p in PAROLE) or not redatta.endswith("\nquota = 3.5"):
+                        fughe.append(f"  {riga!r} -> {redatta!r}")
     assert not fughe, f"{workflow}: {len(fughe)} fughe\n" + "\n".join(fughe[:12])
 
 
-# Chiave a meta' riga: dopo c'e' codice, toglierlo al reviewer e' un verde falso.
+# Chiave a meta' riga, o valore con forma di codice a inizio istruzione
+# (assegnazioni, annotazioni, chiamate: Claude Fable 5.1 e Codex sulla #483):
+# redazione IDENTICA a quella della sola regola generica, cioe' a prima.
 RIGHE_CHE_RESTANO = (
-    ("    login({c}=utente, user=u)", "user=u)"),
-    ("    if {c} == atteso and not scaduto:", "and not scaduto:"),
-    ("    def rinnova(self, {c}: str) -> str:", "-> str:"),
-    ('{c}: "{v}"  # nota', "# nota"),
-    ("{c}: ${{{{ secrets.X }}}}", "secrets.X }}"),
-    ("    {c}izer = crea(a, b)", "crea(a, b)"),
-    ("    {c}_hash = hash(pw, salt)", "hash(pw, salt)"),
+    "    login({c}=utente, user=u)", "    if {c} == atteso and not scaduto:",
+    "    def rinnova(self, {c}: str) -> str:", '{c}: "{v}"  # nota',
+    "{c}: ${{{{ secrets.X }}}}", "    {c}izer = crea(a, b)", "    {c}_hash = hash(pw, salt)",
+    "    {c} = calcola(a, b)", '    self.{c} = dati["chiave"]', "    {c}: str = None",
+    '    {c}: Optional[str] = "predefinito"', "    {c}: str | None = None,",
+    "            {c}=config.valore,", '    "{c}": valore,', '    {c} = base / "file.crt"',
+    '    {c} = (chiedi("x") or "").strip()', '    {c}=lambda p: "",',
 )
 
 
 @pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
-@pytest.mark.parametrize("forma,resta", RIGHE_CHE_RESTANO)
-def test_pass_il_codice_intorno_resta_visibile(workflow: str, forma: str, resta: str) -> None:
-    redatta = _redazione(workflow)("+" + forma.format(c="password", v=" ".join(PAROLE)))
-    assert resta in redatta and not any(p in redatta for p in PAROLE), (
-        f"{workflow}: {forma!r} -> {redatta!r}")
+def test_pass_il_codice_resta_visibile_come_prima(workflow: str) -> None:
+    redigi, generica, diversi = _redazione(workflow), _regex_generica(workflow), []
+    for c in _chiavi(workflow):
+        for forma in RIGHE_CHE_RESTANO:
+            riga = "+" + forma.format(c=c, v=" ".join(PAROLE))
+            redatta, prima = redigi(riga), generica.sub(r"\1=[REDACTED]", riga)
+            if redatta != prima or any(p in redatta for p in PAROLE):
+                diversi.append(f"  {riga!r} -> {redatta!r} (prima {prima!r})")
+    assert not diversi, f"{workflow}: codice nascosto al reviewer\n" + "\n".join(diversi[:12])
 
 
 @pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))

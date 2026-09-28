@@ -228,12 +228,15 @@ jobs:
               # al primo spazio e il resto del segreto usciva in chiaro, verso il
               # provider e nel commento pubblicato (DECISIONE-426 P14, #479;
               # rilievo di GPT-5.6 Sol sulla #477). Stesse chiavi della generica.
-              # Restano alla generica il valore quotato (si vede cio' che segue la
-              # virgoletta di chiusura) e il riferimento a un'espressione di
-              # Actions (dollaro e doppia graffa), che non e' un valore. Misurato
-              # sul repo intero: 138 righe su 219.588 redatte piu' di prima, tutte
-              # con il primo pezzo del valore gia' nascosto dalla generica.
-              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:[-*]|#+|//+|;+)[ \t]*)?(?:export[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*[:=][ \t]*(?!\$\{\{)(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
+              # Restano alla generica, quindi visibili come prima: il valore
+              # quotato, il riferimento a un'espressione di Actions (dollaro e
+              # doppia graffa) e il valore con forma di CODICE, che comincia con
+              # `(`, `lambda`, `await`, o con un nome (anche puntato) seguito da
+              # `(`/`[`, da `=`, `|`, `+`, `*`, `/`, `%`, o da `,`/`;` a fine riga:
+              # assegnazioni, annotazioni, chiamate (Claude Fable 5.1 e Codex
+              # sulla #483). Misurato sul repo intero: 11 righe su 219.588
+              # redatte piu' di prima, commenti ed esempi; nessuna di codice.
+              (re.compile(r"(?im)^([+\- ]?[ \t]*(?:(?:[-*]|#+|//+|;+)[ \t]*)?(?:export[ \t]+)?[\"']?(?:[\w\-]+\.)*[\w\-]*?)(api[_-]?key|app[_-]?key|token|secret|password|passwd|pwd|private[_-]?key|cert)[\"']?[ \t]*[:=][ \t]*(?!\$\{\{)(?!\(|(?:lambda|await)\b|[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*(?:[(\[]|[ \t]*(?:=(?!=)|[|+*/%]|[,;][ \t]*$)))(?=[^\"'\s])[^\n]*"), r"\1\2=[REDACTED]"),
               # Regola generica chiave/valore. Copre: valore nudo, quotato,
               # con spazi, con delimitatore escapato, e quotato NON chiuso
               # (li' il ramo quotato consuma fino a fine riga — `\n` escluso

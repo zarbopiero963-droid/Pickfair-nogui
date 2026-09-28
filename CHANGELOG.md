@@ -22,10 +22,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   unquoted value is now redacted up to the end of the line, spaces included,
   before the diff reaches the provider and before the review is published. It
   used to stop at the first space, so the rest of the value leaked. Mid-line
-  matches (arguments, comparisons, signatures) keep the previous rule, so the
-  reviewer still sees the code; across the whole repo, 138 of 219,588 lines
-  are now redacted more than before. Quoted values and GitHub Actions
-  expressions are unchanged. (DECISIONE-426 P14, #479)
+  matches (arguments, comparisons, signatures) and code-shaped values at the
+  start of a statement (assignments, annotations, calls) keep the previous
+  rule, so the reviewer still sees the code; across the whole repo, 11 of
+  219,588 lines are now redacted more than before, all comments or examples.
+  Quoted values and GitHub Actions expressions are unchanged.
+  (DECISIONE-426 P14, #479)
 
 ### Added
 - `core/duplication_guard.py`: concrete `is_duplicate()` / `register()` two-phase

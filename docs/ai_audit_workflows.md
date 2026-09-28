@@ -64,13 +64,18 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   Quando la chiave apre la riga (`.env`, YAML, INI, properties, `export`, liste,
   commenti), un valore **non quotato** viene redatto fino a fine riga, spazi
   compresi: prima si fermava al primo spazio e il resto del segreto usciva
-  (DECISIONE-426 P14, #479). A metà riga (argomenti, confronti, firme) resta la
-  regola generica, che si ferma al primo spazio: dopo il valore c'è codice, e
-  toglierlo al reviewer sarebbe un verde falso. Misurato sul repo intero: 138
-  righe su 219.588 redatte più di prima. Residui dichiarati: valore non quotato
-  con spazi a metà riga, valori su righe successive (blocchi YAML `|`), tabelle
-  senza separatore; e una riga dell'output del modello che comincia con una di
-  queste chiavi seguita da `:` viene redatta per intero.
+  (DECISIONE-426 P14, #479). Resta la regola generica, che si ferma al primo
+  spazio, dove dopo il valore c'è codice e toglierlo al reviewer sarebbe un
+  verde falso: chiave a metà riga (argomenti, confronti, firme) e valore con
+  forma di codice a inizio istruzione (assegnazioni, annotazioni, chiamate:
+  comincia con `(`, `lambda`, `await`, o con un nome seguito da `(`/`[`, da
+  `=`, `|`, `+`, `*`, `/`, `%`, o da `,`/`;` a fine riga). Misurato sul repo
+  intero: 11 righe su 219.588 redatte più di prima, commenti ed esempi, nessuna
+  di codice. Residui dichiarati: valore non quotato con spazi a metà riga, o che
+  comincia con una di quelle forme di codice; valori su righe successive
+  (blocchi YAML `|`); tabelle senza separatore; e una riga dell'output del
+  modello che comincia con una di queste chiavi seguita da `:` viene redatta per
+  intero.
 - **Il diff è trattato come contenuto non attendibile**: il prompt istruisce il
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono

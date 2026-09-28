@@ -1853,7 +1853,7 @@
         "tests/guardrails/test_ai_review_redazione_segreti.py"
       ],
       "max_files": 9,
-      "description": "DECISIONE-426 P14 (owner, 23/09/2026, #479): nei cinque workflow di review un valore NON quotato con la chiave a inizio riga (.env, YAML, INI, properties, export, liste, commenti) si redige fino a fine riga; prima si fermava al primo spazio e il resto del segreto arrivava al provider e nel commento pubblicato. A meta' riga resta la regola generica, per non togliere codice al reviewer: sul repo intero 138 righe su 219.588 redatte piu' di prima. Workflow-gate: merge dell'agente per DECISIONE-426 P19. Test red-first in tests/guardrails/test_ai_review_redazione_segreti.py: 5 failed su main, verdi dopo; tre mutazioni catturate."
+      "description": "DECISIONE-426 P14 (owner, 23/09/2026, #479): nei cinque workflow di review un valore NON quotato con la chiave a inizio riga (.env, YAML, INI, properties, export, liste, commenti) si redige fino a fine riga; prima si fermava al primo spazio e il resto del segreto arrivava al provider e nel commento pubblicato. A meta' riga, e per un valore con forma di codice a inizio istruzione (assegnazioni, annotazioni, chiamate: Claude Fable 5.1 e Codex sulla #483), resta la regola generica, per non togliere codice al reviewer: sul repo intero 11 righe su 219.588 redatte piu' di prima, nessuna di codice. Workflow-gate: merge dell'agente per DECISIONE-426 P19. Test red-first in tests/guardrails/test_ai_review_redazione_segreti.py: BLOCK rosso su main, PASS rosso sulla prima patch, verdi dopo; cinque mutazioni catturate."
     }
   }
 }
