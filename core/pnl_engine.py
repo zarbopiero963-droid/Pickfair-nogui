@@ -60,6 +60,63 @@ class MarketNetRealizedSettlementAggregator:
         }
 
 
+# Stati del runner che il settlement stile exchange sa regolare per una bet
+# semplice. Gli altri (ACTIVE, HIDDEN, PLACED dei mercati each-way, stati
+# sconosciuti) non hanno un esito certo: errore, mai un lordo di ripiego.
+_ESITI_RUNNER_REGOLABILI = {
+    "WINNER": "WIN",
+    "LOSER": "LOSE",
+    "REMOVED": "VOID",
+    "REMOVED_VACANT": "VOID",
+}
+
+
+def _numero_finito(valore: Any, nome: str) -> float:
+    if isinstance(valore, bool) or not isinstance(valore, (int, float)):
+        raise ValueError(f"SETTLEMENT_INVALID_{nome.upper()}: {valore!r}")
+    numero = float(valore)
+    if not math.isfinite(numero):
+        raise ValueError(f"SETTLEMENT_INVALID_{nome.upper()}: {valore!r}")
+    return numero
+
+
+def exchange_settled_gross_pnl(*, side: Any, price: Any, size: Any, runner_status: Any) -> float:
+    """Lordo di una bet abbinata al settlement, semantica exchange.
+
+    Fonte unica del calcolo (PR03 #461): la usa il broker simulato per
+    regolare un mercato CHIUSO; in LIVE il lordo lo riporta Betfair.
+
+    - BACK: il runner vince => ``size x (price - 1)``; perde => ``-size``.
+    - LAY: il runner vince => ``-size x (price - 1)`` (la liability);
+      perde => ``+size``.
+    - Runner rimosso (``REMOVED`` / ``REMOVED_VACANT``): bet annullata, 0.
+
+    ``price`` e ``size`` sono quota media e importo ABBINATI. Fail-closed:
+    lato fuori BACK/LAY, quota <= 1, importo <= 0, valori non numerici o non
+    finiti (bool compreso) o stato del runner senza esito certo =>
+    ``ValueError``.
+    """
+    lato = side.strip().upper() if isinstance(side, str) else ""
+    if lato not in {"BACK", "LAY"}:
+        raise ValueError(f"SETTLEMENT_INVALID_SIDE: {side!r}")
+    stato = runner_status.strip().upper() if isinstance(runner_status, str) else ""
+    esito = _ESITI_RUNNER_REGOLABILI.get(stato)
+    if esito is None:
+        raise ValueError(f"SETTLEMENT_RUNNER_STATUS_UNSUPPORTED: {runner_status!r}")
+    quota = _numero_finito(price, "price")
+    importo = _numero_finito(size, "size")
+    if quota <= 1.0:
+        raise ValueError(f"SETTLEMENT_INVALID_PRICE: {price!r}")
+    if importo <= 0.0:
+        raise ValueError(f"SETTLEMENT_INVALID_SIZE: {size!r}")
+    if esito == "VOID":
+        return 0.0
+    vince = esito == "WIN"
+    if lato == "BACK":
+        return importo * (quota - 1.0) if vince else -importo
+    return -importo * (quota - 1.0) if vince else importo
+
+
 class PnLEngine:
     """
     PnL Engine completo.
@@ -105,6 +162,14 @@ class PnLEngine:
             commission_pct=(self.commission * 100.0),
             context="core_pnl_engine_realized_settlement",
         )
+        # Settlement del broker simulato (PR03 #461): aggregatore e dedupe
+        # propri, cosi' il netto di mercato SIM non si mescola con i
+        # settlement LIVE dello stesso mercato nello stesso processo.
+        self._sim_market_net_realized_aggregator = MarketNetRealizedSettlementAggregator(
+            commission_pct=(self.commission * 100.0),
+            context="core_pnl_engine_sim_settlement",
+        )
+        self._applied_simulated_settlements: set[str] = set()
 
         if self.bus:
             self.bus.subscribe("QUICK_BET_FILLED", self._on_filled)
@@ -485,6 +550,117 @@ class PnLEngine:
         # Publish FUORI dalla sezione critica: il bus e' enqueue-only, ma un
         # subscriber sincrono (bus di test / futuri wiring) non deve mai
         # rientrare nel motore con il lock ancora tenuto (lock-ordering).
+        if self.bus:
+            self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
+
+        return payload
+
+    # =========================================================
+    # SETTLEMENT SIMULATO (broker SIM, PR03 #461)
+    # =========================================================
+    @staticmethod
+    def simulated_settlement_key(market_id: Any, settlement_ref: Any) -> str:
+        """Chiave di un settlement SIM: e' l'``event_key`` del payload, quindi
+        la stessa ``settlement_key`` con cui il consumer scrive il checkpoint
+        durevole. Il poller deduplica con questa, prima di emettere."""
+        return f"sim:{str(market_id or '').strip()}:{str(settlement_ref or '').strip()}"
+
+    def apply_simulated_market_settlement(
+        self,
+        *,
+        market_id: str,
+        gross_pnl: float,
+        settlement_ref: str,
+        settled_date: str = "",
+    ) -> Dict[str, Any]:
+        """Realizza il settlement di un mercato CHIUSO nel broker simulato.
+
+        Il broker ha gia' aggregato le selezioni: ``gross_pnl`` e' il lordo
+        dell'INTERO mercato, quindi la commissione di policy si applica una
+        volta sola sul netto e il mercato si chiude con UN evento (mai una
+        chiusura per gamba). Stesso payload canonico del settlement LIVE,
+        con ``settlement_source="simulation_broker"``.
+
+        Fail-closed: mercato o riferimento vuoti, lordo non numerico o non
+        finito (bool compreso) => raise senza stato ne' publish. Idempotente
+        nel motore sulla chiave ``sim:<market_id>:<settlement_ref>``
+        (``SIM_SETTLEMENT_DUPLICATE``), oltre alla dedupe del poller e al
+        checkpoint durevole del consumer.
+        """
+        market_key = str(market_id or "").strip()
+        if not market_key:
+            raise ValueError("SIM_SETTLEMENT_INVALID_MARKET: market_id is required")
+        ref = str(settlement_ref or "").strip()
+        if not ref:
+            raise ValueError(
+                f"SIM_SETTLEMENT_INVALID_REF: settlement_ref is required for market {market_key}"
+            )
+        if isinstance(gross_pnl, bool) or not isinstance(gross_pnl, (int, float)):
+            raise ValueError(
+                f"SIM_SETTLEMENT_INVALID_GROSS: lordo non numerico per market "
+                f"{market_key}: {gross_pnl!r}"
+            )
+        gross = float(gross_pnl)
+        if not math.isfinite(gross):
+            raise ValueError(
+                f"SIM_SETTLEMENT_INVALID_GROSS: lordo non finito per market "
+                f"{market_key}: {gross_pnl!r}"
+            )
+
+        event_key = self.simulated_settlement_key(market_key, ref)
+        with self._state_lock:
+            if event_key in self._applied_simulated_settlements:
+                raise ValueError(
+                    f"SIM_SETTLEMENT_DUPLICATE: settlement {event_key} gia' realizzato"
+                )
+            realized = self._sim_market_net_realized_aggregator.apply(
+                market_id=market_key, gross_pnl=gross
+            )
+            self._applied_simulated_settlements.add(event_key)
+            net_pnl = float(realized["net_pnl"])
+
+            cleared_positions = [
+                key
+                for key, pos in list(self._positions.items())
+                if str(pos.get("market_id") or "") == market_key
+            ]
+            for key in cleared_positions:
+                self._positions.pop(key, None)
+                self._position_ledgers.pop(key, None)
+
+            payload: Dict[str, Any] = {
+                "event_key": event_key,
+                "market_id": market_key,
+                "table_id": None,
+                "batch_id": "",
+                # legacy alias (net pnl) kept for compatibility
+                "pnl": net_pnl,
+                "gross_pnl": gross,
+                "commission_amount": float(realized["commission_amount"]),
+                "net_pnl": net_pnl,
+                "commission_pct": float(realized["commission_pct"]),
+                "market_net_gross": float(realized["market_net_gross"]),
+                "market_commission_amount_total": float(
+                    realized["market_commission_amount_total"]
+                ),
+                "settlement_basis": str(realized["settlement_basis"]),
+                "settlement_source": "simulation_broker",
+                "settlement_kind": "realized_settlement",
+                "settled_date": str(settled_date or ""),
+                "settlement_ref": ref,
+                "cleared_positions": list(cleared_positions),
+            }
+
+            logger.info(
+                "[PnL] SIM settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
+                market_key,
+                ref,
+                gross,
+                net_pnl,
+                len(cleared_positions),
+            )
+
+        # Publish fuori dalla sezione critica, come per il settlement LIVE.
         if self.bus:
             self.bus.publish("RUNTIME_CLOSE_POSITION", payload)
 

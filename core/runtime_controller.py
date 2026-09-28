@@ -128,7 +128,8 @@ class RuntimeController:
         # (stessa settlement_key PER-BET del consumer:
         # "cleared:<market_id>:<bet_id>" — il payload cleared non ha
         # batch/table/bet top-level, quindi _build_bankroll_sync_key
-        # collassa sull'event_key).
+        # collassa sull'event_key). In SIM la chiave e' per mercato:
+        # "sim:<market_id>:<settlement_id>" (PR03 #461).
         self._settlement_emitted_keys: set[str] = set()
         self._settlement_poll_thread: Optional[threading.Thread] = None
         self._settlement_poll_stop = threading.Event()
@@ -427,7 +428,9 @@ class RuntimeController:
     # Settlement poller (PR3, runtime_settlement_wiring) — il ciclo di
     # chiusura reale: listClearedOrders(SETTLED, group_by=MARKET) =>
     # PnLEngine.apply_cleared_market_settlement => RUNTIME_CLOSE_POSITION
-    # => daily-loss/bankroll sync. Default OFF, LIVE-only, fail-closed.
+    # => daily-loss/bankroll sync. Default OFF, fail-closed. In SIM (PR03
+    # #461) lo stesso poller legge il registro dei mercati regolati dal
+    # broker simulato => PnLEngine.apply_simulated_market_settlement.
     # =========================================================
     def _load_settlement_poll_config(self) -> dict:
         """Config del poller settlement, letta dalle settings (pattern
@@ -471,10 +474,9 @@ class RuntimeController:
         self._settlement_poll_cfg = self._load_settlement_poll_config()
         if not bool(self._settlement_poll_cfg.get("enabled", False)):
             return
-        if self.simulation_mode:
-            # Parity SIM non ancora cablata (record_realized_settlement del
-            # broker simulato resta senza consumer): nessun poll in SIM.
-            return
+        # Nessuna esclusione della SIM (PR03 #461): il giro sceglie il ramo
+        # dalla modalita' corrente — in SIM legge il registro del broker
+        # simulato, mai la facade LIVE list_cleared_orders.
         if (
             self._settlement_poll_thread is not None
             and self._settlement_poll_thread.is_alive()
@@ -497,9 +499,10 @@ class RuntimeController:
         )
         self._settlement_poll_thread.start()
         logger.info(
-            "Settlement poller avviato (poll_sec=%.0f lookback_hours=%.0f)",
+            "Settlement poller avviato (poll_sec=%.0f lookback_hours=%.0f simulation=%s)",
             float(self._settlement_poll_cfg.get("poll_sec", 60.0)),
             float(self._settlement_poll_cfg.get("lookback_hours", 24.0)),
+            bool(self.simulation_mode),
         )
 
     def _stop_settlement_poller(self) -> None:
@@ -536,7 +539,9 @@ class RuntimeController:
     def _poll_cleared_settlements(self, generation: Optional[int] = None) -> None:
         """Un giro di poll dei settlement reali. Fail-closed su ogni ramo:
 
-        - SIM o runtime non ACTIVE => nessuna chiamata;
+        - SIM => giro SIM sul registro del broker simulato
+          (``_poll_simulated_settlements_locked``), mai la facade LIVE;
+        - runtime non ACTIVE => nessuna chiamata;
         - **identita' del bot PER-BET (I1)**: si interrogano SOLO i ``betId``
           registrati dal bot (``db.get_bot_active_orders`` — ledger a
           denylist SIM+LIVE: le bet settlate RESTANO nel ledger, si escludono
@@ -707,6 +712,7 @@ class RuntimeController:
 
     def _poll_cleared_settlements_locked(self, *, generation: int) -> None:
         if self.simulation_mode:
+            self._poll_simulated_settlements_locked()
             return
         if self.mode is not RuntimeMode.ACTIVE:
             return
@@ -883,6 +889,112 @@ class RuntimeController:
             # sara' ritentata ancora a orizzonte completo, mai persa oltre
             # il lookback (rilievi Fable/GPT-5.6 su #440).
             self._settlement_sweep_done_generation = generation
+
+    def _poll_simulated_settlements_locked(self) -> None:
+        """Giro SIM del poller settlement (PR03 #461).
+
+        Il broker simulato regola un mercato quando riceve il book CHIUSO
+        (selezioni aggregate, commissione di policy una volta sul netto) e
+        lo iscrive nel suo registro persistito. Qui ogni settlement del
+        registro si consegna UNA volta al ciclo, via
+        ``PnLEngine.apply_simulated_market_settlement`` =>
+        RUNTIME_CLOSE_POSITION => consumer (realizzato, daily-loss,
+        bankroll sync dal saldo SIM, checkpoint del ciclo).
+
+        Fail-closed, come il ramo LIVE: runtime non ACTIVE, broker assente
+        o registro illeggibile => nessuna emissione (si ritenta al giro
+        dopo); record malformato => scartato, mai un lordo inventato. Dedupe
+        a tre livelli sulla chiave ``sim:<market_id>:<settlement_id>``:
+        in-memory, checkpoint durevole del consumer (stato illeggibile =>
+        emissione sospesa senza marcare), guardia nel motore. Cosi' il
+        settlement persistito dal broker prima di un riavvio arriva al
+        ciclo dopo il riavvio, e mai due volte.
+        """
+        if self.mode is not RuntimeMode.ACTIVE:
+            return
+        getter = getattr(self.betfair_service, "get_simulation_broker", None)
+        broker = getter() if callable(getter) else None
+        lettore = getattr(broker, "list_settlements", None)
+        if not callable(lettore):
+            return
+        try:
+            records = lettore() or []
+        except Exception as exc:
+            logger.warning(
+                "Settlement SIM: registro del broker illeggibile, round abortito "
+                "(fail-closed): %s",
+                exc,
+            )
+            return
+
+        validi: list[tuple[str, str, str, float]] = []
+        for record in records:
+            if not isinstance(record, dict):
+                logger.warning("Settlement SIM: record non-dict scartato: %r", record)
+                continue
+            market_id = str(record.get("market_id") or "").strip()
+            settlement_id = str(record.get("settlement_id") or "").strip()
+            gross_raw = record.get("gross_pnl")
+            gross_valido = (
+                not isinstance(gross_raw, bool)
+                and isinstance(gross_raw, (int, float))
+                and math.isfinite(float(gross_raw))
+            )
+            if not market_id or not settlement_id or not gross_valido:
+                logger.warning(
+                    "Settlement SIM: record malformato scartato market=%r id=%r gross=%r",
+                    record.get("market_id"),
+                    record.get("settlement_id"),
+                    gross_raw,
+                )
+                continue
+            validi.append(
+                (str(record.get("settled_at") or ""), market_id, settlement_id, float(gross_raw))
+            )
+
+        # Ordine cronologico di chiusura, qualunque sia quello del registro:
+        # il daily-loss vede le perdite quando sono avvenute.
+        for settled_at, market_id, settlement_id, gross in sorted(validi):
+            settlement_key = PnLEngine.simulated_settlement_key(market_id, settlement_id)
+            if settlement_key in self._settlement_emitted_keys:
+                continue
+            probe = self._read_cycle_recovery_state(settlement_key)
+            probe_status = str(probe.get("status") or "")
+            if probe_status == "RECOVERY_STATE_INVALID":
+                logger.warning(
+                    "Settlement SIM: recovery state illeggibile per %s — "
+                    "emissione sospesa (ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
+            if probe_status != "RECOVERY_NO_STATE":
+                # Checkpoint durevole gia' presente: consegnato in un processo
+                # precedente. Non ri-applicare il PnL.
+                self._settlement_emitted_keys.add(settlement_key)
+                continue
+            try:
+                self.pnl_engine.apply_simulated_market_settlement(
+                    market_id=market_id,
+                    gross_pnl=gross,
+                    settlement_ref=settlement_id,
+                    settled_date=settled_at,
+                )
+            except ValueError as exc:
+                if "SIM_SETTLEMENT_DUPLICATE" in str(exc):
+                    self._settlement_emitted_keys.add(settlement_key)
+                    continue
+                logger.exception(
+                    "Settlement SIM: emissione fallita per %s (ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
+            except Exception:
+                logger.exception(
+                    "Settlement SIM: emissione fallita per %s (ritentata al prossimo giro)",
+                    settlement_key,
+                )
+                continue
+            self._settlement_emitted_keys.add(settlement_key)
 
     def _snapshot_rest_fallback(self, *, reason: str, payload: Optional[dict] = None) -> None:
         cfg = dict(self._market_data_cfg or self._load_market_data_config())
@@ -2216,8 +2328,9 @@ class RuntimeController:
         self.last_error = ""
 
         # PR3: ciclo chiusura reale — parte solo se abilitato in config
-        # (settlement.poll_enabled) e mai in SIM. Un errore qui non deve
-        # impedire lo start del runtime.
+        # (settlement.poll_enabled); in SIM legge il registro del broker
+        # simulato (PR03 #461). Un errore qui non deve impedire lo start
+        # del runtime.
         try:
             self._start_settlement_poller()
         except Exception:

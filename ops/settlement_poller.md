@@ -32,11 +32,93 @@ listClearedOrders (SETTLED, bet_ids del bot, righe per-bet)
   realizzerebbe PnL contabile fantasma su una posizione ancora viva. Il
   guardrail di cablaggio asserisce che sull'app reale resti disarmato.
 
+## Il filo SIM (PR03 #461)
+
+Fino alla #484 in SIMULATION il settlement non esisteva: nessuno rilevava la
+chiusura di un mercato, il poller non partiva e `record_realized_settlement`
+lo chiamavano solo i test (e dopo dei fill avrebbe contato due volte stake e
+liability). Ora:
+
+```
+book CHIUSO (status CLOSED, runner WINNER/LOSER/REMOVED)
+  → MarketTracker.on_market_book                (ingresso reale dei book SIM)
+  → BetfairService.update_simulation_market_book
+  → SimulationBroker.update_market_book         (regola il mercato UNA volta,
+                                                 registro persistito nello
+                                                 stato SIM)
+  → RuntimeController._poll_simulated_settlements_locked
+                                                (stesso thread/chiave del LIVE)
+  → PnLEngine.apply_simulated_market_settlement (un evento per mercato)
+  → RUNTIME_CLOSE_POSITION → _on_close_position (contratto → realizzato →
+                                                 bankroll sync dal saldo SIM →
+                                                 daily-loss → ciclo/drawdown)
+```
+
+Regole del settlement nel broker:
+
+- **Lordo per bet stile exchange** (fonte unica
+  `core.pnl_engine.exchange_settled_gross_pnl`), su quota e importo ABBINATI:
+  BACK vince `size x (price - 1)`, perde `-size`; LAY col runner vincente
+  `-size x (price - 1)`, col runner perdente `+size`; runner rimosso 0.
+- **Selezioni aggregate PRIMA della commissione**: la commissione di policy
+  (4,5%) si applica una volta sul netto dell'intero mercato, e il mercato si
+  chiude con UN evento. Nel LIVE le righe cleared arrivano per bet, qui no:
+  nessuna gamba vincente puo' arrivare «dopo» una perdente.
+- **Accredito = netto − effetto di cassa gia' applicato dai fill.** Stake
+  BACK e liability LAY escono dal saldo al fill, e il ledger accredita
+  subito il realizzato di una posizione chiusa (BACK poi LAY). L'effetto dei
+  fill si ricostruisce ripercorrendo gli ordini abbinati, non dal ledger
+  vivo che dopo un riavvio perde il realizzato: alla fine il mercato pesa
+  sul saldo esattamente il suo netto. Esempio: BACK 10 @ 3.0 vincente e
+  LAY 5 @ 2.0 sul perdente ⇒ lordo +25, commissione 1,125, netto 23,875; ai
+  fill il saldo scende di 15 (985), al settlement sale di 38,875 (1023,875).
+- I **PositionLedger** del mercato si chiudono (esposizione rilasciata); gli
+  ordini abbinati diventano `SETTLED` (esclusi dagli ordini correnti, come
+  su Betfair), i residui non abbinati `LAPSED`. Un ordine piazzato dopo sul
+  mercato gia' regolato decade senza abbinarsi: il mercato e' chiuso.
+- **Fail-closed, senza toccare nulla** (posizioni aperte, nessun effetto sul
+  saldo): runner con puntate senza stato terminale noto (`ACTIVE`, `HIDDEN`,
+  `PLACED` each-way, assente); runner rimosso con puntate su ALTRI runner
+  (fattori di riduzione non modellati); dead heat (`numberOfWinners`
+  superato); ordini incoerenti coi ledger; valori non validi; commissione
+  fuori policy.
+
+Idempotenza sulla chiave `sim:<market_id>:<settlement_id>`, a tre livelli
+piu' il registro: il broker non regola due volte lo stesso mercato (book
+CHIUSO ripetuto o riavvio); il poller deduplica in memoria e sul checkpoint
+durevole del consumer (stato illeggibile ⇒ emissione sospesa senza marcare);
+il motore rifiuta `SIM_SETTLEMENT_DUPLICATE`. Il giro emette in ordine
+cronologico di chiusura.
+
+**Riavvio fra persistenza e aggiornamento del ciclo**: il service salva lo
+stato SIM subito dopo il book CHIUSO, quindi saldo e registro sopravvivono
+al riavvio; il poller, al primo giro del nuovo processo, consegna al ciclo i
+settlement senza checkpoint, una volta sola. Un settlement gia' consegnato
+non si riconsegna.
+
+Limiti dichiarati:
+
+- **In produzione il SIM oggi non riceve book**: il feed di mercato parte
+  solo in LIVE e in SIM non c'e' sessione Betfair. Il filo e' cablato
+  dall'ingresso reale (`MarketTracker`), ma trasporta dati solo quando
+  arriva il feed Italy in SIM (PR11 della #461).
+- Stessa chiave `settlement.poll_enabled` del LIVE, default OFF invariato: il
+  broker regola comunque il saldo simulato, ma il ciclo del runtime lo vede
+  solo col poller acceso.
+- Con il poller acceso una perdita SIM puo' far scattare lo stop daily-loss:
+  il marker d'emergenza e' unico per SIM e LIVE (la separazione e' la PR15).
+- Il settlement SIM non arrotonda al centesimo come Betfair.
+- Il registro dei settlement non si pota, come gli ordini SIM: cresce con i
+  mercati regolati e viaggia nel JSON dello stato SIM.
+- Il realizzato del RiskDesk e lo stato daily-loss restano in memoria: dopo
+  un riavvio ripartono da zero, in LIVE come in SIM (preesistente, seguito
+  in #453).
+
 ## Chiavi di configurazione (settings, pattern market-data)
 
 | chiave | default | note |
 |---|---|---|
-| `settlement.poll_enabled` | `False` | **dormiente di default** (decisione owner, stesso precedente del TTL DIRECT B6.3.2b). Finche' e' OFF il filo esiste ma non trasporta dati. |
+| `settlement.poll_enabled` | `False` | **dormiente di default** (decisione owner, stesso precedente del TTL DIRECT B6.3.2b). Finche' e' OFF il filo esiste ma non trasporta dati. Vale anche per il giro SIM (PR03 #461). |
 | `settlement.poll_sec` | `60` | intervallo del giro, clamp minimo 5s. |
 | `settlement.lookback_hours` | `24` | finestra `settled_after`, clamp 1..168h. |
 
@@ -58,10 +140,10 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
   del bot (fail-open sul kill-switch). Gli id del ledger SIM (`SIMBET-*`,
   non numerici) sono esclusi dal poll LIVE. Identita' illeggibile o vuota ⇒
   nessuna chiamata.
-- **LIVE only**: in SIMULATION il poller non parte e non chiama nulla; la
-  facade solleva `CLEARED_ORDERS_UNAVAILABLE_IN_SIMULATION` (la parity del
-  broker simulato — `record_realized_settlement` e' gia' pronto ma senza
-  consumer — arrivera' con una PR dedicata).
+- **Facade cleared solo LIVE**: in SIMULATION il giro non chiama mai
+  `list_cleared_orders`, che solleva
+  `CLEARED_ORDERS_UNAVAILABLE_IN_SIMULATION`; legge invece il registro del
+  broker simulato (sezione «Il filo SIM» sotto, PR03 #461).
 - **Runtime non ACTIVE** ⇒ giro no-op (vale anche dopo emergency/lockdown).
 - **Primo giro di ogni generazione = sweep completo** (senza
   `settled_after`, orizzonte Betfair ~90 giorni): recupera i settlement
@@ -130,8 +212,9 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
 
 1. Impostare `settlement.poll_enabled = true` nelle settings (DB).
 2. Riavviare il runtime (la config e' letta allo start del poller).
-3. Verifica: log `Settlement poller avviato (poll_sec=… lookback_hours=…)` e,
-   al primo mercato settlato, `[PnL] Cleared settlement <market> …`.
+3. Verifica: log `Settlement poller avviato (poll_sec=… lookback_hours=…
+   simulation=…)` e, al primo mercato settlato, `[PnL] Cleared settlement
+   <market> …` in LIVE o `[PnL] SIM settlement <market> …` in SIM.
 
 ## Test
 
@@ -141,7 +224,18 @@ Qualsiasi errore di lettura/parse della config ⇒ poller **disabilitato**
 - `tests/core/test_settlement_poller.py` — poller: emissione e parametri
   fetch, filo intero fino a breach+emergency stop, SIM/non-ACTIVE, fetch
   fallito, righe malformate, dedupe in-memory e durevole, db illeggibile,
-  config fail-closed, lifecycle thread, facade fail-closed.
+  config fail-closed, lifecycle thread (anche in SIM), facade fail-closed;
+  giro SIM dal registro del broker (PR03).
+- `tests/integration/test_simulation_broker_commission_semantics.py` —
+  broker SIM: settlement del book CHIUSO con i fill veri (piu' selezioni,
+  perdita, match parziale, BACK poi LAY, runner rimosso), duplicato, stati
+  non regolabili, fattori di riduzione, dead heat, ledger incoerente,
+  riavvio prima e dopo il settlement.
+- `tests/acceptance/test_issue437_pr03.py` — app headless VERA (Database,
+  EventBus, broker reali): catena dal book CHIUSO al ciclo, replay e fuori
+  ordine, riavvio fra persistenza e aggiornamento del ciclo, parita' del
+  netto SIM/LIVE sullo stesso portafoglio, kill-switch daily-loss e reset
+  Roserpina da drawdown.
 - `tests/guardrails/test_cablaggio_runtime.py` — voce promossa da GAP a
   CABLATO: `MARKET_BOOK_UPDATE` sottoscritto, PnLEngine reale sul bus
   dell'app per entrambi gli entrypoint, auto-close disarmato.
