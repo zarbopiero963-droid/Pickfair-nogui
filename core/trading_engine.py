@@ -1588,16 +1588,27 @@ class TradingEngine:
         e l'errore nasce tipizzato (`_ErrorePrimaDellInvio`) prima di chiamarlo.
 
         Alias vuoti o di soli spazi valgono come assenti; i due alias, se
-        entrambi presenti, devono coincidere. Si valida qui e solo sul ramo
-        LIVE: il fallback non raggiunge mai il client reale, e validare anche
-        li' rompe 12 test di ciclo di vita che usano di proposito payload senza
-        lato (misurato).
+        entrambi presenti, devono coincidere. Si valida sul ramo LIVE e, dalla
+        DECISIONE-426 P17, anche sul fallback quando il client e' il broker di
+        simulazione: in PAPER lo stesso input deve avere lo stesso esito del
+        LIVE (rilievo P2 di Codex sulla #481). Per gli altri client il fallback
+        resta senza validazione: non raggiunge mai il client reale, e validare
+        anche li' rompe 12 test di ciclo di vita che usano di proposito payload
+        senza lato (misurato di nuovo alla #481).
+
+        Un alias che non e' una stringa e' invalido, anche se `str()` lo farebbe
+        sembrare BACK o LAY: convertirlo lo ripuliva, e il controllo sui tipi del
+        client (P13) non lo vedeva mai. In LIVE partiva un ordine vero dalla
+        #478. Rilievo P2 di Codex su `f80c813` (#481), DECISIONE-426 P20.
         """
-        lati = {
-            str(valore).strip().upper()
-            for valore in (payload.get("bet_type"), payload.get("side"))
-            if valore is not None and str(valore).strip()
-        }
+        lati = set()
+        for valore in (payload.get("bet_type"), payload.get("side")):
+            if valore is None:
+                continue
+            if not isinstance(valore, str):
+                raise _ErrorePrimaDellInvio("INVALID_SIDE")
+            if valore.strip():
+                lati.add(valore.strip().upper())
         if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
             raise _ErrorePrimaDellInvio("INVALID_SIDE")
         return {**payload, "bet_type": lati.pop()}
@@ -1800,6 +1811,17 @@ class TradingEngine:
                     )
                 place = getattr(client, "place_bet", None)
                 if callable(place):
+                    # PAPER: al broker di simulazione arriva lo stesso lato che
+                    # arriverebbe al client reale. Senza questa validazione
+                    # `_kwargs_per_place_bet` riduceva i due alias a
+                    # `bet_type or side`, e due alias discordanti
+                    # (`bet_type=BACK`, `side=LAY`) diventavano un ordine BACK
+                    # che il ramo LIVE rifiuta con `INVALID_SIDE`. Vale solo
+                    # per il broker riconosciuto per identita': i doppi dei
+                    # test restano come prima. Rilievo P2 di Codex sulla #481,
+                    # DECISIONE-426 P17.
+                    if self._e_il_broker_di_simulazione(client):
+                        payload = self._con_lato_valido(payload)
                     return place(**self._kwargs_per_place_bet(place, payload))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")

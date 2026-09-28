@@ -54,6 +54,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- `SimulationBroker.place_bet` now requires BACK or LAY and normalizes case
+  and surrounding spaces before recording a PAPER order. Missing, malformed,
+  or non-string sides raise `INVALID_SIDE` without changing simulated orders
+  or funds. `place_orders` rejects just the invalid instruction without an
+  implicit BACK; empty `side` permits a valid `bet_type`, while conflicting
+  non-empty aliases and non-string aliases fail. Independent valid batch
+  instructions still run. A regression test exercises the actual PAPER
+  OrderRouter, OrderManager and CashoutExecutor against the broker.
+  This aligns the simulation boundary with the live client (#426 P15).
+  The engine's PAPER path now checks the two side aliases (`bet_type` and
+  `side`) the same way as the LIVE branch before calling the simulation
+  broker: discordant aliases, such as `bet_type=BACK` with `side=LAY`, fail
+  with `INVALID_SIDE` instead of recording a `bet_type` order (#426 P17).
+  A non-string side alias now fails with `INVALID_SIDE` on both paths, even
+  when `str()` would turn it into BACK or LAY; on the LIVE branch such a
+  value had been converted and sent since #478 (#426 P20).
 - `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
   BACK/LAY (checked after strip/upper; empty, `None` and non-string values
   included) with `RuntimeError("INVALID_SIDE")` before building the request,
