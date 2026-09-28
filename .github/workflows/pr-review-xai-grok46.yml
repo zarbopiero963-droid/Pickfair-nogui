@@ -31,9 +31,9 @@ jobs:
   review:
     name: Grok 4.7 push-range review
     runs-on: ubuntu-latest
-    # 15 e non 10: tre tentativi da 240 s piu' il backoff, vedi call_model
-    # (DECISIONE-426 P24).
-    timeout-minutes: 15
+    # 20 e non 10: tre tentativi da 240 s, il backoff, le chiamate a GitHub al
+    # loro tetto e l'avvio del runner, vedi call_model (DECISIONE-426 P24).
+    timeout-minutes: 20
 
     if: >
       github.event.pull_request.draft == false &&
@@ -597,9 +597,9 @@ jobs:
               data = json.dumps(payload).encode("utf-8")
               last_error = None
 
-              # 3 tentativi × 240 s + backoff (2+4+8 s) = 734 s: sta nei 15 minuti
-              # del job, col margine per il runner e le chiamate a GitHub.
-              # Erano 100 s. La richiesta non e' in streaming e a reasoning high
+              # 3 tentativi × 240 s + backoff (2+4+8 s) = 734 s. Con le sei chiamate
+              # a GitHub al tetto di 30 s e un minuto di avvio del runner si arriva
+              # a 974 s: sta nei 20 minuti del job. Erano 100 s. La richiesta non e' in streaming e a reasoning high
               # Grok 4.7 risponde solo a ragionamento finito, spesso oltre i 100 s:
               # sulla #478 non ha mai completato, sulla #483 1 tentativo su 8
               # (DECISIONE-426 P24). Aspettare di piu' non costa: si pagano i

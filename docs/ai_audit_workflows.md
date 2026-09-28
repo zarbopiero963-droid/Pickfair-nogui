@@ -182,10 +182,13 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   i 100 s. Sulla #478 non ha mai completato, sulla #483 ha completato 1
   tentativo su 8. Aspettare di più non costa, perché si pagano i token
   generati. Il caso peggiore deve stare dentro il `timeout-minutes` del job: tre
-  tentativi, le attese fra i tentativi e 120 s di margine per il runner e le
-  chiamate a GitHub. Altrimenti GitHub interrompe il job prima del commento
-  d'errore, e il reviewer tace. Lo verifica
-  `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer.
+  tentativi, le attese fra i tentativi, le chiamate a GitHub al loro tetto di
+  30 s (sei per workflow) e un minuto di avvio del runner. Per Grok fa 974 s, e
+  il suo job ha 20 minuti. Altrimenti GitHub interrompe il job prima del
+  commento d'errore, e il reviewer tace. Lo verifica
+  `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,
+  contando le chiamate a GitHub dal file e pretendendo esattamente tre
+  tentativi.
 
 ## Label
 
