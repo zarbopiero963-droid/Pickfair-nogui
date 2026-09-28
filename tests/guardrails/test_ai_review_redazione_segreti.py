@@ -209,7 +209,8 @@ PAROLE = ("PRIMOPEZZO", "SECONDOPEZZO", "TERZOPEZZO")
 # Anche segreti codificati (base64, URL) e passphrase con operatori: la forma
 # di codice non deve inghiottirli (GPT-5.6 Sol, GPT-6 Astra, Fugu Ultra, #483).
 VALORI = ("{0} {1} {2}", "{0}, {1} {2}", "{0} ({1}) {2}", "{0}.{1} {2}",
-          "{0}+{1}/{2}== {1}", "{0}%2F{1} {2}", "{0} + {1} {2}", "{0}={1} {2}", "{0}|{1} {2}")
+          "{0}+{1}/{2}== {1}", "{0}%2F{1} {2}", "{0} + {1} {2}", "{0}={1} {2}", "{0}|{1} {2}",
+          "{0} = {1} {2}", "{0} | {1} {2}")
 FORME_DI_RIGA = ("{c}={v}", "{c}: {v}", "{c} = {v}", "export {C}={v}",
                  "db.{c}={v}", "DB_{C}={v}", "  - {C}={v}", "* {c}: {v}",
                  "# {c}: {v}", '"{c}": {v}')

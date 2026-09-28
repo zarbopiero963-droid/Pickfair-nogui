@@ -23,9 +23,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   before the diff reaches the provider and before the review is published. It
   used to stop at the first space, so the rest of the value leaked. Mid-line
   matches (arguments, comparisons, signatures) and code-shaped values at the
-  start of a statement (calls, subscripts, type annotations, arguments) keep
-  the previous rule, so the reviewer still sees the code. Arithmetic operators
-  do not count as code, since encoded secrets and passphrases contain them.
+  start of a statement (calls, subscripts, built-in type annotations,
+  arguments) keep the previous rule, so the reviewer still sees the code.
+  Arithmetic operators do not count as code, since encoded secrets and
+  passphrases contain them.
   Across the whole repo, 18 of 219,588 lines are now redacted more than before
   (comments, examples, test paths joined with `/`), none of them production
   code. Quoted values and GitHub Actions expressions are unchanged.

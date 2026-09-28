@@ -69,8 +69,9 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   verde falso: chiave a metà riga (argomenti, confronti, firme) e valore con
   forma di codice a inizio istruzione (chiamate, indici, annotazioni,
   argomenti: comincia con `(`, `lambda`, `await`, o con un nome seguito subito
-  da `(`/`[` o da `,`/`;` a fine riga; dopo `:` anche un nome seguito da ` = `
-  o ` | `). Gli operatori `+ - * / %` non contano come codice, perché stanno
+  da `(`/`[` o da `,`/`;` a fine riga; dopo `:` anche un tipo built-in come
+  `str`, `int`, `bool` seguito da ` = ` o ` | `). Gli operatori `+ - * / %`, e
+  ` = `/` | ` dopo un nome qualsiasi, non contano come codice, perché stanno
   nei segreti codificati (base64, URL) e nelle passphrase. Misurato sul repo
   intero: 18 righe su 219.588 redatte più di prima (commenti, esempi, percorsi
   di test con `/`), nessuna di codice di produzione. Residui dichiarati: valore
