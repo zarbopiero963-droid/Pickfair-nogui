@@ -1839,6 +1839,21 @@
       ],
       "max_files": 3,
       "description": "DECISIONE-426 P18 (owner, 27/09/2026): il tetto di output di Claude Fable 5.1 passa da 3000 a 8000. Sulla #481 il giro a label sull'intera PR si e' fermato a 3000 token (stop_reason=max_tokens): review parziale, check rosso, gate finale senza verdetto. Il tetto e' un massimale, non un addebito: si paga cio' che il modello genera. Workflow-gate: il merge dell'agente e' autorizzato da DECISIONE-426 P19. Seconda PR aperta per eccezione autorizzata solo qui (P18), quindi il controllo della PR unica resta rosso finche' la #481 e' aperta. Test red-first in tests/guardrails/test_ai_review_effort.py: 1 failed a 3000, verde a 8000; controlla anche il valore di riserva nel codice del job."
+    },
+    "decisione426-p14-redazione-segreti": {
+      "files": [
+        ".github/workflows/pr-review-claude-fable5.yml",
+        ".github/workflows/pr-review-openrouter-fugu-ultra.yml",
+        ".github/workflows/pr-review-openrouter-gpt-astra.yml",
+        ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_redazione_segreti.py"
+      ],
+      "max_files": 9,
+      "description": "DECISIONE-426 P14 (owner, 23/09/2026, #479): nei cinque workflow di review un valore NON quotato con la chiave a inizio riga (.env, YAML, INI, properties, export, liste, commenti) si redige fino a fine riga; prima si fermava al primo spazio e il resto del segreto arrivava al provider e nel commento pubblicato. A meta' riga resta la regola generica, per non togliere codice al reviewer: sul repo intero 138 righe su 219.588 redatte piu' di prima. Workflow-gate: merge dell'agente per DECISIONE-426 P19. Test red-first in tests/guardrails/test_ai_review_redazione_segreti.py: 5 failed su main, verdi dopo; tre mutazioni catturate."
     }
   }
 }

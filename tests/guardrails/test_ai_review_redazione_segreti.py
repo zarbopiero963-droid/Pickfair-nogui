@@ -21,9 +21,11 @@ sarebbe un verde falso.
 """
 from __future__ import annotations
 
+import ast
 import re
+import time
 from pathlib import Path
-from typing import Set
+from typing import Callable, List, Set
 
 import pytest
 
@@ -74,8 +76,7 @@ SEGRETI_DA_REDIGERE = (
 NON_DA_DIVORARE = (
     ('"password": "x"\nquota = 3.5\n', "quota = 3.5"),
     ('"password": "aperto\nselezione = 2\n', "selezione = 2"),
-    ('password=x  e poi altro_campo=visibile', "altro_campo=visibile"),
-)
+)  # il vecchio terzo caso e' la forma del difetto #479: ora e' un BLOCK (P14)
 VALORE = "SEGRETISSIMO"
 
 
@@ -110,7 +111,7 @@ def _regex_generica(workflow: str) -> re.Pattern:
 def test_block_il_valore_del_segreto_non_sopravvive_alla_redazione(
     workflow: str, campione: str
 ) -> None:
-    redatto = _regex_generica(workflow).sub(r"\1=[REDACTED]", campione)
+    redatto = _redazione(workflow)(campione)
     assert VALORE not in redatto, (
         f"{workflow}: {campione!r} resta in chiaro dopo la redazione "
         f"({redatto!r}). Il diff viene inviato al modello e ripubblicato nel "
@@ -178,8 +179,85 @@ def test_block_la_redazione_non_divora_il_resto_del_diff(
     divora il diff da li' in poi. Un reviewer che non vede il codice e' un
     check verde falso, cioe' lo stesso danno visto dall'altra parte.
     """
-    redatto = _regex_generica(workflow).sub(r"\1=[REDACTED]", campione)
+    redatto = _redazione(workflow)(campione)
     assert deve_restare in redatto, (
         f"{workflow}: la redazione ha divorato {deve_restare!r} "
         f"({redatto!r}). Sopra-redigere acceca la review"
     )
+
+
+def _redazione(workflow: str) -> Callable[[str], str]:
+    """`redact()` vero: tutte le regole di REDACTIONS in ordine, lette con `ast`."""
+    testo = (ROOT / workflow).read_text(encoding="utf-8")
+    m = re.search(r"REDACTIONS = \[(.*?)\n          \]", testo, re.S)
+    assert m and ("for pattern, replacement in REDACTIONS:\n                  "
+                  "text = pattern.sub(replacement, text)") in testo, (
+        f"{workflow}: REDACTIONS o redact() hanno cambiato forma")
+    regole = [(re.compile(v.elts[0].args[0].value), v.elts[1].value)
+              for v in ast.parse("X = [" + m.group(1) + "\n]").body[0].value.elts]
+
+    def redigi(testo_: str) -> str:
+        for regola, sostituto in regole:
+            testo_ = regola.sub(sostituto, testo_)
+        return testo_
+    return redigi
+
+
+# P14 (#479): valore nudo con spazi, chiave a inizio riga. Campioni montati per
+# pezzi: per esteso li mutilerebbe la redazione dei reviewer (branch base).
+PAROLE = ("PRIMOPEZZO", "SECONDOPEZZO", "TERZOPEZZO")
+FORME_DI_RIGA = ("{c}={v}", "{c}: {v}", "{c} = {v}", "export {C}={v}",
+                 "db.{c}={v}", "DB_{C}={v}", "  - {C}={v}", "* {c}: {v}",
+                 "# {c}: {v}", '"{c}": {v}')
+
+
+def _chiavi(workflow: str) -> List[str]:
+    """Chiavi della regola generica: `app[_-]?key` -> `app_key`."""
+    m = re.match(r"\(\?i\)\(([^)]*)\)", _regex_generica(workflow).pattern)
+    assert m, f"{workflow}: chiavi della regola generica non trovate"
+    return [a.replace("[_-]?", "_") for a in m.group(1).split("|")]
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+def test_block_un_valore_nudo_con_spazi_sparisce_per_intero(workflow: str) -> None:
+    redigi, chiavi, fughe = _redazione(workflow), _chiavi(workflow), []
+    assert "password" in chiavi and "app_key" in chiavi
+    for c in chiavi:
+        for forma in FORME_DI_RIGA:
+            for marcatore in ("", "+", "-", " "):
+                riga = marcatore + forma.format(c=c, C=c.upper(), v=" ".join(PAROLE))
+                redatta = redigi(riga + "\nquota = 3.5")
+                if any(p in redatta for p in PAROLE) or not redatta.endswith("\nquota = 3.5"):
+                    fughe.append(f"  {riga!r} -> {redatta!r}")
+    assert not fughe, f"{workflow}: {len(fughe)} fughe\n" + "\n".join(fughe[:12])
+
+
+# Chiave a meta' riga: dopo c'e' codice, toglierlo al reviewer e' un verde falso.
+RIGHE_CHE_RESTANO = (
+    ("    login({c}=utente, user=u)", "user=u)"),
+    ("    if {c} == atteso and not scaduto:", "and not scaduto:"),
+    ("    def rinnova(self, {c}: str) -> str:", "-> str:"),
+    ('{c}: "{v}"  # nota', "# nota"),
+    ("{c}: ${{{{ secrets.X }}}}", "secrets.X }}"),
+    ("    {c}izer = crea(a, b)", "crea(a, b)"),
+    ("    {c}_hash = hash(pw, salt)", "hash(pw, salt)"),
+)
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+@pytest.mark.parametrize("forma,resta", RIGHE_CHE_RESTANO)
+def test_pass_il_codice_intorno_resta_visibile(workflow: str, forma: str, resta: str) -> None:
+    redatta = _redazione(workflow)("+" + forma.format(c="password", v=" ".join(PAROLE)))
+    assert resta in redatta and not any(p in redatta for p in PAROLE), (
+        f"{workflow}: {forma!r} -> {redatta!r}")
+
+
+@pytest.mark.parametrize("workflow", sorted(_reviewer_su_disco()))
+def test_block_la_redazione_resta_lineare_sulle_patch_grandi(workflow: str) -> None:
+    """Gira sulla patch intera: se esplode, il reviewer tace. ~0,2 s misurati."""
+    redigi, c = _redazione(workflow), "password"
+    inizio = time.perf_counter()
+    for testo in ("+" + "a." * 100_000, "+" + "x" * 200_000 + c, "+" + c + " " * 200_000,
+                  "+    if {c} == atteso:\n+{c}: a b\n".format(c=c) * 20_000):
+        redigi(testo)
+    assert time.perf_counter() - inizio < 10, f"{workflow}: redazione non lineare"
