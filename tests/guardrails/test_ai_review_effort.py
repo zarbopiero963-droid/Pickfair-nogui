@@ -181,6 +181,35 @@ def test_block_fable_resta_a_piena_profondita() -> None:
     )
 
 
+# Sulla #481 il giro a label di Fable sull'intera PR si e' fermato a 3000 token
+# di output (`stop_reason=max_tokens`): review parziale, check rosso, gate a
+# label senza verdetto. Era gia' successo a 1200 sulla #322. DECISIONE-426 P18.
+TETTO_OUTPUT_FABLE_MINIMO = 8000
+
+
+def test_block_il_tetto_di_output_di_fable_non_tronca_la_review_finale() -> None:
+    """Fable un effort non ce l'ha, ma la trappola e' la stessa di quella sopra.
+
+    Un tetto basso non fa risparmiare: si paga cio' che il modello genera, e il
+    tetto decide solo se la review arriva intera o tagliata a meta'. Si
+    controlla anche il valore di riserva nel codice, cosi' un 3000 non torna
+    di nascosto se la chiave sparisse dall'env del job.
+    """
+    env = _env(WORKFLOW_FABLE)
+    assert "MAX_OUTPUT_TOKENS" in env, f"{WORKFLOW_FABLE}: MAX_OUTPUT_TOKENS assente dall'env del job"
+    tetto = int(env["MAX_OUTPUT_TOKENS"])
+    assert tetto >= TETTO_OUTPUT_FABLE_MINIMO, (
+        f"{WORKFLOW_FABLE}: MAX_OUTPUT_TOKENS={tetto}, sotto {TETTO_OUTPUT_FABLE_MINIMO}. "
+        f"A 3000 la review finale della #481 e' uscita troncata"
+    )
+    riserva = re.search(r'os\.environ\.get\("MAX_OUTPUT_TOKENS", "(\d+)"\)',
+                        _senza_commenti(_testo(WORKFLOW_FABLE)))
+    assert riserva, f"{WORKFLOW_FABLE}: lettura di MAX_OUTPUT_TOKENS non trovata nel codice"
+    assert int(riserva.group(1)) == tetto, (
+        f"{WORKFLOW_FABLE}: valore di riserva {riserva.group(1)} diverso dal tetto {tetto}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Le liste di reviewer qui sopra sono scritte a mano. Finche' restano tali,
 # aggiungere un reviewer significa ricordarsi di QUATTRO moduli diversi
