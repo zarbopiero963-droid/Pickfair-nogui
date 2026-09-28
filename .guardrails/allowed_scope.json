@@ -1854,6 +1854,17 @@
       ],
       "max_files": 9,
       "description": "DECISIONE-426 P14 (owner, 23/09/2026, #479): nei cinque workflow di review un valore NON quotato con la chiave a inizio riga (.env, YAML, INI, properties, export, liste, commenti) si redige fino a fine riga; prima si fermava al primo spazio e il resto del segreto arrivava al provider e nel commento pubblicato. A meta' riga, e per un valore con forma di codice a inizio istruzione (chiamate, indici, annotazioni, argomenti: Claude Fable 5.1 e Codex sulla #483), resta la regola generica, per non togliere codice al reviewer; gli operatori + - * / % non contano come codice, perche' stanno nei segreti codificati e nelle passphrase (GPT-5.6 Sol, GPT-6 Astra, Fugu Ultra sulla #483); l'annotazione con ' = ' o ' | ' vale solo per un tipo built-in (GPT-5.6 Sol sulla #483); commenti con ! -- /* <!-- e set dei .bat coperti, == := => non sono separatori (Codex sulla #483, ultimo push per DECISIONE-426 P23, residui accettati con P22 e P23). Sul repo intero 18 righe su 219.588 redatte piu' di prima, nessuna di codice di produzione. Workflow-gate: merge dell'agente per DECISIONE-426 P19. Test red-first in tests/guardrails/test_ai_review_redazione_segreti.py: BLOCK rosso su main, 8009f5f, b1fd505 ed e72965a, PASS rosso su 0c397c9 ed e72965a, verdi dopo; mutazioni catturate."
+    },
+    "decisione426-p24-timeout-grok": {
+      "files": [
+        ".github/workflows/pr-review-xai-grok46.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ai_audit_workflows.md",
+        "tests/guardrails/test_ai_review_timeout.py"
+      ],
+      "max_files": 5,
+      "description": "DECISIONE-426 P24 (owner, 28/09/2026): nel workflow di Grok 4.7 il limite di attesa per richiesta al modello passa da 100 a 240 s e il timeout del job da 10 a 20 minuti (15 nella prima stesura: Codex sulla #484 ha contato le sei chiamate a GitHub al tetto di 30 s, che non ci stavano). La richiesta non e' in streaming e a reasoning high Grok risponde solo a ragionamento finito, spesso oltre i 100 s: sulla #478 non ha mai completato, sulla #483 1 tentativo su 8, e la #483 e' stata mergiata senza Grok per l'eccezione P24.1. Il test tests/guardrails/test_ai_review_timeout.py verifica per i cinque reviewer che esattamente tre tentativi, il backoff, le chiamate a GitHub contate dal file e un minuto di avvio stiano dentro timeout-minutes, che Grok abbia almeno 240 s e che i percorsi abbiano la barra anche su Windows (GPT-6 Astra sulla #484). Nessun altro valore del workflow cambia (prompt, redazione, budget, done_marker, label, effort). Docs e CHANGELOG nello stesso PR."
     }
   }
 }

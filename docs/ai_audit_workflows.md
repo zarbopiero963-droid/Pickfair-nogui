@@ -173,6 +173,22 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   volutamente corti.
 - Un `done_marker` per range evita di ripagare la stessa review su re-run del
   workflow o togli/rimetti label. Un nuovo push = nuovo range = nuova review.
+- **Attesa del provider.** La richiesta al modello non è in streaming: la
+  risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
+  tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito
+  aspetta 2, 4 e poi 8 s. Il limite è di 100 s per Fable e per Sol, di 120 s
+  per Fugu e per Astra, di 240 s per Grok. Quello di Grok era 100 s ed è salito
+  con la DECISIONE-426 P24: a reasoning `high` Grok 4.7 rispondeva spesso oltre
+  i 100 s. Sulla #478 non ha mai completato, sulla #483 ha completato 1
+  tentativo su 8. Aspettare di più non costa, perché si pagano i token
+  generati. Il caso peggiore deve stare dentro il `timeout-minutes` del job: tre
+  tentativi, le attese fra i tentativi, le chiamate a GitHub al loro tetto di
+  30 s (sei per workflow) e un minuto di avvio del runner. Per Grok fa 974 s, e
+  il suo job ha 20 minuti. Altrimenti GitHub interrompe il job prima del
+  commento d'errore, e il reviewer tace. Lo verifica
+  `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,
+  contando le chiamate a GitHub dal file e pretendendo esattamente tre
+  tentativi.
 
 ## Label
 

@@ -60,6 +60,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `pyproject.toml` packaging metadata.
 
 ### Changed
+- AI review workflow for Grok 4.7 (`pr-review-xai-grok46.yml`): each request to
+  the model may now wait 240 s instead of 100 s, and the job timeout rises from
+  10 to 20 minutes. The request is not streamed, so the answer arrives only
+  after the reasoning; at reasoning `high` Grok often needed more than 100 s
+  and the review failed (never completed on #478, 1 attempt out of 8 on #483).
+  Waiting longer adds no provider cost, since billing is per generated token.
+  A new test checks that, for all five reviewers, exactly three attempts plus
+  backoff, the GitHub calls at their timeout and runner start-up fit in the
+  job timeout. (DECISIONE-426 P24)
 - `requirements.txt`: removed `pytest` / `pytest-asyncio` (test deps only).
 - CI `unit.yml`, `failure.yml`, `net.yml`: install via `requirements-test.txt`
   instead of `requirements.txt + pip install pytest`.
