@@ -1595,12 +1595,20 @@ class TradingEngine:
         resta senza validazione: non raggiunge mai il client reale, e validare
         anche li' rompe 12 test di ciclo di vita che usano di proposito payload
         senza lato (misurato di nuovo alla #481).
+
+        Un alias che non e' una stringa e' invalido, anche se `str()` lo farebbe
+        sembrare BACK o LAY: convertirlo lo ripuliva, e il controllo sui tipi del
+        client (P13) non lo vedeva mai. In LIVE partiva un ordine vero dalla
+        #478. Rilievo P2 di Codex su `f80c813` (#481), DECISIONE-426 P20.
         """
-        lati = {
-            str(valore).strip().upper()
-            for valore in (payload.get("bet_type"), payload.get("side"))
-            if valore is not None and str(valore).strip()
-        }
+        lati = set()
+        for valore in (payload.get("bet_type"), payload.get("side")):
+            if valore is None:
+                continue
+            if not isinstance(valore, str):
+                raise _ErrorePrimaDellInvio("INVALID_SIDE")
+            if valore.strip():
+                lati.add(valore.strip().upper())
         if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
             raise _ErrorePrimaDellInvio("INVALID_SIDE")
         return {**payload, "bet_type": lati.pop()}

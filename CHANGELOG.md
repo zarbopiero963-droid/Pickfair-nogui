@@ -67,6 +67,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `side`) the same way as the LIVE branch before calling the simulation
   broker: discordant aliases, such as `bet_type=BACK` with `side=LAY`, fail
   with `INVALID_SIDE` instead of recording a `bet_type` order (#426 P17).
+  A non-string side alias now fails with `INVALID_SIDE` on both paths, even
+  when `str()` would turn it into BACK or LAY; on the LIVE branch such a
+  value had been converted and sent since #478 (#426 P20).
 - `betfair_client.py`: `BetfairClient.place_bet` now rejects a side outside
   BACK/LAY (checked after strip/upper; empty, `None` and non-string values
   included) with `RuntimeError("INVALID_SIDE")` before building the request,

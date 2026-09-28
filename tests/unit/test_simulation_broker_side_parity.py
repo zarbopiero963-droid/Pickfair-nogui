@@ -304,3 +304,21 @@ def test_paper_and_live_engine_give_the_same_answer_for_the_same_side(aliases):
 
     assert paper_outcome == live_outcome
     assert [order.side for order in broker.state.orders.values()] == live.sent
+
+
+@pytest.mark.parametrize("aliases", [
+    {"side": _LooksLikeBack()},
+    {"bet_type": _LooksLikeBack()},
+    {"bet_type": _LooksLikeBack(), "side": "BACK"},
+])
+@pytest.mark.parametrize("mode", ["SIMULATION", "LIVE"])
+def test_engine_rejects_non_string_side_aliases_in_paper_and_live(mode, aliases):
+    """Codex P2 on f80c813 (#426 P20): `str()` must not launder a non-string side."""
+    broker, live = SimulationBroker(), _StrictLiveClient()
+    paper = mode == "SIMULATION"
+
+    outcome = _submit(mode, broker if paper else live, aliases, broker if paper else None)
+
+    assert outcome == (STATUS_FAILED, "INVALID_SIDE")
+    assert broker.state.orders == {}
+    assert live.sent == []
