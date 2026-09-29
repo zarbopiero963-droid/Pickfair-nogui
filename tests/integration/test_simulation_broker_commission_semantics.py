@@ -216,9 +216,9 @@ def _fotografia(broker):
 
 def _tre_selezioni(broker, market_id="2.1"):
     broker.update_market_book(_aperto(market_id, {
-        11: (2.9, 3.0, 100.0),
-        22: (2.0, 2.1, 100.0),
-        33: (4.9, 5.0, 100.0),
+        11: (3.0, 3.1, 100.0),
+        22: (1.98, 2.0, 100.0),
+        33: (5.0, 5.1, 100.0),
     }))
     broker.place_bet(market_id=market_id, selection_id=11, side="BACK", price=3.0, size=10.0)
     broker.place_bet(market_id=market_id, selection_id=22, side="LAY", price=2.0, size=5.0)
@@ -267,7 +267,7 @@ def test_settlement_sim_mercato_in_perdita_senza_commissione():
     """BACK 10 @ 3.0 perde (-10), LAY 5 @ 2.0 sul vincitore perde la
     liability (-5): lordo -15, commissione 0, saldo finale 985 = 1000 - 15."""
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    broker.update_market_book(_aperto("2.2", {11: (2.9, 3.0, 100.0), 22: (2.0, 2.1, 100.0)}))
+    broker.update_market_book(_aperto("2.2", {11: (3.0, 3.1, 100.0), 22: (1.98, 2.0, 100.0)}))
     broker.place_bet(market_id="2.2", selection_id=11, side="BACK", price=3.0, size=10.0)
     broker.place_bet(market_id="2.2", selection_id=22, side="LAY", price=2.0, size=5.0)
 
@@ -284,13 +284,13 @@ def test_settlement_sim_mercato_in_perdita_senza_commissione():
 @pytest.mark.integration
 def test_settlement_sim_match_parziale_e_residuo_decaduto():
     """Liquidita' 4 a quota 3.0: della BACK da 10 se ne abbinano 4. Una
-    seconda BACK a 2.5 non si abbina. Vince la 11: lordo 4 x 2 = 8,
+    seconda BACK a 3.5, sopra il miglior back, non si abbina. Vince la 11: lordo 4 x 2 = 8,
     commissione 0,36, netto 7,64. Il residuo non abbinato decade senza
     toccare il saldo."""
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    broker.update_market_book(_aperto("2.3", {11: (2.9, 3.0, 4.0)}))
+    broker.update_market_book(_aperto("2.3", {11: (3.0, 3.1, 4.0)}))
     parziale = broker.place_bet(market_id="2.3", selection_id=11, side="BACK", price=3.0, size=10.0)
-    non_abbinata = broker.place_bet(market_id="2.3", selection_id=11, side="BACK", price=2.5, size=5.0)
+    non_abbinata = broker.place_bet(market_id="2.3", selection_id=11, side="BACK", price=3.5, size=5.0)
     id_parziale = parziale["instructionReports"][0]["betId"]
     id_libera = non_abbinata["instructionReports"][0]["betId"]
     assert broker.state.orders[id_parziale].matched_size == pytest.approx(4.0)
@@ -309,9 +309,9 @@ def _back_poi_lay(broker, market_id="2.4"):
     """BACK 10 @ 3.0, poi LAY 10 @ 2.0 sullo stesso runner. Il ledger
     accredita subito (3 - 2) x 10 = +10 alla chiusura della posizione:
     saldo 1010 prima del settlement."""
-    broker.update_market_book(_aperto(market_id, {11: (2.9, 3.0, 100.0)}))
+    broker.update_market_book(_aperto(market_id, {11: (3.0, 3.1, 100.0)}))
     broker.place_bet(market_id=market_id, selection_id=11, side="BACK", price=3.0, size=10.0)
-    broker.update_market_book(_aperto(market_id, {11: (2.0, 2.02, 100.0)}))
+    broker.update_market_book(_aperto(market_id, {11: (1.98, 2.0, 100.0)}))
     broker.place_bet(market_id=market_id, selection_id=11, side="LAY", price=2.0, size=10.0)
 
 
@@ -344,7 +344,7 @@ def test_settlement_sim_runner_rimosso_puntata_annullata():
     """Tutte le puntate sul runner rimosso: bet annullata, lordo 0, lo stake
     torna al saldo."""
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    broker.update_market_book(_aperto("2.5", {11: (2.9, 3.0, 100.0), 22: (2.9, 3.0, 100.0)}))
+    broker.update_market_book(_aperto("2.5", {11: (3.0, 3.1, 100.0), 22: (3.0, 3.1, 100.0)}))
     broker.place_bet(market_id="2.5", selection_id=22, side="BACK", price=3.0, size=10.0)
 
     esito = broker.update_market_book(_chiuso("2.5", {11: "WINNER", 22: "REMOVED"}))
@@ -459,8 +459,9 @@ def test_settlement_sim_ledger_incoerente_con_gli_ordini_fail_closed():
 @pytest.mark.integration
 def test_settlement_sim_mercato_senza_posizioni_decade_senza_registro():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
-    broker.update_market_book(_aperto("2.6", {11: (2.9, 3.0, 100.0)}))
-    r = broker.place_bet(market_id="2.6", selection_id=11, side="BACK", price=2.0, size=5.0)
+    broker.update_market_book(_aperto("2.6", {11: (3.0, 3.1, 100.0)}))
+    # Sopra il miglior back (3.0): su Betfair resta a riposo.
+    r = broker.place_bet(market_id="2.6", selection_id=11, side="BACK", price=3.5, size=5.0)
     bet_id = r["instructionReports"][0]["betId"]
 
     esito = broker.update_market_book(_chiuso("2.6", {11: "WINNER"}))
@@ -513,7 +514,7 @@ def test_settlement_sim_restart_prima_del_settlement_saldo_esatto():
 def test_settlement_sim_registro_restituisce_copie_ordinate():
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
     for mercato in ("3.2", "3.1"):
-        broker.update_market_book(_aperto(mercato, {11: (2.9, 3.0, 100.0)}))
+        broker.update_market_book(_aperto(mercato, {11: (3.0, 3.1, 100.0)}))
         broker.place_bet(market_id=mercato, selection_id=11, side="BACK", price=3.0, size=2.0)
         broker.update_market_book(_chiuso(mercato, {11: "LOSER"}))
 
@@ -538,7 +539,7 @@ def test_settlement_sim_puntata_su_mercato_gia_regolato_non_si_abbina():
     chiuso = _chiuso("2.1", {11: "WINNER", 22: "LOSER", 33: "LOSER"})
     broker.update_market_book(chiuso)
     saldo = broker.get_account_funds()["available"]
-    chiuso_con_prezzi = _aperto("2.1", {11: (2.9, 3.0, 100.0)})
+    chiuso_con_prezzi = _aperto("2.1", {11: (3.0, 3.1, 100.0)})
     chiuso_con_prezzi["status"] = "CLOSED"
     broker.update_market_book(chiuso_con_prezzi)
 

@@ -23,13 +23,16 @@ esterni: Telegram start/stop e il sender (niente rete), il widget della tab
 Telegram (come il guardrail di cablaggio) e, dove dichiarato, la risposta del
 broker per simulare un esito che il SIM da solo non produce.
 
-Calcolo indipendente del green-up: BACK 10 @ 2.02; il router chiude una
-posizione BACK con un LAY alla miglior quota di ``availableToBack`` (2.0),
-secondo la convenzione di ``cashout_router._closing_price`` e del motore SIM.
-Stake di chiusura 10 x 2.02 / 2.0 = 10,10. Esito del runner 11: vince
-+10,20 - 10,10 = +0,10; perde -10 + 10,10 = +0,10. Green-up 0,10 in entrambi
-i casi. La PR04 non tocca quella convenzione: la GUI deve fare esattamente cio'
-che fa l'headless.
+Calcolo indipendente del green-up: BACK 10 @ 2.02, abbinato sul miglior back
+di un book 2.02 / 2.04; poi il mercato scende a 1.98 / 2.00. Per chiudere un
+BACK si banca al miglior ``availableToLay`` (2.00), come sull'exchange Betfair
+(F6, #453). Stake di chiusura 10 x 2.02 / 2.0 = 10,10. Esito del runner 11:
+vince +10,20 - 10,10 = +0,10; perde -10 + 10,10 = +0,10. Green-up 0,10 in
+entrambi i casi. La GUI deve fare esattamente cio' che fa l'headless.
+
+Fino a F6 il router e il motore SIM usavano il lato opposto del book: la
+posizione si apriva su un book 2.00 / 2.02 e la chiusura bancava a 2.00, il
+miglior back. Gli stessi numeri valgono ora dal lato giusto.
 """
 from __future__ import annotations
 
@@ -147,14 +150,18 @@ class _App:
         self.rt.market_tracker.on_market_book(book)
 
     def posizione(self, market_id: str = MERCATO, evento: str = EVENTO) -> None:
-        """BACK 10 @ 2.02 del bot: il broker SIM lo registra nel ledger del bot
+        """BACK 10 @ 2.02 del bot, abbinato sul miglior back di un book
+        2.02 / 2.04; poi il mercato scende al book corrente di ``_aperto``
+        (1.98 / 2.00). Il broker SIM registra la puntata nel ledger del bot
         (simulation_bets), la stessa identita' che il router usa per chiudere."""
-        self.book(_aperto(market_id))
+        self.book(_aperto(market_id, back=2.02, lay=2.04))
         esito = self.broker.place_bet(
             market_id=market_id, selection_id=11, side="BACK", price=2.02,
             size=10.0, event_name=evento,
         )
         assert esito.get("status") == "SUCCESS"
+        assert float(esito["instructionReports"][0]["sizeMatched"]) == 10.0
+        self.book(_aperto(market_id))
         self.svuota_bus()
 
     def messaggio(self, testo: str) -> None:
@@ -199,7 +206,8 @@ class _App:
             self.app.stop()
 
 
-def _aperto(market_id: str, status: str = "OPEN") -> dict:
+def _aperto(market_id: str, status: str = "OPEN", back: float = 1.98, lay: float = 2.0) -> dict:
+    """Book corrente: sul runner 11 si punta a ``back`` e si banca a ``lay``."""
     return {
         "marketId": market_id,
         "status": status,
@@ -208,8 +216,8 @@ def _aperto(market_id: str, status: str = "OPEN") -> dict:
                 "selectionId": 11,
                 "status": "ACTIVE",
                 "ex": {
-                    "availableToBack": [{"price": 2.0, "size": 100.0}],
-                    "availableToLay": [{"price": 2.02, "size": 100.0}],
+                    "availableToBack": [{"price": back, "size": 100.0}],
+                    "availableToLay": [{"price": lay, "size": 100.0}],
                 },
             },
             {
@@ -618,10 +626,12 @@ class _ListenerAllaChiusura:
         self.testo = testo
         self.attendi = attendi
         self.limite = limite
+        self.fermate = 0
 
     def stop(self):
         import time as _time
 
+        self.fermate += 1
         if self.testo:
             self.app.messaggio(self.testo)
         if self.attendi:
@@ -700,9 +710,16 @@ def test_chiusura_finestra_hook_in_ordine_e_tutti_riusciti(gui):
     """Fugu Ultra sulla #486: l'hook runtime_stop ferma anche Telegram e
     Betfair, poi gli hook successivi li richiamano. La stessa chiamata che fa
     ``_on_close``, sui servizi veri: il runtime si ferma per primo e nessun
-    hook fallisce, doppio stop e doppia disconnessione compresi."""
+    hook fallisce, doppio stop e doppia disconnessione compresi.
+
+    Lo stop di Telegram e' quello vero anche quando lo chiama il runtime (il
+    fixture lo sostituisce, qui lo si rimette), fino a un listener di confine.
+    Dopo il merge della #486 il test copriva il doppio stop col solo metodo
+    dell'hook: rafforzato nella PR di F6, come dichiarato nella #486."""
     gui.avvia()
     gui.posizione()
+    _listener_di_confine(gui)
+    listener = gui.app.telegram_service.listener
 
     esiti = gui.app.shutdown.shutdown()
 
@@ -712,6 +729,10 @@ def test_chiusura_finestra_hook_in_ordine_e_tutti_riusciti(gui):
     assert all(e["ok"] for e in esiti), esiti
     assert gui.rt.mode.value == "STOPPED"
     assert gui.app.betfair_service.get_simulation_broker() is None
+    # Il listener si ferma una volta: il secondo stop trova il servizio fermo.
+    assert listener.fermate == 1
+    assert gui.app.telegram_service.state == "STOPPED"
+    assert gui.app.telegram_service.listener is None
 
 
 def test_chiusura_finestra_esito_tardivo_senza_effetti(gui):

@@ -2803,7 +2803,13 @@ class RuntimeController:
             router = CashoutRouter(
                 fetch_current_orders=svc.list_current_orders,
                 fetch_bot_orders=self.db.get_bot_active_orders,
-                fetch_market_book=svc.get_market_book_snapshot,
+                # In LIVE il book va chiesto CON i prezzi: senza priceProjection
+                # Betfair non popola le ladder, il router non trova il prezzo di
+                # chiusura e salta ogni posizione con un solo warning (F6). In
+                # SIM il flag e' ininfluente.
+                fetch_market_book=lambda market_id: svc.get_market_book_snapshot(
+                    market_id, include_prices=True
+                ),
                 cancel_orders=adapter.cancel,
                 publish=self.bus.publish,
                 commission_pct=commission,

@@ -151,10 +151,13 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
         })
     assert len(broker.state.orders) == before
 
+    # Semantica Betfair (#383, F6): il BACK @ 2.0 si abbina sul miglior
+    # availableToBack (2.0); poi il mercato scende e il LAY @ 1.8 del cashout si
+    # abbina sul miglior availableToLay (1.8).
     broker.update_market_book({
         "marketId": "1.1", "runners": [{"selectionId": 9, "ex": {
-            "availableToLay": [{"price": 1.9, "size": 10.0}],
-            "availableToBack": [{"price": 1.8, "size": 10.0}],
+            "availableToBack": [{"price": 2.0, "size": 10.0}],
+            "availableToLay": [{"price": 2.02, "size": 10.0}],
         }}],
     })
     manager = OrderManager(db=SagaDB(), client_getter=lambda: broker,
@@ -167,6 +170,12 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
     assert managed["ok"] is True
     assert broker.state.orders[managed["bet_id"]].side == "BACK"
 
+    broker.update_market_book({
+        "marketId": "1.1", "runners": [{"selectionId": 9, "ex": {
+            "availableToBack": [{"price": 1.78, "size": 10.0}],
+            "availableToLay": [{"price": 1.8, "size": 10.0}],
+        }}],
+    })
     bus = Bus()
     CashoutExecutor(bus, router).on_cmd_execute_cashout({
         "market_id": "1.1", "selection_id": 9, "side": "LAY",

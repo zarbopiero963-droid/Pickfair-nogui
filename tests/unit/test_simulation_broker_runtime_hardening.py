@@ -10,20 +10,24 @@ class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
     """Covers malformed runtime input hardening scenarios."""
 
     @staticmethod
-    def make_book(selection_id=10, lay_size=10.0):
-        """Build a minimal market book fixture."""
+    def make_book(selection_id=10, back_size=10.0):
+        """Build a minimal market book fixture.
+
+        A BACK matches on the best availableToBack (Betfair semantics, #383, F6):
+        ``back_size`` is the liquidity available to the tests' BACK @ 2.0 orders.
+        """
         return {
             "marketId": "1.100",
             "runners": [{"selectionId": selection_id, "ex": {
-                "availableToBack": [{"price": 1.99, "size": 10.0}],
-                "availableToLay": [{"price": 2.0, "size": lay_size}],
+                "availableToBack": [{"price": 2.0, "size": back_size}],
+                "availableToLay": [{"price": 2.02, "size": 10.0}],
             }}],
         }
 
-    def make_broker(self, lay_size=10.0):
+    def make_broker(self, back_size=10.0):
         """Create a broker with seeded liquidity."""
         broker = SimulationBroker(starting_balance=1000.0, partial_fill_enabled=True, consume_liquidity=True)
-        broker.update_market_book(self.make_book(lay_size=lay_size))
+        broker.update_market_book(self.make_book(back_size=back_size))
         return broker
 
     @staticmethod
@@ -60,7 +64,7 @@ class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
 
     def test_partial_cancel_state(self):
         """Partial fill then cancel should keep coherent state."""
-        broker = self.make_broker(lay_size=2.0)
+        broker = self.make_broker(back_size=2.0)
         out = broker.place_bet(market_id="1.100", selection_id=10, side="BACK", price=2.0, size=5.0)
         report = self.first_report(out)
         order = self.stored_order(broker, report)

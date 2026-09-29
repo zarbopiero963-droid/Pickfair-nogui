@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -23,9 +24,9 @@ class SimulationMatchingEngine:
     """
     Matching engine simulato.
 
-    Regole:
-    - BACK matcha contro availableToLay
-    - LAY  matcha contro availableToBack
+    Regole (semantica Betfair, #383, F6):
+    - BACK matcha contro availableToBack, sui livelli con prezzo >= della quota chiesta
+    - LAY  matcha contro availableToLay, sui livelli con prezzo <= della quota chiesta
     - supporta partial fill opzionale
     - può consumare liquidità dal ladder
     """
@@ -61,9 +62,11 @@ class SimulationMatchingEngine:
         order_price: float,
         book_price: float,
     ) -> bool:
+        # Il lato del ladder e la disuguaglianza si invertono insieme (#383): un
+        # BACK chiede al massimo il prezzo del livello, un LAY almeno quello.
         if side == "BACK":
-            return order_price >= book_price
-        return order_price <= book_price
+            return order_price <= book_price
+        return order_price >= book_price
 
     def _status_from_match(self, requested: float, matched: float) -> str:
         if matched <= 0.0:
@@ -205,7 +208,9 @@ class SimulationMatchingEngine:
                 message="market_id_missing",
             )
 
-        if price <= 1.0:
+        # Anche una quota non finita e' non valida: con la semantica Betfair un
+        # LAY a quota infinita attraverserebbe qualsiasi livello (F6).
+        if not math.isfinite(price) or price <= 1.0:
             return SimulationMatchResult(
                 bet_id=str(bet_id),
                 status="FAILURE",

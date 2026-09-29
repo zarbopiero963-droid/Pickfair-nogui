@@ -134,10 +134,10 @@ submit. Richiesta = `stake * multiplier` (le `size` del book e lo `stake` sono
 backer-stake, omogenei; per il LAY lo `stake` e' backer-stake, la liability e' un
 campo separato). Shortfall se `available < max(min_absolute, required)`.
 
-> Nota: la direzione ladder e' **invertita** rispetto al mirror del matcher
-> interno del simulatore (che modella ordini in attesa: BACK→availableToLay). Sul
-> book reale (feed Betfair) i campi sono quelli standard, quindi il blocco usa
-> `availableToBack` per un BACK. Decisione owner in #383.
+> Nota: e' la direzione Betfair-standard, decisa dall'owner in #383. Fino a F6
+> (#453, DECISIONE-426 P25) il matcher del simulatore usava quella opposta
+> (BACK→availableToLay); da F6 il simulatore, il prezzo di chiusura del cashout
+> e il resolver Telegram seguono la stessa direzione di questo guard.
 
 **FAIL-OPEN su dato mancante.** Se il book non e' in cache o la selezione non e'
 nel book, non si emette shortfall (dato ignoto) => **nessun blocco** (cache

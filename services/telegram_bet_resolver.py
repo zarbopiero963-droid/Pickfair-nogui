@@ -518,19 +518,23 @@ class TelegramBetResolver:
             backs = ex.get("availableToBack") or []
             lays = ex.get("availableToLay") or []
 
+            # Semantica Betfair (#383, F6): availableToBack sono i prezzi a cui si
+            # PUNTA adesso, availableToLay quelli a cui si BANCA. Fino a F6 i due
+            # rami erano invertiti: l'"aggressivo" offriva al miglior lay e su
+            # Betfair restava a riposo.
             price = 0.0
             if aggressive_best_price:
-                # BACK aggressivo: prendo miglior lay disponibile
-                if lays:
-                    price = self._safe_float(lays[0].get("price"), 0.0)
-                elif backs:
-                    price = self._safe_float(backs[0].get("price"), 0.0)
-            else:
-                # BACK passivo: prendo miglior back
+                # BACK aggressivo: il miglior back disponibile, eseguibile subito
                 if backs:
                     price = self._safe_float(backs[0].get("price"), 0.0)
                 elif lays:
                     price = self._safe_float(lays[0].get("price"), 0.0)
+            else:
+                # BACK passivo: si offre al miglior lay e resta a riposo
+                if lays:
+                    price = self._safe_float(lays[0].get("price"), 0.0)
+                elif backs:
+                    price = self._safe_float(backs[0].get("price"), 0.0)
 
             if price <= 1.0:
                 continue

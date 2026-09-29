@@ -20,6 +20,13 @@ def _set_book(broker: SimulationBroker, *, market_id: str, selection_id: int, ba
     )
 
 
+# Semantica Betfair (#383, F6): un BACK si abbina sul miglior availableToBack
+# se la quota chiesta e' <= (prende il prezzo del book: chiedere 1.9 con il
+# miglior back a 2.0 abbina a 2.0); un LAY sul miglior availableToLay se la
+# quota chiesta e' >=. I fill restano quelli di prima (2.0, 3.0, 1.5), ora dal
+# lato giusto del book.
+
+
 def _find_open_position(snapshot: dict, market_id: str, selection_id: int) -> dict:
     for row in snapshot.get("open_positions", []):
         if row.get("market_id") == market_id and int(row.get("runner_id") or 0) == int(selection_id):
@@ -31,11 +38,11 @@ def _find_open_position(snapshot: dict, market_id: str, selection_id: int) -> di
 def test_simulation_weighted_average_fills_use_authoritative_position_ledger():
     broker = SimulationBroker(partial_fill_enabled=False)
 
-    _set_book(broker, market_id="1.900", selection_id=77, back_price=1.99, lay_price=2.0)
-    broker.place_bet(market_id="1.900", selection_id=77, side="BACK", price=3.0, size=40.0)
+    _set_book(broker, market_id="1.900", selection_id=77, back_price=2.0, lay_price=2.02)
+    broker.place_bet(market_id="1.900", selection_id=77, side="BACK", price=1.9, size=40.0)
 
-    _set_book(broker, market_id="1.900", selection_id=77, back_price=2.99, lay_price=3.0)
-    broker.place_bet(market_id="1.900", selection_id=77, side="BACK", price=3.5, size=20.0)
+    _set_book(broker, market_id="1.900", selection_id=77, back_price=3.0, lay_price=3.05)
+    broker.place_bet(market_id="1.900", selection_id=77, side="BACK", price=2.8, size=20.0)
 
     snap = broker.snapshot()
     pos = _find_open_position(snap, "1.900", 77)
@@ -49,14 +56,14 @@ def test_simulation_weighted_average_fills_use_authoritative_position_ledger():
 def test_simulation_partial_close_and_residual_exposure_are_ledger_driven():
     broker = SimulationBroker(partial_fill_enabled=False)
 
-    _set_book(broker, market_id="1.901", selection_id=78, back_price=1.99, lay_price=2.0)
-    broker.place_bet(market_id="1.901", selection_id=78, side="BACK", price=3.0, size=40.0)
+    _set_book(broker, market_id="1.901", selection_id=78, back_price=2.0, lay_price=2.02)
+    broker.place_bet(market_id="1.901", selection_id=78, side="BACK", price=1.9, size=40.0)
 
-    _set_book(broker, market_id="1.901", selection_id=78, back_price=2.99, lay_price=3.0)
-    broker.place_bet(market_id="1.901", selection_id=78, side="BACK", price=3.5, size=20.0)
+    _set_book(broker, market_id="1.901", selection_id=78, back_price=3.0, lay_price=3.05)
+    broker.place_bet(market_id="1.901", selection_id=78, side="BACK", price=2.8, size=20.0)
 
-    _set_book(broker, market_id="1.901", selection_id=78, back_price=1.5, lay_price=1.6)
-    broker.place_bet(market_id="1.901", selection_id=78, side="LAY", price=1.5, size=20.0)
+    _set_book(broker, market_id="1.901", selection_id=78, back_price=1.49, lay_price=1.5)
+    broker.place_bet(market_id="1.901", selection_id=78, side="LAY", price=1.6, size=20.0)
 
     snap = broker.snapshot()
     pos = _find_open_position(snap, "1.901", 78)
@@ -74,11 +81,11 @@ def test_simulation_partial_close_and_residual_exposure_are_ledger_driven():
 def test_simulation_realized_and_unrealized_remain_separate_on_market_updates():
     broker = SimulationBroker(partial_fill_enabled=False)
 
-    _set_book(broker, market_id="1.902", selection_id=79, back_price=1.99, lay_price=2.0)
-    broker.place_bet(market_id="1.902", selection_id=79, side="BACK", price=2.2, size=50.0)
+    _set_book(broker, market_id="1.902", selection_id=79, back_price=2.0, lay_price=2.02)
+    broker.place_bet(market_id="1.902", selection_id=79, side="BACK", price=1.9, size=50.0)
 
-    _set_book(broker, market_id="1.902", selection_id=79, back_price=1.5, lay_price=1.6)
-    broker.place_bet(market_id="1.902", selection_id=79, side="LAY", price=1.5, size=10.0)
+    _set_book(broker, market_id="1.902", selection_id=79, back_price=1.49, lay_price=1.5)
+    broker.place_bet(market_id="1.902", selection_id=79, side="LAY", price=1.6, size=10.0)
 
     # refresh unrealized on residual BACK size=40 with mark lay=1.8
     _set_book(broker, market_id="1.902", selection_id=79, back_price=1.79, lay_price=1.8)
