@@ -1927,6 +1927,17 @@
       ],
       "max_files": 23,
       "description": "F6 della #453 (DECISIONE-426 P25, PR dedicata subito dopo la PR04 e prima della PR05): i lati del book come su Betfair, convenzione gia' decisa dall'owner per il dutching in #383 (availableToBack = prezzi a cui si punta adesso, availableToLay = prezzi a cui si banca adesso; lato e disuguaglianza si invertono insieme). PHASE 0 SUL MAIN `774bb3b`, riprodotto: su un book 2.00 / 2.02 il SIM abbinava BACK @ 2.02 e lasciava a riposo BACK @ 2.00; il router del cashout prezzava l'hedge LAY a 2.00 (miglior back); in LIVE il router chiedeva il book senza priceProjection, Betfair non popola le ladder e ogni posizione veniva saltata con un solo warning. Correzione: simulation_broker._match_order (BACK sul miglior availableToBack con quota <=, LAY sul miglior availableToLay con quota >=, al prezzo del book) con quota non valida rifiutata esplicitamente (prima di F6 un LAY a quota 0 si abbinava); cashout_router._closing_price (hedge LAY dal miglior availableToLay, hedge BACK dal miglior availableToBack, gate L95 sullo stesso livello); core/runtime_controller.py passa al router get_market_book_snapshot(include_prices=True); services/telegram_bet_resolver.py (BACK aggressivo = miglior availableToBack); core/simulation_matching_engine.py e core/simulation_order_book.py (motore dei soli test, stesse regole, quota non finita rifiutata); docstring di direct_best_price. Test nuovi con oracolo Betfair indipendente, test esistenti che fissavano la convenzione invertita riallineati al lato giusto con gli stessi numeri attesi; rafforzato il test degli hook di chiusura della PR04 (stop vero di Telegram anche dal runtime, come dichiarato nella #486). Docs e CHANGELOG nello stesso PR."
+    },
+    "decisione426-p27-quota-non-finita": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "guardrails/contracts/core.trading_engine.json",
+        "tests/unit/test_betfair_client_quota_non_finita.py"
+      ],
+      "max_files": 5,
+      "description": "F11 della #453 (DECISIONE-426 P27, PR piccola sul solo client, prima della PR delle credenziali e della PR05): BetfairClient.place_bet rifiuta quota e size NaN o infinite (INVALID_PRICE / INVALID_SIZE) prima di costruire la richiesta, come gia' _validate_replace_params. PHASE 0 SUL MAIN `a86bfaa`, riprodotto col client reale e la sessione HTTP come contatore: price=nan/inf e size=nan passavano, POST=1 con il corpo \"price\": NaN / \"size\": NaN; stesso esito da OrderRouter.place, il seam da cui la catena del cashout arriva al client in produzione (il SafetyLayer li' controlla solo price <= 1 e stake <= 0), e da BetfairService.place_order e OrderManager.place_order (che controlla solo price <= 1.0), oggi senza chiamanti in produzione. Estensione dichiarata rispetto al testo di P27, che nomina la quota: la size ha lo stesso difetto nello stesso blocco di validazione ed e' corretta insieme. Test nuovi PASS/BLOCK/EDGE sul client e dai tre percorsi reali, piu' la classificazione pre-invio dell'engine; nota nel contratto wire (guardrails/contracts/core.trading_engine.json) e CHANGELOG nello stesso PR."
     }
   }
 }

@@ -1593,18 +1593,22 @@ class BetfairClient:
         if selection_id_i <= 0:
             raise RuntimeError("INVALID_SELECTION_ID")
 
+        # NaN e infinito passano `float()`, e `nan <= 1.0` e' falso: senza il
+        # controllo di finitezza il corpo di placeOrders partiva con
+        # `"price": NaN` o `"size": Infinity`. F11 della #453, DECISIONE-426
+        # P27; `_validate_replace_params` fa lo stesso per il replace.
         try:
             price_f = float(price)
         except Exception as exc:
             raise RuntimeError("INVALID_PRICE") from exc
-        if price_f <= 1.0:
+        if not math.isfinite(price_f) or price_f <= 1.0:
             raise RuntimeError("INVALID_PRICE")
 
         try:
             size_f = float(size)
         except Exception as exc:
             raise RuntimeError("INVALID_SIZE") from exc
-        if size_f <= 0.0:
+        if not math.isfinite(size_f) or size_f <= 0.0:
             raise RuntimeError("INVALID_SIZE")
 
         # Il lato si VALIDA come gli altri argomenti, non si converte.
