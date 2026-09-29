@@ -251,6 +251,54 @@ def test_headless_costruisce_il_componente(nome, app_headless):
     )
 
 
+# Catena di esecuzione del cashout nella GUI: promossa da GAP a CABLATO dalla
+# PR04 (#461, H28 della #453). La costruisce `cashout_wiring.cabla_catena_cashout`,
+# la stessa funzione dell'headless, nello stesso punto del build.
+COMPONENTI_CASHOUT_GUI = (
+    "order_router",
+    "cashout_executor",
+    "cashout_request_bridge",
+    "cashout_residual_handler",
+)
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize("nome", COMPONENTI_CASHOUT_GUI)
+def test_gui_costruisce_la_catena_cashout(nome, app_gui):
+    """CABLATO (promosso dal gap «GUI parity», PR04 #461). Senza questi
+    componenti un CASHOUT arrivato dalla chat nella GUI e' rifiutato
+    (`cashout_chain_not_wired`) e il REQ_EXECUTE_CASHOUT dell'auto-close
+    cade su un bus senza ascoltatori."""
+    assert getattr(app_gui, nome, None) is not None, (
+        f"COMPONENTE NON COSTRUITO: MiniPickfairGUI non produce piu' '{nome}': "
+        "il cashout dalla GUI torna rifiutato."
+    )
+
+
+@pytest.mark.guardrail
+@pytest.mark.parametrize(
+    "topic", ("REQ_EXECUTE_CASHOUT", "CMD_EXECUTE_CASHOUT", "CASHOUT_FAILED")
+)
+def test_gui_ha_il_sottoscrittore_cashout(topic, app_gui):
+    presenti = _sottoscrittori(app_gui.bus)
+    assert presenti.get(topic, 0) >= 1, (
+        f"FILO STACCATO: '{topic}' non ha sottoscrittori sul bus della GUI "
+        "reale: un cashout pubblicato li' cade nel vuoto."
+    )
+
+
+@pytest.mark.guardrail
+def test_safety_layer_nel_cashout_executor_della_gui(app_gui):
+    """La GUI non ha un executor «alleggerito»: lo stesso SafetyLayer reale
+    dell'headless (test_cablato_safety_layer_nel_cashout_executor)."""
+    from core.safety_layer import SafetyLayer
+
+    layer = getattr(app_gui.cashout_executor, "safety_layer", None)
+    assert isinstance(layer, SafetyLayer), (
+        "REGRESSIONE: CashoutExecutor della GUI senza SafetyLayer reale."
+    )
+
+
 @pytest.mark.guardrail
 def test_risk_gate_reale_sul_percorso_ordine(app_headless, app_gui):
     """H-04: senza RiskGate esplicito l'engine ripiega sul segnaposto che
@@ -382,10 +430,10 @@ def test_dutching_agganciato_corsia_selettiva_senza_doppi_consumer(
         # Le corsie preesistenti NON devono guadagnare un secondo consumer:
         # se un conteggio sale oltre l'atteso, qualcuno ha cablato il
         # middleware anche li' e ogni REQ produrrebbe DUE esecuzioni.
-        # Attesi di oggi: REQ_QUICK_BET=1 (engine) su entrambi;
-        # REQ_EXECUTE_CASHOUT=1 (bridge) su headless, 0 su GUI (il bridge
-        # manca dalla GUI: gap «GUI parity», tracciato a parte).
-        atteso_cashout = 1 if nome == "headless" else 0
+        # Attesi di oggi: REQ_QUICK_BET=1 (engine) e REQ_EXECUTE_CASHOUT=1
+        # (bridge) su ENTRAMBI: dalla PR04 (#461) la GUI costruisce la stessa
+        # catena cashout dell'headless.
+        atteso_cashout = 1
         assert presenti.get("REQ_QUICK_BET", 0) == 1, (
             f"DOPPIO CONSUMER ({nome}): REQ_QUICK_BET deve restare al solo "
             "TradingEngine."
@@ -560,27 +608,21 @@ def test_cablato_safety_layer_nel_cashout_executor(app_headless):
 
 
 @pytest.mark.guardrail
-def test_gap_gui_senza_osservabilita_ne_cashout(app_gui):
+def test_gap_gui_senza_osservabilita(app_gui):
     """GAP (piano: PR «GUI parity», decisione owner 2026-08-23: parity
-    completa). La GUI monta il runtime ma NON watchdog/alert ne' la catena
-    cashout: le tab Watchdog e Alert salvano su servizi che nel processo GUI
-    non esistono, e un REQ_EXECUTE_CASHOUT cade su un bus senza ascoltatori."""
+    completa). La GUI monta il runtime ma NON watchdog/alert/incidenti: le tab
+    Watchdog e Alert salvano su servizi che nel processo GUI non esistono.
+    La meta' cashout di questo gap e' chiusa dalla PR04 (#461) e sta in
+    CABLATO (test_gui_costruisce_la_catena_cashout)."""
     mancanti = [
         nome
-        for nome in ("watchdog_service", "alerts_manager", "incidents_manager",
-                     "order_router", "cashout_executor", "cashout_request_bridge",
-                     "cashout_residual_handler")
+        for nome in ("watchdog_service", "alerts_manager", "incidents_manager")
         if not hasattr(app_gui, nome)
     ]
-    assert len(mancanti) == 7, (
-        f"GAP IN CHIUSURA: la GUI ora costruisce {7 - len(mancanti)} dei 7 "
-        "componenti attesi dalla parity. Completa la parity e promuovi la "
-        f"voce in CABLATO (mancano ancora: {mancanti})."
-    )
-    presenti = _sottoscrittori(app_gui.bus)
-    assert presenti.get("REQ_EXECUTE_CASHOUT", 0) == 0, (
-        "GAP CHIUSO: la GUI ha un sottoscrittore per REQ_EXECUTE_CASHOUT. "
-        "Promuovi in CABLATO."
+    assert len(mancanti) == 3, (
+        f"GAP IN CHIUSURA: la GUI ora costruisce {3 - len(mancanti)} dei 3 "
+        "componenti di osservabilita' attesi dalla parity. Completa la parity "
+        f"e promuovi la voce in CABLATO (mancano ancora: {mancanti})."
     )
 
 

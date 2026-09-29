@@ -1881,6 +1881,23 @@
       ],
       "max_files": 10,
       "description": "PR03 della roadmap #461 (pacchetto P02 / H01): settlement SIM fino al netto di mercato, al saldo e al ciclo Roserpina. PHASE 0 SUL MAIN `840fc1e`, falso successo RIPRODOTTO con l'app headless vera (Database reale, EventBus reale, SimulationBroker reale): mercato con BACK 10 @ 3.0 vincente e LAY 5 @ 2.0 sul perdente, book CHIUSO consegnato dall'ingresso reale MarketTracker.on_market_book, settlement.poll_enabled acceso: saldo fermo a 985 invece di 1023,875, esposizione bloccata a 15, zero RUNTIME_CLOSE_POSITION, ciclo invariato, poller non avviato in SIM. Il test del calcolo passava chiamando record_realized_settlement con un lordo scritto a mano, senza chiamanti di produzione e con stake e liability contati due volte se usato dopo i fill (1008,875). Correzione: il broker SIM regola il mercato al book CHIUSO (lordo per bet stile exchange da core.pnl_engine.exchange_settled_gross_pnl, selezioni aggregate prima della commissione di policy applicata una volta sul netto, accredito = netto meno effetto di cassa gia' applicato dai fill ricostruito dagli ordini, PositionLedger chiusi, ordini SETTLED/LAPSED, registro persistito nello stato SIM, fail-closed su stati runner non terminali, runner rimossi con puntate altrove, dead heat, ledger incoerenti, commissione fuori policy); PnLEngine.apply_simulated_market_settlement pubblica un evento per mercato con aggregatore SIM separato dal LIVE; il poller settlement gira anche in SIM con la stessa chiave (default OFF invariato) e consegna ogni settlement una volta, anche dopo un riavvio fra persistenza e aggiornamento del ciclo. Ramo LIVE del poller, contratto e consumer del runtime invariati; services/ non toccato. Docs e CHANGELOG nello stesso PR."
+    },
+    "issue437-pr04": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_wiring.py",
+        "core/runtime_controller.py",
+        "docs/cashout_overview.md",
+        "docs/design/design_handoff.md",
+        "headless_main.py",
+        "mini_gui.py",
+        "tests/acceptance/test_issue437_pr04.py",
+        "tests/guardrails/test_cablaggio_runtime.py",
+        "tests/unit/test_cashout_wiring.py"
+      ],
+      "max_files": 11,
+      "description": "PR04 della roadmap #461 (pacchetto P03 / H28 della #453): cashout nella GUI con la stessa catena dell'headless. PHASE 0 SUL MAIN `7b0fc5b`, falso successo RIPRODOTTO con la GUI vera (MiniPickfairGUI test_mode, Database reale, EventBus reale, SimulationBroker reale) e l'headless vero, stesso book, stessa posizione BACK 10 @ 2.02, stesso CASHOUT_ALL: la GUI rifiuta con cashout_chain_not_wired, zero hedge, esposizione ferma a 10; l'headless chiude con LAY 10,1 @ 2,0 e CASHOUT_SUCCESS. I test della scheda (bridge, executor, guardrail di cablaggio) erano verdi: 91 passed, e il guardrail affermava il gap. Correzione: cashout_wiring.cabla_catena_cashout costruisce bridge, executor con SafetyLayer reale, OrderRouter e gestore del residuo, usato da headless_main e da mini_gui nello stesso punto del build (un solo consumer per topic); la notifica del residuo via Telegram passa, invariata, da headless_main al modulo comune; il Log della GUI mostra CASHOUT_SUCCESS e CASHOUT_FAILED e Storico Bet e Risk Desk si aggiornano sugli esiti cashout. core/runtime_controller.py: commento del guard anti-silent-drop e stop() che rende il runtime non attivo prima di smontare Telegram e Betfair; la chiusura della GUI ferma il runtime per primo (hook runtime_stop), cosi' un comando o un cashout differito arrivato durante lo smontaggio non parte (rilievo GPT-6 Astra sulla #486); stop() disconnette Betfair anche se lo stop di Telegram solleva (rilievo GPT-5.6 Sol e Fugu Ultra sulla #486). Router, resolver, bridge, executor e residuo invariati; services/ non toccato. Docs, design handoff e CHANGELOG nello stesso PR."
     }
   }
 }

@@ -2363,11 +2363,20 @@ class RuntimeController:
         }
 
     def stop(self) -> dict:
-        self._stop_settlement_poller()
-        self._stop_market_data_feed()
-        self.telegram_service.stop()
-        self.betfair_service.disconnect()
+        # Il runtime smette di essere attivo PRIMA di smontare i servizi
+        # (#461 PR04): la disconnessione di Telegram puo' durare secondi, e un
+        # segnale o un cashout differito (grace auto-green) arrivato intanto
+        # trova i gate chiusi e viene rifiutato, invece di piazzare mentre il
+        # servizio Betfair e' ancora collegato. Se uno smontaggio solleva, il
+        # runtime resta comunque fermo e Betfair si disconnette lo stesso;
+        # l'errore risale poi al chiamante.
         self.mode = RuntimeMode.STOPPED
+        try:
+            self._stop_settlement_poller()
+            self._stop_market_data_feed()
+            self.telegram_service.stop()
+        finally:
+            self.betfair_service.disconnect()
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {
@@ -2487,11 +2496,12 @@ class RuntimeController:
         monte in ``_on_signal_received``. Fail-closed: un errore di costruzione o
         routing pubblica un ``CASHOUT_FAILED`` strutturato, non scarta in silenzio.
         """
-        # Guard anti-silent-drop: la catena d'esecuzione cashout è cablata solo
-        # in HeadlessApp (path di go-live). In un entrypoint dove non è cablata
-        # (es. mini_gui), pubblicare REQ_EXECUTE_CASHOUT lo farebbe cadere senza
-        # subscriber => l'operatore non vedrebbe nulla. Qui si rifiuta in modo
-        # VISIBILE (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
+        # Guard anti-silent-drop: la catena d'esecuzione cashout la cablano
+        # HeadlessApp e MiniPickfairGUI con cashout_wiring (#461 PR04). In un
+        # entrypoint dove non è cablata (un test, uno strumento di sviluppo),
+        # pubblicare REQ_EXECUTE_CASHOUT lo farebbe cadere senza subscriber =>
+        # l'operatore non vedrebbe nulla. Qui si rifiuta in modo VISIBILE
+        # (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
         if not self._cashout_chain_wired():
             self._reject_signal(signal, "cashout_chain_not_wired")
             return

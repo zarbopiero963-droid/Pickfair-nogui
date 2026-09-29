@@ -238,6 +238,7 @@ from core.risk_gate import RiskGate, RoserpinaRiskLimits
 from core.runtime_controller import RuntimeController
 from core.risk_middleware import RiskMiddleware
 from controllers.dutching_controller import DutchingController
+from cashout_wiring import cabla_catena_cashout, notifica_residuo_cashout
 from observability import RuntimeProbe
 from safe_mode import get_safe_mode_manager
 
@@ -462,6 +463,26 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.dutching_controller = DutchingController(
             self.bus, self.runtime
         ).attach_bus_consumer()
+
+        # Catena di esecuzione del cashout (#461 PR04, H28 #453): la STESSA
+        # dell'headless, costruita dallo stesso cashout_wiring, nello stesso
+        # punto del build. Prima la GUI non l'aveva: un CASHOUT arrivato dalla
+        # chat era rifiutato (cashout_chain_not_wired) e il REQ_EXECUTE_CASHOUT
+        # dell'auto-close cadeva su un bus senza ascoltatori. Un solo consumer
+        # per topic: il RiskMiddleware qui sopra resta sulla sola corsia
+        # dutching, altrimenti ogni cashout diventerebbe due hedge.
+        catena_cashout = cabla_catena_cashout(
+            bus=self.bus,
+            betfair_service=self.betfair_service,
+            # Lazy: il record e' scritto solo a CASHOUT_FAILED-time, mai qui.
+            persist=lambda record: self.db.insert_audit_event(record),
+            notify=self._notify_cashout_residual,
+        )
+        self.order_router = catena_cashout.order_router
+        self.cashout_executor = catena_cashout.cashout_executor
+        self.cashout_request_bridge = catena_cashout.cashout_request_bridge
+        self.cashout_residual_handler = catena_cashout.cashout_residual_handler
+
         self.runtime_probe = RuntimeProbe(
             db=self.db,
             trading_engine=self.trading_engine,
@@ -477,10 +498,32 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.telegram_controller = TelegramController(self)
 
+        # Alla chiusura il runtime si ferma PRIMA di Telegram, Betfair e DB,
+        # come in HeadlessApp.stop (#461 PR04): dalla PR04 la GUI piazza
+        # hedge, e un comando o un cashout differito che arriva durante lo
+        # smontaggio non deve partire. RuntimeController.stop chiude i gate
+        # per primo; gli hook che seguono ripetono stop e disconnect, che sono
+        # idempotenti.
+        self._register_shutdown_hook("runtime_stop", self._stop_runtime_on_close, priority=5)
         self._register_shutdown_hook("telegram_stop", self.telegram_service.stop, priority=10)
         self._register_shutdown_hook("betfair_disconnect", self.betfair_service.disconnect, priority=20)
         self._register_shutdown_hook("db_close", self.db.close_all_connections, priority=30)
         self._register_shutdown_hook("executor_shutdown", self.executor.shutdown, priority=40)
+
+    def _stop_runtime_on_close(self) -> None:
+        """Hook di chiusura: ferma il runtime prima degli altri (#461 PR04).
+
+        ``stop`` si risolve alla chiusura, non al build: un runtime senza
+        ``stop`` (i runtime finti di alcuni test) non fa fallire la costruzione
+        della GUI. In produzione il runtime e' sempre il RuntimeController."""
+        stop = getattr(self.runtime, "stop", None)
+        if callable(stop):
+            stop()
+
+    def _notify_cashout_residual(self, text: str, *, severity: str = "HIGH") -> None:
+        """Residuo di un cashout all'operatore via Telegram, come nell'headless
+        (best-effort, mai solleva). Nella GUI l'esito compare anche nel Log."""
+        notifica_residuo_cashout(self.telegram_service, text, severity=severity)
 
     def _register_shutdown_hook(self, name, fn, priority=100):
         if hasattr(self.shutdown, "register"):
@@ -2123,6 +2166,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.bus.subscribe("SIGNAL_RECEIVED", self._on_signal_received)
         self.bus.subscribe("SIGNAL_REJECTED", self._on_signal_rejected)
         self.bus.subscribe("SIGNAL_APPROVED", self._on_signal_approved)
+        # Esito del cashout nel Log (#461 PR04): un rifiuto del bridge o del
+        # SafetyLayer, un hedge non abbinato o un esito ignoto si vedono qui;
+        # SUCCESS arriva solo dall'executor, dopo l'abbinamento.
+        self.bus.subscribe("CASHOUT_SUCCESS", self._on_cashout_success)
+        self.bus.subscribe("CASHOUT_FAILED", self._on_cashout_failed)
         self.bus.subscribe("RUNTIME_STARTED", lambda payload: self.uiq.post(self._refresh_runtime_status))
         self.bus.subscribe("RUNTIME_PAUSED", lambda payload: self.uiq.post(self._refresh_runtime_status))
         self.bus.subscribe("RUNTIME_RESUMED", lambda payload: self.uiq.post(self._refresh_runtime_status))
@@ -2139,6 +2187,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 "QUICK_BET_AMBIGUOUS",
                 "QUICK_BET_FAILED",
                 "RUNTIME_CLOSE_POSITION",
+                # l'hedge del cashout cambia esposizione e saldo (#461 PR04)
+                "CASHOUT_SUCCESS",
+                "CASHOUT_FAILED",
             ],
             "handler": self._refresh_risk_desk_data,
             "inflight": False,
@@ -2153,6 +2204,9 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 "QUICK_BET_AMBIGUOUS",
                 "QUICK_BET_FAILED",
                 "RUNTIME_CLOSE_POSITION",
+                # l'hedge del cashout e' una bet del bot, anche non abbinato
+                "CASHOUT_SUCCESS",
+                "CASHOUT_FAILED",
             ],
             "handler": self._refresh_bet_history_data,
             "inflight": False,
@@ -2294,6 +2348,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _on_signal_approved(self, payload):
         self.uiq.post(self._log, f"SIGNAL_APPROVED -> {payload}")
         self.uiq.post(self._refresh_runtime_status)
+
+    def _on_cashout_success(self, payload):
+        # Il refresh di Risk Desk e Storico Bet lo fanno i coordinatori.
+        self.uiq.post(self._log, f"CASHOUT_SUCCESS -> {payload}")
+
+    def _on_cashout_failed(self, payload):
+        self.uiq.post(self._log, f"CASHOUT_FAILED -> {payload}")
 
     def _update_telegram_status(self, status: str, message: str = ""):
         self.telegram_status = str(status or "UNKNOWN")
