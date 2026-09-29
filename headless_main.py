@@ -23,14 +23,12 @@ from core.trading_engine import TradingEngine
 from core.risk_gate import RiskGate, RoserpinaRiskLimits
 from core.runtime_controller import RuntimeController
 from core.risk_middleware import RiskMiddleware
-from core.safety_layer import SafetyLayer
 from controllers.dutching_controller import DutchingController
 from core.order_router import OrderRouter
 from cashout_executor import CashoutExecutor
 from cashout_request_bridge import CashoutRequestBridge
-from cashout_cancel_adapter import CashoutCancelAdapter
 from cashout_residual_handler import CashoutResidualHandler
-from telegram_sender import get_telegram_sender
+from cashout_wiring import cabla_catena_cashout, notifica_residuo_cashout
 from observability import (
     AlertsManager,
     DiagnosticsService,
@@ -496,120 +494,42 @@ class HeadlessApp:
 
         Sottoscrive al bus la catena ``REQ_EXECUTE_CASHOUT`` →
         ``CMD_EXECUTE_CASHOUT`` → piazzamento green-up → gestione del residuo:
+        ``CashoutRequestBridge`` → ``CashoutExecutor`` (con ``SafetyLayer``
+        reale) → ``OrderRouter``; ``CashoutResidualHandler`` su
+        ``CASHOUT_FAILED`` (UNMATCHED ⇒ un solo cancel sicuro del resting +
+        persist + notify; AMBIGUOUS ⇒ no-cancel + reconciliation + notify alta;
+        altri ⇒ notify + persist diagnostico), ``persist`` su ``audit_events``,
+        ``notify`` su Telegram.
 
-        - ``OrderRouter``: seam unico di piazzamento sim/live (sceglie il broker
-          attivo via ``betfair_service.get_client()``, mode-aware);
-        - ``CashoutExecutor``: consuma ``CMD_EXECUTE_CASHOUT``, applica le
-          invarianti real-money hard e piazza l'hedge tramite l'``OrderRouter``;
-        - ``CashoutRequestBridge``: bridge cashout-only che consuma
-          ``REQ_EXECUTE_CASHOUT`` (dedup + normalizzazione + ``CASHOUT_FAILED``
-          strutturato) e pubblica ``CMD_EXECUTE_CASHOUT``;
-        - ``CashoutResidualHandler``: consuma ``CASHOUT_FAILED`` e gestisce il
-          residuo (UNMATCHED ⇒ un solo cancel sicuro del resting + persist +
-          notify; AMBIGUOUS ⇒ no-cancel + reconciliation + notify alta; altri ⇒
-          notify + persist diagnostico). ``cancel`` via ``CashoutCancelAdapter``
-          (cashout-only), ``persist`` su ``audit_events``, ``notify`` su Telegram.
+        La costruzione sta in ``cashout_wiring.cabla_catena_cashout``, la
+        STESSA che usa ``MiniPickfairGUI`` (#461 PR04, H28): i due entrypoint
+        non possono divergere.
 
         ATTIVA da B2.4b-2: il trigger runtime (``RuntimeController`` sui segnali
         CASHOUT/CASHOUT_ALL) emette ``REQ_EXECUTE_CASHOUT``. Il wiring degli altri
         order type (QUICK_BET, DUTCHING, CANCEL, REPLACE) NON è toccato: bridge e
         residual handler sono cashout-only (sottoscrivono solo eventi cashout).
         """
-        if self.bus is None or self.betfair_service is None:
-            raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
-
-        self.order_router = OrderRouter(self.betfair_service)
-        # SafetyLayer REALE sull'executor (#437): validate_cashout_request
-        # aggiunge schema+tipi (es. selection_id int esatto) agli invarianti
-        # hard. Il costruttore e' inerte (nessun thread, nessuno stato che
-        # start() ricostruisce) e il bridge normalizza gia' i tipi sul
-        # percorso reale: il layer non puo' rigettare cashout legittimi.
-        self.cashout_executor = CashoutExecutor(
-            self.bus, self.order_router, safety_layer=SafetyLayer()
-        )
-        self.cashout_executor.wire()
-
-        self.cashout_request_bridge = CashoutRequestBridge(self.bus)
-        self.cashout_request_bridge.wire()
-
-        svc = self.betfair_service
-        # Accessori risolti lazy (lambda): l'adapter legge is_simulation/broker
-        # solo a cancel-time (su un CASHOUT_FAILED UNMATCHED), mai durante build().
-        # Così un betfair_service incompleto non fa crashare il boot, e la scelta
-        # sim/live resta valutata al momento del cancel reale.
-        residual_cancel = CashoutCancelAdapter(
-            is_simulation=lambda: svc.is_simulation_mode(),
-            live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
-            sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
-        )
-        self.cashout_residual_handler = CashoutResidualHandler(
-            cancel=residual_cancel.cancel,
+        catena = cabla_catena_cashout(
+            bus=self.bus,
+            betfair_service=self.betfair_service,
             # Lazy: il record è scritto solo a CASHOUT_FAILED-time, mai a build();
             # _safe_persist nel handler assorbe eventuali errori di scrittura.
             persist=lambda record: self.db.insert_audit_event(record),
             notify=self._notify_cashout_residual,
         )
-        self.cashout_residual_handler.wire(self.bus)
-
-        logger.info(
-            "Catena cashout cablata: "
-            "CashoutRequestBridge[REQ_EXECUTE_CASHOUT] -> "
-            "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter; "
-            "CashoutResidualHandler[CASHOUT_FAILED]"
-        )
-
-    def _resolve_telegram_sender(self) -> Any:
-        """Risolve il sender Telegram dal ``telegram_service`` (come telegram_alerts).
-
-        Il global ``get_telegram_sender()`` è inizializzato solo se costruito con
-        un client (in headless non lo è), quindi NON ci si affida a quello: si usa
-        il sender del ``telegram_service`` (lo stesso che consuma CASHOUT_SUCCESS),
-        con fallback al global per percorsi alternativi.
-        """
-        sender = None
-        try:
-            svc = self.telegram_service
-            if svc is not None:
-                getter = getattr(svc, "get_sender", None)
-                if callable(getter):
-                    sender = getter()
-                if sender is None:
-                    sender = getattr(svc, "sender", None)
-        except Exception:
-            sender = None
-        if sender is None:
-            try:
-                sender = get_telegram_sender()
-            except Exception:
-                sender = None
-        return sender
+        self.order_router = catena.order_router
+        self.cashout_executor = catena.cashout_executor
+        self.cashout_request_bridge = catena.cashout_request_bridge
+        self.cashout_residual_handler = catena.cashout_residual_handler
 
     def _notify_cashout_residual(self, text: str, *, severity: str = "HIGH") -> None:
         """Notifica operatore del residuo cashout (best-effort, mai solleva).
 
-        Prova i metodi del sender in ordine (``queue_default_message`` → invio
-        diretto); se nessuno è disponibile o l'invio fallisce, logga. Il
-        ``message_type`` dedicato distingue queste notifiche dagli altri invii.
+        Sender del ``telegram_service``, ripiego sul global, poi il log: vedi
+        ``cashout_wiring.notifica_residuo_cashout``, condivisa con la GUI.
         """
-        msg = f"[{severity}] {text}"
-        sender = self._resolve_telegram_sender()
-        if sender is not None:
-            q = getattr(sender, "queue_default_message", None)
-            if callable(q):
-                try:
-                    q(msg, message_type="CASHOUT_RESIDUAL")
-                    return
-                except Exception:
-                    logger.exception("Notifica residuo via queue_default_message fallita")
-            for name in ("send_message", "enqueue_message", "send"):
-                fn = getattr(sender, name, None)
-                if callable(fn):
-                    try:
-                        fn(msg)
-                        return
-                    except Exception:
-                        logger.exception("Notifica residuo via %s fallita", name)
-        logger.warning("[CASHOUT_RESIDUAL][%s] %s", severity, text)
+        notifica_residuo_cashout(self.telegram_service, text, severity=severity)
 
     def _register_shutdown_hooks(self) -> None:
         if not self.shutdown:

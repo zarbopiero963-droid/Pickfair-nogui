@@ -48,7 +48,7 @@ copy-pattern (regex)┘                                        │
                                              │
                                              ▼
                                    CashoutExecutor
-                                   · invarianti real-money hard
+                                   · invarianti real-money hard + SafetyLayer
                                    · piazza l'hedge via OrderRouter (sim/live)
                                              │
                                 ┌────────────┴─────────────┐
@@ -63,7 +63,15 @@ copy-pattern (regex)┘                                        │
 Mappa PR: B0 resolver (#296) · B1 router (#300) · B2.1 cancel-adapter (#303) ·
 B2.2 identità DB (#304) · B2.3 executor (#307) · B2.4a flatten/depth (#308) ·
 B2.4b-1 catena dormiente (#310) · **B2.4b-2 trigger+residuo (#311, attiva)** ·
-B2.5 residui shape/sim-guard (#313) · **2.1-C copy-pattern action (#314)**.
+B2.5 residui shape/sim-guard (#313) · **2.1-C copy-pattern action (#314)** ·
+SafetyLayer nell'executor (#445) · **catena anche nella GUI (PR04 #461)**.
+
+Bridge, executor, `OrderRouter` e gestore del residuo li costruisce
+`cashout_wiring.cabla_catena_cashout`, la **stessa** funzione in
+`headless_main` e in `mini_gui`: i due entrypoint non possono divergere, e su
+ciascun bus c'è **un solo** consumer per topic (due consumer di
+`REQ_EXECUTE_CASHOUT` sarebbero due hedge reali per un comando). Router e
+resolver restano costruiti dal `RuntimeController` a ogni segnale.
 
 ---
 
@@ -140,9 +148,14 @@ eventi (il `PnLEngine` sarebbe rimasto vuoto in produzione — vedi PR #298 chiu
   consentito — emergency-stop (incl. daily-loss pending), session-guard LIVE,
   deploy-gate, runtime-active.
 - **Guard anti-silent-drop**: il trigger è in `RuntimeController` (tutti gli
-  entrypoint) ma la catena è cablata solo in `HeadlessApp`; se non è cablata
-  (es. `mini_gui`) il cashout viene **rifiutato visibilmente**
-  (`cashout_chain_not_wired`), mai droppato in silenzio.
+  entrypoint); la catena la cablano `HeadlessApp` e `MiniPickfairGUI` con
+  `cashout_wiring` (dalla PR04 #461, prima solo l'headless). In un entrypoint
+  senza catena (un test, uno strumento) il cashout viene **rifiutato
+  visibilmente** (`cashout_chain_not_wired`), mai droppato in silenzio.
+- **Nella GUI**: l'esito (`CASHOUT_SUCCESS` / `CASHOUT_FAILED`) compare nella
+  tab `Log`, e Storico Bet e Risk Desk si aggiornano. La GUI non ha un
+  controllo cashout manuale: il comando arriva dalla chat o dal copy-pattern,
+  come nell'headless.
 - **Il runtime pubblica solo `REQ_EXECUTE_CASHOUT`**, mai `CMD_*` diretto.
 - **Dedup** per identità posizione nel bridge: un price-drift o metadata diversi
   non generano un secondo hedge per la stessa posizione.
@@ -187,9 +200,14 @@ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 4. **Reconciliation automatica degli AMBIGUOUS**: oggi è manuale (record +
    notify). Un job che ri-interroga Betfair dopo N secondi per risolvere l'esito
    ignoto chiuderebbe il loop senza intervento umano.
-5. **Wiring comune della catena** (oggi solo headless): spostare
-   OrderRouter/Executor/Bridge/ResidualHandler in un wiring condiviso o in
-   `RuntimeController` darebbe il cashout anche a `mini_gui` senza duplicazione.
+5. ~~**Wiring comune della catena**~~ — **fatto** (PR04 #461):
+   `cashout_wiring.cabla_catena_cashout` costruisce
+   OrderRouter/Executor/Bridge/ResidualHandler per `headless_main` e per
+   `mini_gui`. Resta aperto: alla chiusura della finestra la GUI non ferma il
+   runtime (l'headless sì), quindi un grace di auto-green già armato non viene
+   annullato. Dopo l'hook `betfair_disconnect` nessun ordine parte comunque: il
+   service non ha più né client né broker. Lo shutdown unico GUI/headless è la
+   PR17 della #461.
 6. **Telemetria/UI del cashout**: contatori SUCCESS/UNMATCHED/AMBIGUOUS e green-up
    cumulato negli observability snapshot.
 

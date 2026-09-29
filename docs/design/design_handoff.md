@@ -173,7 +173,16 @@ quando gli alert sono attivi.»).
   Selection ID`; bottone `Forza refresh Risk Desk`.
 - `Storico Risk Desk`: colonne `ID, Data/Ora, Stato, Loss, Exposure, Evento,
   Mercato, Selezione`; bottone `Forza refresh Storico Risk Desk`.
-- `Log`: solo `CTkTextbox` in append.
+- `Log`: solo `CTkTextbox` in append. Fra le righe, `EVENTO -> {payload}` per
+  `TELEGRAM_STATUS`, `SIGNAL_RECEIVED`, `SIGNAL_REJECTED`, `SIGNAL_APPROVED`
+  e, dalla PR04 della #461, `CASHOUT_SUCCESS` e `CASHOUT_FAILED` (rifiuto del
+  bridge o del SafetyLayer, hedge non abbinato, esito ignoto), e
+  `Refresh event for ... -> {payload}` dei refresh automatici.
+- Refresh automatici: `Storico Bet` e `Risk Desk` si aggiornano sugli eventi
+  `QUICK_BET_*`, `RUNTIME_CLOSE_POSITION` e, dalla PR04, sugli esiti cashout
+  (`CASHOUT_SUCCESS`, `CASHOUT_FAILED`: l'hedge è una bet del bot anche se non
+  abbinato); `Storico Risk Desk` su `RUNTIME_CLOSE_POSITION` e
+  `RUNTIME_DAILY_LOSS_BREACH`.
 
 ## 12. Tab Provider (solo GUI reale)
 
@@ -285,6 +294,14 @@ modifica design/safety e deve aggiornare questo handoff.
 - Commissione simulata bloccata al 4.5%, non editabile.
 - Segreti mascherati (password Betfair, 2FA, bot token); token mai
   ricaricato in chiaro.
+- Cashout: **nessun controllo cashout manuale** nella GUI. Il comando arriva
+  dalla chat (`CASHOUT` / `CASHOUT ALL`) o dal copy-pattern e passa dalla
+  stessa catena dell'headless (`cashout_wiring`: bridge con dedup, executor
+  con SafetyLayer, gestore del residuo), con gli stessi gate (emergency stop,
+  runtime attivo, sessione e deploy gate in LIVE). Fino alla PR04 della #461
+  la GUI rifiutava ogni cashout (`cashout_chain_not_wired`); ora in LIVE un
+  CASHOUT dalla chat piazza un hedge reale. `CASHOUT_SUCCESS` compare solo
+  dopo l'abbinamento.
 
 ## 17. `ui_panels/` — superficie separata NON collegata alla Mini GUI
 

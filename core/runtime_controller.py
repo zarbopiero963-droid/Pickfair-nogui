@@ -2487,11 +2487,12 @@ class RuntimeController:
         monte in ``_on_signal_received``. Fail-closed: un errore di costruzione o
         routing pubblica un ``CASHOUT_FAILED`` strutturato, non scarta in silenzio.
         """
-        # Guard anti-silent-drop: la catena d'esecuzione cashout è cablata solo
-        # in HeadlessApp (path di go-live). In un entrypoint dove non è cablata
-        # (es. mini_gui), pubblicare REQ_EXECUTE_CASHOUT lo farebbe cadere senza
-        # subscriber => l'operatore non vedrebbe nulla. Qui si rifiuta in modo
-        # VISIBILE (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
+        # Guard anti-silent-drop: la catena d'esecuzione cashout la cablano
+        # HeadlessApp e MiniPickfairGUI con cashout_wiring (#461 PR04). In un
+        # entrypoint dove non è cablata (un test, uno strumento di sviluppo),
+        # pubblicare REQ_EXECUTE_CASHOUT lo farebbe cadere senza subscriber =>
+        # l'operatore non vedrebbe nulla. Qui si rifiuta in modo VISIBILE
+        # (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
         if not self._cashout_chain_wired():
             self._reject_signal(signal, "cashout_chain_not_wired")
             return

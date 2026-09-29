@@ -79,6 +79,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Cashout in the GUI (#461 PR04): the GUI process now builds the same cashout
+  execution chain as the headless app (request bridge with duplicate filter,
+  executor with the real SafetyLayer, OrderRouter, residual handler), through
+  one shared builder, `cashout_wiring.cabla_catena_cashout`, used by both
+  entrypoints. Before, a `CASHOUT` / `CASHOUT ALL` message received by the
+  GUI was rejected with `cashout_chain_not_wired`, and the cashout request of
+  the auto-close fell on a bus with no listener. Now it goes through the same
+  gates as headless (emergency stop, runtime active, session and deploy gate
+  in LIVE) and, in LIVE, places a real hedge. The GUI `Log` shows
+  `CASHOUT_SUCCESS` and `CASHOUT_FAILED`, and `Storico Bet` and `Risk Desk`
+  refresh on both. The GUI still has no manual cashout control. The Telegram
+  notification of a cashout residual moved from `headless_main` to
+  `cashout_wiring` unchanged, and both entrypoints use it.
 - Simulation settlement (#461 PR03): a SIM market is now settled when its
   CLOSED market book reaches the simulation broker. Before, nothing settled
   a SIM market: stakes and liabilities stayed locked forever and the runtime
