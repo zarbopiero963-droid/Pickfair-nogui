@@ -79,6 +79,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Live client, non-finite price or size (F11 in #453, DECISIONE-426 P27):
+  `BetfairClient.place_bet` now rejects a price or a size that is NaN or
+  infinite with `INVALID_PRICE` / `INVALID_SIZE` before building the request,
+  as `replace_orders` already did. Before, `float()` accepted them and
+  `nan <= 1.0` is false, so the `placeOrders` body went out with
+  `"price": NaN` or `"size": Infinity`; Betfair would have refused a body
+  that is not valid JSON, but the check belongs to the client. In production
+  the cashout chain reaches the client through `OrderRouter.place`, where the
+  SafetyLayer only checks `price <= 1` and `stake <= 0`: the client was the
+  only barrier. `BetfairService.place_order` and `OrderManager.place_order`
+  (which only checks `price <= 1.0`) had the same hole, but today nothing in
+  production calls them. For the `TradingEngine` the rejection is a certain
+  pre-send failure, not an ambiguous outcome.
 - Book sides (F6 in #453, DECISIONE-426 P25): the simulation broker, the
   cashout router and the Telegram resolver now read the two ladders as Betfair
   defines them, the convention the owner chose for dutching in #383:
