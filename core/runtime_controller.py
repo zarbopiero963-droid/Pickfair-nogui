@@ -2368,12 +2368,15 @@ class RuntimeController:
         # segnale o un cashout differito (grace auto-green) arrivato intanto
         # trova i gate chiusi e viene rifiutato, invece di piazzare mentre il
         # servizio Betfair e' ancora collegato. Se uno smontaggio solleva, il
-        # runtime resta comunque fermo.
+        # runtime resta comunque fermo e Betfair si disconnette lo stesso;
+        # l'errore risale poi al chiamante.
         self.mode = RuntimeMode.STOPPED
-        self._stop_settlement_poller()
-        self._stop_market_data_feed()
-        self.telegram_service.stop()
-        self.betfair_service.disconnect()
+        try:
+            self._stop_settlement_poller()
+            self._stop_market_data_feed()
+            self.telegram_service.stop()
+        finally:
+            self.betfair_service.disconnect()
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {

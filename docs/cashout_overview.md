@@ -208,9 +208,11 @@ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
    `RuntimeController.stop` rende il runtime non attivo prima di smontare
    Telegram e Betfair: un comando arrivato durante lo smontaggio è rifiutato
    (`runtime_non_attivo:STOPPED`), un cashout differito dal grace è annullato
-   (`CASHOUT_FAILED` `grace_aborted`). Resta per la PR17 della #461 lo
+   (`CASHOUT_FAILED` `grace_aborted`). Se lo stop di Telegram fallisce,
+   Betfair si disconnette comunque. Restano per la PR17 della #461 lo
    shutdown unico e idempotente GUI/headless (errori del main, doppia
-   chiusura).
+   chiusura) e i comandi già accettati dal bus prima dello stop, che oggi
+   completano durante lo smontaggio.
 6. **Telemetria/UI del cashout**: contatori SUCCESS/UNMATCHED/AMBIGUOUS e green-up
    cumulato negli observability snapshot.
 

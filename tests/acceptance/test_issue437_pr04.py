@@ -584,23 +584,51 @@ def test_stop_chiude_i_gate_prima_dello_smontaggio(gui, headless):
         assert visto and visto[0] == ("STOPPED", False), (app.tipo, visto)
 
 
+def test_stop_disconnette_betfair_anche_se_telegram_solleva(gui, headless):
+    """GPT-5.6 Sol e Fugu Ultra sulla #486: se lo stop di Telegram solleva,
+    ``stop()`` saltava la disconnessione di Betfair. Ora il servizio Betfair
+    si disconnette comunque, il runtime resta fermo e l'errore risale al
+    chiamante (gli hook di chiusura lo registrano e proseguono)."""
+    for app in (gui, headless):
+        app.avvia()
+        assert app.app.betfair_service.get_simulation_broker() is not None
+
+        def _telegram_rotto(*a, **k):
+            raise RuntimeError("disconnessione Telegram fallita")
+
+        app.app.telegram_service.stop = _telegram_rotto
+        with pytest.raises(RuntimeError, match="Telegram"):
+            app.rt.stop()
+
+        assert app.app.betfair_service.get_simulation_broker() is None, app.tipo
+        assert app.app.betfair_service.get_live_client() is None, app.tipo
+        assert app.rt.mode.value == "STOPPED", app.tipo
+        assert app.rt._runtime_active() is False, app.tipo
+
+
 class _ListenerAllaChiusura:
     """Confine Telegram: il listener, mentre si ferma, consegna un ultimo
-    messaggio (``testo``) oppure impiega ``attesa`` secondi, come una
-    disconnessione lenta. Lo stop del ``TelegramService`` resta quello vero."""
+    messaggio (``testo``) oppure resta appeso finche' sul bus non compare uno
+    degli eventi ``attendi`` (una disconnessione lenta che dura quanto serve,
+    senza dipendere dai tempi della macchina). Lo stop del ``TelegramService``
+    resta quello vero."""
 
-    def __init__(self, app: "_App", testo: str = "", attesa: float = 0.0):
+    def __init__(self, app: "_App", testo: str = "", attendi: tuple = (), limite: float = 5.0):
         self.app = app
         self.testo = testo
-        self.attesa = attesa
+        self.attendi = attendi
+        self.limite = limite
 
     def stop(self):
         import time as _time
 
         if self.testo:
             self.app.messaggio(self.testo)
-        if self.attesa:
-            _time.sleep(self.attesa)
+        if self.attendi:
+            scadenza = _time.monotonic() + self.limite
+            while not any(t in self.attendi for t, _ in self.app.eventi):
+                assert _time.monotonic() < scadenza, f"nessuno di {self.attendi} entro {self.limite}s"
+                _time.sleep(0.02)
         self.app.svuota_bus()
         return {"stopped": True}
 
@@ -640,8 +668,6 @@ def test_chiusura_finestra_con_grace_armato_non_parte(gui):
     lo smontaggio. Nessun produttore di oggi arma il grace (serve un CASHOUT
     con mercato e selezione): il segnale e' costruito come nei test del grace.
     Esito: annullato con CASHOUT_FAILED visibile, nessun invio."""
-    import time as _time
-
     gui.avvia()
     gui.posizione()
     gui.rt.config.auto_green_delay_enabled = True
@@ -657,10 +683,10 @@ def test_chiusura_finestra_con_grace_armato_non_parte(gui):
     gui.svuota_bus()
     assert gui.di("REQ_EXECUTE_CASHOUT") == []  # il grace e' armato, non ancora partito
 
-    # La disconnessione di Telegram dura piu' del grace.
-    _listener_di_confine(gui, attesa=0.6)
+    # La disconnessione di Telegram dura finche' il grace non e' scattato:
+    # si aspetta l'esito sul bus (annullato o instradato), non un tempo fisso.
+    _listener_di_confine(gui, attendi=("CASHOUT_FAILED", "REQ_EXECUTE_CASHOUT"))
     gui.app._on_close()
-    _time.sleep(0.3)
     gui.svuota_bus()
 
     assert broker.get_current_orders(None) == ordini_prima
@@ -668,6 +694,24 @@ def test_chiusura_finestra_con_grace_armato_non_parte(gui):
     falliti = gui.di("CASHOUT_FAILED")
     assert len(falliti) == 1, falliti
     assert falliti[0]["reason"].startswith("grace_aborted:runtime_non_attivo"), falliti
+
+
+def test_chiusura_finestra_hook_in_ordine_e_tutti_riusciti(gui):
+    """Fugu Ultra sulla #486: l'hook runtime_stop ferma anche Telegram e
+    Betfair, poi gli hook successivi li richiamano. La stessa chiamata che fa
+    ``_on_close``, sui servizi veri: il runtime si ferma per primo e nessun
+    hook fallisce, doppio stop e doppia disconnessione compresi."""
+    gui.avvia()
+    gui.posizione()
+
+    esiti = gui.app.shutdown.shutdown()
+
+    assert [e["name"] for e in esiti] == [
+        "runtime_stop", "telegram_stop", "betfair_disconnect", "db_close", "executor_shutdown",
+    ]
+    assert all(e["ok"] for e in esiti), esiti
+    assert gui.rt.mode.value == "STOPPED"
+    assert gui.app.betfair_service.get_simulation_broker() is None
 
 
 def test_chiusura_finestra_esito_tardivo_senza_effetti(gui):

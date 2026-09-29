@@ -97,6 +97,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   down Telegram and Betfair, in both entrypoints. A command or a delayed
   cashout (auto-green grace) arriving during that teardown is rejected
   instead of being placed while the Betfair service is still connected.
+  If stopping Telegram fails, `stop` now still disconnects Betfair before
+  raising the error; before, the Betfair disconnect was skipped.
 - Simulation settlement (#461 PR03): a SIM market is now settled when its
   CLOSED market book reaches the simulation broker. Before, nothing settled
   a SIM market: stakes and liabilities stayed locked forever and the runtime
