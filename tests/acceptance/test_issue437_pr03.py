@@ -139,7 +139,7 @@ def _tre_selezioni(app: _App, market_id: str) -> None:
     BACK 10 @ 3.0 = +20; LAY 5 @ 2.0 sul perdente = +5; BACK 4 @ 5.0 = -4.
     Lordo +21, commissione 4,5% una volta = 0,945, netto 20,055.
     Ai fill il saldo scende di 19; a settlement chiude a 1000 + 20,055."""
-    app.book(_aperto(market_id, {11: (2.9, 3.0, 100.0), 22: (2.0, 2.1, 100.0), 33: (4.9, 5.0, 100.0)}))
+    app.book(_aperto(market_id, {11: (3.0, 3.1, 100.0), 22: (1.98, 2.0, 100.0), 33: (5.0, 5.1, 100.0)}))
     app.broker.place_bet(market_id=market_id, selection_id=11, side="BACK", price=3.0, size=10.0)
     app.broker.place_bet(market_id=market_id, selection_id=22, side="LAY", price=2.0, size=5.0)
     app.broker.place_bet(market_id=market_id, selection_id=33, side="BACK", price=5.0, size=4.0)
@@ -276,7 +276,7 @@ def test_mercati_chiusi_fuori_ordine_ognuno_una_volta(app):
     realizzato 14,055; saldo 1014,055."""
     app.avvia()
     _tre_selezioni(app, "5.3")
-    app.book(_aperto("5.4", {11: (1.9, 2.0, 100.0)}))
+    app.book(_aperto("5.4", {11: (2.0, 2.02, 100.0)}))
     app.broker.place_bet(market_id="5.4", selection_id=11, side="BACK", price=2.0, size=6.0)
 
     app.book(_chiuso("5.4", {11: "LOSER"}))
@@ -417,7 +417,7 @@ def test_parita_sim_live_stesso_portafoglio_stesso_netto(app):
     coincide fra i due e col calcolo indipendente."""
     # SIM
     app.avvia()
-    app.book(_aperto("7.1", {11: (2.9, 3.0, 100.0), 22: (2.0, 2.1, 100.0), 33: (4.9, 5.0, 2.0)}))
+    app.book(_aperto("7.1", {11: (3.0, 3.1, 100.0), 22: (1.98, 2.0, 100.0), 33: (5.0, 5.1, 2.0)}))
     app.broker.place_bet(market_id="7.1", selection_id=11, side="BACK", price=3.0, size=10.0)
     app.broker.place_bet(market_id="7.1", selection_id=22, side="LAY", price=2.0, size=5.0)
     app.broker.place_bet(market_id="7.1", selection_id=33, side="BACK", price=5.0, size=4.0)  # 2 abbinati
@@ -466,7 +466,7 @@ def test_perdita_sim_arriva_al_kill_switch_giornaliero(tmp_path, monkeypatch):
     istanza = _App(tmp_path, monkeypatch, {"roserpina.max_daily_loss": 10.0})
     try:
         istanza.avvia()
-        istanza.book(_aperto("8.1", {11: (1.9, 2.0, 100.0)}))
+        istanza.book(_aperto("8.1", {11: (2.0, 2.02, 100.0)}))
         istanza.broker.place_bet(market_id="8.1", selection_id=11, side="BACK", price=2.0, size=15.0)
         istanza.book(_chiuso("8.1", {11: "LOSER"}))
         istanza.giro()
@@ -484,7 +484,7 @@ def test_drawdown_da_settlement_sim_resetta_il_ciclo_roserpina(app):
     BACK 160 @ 2.0 perdente = -160 su 1000 => drawdown 16% => reset del
     ciclo (ROSERPINA_AUTO_RESET), sotto il 20% del lockdown."""
     app.avvia()
-    app.book(_aperto("9.1", {11: (1.9, 2.0, 1000.0)}))
+    app.book(_aperto("9.1", {11: (2.0, 2.02, 1000.0)}))
     app.broker.place_bet(market_id="9.1", selection_id=11, side="BACK", price=2.0, size=160.0)
     app.book(_chiuso("9.1", {11: "LOSER"}))
     app.giro()

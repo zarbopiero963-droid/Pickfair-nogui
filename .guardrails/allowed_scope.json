@@ -1898,6 +1898,35 @@
       ],
       "max_files": 11,
       "description": "PR04 della roadmap #461 (pacchetto P03 / H28 della #453): cashout nella GUI con la stessa catena dell'headless. PHASE 0 SUL MAIN `7b0fc5b`, falso successo RIPRODOTTO con la GUI vera (MiniPickfairGUI test_mode, Database reale, EventBus reale, SimulationBroker reale) e l'headless vero, stesso book, stessa posizione BACK 10 @ 2.02, stesso CASHOUT_ALL: la GUI rifiuta con cashout_chain_not_wired, zero hedge, esposizione ferma a 10; l'headless chiude con LAY 10,1 @ 2,0 e CASHOUT_SUCCESS. I test della scheda (bridge, executor, guardrail di cablaggio) erano verdi: 91 passed, e il guardrail affermava il gap. Correzione: cashout_wiring.cabla_catena_cashout costruisce bridge, executor con SafetyLayer reale, OrderRouter e gestore del residuo, usato da headless_main e da mini_gui nello stesso punto del build (un solo consumer per topic); la notifica del residuo via Telegram passa, invariata, da headless_main al modulo comune; il Log della GUI mostra CASHOUT_SUCCESS e CASHOUT_FAILED e Storico Bet e Risk Desk si aggiornano sugli esiti cashout. core/runtime_controller.py: commento del guard anti-silent-drop e stop() che rende il runtime non attivo prima di smontare Telegram e Betfair; la chiusura della GUI ferma il runtime per primo (hook runtime_stop), cosi' un comando o un cashout differito arrivato durante lo smontaggio non parte (rilievo GPT-6 Astra sulla #486); stop() disconnette Betfair anche se lo stop di Telegram solleva (rilievo GPT-5.6 Sol e Fugu Ultra sulla #486). Router, resolver, bridge, executor e residuo invariati; services/ non toccato. Docs, design handoff e CHANGELOG nello stesso PR."
+    },
+    "decisione426-p25-lati-book": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_router.py",
+        "core/runtime_controller.py",
+        "core/simulation_matching_engine.py",
+        "core/simulation_order_book.py",
+        "direct_best_price.py",
+        "docs/cashout_overview.md",
+        "ops/config_console.md",
+        "ops/roadmap_go_live.md",
+        "services/telegram_bet_resolver.py",
+        "simulation_broker.py",
+        "tests/acceptance/test_issue437_pr03.py",
+        "tests/acceptance/test_issue437_pr04.py",
+        "tests/acceptance/test_issue453_f6_lati_book.py",
+        "tests/integration/test_simulation_broker_commission_semantics.py",
+        "tests/integration/test_simulation_broker_copy_parity.py",
+        "tests/integration/test_simulation_broker_pattern_parity.py",
+        "tests/integration/test_simulation_broker_position_ledger_integration.py",
+        "tests/integration/test_simulation_realism.py",
+        "tests/unit/test_cashout_router.py",
+        "tests/unit/test_simulation_broker_runtime_hardening.py",
+        "tests/unit/test_simulation_broker_side_parity.py"
+      ],
+      "max_files": 23,
+      "description": "F6 della #453 (DECISIONE-426 P25, PR dedicata subito dopo la PR04 e prima della PR05): i lati del book come su Betfair, convenzione gia' decisa dall'owner per il dutching in #383 (availableToBack = prezzi a cui si punta adesso, availableToLay = prezzi a cui si banca adesso; lato e disuguaglianza si invertono insieme). PHASE 0 SUL MAIN `774bb3b`, riprodotto: su un book 2.00 / 2.02 il SIM abbinava BACK @ 2.02 e lasciava a riposo BACK @ 2.00; il router del cashout prezzava l'hedge LAY a 2.00 (miglior back); in LIVE il router chiedeva il book senza priceProjection, Betfair non popola le ladder e ogni posizione veniva saltata con un solo warning. Correzione: simulation_broker._match_order (BACK sul miglior availableToBack con quota <=, LAY sul miglior availableToLay con quota >=, al prezzo del book) con quota non valida rifiutata esplicitamente (prima di F6 un LAY a quota 0 si abbinava); cashout_router._closing_price (hedge LAY dal miglior availableToLay, hedge BACK dal miglior availableToBack, gate L95 sullo stesso livello); core/runtime_controller.py passa al router get_market_book_snapshot(include_prices=True); services/telegram_bet_resolver.py (BACK aggressivo = miglior availableToBack); core/simulation_matching_engine.py e core/simulation_order_book.py (motore dei soli test, stesse regole, quota non finita rifiutata); docstring di direct_best_price. Test nuovi con oracolo Betfair indipendente, test esistenti che fissavano la convenzione invertita riallineati al lato giusto con gli stessi numeri attesi; rafforzato il test degli hook di chiusura della PR04 (stop vero di Telegram anche dal runtime, come dichiarato nella #486). Docs e CHANGELOG nello stesso PR."
     }
   }
 }

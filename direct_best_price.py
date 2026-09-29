@@ -1,11 +1,14 @@
 """Best-price DIRECT — estrattore puro (Fase 2.2 / B6.1).
 
 Funzione PURA che, dato un market book live + selection_id + side + master_price,
-ricava il best price **difensivo** per il percorso copy DIRECT, **fail-closed**:
+ricava il best price **eseguibile subito** per il percorso copy DIRECT,
+**fail-closed**:
 
-- **Difensivo**: per un BACK usa solo `availableToBack` (mai il lato LAY), per un
-  LAY solo `availableToLay`. Non attraversa lo spread → niente "aggressione"
-  involontaria del lato sbagliato (a differenza del resolver `aggressive_best_price`).
+- **Lato giusto**: per un BACK usa solo `availableToBack` (i prezzi a cui si
+  punta adesso), per un LAY solo `availableToLay` (quelli a cui si banca). È il
+  miglior prezzo che si abbina subito, senza andare oltre: mai un prezzo preso
+  dall'altro lato dello spread. È la semantica Betfair (#383, F6), la stessa del
+  resolver `aggressive_best_price` e del prezzo di chiusura del cashout.
 - **Tolleranza**: il best price deve stare entro `max_deviation_pct` dal
   master_price; oltre → fallback al master (price drift sospetto / book stale).
 - **Fail-closed**: qualunque anomalia (book assente, mercato non OPEN, runner
@@ -35,7 +38,7 @@ def resolve_direct_best_price(
     master_price: Any,
     max_deviation_pct: float = 2.0,
 ) -> Dict[str, Any]:
-    """Risolve il best price difensivo dal book per il DIRECT (fail-closed).
+    """Risolve il best price eseguibile dal book per il DIRECT (fail-closed).
 
     Ritorna sempre un dict con:
     - ``price``: il prezzo da usare (best live se ok, altrimenti master);
@@ -96,8 +99,9 @@ def _best_side_price(market_book: Any, selection_id: Any, side_u: str):
     """Best price del SOLO lato richiesto, fail-closed.
 
     Ritorna ``(best_price, "ok")`` se ricavabile, altrimenti ``(None, reason)``.
-    Difensivo: ``BACK`` → ``availableToBack``, ``LAY`` → ``availableToLay``;
-    mai cross-spread. Qualunque schema malformato (tipi inattesi) ⇒
+    ``BACK`` → ``availableToBack``, ``LAY`` → ``availableToLay``: il miglior
+    prezzo eseguibile subito del proprio lato, mai quello dell'altro lato dello
+    spread. Qualunque schema malformato (tipi inattesi) ⇒
     ``(None, "malformed_book")`` — fail-closed, mai un'eccezione propagata.
     """
     try:

@@ -5,6 +5,10 @@ from core.simulation_state import SimulationState
 
 
 def _seed_book(book: SimulationOrderBook, market_id: str = "1.234", selection_id: int = 11):
+    # Semantica Betfair (#383, F6): un BACK si abbina sui livelli di
+    # availableToBack con prezzo >= della quota chiesta. Un BACK @ 1.95 attraversa
+    # entrambi i livelli back (2.00 x 4 e 1.99 x 10), come prima il BACK @ 2.10
+    # attraversava i due livelli lay nel motore invertito.
     book.update_market_book(
         market_id,
         {
@@ -40,7 +44,7 @@ def test_order_is_not_fully_matched_when_queue_ahead_blocks_volume():
         market_id="1.234",
         selection_id=11,
         side="BACK",
-        price=2.10,
+        price=1.95,
         size=8.0,
     )
 
@@ -61,12 +65,13 @@ def test_slippage_worse_execution_under_constrained_liquidity():
         market_id="1.234",
         selection_id=11,
         side="BACK",
-        price=2.10,
+        price=1.95,
         size=2.0,
     )
 
     assert res.status == "EXECUTION_COMPLETE"
-    assert res.average_matched_price < 2.02
+    # peggio del miglior back (2.00) su cui si e' abbinato
+    assert res.average_matched_price < 2.0
 
 
 def test_partial_fill_remains_supported():
@@ -81,7 +86,7 @@ def test_partial_fill_remains_supported():
         market_id="1.234",
         selection_id=11,
         side="BACK",
-        price=2.10,
+        price=1.95,
         size=4.0,
     )
 
@@ -100,7 +105,7 @@ def test_pnl_reflects_pessimistic_fill_vs_naive_immediate_fill():
         market_id="1.234",
         selection_id=11,
         side="BACK",
-        price=2.10,
+        price=1.95,
         size=2.0,
     )
 
@@ -127,7 +132,8 @@ def test_pnl_reflects_pessimistic_fill_vs_naive_immediate_fill():
     naive_pos = {
         "selection_id": 11,
         "side": "BACK",
-        "price": 2.02,
+        # il fill immediato ingenuo: il miglior back disponibile
+        "price": 2.0,
         "stake": res.matched_size,
     }
 

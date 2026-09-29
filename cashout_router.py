@@ -63,25 +63,25 @@ def _closing_price(book: Dict[str, Any], selection_id: Any, side: str) -> Option
     gate depth/partial-fill (L95): se lo stake dell'hedge la supera, il cashout è
     rifiutato (R1 fail-closed) invece di abbinarsi solo in parte.
 
-    L'hedge ha lato opposto alla posizione e, nel motore di matching del repo
-    (``SimulationOrderBook.get_opposite_ladder`` e ``simulation_broker``), un
-    ordine matcha contro il ladder opposto: un BACK matcha su ``availableToLay``,
-    un LAY su ``availableToBack`` (con condizione di marketability
-    ``lay.price <= bestBack`` / ``back.price >= bestLay``). Quindi:
+    L'hedge ha lato opposto alla posizione e si abbina come sull'exchange
+    Betfair (#383, F6/P25): ``availableToLay`` sono i prezzi a cui si BANCA
+    adesso, ``availableToBack`` quelli a cui si PUNTA. Quindi:
 
-    - posizione BACK => hedge LAY => prezzo da ``availableToBack`` (dove il LAY
-      matcha); usando ``availableToLay`` su spread normale (best back < best lay)
-      il LAY resterebbe NON abbinato e la posizione non si chiuderebbe;
-    - posizione LAY => hedge BACK => prezzo da ``availableToLay``.
+    - posizione BACK => hedge LAY => prezzo e profondita' dal miglior
+      ``availableToLay``;
+    - posizione LAY => hedge BACK => prezzo e profondita' dal miglior
+      ``availableToBack``.
 
-    Il prezzo restituito e' anche quello a cui l'hedge si abbina, quindi corretto
-    per il calcolo del green-up.
+    Il prezzo restituito e' quello a cui l'hedge si abbina subito, quindi
+    corretto per il calcolo del green-up. Fino a F6 era il lato opposto, allineato
+    al motore SIM di allora: in LIVE l'hedge LAY partiva sotto il miglior lay,
+    restava a riposo e il gestore del residuo lo cancellava.
     """
     try:
         sel = int(selection_id)
     except (TypeError, ValueError):
         return None
-    ladder_key = "availableToBack" if str(side).upper() == "BACK" else "availableToLay"
+    ladder_key = "availableToLay" if str(side).upper() == "BACK" else "availableToBack"
     for runner in book.get("runners") or []:
         try:
             if int(runner.get("selectionId")) != sel:

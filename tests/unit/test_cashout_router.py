@@ -274,10 +274,11 @@ def test_cancel_nested_instruction_failure_skips_position():
     assert h.reqs() == []
 
 
-def test_back_position_prices_hedge_from_available_to_back():
-    # Codex P1: l'hedge LAY di una posizione BACK matcha (nel motore del repo)
-    # contro availableToBack; su spread normale (back<lay) prezzare da
-    # availableToLay lo lascerebbe non abbinato.
+def test_back_position_prices_hedge_from_available_to_lay():
+    # F6 (#453, DECISIONE-426 P25): l'hedge LAY di una posizione BACK si abbina,
+    # come sull'exchange Betfair, sul miglior availableToLay (i prezzi a cui si
+    # banca adesso). Fino a F6 il router prezzava da availableToBack, allineato
+    # al motore SIM di allora: in LIVE l'hedge restava a riposo.
     h = _Harness(
         current=[_curr("B1", "1.1", 7, "BACK", 10.0, avg=2.0)],
         bot=[_bot("B1", "1.1", 7)],
@@ -287,10 +288,12 @@ def test_back_position_prices_hedge_from_available_to_back():
     assert out["published"] == 1
     req = h.reqs()[0]
     assert req["side"] == "LAY"
-    assert req["price"] == 2.0  # availableToBack[0], non 2.1
+    assert req["price"] == 2.1  # availableToLay[0], non 2.0
 
 
-def test_lay_position_prices_hedge_from_available_to_lay():
+def test_lay_position_prices_hedge_from_available_to_back():
+    # Simmetrico: l'hedge BACK di una posizione LAY si abbina sul miglior
+    # availableToBack (i prezzi a cui si punta adesso).
     h = _Harness(
         current=[_curr("B1", "1.1", 7, "LAY", 10.0, avg=2.1)],
         bot=[_bot("B1", "1.1", 7)],
@@ -300,7 +303,7 @@ def test_lay_position_prices_hedge_from_available_to_lay():
     assert out["published"] == 1
     req = h.reqs()[0]
     assert req["side"] == "BACK"
-    assert req["price"] == 2.1  # availableToLay[0], non 2.0
+    assert req["price"] == 2.0  # availableToBack[0], non 2.1
 
 
 def test_bot_orders_db_error_publishes_failure_fail_closed():

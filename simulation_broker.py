@@ -202,9 +202,13 @@ class SimulationBroker:
     - TelegramBetResolver
     - OrderManager
 
-    Modello semplice ma coerente:
-    - match aggressivo sul best lay per BACK
-    - match aggressivo sul best back per LAY
+    Modello semplice, con la semantica dell'exchange Betfair (#383, F6):
+    - un BACK si abbina sul miglior ``availableToBack`` se la quota chiesta
+      e' <= di quel prezzo, e prende il prezzo del book;
+    - un LAY si abbina sul miglior ``availableToLay`` se la quota chiesta
+      e' >= di quel prezzo, e prende il prezzo del book;
+    - solo il primo livello, solo al piazzamento: un ordine rimasto a riposo
+      non si riabbina quando il book si muove;
     - nessun auto-close
     - stato persistibile
     """
@@ -1150,6 +1154,18 @@ class SimulationBroker:
             # aperta dopo il settlement non verrebbe mai regolata.
             order.status = "LAPSED"
             return
+        # Quota non valida (malformata, non finita o <= 1.0): nessun
+        # abbinamento, come il client LIVE che la rifiuta (INVALID_PRICE). Il
+        # controllo e' esplicito: con la semantica Betfair un BACK a quota 0
+        # accetterebbe qualsiasi prezzo. Prima di F6 il verso opposto lasciava
+        # passare il caso speculare, un LAY a quota 0.
+        try:
+            quota = float(order.price)
+        except (TypeError, ValueError):
+            quota = float("nan")
+        if not math.isfinite(quota) or quota <= 1.0:
+            order.status = "EXECUTABLE"
+            return
         market = self.state.market_books.get(order.market_id)
         if not market:
             order.status = "EXECUTABLE"
@@ -1173,10 +1189,16 @@ class SimulationBroker:
         backs = ex.get("availableToBack") or []
         lays = ex.get("availableToLay") or []
 
+        # Semantica Betfair (#383, F6/P25): ``availableToBack`` sono i prezzi a
+        # cui si PUNTA adesso (offerte di chi banca), ``availableToLay`` quelli a
+        # cui si BANCA. Un BACK si abbina quindi sul miglior availableToBack, un
+        # LAY sul miglior availableToLay. Fino a F6 era il contrario: il SIM
+        # abbinava dal lato opposto dello spread, e un BACK al prezzo davvero
+        # eseguibile restava a riposo.
         if order.side == "BACK":
-            best_counter = lays[0] if lays else None
-        else:
             best_counter = backs[0] if backs else None
+        else:
+            best_counter = lays[0] if lays else None
 
         if not best_counter:
             order.status = "EXECUTABLE"
@@ -1189,12 +1211,14 @@ class SimulationBroker:
             order.status = "EXECUTABLE"
             return
 
-        # ordine aggressivo: match se il prezzo è compatibile
+        # Si abbina subito se la quota chiesta e' compatibile col miglior
+        # livello: un BACK chiede al massimo quel prezzo, un LAY almeno quello.
+        # Si prende il prezzo del book (miglioramento possibile, come l'exchange).
         can_match = False
         if order.side == "BACK":
-            can_match = order.price >= best_price
-        else:
             can_match = order.price <= best_price
+        else:
+            can_match = order.price >= best_price
 
         if not can_match:
             order.status = "EXECUTABLE"

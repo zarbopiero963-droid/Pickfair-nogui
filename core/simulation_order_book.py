@@ -152,14 +152,15 @@ class SimulationOrderBook:
 
     def get_opposite_ladder(self, market_id: str, selection_id: int, order_side: str) -> List[Dict[str, float]]:
         """
-        Per un ordine:
-        - BACK matcha contro availableToLay
-        - LAY  matcha contro availableToBack
+        Il ladder delle offerte di lato opposto contro cui l'ordine si abbina,
+        con la semantica Betfair (#383, F6):
+        - BACK matcha contro availableToBack (le offerte di chi banca)
+        - LAY  matcha contro availableToLay (le offerte di chi punta)
         """
         side = str(order_side or "BACK").upper().strip()
         if side == "BACK":
-            return self.get_available_to_lay(market_id, selection_id)
-        return self.get_available_to_back(market_id, selection_id)
+            return self.get_available_to_back(market_id, selection_id)
+        return self.get_available_to_lay(market_id, selection_id)
 
     # =========================================================
     # LIQUIDITY CONSUMPTION
@@ -173,9 +174,10 @@ class SimulationOrderBook:
         matched_size: float,
     ) -> Dict[str, Any]:
         """
-        Consuma liquidità dal lato opposto del book:
-        - BACK consuma availableToLay
-        - LAY consuma availableToBack
+        Consuma la liquidità su cui l'ordine si è abbinato (semantica Betfair,
+        #383, F6):
+        - BACK consuma availableToBack
+        - LAY consuma availableToLay
         """
         with self._lock:
             market_id = self._normalize_market_id(market_id)
@@ -198,7 +200,7 @@ class SimulationOrderBook:
                 }
 
             ex = runner.setdefault("ex", {})
-            book_key = "availableToLay" if side == "BACK" else "availableToBack"
+            book_key = "availableToBack" if side == "BACK" else "availableToLay"
             ladder = ex.get(book_key) or []
 
             remaining = matched_size

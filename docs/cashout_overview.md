@@ -30,8 +30,9 @@ copy-pattern (regex)┘                                        │
                                    CashoutRouter (A3, query LIVE)
                                    · posizioni del bot = list_current_orders +
                                      identità DB (get_bot_active_orders, I1)
-                                   · prezzo corrente live; cancella il resting non
-                                     abbinato prima del green-up
+                                   · prezzo di chiusura dal lato eseguibile, dal
+                                     book chiesto con i prezzi; cancella il
+                                     resting non abbinato prima del green-up
                                    · calcola lo stake green-up (dutching)
                                              │ pubblica SOLO
                                              ▼
@@ -101,6 +102,10 @@ LAY **€10 @ 2.0**; la quota è salita a **3.0**.
 > Nota: lo stake green-up è arrotondato allo step Betfair; se arrotonda a 0 il
 > resolver **rifiuta** (niente ordine inutile). La commissione 4.5% è enforced
 > nel layer math (Betfair Italia), non configurabile a runtime.
+>
+> La «quota corrente» (`current_price`) è il prezzo a cui la chiusura si abbina
+> subito: per chiudere un BACK si banca al miglior `availableToLay`, per chiudere
+> un LAY si punta al miglior `availableToBack` (vedi §5).
 
 ---
 
@@ -139,6 +144,19 @@ eventi (il `PnLEngine` sarebbe rimasto vuoto in produzione — vedi PR #298 chiu
   hedge sul lato sbagliato (il netting P&L-based è un follow-up).
 - Il **resting non abbinato** (`sizeRemaining`) viene **cancellato** prima del
   green-up, così non resta esposizione fantasma.
+- **Prezzo di chiusura** (`cashout_router._closing_price`): l'hedge si prezza dal
+  lato su cui si abbina subito, come sull'exchange Betfair (#383, F6 della #453):
+  chiudere un BACK = LAY al miglior `availableToLay`, chiudere un LAY = BACK al
+  miglior `availableToBack`. Il gate di profondità (L95) guarda la size dello
+  stesso livello. Fino a F6 il router usava il lato opposto, allineato al motore
+  SIM di allora: in LIVE l'hedge sarebbe rimasto a riposo e il gestore del
+  residuo l'avrebbe cancellato.
+- **Book con i prezzi** in LIVE: il runtime passa al router
+  `get_market_book_snapshot(market_id, include_prices=True)`, cioè
+  `listMarketBook` con `EX_BEST_OFFERS`. Senza `priceProjection` Betfair non
+  popola le ladder: fino a F6 il router non trovava il prezzo di chiusura e
+  saltava ogni posizione con un solo warning nel log. In SIM il flag è
+  ininfluente.
 
 ---
 

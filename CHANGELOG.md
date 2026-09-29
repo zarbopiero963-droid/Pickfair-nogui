@@ -79,6 +79,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Book sides (F6 in #453, DECISIONE-426 P25): the simulation broker, the
+  cashout router and the Telegram resolver now read the two ladders as Betfair
+  defines them, the convention the owner chose for dutching in #383:
+  `availableToBack` holds the prices you can back at now, `availableToLay` the
+  prices you can lay at now.
+  - SIM: a BACK matches on the best `availableToBack` when its price is at or
+    below it, a LAY on the best `availableToLay` when its price is at or above
+    it, both at the book price. Before, each side matched against the opposite
+    ladder: paper results earned the spread instead of paying it, and a BACK at
+    the really executable price stayed unmatched.
+  - Cashout: a BACK position is closed with a LAY at the best `availableToLay`
+    and a LAY position with a BACK at the best `availableToBack`; the L95 depth
+    gate reads that same level. Before, in LIVE the hedge would have rested
+    unmatched and the residual handler would have cancelled it.
+  - Cashout in LIVE: the router now asks for the market book with prices
+    (`include_prices=True`, `EX_BEST_OFFERS`). Without them Betfair returns no
+    ladders, so every position was skipped with only a log warning and a
+    `CASHOUT` from the chat closed nothing.
+  - The "aggressive" BACK of the Telegram resolver (old Telegram tab of the
+    GUI, reachable in SIM only) now takes the best `availableToBack`, the
+    price that matches at once.
+  - The SIM no longer matches an order with an invalid price (malformed,
+    non-finite or at most 1.0), as the live client refuses it. Before F6 a LAY
+    with such a price matched; the side fix alone would have moved the hole to
+    the BACK side.
+  - `SimulationMatchingEngine` and `SimulationOrderBook` (used by tests only)
+    follow the same rules; `direct_best_price` docstrings no longer call the
+    executable price "defensive" (its code was already right).
+  May look like a regression: SIM results are less optimistic, since the
+  spread is now paid, and a SIM BACK priced above the best back now rests
+  unmatched instead of matching.
 - Cashout in the GUI (#461 PR04): the GUI process now builds the same cashout
   execution chain as the headless app (request bridge with duplicate filter,
   executor with the real SafetyLayer, OrderRouter, residual handler), through
