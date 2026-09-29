@@ -2363,11 +2363,17 @@ class RuntimeController:
         }
 
     def stop(self) -> dict:
+        # Il runtime smette di essere attivo PRIMA di smontare i servizi
+        # (#461 PR04): la disconnessione di Telegram puo' durare secondi, e un
+        # segnale o un cashout differito (grace auto-green) arrivato intanto
+        # trova i gate chiusi e viene rifiutato, invece di piazzare mentre il
+        # servizio Betfair e' ancora collegato. Se uno smontaggio solleva, il
+        # runtime resta comunque fermo.
+        self.mode = RuntimeMode.STOPPED
         self._stop_settlement_poller()
         self._stop_market_data_feed()
         self.telegram_service.stop()
         self.betfair_service.disconnect()
-        self.mode = RuntimeMode.STOPPED
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {

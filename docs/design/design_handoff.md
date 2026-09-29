@@ -302,6 +302,9 @@ modifica design/safety e deve aggiornare questo handoff.
   la GUI rifiutava ogni cashout (`cashout_chain_not_wired`); ora in LIVE un
   CASHOUT dalla chat piazza un hedge reale. `CASHOUT_SUCCESS` compare solo
   dopo l'abbinamento.
+- Chiusura della finestra: prima si ferma il runtime (hook `runtime_stop`),
+  poi Telegram, Betfair, database ed executor. Un comando o un cashout
+  differito che arriva durante lo smontaggio non parte.
 
 ## 17. `ui_panels/` — superficie separata NON collegata alla Mini GUI
 

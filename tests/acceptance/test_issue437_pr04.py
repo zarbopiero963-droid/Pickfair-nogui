@@ -567,17 +567,118 @@ def test_mercato_sospeso_come_headless(gui, headless):
 
 
 # --------------------------------------------------------------------------
-# TEARDOWN
+# TEARDOWN — dalla chiusura reale della finestra, senza fermare prima il runtime
 # --------------------------------------------------------------------------
-def test_chiusura_finestra_esito_tardivo_senza_effetti(gui):
-    """La catena non ha thread propri. Dopo la chiusura della finestra
-    (_on_close: ShutdownManager + destroy) un CASHOUT_FAILED tardivo non
-    rompe il worker del bus e non piazza nulla."""
+def test_stop_chiude_i_gate_prima_dello_smontaggio(gui, headless):
+    """``RuntimeController.stop`` rende il runtime non attivo PRIMA di
+    smontare Telegram e Betfair: quando parte lo smontaggio (che per Telegram
+    puo' durare secondi) nessun segnale e nessun cashout differito passa piu'
+    i gate. Vale per entrambi gli entrypoint."""
+    for app in (gui, headless):
+        app.avvia()
+        visto = []
+        app.app.telegram_service.stop = lambda *a, _rt=app.rt, **k: visto.append(
+            (_rt.mode.value, _rt._runtime_active())
+        )
+        app.rt.stop()
+        assert visto and visto[0] == ("STOPPED", False), (app.tipo, visto)
+
+
+class _ListenerAllaChiusura:
+    """Confine Telegram: il listener, mentre si ferma, consegna un ultimo
+    messaggio (``testo``) oppure impiega ``attesa`` secondi, come una
+    disconnessione lenta. Lo stop del ``TelegramService`` resta quello vero."""
+
+    def __init__(self, app: "_App", testo: str = "", attesa: float = 0.0):
+        self.app = app
+        self.testo = testo
+        self.attesa = attesa
+
+    def stop(self):
+        import time as _time
+
+        if self.testo:
+            self.app.messaggio(self.testo)
+        if self.attesa:
+            _time.sleep(self.attesa)
+        self.app.svuota_bus()
+        return {"stopped": True}
+
+
+def _listener_di_confine(app: "_App", **kw) -> None:
+    svc = app.app.telegram_service
+    del svc.stop  # di nuovo lo stop vero del servizio, fino al listener
+    svc.listener = _ListenerAllaChiusura(app, **kw)
+
+
+def test_chiusura_finestra_comando_durante_lo_smontaggio_non_parte(gui):
+    """GPT-6 Astra sulla #486: dalla PR04 la GUI puo' piazzare un hedge, e
+    alla chiusura non fermava il runtime. Un CASHOUT consegnato mentre
+    Telegram si disconnette partiva col servizio Betfair ancora collegato:
+    gli hook della chiusura smontano Telegram prima di Betfair. Ora la
+    chiusura ferma il runtime per primo: rifiutato, zero invii."""
     gui.avvia()
     gui.posizione()
-    broker = gui.broker  # STOP scollega il service: si guarda lo stesso broker
+    broker = gui.broker  # la chiusura scollega il service: si guarda lo stesso broker
     ordini_prima = broker.get_current_orders(None)
-    gui.rt.stop()
+    _listener_di_confine(gui, testo="CASHOUT ALL")
+    gui.eventi.clear()
+
+    gui.app._on_close()
+    gui.svuota_bus()
+
+    assert broker.get_current_orders(None) == ordini_prima
+    assert gui.di("REQ_EXECUTE_CASHOUT") == []
+    assert gui.di("CMD_EXECUTE_CASHOUT") == []
+    rifiuti = gui.di("SIGNAL_REJECTED")
+    assert len(rifiuti) == 1 and rifiuti[0]["reason"] == "runtime_non_attivo:STOPPED", rifiuti
+
+
+def test_chiusura_finestra_con_grace_armato_non_parte(gui):
+    """Lo scenario di GPT-6 Astra alla lettera: un cashout differito dal
+    grace auto-green e' armato quando si chiude la finestra, e scatta durante
+    lo smontaggio. Nessun produttore di oggi arma il grace (serve un CASHOUT
+    con mercato e selezione): il segnale e' costruito come nei test del grace.
+    Esito: annullato con CASHOUT_FAILED visibile, nessun invio."""
+    import time as _time
+
+    gui.avvia()
+    gui.posizione()
+    gui.rt.config.auto_green_delay_enabled = True
+    gui.rt.config.auto_green_delay_sec = 0.2
+    broker = gui.broker
+    ordini_prima = broker.get_current_orders(None)
+    gui.eventi.clear()
+
+    gui.app.bus.publish("SIGNAL_RECEIVED", {
+        "signal_type": "CASHOUT", "market_id": MERCATO, "selection_id": 11,
+        "event_name": EVENTO, "source": "TEST",
+    })
+    gui.svuota_bus()
+    assert gui.di("REQ_EXECUTE_CASHOUT") == []  # il grace e' armato, non ancora partito
+
+    # La disconnessione di Telegram dura piu' del grace.
+    _listener_di_confine(gui, attesa=0.6)
+    gui.app._on_close()
+    _time.sleep(0.3)
+    gui.svuota_bus()
+
+    assert broker.get_current_orders(None) == ordini_prima
+    assert gui.di("REQ_EXECUTE_CASHOUT") == []
+    falliti = gui.di("CASHOUT_FAILED")
+    assert len(falliti) == 1, falliti
+    assert falliti[0]["reason"].startswith("grace_aborted:runtime_non_attivo"), falliti
+
+
+def test_chiusura_finestra_esito_tardivo_senza_effetti(gui):
+    """La catena non ha thread propri. Dopo la chiusura reale della finestra
+    (_on_close: ShutdownManager + destroy, senza fermare prima il runtime a
+    mano) un CASHOUT_FAILED tardivo non rompe il worker del bus e non piazza
+    nulla."""
+    gui.avvia()
+    gui.posizione()
+    broker = gui.broker  # la chiusura scollega il service: si guarda lo stesso broker
+    ordini_prima = broker.get_current_orders(None)
     gui.app._on_close()
 
     gui.app.bus.publish("CASHOUT_FAILED", {

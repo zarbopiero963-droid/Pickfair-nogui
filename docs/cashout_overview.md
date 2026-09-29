@@ -203,11 +203,14 @@ non riletto dopo, per evitare uno switch SIM/LIVE in volo).
 5. ~~**Wiring comune della catena**~~ — **fatto** (PR04 #461):
    `cashout_wiring.cabla_catena_cashout` costruisce
    OrderRouter/Executor/Bridge/ResidualHandler per `headless_main` e per
-   `mini_gui`. Resta aperto: alla chiusura della finestra la GUI non ferma il
-   runtime (l'headless sì), quindi un grace di auto-green già armato non viene
-   annullato. Dopo l'hook `betfair_disconnect` nessun ordine parte comunque: il
-   service non ha più né client né broker. Lo shutdown unico GUI/headless è la
-   PR17 della #461.
+   `mini_gui`. Nella stessa PR la chiusura della finestra ferma il runtime per
+   primo (hook `runtime_stop`, come `HeadlessApp.stop`), e
+   `RuntimeController.stop` rende il runtime non attivo prima di smontare
+   Telegram e Betfair: un comando arrivato durante lo smontaggio è rifiutato
+   (`runtime_non_attivo:STOPPED`), un cashout differito dal grace è annullato
+   (`CASHOUT_FAILED` `grace_aborted`). Resta per la PR17 della #461 lo
+   shutdown unico e idempotente GUI/headless (errori del main, doppia
+   chiusura).
 6. **Telemetria/UI del cashout**: contatori SUCCESS/UNMATCHED/AMBIGUOUS e green-up
    cumulato negli observability snapshot.
 

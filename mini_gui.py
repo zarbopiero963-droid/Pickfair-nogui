@@ -498,10 +498,27 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
         self.telegram_controller = TelegramController(self)
 
+        # Alla chiusura il runtime si ferma PRIMA di Telegram, Betfair e DB,
+        # come in HeadlessApp.stop (#461 PR04): dalla PR04 la GUI piazza
+        # hedge, e un comando o un cashout differito che arriva durante lo
+        # smontaggio non deve partire. RuntimeController.stop chiude i gate
+        # per primo; gli hook che seguono ripetono stop e disconnect, che sono
+        # idempotenti.
+        self._register_shutdown_hook("runtime_stop", self._stop_runtime_on_close, priority=5)
         self._register_shutdown_hook("telegram_stop", self.telegram_service.stop, priority=10)
         self._register_shutdown_hook("betfair_disconnect", self.betfair_service.disconnect, priority=20)
         self._register_shutdown_hook("db_close", self.db.close_all_connections, priority=30)
         self._register_shutdown_hook("executor_shutdown", self.executor.shutdown, priority=40)
+
+    def _stop_runtime_on_close(self) -> None:
+        """Hook di chiusura: ferma il runtime prima degli altri (#461 PR04).
+
+        ``stop`` si risolve alla chiusura, non al build: un runtime senza
+        ``stop`` (i runtime finti di alcuni test) non fa fallire la costruzione
+        della GUI. In produzione il runtime e' sempre il RuntimeController."""
+        stop = getattr(self.runtime, "stop", None)
+        if callable(stop):
+            stop()
 
     def _notify_cashout_residual(self, text: str, *, severity: str = "HIGH") -> None:
         """Residuo di un cashout all'operatore via Telegram, come nell'headless

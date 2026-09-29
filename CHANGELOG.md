@@ -92,6 +92,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   refresh on both. The GUI still has no manual cashout control. The Telegram
   notification of a cashout residual moved from `headless_main` to
   `cashout_wiring` unchanged, and both entrypoints use it.
+  Closing the GUI window now stops the runtime first, as the headless app
+  does, and `RuntimeController.stop` marks the runtime stopped before tearing
+  down Telegram and Betfair, in both entrypoints. A command or a delayed
+  cashout (auto-green grace) arriving during that teardown is rejected
+  instead of being placed while the Betfair service is still connected.
 - Simulation settlement (#461 PR03): a SIM market is now settled when its
   CLOSED market book reaches the simulation broker. Before, nothing settled
   a SIM market: stakes and liabilities stayed locked forever and the runtime
