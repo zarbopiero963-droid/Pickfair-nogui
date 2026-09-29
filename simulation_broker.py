@@ -1,14 +1,15 @@
 from __future__ import annotations
 
+import copy
 import logging
 import math
 import threading
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
-from core.pnl_engine import MarketNetRealizedSettlementAggregator
+from core.pnl_engine import MarketNetRealizedSettlementAggregator, exchange_settled_gross_pnl
 from core.position_ledger import PositionLedger
 
 logger = logging.getLogger(__name__)
@@ -90,6 +91,10 @@ class SimulationState:
         self.market_books: Dict[str, Dict[str, Any]] = {}
         self.event_index: Dict[str, Dict[str, Any]] = {}
         self.position_ledgers: Dict[str, PositionLedger] = {}
+        # Registro dei mercati CHIUSI gia' regolati (PR03 #461): market_id ->
+        # settlement. Persistito col resto dello stato, e' la dedupe del broker:
+        # un book CHIUSO ripetuto o un riavvio non regolano due volte.
+        self.settlements: Dict[str, Dict[str, Any]] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -113,6 +118,7 @@ class SimulationState:
                 }
                 for key, ledger in self.position_ledgers.items()
             },
+            "settlements": copy.deepcopy(self.settlements),
         }
 
     # skipcq: PY-R1000 - pre-existing state-restoration complexity; PR3 only adds defensive parsing.
@@ -182,6 +188,11 @@ class SimulationState:
                     size=open_size,
                 )
             self.position_ledgers[str(key)] = ledger
+
+        self.settlements = {}
+        for market_id, record in dict(data.get("settlements") or {}).items():
+            if isinstance(record, dict) and str(market_id).strip():
+                self.settlements[str(market_id)] = copy.deepcopy(record)
 
 
 class SimulationBroker:
@@ -334,6 +345,8 @@ class SimulationBroker:
         normalized["marketId"] = market_id
         normalized["market_id"] = market_id
 
+        esito_settlement: Optional[Dict[str, Any]] = None
+        da_persistere: List[SimOrder] = []
         with self._lock:
             self.state.market_books[market_id] = normalized
             self._refresh_unrealized_for_market(market_id)
@@ -372,7 +385,281 @@ class SimulationBroker:
                     "market_name": market_name,
                 }
 
-        return {"ok": True, "market_id": market_id, "simulated": True}
+            # PR03 (#461): il book CHIUSO e' il segnale di settlement del
+            # mercato, come su Betfair. Stesso lock dei fill: nessun ordine
+            # si abbina a meta' di un settlement.
+            if self._book_chiuso(normalized):
+                esito_settlement, da_persistere = self._settle_closed_market_locked(
+                    market_id, normalized
+                )
+
+        for order in da_persistere:
+            self._persist_order(order)
+        esito: Dict[str, Any] = {"ok": True, "market_id": market_id, "simulated": True}
+        if esito_settlement is not None:
+            esito.update(esito_settlement)
+        return esito
+
+    # =========================================================
+    # SETTLEMENT DEL MERCATO CHIUSO (PR03 #461)
+    # =========================================================
+    @staticmethod
+    def _book_chiuso(market_book: Dict[str, Any]) -> bool:
+        status = market_book.get("status")
+        return isinstance(status, str) and status.strip().upper() == "CLOSED"
+
+    @staticmethod
+    def _vincitori_attesi(market_book: Dict[str, Any]) -> Optional[int]:
+        """``numberOfWinners`` dichiarato dal mercato: al livello alto nel
+        book REST, dentro ``marketDefinition`` nel book dello stream. None se
+        assente o non valido."""
+        for fonte in (market_book, market_book.get("marketDefinition")):
+            if isinstance(fonte, dict):
+                valore = fonte.get("numberOfWinners")
+                if isinstance(valore, int) and not isinstance(valore, bool) and valore > 0:
+                    return valore
+        return None
+
+    def _ricostruisci_fill_mercato_locked(self, market_id: str) -> Tuple[float, Dict[int, float]]:
+        """Effetto di cassa gia' applicato al saldo dai fill del mercato, ed
+        esposizione residua per selezione, ricostruiti dagli ordini.
+
+        Ogni ordine si abbina una volta sola (``place_bet`` o il nuovo ordine
+        di ``replace_orders``) con un fill ``bet_id`` a quota e importo
+        abbinati: ripercorrerli in ordine d'inserimento su ledger nuovi
+        riproduce esattamente i movimenti di saldo dei fill. Non si usa il
+        ledger vivo, che dopo un riavvio non conserva il realizzato gia'
+        accreditato. Un ordine con valori non validi solleva ``ValueError``.
+        """
+        ledgers: Dict[int, PositionLedger] = {}
+        cassa = 0.0
+        for order in self.state.orders.values():
+            if str(order.market_id) != market_id or not order.matched_size > 0.0:
+                continue
+            selezione = int(order.selection_id)
+            ledger = ledgers.get(selezione)
+            if ledger is None:
+                ledger = PositionLedger(market_id=market_id, runner_id=selezione)
+                ledgers[selezione] = ledger
+            prima = ledger.snapshot()
+            applicato = ledger.apply_fill(
+                fill_id=str(order.bet_id),
+                side=order.side,
+                price=order.avg_price_matched,
+                size=order.matched_size,
+            )
+            dopo = applicato["snapshot"]
+            cassa += (float(prima.exposure) - float(dopo.exposure)) + float(
+                applicato.get("realized_delta") or 0.0
+            )
+        esposizioni = {sel: float(led.snapshot().exposure) for sel, led in ledgers.items()}
+        return cassa, esposizioni
+
+    # skipcq: PY-R1000 - una funzione lineare di controlli fail-closed in sequenza.
+    def _settle_closed_market_locked(
+        self, market_id: str, market_book: Dict[str, Any]
+    ) -> Tuple[Dict[str, Any], List[SimOrder]]:
+        """Regola UNA volta il mercato CHIUSO sulle puntate abbinate.
+
+        - Lordo per bet con la semantica exchange (fonte unica
+          ``exchange_settled_gross_pnl``), aggregato sul mercato PRIMA della
+          commissione: la commissione di policy si applica una volta sul
+          netto di mercato (aggregatore market-net).
+        - Accredito = netto - effetto di cassa gia' applicato dai fill (stake
+          BACK e liability LAY tolti al fill, realizzato gia' accreditato):
+          alla fine il mercato pesa sul saldo esattamente il suo netto.
+        - I PositionLedger del mercato si chiudono (esposizione rilasciata);
+          gli ordini abbinati diventano SETTLED, i residui non abbinati
+          LAPSED; il settlement entra nel registro persistito, da cui il
+          poller del runtime lo consegna al ciclo.
+
+        Fail-closed, senza toccare nulla: ledger incoerenti con gli ordini,
+        ordini con valori non validi, runner con puntate senza stato
+        terminale noto, runner rimossi con puntate su altri runner (fattori
+        di riduzione non modellati), dead heat, commissione fuori policy.
+        """
+        esistente = self.state.settlements.get(market_id)
+        if esistente is not None:
+            return {"settlement_status": "DUPLICATE", "settlement": copy.deepcopy(esistente)}, []
+
+        def _rifiuto(stato: str, dettaglio: str) -> Tuple[Dict[str, Any], List[SimOrder]]:
+            logger.warning(
+                "Settlement SIM del mercato %s non eseguito (%s): %s — posizioni aperte, "
+                "nessun effetto sul saldo",
+                market_id, stato, dettaglio,
+            )
+            return {"settlement_status": stato}, []
+
+        try:
+            cassa_fill, esposizioni = self._ricostruisci_fill_mercato_locked(market_id)
+        except (TypeError, ValueError) as exc:
+            return _rifiuto("INVALID_BET", str(exc))
+
+        prefisso = f"{market_id}::"
+        esposizioni_vive: Dict[int, float] = {}
+        for chiave, ledger in self.state.position_ledgers.items():
+            if chiave.startswith(prefisso):
+                snap = ledger.snapshot()
+                esposizioni_vive[int(snap.runner_id)] = float(snap.exposure)
+        for selezione in set(esposizioni_vive) | set(esposizioni):
+            if abs(esposizioni_vive.get(selezione, 0.0) - esposizioni.get(selezione, 0.0)) > 1e-6:
+                return _rifiuto(
+                    "LEDGER_INCONSISTENT",
+                    f"selezione {selezione}: ledger {esposizioni_vive.get(selezione, 0.0)} "
+                    f"ordini {esposizioni.get(selezione, 0.0)}",
+                )
+
+        ordini = [o for o in self.state.orders.values() if str(o.market_id) == market_id]
+        abbinati = [o for o in ordini if o.matched_size > 0.0]
+        adesso = datetime.utcnow().isoformat()
+        if not abbinati:
+            decaduti = []
+            for order in ordini:
+                if order.status == "EXECUTABLE":
+                    order.status = "LAPSED"
+                    order.updated_at = adesso
+                    decaduti.append(order)
+            return {"settlement_status": "NO_POSITIONS"}, decaduti
+
+        stati: Dict[int, str] = {}
+        for runner in market_book.get("runners") or []:
+            if not isinstance(runner, dict):
+                continue
+            try:
+                selezione = int(runner.get("selectionId") or runner.get("selection_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            grezzo = runner.get("status")
+            stato = grezzo.strip().upper() if isinstance(grezzo, str) else ""
+            # Due righe discordanti per lo stesso runner: esito non certo.
+            stati[selezione] = stato if stati.get(selezione, stato) == stato else ""
+
+        regolabili = {"WINNER", "LOSER", "REMOVED", "REMOVED_VACANT"}
+        rimossi = {sel for sel, st in stati.items() if st in {"REMOVED", "REMOVED_VACANT"}}
+        for order in abbinati:
+            if stati.get(int(order.selection_id), "") not in regolabili:
+                return _rifiuto(
+                    "UNSUPPORTED_RUNNER_STATUS",
+                    f"runner {order.selection_id} stato {stati.get(int(order.selection_id))!r}",
+                )
+        if rimossi and any(int(o.selection_id) not in rimossi for o in abbinati):
+            return _rifiuto(
+                "REDUCTION_FACTOR_UNSUPPORTED",
+                f"runner rimossi {sorted(rimossi)} con puntate su altri runner",
+            )
+        # Piu' di un WINNER e' regolabile solo se il mercato dichiara quanti
+        # vincitori prevede e non li supera: altrimenti puo' essere un dead
+        # heat, che Betfair paga ridotto (Fugu Ultra sulla #485).
+        vincitori = sum(1 for st in stati.values() if st == "WINNER")
+        vincitori_attesi = self._vincitori_attesi(market_book)
+        if vincitori > 1 and (vincitori_attesi is None or vincitori > vincitori_attesi):
+            return _rifiuto(
+                "DEAD_HEAT_UNSUPPORTED",
+                f"{vincitori} vincitori su {vincitori_attesi} attesi",
+            )
+
+        bets: List[Dict[str, Any]] = []
+        try:
+            for order in abbinati:
+                stato_runner = stati[int(order.selection_id)]
+                bets.append({
+                    "bet_id": order.bet_id,
+                    "selection_id": int(order.selection_id),
+                    "side": order.side,
+                    "price": float(order.avg_price_matched),
+                    "size": float(order.matched_size),
+                    "runner_status": stato_runner,
+                    "gross_pnl": exchange_settled_gross_pnl(
+                        side=order.side,
+                        price=order.avg_price_matched,
+                        size=order.matched_size,
+                        runner_status=stato_runner,
+                    ),
+                })
+        except (TypeError, ValueError) as exc:
+            return _rifiuto("INVALID_BET", str(exc))
+        lordo = float(sum(bet["gross_pnl"] for bet in bets))
+
+        # Il registro delle commissioni e' quello dello stato CORRENTE: dopo
+        # load_from_dict lo stato ne ha uno nuovo, l'aggregatore va riagganciato.
+        self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
+        try:
+            realizzato = self._market_net_realized_aggregator.apply(
+                market_id=market_id, gross_pnl=lordo
+            )
+        except ValueError as exc:
+            return _rifiuto("COMMISSION_POLICY_VIOLATION", str(exc))
+
+        commissione = float(realizzato["commission_amount"])
+        netto = float(realizzato["net_pnl"])
+        accredito = netto - cassa_fill
+        esposizione_rilasciata = float(sum(esposizioni_vive.values()))
+
+        self.state.balance += accredito
+        for chiave in [k for k in self.state.position_ledgers if k.startswith(prefisso)]:
+            self.state.position_ledgers.pop(chiave, None)
+        self._recompute_exposure_and_unrealized()
+        self.state.realized_pnl += netto
+        self.state.realized_commission += commissione
+
+        decaduti_ids: List[str] = []
+        cambiati: List[SimOrder] = []
+        for order in ordini:
+            if order.matched_size > 0.0:
+                order.status = "SETTLED"
+            elif order.status == "EXECUTABLE":
+                order.status = "LAPSED"
+                decaduti_ids.append(order.bet_id)
+            else:
+                continue
+            order.updated_at = adesso
+            cambiati.append(order)
+
+        record = {
+            "settlement_id": "SIMSET-" + uuid.uuid4().hex[:12],
+            "market_id": market_id,
+            "settled_at": datetime.now(timezone.utc).isoformat(timespec="microseconds"),
+            "gross_pnl": lordo,
+            "commission_amount": commissione,
+            "net_pnl": netto,
+            "commission_pct": float(realizzato["commission_pct"]),
+            "market_net_gross": float(realizzato["market_net_gross"]),
+            "market_commission_amount_total": float(realizzato["market_commission_amount_total"]),
+            "fill_cash": float(cassa_fill),
+            "balance_credit": float(accredito),
+            "released_exposure": esposizione_rilasciata,
+            "bets": bets,
+            "lapsed_bet_ids": decaduti_ids,
+            "settlement_basis": str(realizzato["settlement_basis"]),
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
+        }
+        self.state.settlements[market_id] = record
+        self.state.last_settlement = {
+            "gross_pnl": lordo,
+            "commission_amount": commissione,
+            "net_pnl": netto,
+            "commission_pct": float(realizzato["commission_pct"]),
+            "settlement_source": "simulation_broker",
+            "settlement_kind": "realized_settlement",
+        }
+        logger.info(
+            "[SIM] Mercato %s regolato: lordo=%.2f commissione=%.2f netto=%.2f accredito=%.2f",
+            market_id, lordo, commissione, netto, accredito,
+        )
+        return {"settlement_status": "SETTLED", "settlement": copy.deepcopy(record)}, cambiati
+
+    def list_settlements(self) -> List[Dict[str, Any]]:
+        """Copie dei settlement regolati, in ordine di chiusura: il registro
+        che il poller del runtime consegna al ciclo (PR03 #461)."""
+        with self._lock:
+            records = [
+                copy.deepcopy(r) for r in self.state.settlements.values() if isinstance(r, dict)
+            ]
+        return sorted(
+            records,
+            key=lambda r: (str(r.get("settled_at") or ""), str(r.get("market_id") or "")),
+        )
 
     def _refresh_unrealized_for_market(self, market_id: str) -> None:
         market = self.state.market_books.get(str(market_id))
@@ -643,7 +930,9 @@ class SimulationBroker:
     # listCurrentOrders never returns these, so the simulation wrapper must
     # exclude them too — otherwise a cancelled simulated order would be reported
     # as a still-present remote order and mis-detected as a ghost.
-    _TERMINAL_ORDER_STATUSES = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED"})
+    # SETTLED (PR03 #461): una puntata regolata non e' piu' fra gli ordini
+    # correnti di Betfair, passa ai cleared.
+    _TERMINAL_ORDER_STATUSES = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED", "SETTLED"})
 
     def get_current_orders(
         self, market_ids: Optional[List[str]] = None
@@ -855,6 +1144,12 @@ class SimulationBroker:
     # =========================================================
     # skipcq: PY-R1000 - pre-existing matching complexity; PR3 only adds defensive numeric/state hardening.
     def _match_order(self, order: SimOrder) -> None:
+        if order.market_id in self.state.settlements:
+            # Mercato gia' regolato (PR03 #461): e' chiuso, come su Betfair
+            # l'ordine non si abbina e non resta in attesa. Una posizione
+            # aperta dopo il settlement non verrebbe mai regolata.
+            order.status = "LAPSED"
+            return
         market = self.state.market_books.get(order.market_id)
         if not market:
             order.status = "EXECUTABLE"
@@ -958,6 +1253,13 @@ class SimulationBroker:
         - commissione solo su pnl positivo
         - nessuna commissione su pnl <= 0
         - mercato: commissione su market-net realizzato (non per singolo leg positivo)
+
+        Helper del CALCOLO della commissione, non il settlement di
+        produzione: non chiude i PositionLedger, non rilascia l'esposizione
+        e non e' idempotente. Usato dopo dei fill conterebbe due volte stake
+        e liability. Il settlement di produzione e' quello del book CHIUSO
+        (``update_market_book`` -> ``_settle_closed_market_locked``, PR03
+        #461).
         """
         with self._lock:
             gross = _to_float(value=gross_pnl, default=0.0)

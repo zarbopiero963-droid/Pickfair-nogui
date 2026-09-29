@@ -346,3 +346,318 @@ def test_cleared_settlement_non_dipende_dal_flag_auto_close():
     )
     assert math.isclose(payload["net_pnl"], -25.0)
     assert len(_close_events(bus)) == 1
+
+
+# ===========================================================================
+# PR03 (#461/#437) — settlement SIM: lordo per-bet stile exchange e
+# PnLEngine.apply_simulated_market_settlement
+#
+# Esempi numerici (commissione policy 4,5% sul netto di mercato):
+# - BACK 10 @ 3.0 vince: +20;  perde: -10
+# - LAY 5 @ 2.0: se il runner perde +5; se vince -5 (liability 5 x (2-1))
+# - runner rimosso: 0 (bet annullata)
+# - mercato lordo +25 => commissione 1,125 => netto 23,875
+# ===========================================================================
+
+from core.pnl_engine import exchange_settled_gross_pnl  # noqa: E402
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("side", "price", "size", "runner_status", "atteso"),
+    [
+        ("BACK", 3.0, 10.0, "WINNER", 20.0),
+        ("BACK", 3.0, 10.0, "LOSER", -10.0),
+        ("LAY", 2.0, 5.0, "WINNER", -5.0),
+        ("LAY", 2.0, 5.0, "LOSER", 5.0),
+        ("BACK", 3.0, 10.0, "REMOVED", 0.0),
+        ("LAY", 4.5, 2.0, "REMOVED_VACANT", 0.0),
+        (" lay ", 4.5, 2.0, "loser", 2.0),
+    ],
+)
+def test_sim_lordo_per_bet_stile_exchange(side, price, size, runner_status, atteso):
+    assert exchange_settled_gross_pnl(
+        side=side, price=price, size=size, runner_status=runner_status,
+    ) == pytest.approx(atteso)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"side": "", "price": 3.0, "size": 10.0, "runner_status": "WINNER"},
+        {"side": None, "price": 3.0, "size": 10.0, "runner_status": "WINNER"},
+        {"side": 1, "price": 3.0, "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": 1.0, "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": float("nan"), "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": float("inf"), "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": True, "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": "3.0", "size": 10.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": 3.0, "size": 0.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": 3.0, "size": -1.0, "runner_status": "WINNER"},
+        {"side": "BACK", "price": 3.0, "size": float("nan"), "runner_status": "WINNER"},
+        {"side": "BACK", "price": 3.0, "size": 10.0, "runner_status": "ACTIVE"},
+        {"side": "BACK", "price": 3.0, "size": 10.0, "runner_status": "PLACED"},
+        {"side": "BACK", "price": 3.0, "size": 10.0, "runner_status": "HIDDEN"},
+        {"side": "BACK", "price": 3.0, "size": 10.0, "runner_status": ""},
+        {"side": "BACK", "price": 3.0, "size": 10.0, "runner_status": None},
+    ],
+)
+def test_sim_lordo_per_bet_input_non_regolabili_sollevano(kwargs):
+    """Il settlement non inventa un esito: lato, quota, importo o stato del
+    runner fuori dominio => errore, mai un lordo di ripiego."""
+    with pytest.raises(ValueError):
+        exchange_settled_gross_pnl(**kwargs)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("gross", "commissione", "netto"),
+    [(25.0, 1.125, 23.875), (-15.0, 0.0, -15.0), (0.0, 0.0, 0.0)],
+)
+def test_sim_settlement_payload_canonico_accettato_dal_contratto_reale(gross, commissione, netto):
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+
+    payload = engine.apply_simulated_market_settlement(
+        market_id="1.1", gross_pnl=gross, settlement_ref="SIMSET-1",
+        settled_date="2026-09-28T20:00:00+00:00",
+    )
+
+    assert payload["event_key"] == "sim:1.1:SIMSET-1"
+    assert payload["market_id"] == "1.1"
+    assert payload["table_id"] is None
+    assert payload["batch_id"] == ""
+    assert payload["gross_pnl"] == pytest.approx(gross)
+    assert payload["commission_amount"] == pytest.approx(commissione)
+    assert payload["net_pnl"] == pytest.approx(netto)
+    assert payload["pnl"] == pytest.approx(netto)
+    assert payload["commission_pct"] == pytest.approx(4.5)
+    assert payload["settlement_source"] == "simulation_broker"
+    assert payload["settlement_kind"] == "realized_settlement"
+    assert payload["settlement_basis"] == "market_net_realized"
+    assert payload["settlement_ref"] == "SIMSET-1"
+    assert payload["settled_date"] == "2026-09-28T20:00:00+00:00"
+
+    contract = RuntimeController._extract_settlement_contract(payload)
+    assert contract["settlement_validation"] == "accepted", contract["reason"]
+    assert contract["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
+    assert _close_events(bus) == [payload]
+
+
+@pytest.mark.unit
+def test_sim_settlement_chiave_identica_a_quella_del_consumer():
+    """Il poller deduplica con la stessa chiave che il consumer usa per il
+    checkpoint durevole: se divergessero, un replay dopo il riavvio
+    ri-applicherebbe il PnL."""
+    engine = PnLEngine(bus=_Bus(), commission_pct=4.5)
+    payload = engine.apply_simulated_market_settlement(
+        market_id="1.2", gross_pnl=-3.0, settlement_ref="SIMSET-X",
+    )
+    chiave = PnLEngine.simulated_settlement_key("1.2", "SIMSET-X")
+    assert chiave == payload["event_key"]
+    assert RuntimeController._build_bankroll_sync_key(payload) == chiave
+
+
+@pytest.mark.unit
+def test_sim_settlement_duplicato_bloccato_nel_motore():
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    engine.apply_simulated_market_settlement(
+        market_id="1.3", gross_pnl=40.0, settlement_ref="SIMSET-D",
+    )
+    riga = dict(engine._sim_market_net_realized_aggregator.ledger["1.3"])
+
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_DUPLICATE"):
+        engine.apply_simulated_market_settlement(
+            market_id="1.3", gross_pnl=40.0, settlement_ref="SIMSET-D",
+        )
+
+    assert len(_close_events(bus)) == 1
+    assert engine._sim_market_net_realized_aggregator.ledger["1.3"] == riga
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"market_id": "", "gross_pnl": 5.0, "settlement_ref": "R"},
+        {"market_id": "   ", "gross_pnl": 5.0, "settlement_ref": "R"},
+        {"market_id": "1.4", "gross_pnl": 5.0, "settlement_ref": ""},
+        {"market_id": "1.4", "gross_pnl": float("nan"), "settlement_ref": "R"},
+        {"market_id": "1.4", "gross_pnl": float("inf"), "settlement_ref": "R"},
+        {"market_id": "1.4", "gross_pnl": "5", "settlement_ref": "R"},
+        {"market_id": "1.4", "gross_pnl": None, "settlement_ref": "R"},
+        {"market_id": "1.4", "gross_pnl": True, "settlement_ref": "R"},
+    ],
+)
+def test_sim_settlement_input_malformato_solleva_senza_stato(kwargs):
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    with pytest.raises(ValueError):
+        engine.apply_simulated_market_settlement(**kwargs)
+    assert _close_events(bus) == []
+    assert engine._sim_market_net_realized_aggregator.ledger == {}
+
+
+@pytest.mark.unit
+def test_sim_settlement_aggregatore_separato_dal_live():
+    """Stesso mercato regolato in LIVE (-80) e poi in SIM (+100) nello stesso
+    processo: la commissione SIM e' calcolata sul SOLO netto SIM (4,50), non
+    sul netto misto (delta 0,90, che il contratto rifiuterebbe)."""
+    engine = PnLEngine(bus=_Bus(), commission_pct=4.5)
+    engine.apply_cleared_market_settlement(
+        market_id="1.5", gross_pnl=-80.0, settlement_ref="101",
+    )
+    payload = engine.apply_simulated_market_settlement(
+        market_id="1.5", gross_pnl=100.0, settlement_ref="SIMSET-5",
+    )
+    assert payload["commission_amount"] == pytest.approx(4.5)
+    assert payload["net_pnl"] == pytest.approx(95.5)
+    contract = RuntimeController._extract_settlement_contract(payload)
+    assert contract["settlement_validation"] == "accepted", contract["reason"]
+
+
+@pytest.mark.unit
+def test_sim_settlement_rimuove_le_posizioni_tracked_del_mercato():
+    engine = PnLEngine(bus=_Bus(), commission_pct=4.5)
+    _fill(engine, event_key="e-sim", market_id="1.6")
+    _fill(engine, event_key="e-altro", market_id="1.7")
+
+    payload = engine.apply_simulated_market_settlement(
+        market_id="1.6", gross_pnl=10.0, settlement_ref="SIMSET-6",
+    )
+
+    assert payload["cleared_positions"] == ["e-sim"]
+    assert "e-sim" not in engine._positions
+    assert "e-altro" in engine._positions
+
+
+class _BusCheCadeUnaVolta(_Bus):
+    """Il primo publish solleva: il settlement e' gia' applicato ma non
+    consegnato."""
+
+    def __init__(self):
+        super().__init__()
+        self.cadute = 1
+
+    def publish(self, topic, payload=None):
+        if self.cadute:
+            self.cadute -= 1
+            raise RuntimeError("BUS_NON_DISPONIBILE")
+        super().publish(topic, payload)
+
+
+@pytest.mark.unit
+def test_sim_settlement_publish_fallito_si_riconsegna_senza_riapplicare():
+    """GPT-6 Astra sulla #485: la dedupe registrata prima del publish faceva
+    rispondere DUPLICATE al ritento, e il settlement non arrivava piu' al
+    ciclo. Applicazione contabile e consegna sono separate: il ritento
+    ripubblica lo STESSO payload, senza riapplicare commissione o netto."""
+    bus = _BusCheCadeUnaVolta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.8", "gross_pnl": 25.0, "settlement_ref": "SIMSET-8"}
+
+    with pytest.raises(RuntimeError, match="BUS_NON_DISPONIBILE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    riga = dict(engine._sim_market_net_realized_aggregator.ledger["1.8"])
+    assert _close_events(bus) == []
+
+    payload = engine.apply_simulated_market_settlement(**kwargs)
+
+    assert _close_events(bus) == [payload]
+    assert payload["commission_amount"] == pytest.approx(1.125)
+    assert payload["net_pnl"] == pytest.approx(23.875)
+    assert engine._sim_market_net_realized_aggregator.ledger["1.8"] == riga
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_DUPLICATE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    assert len(_close_events(bus)) == 1
+
+
+@pytest.mark.unit
+def test_sim_settlement_ritento_con_lordo_diverso_rifiutato():
+    """Un ritento con lo stesso riferimento ma un lordo diverso non e' lo
+    stesso settlement: errore, mai un payload diverso sotto la stessa chiave."""
+    bus = _BusCheCadeUnaVolta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    with pytest.raises(RuntimeError):
+        engine.apply_simulated_market_settlement(
+            market_id="1.9", gross_pnl=25.0, settlement_ref="SIMSET-9",
+        )
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_CONFLICT"):
+        engine.apply_simulated_market_settlement(
+            market_id="1.9", gross_pnl=30.0, settlement_ref="SIMSET-9",
+        )
+    assert _close_events(bus) == []
+
+
+class _BusCheAspetta(_Bus):
+    """Il publish resta dentro finche' il test non lo rilascia: simula una
+    consegna lenta durante la quale arriva una seconda chiamata."""
+
+    def __init__(self):
+        super().__init__()
+        import threading
+
+        self.dentro = threading.Event()
+        self.rilascia = threading.Event()
+
+    def publish(self, topic, payload=None):
+        self.dentro.set()
+        assert self.rilascia.wait(timeout=5.0)
+        super().publish(topic, payload)
+
+
+@pytest.mark.unit
+def test_sim_settlement_chiamate_sovrapposte_una_sola_consegna():
+    """GPT-5.6 Sol, Claude Fable 5.1, GPT-6 Astra e Fugu Ultra sulla #485
+    (secondo giro): con la sola separazione applicato/consegnato, una seconda
+    chiamata durante il primo publish trovava il payload pendente e
+    ripubblicava. Ora la consegna e' prenotata sotto lock: la seconda
+    chiamata riceve SIM_SETTLEMENT_IN_FLIGHT e non pubblica nulla."""
+    import threading
+
+    bus = _BusCheAspetta()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.10", "gross_pnl": 25.0, "settlement_ref": "SIMSET-10"}
+    esiti = []
+    prima = threading.Thread(
+        target=lambda: esiti.append(engine.apply_simulated_market_settlement(**kwargs)),
+        daemon=True,
+    )
+    prima.start()
+    assert bus.dentro.wait(timeout=5.0)
+
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_IN_FLIGHT"):
+        engine.apply_simulated_market_settlement(**kwargs)
+
+    bus.rilascia.set()
+    prima.join(timeout=5.0)
+    assert len(esiti) == 1
+    with pytest.raises(ValueError, match="SIM_SETTLEMENT_DUPLICATE"):
+        engine.apply_simulated_market_settlement(**kwargs)
+    assert len(_close_events(bus)) == 1
+
+
+@pytest.mark.unit
+def test_sim_settlement_chiamata_rientrante_dal_subscriber_non_ripubblica():
+    """Un subscriber sincrono che richiama il motore sulla stessa chiave
+    durante il publish non provoca una seconda consegna."""
+    bus = _Bus()
+    engine = PnLEngine(bus=bus, commission_pct=4.5)
+    kwargs = {"market_id": "1.11", "gross_pnl": -5.0, "settlement_ref": "SIMSET-11"}
+    rientri = []
+    pubblica = bus.publish
+
+    def _publish_rientrante(topic, payload=None):
+        pubblica(topic, payload)
+        try:
+            engine.apply_simulated_market_settlement(**kwargs)
+        except ValueError as exc:
+            rientri.append(str(exc))
+
+    bus.publish = _publish_rientrante
+    engine.apply_simulated_market_settlement(**kwargs)
+
+    assert len(_close_events(bus)) == 1
+    assert len(rientri) == 1 and "SIM_SETTLEMENT_IN_FLIGHT" in rientri[0]

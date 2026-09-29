@@ -917,8 +917,29 @@ def test_poller_lifecycle_start_stop_pulito():
 
 
 @pytest.mark.integration
-def test_poller_non_parte_in_simulation_mode_anche_se_abilitato():
+def test_poller_parte_in_simulation_mode_se_abilitato():
+    """PR03 (#461): fino alla #484 questo test affermava il contrario («il
+    poller non parte in SIM anche se abilitato») — fissava il gap che la
+    PR03 chiude. In SIM il poller ora parte con la STESSA chiave
+    ``settlement.poll_enabled`` e legge il registro del broker simulato;
+    la facade LIVE ``list_cleared_orders`` non viene mai chiamata."""
     rc = _controller(settings=_Settings({"settlement.poll_enabled": True}))
+    rc.simulation_mode = True
+    rc.mode = RuntimeMode.STOPPED  # il giro nel thread esce subito
+
+    rc._start_settlement_poller()
+    thread = rc._settlement_poll_thread
+    assert thread is not None and thread.is_alive()
+
+    rc._stop_settlement_poller()
+    assert rc._settlement_poll_thread is None
+    assert not thread.is_alive()
+    assert rc.betfair_service.calls == []
+
+
+@pytest.mark.integration
+def test_poller_in_simulation_mode_resta_spento_di_default():
+    rc = _controller(settings=_Settings())  # nessuna chiave settlement.*
     rc.simulation_mode = True
     rc._start_settlement_poller()
     assert rc._settlement_poll_thread is None
@@ -950,6 +971,247 @@ def test_config_clamp_poll_sec_e_lookback():
     assert cfg["enabled"] is True
     assert cfg["poll_sec"] == pytest.approx(5.0)
     assert cfg["lookback_hours"] == pytest.approx(168.0)
+
+
+# ===========================================================================
+# PR03 (#461/#437) — giro SIM: registro del broker simulato => PnLEngine
+#
+# In SIM il poller non chiama la facade LIVE: legge i settlement che il
+# broker simulato ha gia' regolato (book CHIUSO) e li emette UNA volta per
+# mercato, con la stessa dedupe a tre livelli del LIVE (motore, in-memory,
+# checkpoint durevole del consumer).
+# ===========================================================================
+
+class _SimBroker:
+    def __init__(self, records=None, error=None):
+        self.records = list(records or [])
+        self.error = error
+        self.calls = 0
+
+    def list_settlements(self):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+        return [dict(r) for r in self.records]
+
+
+class _BetfairServiceSim(_BetfairService):
+    def __init__(self, broker=None, results=None):
+        super().__init__(results=results)
+        self.broker = broker
+
+    def get_simulation_broker(self):
+        return self.broker
+
+
+def _controller_sim(*, broker, recovery=None, db=None):
+    rc = RuntimeController(
+        bus=_Bus(),
+        db=db if db is not None else _DB(recovery=recovery),
+        settings_service=_Settings(),
+        betfair_service=_BetfairServiceSim(broker=broker),
+        telegram_service=_Telegram(),
+    )
+    rc.mode = RuntimeMode.ACTIVE
+    rc.simulation_mode = True
+    rc._settlement_poll_cfg = dict(_POLL_CFG)
+    return rc
+
+
+_REC = {
+    "settlement_id": "SIMSET-a1",
+    "market_id": "1.500",
+    "gross_pnl": 25.0,
+    "settled_at": "2026-09-28T20:00:00+00:00",
+}
+
+
+@pytest.mark.integration
+def test_sim_giro_emette_un_settlement_per_mercato_dal_registro_del_broker():
+    """Due mercati regolati dal broker: due chiusure, una per mercato.
+    Calcolo indipendente: +25 => commissione 1,125 => netto 23,875;
+    -10 => commissione 0 => netto -10."""
+    perso = dict(_REC, settlement_id="SIMSET-b2", market_id="1.501", gross_pnl=-10.0,
+                 settled_at="2026-09-28T20:05:00+00:00")
+    rc = _controller_sim(broker=_SimBroker(records=[perso, dict(_REC)]))
+
+    rc._poll_cleared_settlements()
+
+    closes = _closes(rc)
+    assert [c["event_key"] for c in closes] == ["sim:1.500:SIMSET-a1", "sim:1.501:SIMSET-b2"]
+    assert closes[0]["net_pnl"] == pytest.approx(23.875)
+    assert closes[0]["commission_amount"] == pytest.approx(1.125)
+    assert closes[1]["net_pnl"] == pytest.approx(-10.0)
+    assert {c["settlement_source"] for c in closes} == {"simulation_broker"}
+    assert rc.betfair_service.calls == []  # la facade LIVE non e' mai toccata
+    for close in closes:
+        contract = RuntimeController._extract_settlement_contract(close)
+        assert contract["settlement_validation"] == "accepted", contract["reason"]
+
+    # Il consumer VERO applica il netto al realizzato una volta per chiusura.
+    for close in closes:
+        rc._on_close_position(close)
+    assert rc.risk_desk.realized_pnl == pytest.approx(13.875)
+
+
+@pytest.mark.integration
+def test_sim_giro_successivo_non_riemette():
+    broker = _SimBroker(records=[dict(_REC)])
+    rc = _controller_sim(broker=broker)
+    rc._poll_cleared_settlements()
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+    assert broker.calls == 2
+
+
+@pytest.mark.integration
+def test_sim_giro_checkpoint_durevole_presente_non_riemette():
+    """Riavvio dopo che il consumer ha gia' scritto il checkpoint: il
+    settlement non si ri-applica."""
+    chiave = "sim:1.500:SIMSET-a1"
+    rc = _controller_sim(
+        broker=_SimBroker(records=[dict(_REC)]),
+        recovery={chiave: {"exists": True, "processed": True, "stage": "SETTLEMENT_DETECTED"}},
+    )
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert chiave in rc._settlement_emitted_keys
+
+
+@pytest.mark.integration
+def test_sim_giro_stato_recovery_illeggibile_sospende_e_ritenta():
+    db = _DB()
+    db.fail_reads = True
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]), db=db)
+
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert "sim:1.500:SIMSET-a1" not in rc._settlement_emitted_keys
+
+    db.fail_reads = False
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+
+
+@pytest.mark.integration
+def test_sim_giro_record_malformati_scartati_mai_un_profit_inventato():
+    malformati = [
+        "non un dict",
+        {},
+        dict(_REC, market_id=""),
+        dict(_REC, settlement_id=""),
+        dict(_REC, gross_pnl=float("nan")),
+        dict(_REC, gross_pnl=float("inf")),
+        dict(_REC, gross_pnl=True),
+        dict(_REC, gross_pnl="25"),
+        dict(_REC, gross_pnl=None),
+    ]
+    valido = dict(_REC, settlement_id="SIMSET-ok", market_id="1.502")
+    broker = _SimBroker(records=malformati + [valido])
+    broker.list_settlements = lambda: list(malformati) + [dict(valido)]
+    rc = _controller_sim(broker=broker)
+
+    rc._poll_cleared_settlements()
+
+    assert [c["event_key"] for c in _closes(rc)] == ["sim:1.502:SIMSET-ok"]
+
+
+@pytest.mark.integration
+def test_sim_giro_runtime_non_active_nessuna_lettura():
+    broker = _SimBroker(records=[dict(_REC)])
+    rc = _controller_sim(broker=broker)
+    rc.mode = RuntimeMode.STOPPED
+    rc._poll_cleared_settlements()
+    assert broker.calls == 0
+    assert _closes(rc) == []
+
+
+@pytest.mark.integration
+def test_sim_giro_senza_broker_nessuna_emissione():
+    rc = _controller_sim(broker=None)
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert rc.betfair_service.calls == []
+
+
+@pytest.mark.integration
+def test_sim_giro_errore_del_registro_round_abortito_e_ritentato():
+    broker = _SimBroker(records=[dict(_REC)], error=RuntimeError("STATE_LOCKED"))
+    rc = _controller_sim(broker=broker)
+
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+
+    broker.error = None
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+
+
+class _BusCheCadeUnaVolta(_Bus):
+    def __init__(self):
+        super().__init__()
+        self.cadute = 1
+
+    def publish(self, topic, payload=None):
+        if topic == "RUNTIME_CLOSE_POSITION" and self.cadute:
+            self.cadute -= 1
+            raise RuntimeError("BUS_NON_DISPONIBILE")
+        super().publish(topic, payload)
+
+
+@pytest.mark.integration
+def test_sim_giro_publish_fallito_ritentato_al_giro_dopo():
+    """GPT-6 Astra sulla #485: se la consegna al bus fallisce, il giro dopo
+    deve riconsegnare il settlement (una volta sola), non marcarlo visto."""
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
+    rc.bus = _BusCheCadeUnaVolta()
+    rc.pnl_engine.bus = rc.bus
+
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert "sim:1.500:SIMSET-a1" not in rc._settlement_emitted_keys
+
+    rc._poll_cleared_settlements()
+    rc._poll_cleared_settlements()
+    closes = _closes(rc)
+    assert len(closes) == 1
+    assert closes[0]["net_pnl"] == pytest.approx(23.875)
+    assert "sim:1.500:SIMSET-a1" in rc._settlement_emitted_keys
+
+
+@pytest.mark.integration
+def test_sim_giro_consegna_in_corso_non_marcata_e_ritentata():
+    """Se il motore risponde che la consegna e' in corso, il giro non marca
+    il settlement come visto: il giro dopo lo ritenta."""
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
+    originale = rc.pnl_engine.apply_simulated_market_settlement
+    chiamate = []
+
+    def _in_corso_una_volta(**kwargs):
+        chiamate.append(kwargs)
+        if len(chiamate) == 1:
+            raise ValueError("SIM_SETTLEMENT_IN_FLIGHT: consegna in corso")
+        return originale(**kwargs)
+
+    rc.pnl_engine.apply_simulated_market_settlement = _in_corso_una_volta
+    rc._poll_cleared_settlements()
+    assert _closes(rc) == []
+    assert "sim:1.500:SIMSET-a1" not in rc._settlement_emitted_keys
+
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+    assert "sim:1.500:SIMSET-a1" in rc._settlement_emitted_keys
+
+
+@pytest.mark.integration
+def test_sim_giro_duplicato_nel_motore_marcato_visto_senza_doppia_chiusura():
+    rc = _controller_sim(broker=_SimBroker(records=[dict(_REC)]))
+    rc.pnl_engine.apply_simulated_market_settlement(
+        market_id="1.500", gross_pnl=25.0, settlement_ref="SIMSET-a1",
+    )
+    rc._poll_cleared_settlements()
+    assert len(_closes(rc)) == 1
+    assert "sim:1.500:SIMSET-a1" in rc._settlement_emitted_keys
 
 
 # ===========================================================================

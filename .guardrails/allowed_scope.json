@@ -1865,6 +1865,22 @@
       ],
       "max_files": 5,
       "description": "DECISIONE-426 P24 (owner, 28/09/2026): nel workflow di Grok 4.7 il limite di attesa per richiesta al modello passa da 100 a 240 s e il timeout del job da 10 a 20 minuti (15 nella prima stesura: Codex sulla #484 ha contato le sei chiamate a GitHub al tetto di 30 s, che non ci stavano). La richiesta non e' in streaming e a reasoning high Grok risponde solo a ragionamento finito, spesso oltre i 100 s: sulla #478 non ha mai completato, sulla #483 1 tentativo su 8, e la #483 e' stata mergiata senza Grok per l'eccezione P24.1. Il test tests/guardrails/test_ai_review_timeout.py verifica per i cinque reviewer che esattamente tre tentativi, il backoff, le chiamate a GitHub contate dal file e un minuto di avvio stiano dentro timeout-minutes, che Grok abbia almeno 240 s e che i percorsi abbiano la barra anche su Windows (GPT-6 Astra sulla #484). Nessun altro valore del workflow cambia (prompt, redazione, budget, done_marker, label, effort). Docs e CHANGELOG nello stesso PR."
+    },
+    "issue437-pr03": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/pnl_engine.py",
+        "core/runtime_controller.py",
+        "ops/settlement_poller.md",
+        "simulation_broker.py",
+        "tests/acceptance/test_issue437_pr03.py",
+        "tests/core/test_settlement_poller.py",
+        "tests/integration/test_simulation_broker_commission_semantics.py",
+        "tests/unit/test_pnl_engine_cleared_settlement.py"
+      ],
+      "max_files": 10,
+      "description": "PR03 della roadmap #461 (pacchetto P02 / H01): settlement SIM fino al netto di mercato, al saldo e al ciclo Roserpina. PHASE 0 SUL MAIN `840fc1e`, falso successo RIPRODOTTO con l'app headless vera (Database reale, EventBus reale, SimulationBroker reale): mercato con BACK 10 @ 3.0 vincente e LAY 5 @ 2.0 sul perdente, book CHIUSO consegnato dall'ingresso reale MarketTracker.on_market_book, settlement.poll_enabled acceso: saldo fermo a 985 invece di 1023,875, esposizione bloccata a 15, zero RUNTIME_CLOSE_POSITION, ciclo invariato, poller non avviato in SIM. Il test del calcolo passava chiamando record_realized_settlement con un lordo scritto a mano, senza chiamanti di produzione e con stake e liability contati due volte se usato dopo i fill (1008,875). Correzione: il broker SIM regola il mercato al book CHIUSO (lordo per bet stile exchange da core.pnl_engine.exchange_settled_gross_pnl, selezioni aggregate prima della commissione di policy applicata una volta sul netto, accredito = netto meno effetto di cassa gia' applicato dai fill ricostruito dagli ordini, PositionLedger chiusi, ordini SETTLED/LAPSED, registro persistito nello stato SIM, fail-closed su stati runner non terminali, runner rimossi con puntate altrove, dead heat, ledger incoerenti, commissione fuori policy); PnLEngine.apply_simulated_market_settlement pubblica un evento per mercato con aggregatore SIM separato dal LIVE; il poller settlement gira anche in SIM con la stessa chiave (default OFF invariato) e consegna ogni settlement una volta, anche dopo un riavvio fra persistenza e aggiornamento del ciclo. Ramo LIVE del poller, contratto e consumer del runtime invariati; services/ non toccato. Docs e CHANGELOG nello stesso PR."
     }
   }
 }

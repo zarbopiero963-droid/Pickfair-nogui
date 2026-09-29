@@ -79,6 +79,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Simulation settlement (#461 PR03): a SIM market is now settled when its
+  CLOSED market book reaches the simulation broker. Before, nothing settled
+  a SIM market: stakes and liabilities stayed locked forever and the runtime
+  never saw a SIM result. Each matched bet is settled with exchange
+  semantics (`core.pnl_engine.exchange_settled_gross_pnl`), selections are
+  aggregated per market before the 4.5% policy commission, which applies
+  once to the market net. The balance is credited with the net minus what
+  the fills already moved (stakes, liabilities, realized close-outs), so a
+  stake is no longer counted twice, and the market's position ledgers are
+  closed. Duplicate CLOSED books, replays and restarts never settle twice,
+  and an order placed on an already settled SIM market lapses unmatched.
+  With `settlement.poll_enabled` on (default still off) the settlement
+  poller now runs in SIM too and delivers each settled market once to the
+  runtime cycle (realized PnL, daily loss, bankroll sync, checkpoints),
+  also after a restart between the SIM state save and the cycle update.
+  Runners without a terminal status, removed runners with bets on other
+  runners, possible dead heats (several winners without a declared number
+  of winners, or more than declared) and ledgers inconsistent with the
+  orders leave the positions open. If handing the settlement to the event
+  bus fails, the next poll round delivers it again without re-applying it;
+  a delivery in progress is never repeated by a concurrent call. In production SIM still receives no market books until
+  the SIM feed arrives (#461 PR11).
 - `SimulationBroker.place_bet` now requires BACK or LAY and normalizes case
   and surrounding spaces before recording a PAPER order. Missing, malformed,
   or non-string sides raise `INVALID_SIDE` without changing simulated orders
