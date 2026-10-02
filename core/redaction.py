@@ -27,6 +27,19 @@ from __future__ import annotations
 
 import re
 
+
+def redact_literal_secret(text: str, secret: str, replacement: str) -> str:
+    """Redact exact values; short invalid credentials must not alter error codes.
+
+    Normal credentials are replaced wherever echoed. Below eight characters,
+    match a delimited value rather than letters inside diagnostic words.
+    """
+    if not secret:
+        return text
+    if len(secret) < 8:
+        return re.sub(r"(?<!\w)" + re.escape(secret) + r"(?!\w)", lambda _: replacement, text)
+    return text.replace(secret, replacement)
+
 # Unione dei nomi-chiave esatti storicamente coperti dai due sanitizer.
 # (telegram_sanitizer.TELEGRAM_SENSITIVE_KEYS ∪ observability.SENSITIVE_KEYS)
 SENSITIVE_KEYS_EXACT: frozenset = frozenset({

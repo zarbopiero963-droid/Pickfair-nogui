@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from betfair_client import BetfairClient
+from core.redaction import redact_literal_secret
 from simulation_broker import SimulationBroker
 
 logger = logging.getLogger(__name__)
@@ -516,7 +517,7 @@ class BetfairService:
             secrets = {str(value or "") for value in (live_key, getattr(cfg, "app_key_delayed", ""), password)}
             for secret in sorted(secrets, key=len, reverse=True):
                 if secret:
-                    text = text.replace(str(secret), "[REDACTED]")
+                    text = redact_literal_secret(text, secret, "[REDACTED]")
             self.last_error = text
             logger.error("Errore connect LIVE Betfair (%s): %s", type(exc).__name__, text)
             raise RuntimeError(text) from None

@@ -20,6 +20,7 @@ from requests.exceptions import HTTPError, RequestException, Timeout
 
 import percorsi
 from circuit_breaker import CircuitBreaker
+from core.redaction import redact_literal_secret
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
@@ -987,7 +988,7 @@ class BetfairClient:
             replacements.setdefault(self.app_key, "***APP_KEY***")
         # Longest first also covers an App Key contained in a session token.
         for secret in sorted(replacements, key=len, reverse=True):
-            out = out.replace(secret, replacements[secret])
+            out = redact_literal_secret(out, secret, replacements[secret])
         return out
 
     def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:

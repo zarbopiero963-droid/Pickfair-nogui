@@ -1956,9 +1956,10 @@
         "services/setting_service.py",
         "tests/acceptance/test_issue461_pr04_quater.py",
         "tests/fixtures/betfair_tls_synthetic.py",
-        "tests/unit/test_config_registry.py"
+        "tests/unit/test_config_registry.py",
+        "tests/unit/test_issue490_review_proofs.py"
       ],
-      "max_files": 16,
+      "max_files": 17,
       "description": "#461 PR04-quater / DEC-426-P28–P32, base main 633c178: credenziali Betfair con file picker, validazione PEM/coppia/permessi prima del save atomico, App Key Delayed e Live separate e protette; legacy solo Delayed; LIVE bloccato senza Live key e client reale soltanto Live; password vuota invariata. Phase 0 #453: percorsi inesistenti salvati, password cancellata, legacy non migrata, fallback legacy LIVE e fuga App Key in errori del client riprodotti con SQLite/client reali e HTTP di confine. Test RED/PASS/BLOCK/MALFORMED/EDGE, test GUI reale e screenshot sintetico. Fixture registry riallineata al nuovo contratto senza indebolire controlli. SIM offline invariata; feed Delayed separato PR11 e upgrade AEAD PR35 rinviati. Nessun cambio ordini/MM/parser/gate o workflow. Design handoff, configurazione e CHANGELOG allineati."
     }
   }

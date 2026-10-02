@@ -30,8 +30,10 @@ richiesto in #351.
 
 ## `config_registry.py` — fonte-dato unica
 
-Modulo **di sola lettura**: non scrive impostazioni e **non modifica nessun
-gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
+Il registro non offre editor e **non modifica nessun gate**. Legge da
+`SettingsService` (DB) e da `trading_config` (costanti). Il loader Betfair
+esegue una sola volta la migrazione legacy→Delayed sotto lock (P30), anche
+quando invocato dal registro; la configurazione Live non viene promossa.
 
 ### `ConfigRegistry(settings_service, runtime=None)`
 
