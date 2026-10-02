@@ -26,14 +26,20 @@ from core.type_helpers import safe_float, safe_int, safe_side
 logger = logging.getLogger(__name__)
 
 
-class BetfairLoginError(RuntimeError):
-    """Trusted local login code kept separate from the redacted provider detail."""
+class BetfairDiagnosticError(RuntimeError):
+    """Trusted local credential code separate from the redacted provider detail."""
     def __init__(self, code: str, detail: str = ""):
-        if code not in {"LOGIN_FAILED", "LOGIN_TIMEOUT", "LOGIN_HTTP_ERROR", "LOGIN_NETWORK_ERROR"}:
-            raise ValueError("Invalid local login diagnostic code")
+        if code not in {"LOGIN_FAILED", "LOGIN_TIMEOUT", "LOGIN_HTTP_ERROR", "LOGIN_NETWORK_ERROR",
+                        "CERT_FILE_MISSING", "CERT_KEY_MISSING", "CERT_UNREADABLE", "CERT_PERMISSIONS_UNSAFE",
+                        "CERT_INVALID_FORMAT", "CERT_EXPIRED", "INVALID_JSON", "INVALID_LOGIN_JSON", "INVALID_KEEPALIVE_JSON"}:
+            raise ValueError("Invalid local credential diagnostic code")
         self.code = code
         self.detail = detail
         super().__init__(f"{code}: {detail}" if detail else code)
+
+
+class BetfairLoginError(BetfairDiagnosticError):
+    """RuntimeError-compatible login diagnostic."""
 
 #: Betfair `customerRef` (placeOrders): stringa client per de-dup di
 #: ri-sottomissioni entro una finestra di 60s. Vincoli API: <=32 caratteri,
@@ -988,12 +994,12 @@ class BetfairClient:
         risposte API) passerebbero intatte fino a log, io_snapshot e
         get_status()['runtime_io']. Redatta sia il token CORRENTE sia lo
         snapshot del token usato per la richiesta (un altro thread puo'
-        ruotarlo/azzerarlo tra invio ed eccezione). Soglia minima di
-        lunghezza per evitare sostituzioni spurie su token degeneri.
+        ruotarlo/azzerarlo tra invio ed eccezione), anche se breve.
+        I codici locali si conservano separatamente, senza esentare l'eco.
         """
         out = str(text or "")
         candidates = {self._session_token_value(), str(token_snapshot or "")}
-        replacements = {token: "***SESSION_TOKEN***" for token in candidates if len(token) >= 8}
+        replacements = {token: "***SESSION_TOKEN***" for token in candidates if token}
         if self.app_key:
             replacements.setdefault(self.app_key, "***APP_KEY***")
         if password_snapshot:
@@ -1037,9 +1043,9 @@ class BetfairClient:
 
     def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
-            raise RuntimeError("CERT_FILE_MISSING")
+            raise BetfairDiagnosticError("CERT_FILE_MISSING")
         if not os.path.exists(self.key_pem):
-            raise RuntimeError("CERT_KEY_MISSING")
+            raise BetfairDiagnosticError("CERT_KEY_MISSING")
 
         self._validate_cert_file(self.cert_pem, is_key=False)
         self._validate_cert_file(self.key_pem, is_key=True)
@@ -1050,16 +1056,16 @@ class BetfairClient:
         try:
             file_stat = os.stat(path)
         except OSError as exc:
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: {exc}")) from None
 
         if not stat.S_ISREG(file_stat.st_mode):
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: not a regular file")
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: not a regular file"))
 
         try:
             with open(path, "rb") as fh:
                 fh.read(1)
         except OSError as exc:
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: {exc}")) from None
 
         if os.name == "posix":
             mode = stat.S_IMODE(file_stat.st_mode)
@@ -1067,7 +1073,7 @@ class BetfairClient:
             if is_key:
                 unsafe_bits |= stat.S_IRGRP | stat.S_IROTH
             if mode & unsafe_bits:
-                raise RuntimeError(f"CERT_PERMISSIONS_UNSAFE: {path}: mode={oct(mode)}")
+                raise BetfairDiagnosticError("CERT_PERMISSIONS_UNSAFE", self._redact_error_text(f"{path}: mode={oct(mode)}"))
 
         return file_stat
 
@@ -1075,19 +1081,19 @@ class BetfairClient:
         try:
             decoded = ssl._ssl._test_decode_cert(cert_path)
         except Exception as exc:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}") from exc
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(cert_path)) from None
 
         not_after_raw = str(decoded.get("notAfter") or "").strip()
         if not not_after_raw:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: missing_notAfter")
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: missing_notAfter"))
 
         try:
             expires_at = datetime.strptime(not_after_raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
         except Exception as exc:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: invalid_notAfter") from exc
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: invalid_notAfter")) from None
 
         if expires_at <= datetime.now(timezone.utc):
-            raise RuntimeError(f"CERT_EXPIRED: {cert_path}: notAfter={not_after_raw}")
+            raise BetfairDiagnosticError("CERT_EXPIRED", self._redact_error_text(f"{cert_path}: notAfter={not_after_raw}"))
 
     def _headers(self) -> Dict[str, str]:
         with self._session_state_lock:
@@ -1126,7 +1132,7 @@ class BetfairClient:
         try:
             return response.json()
         except Exception as exc:
-            raise RuntimeError(err_code) from exc
+            raise BetfairDiagnosticError(err_code) from None
 
     # =========================================================
     # ERROR CLASSIFICATION

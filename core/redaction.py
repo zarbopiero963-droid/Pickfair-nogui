@@ -37,8 +37,16 @@ def redact_literal_secrets(text: str, replacements: dict[str, str]) -> str:
     secrets = sorted((s for s in replacements if s), key=len, reverse=True)
     if not secrets:
         return text
+    # A public mask must not itself match a protected value on a later pass.
+    safe = dict(replacements)
+    for secret, marker in safe.items():
+        if any(value in marker for value in secrets):
+            codepoint = 0x25CF
+            while chr(codepoint) in secrets:
+                codepoint += 1
+            safe[secret] = chr(codepoint)
     pattern = "|".join(re.escape(s) for s in secrets)
-    return re.sub(pattern, lambda match: replacements[match.group()], text)
+    return re.sub(pattern, lambda match: safe[match.group()], text)
 
 # Unione dei nomi-chiave esatti storicamente coperti dai due sanitizer.
 # (telegram_sanitizer.TELEGRAM_SENSITIVE_KEYS ∪ observability.SENSITIVE_KEYS)

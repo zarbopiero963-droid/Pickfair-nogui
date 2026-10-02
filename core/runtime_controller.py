@@ -1690,6 +1690,20 @@ class RuntimeController:
             blockers.append("LIVE_DEPENDENCY_MISSING")
 
         normalized_execution_mode = str(execution_mode if execution_mode is not None else self.execution_mode).strip().upper()
+        if normalized_execution_mode == "LIVE":
+            try:
+                cfg = self.settings_service.load_betfair_config()
+                value = getattr(cfg, "app_key_live", None)
+                key_present = isinstance(value, str) and bool(value.strip())
+                credentials_readable = True
+            except Exception:
+                key_present = False
+                credentials_readable = False
+            details["betfair_credentials"] = {"live_key_present": key_present, "readable": credentials_readable}
+            if not credentials_readable:
+                blockers.append("LIVE_APP_KEY_UNAVAILABLE")
+            elif not key_present:
+                blockers.append("LIVE_APP_KEY_MISSING")
         effective_live_enabled = self._safe_bool(
             self.live_enabled if live_enabled is None else live_enabled,
             default=False,

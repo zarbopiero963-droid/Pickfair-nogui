@@ -91,6 +91,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Every credential echo is redacted, including short/concatenated values and
   login passwords in client diagnostics. Local login codes are separate from
   provider text; session expiry is classified before redaction.
+  Certificate diagnostics remain actionable; unreadable legacy credentials
+  do not finalize migration, and original ciphertext remains recoverable.
+  LIVE readiness/deploy also require the Live key; SIM remains independent.
+  Short session tokens and colliding redaction markers are covered.
 - Live client, non-finite price or size (F11 in #453, DECISIONE-426 P27):
   `BetfairClient.place_bet` now rejects a price or a size that is NaN or
   infinite with `INVALID_PRICE` / `INVALID_SIZE` before building the request,

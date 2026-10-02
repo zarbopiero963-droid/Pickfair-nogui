@@ -111,6 +111,9 @@ Errore visibile senza modifiche parziali. Password vuota conserva quella
 salvata, nuova password la sostituisce e il campo si svuota dopo il save.
 Migrazione vecchia App Key → Delayed, Live vuota; LIVE senza Live key
 bloccato con errore esplicito. SIM offline; feed Delayed separato in PR11.
+Readiness/preflight LIVE mostra NOT_READY/NO-GO anche con flag generale attivo
+se la Live key manca o non e' leggibile; salvare una key valida consente il
+nuovo controllo, senza bypassare gli altri blocker. SIM non richiede questa key.
 
 Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
 SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP

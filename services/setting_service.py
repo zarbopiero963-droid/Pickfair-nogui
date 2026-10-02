@@ -90,11 +90,8 @@ class SettingsService:
             with self.db.transaction():
                 data = self.get_all_settings()
                 if "app_key_delayed" not in data:
-                    migration = {"app_key_delayed": str(data.get("app_key", "") or "")}
-                    if "app_key_live" not in data:
-                        migration["app_key_live"] = ""
-                    self.db.save_settings(migration)
-                    data.update(migration)
+                    self.db.migrate_legacy_betfair_app_key()
+                    data = self.get_all_settings()
         return BetfairConfig(
             username=str(data.get("username", "") or ""),
             app_key_delayed=str(data.get("app_key_delayed", "") or ""),

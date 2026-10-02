@@ -433,6 +433,26 @@ class Database:
             result[key] = val
         return result
 
+    def migrate_legacy_betfair_app_key(self) -> bool:
+        """Preserve original ciphertext; an unreadable legacy key is retryable."""
+        with self.transaction():
+            existing = self._execute("SELECT value FROM settings WHERE key = ?", ("app_key_delayed",), fetchone=True, commit=False)
+            if existing is not None:
+                return False
+            row = self._execute("SELECT value FROM settings WHERE key = ?", ("app_key",), fetchone=True, commit=False)
+            if row is None:
+                return False
+            raw = str(row["value"] or "")
+            if self._cipher.is_encrypted(raw):
+                if not self._cipher.decrypt(raw):
+                    return False
+                stored = raw  # Never re-encrypt a potentially wrong-key decode.
+            else:
+                stored = self._cipher.encrypt(raw) if raw else ""
+            self._execute("INSERT INTO settings(key,value) VALUES(?,?)", ("app_key_delayed", stored))
+            self._execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", ("app_key_live", ""))
+            return True
+
     def save_credentials(
         self,
         *,

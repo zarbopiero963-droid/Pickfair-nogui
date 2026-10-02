@@ -16,6 +16,11 @@ Live key resta bloccato con errore visibile. Il client reale di ordini e
 cancellazioni usa esclusivamente Live: non esiste fallback a Delayed.
 Il registro richiede `betfair.app_key_live` per LIVE, mentre Delayed resta
 enumerata e mascherata ma non e' un prerequisito LIVE.
+La readiness autorevole del RuntimeController verifica la Live key anche
+quando il flag generale e' impostato: assente/non leggibile significa
+NOT_READY/NO-GO, mentre la verifica non viene eseguita per SIM offline.
+La migrazione copia il ciphertext originale e non finalizza Delayed se la
+vecchia key cifrata non e' leggibile: ripristinare la master key consente retry.
 
 `Sfoglia…` seleziona certificato e chiave privata PEM. Il save verifica file
 regolari/leggibili, permessi POSIX e coppia TLS valida prima di scrivere;
@@ -26,6 +31,8 @@ Le due key usano la protezione a riposo vigente e la redazione diagnostica;
 la redazione copre anche valori brevi/concatenati e password nell'errore login
 e nello snapshot del client. I codici login locali sono metadati separati dal
 testo provider: nessuna parola dell'eco viene esentata perché sembra un codice.
+Anche i token brevi sono redatti. Le maschere che collidono con un valore
+protetto usano un simbolo neutro, evitando riscritture nelle passate successive.
 la migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
 feed reale separato dal client degli ordini/cancel sono nella PR11.
 Queste prove locali non sostituiscono il collaudo installato Windows/Betfair

@@ -124,3 +124,109 @@ def test_short_key_cannot_hide_real_exchange_session_expiry(setup):
     with pytest.raises(RuntimeError, match="^SESSION_EXPIRED$"):
         client.get_account_funds()
     assert not client.connected and not client.session_token
+
+
+@pytest.mark.parametrize("invalid,code", [("missing", "CERT_FILE_MISSING"), ("permissions", "CERT_PERMISSIONS_UNSAFE"), ("malformed", "CERT_INVALID_FORMAT")])
+def test_certificate_diagnostic_survives_credential_overlap(setup, monkeypatch, invalid, code):
+    _, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_live="CERT"), password="demo-password")
+    if invalid == "missing":
+        Path(cfg.certificate).unlink()
+    elif invalid == "permissions":
+        import os
+        if os.name != "posix":
+            pytest.skip("POSIX file permission contract")
+        Path(cfg.private_key).chmod(0o666)
+    else:
+        Path(cfg.certificate).write_text("not PEM")
+    service, http, _ = wire_client(settings, monkeypatch)
+    with pytest.raises(RuntimeError, match="^" + code):
+        service.connect(simulation_mode=False)
+    assert service.last_error.startswith(code)
+    assert not http.calls and service.get_live_client() is None
+
+
+def test_failed_legacy_decrypt_does_not_finalize_migration_then_recovers(setup):
+    from core.secret_cipher import SecretCipher
+    db, settings, _ = setup
+    db.save_settings({"app_key": "demo-legacy-recoverable"})
+    correct = db._cipher
+    raw = db._execute("SELECT value FROM settings WHERE key='app_key'", fetchone=True, commit=False)["value"]
+    # Find an actually unreadable wrong-key decode; random nonce never decides
+    # whether this regression case exercises the intended failure path.
+    for seed in range(1, 256):
+        wrong = SecretCipher(bytes([seed]) * 32, key_source="env")
+        if wrong.decrypt(raw) == "":
+            db._cipher = wrong
+            break
+    else:
+        pytest.fail("No unreadable wrong-key case found")
+    assert db.get_settings()["app_key"] == ""
+    settings.load_betfair_config()
+    assert "app_key_delayed" not in db.get_settings()
+    db._cipher = correct
+    assert settings.load_betfair_config().app_key_delayed == "demo-legacy-recoverable"
+
+
+def test_short_session_token_is_redacted_and_masks_do_not_expand(setup):
+    _, _, cfg = setup
+    client = BetfairClient(username=cfg.username, app_key="APP",
+                           cert_pem=cfg.certificate, key_pem=cfg.private_key,
+                           session=NoNetworkSession())
+    client._set_session_state(session_token="tiny", session_expiry="", connected=True)
+    masked = client._redact_error_text("echo=APP; token=tiny")
+    assert "APP" not in masked and "tiny" not in masked
+    assert client._redact_error_text(masked) == masked
+
+
+def test_authoritative_readiness_blocks_empty_live_key_without_affecting_sim(setup, monkeypatch):
+    import mini_gui as gui
+    db, settings, cfg = setup
+    db.save_settings({"app_key": "demo-legacy"})
+    settings.save_roserpina_config(replace(settings.load_roserpina_config(), max_daily_loss=10,
+                                         max_open_exposure=10, max_drawdown_hard_stop_pct=20))
+    monkeypatch.setattr(gui, "Database", lambda: db)
+    monkeypatch.setattr(gui, "TelegramTabUI", lambda *args: None)
+    app = gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
+    app.runtime.simulation_mode = False
+    try:
+        report = app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        assert report["blockers"] == ["LIVE_APP_KEY_MISSING"]
+        assert "LIVE_APP_KEY_MISSING" in report["blockers"]
+        assert not app.runtime.get_deploy_gate_status(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)["allowed"]
+        sim = app.runtime.evaluate_live_readiness(execution_mode="SIMULATION")
+        assert "LIVE_APP_KEY_MISSING" not in sim["blockers"]
+        settings.save_betfair_config(replace(cfg, app_key_live="demo-live"))
+        report = app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        assert "LIVE_APP_KEY_MISSING" not in report["blockers"]
+        assert report["ready"] is True
+        db._execute("ALTER TABLE settings RENAME TO unavailable_settings")
+        try:
+            blocked = app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+            assert blocked["blockers"] == ["LIVE_APP_KEY_UNAVAILABLE"]
+            assert not blocked["ready"]
+        finally:
+            db._execute("ALTER TABLE unavailable_settings RENAME TO settings")
+        assert app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)["ready"]
+    finally:
+        app.destroy()
+
+
+def test_migration_preserves_ciphertext_even_if_wrong_key_decodes_utf8(setup):
+    from core.secret_cipher import SecretCipher
+    db, settings, _ = setup
+    db.save_settings({"app_key": "x"})
+    correct = db._cipher
+    raw = db._execute("SELECT value FROM settings WHERE key='app_key'", fetchone=True, commit=False)["value"]
+    for seed in range(1, 256):
+        wrong = SecretCipher(bytes([seed]) * 32, key_source="env")
+        if wrong.decrypt(raw) not in ("", "x"):
+            db._cipher = wrong
+            break
+    else:
+        pytest.fail("No nonempty wrong-key decode found")
+    settings.load_betfair_config()
+    migrated = db._execute("SELECT value FROM settings WHERE key='app_key_delayed'", fetchone=True, commit=False)["value"]
+    assert migrated == raw
+    db._cipher = correct
+    assert settings.load_betfair_config().app_key_delayed == "x"
