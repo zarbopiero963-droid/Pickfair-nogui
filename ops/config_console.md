@@ -23,6 +23,15 @@ Il preflight legge la key Live canonica senza scrivere o migrare il DB.
 `LIVE_APP_KEY_MISSING` indica di salvare la Live key; `LIVE_APP_KEY_UNAVAILABLE`
 indica di ripristinare accesso al DB/master key. I report registry e headless
 mostrano questi rimedi; il log diagnostico espone soltanto il tipo di errore.
+La lettura dedicata `load_betfair_live_key_status`/`get_betfair_live_key_status`
+restituisce soltanto presenza e leggibilita': un ciphertext presente che non
+si decifra, o un formato `enc:` non supportato, e' UNAVAILABLE e resta intatto.
+`get_all_settings` gia' decifra i segreti, ma il suo risultato vuoto da solo
+non distingue credenziale assente da errore di decifratura.
+Limite vigente: `enc:v1` non autentica il contenuto; un wrong-key decode UTF8
+non vuoto non e' riconoscibile crittograficamente qui. READY non certifica la
+validita' della key sull'exchange. AEAD/integrita' resta nella PR35; nessuna
+nuova validazione del formato App Key o promozione da Delayed viene dedotta.
 La migrazione copia il ciphertext originale e non finalizza Delayed se la
 vecchia key cifrata non e' leggibile: ripristinare la master key consente retry.
 Il writer legacy `save_credentials(app_key=...)` aggiorna esplicitamente Delayed

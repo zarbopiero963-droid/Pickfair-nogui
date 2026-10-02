@@ -1694,12 +1694,12 @@ class RuntimeController:
             try:
                 # Readiness/preflight is read-only: the credentials loader may
                 # migrate legacy rows and belongs to configuration/bootstrap.
-                settings = self.settings_service.get_all_settings()
-                if not isinstance(settings, dict):
-                    raise TypeError("Invalid settings payload")
-                value = settings.get("app_key_live")
-                key_present = isinstance(value, str) and bool(value.strip())
-                credentials_readable = True
+                state = self.settings_service.load_betfair_live_key_status()
+                if not isinstance(state, dict) or any(type(state.get(key)) is not bool
+                                                     for key in ("present", "readable")):
+                    raise TypeError("Invalid credential status")
+                key_present = state["present"]
+                credentials_readable = state["readable"]
             except Exception as exc:
                 # Exception messages can contain credentials or storage paths.
                 logger.warning("LIVE_APP_KEY_UNAVAILABLE (%s)", type(exc).__name__)

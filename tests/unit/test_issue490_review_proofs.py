@@ -336,3 +336,52 @@ def test_live_key_blockers_have_actionable_registry_and_headless_remedies(setup,
     finally:
         if unavailable:
             db._execute("ALTER TABLE unavailable_settings RENAME TO settings")
+
+
+@pytest.mark.parametrize("failure", ["wrong-master-key", "corrupt-ciphertext", "unsupported-ciphertext"])
+def test_live_key_decode_failure_directs_recovery_without_overwriting_ciphertext(setup, readiness_app, failure, caplog):
+    import sqlite3
+    from core.secret_cipher import SecretCipher
+    from config_registry import readiness_report
+    from headless_main import HeadlessApp
+    db, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_live="demo-live-recoverable"))
+    raw = db._execute("SELECT value FROM settings WHERE key='app_key_live'", fetchone=True, commit=False)["value"]
+    assert raw.startswith("enc:v1:")
+    # Prove the actual read contract, not the plaintext integration fixtures.
+    assert settings.get_all_settings()["app_key_live"] == "demo-live-recoverable"
+    correct_cipher = db._cipher
+    if failure == "wrong-master-key":
+        for seed in range(1, 256):
+            wrong = SecretCipher(bytes([seed]) * 32, key_source="env")
+            if wrong.decrypt(raw) == "":
+                db._cipher = wrong
+                break
+        else:
+            pytest.fail("No unreadable wrong-key case found")
+    else:
+        broken = "enc:v1:broken" if failure == "corrupt-ciphertext" else "enc:v2:unsupported"
+        db._execute("UPDATE settings SET value=? WHERE key='app_key_live'", (broken,))
+    def snapshot():
+        with sqlite3.connect(db.db_path) as conn:
+            return dict(conn.execute("SELECT key,value FROM settings"))
+    before = snapshot()
+    try:
+        for _ in range(2):
+            report = readiness_report(readiness_app.runtime, execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+            assert report["blockers"] == ["LIVE_APP_KEY_UNAVAILABLE"]
+            assert report["details"]["betfair_credentials"] == {"live_key_present": False, "readable": False}
+            item = next(item for item in report["items"] if item.blocker == "LIVE_APP_KEY_UNAVAILABLE")
+            assert "master key" in item.remedy
+            status = readiness_app.runtime.get_deploy_gate_status(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+            text, exit_code = object.__new__(HeadlessApp)._format_preflight_report(status, "LIVE", True, True)
+            assert exit_code == 2 and item.remedy in text
+            assert "Imposta e salva la App Key Live" not in text
+            assert "demo-live-recoverable" not in text + str(report) + caplog.text
+        assert snapshot() == before
+        sim = readiness_app.runtime.evaluate_live_readiness(execution_mode="SIMULATION")
+        assert "LIVE_APP_KEY_UNAVAILABLE" not in sim["blockers"]
+    finally:
+        db._cipher = correct_cipher
+        db._execute("UPDATE settings SET value=? WHERE key='app_key_live'", (raw,))
+    assert readiness_app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)["ready"]

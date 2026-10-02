@@ -93,6 +93,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   The legacy credentials writer updates Delayed after migration while keeping
   Live/password unchanged. Colliding redaction masks use a neutral ASCII
   character so strict Windows CP1252 log sinks retain login diagnostics.
+  A read-only Live-key status distinguishes absent values from undecodable or
+  unsupported ciphertext, retaining the stored value and directing master-key
+  recovery. The existing unauthenticated enc:v1 format is unchanged; integrity
+  verification remains in PR35.
   Every credential echo is redacted, including short/concatenated values and
   login passwords in client diagnostics. Local login codes are separate from
   provider text; session expiry is classified before redaction.

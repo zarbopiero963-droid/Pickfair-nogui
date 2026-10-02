@@ -25,6 +25,9 @@ class _Db:
 
 
 class _Settings:
+    def load_betfair_live_key_status(self):
+        return {"present": True, "readable": True}
+
     def get_all_settings(self):
         return {"app_key_live": "demo-live"}
 

@@ -433,6 +433,26 @@ class Database:
             result[key] = val
         return result
 
+    def get_betfair_live_key_status(self) -> Dict[str, bool]:
+        """Read-only presence/decode status; never return or modify the key.
+
+        A stored ciphertext decoding to empty is unavailable, not missing.
+        This is not authentication: enc:v1 can decode wrong-key bytes as valid
+        UTF8. Cryptographic integrity remains the AEAD task (PR35).
+        """
+        row = self._execute("SELECT value FROM settings WHERE key = ?",
+                            ("app_key_live",), fetchone=True, commit=False)
+        raw = str(row["value"] or "") if row is not None else ""
+        if not raw.strip():
+            return {"present": False, "readable": True}
+        encrypted = self._cipher.is_encrypted(raw)
+        if raw.startswith("enc:") and not encrypted:
+            return {"present": False, "readable": False}
+        value = self._cipher.decrypt(raw) if encrypted else raw
+        if encrypted and not value:
+            return {"present": False, "readable": False}
+        return {"present": bool(value.strip()), "readable": True}
+
     def migrate_legacy_betfair_app_key(self) -> bool:
         """Preserve original ciphertext; an unreadable legacy key is retryable."""
         with self.transaction():

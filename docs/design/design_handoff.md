@@ -117,6 +117,10 @@ nuovo controllo, senza bypassare gli altri blocker. SIM non richiede questa key.
 Il preflight non modifica il DB. Registry/headless mostrano per key assente
 il rimedio `Imposta e salva la App Key Live nelle credenziali Betfair; Delayed non abilita LIVE.`;
 per credenziali non leggibili `Ripristina l'accesso al DB e alla master key, poi ripeti il preflight LIVE.`.
+Questo secondo rimedio copre anche ciphertext non decifrabile/formato di
+protezione non supportato, mantenendo il valore salvato per il recovery.
+La readiness attesta presenza/decodifica, non autenticita' crittografica o
+validita' exchange; l'integrita' AEAD resta PR35.
 
 Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
 SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP

@@ -83,6 +83,13 @@ class SettingsService:
     # =========================================================
     # BETFAIR CONFIG
     # =========================================================
+    def load_betfair_live_key_status(self) -> Dict[str, bool]:
+        """Read decode status without exposing secrets or migrating settings."""
+        getter = getattr(self.db, "get_betfair_live_key_status", None)
+        if not callable(getter):
+            raise RuntimeError("Betfair credential status unavailable")
+        return getter()
+
     def load_betfair_config(self) -> BetfairConfig:
         data = self.get_all_settings()
         if "app_key" in data and "app_key_delayed" not in data:
