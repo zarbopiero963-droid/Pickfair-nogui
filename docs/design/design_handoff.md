@@ -121,6 +121,10 @@ Questo secondo rimedio copre anche ciphertext non decifrabile/formato di
 protezione non supportato, mantenendo il valore salvato per il recovery.
 La readiness attesta presenza/decodifica, non autenticita' crittografica o
 validita' exchange; l'integrita' AEAD resta PR35.
+Le App Key non decifrabili sono mostrate vuote: un save senza sostituzione
+non cancella il ciphertext recuperabile. Una key nuova non vuota lo sostituisce;
+una key leggibile puo' essere cancellata. Il registry non migra durante un report,
+mentre il bootstrap/config conserva la migrazione legacy prevista.
 
 Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
 SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP

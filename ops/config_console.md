@@ -32,8 +32,17 @@ Limite vigente: `enc:v1` non autentica il contenuto; un wrong-key decode UTF8
 non vuoto non e' riconoscibile crittograficamente qui. READY non certifica la
 validita' della key sull'exchange. AEAD/integrita' resta nella PR35; nessuna
 nuova validazione del formato App Key o promozione da Delayed viene dedotta.
+Il report `ConfigRegistry.entries()` usa `load_betfair_config(migrate=False)`:
+su DB legacy mostra Delayed senza inserire righe, anche con scritture negate.
+GUI/bootstrap e login usano il loader con migrazione esplicita consentita.
+Una key stored illeggibile appare vuota nei campi GUI; un normale save vuoto
+preserva il ciphertext originale, anche per la legacy senza marker Delayed.
+Una nuova key non vuota lo sostituisce esplicitamente; una key leggibile puo'
+ancora essere cancellata. Lettura dello stato e save sono nello stesso lock/
+transazione, e gli altri valori validati possono essere salvati senza perdita.
 La migrazione copia il ciphertext originale e non finalizza Delayed se la
-vecchia key cifrata non e' leggibile: ripristinare la master key consente retry.
+vecchia key cifrata non e' leggibile o usa `enc:` non supportato: ripristinare
+master key/formato supportato consente retry.
 Il writer legacy `save_credentials(app_key=...)` aggiorna esplicitamente Delayed
 anche dopo la migrazione, mantenendo Live e password esistenti.
 

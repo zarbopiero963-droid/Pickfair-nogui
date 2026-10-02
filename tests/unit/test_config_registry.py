@@ -62,7 +62,7 @@ class _FakeSettings:
     def load_kill_switch(self):
         return self._ks
 
-    def load_betfair_config(self):
+    def load_betfair_config(self, *, migrate=True):
         return self._bf
 
     def load_password(self):
@@ -308,7 +308,7 @@ def test_all_safety_entries_invalid_on_read_error():
 
 
 class _BetfairRaisingSettings(_FakeSettings):
-    def load_betfair_config(self):
+    def load_betfair_config(self, *, migrate=True):
         raise RuntimeError("x")
 
     def load_password(self):

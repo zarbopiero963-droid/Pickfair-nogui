@@ -90,19 +90,25 @@ class SettingsService:
             raise RuntimeError("Betfair credential status unavailable")
         return getter()
 
-    def load_betfair_config(self) -> BetfairConfig:
+    def load_betfair_config(self, *, migrate: bool = True) -> BetfairConfig:
         data = self.get_all_settings()
-        if "app_key" in data and "app_key_delayed" not in data:
+        if migrate and "app_key" in data and "app_key_delayed" not in data:
             # Recheck under the DB lock: a concurrent save must not be lost.
             with self.db.transaction():
                 data = self.get_all_settings()
                 if "app_key_delayed" not in data:
                     self.db.migrate_legacy_betfair_app_key()
                     data = self.get_all_settings()
+        # Reports can show the legacy Delayed value without migrating it.
+        delayed_field = "app_key_delayed" if "app_key_delayed" in data else "app_key"
+        def app_key(field):
+            if not self.db.get_betfair_app_key_status(field)["readable"]:
+                return ""
+            return str(data.get(field, "") or "")
         return BetfairConfig(
             username=str(data.get("username", "") or ""),
-            app_key_delayed=str(data.get("app_key_delayed", "") or ""),
-            app_key_live=str(data.get("app_key_live", "") or ""),
+            app_key_delayed=app_key(delayed_field),
+            app_key_live=app_key("app_key_live"),
             certificate=str(data.get("certificate", "") or ""),
             private_key=str(data.get("private_key", "") or ""),
         )
@@ -111,7 +117,8 @@ class SettingsService:
         """Validate first, then persist all credentials in one transaction.
 
         Empty password preserves the saved one. Legacy input goes only to
-        Delayed; an empty Live key is allowed to save but blocks LIVE login.
+        Delayed; unreadable stored App Keys survive an empty input. A readable
+        key can still be cleared, and a nonempty replacement is explicit.
         """
         self._validate_betfair_files(config.certificate, config.private_key)
         values = {
@@ -123,7 +130,16 @@ class SettingsService:
         }
         if password is not None and password != "":
             values["password"] = password
-        self.db.save_settings(values)
+        with self.db.transaction():
+            for field in ("app_key_delayed", "app_key_live"):
+                if values[field]:
+                    continue
+                state = self.db.get_betfair_app_key_status(field)
+                if field == "app_key_delayed" and not state["stored"]:
+                    state = self.db.get_betfair_app_key_status("app_key")
+                if not state["readable"]:
+                    values.pop(field)
+            self.db.save_settings(values)
 
     @staticmethod
     def _validate_betfair_files(certificate: str, private_key: str) -> None:

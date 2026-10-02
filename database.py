@@ -440,18 +440,26 @@ class Database:
         This is not authentication: enc:v1 can decode wrong-key bytes as valid
         UTF8. Cryptographic integrity remains the AEAD task (PR35).
         """
+        state = self.get_betfair_app_key_status("app_key_live")
+        return {"present": state["present"], "readable": state["readable"]}
+
+    def get_betfair_app_key_status(self, key: str) -> Dict[str, bool]:
+        """Read-only storage/decode status for canonical or legacy App Keys."""
+        if key not in {"app_key", "app_key_delayed", "app_key_live"}:
+            raise ValueError("Unsupported Betfair App Key field")
         row = self._execute("SELECT value FROM settings WHERE key = ?",
-                            ("app_key_live",), fetchone=True, commit=False)
+                            (key,), fetchone=True, commit=False)
+        stored = row is not None
         raw = str(row["value"] or "") if row is not None else ""
         if not raw.strip():
-            return {"present": False, "readable": True}
+            return {"present": False, "readable": True, "stored": stored}
         encrypted = self._cipher.is_encrypted(raw)
         if raw.startswith("enc:") and not encrypted:
-            return {"present": False, "readable": False}
+            return {"present": False, "readable": False, "stored": stored}
         value = self._cipher.decrypt(raw) if encrypted else raw
         if encrypted and not value:
-            return {"present": False, "readable": False}
-        return {"present": bool(value.strip()), "readable": True}
+            return {"present": False, "readable": False, "stored": stored}
+        return {"present": bool(value.strip()), "readable": True, "stored": stored}
 
     def migrate_legacy_betfair_app_key(self) -> bool:
         """Preserve original ciphertext; an unreadable legacy key is retryable."""
@@ -463,9 +471,9 @@ class Database:
             if row is None:
                 return False
             raw = str(row["value"] or "")
+            if not self.get_betfair_app_key_status("app_key")["readable"]:
+                return False
             if self._cipher.is_encrypted(raw):
-                if not self._cipher.decrypt(raw):
-                    return False
                 stored = raw  # Never re-encrypt a potentially wrong-key decode.
             else:
                 stored = self._cipher.encrypt(raw) if raw else ""

@@ -252,7 +252,7 @@ class ConfigRegistry:
 
     # -- Enumerazione per dominio -----------------------------------------
 
-    def _read(self, name: str, default: Any = None) -> tuple[Any, bool]:
+    def _read(self, name: str, default: Any = None, **kwargs: Any) -> tuple[Any, bool]:
         """(valore, letto_ok). `letto_ok=False` se il loader manca o SOLLEVA.
 
         L'errore di lettura NON viene mascherato da un default plausibile e viene
@@ -264,7 +264,7 @@ class ConfigRegistry:
         if not callable(loader):
             return default, False
         try:
-            return loader(), True
+            return loader(**kwargs), True
         except Exception as exc:
             # Sicurezza: NON loggare traceback (exc_info) ne' il messaggio
             # dell'eccezione. I loader dei segreti (betfair_config, password)
@@ -381,7 +381,7 @@ class ConfigRegistry:
     def _betfair_entries(self) -> list[ConfigEntry]:
         # `_read` conserva il flag di lettura: un backend rotto rende
         # "(errore lettura)" (non "(non impostato)"), coerente coi campi execution.
-        cfg_raw, cfg_ok = self._read("load_betfair_config")
+        cfg_raw, cfg_ok = self._read("load_betfair_config", migrate=False)
         cfg = cfg_raw or SimpleNamespace()
         password, pwd_ok = self._read("load_password", "")
 

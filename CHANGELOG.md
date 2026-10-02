@@ -97,6 +97,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   unsupported ciphertext, retaining the stored value and directing master-key
   recovery. The existing unauthenticated enc:v1 format is unchanged; integrity
   verification remains in PR35.
+  Empty GUI saves preserve unreadable Delayed/Live or unmigrated legacy App
+  Keys; explicit replacements and clearing readable keys remain supported.
+  Registry configuration reports never migrate, including on read-only legacy
+  storage, and unsupported legacy enc formats remain retryable after recovery.
   Every credential echo is redacted, including short/concatenated values and
   login passwords in client diagnostics. Local login codes are separate from
   provider text; session expiry is classified before redaction.

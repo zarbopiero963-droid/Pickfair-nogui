@@ -294,6 +294,19 @@ def test_gui_save_reopen_file_pickers_and_live_boundary(setup, monkeypatch, real
         assert svc.connect(simulation_mode=False)["connected"]
         assert keys == ["demo-live"]
         assert http.calls[0][1]["headers"]["X-Application"] == "demo-live"
+        raw_keys = {field: db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"]
+                    for field in ("app_key_delayed", "app_key_live")}
+        broken_keys = {"app_key_delayed": "enc:v2:unsupported", "app_key_live": "enc:v1:broken"}
+        for field, broken in broken_keys.items():
+            db._execute("UPDATE settings SET value=? WHERE key=?", (broken, field))
+        app._load_initial_settings()
+        assert app.bf_app_key_delayed_var.get() == app.bf_app_key_live_var.get() == ""
+        save()  # Unrelated GUI save cannot erase the recoverable ciphertext.
+        for field, broken in broken_keys.items():
+            assert db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"] == broken
+            db._execute("UPDATE settings SET value=? WHERE key=?", (raw_keys[field], field))
+        app._load_initial_settings()
+        assert app.bf_app_key_live_var.get() == "demo-live"
         screenshot = os.environ.get("PICKFAIR_TEST_SCREENSHOT")
         if real_widgets and screenshot:
             from PIL import ImageGrab

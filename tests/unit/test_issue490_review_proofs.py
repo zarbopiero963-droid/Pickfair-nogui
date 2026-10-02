@@ -385,3 +385,85 @@ def test_live_key_decode_failure_directs_recovery_without_overwriting_ciphertext
         db._cipher = correct_cipher
         db._execute("UPDATE settings SET value=? WHERE key='app_key_live'", (raw,))
     assert readiness_app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)["ready"]
+
+
+@pytest.mark.parametrize("field", ["app_key_delayed", "app_key_live", "app_key"])
+@pytest.mark.parametrize("failure", ["wrong-master-key", "corrupt-ciphertext", "unsupported-ciphertext"])
+def test_load_save_preserves_unreadable_app_key_until_replaced(setup, field, failure):
+    from core.secret_cipher import SecretCipher
+    db, settings, cfg = setup
+    db.save_settings({"username": cfg.username, "certificate": cfg.certificate,
+                      "private_key": cfg.private_key, field: "demo-recoverable"})
+    original = db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"]
+    correct_cipher = db._cipher
+    if failure == "wrong-master-key":
+        for seed in range(1, 256):
+            wrong = SecretCipher(bytes([seed]) * 32, key_source="env")
+            if wrong.decrypt(original) == "":
+                db._cipher = wrong
+                break
+        else:
+            pytest.fail("No unreadable wrong-key case found")
+        broken = original
+    else:
+        broken = "enc:v1:broken" if failure == "corrupt-ciphertext" else "enc:v2:unsupported"
+        db._execute("UPDATE settings SET value=? WHERE key=?", (broken, field))
+    try:
+        loaded = settings.load_betfair_config()
+        # The operator can reselect readable certificate paths even when the
+        # old master key also made stored paths unreadable.
+        loaded = replace(loaded, certificate=cfg.certificate, private_key=cfg.private_key)
+        settings.save_betfair_config(loaded, password="")
+        stored = db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"]
+        assert stored == broken
+        canonical = "app_key_live" if field == "app_key_live" else "app_key_delayed"
+        if field == "app_key":
+            assert db._execute("SELECT value FROM settings WHERE key=?", (canonical,), fetchone=True, commit=False) is None
+        else:
+            assert getattr(settings.load_betfair_config(), canonical) == ""
+        # Restoration is possible because an unrelated save kept the original bytes.
+        db._cipher = correct_cipher
+        db._execute("UPDATE settings SET value=? WHERE key=?", (original, field))
+        assert getattr(settings.load_betfair_config(), canonical) == "demo-recoverable"
+        db._execute("UPDATE settings SET value=? WHERE key=?", (broken, canonical))
+        replacement = replace(cfg, **{canonical: "demo-explicit-replacement"})
+        settings.save_betfair_config(replacement)
+        assert getattr(settings.load_betfair_config(), canonical) == "demo-explicit-replacement"
+    finally:
+        db._cipher = correct_cipher
+
+
+def test_registry_legacy_report_is_read_only_and_bootstrap_still_migrates(setup):
+    import sqlite3
+    from config_registry import ConfigRegistry
+    db, settings, cfg = setup
+    db.save_settings({"username": cfg.username, "app_key": "demo-legacy",
+                      "certificate": cfg.certificate, "private_key": cfg.private_key})
+    def snapshot():
+        with sqlite3.connect(db.db_path) as conn:
+            return dict(conn.execute("SELECT key,value FROM settings"))
+    before = snapshot()
+    entries = {e.key: e for e in ConfigRegistry(settings).entries()}
+    assert snapshot() == before
+    assert entries["betfair.app_key_delayed"].valid
+    assert not entries["betfair.app_key_live"].valid
+    conn = db._get_connection()
+    writes = {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}
+    conn.set_authorizer(lambda action, *args: sqlite3.SQLITE_DENY if action in writes else sqlite3.SQLITE_OK)
+    try:
+        entries = {e.key: e for e in ConfigRegistry(settings).entries()}
+        assert entries["betfair.username"].valid
+        assert entries["betfair.app_key_delayed"].valid
+        assert snapshot() == before
+    finally:
+        conn.set_authorizer(None)
+    assert settings.load_betfair_config().app_key_delayed == "demo-legacy"
+    assert "app_key_delayed" in snapshot() and snapshot()["app_key_live"] == ""
+
+
+def test_readable_app_keys_can_still_be_explicitly_cleared(setup):
+    db, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_delayed="demo-delayed", app_key_live="demo-live"))
+    settings.save_betfair_config(cfg)
+    assert settings.load_betfair_config().app_key_delayed == ""
+    assert settings.load_betfair_config().app_key_live == ""
