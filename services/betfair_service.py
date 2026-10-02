@@ -5,8 +5,8 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from betfair_client import BetfairClient
-from core.redaction import redact_literal_secret
+from betfair_client import BetfairClient, BetfairLoginError
+from core.redaction import redact_literal_secrets
 from simulation_broker import SimulationBroker
 
 logger = logging.getLogger(__name__)
@@ -513,11 +513,11 @@ class BetfairService:
         except Exception as exc:
             self.client = None
             self.connected = False
-            text = str(exc)
+            text = exc.detail if isinstance(exc, BetfairLoginError) else str(exc)
             secrets = {str(value or "") for value in (live_key, getattr(cfg, "app_key_delayed", ""), password)}
-            for secret in sorted(secrets, key=len, reverse=True):
-                if secret:
-                    text = redact_literal_secret(text, secret, "[REDACTED]")
+            text = redact_literal_secrets(text, {secret: "[REDACTED]" for secret in secrets})
+            if isinstance(exc, BetfairLoginError):
+                text = exc.code + (": " + text if text else "")
             self.last_error = text
             logger.error("Errore connect LIVE Betfair (%s): %s", type(exc).__name__, text)
             raise RuntimeError(text) from None

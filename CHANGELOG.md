@@ -88,8 +88,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   input after saving. App Keys are masked in the registry and redacted from
   client errors and diagnostics. SIM remains offline; its Delayed feed belongs
   to PR11, and the authenticated encryption upgrade remains in PR35.
-  Short invalid credentials are masked as delimited values, preserving
-  diagnostic words and error codes; normal secret values remain fully redacted.
+  Every credential echo is redacted, including short/concatenated values and
+  login passwords in client diagnostics. Local login codes are separate from
+  provider text; session expiry is classified before redaction.
 - Live client, non-finite price or size (F11 in #453, DECISIONE-426 P27):
   `BetfairClient.place_bet` now rejects a price or a size that is NaN or
   infinite with `INVALID_PRICE` / `INVALID_SIZE` before building the request,

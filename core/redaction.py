@@ -28,17 +28,17 @@ from __future__ import annotations
 import re
 
 
-def redact_literal_secret(text: str, secret: str, replacement: str) -> str:
-    """Redact exact values; short invalid credentials must not alter error codes.
+def redact_literal_secrets(text: str, replacements: dict[str, str]) -> str:
+    """Mask every literal occurrence, longest first, without rewriting masks.
 
-    Normal credentials are replaced wherever echoed. Below eight characters,
-    match a delimited value rather than letters inside diagnostic words.
+    Provider text is untrusted even when it resembles a diagnostic code.
+    Locally generated codes must be kept separately by the caller.
     """
-    if not secret:
+    secrets = sorted((s for s in replacements if s), key=len, reverse=True)
+    if not secrets:
         return text
-    if len(secret) < 8:
-        return re.sub(r"(?<!\w)" + re.escape(secret) + r"(?!\w)", lambda _: replacement, text)
-    return text.replace(secret, replacement)
+    pattern = "|".join(re.escape(s) for s in secrets)
+    return re.sub(pattern, lambda match: replacements[match.group()], text)
 
 # Unione dei nomi-chiave esatti storicamente coperti dai due sanitizer.
 # (telegram_sanitizer.TELEGRAM_SENSITIVE_KEYS ∪ observability.SENSITIVE_KEYS)

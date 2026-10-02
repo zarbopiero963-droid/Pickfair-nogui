@@ -23,6 +23,9 @@ errore = nessun aggiornamento parziale. Password vuota mantiene la password
 salvata; un valore nuovo la sostituisce. Credenziali e password vengono salvate
 in un'unica transazione, e il campo password si svuota dopo il successo.
 Le due key usano la protezione a riposo vigente e la redazione diagnostica;
+la redazione copre anche valori brevi/concatenati e password nell'errore login
+e nello snapshot del client. I codici login locali sono metadati separati dal
+testo provider: nessuna parola dell'eco viene esentata perché sembra un codice.
 la migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
 feed reale separato dal client degli ordini/cancel sono nella PR11.
 Queste prove locali non sostituiscono il collaudo installato Windows/Betfair

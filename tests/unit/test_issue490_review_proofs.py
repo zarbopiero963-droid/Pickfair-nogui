@@ -11,12 +11,15 @@ from betfair_client import BetfairClient
 
 
 @pytest.mark.parametrize("key", ["e", "SESSION"])
-def test_short_app_key_masks_echo_without_corrupting_error_code(setup, key):
+def test_short_app_key_masks_every_raw_echo(setup, key):
     _, _, cfg = setup
     client = BetfairClient(username=cfg.username, app_key=key,
                            cert_pem=cfg.certificate, key_pem=cfg.private_key,
                            session=NoNetworkSession())
-    assert client._redact_error_text(f"SESSION_EXPIRED; key={key}") == "SESSION_EXPIRED; key=***APP_KEY***"
+    raw = f"auth_{key}_failed; key={key}"
+    masked = client._redact_error_text(raw)
+    assert f"auth_{key}_failed" not in masked
+    assert f"key={key}" not in masked
 
 
 @pytest.mark.parametrize("error,code", [
@@ -59,6 +62,65 @@ def test_service_preserves_codes_with_short_key_and_password(setup, monkeypatch)
     monkeypatch.setattr(http, "post", fail)
     with pytest.raises(RuntimeError, match="LOGIN_NETWORK_ERROR") as caught:
         service.connect(simulation_mode=False)
-    assert "SESSION_EXPIRED" in str(caught.value)
+    # Only the locally generated login code is authoritative; provider detail
+    # that happens to resemble a code is still fully redacted.
     assert "key=SESSION" not in str(caught.value)
     assert "password=e" not in str(caught.value)
+
+
+@pytest.mark.parametrize("key,echo", [("-x", "appKey-x"), ("abc123", "auth_abc123_failed")])
+def test_concatenated_short_key_never_reaches_client_diagnostics(setup, key, echo):
+    _, _, cfg = setup
+    class FailingTransport(NoNetworkSession):
+        def post(self, url, **kwargs):
+            raise ConnectionError(echo)
+    client = BetfairClient(username=cfg.username, app_key=key,
+                           cert_pem=cfg.certificate, key_pem=cfg.private_key,
+                           session=FailingTransport())
+    with pytest.raises(RuntimeError, match="LOGIN_NETWORK_ERROR") as caught:
+        client.login("demo-password")
+    assert key not in str(caught.value)
+    assert key not in str(client.io_snapshot())
+    assert "LOGIN_NETWORK_ERROR" in client.io_snapshot()["last_error"]
+
+
+@pytest.mark.parametrize("password,echo", [("abc123", "auth_abc123_failed"), ("e", "auth_e_failed")])
+def test_concatenated_password_never_reaches_service_or_client_diagnostics(setup, monkeypatch, caplog, password, echo):
+    _, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_live="demo-live-secret"), password=password)
+    service, http, _ = wire_client(settings, monkeypatch)
+    clients = []
+    import services.betfair_service as module
+    original = module.BetfairClient
+    def capture(**kwargs):
+        client = original(**kwargs)
+        clients.append(client)
+        return client
+    monkeypatch.setattr(module, "BetfairClient", capture)
+    def fail(*args, **kwargs):
+        raise ConnectionError(echo)
+    monkeypatch.setattr(http, "post", fail)
+    with pytest.raises(RuntimeError, match="LOGIN_NETWORK_ERROR") as caught:
+        service.connect(simulation_mode=False)
+    assert caught.value.__suppress_context__
+    for value in (str(caught.value), service.last_error, caplog.text, str(clients[0].io_snapshot())):
+        assert echo not in value
+        if len(password) > 1:
+            assert password not in value
+    assert "LOGIN_NETWORK_ERROR" in clients[0].io_snapshot()["last_error"]
+
+
+def test_short_key_cannot_hide_real_exchange_session_expiry(setup):
+    from types import SimpleNamespace
+    _, _, cfg = setup
+    class ExpiredTransport(NoNetworkSession):
+        def post(self, url, **kwargs):
+            return SimpleNamespace(status_code=200, raise_for_status=lambda: None,
+                                   json=lambda: [{"error": {"errorCode": "INVALID_SESSION"}}])
+    client = BetfairClient(username=cfg.username, app_key="SESSION",
+                           cert_pem=cfg.certificate, key_pem=cfg.private_key,
+                           session=ExpiredTransport())
+    client._set_session_state(session_token="demo-session-token", session_expiry="", connected=True)
+    with pytest.raises(RuntimeError, match="^SESSION_EXPIRED$"):
+        client.get_account_funds()
+    assert not client.connected and not client.session_token
