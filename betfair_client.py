@@ -970,7 +970,7 @@ class BetfairClient:
         }
 
     def _redact_error_text(self, text: Any, *, token_snapshot: str = "") -> str:
-        """Maschera il valore del session token nelle stringhe d'errore.
+        """Maschera App Key e session token nelle stringhe d'errore.
 
         La redazione strutturata (observability/sanitizers) lavora per
         CHIAVE sui payload: le stringhe d'errore grezze (eccezioni di rete,
@@ -982,11 +982,12 @@ class BetfairClient:
         """
         out = str(text or "")
         candidates = {self._session_token_value(), str(token_snapshot or "")}
-        # Dal piu' lungo al piu' corto: se un token e' substring dell'altro,
-        # sostituire prima il corto lascerebbe un residuo parziale del lungo.
-        for token in sorted(candidates, key=len, reverse=True):
-            if token and len(token) >= 8 and token in out:
-                out = out.replace(token, "***SESSION_TOKEN***")
+        replacements = {token: "***SESSION_TOKEN***" for token in candidates if len(token) >= 8}
+        if self.app_key:
+            replacements.setdefault(self.app_key, "***APP_KEY***")
+        # Longest first also covers an App Key contained in a session token.
+        for secret in sorted(replacements, key=len, reverse=True):
+            out = out.replace(secret, replacements[secret])
         return out
 
     def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:

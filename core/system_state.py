@@ -32,9 +32,12 @@ class DeskMode(Enum):
 @dataclass
 class BetfairConfig:
     username: str = ""
-    app_key: str = ""
+    # Legacy input only: never an implicit LIVE credential (DEC-426-P30).
+    app_key: str = field(default="", repr=False)
     certificate: str = ""
     private_key: str = ""
+    app_key_delayed: str = field(default="", repr=False)
+    app_key_live: str = field(default="", repr=False)
 
 
 @dataclass

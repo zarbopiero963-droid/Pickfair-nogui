@@ -7,7 +7,7 @@ import types
 _LOGGER = logging.getLogger(__name__)
 try:
     import tkinter as tk
-    from tkinter import ttk, messagebox
+    from tkinter import ttk, messagebox, filedialog
 except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
     class _DummyWidget:
         @staticmethod
@@ -107,6 +107,7 @@ except ModuleNotFoundError:  # pragma: no cover - headless CI fallback
             return True
 
     messagebox = _MessageBoxFallback()
+    filedialog = types.SimpleNamespace(askopenfilename=lambda **_kwargs: "")
 from typing import Callable
 
 try:
@@ -674,7 +675,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _build_vars(self):
         self.bf_username_var = self._make_string_var()
         self.bf_password_var = self._make_string_var()
-        self.bf_app_key_var = self._make_string_var()
+        self.bf_app_key_delayed_var = self._make_string_var()
+        self.bf_app_key_live_var = self._make_string_var()
         self.bf_cert_var = self._make_string_var()
         self.bf_key_var = self._make_string_var()
 
@@ -1056,13 +1058,37 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         ctk.CTkLabel(scroll, text="Betfair Credentials", font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=12, pady=8)
 
         self._labeled_entry(scroll, "Username", self.bf_username_var)
-        self._labeled_entry(scroll, "Password", self.bf_password_var, show="*")
-        self._labeled_entry(scroll, "App Key", self.bf_app_key_var)
-        self._labeled_entry(scroll, "Certificate Path", self.bf_cert_var)
-        self._labeled_entry(scroll, "Key Path", self.bf_key_var)
+        self._labeled_entry(scroll, "Password (vuota = invariata)", self.bf_password_var, show="*")
+        self._labeled_entry(scroll, "App Key Delayed", self.bf_app_key_delayed_var, show="*")
+        self._labeled_entry(scroll, "App Key Live", self.bf_app_key_live_var, show="*")
+        ctk.CTkLabel(scroll, text="LIVE richiede la Live key. SIM al momento funziona offline.").pack(anchor="w", padx=12)
+        self._betfair_file_entry(scroll, "Certificato (.crt/.pem)", self.bf_cert_var, False)
+        self._betfair_file_entry(scroll, "Chiave privata (.key/.pem)", self.bf_key_var, True)
 
         self.btn_save_bf = ctk.CTkButton(scroll, text="Salva Betfair", command=self._save_betfair_settings)
         self.btn_save_bf.pack(anchor="w", padx=12, pady=12)
+
+    def _betfair_file_entry(self, parent, label, variable, is_key):
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill=tk.X, padx=12, pady=6)
+        ctk.CTkLabel(row, text=label, width=220, anchor="w").pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkEntry(row, textvariable=variable, width=320).pack(side=tk.LEFT, padx=8, pady=8)
+        button = ctk.CTkButton(row, text="Sfoglia…", width=100, command=lambda: self._browse_betfair_file(is_key))
+        button.pack(side=tk.LEFT, padx=8)
+        if is_key:
+            self.btn_browse_bf_key = button
+        else:
+            self.btn_browse_bf_cert = button
+
+    def _browse_betfair_file(self, is_key=False):
+        variable = self.bf_key_var if is_key else self.bf_cert_var
+        selected = filedialog.askopenfilename(
+            parent=self,
+            title="Seleziona chiave privata Betfair" if is_key else "Seleziona certificato Betfair",
+            filetypes=[("Chiave privata PEM", "*.key *.pem")] if is_key else [("Certificato PEM", "*.crt *.pem *.cer")],
+        )
+        if selected:
+            variable.set(selected)
 
     def _build_telegram_tab(self):
         self.telegram_ui = TelegramTabUI(self.tab_telegram, self)
@@ -1546,7 +1572,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             if hasattr(self.settings_service, "load_betfair_config"):
                 bf = self.settings_service.load_betfair_config()
                 self.bf_username_var.set(getattr(bf, "username", ""))
-                self.bf_app_key_var.set(getattr(bf, "app_key", ""))
+                self.bf_app_key_delayed_var.set(getattr(bf, "app_key_delayed", ""))
+                self.bf_app_key_live_var.set(getattr(bf, "app_key_live", ""))
                 self.bf_cert_var.set(getattr(bf, "certificate", ""))
                 self.bf_key_var.set(getattr(bf, "private_key", ""))
         except Exception:
@@ -1764,14 +1791,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
 
             cfg = BetfairConfig(
                 username=self.bf_username_var.get().strip(),
-                app_key=self.bf_app_key_var.get().strip(),
+                app_key_delayed=self.bf_app_key_delayed_var.get().strip(),
+                app_key_live=self.bf_app_key_live_var.get().strip(),
                 certificate=self.bf_cert_var.get().strip(),
                 private_key=self.bf_key_var.get().strip(),
             )
             self.settings_service.save_betfair_config(cfg, password=self.bf_password_var.get())
+            self.bf_password_var.set("")
             self._safe_show_info("OK", "Impostazioni Betfair salvate.")
         except Exception as exc:
-            self._safe_show_error("Errore salvataggio Betfair", str(exc))
+            # Backend errors may contain SQL values. Validation messages are
+            # controlled locally; other errors expose only their type.
+            msg = str(exc) if isinstance(exc, ValueError) else f"Salvataggio non riuscito ({type(exc).__name__}). Credenziali non aggiornate."
+            self._safe_show_error("Errore salvataggio Betfair", msg)
 
     @staticmethod
     def _hard_stop_to_str(value):

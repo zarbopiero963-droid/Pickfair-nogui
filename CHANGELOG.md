@@ -79,6 +79,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Betfair credentials (#461 PR04-quater, DEC-426-P28–P32): separate encrypted
+  Delayed and Live App Keys; the legacy key migrates only to Delayed. LIVE
+  requires the explicit Live key, and the real client never uses Delayed.
+  Settings include certificate/private-key file pickers and validate readable
+  PEM files, permissions and the matching TLS pair before an atomic save.
+  An empty password preserves the saved password; a replacement clears the
+  input after saving. App Keys are masked in the registry and redacted from
+  client errors and diagnostics. SIM remains offline; its Delayed feed belongs
+  to PR11, and the authenticated encryption upgrade remains in PR35.
 - Live client, non-finite price or size (F11 in #453, DECISIONE-426 P27):
   `BetfairClient.place_bet` now rejects a price or a size that is NaN or
   infinite with `INVALID_PRICE` / `INVALID_SIZE` before building the request,

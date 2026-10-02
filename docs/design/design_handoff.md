@@ -99,9 +99,26 @@ In basso: `Last Error/Info:` in rosso `#d9534f`.
 
 ## 6. Tab Impostazioni (Betfair Credentials)
 
-Entry: `Username`, `Password` (mascherata `*`), `App Key`,
-`Certificate Path`, `Key Path`. Bottone `Salva Betfair` → dialog
-`OK / Impostazioni Betfair salvate.` o errore.
+Entry: `Username`, `Password (vuota = invariata)`, `App Key Delayed`,
+`App Key Live` (password e key mascherate `*`), `Certificato (.crt/.pem)`,
+`Chiave privata (.key/.pem)`. Ogni percorso ha `Sfoglia…`: seleziona un
+file; annullamento lascia il percorso invariato. Nota visibile:
+`LIVE richiede la Live key. SIM al momento funziona offline.`
+Bottone `Salva Betfair` → validazione file regolari/leggibili, permessi
+POSIX coerenti con il client, formato PEM e coppia TLS corrispondente;
+dialog `OK / Impostazioni Betfair salvate.` soltanto dopo save atomico.
+Errore visibile senza modifiche parziali. Password vuota conserva quella
+salvata, nuova password la sostituisce e il campo si svuota dopo il save.
+Migrazione vecchia App Key → Delayed, Live vuota; LIVE senza Live key
+bloccato con errore esplicito. SIM offline; feed Delayed separato in PR11.
+
+Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
+SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP
+sostituiti soltanto ai confini. Verificati masking, pulsanti mappati entro la
+finestra, annullamento picker, save/rifiuto/recovery, riapertura e client Live.
+[Screenshot reale](screenshots/pr04-quater-credentials.png).
+Geometria 1420×900, scala predefinita: non certifica DPI Windows o altre
+geometrie (PR05), login Betfair reale o collaudo installato (#351).
 
 ## 7. Tab Roserpina (Roserpina Cycle Configuration)
 

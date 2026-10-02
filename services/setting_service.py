@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import ssl
+import stat
 from typing import Any, Dict
 
 import trading_config
@@ -81,22 +85,68 @@ class SettingsService:
     # =========================================================
     def load_betfair_config(self) -> BetfairConfig:
         data = self.get_all_settings()
+        if "app_key" in data and "app_key_delayed" not in data:
+            # Recheck under the DB lock: a concurrent save must not be lost.
+            with self.db.transaction():
+                data = self.get_all_settings()
+                if "app_key_delayed" not in data:
+                    migration = {"app_key_delayed": str(data.get("app_key", "") or "")}
+                    if "app_key_live" not in data:
+                        migration["app_key_live"] = ""
+                    self.db.save_settings(migration)
+                    data.update(migration)
         return BetfairConfig(
             username=str(data.get("username", "") or ""),
-            app_key=str(data.get("app_key", "") or ""),
+            app_key_delayed=str(data.get("app_key_delayed", "") or ""),
+            app_key_live=str(data.get("app_key_live", "") or ""),
             certificate=str(data.get("certificate", "") or ""),
             private_key=str(data.get("private_key", "") or ""),
         )
 
     def save_betfair_config(self, config: BetfairConfig, password: str | None = None) -> None:
-        self.db.save_credentials(
-            username=config.username,
-            app_key=config.app_key,
-            certificate=config.certificate,
-            private_key=config.private_key,
-        )
-        if password is not None and hasattr(self.db, "save_password"):
-            self.db.save_password(password)
+        """Validate first, then persist all credentials in one transaction.
+
+        Empty password preserves the saved one. Legacy input goes only to
+        Delayed; an empty Live key is allowed to save but blocks LIVE login.
+        """
+        self._validate_betfair_files(config.certificate, config.private_key)
+        values = {
+            "username": config.username,
+            "app_key_delayed": config.app_key_delayed or config.app_key,
+            "app_key_live": config.app_key_live,
+            "certificate": config.certificate,
+            "private_key": config.private_key,
+        }
+        if password is not None and password != "":
+            values["password"] = password
+        self.db.save_settings(values)
+
+    @staticmethod
+    def _validate_betfair_files(certificate: str, private_key: str) -> None:
+        for name, raw, is_key in (("Certificato", certificate, False), ("Chiave privata", private_key, True)):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"{name}: seleziona un file PEM con Sfoglia…")
+            try:
+                path = Path(raw)
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    raise OSError("not a regular file")
+                with path.open("rb") as handle:
+                    handle.read(1)
+            except (OSError, ValueError):
+                raise ValueError(f"{name}: file assente o non leggibile.") from None
+            if os.name == "posix":
+                unsafe = stat.S_IWGRP | stat.S_IWOTH | stat.S_IXGRP | stat.S_IXOTH
+                if is_key:
+                    unsafe |= stat.S_IRGRP | stat.S_IROTH
+                if info.st_mode & unsafe:
+                    raise ValueError(f"{name}: permessi non sicuri; limita l'accesso al proprietario.")
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            # Callback prevents an interactive prompt for encrypted keys.
+            context.load_cert_chain(certificate, private_key, password=lambda: "")
+        except (OSError, ValueError, ssl.SSLError):
+            raise ValueError("Certificato/chiave privata: formato PEM non valido, chiave cifrata non supportata o coppia non corrispondente.") from None
 
     def load_password(self) -> str:
         data = self.get_all_settings()

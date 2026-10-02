@@ -8,6 +8,26 @@ Questo documento copre **PR-A**: il registro di configurazione (fonte-dato
 unica). Le superfici (headless `--config-report`, tab GUI) lo consumeranno nelle
 PR successive senza duplicare l'enumerazione.
 
+## Credenziali Betfair — DEC-426-P28–P32 / #461 PR04-quater
+
+La tab Impostazioni distingue App Key Delayed e App Key Live (campi mascherati).
+La key legacy migra soltanto nel campo Delayed; Live parte vuoto. LIVE senza
+Live key resta bloccato con errore visibile. Il client reale di ordini e
+cancellazioni usa esclusivamente Live: non esiste fallback a Delayed.
+Il registro richiede `betfair.app_key_live` per LIVE, mentre Delayed resta
+enumerata e mascherata ma non e' un prerequisito LIVE.
+
+`Sfoglia…` seleziona certificato e chiave privata PEM. Il save verifica file
+regolari/leggibili, permessi POSIX e coppia TLS valida prima di scrivere;
+errore = nessun aggiornamento parziale. Password vuota mantiene la password
+salvata; un valore nuovo la sostituisce. Credenziali e password vengono salvate
+in un'unica transazione, e il campo password si svuota dopo il successo.
+Le due key usano la protezione a riposo vigente e la redazione diagnostica;
+la migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
+feed reale separato dal client degli ordini/cancel sono nella PR11.
+Queste prove locali non sostituiscono il collaudo installato Windows/Betfair
+richiesto in #351.
+
 ## `config_registry.py` — fonte-dato unica
 
 Modulo **di sola lettura**: non scrive impostazioni e **non modifica nessun
@@ -21,7 +41,7 @@ gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
 
   | campo | significato |
   |-------|-------------|
-  | `key` | chiave stabile (es. `betfair.app_key`) |
+  | `key` | chiave stabile (es. `betfair.app_key_live`) |
   | `label` | etichetta leggibile |
   | `value` | valore attuale (**mascherato** se segreto) |
   | `valid` | il valore e' valido/utilizzabile |
@@ -34,7 +54,7 @@ gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
 
 ### Mascheramento segreti (obbligatorio)
 
-`app_key`, `certificate`, `private_key`, `password` non sono **mai** esposti in
+`app_key_delayed`, `app_key_live`, `certificate`, `private_key`, `password` non sono **mai** esposti in
 chiaro: la entry mostra solo `(impostato)` / `(non impostato)` e `valid`
 riflette la presenza. Vincolo coperto da test (`test_secrets_never_appear_in_plaintext`).
 

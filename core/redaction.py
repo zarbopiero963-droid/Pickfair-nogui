@@ -36,7 +36,7 @@ SENSITIVE_KEYS_EXACT: frozenset = frozenset({
     "authorization", "auth", "refresh_token", "bot_token", "client_secret",
     "private_key", "api_secret", "authorization_header",
     # storicamente da observability.sanitizers
-    "passwd", "session_string", "app_key", "certificate", "cert",
+    "passwd", "session_string", "app_key", "app_key_delayed", "app_key_live", "certificate", "cert",
     "cookie", "telegram_token", "api_hash", "api_id", "ssoid",
 })
 

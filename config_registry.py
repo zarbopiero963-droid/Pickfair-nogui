@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -388,11 +388,13 @@ class ConfigRegistry:
             )
         ]
         for attr, label in (
-            ("app_key", "Betfair app key"),
+            ("app_key_live", "Betfair App Key Live"),
             ("certificate", "Certificato Betfair"),
             ("private_key", "Chiave privata Betfair"),
         ):
             entries.append(self._secret_entry(f"betfair.{attr}", label, getattr(cfg, attr, ""), cfg_ok))
+        delayed = self._secret_entry("betfair.app_key_delayed", "Betfair App Key Delayed", getattr(cfg, "app_key_delayed", ""), cfg_ok)
+        entries.append(replace(delayed, required_for_live=False))
         entries.append(self._secret_entry("betfair.password", "Password Betfair", password, pwd_ok))
         return entries
 
