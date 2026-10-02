@@ -1692,11 +1692,17 @@ class RuntimeController:
         normalized_execution_mode = str(execution_mode if execution_mode is not None else self.execution_mode).strip().upper()
         if normalized_execution_mode == "LIVE":
             try:
-                cfg = self.settings_service.load_betfair_config()
-                value = getattr(cfg, "app_key_live", None)
+                # Readiness/preflight is read-only: the credentials loader may
+                # migrate legacy rows and belongs to configuration/bootstrap.
+                settings = self.settings_service.get_all_settings()
+                if not isinstance(settings, dict):
+                    raise TypeError("Invalid settings payload")
+                value = settings.get("app_key_live")
                 key_present = isinstance(value, str) and bool(value.strip())
                 credentials_readable = True
-            except Exception:
+            except Exception as exc:
+                # Exception messages can contain credentials or storage paths.
+                logger.warning("LIVE_APP_KEY_UNAVAILABLE (%s)", type(exc).__name__)
                 key_present = False
                 credentials_readable = False
             details["betfair_credentials"] = {"live_key_present": key_present, "readable": credentials_readable}

@@ -88,6 +88,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   input after saving. App Keys are masked in the registry and redacted from
   client errors and diagnostics. SIM remains offline; its Delayed feed belongs
   to PR11, and the authenticated encryption upgrade remains in PR35.
+  LIVE readiness reads canonical settings without triggering migration and
+  reports actionable missing/unavailable-key remedies in registry/headless.
+  The legacy credentials writer updates Delayed after migration while keeping
+  Live/password unchanged. Colliding redaction masks use a neutral ASCII
+  character so strict Windows CP1252 log sinks retain login diagnostics.
   Every credential echo is redacted, including short/concatenated values and
   login passwords in client diagnostics. Local login codes are separate from
   provider text; session expiry is classified before redaction.

@@ -41,7 +41,10 @@ def test_blank_password_preserves_saved_password(setup):
 
 def test_legacy_migrates_only_to_delayed_and_survives_restart(setup):
     db, settings, cfg = setup
-    db.save_credentials(username=cfg.username, app_key="demo-legacy", certificate=cfg.certificate, private_key=cfg.private_key)
+    # Physical pre-migration schema, not the compatibility writer, which now
+    # updates the canonical Delayed row explicitly.
+    db.save_settings({"username": cfg.username, "app_key": "demo-legacy",
+                      "certificate": cfg.certificate, "private_key": cfg.private_key})
     db.save_password("demo-password")
     migrated = settings.load_betfair_config()
     assert migrated.app_key_delayed == "demo-legacy"

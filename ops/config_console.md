@@ -19,8 +19,14 @@ enumerata e mascherata ma non e' un prerequisito LIVE.
 La readiness autorevole del RuntimeController verifica la Live key anche
 quando il flag generale e' impostato: assente/non leggibile significa
 NOT_READY/NO-GO, mentre la verifica non viene eseguita per SIM offline.
+Il preflight legge la key Live canonica senza scrivere o migrare il DB.
+`LIVE_APP_KEY_MISSING` indica di salvare la Live key; `LIVE_APP_KEY_UNAVAILABLE`
+indica di ripristinare accesso al DB/master key. I report registry e headless
+mostrano questi rimedi; il log diagnostico espone soltanto il tipo di errore.
 La migrazione copia il ciphertext originale e non finalizza Delayed se la
 vecchia key cifrata non e' leggibile: ripristinare la master key consente retry.
+Il writer legacy `save_credentials(app_key=...)` aggiorna esplicitamente Delayed
+anche dopo la migrazione, mantenendo Live e password esistenti.
 
 `Sfoglia…` seleziona certificato e chiave privata PEM. Il save verifica file
 regolari/leggibili, permessi POSIX e coppia TLS valida prima di scrivere;
@@ -32,8 +38,11 @@ la redazione copre anche valori brevi/concatenati e password nell'errore login
 e nello snapshot del client. I codici login locali sono metadati separati dal
 testo provider: nessuna parola dell'eco viene esentata perché sembra un codice.
 Anche i token brevi sono redatti. Le maschere che collidono con un valore
-protetto usano un simbolo neutro, evitando riscritture nelle passate successive.
-la migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
+protetto usano un carattere ASCII neutro, evitando riscritture nelle passate
+successive e perdita del record sui sink Windows CP1252. Se tutti i caratteri
+ASCII stampabili sono protetti, l'eco viene rimossa. La prova della codifica
+del sink non equivale al collaudo dell'applicazione installata su Windows.
+La migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
 feed reale separato dal client degli ordini/cancel sono nella PR11.
 Queste prove locali non sostituiscono il collaudo installato Windows/Betfair
 richiesto in #351.

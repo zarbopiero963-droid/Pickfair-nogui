@@ -230,3 +230,109 @@ def test_migration_preserves_ciphertext_even_if_wrong_key_decodes_utf8(setup):
     assert migrated == raw
     db._cipher = correct
     assert settings.load_betfair_config().app_key_delayed == "x"
+
+
+def test_legacy_writer_updates_delayed_after_migration_preserving_live_and_password(setup):
+    db, settings, cfg = setup
+    db.save_settings({"app_key": "demo-legacy-old"})
+    migrated = settings.load_betfair_config()
+    settings.save_betfair_config(replace(cfg, app_key_delayed=migrated.app_key_delayed,
+                                       app_key_live="demo-live-kept"), password="demo-password-kept")
+    db.save_credentials(username=cfg.username, app_key="demo-legacy-new",
+                        certificate=cfg.certificate, private_key=cfg.private_key)
+    loaded = settings.load_betfair_config()
+    assert loaded.app_key_delayed == "demo-legacy-new"
+    assert loaded.app_key_live == "demo-live-kept"
+    assert settings.load_password() == "demo-password-kept"
+
+
+def test_redacted_login_failure_is_written_to_windows_cp1252_log(setup, monkeypatch):
+    import io
+    import logging
+    import sys
+    import services.betfair_service as module
+    _, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_live="APP"), password="demo-password")
+    service, http, _ = wire_client(settings, monkeypatch)
+    def fail(*args, **kwargs):
+        raise ConnectionError("auth_APP_failed")
+    monkeypatch.setattr(http, "post", fail)
+    errors = []
+    class StrictHandler(logging.StreamHandler):
+        def handleError(self, record):
+            errors.append(sys.exc_info()[0])
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="cp1252", errors="strict")
+    handler = StrictHandler(stream)
+    module.logger.addHandler(handler)
+    try:
+        with pytest.raises(RuntimeError, match="LOGIN_NETWORK_ERROR"):
+            service.connect(simulation_mode=False)
+        stream.flush()
+        assert not errors
+        logged = buffer.getvalue().decode("cp1252")
+        assert "LOGIN_NETWORK_ERROR" in logged
+        assert "auth_APP_failed" not in logged and "APP" not in logged
+    finally:
+        module.logger.removeHandler(handler)
+        handler.close()
+        stream.close()
+
+
+@pytest.fixture
+def readiness_app(setup, monkeypatch):
+    import mini_gui as gui
+    db, settings, _ = setup
+    settings.save_roserpina_config(replace(settings.load_roserpina_config(), max_daily_loss=10,
+                                         max_open_exposure=10, max_drawdown_hard_stop_pct=20))
+    monkeypatch.setattr(gui, "Database", lambda: db)
+    monkeypatch.setattr(gui, "TelegramTabUI", lambda *args: None)
+    app = gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
+    app.runtime.simulation_mode = False
+    try:
+        yield app
+    finally:
+        app.destroy()
+
+
+def test_live_preflight_does_not_migrate_legacy_settings(setup, readiness_app):
+    import sqlite3
+    db, settings, _ = setup
+    # Reproduce an old physical DB after bootstrap, before any credentials
+    # loader; preflight alone must not create canonical credential rows.
+    db._execute("DELETE FROM settings WHERE key IN ('app_key_delayed','app_key_live')")
+    db.save_settings({"app_key": "demo-legacy-unmigrated"})
+    def snapshot():
+        with sqlite3.connect(db.db_path) as conn:
+            return dict(conn.execute("SELECT key,value FROM settings"))
+    before = snapshot()
+    for _ in range(2):
+        report = readiness_app.runtime.evaluate_live_readiness(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        assert report["blockers"] == ["LIVE_APP_KEY_MISSING"]
+        status = readiness_app.runtime.get_deploy_gate_status(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        assert not status["allowed"]
+    assert snapshot() == before
+    # Migration is still available through the explicit credentials loader.
+    assert settings.load_betfair_config().app_key_delayed == "demo-legacy-unmigrated"
+
+
+@pytest.mark.parametrize("unavailable,code", [(False, "LIVE_APP_KEY_MISSING"), (True, "LIVE_APP_KEY_UNAVAILABLE")])
+def test_live_key_blockers_have_actionable_registry_and_headless_remedies(setup, readiness_app, unavailable, code):
+    from config_registry import readiness_report
+    from headless_main import HeadlessApp
+    db, _, _ = setup
+    if unavailable:
+        db._execute("ALTER TABLE settings RENAME TO unavailable_settings")
+    try:
+        report = readiness_report(readiness_app.runtime, execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        item = next(item for item in report["items"] if item.blocker == code)
+        assert not item.ok and "non catalogato" not in item.remedy.lower()
+        assert "Live" in item.remedy if not unavailable else "DB" in item.remedy
+        status = readiness_app.runtime.get_deploy_gate_status(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
+        text, exit_code = object.__new__(HeadlessApp)._format_preflight_report(status, "LIVE", True, True)
+        assert exit_code == 2 and code in text
+        assert "non catalogato" not in text.lower()
+        assert item.remedy in text
+    finally:
+        if unavailable:
+            db._execute("ALTER TABLE unavailable_settings RENAME TO settings")

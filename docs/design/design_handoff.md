@@ -114,6 +114,9 @@ bloccato con errore esplicito. SIM offline; feed Delayed separato in PR11.
 Readiness/preflight LIVE mostra NOT_READY/NO-GO anche con flag generale attivo
 se la Live key manca o non e' leggibile; salvare una key valida consente il
 nuovo controllo, senza bypassare gli altri blocker. SIM non richiede questa key.
+Il preflight non modifica il DB. Registry/headless mostrano per key assente
+il rimedio `Imposta e salva la App Key Live nelle credenziali Betfair; Delayed non abilita LIVE.`;
+per credenziali non leggibili `Ripristina l'accesso al DB e alla master key, poi ripeti il preflight LIVE.`.
 
 Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
 SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP

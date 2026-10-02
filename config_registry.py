@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 # `evaluate_live_readiness` (#350) e a `headless_main._BLOCKER_REMEDIATION`
 # (che in PR-B verra' deduplicato importando da qui).
 BLOCKER_REMEDIATION: dict[str, tuple[str, str]] = {
+    "LIVE_APP_KEY_MISSING": (
+        "App Key Live assente",
+        "Imposta e salva la App Key Live nelle credenziali Betfair; Delayed non abilita LIVE.",
+    ),
+    "LIVE_APP_KEY_UNAVAILABLE": (
+        "Credenziali Betfair non leggibili",
+        "Ripristina l'accesso al DB e alla master key, poi ripeti il preflight LIVE.",
+    ),
     "INVALID_EXECUTION_MODE": (
         "execution_mode non valido",
         "Usa SIMULATION o LIVE.",
@@ -106,6 +114,8 @@ _LIVE_PREREQUISITES: tuple[tuple[str, str, str], ...] = (
     ("kill_switch_off", "Kill switch disattivo", "KILL_SWITCH_ACTIVE"),
     ("safe_mode_off", "Safe mode non bloccante", "SAFE_MODE_BLOCKING"),
     ("betfair_dependency", "Dipendenza Betfair presente", "LIVE_DEPENDENCY_MISSING"),
+    ("betfair_live_key_present", "App Key Live presente", "LIVE_APP_KEY_MISSING"),
+    ("betfair_credentials_readable", "Credenziali Betfair leggibili", "LIVE_APP_KEY_UNAVAILABLE"),
     ("runtime_initialized", "Runtime inizializzato", "RUNTIME_NOT_INITIALIZED"),
     ("runtime_not_half_started", "Runtime non half-started", "RUNTIME_HALF_STARTED"),
     ("no_contradictory_state", "Nessuno stato contraddittorio", "CONTRADICTORY_STATE"),

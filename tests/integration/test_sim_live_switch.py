@@ -28,9 +28,8 @@ class _Db:
 
 
 class _Settings:
-    def load_betfair_config(self):
-        from types import SimpleNamespace
-        return SimpleNamespace(app_key_live="demo-live")
+    def get_all_settings(self):
+        return {"app_key_live": "demo-live"}
 
     def __init__(self, live_enabled=False, live_ready=False):
         self._live_enabled = live_enabled

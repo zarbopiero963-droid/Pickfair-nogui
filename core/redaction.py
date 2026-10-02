@@ -41,10 +41,11 @@ def redact_literal_secrets(text: str, replacements: dict[str, str]) -> str:
     safe = dict(replacements)
     for secret, marker in safe.items():
         if any(value in marker for value in secrets):
-            codepoint = 0x25CF
-            while chr(codepoint) in secrets:
-                codepoint += 1
-            safe[secret] = chr(codepoint)
+            # Keep diagnostics writable on strict ASCII/cp1252 Windows sinks.
+            # If every printable character is protected, removing the echo
+            # is safer than introducing a secret or an unencodable glyph.
+            safe[secret] = next((chr(codepoint) for codepoint in range(33, 127)
+                                 if chr(codepoint) not in secrets), "")
     pattern = "|".join(re.escape(s) for s in secrets)
     return re.sub(pattern, lambda match: safe[match.group()], text)
 

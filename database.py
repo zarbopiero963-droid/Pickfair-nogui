@@ -461,10 +461,13 @@ class Database:
         certificate: str,
         private_key: str,
     ) -> None:
+        # The legacy API represents an explicit Delayed-key update, including
+        # after migration. Never promote it to Live or overwrite the password.
         self.save_settings(
             {
                 "username": username,
                 "app_key": app_key,
+                "app_key_delayed": app_key,
                 "certificate": certificate,
                 "private_key": private_key,
             }
