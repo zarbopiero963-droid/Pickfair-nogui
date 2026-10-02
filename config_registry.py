@@ -183,6 +183,10 @@ def readiness_report(
     items: list[ReadinessItem] = []
     mapped_codes = {code for _, _, code in _LIVE_PREREQUISITES}
     for key, label, code in _LIVE_PREREQUISITES:
+        if code == "LIVE_APP_KEY_MISSING" and "LIVE_APP_KEY_UNAVAILABLE" in blockers:
+            # Unavailable cannot pass presence or recommend replacing a
+            # recoverable key. Keep the runtime's authoritative blocker.
+            code = "LIVE_APP_KEY_UNAVAILABLE"
         ok = code not in blockers
         remedy = "" if ok else BLOCKER_REMEDIATION.get(code, ("", ""))[1]
         items.append(
@@ -383,6 +387,7 @@ class ConfigRegistry:
         # "(errore lettura)" (non "(non impostato)"), coerente coi campi execution.
         cfg_raw, cfg_ok = self._read("load_betfair_config", migrate=False)
         cfg = cfg_raw or SimpleNamespace()
+        unreadable = getattr(cfg, "app_keys_unreadable", frozenset())
         password, pwd_ok = self._read("load_password", "")
 
         username = str(getattr(cfg, "username", "") or "")
@@ -402,8 +407,13 @@ class ConfigRegistry:
             ("certificate", "Certificato Betfair"),
             ("private_key", "Chiave privata Betfair"),
         ):
-            entries.append(self._secret_entry(f"betfair.{attr}", label, getattr(cfg, attr, ""), cfg_ok))
-        delayed = self._secret_entry("betfair.app_key_delayed", "Betfair App Key Delayed", getattr(cfg, "app_key_delayed", ""), cfg_ok)
+            entry = self._secret_entry(f"betfair.{attr}", label, getattr(cfg, attr, ""), cfg_ok and attr not in unreadable)
+            if attr in unreadable:
+                entry = replace(entry, remedy=BLOCKER_REMEDIATION["LIVE_APP_KEY_UNAVAILABLE"][1])
+            entries.append(entry)
+        delayed = self._secret_entry("betfair.app_key_delayed", "Betfair App Key Delayed", getattr(cfg, "app_key_delayed", ""), cfg_ok and "app_key_delayed" not in unreadable)
+        if "app_key_delayed" in unreadable:
+            delayed = replace(delayed, remedy=BLOCKER_REMEDIATION["LIVE_APP_KEY_UNAVAILABLE"][1])
         entries.append(replace(delayed, required_for_live=False))
         entries.append(self._secret_entry("betfair.password", "Password Betfair", password, pwd_ok))
         return entries

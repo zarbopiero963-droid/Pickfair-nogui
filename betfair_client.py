@@ -31,7 +31,7 @@ class BetfairDiagnosticError(RuntimeError):
     def __init__(self, code: str, detail: str = ""):
         if code not in {"LOGIN_FAILED", "LOGIN_TIMEOUT", "LOGIN_HTTP_ERROR", "LOGIN_NETWORK_ERROR",
                         "CERT_FILE_MISSING", "CERT_KEY_MISSING", "CERT_UNREADABLE", "CERT_PERMISSIONS_UNSAFE",
-                        "CERT_INVALID_FORMAT", "CERT_EXPIRED", "INVALID_JSON", "INVALID_LOGIN_JSON", "INVALID_KEEPALIVE_JSON"}:
+                        "CERT_INVALID_FORMAT", "CERT_EXPIRED", "CERT_NOT_YET_VALID", "INVALID_JSON", "INVALID_LOGIN_JSON", "INVALID_KEEPALIVE_JSON"}:
             raise ValueError("Invalid local credential diagnostic code")
         self.code = code
         self.detail = detail
@@ -1094,6 +1094,12 @@ class BetfairClient:
 
         if expires_at <= datetime.now(timezone.utc):
             raise BetfairDiagnosticError("CERT_EXPIRED", self._redact_error_text(f"{cert_path}: notAfter={not_after_raw}"))
+        try:
+            starts_at = ssl.cert_time_to_seconds(str(decoded.get("notBefore") or ""))
+        except (ValueError, OverflowError):
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: invalid_notBefore")) from None
+        if starts_at > datetime.now(timezone.utc).timestamp():
+            raise BetfairDiagnosticError("CERT_NOT_YET_VALID", self._redact_error_text(cert_path))
 
     def _headers(self) -> Dict[str, str]:
         with self._session_state_lock:

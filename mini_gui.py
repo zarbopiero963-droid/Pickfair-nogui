@@ -1571,6 +1571,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         try:
             if hasattr(self.settings_service, "load_betfair_config"):
                 bf = self.settings_service.load_betfair_config()
+                self._bf_app_keys_unreadable = getattr(bf, "app_keys_unreadable", frozenset())
                 self.bf_username_var.set(getattr(bf, "username", ""))
                 self.bf_app_key_delayed_var.set(getattr(bf, "app_key_delayed", ""))
                 self.bf_app_key_live_var.set(getattr(bf, "app_key_live", ""))
@@ -1795,8 +1796,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 app_key_live=self.bf_app_key_live_var.get().strip(),
                 certificate=self.bf_cert_var.get().strip(),
                 private_key=self.bf_key_var.get().strip(),
+                app_keys_unreadable=getattr(self, "_bf_app_keys_unreadable", frozenset()),
             )
             self.settings_service.save_betfair_config(cfg, password=self.bf_password_var.get())
+            self._bf_app_keys_unreadable = frozenset(
+                field for field in cfg.app_keys_unreadable if not getattr(cfg, field)
+            )
             self.bf_password_var.set("")
             self._safe_show_info("OK", "Impostazioni Betfair salvate.")
         except Exception as exc:

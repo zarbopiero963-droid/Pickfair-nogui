@@ -125,6 +125,18 @@ Le App Key non decifrabili sono mostrate vuote: un save senza sostituzione
 non cancella il ciphertext recuperabile. Una key nuova non vuota lo sostituisce;
 una key leggibile puo' essere cancellata. Il registry non migra durante un report,
 mentre il bootstrap/config conserva la migrazione legacy prevista.
+Il placeholder vuoto caricato da una key unreadable resta distinto dal clear
+anche se la key viene recuperata da un altro writer prima del save: un metadato
+volatile del form la preserva. Reload leggibile consente clear; replacement
+non vuota e' esplicita. Nessun nuovo campo DB, credenziale o modalita' prodotto.
+Entry registry e riga presenza della checklist indicano recovery DB/master key
+per ciphertext illeggibile; non presentano presenza verde o un invito a
+sovrascriverlo. Il certificato gia' scaduto genera errore visibile al save,
+senza sostituire la configurazione precedente.
+Anche notBefore futuro viene rifiutato. Load e stato di lettura sono coerenti
+nello stesso snapshot; il report resta senza scritture/migrazione.
+Se il certificato diventa futuro dopo save, il client blocca prima di HTTP con
+`CERT_NOT_YET_VALID`, conservando il codice diagnostico senza esporre segreti.
 
 Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
 SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP

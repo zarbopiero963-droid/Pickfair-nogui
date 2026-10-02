@@ -40,6 +40,21 @@ preserva il ciphertext originale, anche per la legacy senza marker Delayed.
 Una nuova key non vuota lo sostituisce esplicitamente; una key leggibile puo'
 ancora essere cancellata. Lettura dello stato e save sono nello stesso lock/
 transazione, e gli altri valori validati possono essere salvati senza perdita.
+Il loader conserva anche un metadato volatile dei placeholder unreadable;
+GUI e service lo propagano fino al save, senza persisterlo o mostrarlo nei log.
+Se un altro writer recupera/sostituisce la key nel frattempo, quel vecchio campo
+vuoto non la cancella. Dopo reload leggibile il clear torna esplicito; una
+replacement non vuota e' sempre esplicita e rimuove il placeholder dal form.
+Entries e checklist mostrano le key unreadable come errore di lettura con
+rimedio DB/master key: neppure la riga presenza Live risulta verde o propone
+di sovrascrivere una key recuperabile. Il save rifiuta anche un certificato
+gia' scaduto, pur se PEM e coppia TLS sono parseabili, prima di ogni scrittura.
+Il controllo data rifiuta anche un certificato non ancora valido (notBefore).
+Valori caricati e metadato unreadable condividono una transazione/snapshot: un
+writer fra le letture non puo' trasformare un placeholder in clear. Il report
+puo' aprire/chiudere una transazione read-only, senza DML o migrazione.
+Il client rifiuta notBefore futuro anche se il file viene sostituito dopo save,
+prima di HTTP/login, con codice locale `CERT_NOT_YET_VALID` preservato/redatto.
 La migrazione copia il ciphertext originale e non finalizza Delayed se la
 vecchia key cifrata non e' leggibile o usa `enc:` non supportato: ripristinare
 master key/formato supportato consente retry.

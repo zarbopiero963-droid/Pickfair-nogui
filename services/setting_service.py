@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import ssl
 import stat
+import time
 from typing import Any, Dict
 
 import trading_config
@@ -91,27 +92,28 @@ class SettingsService:
         return getter()
 
     def load_betfair_config(self, *, migrate: bool = True) -> BetfairConfig:
-        data = self.get_all_settings()
-        if migrate and "app_key" in data and "app_key_delayed" not in data:
-            # Recheck under the DB lock: a concurrent save must not be lost.
-            with self.db.transaction():
+        # Values and decode provenance must share a DB snapshot. A read-only
+        # report may open/close a transaction but never performs migration/DML.
+        with self.db.transaction():
+            data = self.get_all_settings()
+            if migrate and "app_key" in data and "app_key_delayed" not in data:
+                self.db.migrate_legacy_betfair_app_key()
                 data = self.get_all_settings()
-                if "app_key_delayed" not in data:
-                    self.db.migrate_legacy_betfair_app_key()
-                    data = self.get_all_settings()
-        # Reports can show the legacy Delayed value without migrating it.
-        delayed_field = "app_key_delayed" if "app_key_delayed" in data else "app_key"
-        def app_key(field):
-            if not self.db.get_betfair_app_key_status(field)["readable"]:
-                return ""
-            return str(data.get(field, "") or "")
-        return BetfairConfig(
-            username=str(data.get("username", "") or ""),
-            app_key_delayed=app_key(delayed_field),
-            app_key_live=app_key("app_key_live"),
-            certificate=str(data.get("certificate", "") or ""),
-            private_key=str(data.get("private_key", "") or ""),
-        )
+            delayed_field = "app_key_delayed" if "app_key_delayed" in data else "app_key"
+            unreadable = set()
+            def app_key(field):
+                if not self.db.get_betfair_app_key_status(field)["readable"]:
+                    unreadable.add("app_key_delayed" if field == "app_key" else field)
+                    return ""
+                return str(data.get(field, "") or "")
+            return BetfairConfig(
+                username=str(data.get("username", "") or ""),
+                app_key_delayed=app_key(delayed_field),
+                app_key_live=app_key("app_key_live"),
+                certificate=str(data.get("certificate", "") or ""),
+                private_key=str(data.get("private_key", "") or ""),
+                app_keys_unreadable=frozenset(unreadable),
+            )
 
     def save_betfair_config(self, config: BetfairConfig, password: str | None = None) -> None:
         """Validate first, then persist all credentials in one transaction.
@@ -133,6 +135,9 @@ class SettingsService:
         with self.db.transaction():
             for field in ("app_key_delayed", "app_key_live"):
                 if values[field]:
+                    continue
+                if field in config.app_keys_unreadable:
+                    values.pop(field)
                     continue
                 state = self.db.get_betfair_app_key_status(field)
                 if field == "app_key_delayed" and not state["stored"]:
@@ -167,6 +172,17 @@ class SettingsService:
             context.load_cert_chain(certificate, private_key, password=lambda: "")
         except (OSError, ValueError, ssl.SSLError):
             raise ValueError("Certificato/chiave privata: formato PEM non valido, chiave cifrata non supportata o coppia non corrispondente.") from None
+        try:
+            decoded = ssl._ssl._test_decode_cert(certificate)
+            expires_at = ssl.cert_time_to_seconds(str(decoded.get("notAfter") or ""))
+            starts_at = ssl.cert_time_to_seconds(str(decoded.get("notBefore") or ""))
+        except (OSError, ValueError, ssl.SSLError, AttributeError):
+            raise ValueError("Certificato: formato o data di scadenza non validi.") from None
+        now = time.time()
+        if expires_at <= now:
+            raise ValueError("Certificato: scaduto. Seleziona un certificato valido.")
+        if starts_at > now:
+            raise ValueError("Certificato: non ancora valido. Seleziona un certificato valido.")
 
     def load_password(self) -> str:
         data = self.get_all_settings()

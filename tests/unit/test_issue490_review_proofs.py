@@ -126,7 +126,7 @@ def test_short_key_cannot_hide_real_exchange_session_expiry(setup):
     assert not client.connected and not client.session_token
 
 
-@pytest.mark.parametrize("invalid,code", [("missing", "CERT_FILE_MISSING"), ("permissions", "CERT_PERMISSIONS_UNSAFE"), ("malformed", "CERT_INVALID_FORMAT")])
+@pytest.mark.parametrize("invalid,code", [("missing", "CERT_FILE_MISSING"), ("permissions", "CERT_PERMISSIONS_UNSAFE"), ("malformed", "CERT_INVALID_FORMAT"), ("future", "CERT_NOT_YET_VALID")])
 def test_certificate_diagnostic_survives_credential_overlap(setup, monkeypatch, invalid, code):
     _, settings, cfg = setup
     settings.save_betfair_config(replace(cfg, app_key_live="CERT"), password="demo-password")
@@ -137,6 +137,9 @@ def test_certificate_diagnostic_survives_credential_overlap(setup, monkeypatch, 
         if os.name != "posix":
             pytest.skip("POSIX file permission contract")
         Path(cfg.private_key).chmod(0o666)
+    elif invalid == "future":
+        from tests.fixtures.betfair_tls_synthetic import SYNTHETIC_FUTURE_CERT
+        Path(cfg.certificate).write_text(SYNTHETIC_FUTURE_CERT)
     else:
         Path(cfg.certificate).write_text("not PEM")
     service, http, _ = wire_client(settings, monkeypatch)
@@ -371,6 +374,9 @@ def test_live_key_decode_failure_directs_recovery_without_overwriting_ciphertext
             report = readiness_report(readiness_app.runtime, execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
             assert report["blockers"] == ["LIVE_APP_KEY_UNAVAILABLE"]
             assert report["details"]["betfair_credentials"] == {"live_key_present": False, "readable": False}
+            presence = next(item for item in report["items"] if item.key == "betfair_live_key_present")
+            assert not presence.ok and presence.blocker == "LIVE_APP_KEY_UNAVAILABLE"
+            assert "master key" in presence.remedy
             item = next(item for item in report["items"] if item.blocker == "LIVE_APP_KEY_UNAVAILABLE")
             assert "master key" in item.remedy
             status = readiness_app.runtime.get_deploy_gate_status(execution_mode="LIVE", live_enabled=True, live_readiness_ok=True)
@@ -467,3 +473,103 @@ def test_readable_app_keys_can_still_be_explicitly_cleared(setup):
     settings.save_betfair_config(cfg)
     assert settings.load_betfair_config().app_key_delayed == ""
     assert settings.load_betfair_config().app_key_live == ""
+
+
+@pytest.mark.parametrize("field", ["app_key_delayed", "app_key_live", "app_key"])
+@pytest.mark.parametrize("change", ["restore", "replace"])
+def test_stale_unreadable_form_does_not_clear_recovered_or_replaced_key(setup, field, change):
+    db, settings, cfg = setup
+    db.save_settings({"username": cfg.username, "certificate": cfg.certificate,
+                      "private_key": cfg.private_key, field: "demo-original"})
+    original = db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"]
+    db._execute("UPDATE settings SET value=? WHERE key=?", ("enc:v1:broken", field))
+    stale = settings.load_betfair_config()
+    canonical = "app_key_live" if field == "app_key_live" else "app_key_delayed"
+    if change == "restore":
+        db._execute("UPDATE settings SET value=? WHERE key=?", (original, field))
+        expected = "demo-original"
+    else:
+        db.save_settings({field: "demo-concurrent-replacement"})
+        expected = "demo-concurrent-replacement"
+    assert getattr(settings.load_betfair_config(), canonical) == expected
+    before = db._execute("SELECT value FROM settings WHERE key=?", (canonical,), fetchone=True, commit=False)["value"]
+    settings.save_betfair_config(stale)
+    assert db._execute("SELECT value FROM settings WHERE key=?", (canonical,), fetchone=True, commit=False)["value"] == before
+    assert getattr(settings.load_betfair_config(), canonical) == expected
+    # An explicit replacement still wins even from that old form.
+    settings.save_betfair_config(replace(stale, **{canonical: "demo-user-replacement"}))
+    assert getattr(settings.load_betfair_config(), canonical) == "demo-user-replacement"
+
+
+@pytest.mark.parametrize("field", ["app_key_delayed", "app_key_live"])
+@pytest.mark.parametrize("broken", ["enc:v1:broken", "enc:v2:unsupported"])
+def test_registry_entries_direct_unreadable_key_to_recovery(setup, field, broken):
+    from config_registry import ConfigRegistry
+    db, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_delayed="demo-delayed", app_key_live="demo-live"))
+    original = db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"]
+    db._execute("UPDATE settings SET value=? WHERE key=?", (broken, field))
+    entry = next(e for e in ConfigRegistry(settings).entries() if e.key == "betfair." + field)
+    assert not entry.valid and entry.value == "(errore lettura)"
+    assert "master key" in entry.remedy
+    assert "Imposta" not in entry.remedy
+    assert db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"] == broken
+    db._execute("UPDATE settings SET value=? WHERE key=?", (original, field))
+    assert next(e for e in ConfigRegistry(settings).entries() if e.key == "betfair." + field).valid
+
+
+@pytest.mark.parametrize("validity", ["expired", "future"])
+def test_invalid_dates_matching_certificate_save_is_rejected_without_changes(setup, tmp_path, validity):
+    import ssl
+    from tests.fixtures.betfair_tls_synthetic import SYNTHETIC_EXPIRED_CERT, SYNTHETIC_FUTURE_CERT
+    db, settings, cfg = setup
+    settings.save_betfair_config(replace(cfg, app_key_live="demo-kept"), password="demo-kept-password")
+    before = {
+        row['key']: row['value'] for row in db._execute("SELECT key,value FROM settings", fetch=True, commit=False)
+    }
+    expired = tmp_path / "expired.crt"
+    expired.write_text(SYNTHETIC_EXPIRED_CERT if validity == "expired" else SYNTHETIC_FUTURE_CERT)
+    # This is a real parseable matching pair, not a mock TLS validator.
+    ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT).load_cert_chain(str(expired), cfg.private_key)
+    with pytest.raises(ValueError, match="scaduto" if validity == "expired" else "non ancora valido"):
+        settings.save_betfair_config(replace(cfg, certificate=str(expired), app_key_live="demo-replacement"), password="demo-new")
+    assert {row['key']: row['value'] for row in db._execute("SELECT key,value FROM settings", fetch=True, commit=False)} == before
+    settings.save_betfair_config(replace(cfg, app_key_live="demo-valid-after-error"))
+    assert settings.load_betfair_config().app_key_live == "demo-valid-after-error"
+
+
+@pytest.mark.parametrize("field", ["app_key_delayed", "app_key_live"])
+def test_load_status_snapshot_remains_consistent_with_concurrent_recovery(setup, monkeypatch, field):
+    import threading
+    db, settings, cfg = setup
+    settings.save_betfair_config(cfg)
+    db._execute("UPDATE settings SET value=? WHERE key=?", ("enc:v1:broken", field))
+    original_getter = db.get_settings
+    done = threading.Event()
+    failures = []
+    workers = []
+    def recover():
+        try:
+            db.save_settings({field: "demo-recovered-between-reads"})
+        except Exception as exc:
+            failures.append(type(exc).__name__)
+        finally:
+            done.set()
+    def captured_read():
+        data = original_getter()
+        if not workers:
+            worker = threading.Thread(target=recover)
+            workers.append(worker)
+            worker.start()
+            # Without a load transaction the writer completes here, so the
+            # next status read disagrees with the captured empty value.
+            done.wait(0.1)
+        return data
+    monkeypatch.setattr(db, "get_settings", captured_read)
+    loaded = settings.load_betfair_config()
+    workers[0].join(timeout=3)
+    assert not workers[0].is_alive() and not failures
+    assert getattr(loaded, field) == ""
+    assert field in loaded.app_keys_unreadable
+    settings.save_betfair_config(loaded)
+    assert getattr(settings.load_betfair_config(), field) == "demo-recovered-between-reads"

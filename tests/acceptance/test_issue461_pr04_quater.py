@@ -305,6 +305,9 @@ def test_gui_save_reopen_file_pickers_and_live_boundary(setup, monkeypatch, real
         for field, broken in broken_keys.items():
             assert db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"] == broken
             db._execute("UPDATE settings SET value=? WHERE key=?", (raw_keys[field], field))
+        save()  # The still-empty form cannot erase keys recovered by another writer.
+        for field in broken_keys:
+            assert db._execute("SELECT value FROM settings WHERE key=?", (field,), fetchone=True, commit=False)["value"] == raw_keys[field]
         app._load_initial_settings()
         assert app.bf_app_key_live_var.get() == "demo-live"
         screenshot = os.environ.get("PICKFAIR_TEST_SCREENSHOT")

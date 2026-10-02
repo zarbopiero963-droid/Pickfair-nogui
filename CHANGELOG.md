@@ -101,6 +101,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Keys; explicit replacements and clearing readable keys remain supported.
   Registry configuration reports never migrate, including on read-only legacy
   storage, and unsupported legacy enc formats remain retryable after recovery.
+  Volatile unreadable-key provenance also protects an old empty form when
+  another writer restores or replaces the credential before that form saves.
+  Registry entries and presence checklist direct unreadable credentials to
+  recovery; expired matching certificates are rejected before persistence.
+  Load values and unreadable provenance share a transaction snapshot;
+  certificate validation also rejects a future notBefore date.
+  The client also blocks a future certificate swapped in after save with the
+  trusted CERT_NOT_YET_VALID diagnostic before any login HTTP request.
   Every credential echo is redacted, including short/concatenated values and
   login passwords in client diagnostics. Local login codes are separate from
   provider text; session expiry is classified before redaction.
