@@ -8,10 +8,84 @@ Questo documento copre **PR-A**: il registro di configurazione (fonte-dato
 unica). Le superfici (headless `--config-report`, tab GUI) lo consumeranno nelle
 PR successive senza duplicare l'enumerazione.
 
+## Credenziali Betfair — DEC-426-P28–P32 / #461 PR04-quater
+
+La tab Impostazioni distingue App Key Delayed e App Key Live (campi mascherati).
+La key legacy migra soltanto nel campo Delayed; Live parte vuoto. LIVE senza
+Live key resta bloccato con errore visibile. Il client reale di ordini e
+cancellazioni usa esclusivamente Live: non esiste fallback a Delayed.
+Il registro richiede `betfair.app_key_live` per LIVE, mentre Delayed resta
+enumerata e mascherata ma non e' un prerequisito LIVE.
+La readiness autorevole del RuntimeController verifica la Live key anche
+quando il flag generale e' impostato: assente/non leggibile significa
+NOT_READY/NO-GO, mentre la verifica non viene eseguita per SIM offline.
+Il preflight legge la key Live canonica senza scrivere o migrare il DB.
+`LIVE_APP_KEY_MISSING` indica di salvare la Live key; `LIVE_APP_KEY_UNAVAILABLE`
+indica di ripristinare accesso al DB/master key. I report registry e headless
+mostrano questi rimedi; il log diagnostico espone soltanto il tipo di errore.
+La lettura dedicata `load_betfair_live_key_status`/`get_betfair_live_key_status`
+restituisce soltanto presenza e leggibilita': un ciphertext presente che non
+si decifra, o un formato `enc:` non supportato, e' UNAVAILABLE e resta intatto.
+`get_all_settings` gia' decifra i segreti, ma il suo risultato vuoto da solo
+non distingue credenziale assente da errore di decifratura.
+Limite vigente: `enc:v1` non autentica il contenuto; un wrong-key decode UTF8
+non vuoto non e' riconoscibile crittograficamente qui. READY non certifica la
+validita' della key sull'exchange. AEAD/integrita' resta nella PR35; nessuna
+nuova validazione del formato App Key o promozione da Delayed viene dedotta.
+Il report `ConfigRegistry.entries()` usa `load_betfair_config(migrate=False)`:
+su DB legacy mostra Delayed senza inserire righe, anche con scritture negate.
+GUI/bootstrap e login usano il loader con migrazione esplicita consentita.
+Una key stored illeggibile appare vuota nei campi GUI; un normale save vuoto
+preserva il ciphertext originale, anche per la legacy senza marker Delayed.
+Una nuova key non vuota lo sostituisce esplicitamente; una key leggibile puo'
+ancora essere cancellata. Lettura dello stato e save sono nello stesso lock/
+transazione, e gli altri valori validati possono essere salvati senza perdita.
+Il loader conserva anche un metadato volatile dei placeholder unreadable;
+GUI e service lo propagano fino al save, senza persisterlo o mostrarlo nei log.
+Se un altro writer recupera/sostituisce la key nel frattempo, quel vecchio campo
+vuoto non la cancella. Dopo reload leggibile il clear torna esplicito; una
+replacement non vuota e' sempre esplicita e rimuove il placeholder dal form.
+Entries e checklist mostrano le key unreadable come errore di lettura con
+rimedio DB/master key: neppure la riga presenza Live risulta verde o propone
+di sovrascrivere una key recuperabile. Il save rifiuta anche un certificato
+gia' scaduto, pur se PEM e coppia TLS sono parseabili, prima di ogni scrittura.
+Il controllo data rifiuta anche un certificato non ancora valido (notBefore).
+Valori caricati e metadato unreadable condividono una transazione/snapshot: un
+writer fra le letture non puo' trasformare un placeholder in clear. Il report
+puo' aprire/chiudere una transazione read-only, senza DML o migrazione.
+Il client rifiuta notBefore futuro anche se il file viene sostituito dopo save,
+prima di HTTP/login, con codice locale `CERT_NOT_YET_VALID` preservato/redatto.
+La migrazione copia il ciphertext originale e non finalizza Delayed se la
+vecchia key cifrata non e' leggibile o usa `enc:` non supportato: ripristinare
+master key/formato supportato consente retry.
+Il writer legacy `save_credentials(app_key=...)` aggiorna esplicitamente Delayed
+anche dopo la migrazione, mantenendo Live e password esistenti.
+
+`Sfoglia…` seleziona certificato e chiave privata PEM. Il save verifica file
+regolari/leggibili, permessi POSIX e coppia TLS valida prima di scrivere;
+errore = nessun aggiornamento parziale. Password vuota mantiene la password
+salvata; un valore nuovo la sostituisce. Credenziali e password vengono salvate
+in un'unica transazione, e il campo password si svuota dopo il successo.
+Le due key usano la protezione a riposo vigente e la redazione diagnostica;
+la redazione copre anche valori brevi/concatenati e password nell'errore login
+e nello snapshot del client. I codici login locali sono metadati separati dal
+testo provider: nessuna parola dell'eco viene esentata perché sembra un codice.
+Anche i token brevi sono redatti. Le maschere che collidono con un valore
+protetto usano un carattere ASCII neutro, evitando riscritture nelle passate
+successive e perdita del record sui sink Windows CP1252. Se tutti i caratteri
+ASCII stampabili sono protetti, l'eco viene rimossa. La prova della codifica
+del sink non equivale al collaudo dell'applicazione installata su Windows.
+La migrazione ad AEAD resta nella PR35. SIM resta offline: login con Delayed e
+feed reale separato dal client degli ordini/cancel sono nella PR11.
+Queste prove locali non sostituiscono il collaudo installato Windows/Betfair
+richiesto in #351.
+
 ## `config_registry.py` — fonte-dato unica
 
-Modulo **di sola lettura**: non scrive impostazioni e **non modifica nessun
-gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
+Il registro non offre editor e **non modifica nessun gate**. Legge da
+`SettingsService` (DB) e da `trading_config` (costanti). Il loader Betfair
+esegue una sola volta la migrazione legacy→Delayed sotto lock (P30), anche
+quando invocato dal registro; la configurazione Live non viene promossa.
 
 ### `ConfigRegistry(settings_service, runtime=None)`
 
@@ -21,7 +95,7 @@ gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
 
   | campo | significato |
   |-------|-------------|
-  | `key` | chiave stabile (es. `betfair.app_key`) |
+  | `key` | chiave stabile (es. `betfair.app_key_live`) |
   | `label` | etichetta leggibile |
   | `value` | valore attuale (**mascherato** se segreto) |
   | `valid` | il valore e' valido/utilizzabile |
@@ -34,7 +108,7 @@ gate**. Legge da `SettingsService` (DB) e da `trading_config` (costanti).
 
 ### Mascheramento segreti (obbligatorio)
 
-`app_key`, `certificate`, `private_key`, `password` non sono **mai** esposti in
+`app_key_delayed`, `app_key_live`, `certificate`, `private_key`, `password` non sono **mai** esposti in
 chiaro: la entry mostra solo `(impostato)` / `(non impostato)` e `valid`
 riflette la presenza. Vincolo coperto da test (`test_secrets_never_appear_in_plaintext`).
 

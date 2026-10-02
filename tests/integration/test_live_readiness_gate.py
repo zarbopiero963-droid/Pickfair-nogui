@@ -28,6 +28,12 @@ class _Db:
 
 
 class _Settings:
+    def load_betfair_live_key_status(self):
+        return {"present": True, "readable": True}
+
+    def get_all_settings(self):
+        return {"app_key_live": "demo-live"}
+
     def __init__(self, live_enabled=False, live_ready=False, strict_live_key_source_required=False):
         self._live_enabled = live_enabled
         self._live_ready = live_ready

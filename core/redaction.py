@@ -27,6 +27,28 @@ from __future__ import annotations
 
 import re
 
+
+def redact_literal_secrets(text: str, replacements: dict[str, str]) -> str:
+    """Mask every literal occurrence, longest first, without rewriting masks.
+
+    Provider text is untrusted even when it resembles a diagnostic code.
+    Locally generated codes must be kept separately by the caller.
+    """
+    secrets = sorted((s for s in replacements if s), key=len, reverse=True)
+    if not secrets:
+        return text
+    # A public mask must not itself match a protected value on a later pass.
+    safe = dict(replacements)
+    for secret, marker in safe.items():
+        if any(value in marker for value in secrets):
+            # Keep diagnostics writable on strict ASCII/cp1252 Windows sinks.
+            # If every printable character is protected, removing the echo
+            # is safer than introducing a secret or an unencodable glyph.
+            safe[secret] = next((chr(codepoint) for codepoint in range(33, 127)
+                                 if chr(codepoint) not in secrets), "")
+    pattern = "|".join(re.escape(s) for s in secrets)
+    return re.sub(pattern, lambda match: safe[match.group()], text)
+
 # Unione dei nomi-chiave esatti storicamente coperti dai due sanitizer.
 # (telegram_sanitizer.TELEGRAM_SENSITIVE_KEYS ∪ observability.SENSITIVE_KEYS)
 SENSITIVE_KEYS_EXACT: frozenset = frozenset({
@@ -36,7 +58,7 @@ SENSITIVE_KEYS_EXACT: frozenset = frozenset({
     "authorization", "auth", "refresh_token", "bot_token", "client_secret",
     "private_key", "api_secret", "authorization_header",
     # storicamente da observability.sanitizers
-    "passwd", "session_string", "app_key", "certificate", "cert",
+    "passwd", "session_string", "app_key", "app_key_delayed", "app_key_live", "certificate", "cert",
     "cookie", "telegram_token", "api_hash", "api_id", "ssoid",
 })
 

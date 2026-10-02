@@ -20,9 +20,26 @@ from requests.exceptions import HTTPError, RequestException, Timeout
 
 import percorsi
 from circuit_breaker import CircuitBreaker
+from core.redaction import redact_literal_secrets
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger(__name__)
+
+
+class BetfairDiagnosticError(RuntimeError):
+    """Trusted local credential code separate from the redacted provider detail."""
+    def __init__(self, code: str, detail: str = ""):
+        if code not in {"LOGIN_FAILED", "LOGIN_TIMEOUT", "LOGIN_HTTP_ERROR", "LOGIN_NETWORK_ERROR",
+                        "CERT_FILE_MISSING", "CERT_KEY_MISSING", "CERT_UNREADABLE", "CERT_PERMISSIONS_UNSAFE",
+                        "CERT_INVALID_FORMAT", "CERT_EXPIRED", "CERT_NOT_YET_VALID", "INVALID_JSON", "INVALID_LOGIN_JSON", "INVALID_KEEPALIVE_JSON"}:
+            raise ValueError("Invalid local credential diagnostic code")
+        self.code = code
+        self.detail = detail
+        super().__init__(f"{code}: {detail}" if detail else code)
+
+
+class BetfairLoginError(BetfairDiagnosticError):
+    """RuntimeError-compatible login diagnostic."""
 
 #: Betfair `customerRef` (placeOrders): stringa client per de-dup di
 #: ri-sottomissioni entro una finestra di 60s. Vincoli API: <=32 caratteri,
@@ -969,33 +986,37 @@ class BetfairClient:
             "last_call_at": 0.0,
         }
 
-    def _redact_error_text(self, text: Any, *, token_snapshot: str = "") -> str:
-        """Maschera il valore del session token nelle stringhe d'errore.
+    def _redact_error_text(self, text: Any, *, token_snapshot: str = "", password_snapshot: str = "") -> str:
+        """Maschera App Key e session token nelle stringhe d'errore.
 
         La redazione strutturata (observability/sanitizers) lavora per
         CHIAVE sui payload: le stringhe d'errore grezze (eccezioni di rete,
         risposte API) passerebbero intatte fino a log, io_snapshot e
         get_status()['runtime_io']. Redatta sia il token CORRENTE sia lo
         snapshot del token usato per la richiesta (un altro thread puo'
-        ruotarlo/azzerarlo tra invio ed eccezione). Soglia minima di
-        lunghezza per evitare sostituzioni spurie su token degeneri.
+        ruotarlo/azzerarlo tra invio ed eccezione), anche se breve.
+        I codici locali si conservano separatamente, senza esentare l'eco.
         """
         out = str(text or "")
         candidates = {self._session_token_value(), str(token_snapshot or "")}
-        # Dal piu' lungo al piu' corto: se un token e' substring dell'altro,
-        # sostituire prima il corto lascerebbe un residuo parziale del lungo.
-        for token in sorted(candidates, key=len, reverse=True):
-            if token and len(token) >= 8 and token in out:
-                out = out.replace(token, "***SESSION_TOKEN***")
-        return out
+        replacements = {token: "***SESSION_TOKEN***" for token in candidates if token}
+        if self.app_key:
+            replacements.setdefault(self.app_key, "***APP_KEY***")
+        if password_snapshot:
+            replacements.setdefault(password_snapshot, "***PASSWORD***")
+        # Longest first also covers an App Key contained in a session token.
+        return redact_literal_secrets(out, replacements)
 
-    def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "") -> None:
+    def _record_io(self, *, operation: str, started_at: float, status: str, error: str = "", error_code: str = "") -> None:
         elapsed_ms = max(0.0, (time.monotonic() - started_at) * 1000.0)
         status_up = str(status or "UNKNOWN").strip().upper()
         self._io_stats["last_operation"] = str(operation)
         self._io_stats["last_latency_ms"] = round(elapsed_ms, 3)
         self._io_stats["last_status"] = status_up
         self._io_stats["last_error"] = self._redact_error_text(error)
+        if error_code:
+            # Only locally generated metadata; never parse a provider prefix.
+            self._io_stats["last_error"] = error_code + (": " + self._io_stats["last_error"] if error else "")
         self._io_stats["last_call_at"] = time.time()
         self._io_stats["total_calls"] = int(self._io_stats.get("total_calls", 0) or 0) + 1
         if status_up == "SLOW":
@@ -1022,9 +1043,9 @@ class BetfairClient:
 
     def _cert_tuple(self) -> tuple[str, str]:
         if not os.path.exists(self.cert_pem):
-            raise RuntimeError("CERT_FILE_MISSING")
+            raise BetfairDiagnosticError("CERT_FILE_MISSING")
         if not os.path.exists(self.key_pem):
-            raise RuntimeError("CERT_KEY_MISSING")
+            raise BetfairDiagnosticError("CERT_KEY_MISSING")
 
         self._validate_cert_file(self.cert_pem, is_key=False)
         self._validate_cert_file(self.key_pem, is_key=True)
@@ -1035,16 +1056,16 @@ class BetfairClient:
         try:
             file_stat = os.stat(path)
         except OSError as exc:
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: {exc}")) from None
 
         if not stat.S_ISREG(file_stat.st_mode):
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: not a regular file")
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: not a regular file"))
 
         try:
             with open(path, "rb") as fh:
                 fh.read(1)
         except OSError as exc:
-            raise RuntimeError(f"CERT_UNREADABLE: {path}: {exc}") from exc
+            raise BetfairDiagnosticError("CERT_UNREADABLE", self._redact_error_text(f"{path}: {exc}")) from None
 
         if os.name == "posix":
             mode = stat.S_IMODE(file_stat.st_mode)
@@ -1052,7 +1073,7 @@ class BetfairClient:
             if is_key:
                 unsafe_bits |= stat.S_IRGRP | stat.S_IROTH
             if mode & unsafe_bits:
-                raise RuntimeError(f"CERT_PERMISSIONS_UNSAFE: {path}: mode={oct(mode)}")
+                raise BetfairDiagnosticError("CERT_PERMISSIONS_UNSAFE", self._redact_error_text(f"{path}: mode={oct(mode)}"))
 
         return file_stat
 
@@ -1060,19 +1081,25 @@ class BetfairClient:
         try:
             decoded = ssl._ssl._test_decode_cert(cert_path)
         except Exception as exc:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}") from exc
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(cert_path)) from None
 
         not_after_raw = str(decoded.get("notAfter") or "").strip()
         if not not_after_raw:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: missing_notAfter")
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: missing_notAfter"))
 
         try:
             expires_at = datetime.strptime(not_after_raw, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
         except Exception as exc:
-            raise RuntimeError(f"CERT_INVALID_FORMAT: {cert_path}: invalid_notAfter") from exc
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: invalid_notAfter")) from None
 
         if expires_at <= datetime.now(timezone.utc):
-            raise RuntimeError(f"CERT_EXPIRED: {cert_path}: notAfter={not_after_raw}")
+            raise BetfairDiagnosticError("CERT_EXPIRED", self._redact_error_text(f"{cert_path}: notAfter={not_after_raw}"))
+        try:
+            starts_at = ssl.cert_time_to_seconds(str(decoded.get("notBefore") or ""))
+        except (ValueError, OverflowError):
+            raise BetfairDiagnosticError("CERT_INVALID_FORMAT", self._redact_error_text(f"{cert_path}: invalid_notBefore")) from None
+        if starts_at > datetime.now(timezone.utc).timestamp():
+            raise BetfairDiagnosticError("CERT_NOT_YET_VALID", self._redact_error_text(cert_path))
 
     def _headers(self) -> Dict[str, str]:
         with self._session_state_lock:
@@ -1111,7 +1138,7 @@ class BetfairClient:
         try:
             return response.json()
         except Exception as exc:
-            raise RuntimeError(err_code) from exc
+            raise BetfairDiagnosticError(err_code) from None
 
     # =========================================================
     # ERROR CLASSIFICATION
@@ -1197,12 +1224,11 @@ class BetfairClient:
                 if "error" in item:
                     # Redatta anche l'errore API: la risposta puo' riflettere
                     # il session token nel payload d'errore.
-                    err = self._redact_error_text(item["error"], token_snapshot=token_snapshot)
-
-                    if "INVALID_SESSION" in err or "NO_SESSION" in err:
+                    raw_error = str(item["error"])
+                    if "INVALID_SESSION" in raw_error or "NO_SESSION" in raw_error:
                         self._clear_session_state()
                         raise RuntimeError("SESSION_EXPIRED")
-
+                    err = self._redact_error_text(raw_error, token_snapshot=token_snapshot)
                     raise RuntimeError(f"API_ERROR: {err}")
 
                 result = item.get("result") or {}
@@ -1270,7 +1296,8 @@ class BetfairClient:
             if str(data.get("loginStatus")) != "SUCCESS":
                 # Solo il loginStatus diagnostico: la risposta grezza puo'
                 # contenere un sessionToken e finirebbe in log/last_error.
-                raise RuntimeError(f"LOGIN_FAILED: {data.get('loginStatus')}")
+                detail = self._redact_error_text(data.get("loginStatus"), token_snapshot=token_snapshot, password_snapshot=password)
+                raise BetfairLoginError("LOGIN_FAILED", detail)
 
             session_token = str(data.get("sessionToken") or "")
             session_expiry = str(data.get("sessionExpiryTime") or "")
@@ -1291,22 +1318,22 @@ class BetfairClient:
             }
 
         except Timeout:
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error="LOGIN_TIMEOUT")
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error_code="LOGIN_TIMEOUT")
             # from None: come per gli altri handler, la causa originale
             # potrebbe contenere il token e finire nel traceback renderizzato.
-            raise RuntimeError("LOGIN_TIMEOUT") from None
+            raise BetfairLoginError("LOGIN_TIMEOUT") from None
 
         except HTTPError as exc:
-            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_HTTP_ERROR:{err}")
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot, password_snapshot=password)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=err, error_code="LOGIN_HTTP_ERROR")
             # from None: la causa originale conterrebbe il token grezzo e
             # logger.exception/traceback la renderizzerebbero.
-            raise RuntimeError(f"LOGIN_HTTP_ERROR: {err}") from None
+            raise BetfairLoginError("LOGIN_HTTP_ERROR", err) from None
 
         except RequestException as exc:
-            err = self._redact_error_text(exc, token_snapshot=token_snapshot)
-            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=f"LOGIN_NETWORK_ERROR:{err}")
-            raise RuntimeError(f"LOGIN_NETWORK_ERROR: {err}") from None
+            err = self._redact_error_text(exc, token_snapshot=token_snapshot, password_snapshot=password)
+            self._record_io(operation="login", started_at=started_at, status="DEGRADED", error=err, error_code="LOGIN_NETWORK_ERROR")
+            raise BetfairLoginError("LOGIN_NETWORK_ERROR", err) from None
 
     def logout(self) -> Dict[str, Any]:
         self._clear_session_state()

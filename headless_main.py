@@ -784,6 +784,14 @@ class HeadlessApp:
     # autorevole dei prerequisiti LIVE): il preflight li rende leggibili a
     # schermo invece di lasciarli sepolti nel log.
     _BLOCKER_REMEDIATION = {
+        "LIVE_APP_KEY_MISSING": (
+            "App Key Live assente",
+            "Imposta e salva la App Key Live nelle credenziali Betfair; Delayed non abilita LIVE.",
+        ),
+        "LIVE_APP_KEY_UNAVAILABLE": (
+            "Credenziali Betfair non leggibili",
+            "Ripristina l'accesso al DB e alla master key, poi ripeti il preflight LIVE.",
+        ),
         "LIVE_NOT_ENABLED": (
             "live_enabled e' False",
             "Avvia con --live-enabled oppure imposta live_enabled=True nel DB.",

@@ -1690,6 +1690,26 @@ class RuntimeController:
             blockers.append("LIVE_DEPENDENCY_MISSING")
 
         normalized_execution_mode = str(execution_mode if execution_mode is not None else self.execution_mode).strip().upper()
+        if normalized_execution_mode == "LIVE":
+            try:
+                # Readiness/preflight is read-only: the credentials loader may
+                # migrate legacy rows and belongs to configuration/bootstrap.
+                state = self.settings_service.load_betfair_live_key_status()
+                if not isinstance(state, dict) or any(type(state.get(key)) is not bool
+                                                     for key in ("present", "readable")):
+                    raise TypeError("Invalid credential status")
+                key_present = state["present"]
+                credentials_readable = state["readable"]
+            except Exception as exc:
+                # Exception messages can contain credentials or storage paths.
+                logger.warning("LIVE_APP_KEY_UNAVAILABLE (%s)", type(exc).__name__)
+                key_present = False
+                credentials_readable = False
+            details["betfair_credentials"] = {"live_key_present": key_present, "readable": credentials_readable}
+            if not credentials_readable:
+                blockers.append("LIVE_APP_KEY_UNAVAILABLE")
+            elif not key_present:
+                blockers.append("LIVE_APP_KEY_MISSING")
         effective_live_enabled = self._safe_bool(
             self.live_enabled if live_enabled is None else live_enabled,
             default=False,

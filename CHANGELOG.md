@@ -79,6 +79,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Betfair credentials (#461 PR04-quater, DEC-426-P28–P32): separate encrypted
+  Delayed and Live App Keys; the legacy key migrates only to Delayed. LIVE
+  requires the explicit Live key, and the real client never uses Delayed.
+  Settings include certificate/private-key file pickers and validate readable
+  PEM files, permissions and the matching TLS pair before an atomic save.
+  An empty password preserves the saved password; a replacement clears the
+  input after saving. App Keys are masked in the registry and redacted from
+  client errors and diagnostics. SIM remains offline; its Delayed feed belongs
+  to PR11, and the authenticated encryption upgrade remains in PR35.
+  LIVE readiness reads canonical settings without triggering migration and
+  reports actionable missing/unavailable-key remedies in registry/headless.
+  The legacy credentials writer updates Delayed after migration while keeping
+  Live/password unchanged. Colliding redaction masks use a neutral ASCII
+  character so strict Windows CP1252 log sinks retain login diagnostics.
+  A read-only Live-key status distinguishes absent values from undecodable or
+  unsupported ciphertext, retaining the stored value and directing master-key
+  recovery. The existing unauthenticated enc:v1 format is unchanged; integrity
+  verification remains in PR35.
+  Empty GUI saves preserve unreadable Delayed/Live or unmigrated legacy App
+  Keys; explicit replacements and clearing readable keys remain supported.
+  Registry configuration reports never migrate, including on read-only legacy
+  storage, and unsupported legacy enc formats remain retryable after recovery.
+  Volatile unreadable-key provenance also protects an old empty form when
+  another writer restores or replaces the credential before that form saves.
+  Registry entries and presence checklist direct unreadable credentials to
+  recovery; expired matching certificates are rejected before persistence.
+  Load values and unreadable provenance share a transaction snapshot;
+  certificate validation also rejects a future notBefore date.
+  The client also blocks a future certificate swapped in after save with the
+  trusted CERT_NOT_YET_VALID diagnostic before any login HTTP request.
+  Every credential echo is redacted, including short/concatenated values and
+  login passwords in client diagnostics. Local login codes are separate from
+  provider text; session expiry is classified before redaction.
+  Certificate diagnostics remain actionable; unreadable legacy credentials
+  do not finalize migration, and original ciphertext remains recoverable.
+  LIVE readiness/deploy also require the Live key; SIM remains independent.
+  Short session tokens and colliding redaction markers are covered.
 - Live client, non-finite price or size (F11 in #453, DECISIONE-426 P27):
   `BetfairClient.place_bet` now rejects a price or a size that is NaN or
   infinite with `INVALID_PRICE` / `INVALID_SIZE` before building the request,

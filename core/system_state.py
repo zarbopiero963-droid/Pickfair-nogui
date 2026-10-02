@@ -32,9 +32,15 @@ class DeskMode(Enum):
 @dataclass
 class BetfairConfig:
     username: str = ""
-    app_key: str = ""
+    # Legacy input only: never an implicit LIVE credential (DEC-426-P30).
+    app_key: str = field(default="", repr=False)
     certificate: str = ""
     private_key: str = ""
+    app_key_delayed: str = field(default="", repr=False)
+    app_key_live: str = field(default="", repr=False)
+    # Volatile load provenance: an unreadable-key placeholder is not a clear
+    # command, even if another writer recovers the stored key before save.
+    app_keys_unreadable: frozenset[str] = field(default_factory=frozenset, repr=False, compare=False)
 
 
 @dataclass

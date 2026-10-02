@@ -25,6 +25,12 @@ class _Db:
 
 
 class _Settings:
+    def load_betfair_live_key_status(self):
+        return {"present": True, "readable": True}
+
+    def get_all_settings(self):
+        return {"app_key_live": "demo-live"}
+
     def __init__(self, *, live_enabled=True, readiness_ok=True):
         self._live_enabled = live_enabled
         self._readiness_ok = readiness_ok

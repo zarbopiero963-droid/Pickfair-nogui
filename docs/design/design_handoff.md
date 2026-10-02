@@ -99,9 +99,52 @@ In basso: `Last Error/Info:` in rosso `#d9534f`.
 
 ## 6. Tab Impostazioni (Betfair Credentials)
 
-Entry: `Username`, `Password` (mascherata `*`), `App Key`,
-`Certificate Path`, `Key Path`. Bottone `Salva Betfair` → dialog
-`OK / Impostazioni Betfair salvate.` o errore.
+Entry: `Username`, `Password (vuota = invariata)`, `App Key Delayed`,
+`App Key Live` (password e key mascherate `*`), `Certificato (.crt/.pem)`,
+`Chiave privata (.key/.pem)`. Ogni percorso ha `Sfoglia…`: seleziona un
+file; annullamento lascia il percorso invariato. Nota visibile:
+`LIVE richiede la Live key. SIM al momento funziona offline.`
+Bottone `Salva Betfair` → validazione file regolari/leggibili, permessi
+POSIX coerenti con il client, formato PEM e coppia TLS corrispondente;
+dialog `OK / Impostazioni Betfair salvate.` soltanto dopo save atomico.
+Errore visibile senza modifiche parziali. Password vuota conserva quella
+salvata, nuova password la sostituisce e il campo si svuota dopo il save.
+Migrazione vecchia App Key → Delayed, Live vuota; LIVE senza Live key
+bloccato con errore esplicito. SIM offline; feed Delayed separato in PR11.
+Readiness/preflight LIVE mostra NOT_READY/NO-GO anche con flag generale attivo
+se la Live key manca o non e' leggibile; salvare una key valida consente il
+nuovo controllo, senza bypassare gli altri blocker. SIM non richiede questa key.
+Il preflight non modifica il DB. Registry/headless mostrano per key assente
+il rimedio `Imposta e salva la App Key Live nelle credenziali Betfair; Delayed non abilita LIVE.`;
+per credenziali non leggibili `Ripristina l'accesso al DB e alla master key, poi ripeti il preflight LIVE.`.
+Questo secondo rimedio copre anche ciphertext non decifrabile/formato di
+protezione non supportato, mantenendo il valore salvato per il recovery.
+La readiness attesta presenza/decodifica, non autenticita' crittografica o
+validita' exchange; l'integrita' AEAD resta PR35.
+Le App Key non decifrabili sono mostrate vuote: un save senza sostituzione
+non cancella il ciphertext recuperabile. Una key nuova non vuota lo sostituisce;
+una key leggibile puo' essere cancellata. Il registry non migra durante un report,
+mentre il bootstrap/config conserva la migrazione legacy prevista.
+Il placeholder vuoto caricato da una key unreadable resta distinto dal clear
+anche se la key viene recuperata da un altro writer prima del save: un metadato
+volatile del form la preserva. Reload leggibile consente clear; replacement
+non vuota e' esplicita. Nessun nuovo campo DB, credenziale o modalita' prodotto.
+Entry registry e riga presenza della checklist indicano recovery DB/master key
+per ciphertext illeggibile; non presentano presenza verde o un invito a
+sovrascriverlo. Il certificato gia' scaduto genera errore visibile al save,
+senza sostituire la configurazione precedente.
+Anche notBefore futuro viene rifiutato. Load e stato di lettura sono coerenti
+nello stesso snapshot; il report resta senza scritture/migrazione.
+Se il certificato diventa futuro dopo save, il client blocca prima di HTTP con
+`CERT_NOT_YET_VALID`, conservando il codice diagnostico senza esporre segreti.
+
+Prova locale PR04-quater: bootstrap della GUI completa con Tk reale sotto Xvfb,
+SQLite reale e materiale TLS sintetico; dialoghi file/errore e trasporto HTTP
+sostituiti soltanto ai confini. Verificati masking, pulsanti mappati entro la
+finestra, annullamento picker, save/rifiuto/recovery, riapertura e client Live.
+[Screenshot reale](screenshots/pr04-quater-credentials.png).
+Geometria 1420×900, scala predefinita: non certifica DPI Windows o altre
+geometrie (PR05), login Betfair reale o collaudo installato (#351).
 
 ## 7. Tab Roserpina (Roserpina Cycle Configuration)
 

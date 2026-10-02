@@ -5,7 +5,8 @@ import threading
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from betfair_client import BetfairClient
+from betfair_client import BetfairClient, BetfairDiagnosticError
+from core.redaction import redact_literal_secrets
 from simulation_broker import SimulationBroker
 
 logger = logging.getLogger(__name__)
@@ -440,6 +441,12 @@ class BetfairService:
         return self._connect_live(password=password, force=force)
 
     def _connect_live(self, password: str | None = None, force: bool = False) -> dict:
+        cfg = self.settings_service.load_betfair_config()
+        live_key = str(getattr(cfg, "app_key_live", "") or "").strip()
+        if not live_key:
+            self.disconnect()
+            self.last_error = "App Key Live mancante: inseriscila in Impostazioni Betfair. LIVE bloccato."
+            raise RuntimeError(self.last_error)
         if self.connected and self.client and not force and not self.simulation_mode:
             return {
                 "connected": True,
@@ -453,10 +460,8 @@ class BetfairService:
             except Exception:
                 pass
 
-        cfg = self.settings_service.load_betfair_config()
         if (
             not cfg.username
-            or not cfg.app_key
             or not cfg.certificate
             or not cfg.private_key
         ):
@@ -475,7 +480,7 @@ class BetfairService:
         try:
             client = BetfairClient(
                 username=cfg.username,
-                app_key=cfg.app_key,
+                app_key=live_key,
                 cert_pem=cfg.certificate,
                 key_pem=cfg.private_key,
             )
@@ -508,9 +513,14 @@ class BetfairService:
         except Exception as exc:
             self.client = None
             self.connected = False
-            self.last_error = str(exc)
-            logger.exception("Errore connect LIVE Betfair: %s", exc)
-            raise
+            text = exc.detail if isinstance(exc, BetfairDiagnosticError) else str(exc)
+            secrets = {str(value or "") for value in (live_key, getattr(cfg, "app_key_delayed", ""), password)}
+            text = redact_literal_secrets(text, {secret: "[REDACTED]" for secret in secrets})
+            if isinstance(exc, BetfairDiagnosticError):
+                text = exc.code + (": " + text if text else "")
+            self.last_error = text
+            logger.error("Errore connect LIVE Betfair (%s): %s", type(exc).__name__, text)
+            raise RuntimeError(text) from None
 
     def _connect_simulation(self, force: bool = False) -> dict:
         if self.connected and self.simulation_broker and not force and self.simulation_mode:

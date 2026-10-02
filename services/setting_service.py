@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+import ssl
+import stat
+import time
 from typing import Any, Dict
 
 import trading_config
@@ -79,24 +84,105 @@ class SettingsService:
     # =========================================================
     # BETFAIR CONFIG
     # =========================================================
-    def load_betfair_config(self) -> BetfairConfig:
-        data = self.get_all_settings()
-        return BetfairConfig(
-            username=str(data.get("username", "") or ""),
-            app_key=str(data.get("app_key", "") or ""),
-            certificate=str(data.get("certificate", "") or ""),
-            private_key=str(data.get("private_key", "") or ""),
-        )
+    def load_betfair_live_key_status(self) -> Dict[str, bool]:
+        """Read decode status without exposing secrets or migrating settings."""
+        getter = getattr(self.db, "get_betfair_live_key_status", None)
+        if not callable(getter):
+            raise RuntimeError("Betfair credential status unavailable")
+        return getter()
+
+    def load_betfair_config(self, *, migrate: bool = True) -> BetfairConfig:
+        # Values and decode provenance must share a DB snapshot. A read-only
+        # report may open/close a transaction but never performs migration/DML.
+        with self.db.transaction():
+            data = self.get_all_settings()
+            if migrate and "app_key" in data and "app_key_delayed" not in data:
+                self.db.migrate_legacy_betfair_app_key()
+                data = self.get_all_settings()
+            delayed_field = "app_key_delayed" if "app_key_delayed" in data else "app_key"
+            unreadable = set()
+            def app_key(field):
+                if not self.db.get_betfair_app_key_status(field)["readable"]:
+                    unreadable.add("app_key_delayed" if field == "app_key" else field)
+                    return ""
+                return str(data.get(field, "") or "")
+            return BetfairConfig(
+                username=str(data.get("username", "") or ""),
+                app_key_delayed=app_key(delayed_field),
+                app_key_live=app_key("app_key_live"),
+                certificate=str(data.get("certificate", "") or ""),
+                private_key=str(data.get("private_key", "") or ""),
+                app_keys_unreadable=frozenset(unreadable),
+            )
 
     def save_betfair_config(self, config: BetfairConfig, password: str | None = None) -> None:
-        self.db.save_credentials(
-            username=config.username,
-            app_key=config.app_key,
-            certificate=config.certificate,
-            private_key=config.private_key,
-        )
-        if password is not None and hasattr(self.db, "save_password"):
-            self.db.save_password(password)
+        """Validate first, then persist all credentials in one transaction.
+
+        Empty password preserves the saved one. Legacy input goes only to
+        Delayed; unreadable stored App Keys survive an empty input. A readable
+        key can still be cleared, and a nonempty replacement is explicit.
+        """
+        self._validate_betfair_files(config.certificate, config.private_key)
+        values = {
+            "username": config.username,
+            "app_key_delayed": config.app_key_delayed or config.app_key,
+            "app_key_live": config.app_key_live,
+            "certificate": config.certificate,
+            "private_key": config.private_key,
+        }
+        if password is not None and password != "":
+            values["password"] = password
+        with self.db.transaction():
+            for field in ("app_key_delayed", "app_key_live"):
+                if values[field]:
+                    continue
+                if field in config.app_keys_unreadable:
+                    values.pop(field)
+                    continue
+                state = self.db.get_betfair_app_key_status(field)
+                if field == "app_key_delayed" and not state["stored"]:
+                    state = self.db.get_betfair_app_key_status("app_key")
+                if not state["readable"]:
+                    values.pop(field)
+            self.db.save_settings(values)
+
+    @staticmethod
+    def _validate_betfair_files(certificate: str, private_key: str) -> None:
+        for name, raw, is_key in (("Certificato", certificate, False), ("Chiave privata", private_key, True)):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(f"{name}: seleziona un file PEM con Sfoglia…")
+            try:
+                path = Path(raw)
+                info = path.stat()
+                if not stat.S_ISREG(info.st_mode):
+                    raise OSError("not a regular file")
+                with path.open("rb") as handle:
+                    handle.read(1)
+            except (OSError, ValueError):
+                raise ValueError(f"{name}: file assente o non leggibile.") from None
+            if os.name == "posix":
+                unsafe = stat.S_IWGRP | stat.S_IWOTH | stat.S_IXGRP | stat.S_IXOTH
+                if is_key:
+                    unsafe |= stat.S_IRGRP | stat.S_IROTH
+                if info.st_mode & unsafe:
+                    raise ValueError(f"{name}: permessi non sicuri; limita l'accesso al proprietario.")
+        try:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            # Callback prevents an interactive prompt for encrypted keys.
+            context.load_cert_chain(certificate, private_key, password=lambda: "")
+        except (OSError, ValueError, ssl.SSLError):
+            raise ValueError("Certificato/chiave privata: formato PEM non valido, chiave cifrata non supportata o coppia non corrispondente.") from None
+        try:
+            decoded = ssl._ssl._test_decode_cert(certificate)
+            expires_at = ssl.cert_time_to_seconds(str(decoded.get("notAfter") or ""))
+            starts_at = ssl.cert_time_to_seconds(str(decoded.get("notBefore") or ""))
+        except (OSError, ValueError, ssl.SSLError, AttributeError):
+            raise ValueError("Certificato: formato o data di scadenza non validi.") from None
+        now = time.time()
+        if expires_at <= now:
+            raise ValueError("Certificato: scaduto. Seleziona un certificato valido.")
+        if starts_at > now:
+            raise ValueError("Certificato: non ancora valido. Seleziona un certificato valido.")
 
     def load_password(self) -> str:
         data = self.get_all_settings()

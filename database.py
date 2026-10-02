@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 # Fields whose values must be encrypted at rest.
 _SECRET_FIELDS: frozenset = frozenset({
     "app_key",
+    "app_key_delayed",
+    "app_key_live",
     "password",
     "private_key",
     "certificate",
@@ -431,6 +433,54 @@ class Database:
             result[key] = val
         return result
 
+    def get_betfair_live_key_status(self) -> Dict[str, bool]:
+        """Read-only presence/decode status; never return or modify the key.
+
+        A stored ciphertext decoding to empty is unavailable, not missing.
+        This is not authentication: enc:v1 can decode wrong-key bytes as valid
+        UTF8. Cryptographic integrity remains the AEAD task (PR35).
+        """
+        state = self.get_betfair_app_key_status("app_key_live")
+        return {"present": state["present"], "readable": state["readable"]}
+
+    def get_betfair_app_key_status(self, key: str) -> Dict[str, bool]:
+        """Read-only storage/decode status for canonical or legacy App Keys."""
+        if key not in {"app_key", "app_key_delayed", "app_key_live"}:
+            raise ValueError("Unsupported Betfair App Key field")
+        row = self._execute("SELECT value FROM settings WHERE key = ?",
+                            (key,), fetchone=True, commit=False)
+        stored = row is not None
+        raw = str(row["value"] or "") if row is not None else ""
+        if not raw.strip():
+            return {"present": False, "readable": True, "stored": stored}
+        encrypted = self._cipher.is_encrypted(raw)
+        if raw.startswith("enc:") and not encrypted:
+            return {"present": False, "readable": False, "stored": stored}
+        value = self._cipher.decrypt(raw) if encrypted else raw
+        if encrypted and not value:
+            return {"present": False, "readable": False, "stored": stored}
+        return {"present": bool(value.strip()), "readable": True, "stored": stored}
+
+    def migrate_legacy_betfair_app_key(self) -> bool:
+        """Preserve original ciphertext; an unreadable legacy key is retryable."""
+        with self.transaction():
+            existing = self._execute("SELECT value FROM settings WHERE key = ?", ("app_key_delayed",), fetchone=True, commit=False)
+            if existing is not None:
+                return False
+            row = self._execute("SELECT value FROM settings WHERE key = ?", ("app_key",), fetchone=True, commit=False)
+            if row is None:
+                return False
+            raw = str(row["value"] or "")
+            if not self.get_betfair_app_key_status("app_key")["readable"]:
+                return False
+            if self._cipher.is_encrypted(raw):
+                stored = raw  # Never re-encrypt a potentially wrong-key decode.
+            else:
+                stored = self._cipher.encrypt(raw) if raw else ""
+            self._execute("INSERT INTO settings(key,value) VALUES(?,?)", ("app_key_delayed", stored))
+            self._execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING", ("app_key_live", ""))
+            return True
+
     def save_credentials(
         self,
         *,
@@ -439,10 +489,13 @@ class Database:
         certificate: str,
         private_key: str,
     ) -> None:
+        # The legacy API represents an explicit Delayed-key update, including
+        # after migration. Never promote it to Live or overwrite the password.
         self.save_settings(
             {
                 "username": username,
                 "app_key": app_key,
+                "app_key_delayed": app_key,
                 "certificate": certificate,
                 "private_key": private_key,
             }

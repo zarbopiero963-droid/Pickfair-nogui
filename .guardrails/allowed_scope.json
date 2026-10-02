@@ -1938,6 +1938,34 @@
       ],
       "max_files": 5,
       "description": "F11 della #453 (DECISIONE-426 P27, PR piccola sul solo client, prima della PR delle credenziali e della PR05): BetfairClient.place_bet rifiuta quota e size NaN o infinite (INVALID_PRICE / INVALID_SIZE) prima di costruire la richiesta, come gia' _validate_replace_params. PHASE 0 SUL MAIN `a86bfaa`, riprodotto col client reale e la sessione HTTP come contatore: price=nan/inf e size=nan passavano, POST=1 con il corpo \"price\": NaN / \"size\": NaN; stesso esito da OrderRouter.place, il seam da cui la catena del cashout arriva al client in produzione (il SafetyLayer li' controlla solo price <= 1 e stake <= 0), e da BetfairService.place_order e OrderManager.place_order (che controlla solo price <= 1.0), oggi senza chiamanti in produzione. Estensione dichiarata rispetto al testo di P27, che nomina la quota: la size ha lo stesso difetto nello stesso blocco di validazione ed e' corretta insieme. Test nuovi PASS/BLOCK/EDGE sul client e dai tre percorsi reali, piu' la classificazione pre-invio dell'engine; nota nel contratto wire (guardrails/contracts/core.trading_engine.json) e CHANGELOG nello stesso PR."
+    },
+    "issue461-pr04-quater-credenziali": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "config_registry.py",
+        "core/redaction.py",
+        "core/runtime_controller.py",
+        "core/system_state.py",
+        "database.py",
+        "docs/design/design_handoff.md",
+        "docs/design/screenshots/pr04-quater-credentials.png",
+        "headless_main.py",
+        "mini_gui.py",
+        "ops/config_console.md",
+        "services/betfair_service.py",
+        "services/setting_service.py",
+        "tests/acceptance/test_issue461_pr04_quater.py",
+        "tests/fixtures/betfair_tls_synthetic.py",
+        "tests/integration/test_deploy_gate.py",
+        "tests/integration/test_live_readiness_gate.py",
+        "tests/integration/test_sim_live_switch.py",
+        "tests/unit/test_config_registry.py",
+        "tests/unit/test_issue490_review_proofs.py"
+      ],
+      "max_files": 22,
+      "description": "#461 PR04-quater / DEC-426-P28–P32, base main 633c178: credenziali Betfair con file picker, validazione PEM/coppia/permessi prima del save atomico, App Key Delayed e Live separate e protette; legacy solo Delayed; LIVE bloccato senza Live key e client reale soltanto Live; password vuota invariata. Phase 0 #453: percorsi inesistenti salvati, password cancellata, legacy non migrata, fallback legacy LIVE e fuga App Key in errori del client riprodotti con SQLite/client reali e HTTP di confine. Test RED/PASS/BLOCK/MALFORMED/EDGE, test GUI Tk reale e screenshot con dati sintetici. Rilievi #490: redazione integrale dei segreti brevi/concatenati, password nel client e service; codici login locali separati dal testo provider; classificazione expiry prima della redazione. Estensione dichiarata a 21 file: core/runtime_controller.py collega il prerequisito Live key alla readiness autorevole; tre fixture LIVE (deploy_gate, live_readiness_gate, sim_live_switch) modellano una credenziale Live valida senza modificare asserzioni. Migrazione retryable e copia ciphertext originale; codici certificati separati, token brevi e maschere idempotenti. Nessuna altra entry modificata. Fixture registry riallineata al nuovo contratto senza indebolire controlli. SIM offline invariata; feed Delayed separato PR11 e upgrade AEAD PR35 rinviati. Nessun cambio ordini/MM/parser/workflow o policy-gate; readiness LIVE rafforzata per il solo prerequisito credenziali. Design handoff, configurazione e CHANGELOG allineati. Estensione dichiarata a 22 file per headless_main.py, soli rimedi dei blocker credenziali; writer legacy aggiorna Delayed dopo migrazione senza toccare Live/password; readiness in sola lettura senza migrazione; marker ASCII compatibile CP1252. Cinque regressioni RED prima della patch, PASS dopo. Nessuna modifica a workflow o policy. Stato read-only dedicato della Live key: distingue campo assente da ciphertext non decifrabile o enc non supportato e conserva il ciphertext per il recovery. Tre regressioni reali RED→PASS; get_all_settings decifra gia i valori ma perde lo stato della decrypt vuota. Nessuna modifica al formato enc:v1; integrita AEAD e limite wrong-key UTF8 non vuoto restano PR35."
     }
   }
 }

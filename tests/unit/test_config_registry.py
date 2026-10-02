@@ -41,7 +41,8 @@ class _FakeSettings:
         self._lro = live_readiness_ok
         self._ks = kill_switch
         self._bf = SimpleNamespace(
-            username=username, app_key=app_key, certificate=certificate, private_key=private_key
+            username=username, app_key_live=app_key, app_key_delayed="DELAYED_SECRET_APP",
+            certificate=certificate, private_key=private_key
         )
         self._pwd = password
         self._tg = telegram_enabled
@@ -61,7 +62,7 @@ class _FakeSettings:
     def load_kill_switch(self):
         return self._ks
 
-    def load_betfair_config(self):
+    def load_betfair_config(self, *, migrate=True):
         return self._bf
 
     def load_password(self):
@@ -155,27 +156,28 @@ def test_secrets_never_appear_in_plaintext():
 
     # BLOCK: nessun valore reale di segreto deve comparire in ALCUNA entry.
     blob = " ".join(f"{e.key}={e.value}" for e in entries)
-    for secret in ("SUPER_SECRET_APP", "PRIVKEY123", "CERTDATA", "PWD_XYZ"):
+    for secret in ("SUPER_SECRET_APP", "DELAYED_SECRET_APP", "PRIVKEY123", "CERTDATA", "PWD_XYZ"):
         assert secret not in blob
 
     # Copertura esplicita: TUTTI i segreti sono enumerati e mascherati.
     secret_keys = {e.key for e in secret_entries}
     assert secret_keys == {
-        "betfair.app_key",
+        "betfair.app_key_live",
+        "betfair.app_key_delayed",
         "betfair.certificate",
         "betfair.private_key",
         "betfair.password",
     }
 
     # La presenza resta rilevata: segreto impostato -> valid True.
-    app = _by_key(entries, "betfair.app_key")
+    app = _by_key(entries, "betfair.app_key_live")
     assert app.valid is True and app.is_secret is True
 
 
 @pytest.mark.unit
 def test_missing_secret_marked_unset_and_invalid():
     reg = ConfigRegistry(_FakeSettings(app_key=""))
-    app = _by_key(reg.entries(), "betfair.app_key")
+    app = _by_key(reg.entries(), "betfair.app_key_live")
     assert app.value == "(non impostato)"
     assert app.valid is False
     assert app.remedy  # rimedio presente
@@ -306,7 +308,7 @@ def test_all_safety_entries_invalid_on_read_error():
 
 
 class _BetfairRaisingSettings(_FakeSettings):
-    def load_betfair_config(self):
+    def load_betfair_config(self, *, migrate=True):
         raise RuntimeError("x")
 
     def load_password(self):
@@ -323,14 +325,16 @@ def test_betfair_read_error_distinguishes_from_unset():
     entries = {e.key: e for e in reg.entries()}
     for key in (
         "betfair.username",
-        "betfair.app_key",
+        "betfair.app_key_live",
+        "betfair.app_key_delayed",
         "betfair.certificate",
         "betfair.private_key",
         "betfair.password",
     ):
         assert entries[key].value == "(errore lettura)", key
         assert entries[key].valid is False, key
-    assert entries["betfair.app_key"].is_secret is True
+    assert entries["betfair.app_key_live"].is_secret is True
+    assert entries["betfair.app_key_delayed"].is_secret is True
 
 
 @pytest.mark.unit
