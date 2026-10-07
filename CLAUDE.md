@@ -19,6 +19,30 @@ PR aperta non equivale a comportamento già presente sul main.
 Questo rinvio non riscrive la policy reviewer storica: P41 prevale sui punti
 espressamente sospesi. Resta il merge manuale owner per i file-policy esclusi.
 
+## PR-flow — budget e triage owner (07/10/2026)
+
+`MAX_FIX_LOOP_ITERATIONS_PER_PR = 5`: cinque cicli **patch → push** da
+`PATCH_REQUIRED`, cumulativi per PR. Head, reviewer/provider, thread risolti,
+CI verde, progresso, cluster o rerun non azzerano il contatore. Il sesto ciclo
+si ferma **prima della patch/commit/push**: `NEEDS_MANUAL`,
+`fix_loop_budget_exhausted`. Una deroga owner deve autorizzare quella PR e un
+numero preciso di cicli aggiuntivi; non cambia il cap globale né il contatore.
+
+Distinguere `CURRENT_DEFECT`, `GUARDRAIL_GAP` e `THEORETICAL_MUTATION` sulla
+base delle prove sul current head, indipendentemente dal reviewer. Nuove
+parafrasi teoriche non autorizzano automaticamente patch; ripetizioni
+equivalenti senza nuovo difetto sono `REVIEW_CHURN` e possono fermare prima
+del cap. `KNOWN_LIMITATION_ACCEPTED_BY_OWNER` richiede decisione owner
+esplicita e tracciata; non significa `FIXED` e non copre bug safety/security,
+real-money, fail-open o violazioni del contratto owner. Nessun resolve fittizio.
+
+Specifica normativa: [auto_pr_flow_spec §11–13](docs/auto_pr_flow_spec.md).
+Enforcement: `scripts/pr_fix_loop_policy.py` e gate `scripts/pr_*`; test di
+policy in `tests/scripts/test_pr_fix_loop_policy.py`. Ledger persistente per
+PR fuori dai checkout temporanei; stato assente/corrotto → arresto prudenziale.
+Merge Readiness mantiene tutti i gate vigenti. Reviewer/merge: #426/P41 e
+successive decisioni pertinenti; non riattivare workflow o label sospesi.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le

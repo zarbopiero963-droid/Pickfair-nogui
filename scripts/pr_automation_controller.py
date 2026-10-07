@@ -21,6 +21,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Sequence, cast
 
+try:
+    from scripts import pr_fix_loop_policy as fix_policy
+except ModuleNotFoundError:
+    import pr_fix_loop_policy as fix_policy
+
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
 CANCELLED_STATES = {"CANCELLED", "CANCELED"}
@@ -642,9 +647,15 @@ def _text_has_phase0_marker(text: str) -> bool:
 def build_codex_patch_task_after_phase0(
     implementation_task: object,
     phase0_result: dict[str, Any] | None,
+    repair_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a passive Codex patch task only after Phase 0 passes."""
     gate = decide_phase0_gate(phase0_result)
+    if repair_context is not None or os.environ.get("PR_NUMBER"):
+        budget = (fix_policy.claim_patch_gate(repair_context) if bool(gate.get("can_patch"))
+                  else fix_policy.reservation_gate(repair_context))
+        if not budget["allowed"]:
+            gate = {**gate, "can_patch": False, **budget}
     if not bool(gate.get("can_patch")):
         return {
             "can_patch": False,
@@ -895,7 +906,13 @@ def can_run_live_action(action: object, context: dict[str, Any] | None = None) -
 
 
 def can_run_safe_autofix(context: dict[str, Any] | None = None) -> dict[str, Any]:
-    return can_run_live_action("safe_autofix", context)
+    enabled = can_run_live_action("safe_autofix", context)
+    if not enabled["allowed"]:
+        return enabled
+    budget = fix_policy.reservation_gate(context)
+    if not budget["allowed"]:
+        return {**enabled, **budget}
+    return enabled
 
 
 def can_auto_resolve_review_threads(context: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1176,7 +1193,7 @@ def build_post_fix_audit_gate_result(
     }
 
 
-def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[str, Any]:
+def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None, *, reservation_stage: str = "reserved") -> dict[str, Any]:
     normalized = normalize_post_fix_audit_gate_input(context)
     post_fix_audit = normalized["post_fix_audit"]
     mode = normalized["automation_mode"]
@@ -1229,6 +1246,15 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
     elif mode != "live":
         reason = "passive_mode_blocks_commit_push"
 
+    ctx = context or {}
+    # Existing-PR repair requires the durable reservation. Initial new-task
+    # publication is not a PATCH_REQUIRED cycle and has no PR identity yet.
+    repair = bool(ctx.get("pr") or ctx.get("pr_number") or ctx.get("fix_loop")
+                  or ctx.get("review_fix") or os.environ.get("PR_NUMBER"))
+    if reason == "allowed" and repair:
+        budget = fix_policy.reservation_gate(ctx, stage=reservation_stage)
+        if not budget["allowed"]:
+            reason = budget["reason"]
     can_commit = reason == "allowed"
     can_push = reason == "allowed"
     commit_evidence = normalized["can_commit_evidence"]
@@ -1398,6 +1424,11 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
             ",".join(merge_guard_failures),
             next_action="needs_manual",
         )
+    budget_gate = fix_policy.merge_budget_gate(ctx)
+    if not budget_gate["allowed"]:
+        return automation_disabled_result("merge", normalize_automation_mode(ctx.get("automation_mode")),
+                                          budget_gate["reason"], next_action="needs_manual")
+
     return _automation_allowed_result("merge", normalize_automation_mode(ctx.get("automation_mode")), "enabled")
 
 
@@ -2019,6 +2050,10 @@ def safe_autofix_command(config: SafeAutofixConfig) -> list[str]:
 
 
 def launch_safe_autofix(config: SafeAutofixConfig) -> dict[str, Any]:
+    # The old supervisor is absent on main. Do not dispatch an uninstrumented
+    # legacy workflow (or reactivate it) as an alternative to the repair gates.
+    if not config.dry_run:
+        return {"action": "needs_manual", "reason": "legacy_autofix_backend_not_budget_instrumented"}
     active = active_safe_autofix_runs(config.repo)
     if active:
         return {
@@ -6054,7 +6089,7 @@ def _state_path_from_output(output_path: str) -> str:
 
 def _budget_limits() -> dict[str, int]:
     return {
-        "max_autofix_commits_per_pr": 3,
+        "max_autofix_commits_per_pr": fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR,
         "max_same_blocker_attempts": 2,
         "max_total_controller_runs": 8,
         "max_codacy_oscillation_rounds": 1,
@@ -6087,8 +6122,31 @@ def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any],
     current_state["controller_run_count"] = safe_nonnegative_int(previous_state.get("controller_run_count"), 0) + 1
     for key in ("codacy_issue_count", "review_active_count", "bad_check_count", "same_blocker_rounds"):
         current_state[key] = safe_nonnegative_int(counters.get(key), 0)
+    ledger_path = os.environ.get("PR_FIX_LOOP_LEDGER", "")
+    if ledger_path:
+        ledger = fix_policy.FixLoopLedger(ledger_path, args.repo, int(args.pr))
+        snapshot = ledger.status()
+        ctx.decision["fix_loop_budget"] = snapshot
+        if snapshot["allowed"]:
+            # Mirror only. The durable ledger is authoritative and never
+            # inferred from current-head commits or this resettable report.
+            current_state["autofix_commit_count"] = max(
+                current_state["autofix_commit_count"], snapshot["completed_count"],
+            )
     progress = detect_pr_progress(previous_state, current_state)
     budget_status = pr_budget_status(current_state, _budget_limits())
+    if not ledger_path or not ctx.decision["fix_loop_budget"]["allowed"]:
+        snapshot = ctx.decision.get("fix_loop_budget") or fix_policy.stopped("fix_loop_state_missing")
+        ctx.decision["fix_loop_budget"] = snapshot
+        budget_status = {"exhausted": True, "reason": snapshot["reason"],
+                         "next_action": "needs_manual_budget_unavailable"}
+    if ledger_path and ctx.decision["fix_loop_budget"]["allowed"]:
+        snapshot = ctx.decision["fix_loop_budget"]
+        if budget_status.get("reason", "").startswith("autofix_commit_count"):
+            budget_status = pr_budget_status({**current_state, "autofix_commit_count": 0}, _budget_limits())
+        if snapshot["reserved_count"]:
+            budget_status = {"exhausted": True, "reason": "unfinished_fix_loop_cycle",
+                             "next_action": "needs_manual_unfinished_cycle"}
     ctx.decision["progress"] = progress
     ctx.decision["budget_status"] = budget_status
     ctx.decision["pr_automation_state"] = current_state
@@ -6519,6 +6577,9 @@ def review_provider_presence_status(
 def review_comment_requires_patch(comment: dict[str, Any], context: dict[str, Any] | None = None) -> bool:
     """True only for active reproducible uncovered bypass/failure reports."""
     ctx = context if isinstance(context, dict) else {}
+    assessments = ctx.get("review_assessments")
+    if isinstance(assessments, dict) and isinstance(assessments.get(_review_thread_id(comment)), dict):
+        return triage_review_thread_contract(comment, ctx)["decision"] == "PATCH_REQUIRED"
     body = _review_text_blob(comment)
     active_raw = comment.get("is_active")
     if active_raw is None:
@@ -7020,6 +7081,34 @@ def _review_triage_manual_reason(
     return "insufficient_or_malformed_context"
 
 
+def _verified_review_triage(thread: dict[str, Any], context: dict[str, Any],
+                            assessment: dict[str, Any]) -> dict[str, Any]:
+    thread_id = _review_thread_id(thread)
+    head = str(context.get("current_head_sha") or "")
+    result = fix_policy.triage(assessment)
+    if not _review_thread_active(thread) or thread.get("active") is False:
+        result = {"decision": "NEEDS_MANUAL", "reason": "cached_assessment_thread_inactive"}
+    if context.get("forbidden_file_request") or _is_out_of_scope_review_path(str(thread.get("path") or ""), context):
+        result = {"decision": "NEEDS_MANUAL", "reason": "forbidden_file_request"}
+    if not head or assessment.get("current_head_sha") != head or assessment.get("thread_id") != thread_id:
+        result = {"decision": "NEEDS_MANUAL", "reason": "assessment_head_or_thread_mismatch"}
+    if result["decision"] == "PATCH_REQUIRED" and context.get("fix_loop"):
+        budget = fix_policy.reservation_gate(context)
+        if not budget["allowed"]:
+            result = {"decision": "NEEDS_MANUAL", "reason": budget["reason"]}
+    decision = result["decision"]
+    return {
+        **result, "review_thread_id": thread_id, "thread_id": thread_id,
+        "current_head_sha": head, "claimed_issue": _review_text_blob(thread),
+        "author": _review_thread_author(thread), "provider": _review_thread_provider(thread),
+        "severity": classify_review_comment_severity(thread), "is_outdated": _review_thread_is_outdated(thread),
+        "is_reproducible": decision == "PATCH_REQUIRED", "matrix_coverage": False,
+        "tests_covering_behavior": _normalize_tests_covering_behavior(context.get("tests_covering_behavior")),
+        "next_action": "patch_required" if decision == "PATCH_REQUIRED" else
+                       "resolve_with_evidence" if decision == "EVIDENCE_RESOLVE" else "needs_manual",
+    }
+
+
 def triage_review_thread_contract(
     thread: dict[str, Any],
     context: dict[str, Any] | None = None,
@@ -7042,6 +7131,10 @@ def triage_review_thread_contract(
             "next_action": "needs_manual",
         }
     ctx = context if isinstance(context, dict) else {}
+    assessments = ctx.get("review_assessments")
+    verified = assessments.get(_review_thread_id(thread)) if isinstance(assessments, dict) else None
+    if isinstance(verified, dict):
+        return _verified_review_triage(thread, ctx, verified)
     claimed_issue = _review_text_blob(thread)
     severity = classify_review_comment_severity(thread)
     review_thread_id = _review_thread_id(thread)
@@ -7274,7 +7367,7 @@ def build_review_triage_matrix(
                 "is_reproducible": bool(triage["is_reproducible"]),
                 "decision": decision,
                 "next_action": next_action,
-                "can_patch": requires_patch and patch_authorized,
+                "can_patch": requires_patch and patch_authorized and fix_policy.reservation_gate(ctx)["allowed"],
                 "reason": reason,
                 "matrix_coverage": matrix_coverage,
                 "tests_covering_behavior": tests_covering_behavior,
@@ -7612,6 +7705,19 @@ def _review_thread_active(thread: dict[str, Any]) -> bool:
 
 def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | None = None) -> dict[str, Any]:
     """Classify an active review thread into PR8 routing categories."""
+    ctx = context or {}
+    assessments = ctx.get("review_assessments")
+    if isinstance(assessments, dict) and isinstance(assessments.get(_review_thread_id(thread)), dict):
+        triage = triage_review_thread_contract(thread, ctx)
+        decision = triage["decision"]
+        inactive = not _review_thread_active(thread) or thread.get("active") is False
+        return {
+            **triage, "verified_classification": True,
+            "blocking": decision == "PATCH_REQUIRED" and not inactive, "advisory": decision == "EVIDENCE_RESOLVE" and not inactive,
+            "needs_manual": decision == "NEEDS_MANUAL" and not inactive, "unknown_author": not bool(triage.get("provider")),
+            "classification": "inactive" if inactive else "blocking" if decision == "PATCH_REQUIRED" else
+                              "needs_manual" if decision == "NEEDS_MANUAL" else "advisory",
+        }
     author = _review_thread_author(thread)
     provider = review_provider_from_author(author)
     path = str(thread.get("path") or "")
@@ -7979,7 +8085,16 @@ def _review_resolution_evidence_blockers(
     triage: dict[str, Any],
 ) -> list[str]:
     claimed_issue = str(triage.get("claimed_issue") or "")
-    provider = str(triage.get("provider") or "")
+    blockers = _review_resolution_common_blockers(thread, evidence, triage)
+    if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
+        blockers.append("safety_or_regression_not_proven_fixed")
+    if _review_thread_has_active_failure_wording(claimed_issue) and not _review_fixed_or_stale(evidence):
+        blockers.append("active_failure_wording")
+    return blockers
+
+
+def _review_resolution_common_blockers(thread: dict[str, Any], evidence: dict[str, Any],
+                                      triage: dict[str, Any]) -> list[str]:
     current_head = str(evidence.get("current_head_sha") or triage.get("current_head_sha") or "").strip()
     evidence_head = str(first_nonempty(evidence.get("evidence_head_sha"), thread.get("evidence_head_sha")) or "").strip()
     blockers: list[str] = []
@@ -8006,11 +8121,30 @@ def _review_resolution_evidence_blockers(
     # "presente" e mai "verde" => questo blocker si sarebbe accodato PER
     # SEMPRE. Stesso deadlock di can_auto_merge, su un altro gate: Codacy
     # ignorato dalla merge readiness ma ancora capace di impedire il rerun.
-    if not _review_evidence_safety_proven(thread, evidence, claimed_issue):
-        blockers.append("safety_or_regression_not_proven_fixed")
-    if _review_thread_has_active_failure_wording(claimed_issue) and not _review_fixed_or_stale(evidence):
-        blockers.append("active_failure_wording")
     return blockers
+
+
+def _accepted_limitation_result(thread: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    thread_id = _review_thread_id(thread)
+    assessments, decisions = context.get("review_assessments"), context.get("owner_decision_ids")
+    if not isinstance(assessments, dict) or not isinstance(decisions, dict):
+        return {"allowed": False}
+    assessment = assessments.get(thread_id)
+    if not isinstance(assessment, dict) or not decisions.get(thread_id) or _node_is_resolved_or_inactive(thread):
+        return {"allowed": False}
+    if assessment.get("thread_id") != thread_id or assessment.get("current_head_sha") != context.get("current_head_sha"):
+        return {"allowed": False}
+    if context.get("head_matches") is False or _review_resolution_common_blockers(thread, context, {}):
+        return {"allowed": False}
+    if any(context.get(key) for key in ("failing_current_head_checks", "current_head_check_failure",
+                                       "check_failures_present", "checks_failed", "check_failure")):
+        return {"allowed": False}
+    try:
+        repo, pr = str(context["repo"]), int(context["pr"])
+        comment = fix_policy.fetch_owner_comment(repo, pr, str(decisions[thread_id]))
+        return fix_policy.accept_limitation(assessment, comment, repo, pr)
+    except (KeyError, ValueError, TypeError, OSError, subprocess.SubprocessError):
+        return {"allowed": False}
 
 
 def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any]) -> bool:
@@ -8022,6 +8156,8 @@ def should_resolve_review_thread(thread: dict[str, Any], evidence: dict[str, Any
         item_evidence = resolution_evidence.get(_review_thread_id(thread))
         if isinstance(item_evidence, dict):
             evidence = {**evidence, **item_evidence}
+    if _accepted_limitation_result(thread, evidence).get("allowed"):
+        return True
     triage = triage_review_thread_contract(thread, evidence)
     if triage.get("decision") != "EVIDENCE_RESOLVE":
         return False
@@ -8108,6 +8244,16 @@ def _review_plan_item_decision(
     raw_item_evidence = resolution_evidence.get(thread_id)
     item_specific_evidence = raw_item_evidence if isinstance(raw_item_evidence, dict) else {}
     item_evidence = {**context, **item_specific_evidence}
+    accepted = _accepted_limitation_result(thread, item_evidence)
+    if accepted.get("allowed"):
+        return {
+            **accepted, "thread_id": thread_id, "review_thread_id": thread_id,
+            "decision": "EVIDENCE_RESOLVE", "disposition": accepted["decision"],
+            "triage_decision": "EVIDENCE_RESOLVE", "safe_to_resolve": True,
+            "blocking": False, "advisory": True, "needs_manual": False,
+            "reason": "KNOWN_LIMITATION_ACCEPTED_BY_OWNER", "skipped_reason": "",
+            "skipped_reasons": [], "next_action": "resolve_with_evidence",
+        }
     triage = triage_review_thread_contract(thread, item_evidence)
     thread_id = str(triage.get("thread_id") or thread_id)
     classified = classify_review_thread(thread, context)
@@ -8116,10 +8262,10 @@ def _review_plan_item_decision(
     provider = str(triage.get("provider") or "").strip()
     resolved_or_inactive = _node_is_resolved_or_inactive(thread)
     manual_classification = bool(
-        classified.get("unknown_author")
+        (classified.get("unknown_author") and not classified.get("verified_classification"))
         or classified.get("needs_manual")
         or classified.get("classification") == "needs_manual"
-        or not provider
+        or (not provider and not classified.get("verified_classification"))
     )
     outdated_evidence_resolve = (
         _review_thread_is_outdated(thread)
@@ -8377,11 +8523,12 @@ def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
         return False
     files_allowed = context.get("files_allowed")
     files_forbidden = context.get("files_forbidden")
-    malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
-        files_allowed
-    )
-    if not malformed_allowed and not normalize_file_scope_rules(files_allowed):
-        return False
+    if _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(files_forbidden):
+        return True
+    forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
+    if any(path_matches_scope_rule(path, rule) for rule in forbidden):
+        return True
+    # Missing task scope is not authorization, for product or automation paths.
     return not scope_allows_file_change(path, files_allowed, files_forbidden)
 
 

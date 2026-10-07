@@ -284,8 +284,19 @@ def _preflight_pr_view(_repo: str, _pr: str) -> dict[str, object]:
     }
 
 
-def _full_pr3h_push_gate_context() -> dict[str, Any]:
-    return {
+def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "budget.sqlite", "owner/repo", 225)
+    if not ledger.path.exists():
+        ledger.initialize(0, "new PR before review repair")
+        reservation = ledger.reserve("repair-1", {
+            "class": "CURRENT_DEFECT", "current_head_correct": False, "pr_branch": "feature/branch",
+            "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced bug",
+        })
+        ASSERTIONS.assertTrue(reservation["allowed"])
+    context = {
+        "pr_branch": "feature/branch",
+        "current_head_sha": "abc123",
+        "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"},
         "automation_mode": "live",
         "post_fix_audit": "PASS",
         "validation_passed": True,
@@ -300,11 +311,20 @@ def _full_pr3h_push_gate_context() -> dict[str, Any]:
     }
 
 
-def _retry_refresh_gate_context() -> dict[str, Any]:
+    cache = tmp_path / "repair-capability.json"
+    if cache.exists():
+        context['fix_loop']['claim_token'] = json.loads(cache.read_text())['claim_token']
+    else:
+        ASSERTIONS.assertTrue(controller.fix_policy.claim_patch_gate(context)['allowed'])
+        cache.write_text(json.dumps({'claim_token':context['fix_loop']['claim_token']}))
+    return context
+
+
+def _retry_refresh_gate_context(tmp_path) -> dict[str, Any]:
     return {
         "retry_push_gate_context": {
             "explicitly_refreshed": True,
-            "gate_context": _full_pr3h_push_gate_context(),
+            "gate_context": _full_pr3h_push_gate_context(tmp_path),
         }
     }
 
@@ -332,10 +352,9 @@ def _allow_push_gate_response() -> dict[str, Any]:
     }
 
 
-def test_preflight_commit_limit_applies_without_codacy(monkeypatch):
-    """Il limite di commit safe-autofix vale SEMPRE: prima era gatato su "Codacy
-    sta bloccando", gate che con Codacy dismesso sarebbe diventato morto. Ora il
-    guard anti-loop e' incondizionato (piu' severo, mai piu' permissivo)."""
+def test_preflight_missing_durable_budget_stops_even_without_codacy(monkeypatch, capsys):
+    """Legacy commit naming is diagnostic and cannot substitute durable history."""
+    monkeypatch.delenv("PR_FIX_LOOP_LEDGER", raising=False)
     monkeypatch.setattr(flow, "pr_view", _preflight_pr_view)
     monkeypatch.setattr(flow, "sh", lambda *_args, **_kwargs: "")
     monkeypatch.setattr(
@@ -351,31 +370,33 @@ def test_preflight_commit_limit_applies_without_codacy(monkeypatch):
 
     rc = flow.cmd_preflight(_preflight_args())
 
-    # 4 commit safe-autofix > max_safe_autofix_commits=3 => preflight segnala.
     ASSERTIONS.assertEqual(rc, 1)
+    result = json.loads(capsys.readouterr().out)
+    ASSERTIONS.assertIn("fix_loop_state_missing", result["issues"])
+    ASSERTIONS.assertEqual(len(result["safe_autofix_commits"]), 4)
 
 
-def test_push_with_retry_once_succeeds_on_first_push():
+def test_push_with_retry_once_succeeds_on_first_push(tmp_path):
     """First push success returns success without retry."""
     calls: list[list[str]] = []
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(
         fake_run,
         "owner/repo",
         "feature/branch",
-        context=_full_pr3h_push_gate_context(),
+        context=_full_pr3h_push_gate_context(tmp_path),
     )
 
     ASSERTIONS.assertTrue(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertFalse(result["retried"])
     ASSERTIONS.assertFalse(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "merge-base", "--is-ancestor", "abc123", "abc123"], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"]])
 
 
 def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_allowed(monkeypatch):
@@ -408,22 +429,22 @@ def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_denied(monkeypa
     )
 
 
-def test_push_with_retry_once_non_fast_forward_then_retry_success():
+def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
     """Non-fast-forward push does one fetch and one retry push."""
     calls: list[list[str]] = []
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and sum(item[1] == "push" for item in calls) == 1:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(
         fake_run,
         "owner/repo",
         "feature/branch",
-        context={**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()},
+        context={**_full_pr3h_push_gate_context(tmp_path), **_retry_refresh_gate_context(tmp_path)},
     )
 
     ASSERTIONS.assertTrue(result["ok"])
@@ -433,31 +454,33 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success():
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "push", "origin", "feature/branch"],
+            ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
+            ["git", "merge-base", "--is-ancestor", "abc123", "abc123"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
         ],
     )
 
 
-def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
+def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp_path):
     """A failed retry after non-fast-forward returns needs_manual with no loop."""
     calls: list[list[str]] = []
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and sum(item[1] == "push" for item in calls) == 1:
             raise RuntimeError("non-fast-forward update rejected")
-        if len(calls) == 3:
+        if cmd[1] == "push" and any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("failed to push some refs")
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(
         fake_run,
         "owner/repo",
         "feature/branch",
-        context={**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()},
+        context={**_full_pr3h_push_gate_context(tmp_path), **_retry_refresh_gate_context(tmp_path)},
     )
 
     ASSERTIONS.assertFalse(result["ok"])
@@ -468,9 +491,11 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual():
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "push", "origin", "feature/branch"],
+            ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
+            ["git", "merge-base", "--is-ancestor", "abc123", "abc123"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
         ],
     )
 
@@ -481,7 +506,7 @@ def test_push_with_retry_once_blocks_before_initial_push_without_pr3h_evidence()
 
     def fake_run(cmd: list[str], **_kwargs: Any) -> str:
         calls.append(list(cmd))
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch")
 
@@ -492,18 +517,18 @@ def test_push_with_retry_once_blocks_before_initial_push_without_pr3h_evidence()
     ASSERTIONS.assertEqual(calls, [])
 
 
-def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_evidence():
-    """Retry path is guarded; force-with-lease is not called when PR3H evidence is missing."""
+def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_evidence(tmp_path):
+    """Retry path is guarded; a second push is not called when refreshed evidence is missing."""
     calls: list[list[str]] = []
-    gate_ctx = _full_pr3h_push_gate_context()
+    gate_ctx = _full_pr3h_push_gate_context(tmp_path)
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and sum(item[1] == "push" for item in calls) == 1:
             gate_ctx["post_fix_audit"] = "FAIL"
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
 
@@ -511,47 +536,47 @@ def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_
     ASSERTIONS.assertEqual(result["status"], "needs_manual")
     ASSERTIONS.assertTrue(result["retried"])
     ASSERTIONS.assertTrue(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "merge-base", "--is-ancestor", "abc123", "abc123"], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"]])
 
 
-def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry_gate_context():
+def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry_gate_context(tmp_path):
     """Retry path proceeds only when explicit refreshed retry context is provided."""
     calls: list[list[str]] = []
-    gate_ctx = {**_full_pr3h_push_gate_context(), **_retry_refresh_gate_context()}
+    gate_ctx = {**_full_pr3h_push_gate_context(tmp_path), **_retry_refresh_gate_context(tmp_path)}
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and sum(item[1] == "push" for item in calls) == 1:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
 
     ASSERTIONS.assertTrue(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertTrue(result["retried"])
-    ASSERTIONS.assertEqual(calls[1], ["git", "fetch", "origin", "feature/branch"])
-    ASSERTIONS.assertEqual(calls[2], ["git", "push", "origin", "feature/branch", "--force-with-lease"])
+    ASSERTIONS.assertEqual(calls[3], ["git", "fetch", "origin", "feature/branch"])
+    ASSERTIONS.assertEqual(calls[4], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"])
 
 
-def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gate_context():
+def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gate_context(tmp_path):
     """Retry path denies when retry gate context is present but not explicitly refreshed."""
     calls: list[list[str]] = []
-    gate_ctx = {**_full_pr3h_push_gate_context(), "retry_push_gate_context": {"explicitly_refreshed": False}}
+    gate_ctx = {**_full_pr3h_push_gate_context(tmp_path), "retry_push_gate_context": {"explicitly_refreshed": False}}
 
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and sum(item[1] == "push" for item in calls) == 1:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
-        return ""
+        return "abc123" if cmd[1] == "rev-parse" else ""
 
     result = flow.push_with_retry_once(fake_run, "owner/repo", "feature/branch", context=gate_ctx)
 
     ASSERTIONS.assertFalse(result["ok"])
     ASSERTIONS.assertTrue(result["retried"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "merge-base", "--is-ancestor", "abc123", "abc123"], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"]])
 
 
 

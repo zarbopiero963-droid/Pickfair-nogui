@@ -1529,11 +1529,7 @@ def eligible_review_comments_for_auto_resolve(
             continue
 
         if evidence_only:
-            triage = controller.triage_review_thread_contract(node, ctx)
-            if (
-                triage.get("decision") == "EVIDENCE_RESOLVE"
-                and controller.should_resolve_review_thread(node, ctx)
-            ):
+            if controller.should_resolve_review_thread(node, ctx):
                 eligible.append(node)
             continue
 
@@ -1871,6 +1867,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     checks = split_checks(pr, ignore_self=True)
     issues: list[str] = []
     warnings: list[str] = []
+    ledger_path = os.environ.get("PR_FIX_LOOP_LEDGER", "")
+    budget = (controller.fix_policy.FixLoopLedger(ledger_path, args.repo, int(args.pr)).status()
+              if ledger_path else controller.fix_policy.stopped("fix_loop_state_missing"))
+    if not budget["allowed"]:
+        issues.append(budget["reason"])
+    elif budget["reserved_count"]:
+        issues.append("unfinished_fix_loop_cycle_requires_manual_recovery")
 
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
@@ -1885,11 +1888,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for f in changed_files_for_commit(c):
             file_touches[f] = file_touches.get(f, 0) + 1
 
-    # Guard anti-loop autofix: prima era gatato su "Codacy sta bloccando"; con
-    # Codacy dismesso il gate diventerebbe morto, quindi il limite vale SEMPRE
-    # (piu' severo, mai piu' permissivo).
+    # Legacy naming is diagnostic only: it cannot replace the durable counter
+    # or invalidate a properly bounded owner grant.
     if len(commits) > args.max_safe_autofix_commits:
-        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
+        warnings.append(f"legacy autofix commit diagnostic: {len(commits)} > {args.max_safe_autofix_commits}")
 
     oscillating = [
         {"file": f, "touches": n}
@@ -1906,6 +1908,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         "head": pr.get("headRefOid"),
         "branch": branch,
         "safe_autofix_commits": commits,
+        "fix_loop_budget": budget,
         "file_touches": file_touches,
         "oscillating_files": oscillating,
         "issues": issues,
@@ -2098,24 +2101,28 @@ class NonFastForwardRetryContext:
     repo: str
     branch: str
     initial_exc: RuntimeError
+    pushed_head: str = ""
 
 
-def _push_initial(run_func: Any, remote: str, branch: str) -> None:
-    run_func(["git", "push", remote, branch], check=True)
+def _push_initial(run_func: Any, remote: str, refspec: str, expected_head: str, branch_name: str) -> None:
+    _push_force_with_lease(run_func, remote, refspec, expected_head, branch_name)
 
 
 def _fetch_branch(run_func: Any, remote: str, branch: str) -> None:
     run_func(["git", "fetch", remote, branch], check=True)
 
 
-def _push_force_with_lease(run_func: Any, remote: str, branch: str) -> None:
-    run_func(["git", "push", remote, branch, "--force-with-lease"], check=True)
+def _push_force_with_lease(run_func: Any, remote: str, branch: str, expected_head: str, branch_name: str) -> None:
+    run_func(["git", "push", remote, branch,
+              f"--force-with-lease=refs/heads/{branch_name}:{expected_head}"], check=True)
 
 
-def push_retry_with_force_lease(run_func: Any, remote: str, branch: str) -> None:
-    """Fetch latest remote branch, then retry push with force-with-lease once."""
+def push_retry_with_force_lease(run_func: Any, remote: str, branch: str, pushed_head: str, expected_head: str) -> None:
+    """Retry once against the assessed SHA; fetching cannot widen the lease."""
+    if not expected_head:
+        raise RuntimeError("assessed_remote_head_missing")
     _fetch_branch(run_func, remote, branch)
-    _push_force_with_lease(run_func, remote, branch)
+    _push_force_with_lease(run_func, remote, f"{pushed_head}:refs/heads/{branch}", expected_head, branch)
 
 
 def _build_push_result(
@@ -2164,17 +2171,18 @@ def _post_fix_push_gate_response(gate: dict[str, Any], allowed: bool) -> dict[st
     }
 
 
-def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
+def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None, *, reservation_stage: str = "reserved") -> dict[str, Any]:
     """Evaluate PR3H gate before any push path; fail closed on malformed payloads."""
-    gate = _post_fix_push_gate_raw(context)
+    gate = (_post_fix_push_gate_raw(context) if reservation_stage == "reserved" else
+            controller.evaluate_post_fix_audit_gate(context, reservation_stage=reservation_stage))
     return _post_fix_push_gate_response(gate, _post_fix_push_gate_allowed(gate))
 
 
 def _failed_push_result(repo: str, branch: str, exc: RuntimeError) -> dict[str, Any]:
     return _build_push_result(
         False,
-        "failed",
-        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False, error=str(exc)),
+        "needs_manual",
+        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=True, error=str(exc)),
     )
 
 
@@ -2205,7 +2213,13 @@ def _retry_non_fast_forward_push(
     gate_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     retry_gate_context = build_retry_push_gate_context(gate_context)
-    gate = ensure_post_fix_audit_gate_before_push(retry_gate_context)
+    if not isinstance((gate_context or {}).get("fix_loop"), dict) or retry_gate_context.get("fix_loop") != gate_context["fix_loop"]:
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc,
+                                         RuntimeError("retry_fix_loop_identity_mismatch_or_missing_refresh"))
+    retry = controller.fix_policy.retry_after_confirmed_rejection(gate_context)
+    if not retry["allowed"]:
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(retry["reason"]))
+    gate = ensure_post_fix_audit_gate_before_push(retry_gate_context, reservation_stage="retry_ready")
     if not gate["allowed"]:
         return _build_push_result(
             False,
@@ -2220,7 +2234,13 @@ def _retry_non_fast_forward_push(
             ),
         )
     try:
-        push_retry_with_force_lease(run_func, remote, ctx.branch)
+        if not ctx.pushed_head:
+            return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError("pushed_head_missing"))
+        attempt = controller.fix_policy.start_push_gate(retry_gate_context, stage="retry_ready")
+        if not attempt["allowed"]:
+            return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(attempt["reason"]))
+        expected_head = str(retry_gate_context.get("current_head_sha") or retry_gate_context.get("head_sha") or retry_gate_context.get("headRefOid") or "")
+        push_retry_with_force_lease(run_func, remote, ctx.branch, ctx.pushed_head, expected_head)
         return _build_push_result(
             True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
         )
@@ -2258,6 +2278,13 @@ def push_with_retry_once(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Push once, recover once on non-fast-forward, then stop with explicit status."""
+    context = {**(context or {}), "repo": repo, "pr_branch": branch}
+    budget = controller.fix_policy.reservation_gate(context)
+    if not budget["allowed"]:
+        result = _build_push_result(False, "needs_manual", PushResultContext(
+            repo=repo, branch=branch, retried=False, needs_manual=True, error=budget["reason"],
+        ))
+        return {**result, "AUTO_PR_FLOW_STATUS": "NEEDS_MANUAL", "REASON": budget["reason"]}
     gate = ensure_post_fix_audit_gate_before_push(context)
     if not gate["allowed"]:
         return _build_push_result(
@@ -2271,16 +2298,49 @@ def push_with_retry_once(
                 error=f"post-fix audit gate denied before push: {gate['reason']}",
             ),
         )
+    pushed_head = ""
     try:
-        _push_initial(run_func, remote, branch)
-        return _build_push_result(
+        attempt = controller.fix_policy.start_push_gate(context)
+        if not attempt["allowed"]:
+            return _build_push_result(False, "needs_manual", PushResultContext(
+                repo=repo, branch=branch, retried=False, needs_manual=True, error=attempt["reason"],
+            ))
+        pushed_head = run_func(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], check=True).strip()
+        if not pushed_head:
+            raise RuntimeError("pushed_head_missing")
+        expected = context["current_head_sha"]
+        # An explicit lease alone permits rewriting history: retain FF semantics.
+        run_func(["git", "merge-base", "--is-ancestor", expected, pushed_head], check=True)
+        _push_initial(run_func, remote, f"{pushed_head}:refs/heads/{branch}", expected, branch)
+        result = _build_push_result(
             True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
         )
     except RuntimeError as exc:
-        if not is_non_fast_forward_push_error(exc):
+        if not pushed_head or not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
-        return _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
+        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc, pushed_head=pushed_head)
+        result = _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
+    return _complete_fix_loop_push(repo, result, context, pushed_head)
+
+
+def _complete_fix_loop_push(repo: str, result: dict[str, Any],
+                            context: dict[str, Any] | None, pushed_head: str) -> dict[str, Any]:
+    budget = (context or {}).get("fix_loop")
+    if not result.get("ok") or not isinstance(budget, dict):
+        return result
+    if budget.get("repo") != repo:
+        return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                "error": "fix_loop_repository_mismatch"}
+    try:
+        ledger = controller.fix_policy.FixLoopLedger(budget["path"], repo, budget["pr"])
+        completion = ledger.complete(budget["cycle_id"], pushed_head, branch=context.get("pr_branch"))
+        if not completion["allowed"]:
+            return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                    "error": completion["reason"]}
+        return {**result, "fix_loop": completion}
+    except (RuntimeError, KeyError, ValueError, TypeError) as error:
+        return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                "error": f"push_completed_budget_confirmation_failed:{error}"}
 
 
 
@@ -2314,7 +2374,9 @@ def main() -> int:
     p = sub.add_parser("preflight")
     p.add_argument("--repo", required=True)
     p.add_argument("--pr", required=True)
-    p.add_argument("--max-safe-autofix-commits", type=int, default=3)
+    p.add_argument("--max-safe-autofix-commits", type=int,
+                   default=controller.fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR,
+                   help="legacy diagnostic only; cannot override the durable per-PR repair cap")
     p.add_argument("--oscillation-touch-limit", type=int, default=3)
     p.add_argument("--output", default="")
     p.add_argument("--comment", action="store_true")

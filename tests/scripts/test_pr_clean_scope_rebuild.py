@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest import TestCase
 
 from scripts import pr_clean_scope_rebuild as rebuild
@@ -22,8 +23,18 @@ def _args(ctx: dict | None, decision_out: str) -> rebuild.RebuildArgs:
     )
 
 
-def _good_ctx(**overrides: object) -> dict[str, object]:
+def _good_ctx(tmp_path, **overrides: object) -> dict[str, object]:
+    ledger = rebuild.controller.fix_policy.FixLoopLedger(tmp_path / "budget.sqlite", "owner/repo", 249)
+    if not ledger.path.exists():
+        ledger.initialize(0, "new PR before review repair")
+        ASSERTIONS.assertTrue(ledger.reserve("clean-1", {
+            "class": "CURRENT_DEFECT", "current_head_correct": False, "pr_branch": "chore/pr3h-post-fix-audit-gate",
+            "thread_id": "T1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
+        })["allowed"])
     base: dict[str, object] = {
+        "pr_branch": "chore/pr3h-post-fix-audit-gate",
+        "current_head_sha": "abc123",
+        "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 249, "cycle_id": "clean-1"},
         "automation_mode": "live",
         "post_fix_audit": "PASS",
         "validation_passed": True,
@@ -36,6 +47,12 @@ def _good_ctx(**overrides: object) -> dict[str, object]:
         "can_commit": True,
         "can_push": True,
     }
+    cache = tmp_path / "clean-capability.json"
+    if cache.exists():
+        base['fix_loop']['claim_token'] = json.loads(cache.read_text())['claim_token']
+    else:
+        ASSERTIONS.assertTrue(rebuild.controller.fix_policy.claim_patch_gate(base)['allowed'])
+        cache.write_text(json.dumps({'claim_token':base['fix_loop']['claim_token']}))
     base.update(overrides)
     return base
 
@@ -90,9 +107,9 @@ def test_push_blocked_gate(monkeypatch, tmp_path):
     """Push gate denial prevents force-with-lease."""
     calls = _run_calls(monkeypatch)
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(can_push=False), decision_out))
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path, can_push=False), decision_out))
     rebuild.commit_and_push(
-        _args(_good_ctx(can_push=False), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"]
+        _args(_good_ctx(tmp_path, can_push=False), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"]
     )
     ASSERTIONS.assertNotIn(["git", "commit", "-m", "Clean rebuild PR 249 scope"], calls)
     ASSERTIONS.assertFalse(any(cmd[:3] == ["git", "push", "--force-with-lease"] for cmd in calls))
@@ -102,10 +119,10 @@ def test_commit_push_allowed(monkeypatch, tmp_path):
     """Full explicit context allows mocked commit and push."""
     calls = _run_calls(monkeypatch, head="def456\n")
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(), decision_out))
-    rebuild.commit_and_push(_args(_good_ctx(), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path), decision_out))
+    rebuild.commit_and_push(_args(_good_ctx(tmp_path), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
     ASSERTIONS.assertIn(["git", "commit", "-m", "Clean rebuild PR 249 scope"], calls)
-    ASSERTIONS.assertTrue(any(cmd[:3] == ["git", "push", "--force-with-lease"] for cmd in calls))
+    ASSERTIONS.assertTrue(any(cmd[:2] == ["git", "push"] and cmd[2].startswith("--force-with-lease=") for cmd in calls))
     ASSERTIONS.assertEqual(decision["final_status"], "success")
 
 
@@ -114,15 +131,15 @@ def test_context_beats_ambient_env(monkeypatch, tmp_path):
     _ = _run_calls(monkeypatch, head="aaa111\n")
     monkeypatch.setenv("POST_FIX_AUDIT", "FAIL")
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(), decision_out))
-    rebuild.commit_and_push(_args(_good_ctx(), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path), decision_out))
+    rebuild.commit_and_push(_args(_good_ctx(tmp_path), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
     ASSERTIONS.assertEqual(decision["final_status"], "success")
 
 
 def test_backup_push_denied(monkeypatch, tmp_path):
     """Backup branch push is skipped when push gate is denied."""
     decision_out, calls = tmp_path / "decision.json", []
-    args = _args(_good_ctx(can_push=False), str(decision_out))
+    args = _args(_good_ctx(tmp_path, can_push=False), str(decision_out))
     decision = rebuild.initial_decision(args)
     _stub_execute_rebuild(monkeypatch, calls, head="abc123\n")
     monkeypatch.setattr(rebuild, "commit_and_push", lambda *_args, **_kwargs: None)
@@ -134,13 +151,35 @@ def test_backup_push_denied(monkeypatch, tmp_path):
 def test_backup_push_allowed_gate(monkeypatch, tmp_path):
     """Backup branch push runs when gate conditions allow push."""
     decision_out, calls = tmp_path / "decision.json", []
-    args = _args(_good_ctx(), str(decision_out))
+    args = _args(_good_ctx(tmp_path), str(decision_out))
     decision = rebuild.initial_decision(args)
     _stub_execute_rebuild(monkeypatch, calls)
     monkeypatch.setattr(rebuild, "ensure_git_identity", lambda: None)
     ASSERTIONS.assertEqual(rebuild.execute_rebuild(args, decision, decision_out), 0)
     ASSERTIONS.assertEqual(decision["final_status"], "success")
     ASSERTIONS.assertIn(
-        ["git", "push", "origin", "origin/chore/pr3h-post-fix-audit-gate:refs/heads/backup/pr-249-before-clean"],
+        ["git", "push", "origin", "abc123:refs/heads/backup/pr-249-before-clean"],
         calls,
     )
+
+
+def test_main_post_intent_failure_is_explicit_manual(monkeypatch,tmp_path):
+    ctx=_good_ctx(tmp_path);args=_args(ctx,str(tmp_path/'decision.json'))
+    monkeypatch.setattr(rebuild,'parse_args',lambda:args)
+    monkeypatch.setattr(rebuild,'validate_inputs',lambda args:None)
+    def run(cmd,check=True):
+        if cmd[:2]==['git','push']:raise RuntimeError('response lost after intent')
+        return 0,'pushed' if cmd[:2]==['git','rev-parse'] else ''
+    monkeypatch.setattr(rebuild,'run',run)
+    def execute(args,decision,out):
+        rebuild.commit_and_push(args,decision,args.allowlist)
+        return rebuild.write_decision(out,decision)
+    monkeypatch.setattr(rebuild,'execute_rebuild',execute)
+    assert rebuild.main()==1
+    result=json.loads((tmp_path/'decision.json').read_text())
+    assert result['AUTO_PR_FLOW_STATUS']=='NEEDS_MANUAL'
+    assert result['REASON']=='post_intent_rebuild_failed'
+    assert result['next_action']=='needs_manual'
+    ledger=rebuild.controller.fix_policy.FixLoopLedger(tmp_path/'budget.sqlite','owner/repo',249)
+    assert ledger.status()['reserved_count']==1
+    assert ledger.status()['completed_count']==0
