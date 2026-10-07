@@ -108,16 +108,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   path, the post-settlement auto-trade, every dutching leg and
   `DutchingController.manual_bet` now publish `CMD_QUICK_BET` with a
   `customer_ref`. Before, the engine rejected all of them with
-  `CUSTOMER_REF_REQUIRED`. An upstream `customer_ref` is preserved (signal,
-  manual bet); otherwise `core/order_identity.py` derives a deterministic,
-  Betfair-compliant ref (`<prefix>-<28 hex>`, 32 chars) from the intent: the
-  signal as received (not the MM stake), the triggering settlement, or the
-  batch id plus leg. The same intent keeps the same ref across redelivery,
-  restart and batch recomputation, so the engine blocks the duplicate.
-  Distinct intents get distinct refs. The `RiskMiddleware` REQ_QUICK_BET
-  forward keeps the caller's ref and never invents one. The engine gate is
-  unchanged, and the Telegram REQ_QUICK_BET compat fallback (no runtime
-  gate) stays rejected.
+  `CUSTOMER_REF_REQUIRED`. `core/order_identity.py` gives every ref the
+  Betfair-compliant shape `<prefix>-<28 hex>` (32 chars). Where each ref
+  comes from:
+  - an upstream ref is preserved; a non-compliant one is mapped
+    deterministically instead of being silently dropped by `BetfairClient`;
+  - signal: derived from its content, without `received_at`, `event_key`
+    or the MM stake. A redelivery after reconnect or restart keeps the same
+    ref, and the engine blocks it;
+  - auto-trade: derived from the triggering settlement;
+  - dutching leg: derived from the batch id plus the leg. The ref is also
+    stored in `dutching_batch_legs`;
+  - `manual_bet` without an upstream ref: a fresh operation ref per call.
+  The `RiskMiddleware` REQ_QUICK_BET forward keeps the caller's ref and never
+  invents one. The engine gate is unchanged, and the Telegram REQ_QUICK_BET
+  compat fallback (no runtime gate) stays rejected.
 - Betfair credentials (#461 PR04-quater, DEC-426-P28–P32): separate encrypted
   Delayed and Live App Keys; the legacy key migrates only to Delayed. LIVE
   requires the explicit Live key, and the real client never uses Delayed.

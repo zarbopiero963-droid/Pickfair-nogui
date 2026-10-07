@@ -3027,14 +3027,21 @@ class RuntimeController:
             "roserpina_mode": decision.desk_mode.value,
         }
         # PR26-a: identita' stabile dell'intento (core/order_identity.py). Un
-        # customer_ref a monte si preserva; altrimenti si deriva dal segnale
-        # COSI' COM'E' ARRIVATO (received_at/chat_id del listener inclusi),
-        # senza l'event_key aggiunto qui e senza lo stake MM: la riconsegna
-        # dello stesso messaggio ha lo stesso ref e l'engine la blocca.
+        # customer_ref a monte si preserva; altrimenti si deriva dal contenuto
+        # del segnale (chat_id incluso) SENZA cio' che cambia a ogni consegna:
+        # received_at (ora di ricezione del listener, rigenerata a una
+        # riconsegna dopo reconnect/restart), event_key (aggiunto qui) e lo
+        # stake MM. Stesso messaggio riconsegnato = stesso ref = doppione
+        # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
+        # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
         payload["customer_ref"] = resolve_customer_ref(
             signal.get("customer_ref"),
             "sig",
-            {key: value for key, value in signal.items() if key != "event_key"},
+            {
+                key: value
+                for key, value in signal.items()
+                if key not in ("event_key", "received_at")
+            },
         )
         routing_contract = signal.get("telegram_routing_contract")
         if isinstance(routing_contract, str) and routing_contract.strip():

@@ -9,9 +9,12 @@ REQ_QUICK_BET -> CMD_QUICK_BET, scartava il ``customer_ref`` del chiamante.
 La correzione sta nei PRODUTTORI, non nell'engine:
 
 - PASS: ogni intento logico arriva all'engine con un ref Betfair-conforme;
-  la stessa intenzione (riconsegna, restart, stake MM diverso, ricalcolo del
-  batch) produce lo STESSO ref e l'engine blocca il doppione; intenti diversi
-  (messaggi, settlement, gambe) hanno ref diversi; un ref a monte si preserva.
+  la stessa intenzione (riconsegna anche dopo restart con received_at nuovo,
+  stake MM diverso, ricalcolo del batch) produce lo STESSO ref e l'engine
+  blocca il doppione; intenti diversi (contenuti/chat, settlement, gambe,
+  click manuali) hanno ref diversi; un ref a monte si preserva (reso
+  conforme se Betfair lo scarterebbe); il ref della gamba arriva nel
+  registro durevole del batch.
 - BLOCK: l'engine rifiuta ancora un ordine senza ref; l'inoltro del middleware
   non inventa un ref; il fallback compat REQ_QUICK_BET di Telegram (senza gate
   runtime) resta rifiutato.
@@ -28,6 +31,7 @@ from types import SimpleNamespace
 import pytest
 
 from controllers.dutching_controller import DutchingController
+from core.dutching_batch_manager import DutchingBatchManager
 from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import DeskMode, RoserpinaConfig, RuntimeMode
@@ -220,16 +224,34 @@ def test_pass_signal_redelivery_keeps_identity_and_engine_blocks_duplicate(tmp_p
     assert _broker_refs(c.broker) == [refs[0]], "la riconsegna ha piazzato un secondo ordine"
 
 
+def test_pass_redelivery_after_restart_with_new_received_at_is_blocked(tmp_path):
+    # Bot API / Telethon possono riconsegnare lo stesso messaggio dopo un
+    # restart: il listener rigenera received_at. Il ref NON deve cambiare.
+    first = _chain(tmp_path, db_name="shared.db")
+    first.rc._on_signal_received(_signal(received_at="2026-10-08T10:00:00.100000+00:00"))
+    ref = first.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref")
+    assert _broker_refs(first.broker) == [ref]
+
+    # Restart: processo nuovo, stesso DB e stesso broker (stesso conto).
+    second = _chain(tmp_path, db_name="shared.db")
+    second.rc.betfair_service.simulation_broker = first.broker
+    second.rc._on_signal_received(_signal(received_at="2026-10-08T10:03:00.900000+00:00"))
+
+    assert second.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    assert _broker_refs(first.broker) == [ref], "la riconsegna post-restart ha piazzato un secondo ordine"
+
+
 def test_pass_distinct_signals_get_distinct_identities(tmp_path):
     c = _chain(tmp_path)
 
-    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:00:00.123456+00:00"))
-    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:05:00.654321+00:00"))
+    c.rc._on_signal_received(_signal())
+    c.rc._on_signal_received(_signal(selection_id=12, selection="Under 2.5"))
     c.rc._on_signal_received(_signal(chat_id=-100999))
+    c.rc._on_signal_received(_signal(price=2.2))
 
     refs = [p.get("customer_ref") for p in c.bus.payloads("CMD_QUICK_BET")]
-    assert len(refs) == 3 and all(refs)
-    assert len(set(refs)) == 3
+    assert len(refs) == 4 and all(refs)
+    assert len(set(refs)) == 4
     assert sorted(_broker_refs(c.broker)) == sorted(refs)
 
 
@@ -254,6 +276,21 @@ def test_pass_upstream_customer_ref_is_preserved(tmp_path):
 
     assert c.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == "tg-777"
     assert _broker_refs(c.broker) == ["tg-777"]
+
+
+def test_pass_noncompliant_upstream_ref_becomes_stable_compliant_ref(tmp_path):
+    # Un ref a monte che Betfair scarterebbe (oltre 32 / spazi) non deve
+    # togliere il de-dup lato Betfair: diventa un ref conforme e stabile.
+    bad = "telegram message 4242 from master channel alpha"
+    c = _chain(tmp_path)
+
+    c.rc._on_signal_received(_signal(customer_ref=bad))
+    c.rc._on_signal_received(_signal(customer_ref=bad, chat_id=-100555))
+
+    refs = [p.get("customer_ref") for p in c.bus.payloads("CMD_QUICK_BET")]
+    assert refs[0] != bad and BETFAIR_CUSTOMER_REF.fullmatch(refs[0])
+    assert refs[0] == refs[1], "stesso ref a monte = stessa identita'"
+    assert _broker_refs(c.broker) == [refs[0]]
 
 
 # =========================================================================
@@ -412,8 +449,10 @@ def _patch_dutching(monkeypatch):
 def test_pass_dutching_legs_distinct_stable_and_all_reach_engine(tmp_path, monkeypatch):
     _patch_dutching(monkeypatch)
     c = _chain(tmp_path, db_name="dutch.db")
+    runtime = _DutchRuntime()
+    runtime.dutching_batch_manager = DutchingBatchManager(c.db)
 
-    result = DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(
+    result = DutchingController(bus=c.bus, runtime_controller=runtime).submit_dutching(
         _dutching_payload()
     )
     assert result["ok"] is True, result
@@ -424,6 +463,9 @@ def test_pass_dutching_legs_distinct_stable_and_all_reach_engine(tmp_path, monke
     assert all(BETFAIR_CUSTOMER_REF.fullmatch(r) for r in refs)
     assert len(set(refs)) == 3, "le gambe di uno stesso batch non sono doppioni"
     assert sorted(_broker_refs(c.broker)) == sorted(refs)
+    # L'identita' arriva anche nel registro durevole delle gambe (reconcile).
+    persisted = runtime.dutching_batch_manager.get_batch_legs(result["batch_id"])
+    assert [leg["customer_ref"] for leg in sorted(persisted, key=lambda l: l["leg_index"])] == refs
 
     # Ricalcolo dello STESSO batch da un controller nuovo (restart: guard di
     # idempotenza in-memory vuoto): stessi ref -> l'engine blocca i doppioni.
@@ -451,18 +493,21 @@ def _manual_payload(**overrides):
     return payload
 
 
-def test_pass_manual_bet_order_has_stable_identity_or_upstream_ref():
+def test_pass_manual_bet_each_call_is_a_new_intent_unless_upstream_ref():
     bus = _SyncBus()
     ctrl = DutchingController(bus=bus, runtime_controller=_DutchRuntime())
 
     assert ctrl.manual_bet(_manual_payload())["ok"] is True
     assert ctrl.manual_bet(_manual_payload())["ok"] is True
     assert ctrl.manual_bet(_manual_payload(customer_ref="ui-42"))["ok"] is True
+    assert ctrl.manual_bet(_manual_payload(customer_ref="ui 42 con spazi"))["ok"] is True
 
     refs = [p.get("customer_ref") for p in bus.payloads("CMD_QUICK_BET")]
-    assert refs[0] and BETFAIR_CUSTOMER_REF.fullmatch(refs[0])
-    assert refs[0] == refs[1]
+    assert all(BETFAIR_CUSTOMER_REF.fullmatch(r) for r in refs), refs
+    # Due click identici senza ref a monte = due intenti distinti.
+    assert refs[0] != refs[1]
     assert refs[2] == "ui-42"
+    assert refs[3] != "ui 42 con spazi"
 
 
 # =========================================================================
@@ -477,9 +522,17 @@ def test_pass_risk_middleware_forward_preserves_upstream_customer_ref():
         {"market_id": "1.9", "selection_id": 3, "price": 2.5, "stake": 2.0, "customer_ref": "ui-9"},
     )
 
+    bus.publish(
+        "REQ_QUICK_BET",
+        {"market_id": "1.9", "selection_id": 4, "price": 2.5, "stake": 2.0,
+         "customer_ref": "x" * 40},
+    )
+
     cmds = bus.payloads("CMD_QUICK_BET")
-    assert len(cmds) == 1
+    assert len(cmds) == 2
     assert cmds[0].get("customer_ref") == "ui-9"
+    assert cmds[1].get("customer_ref") != "x" * 40
+    assert BETFAIR_CUSTOMER_REF.fullmatch(cmds[1].get("customer_ref"))
 
 
 def test_block_risk_middleware_forward_does_not_invent_customer_ref(tmp_path):
@@ -566,6 +619,34 @@ def test_pass_helper_is_deterministic_compliant_and_preserves_upstream():
     assert resolve_customer_ref("  up-1 ", "sig", {"a": 1}) == "up-1"
     assert resolve_customer_ref("", "sig", {"a": 1}) == derive_customer_ref("sig", {"a": 1})
     assert resolve_customer_ref(None, "sig", {"a": 1}) == derive_customer_ref("sig", {"a": 1})
+
+
+def test_pass_helper_upstream_normalization_and_operation_refs():
+    from betfair_client import BetfairClient
+    from core.order_identity import (
+        is_betfair_customer_ref,
+        new_operation_customer_ref,
+        normalize_upstream_customer_ref,
+    )
+
+    samples = ["ok-1", "A.b_c+d*e:f;g~h", "x" * 32, "x" * 33, "con spazio", "àccento", "a/b"]
+    for value in samples:
+        # Stesso verdetto del client Betfair reale.
+        assert is_betfair_customer_ref(value) == (BetfairClient._normalize_customer_ref(value) == value)
+
+    assert normalize_upstream_customer_ref(None) == ""
+    assert normalize_upstream_customer_ref("   ") == ""
+    assert normalize_upstream_customer_ref(" ok-1 ") == "ok-1"
+    mapped = normalize_upstream_customer_ref("x" * 33)
+    assert mapped.startswith("up-") and is_betfair_customer_ref(mapped)
+    assert normalize_upstream_customer_ref("x" * 33) == mapped
+    assert normalize_upstream_customer_ref("x" * 34) != mapped
+
+    op_a, op_b = new_operation_customer_ref("man"), new_operation_customer_ref("man")
+    assert op_a != op_b
+    assert op_a.startswith("man-") and is_betfair_customer_ref(op_a) and len(op_a) == 32
+    with pytest.raises(ValueError):
+        new_operation_customer_ref("MAN")
 
 
 @pytest.mark.parametrize("prefix", ["", "TOOLONG", "s g", "sig-", None])

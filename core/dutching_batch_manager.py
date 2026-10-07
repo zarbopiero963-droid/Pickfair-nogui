@@ -255,6 +255,7 @@ class DutchingBatchManager:
                     price=leg.get("price", 0.0),
                     stake=leg.get("stake", 0.0),
                     liability=leg.get("liability", 0.0),
+                    customer_ref=leg.get("customer_ref", ""),
                 )
 
         batch = self.get_batch(batch_id)

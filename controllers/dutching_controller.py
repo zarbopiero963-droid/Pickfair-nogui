@@ -9,7 +9,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 import trading_config
-from core.order_identity import derive_customer_ref, resolve_customer_ref
+from core.order_identity import (
+    derive_customer_ref,
+    new_operation_customer_ref,
+    normalize_upstream_customer_ref,
+)
 
 try:
     from dutching import calculate_dutching
@@ -883,6 +887,9 @@ class DutchingController:
                         "price": float(o["price"]),
                         "stake": float(o["stake"]),
                         "side": str(o["bet_type"]).upper(),
+                        # PR26-a: l'identita' della gamba arriva anche nel
+                        # registro durevole (chiave piu' forte del reconcile).
+                        "customer_ref": str(o.get("customer_ref") or ""),
                     }
                     for o in orders
                 ],
@@ -1512,19 +1519,12 @@ class DutchingController:
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
                 "table_id": payload.get("table_id"),
                 "event_key": event_key,
-                # PR26-a: ref a monte preservato, altrimenti derivato dal bet.
-                "customer_ref": resolve_customer_ref(
-                    payload.get("customer_ref"),
-                    "man",
-                    {
-                        "event_key": event_key,
-                        "market_id": market_id,
-                        "selection_id": selection_id,
-                        "bet_type": side,
-                        "price": price,
-                        "stake": stake,
-                        "simulation_mode": bool(payload.get("simulation_mode", False)),
-                    },
+                # PR26-a: ref a monte preservato; altrimenti ogni manual_bet e'
+                # un intento NUOVO (due click identici = due bet): ref di
+                # operazione generato qui una volta, riusato dai retry a valle.
+                "customer_ref": (
+                    normalize_upstream_customer_ref(payload.get("customer_ref"))
+                    or new_operation_customer_ref("man")
                 ),
             }
 

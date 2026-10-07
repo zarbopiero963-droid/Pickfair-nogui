@@ -20,6 +20,8 @@ import threading
 import time
 from typing import Any, Dict
 
+from core.order_identity import normalize_upstream_customer_ref
+
 logger = logging.getLogger(__name__)
 
 
@@ -163,7 +165,7 @@ class RiskMiddleware:
                 normalized["telegram_route_target"] = route_target.strip()
             # PR26-a: l'identita' del chiamante sopravvive all'inoltro 1:1.
             # Nessun ref inventato qui: senza ref l'engine resta fail-closed.
-            customer_ref = str(payload.get("customer_ref") or "").strip()
+            customer_ref = normalize_upstream_customer_ref(payload.get("customer_ref"))
             if customer_ref:
                 normalized["customer_ref"] = customer_ref
             if isinstance(copy_meta, dict):
