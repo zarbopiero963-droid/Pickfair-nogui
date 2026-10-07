@@ -161,3 +161,25 @@ def test_backup_push_allowed_gate(monkeypatch, tmp_path):
         ["git", "push", "origin", "abc123:refs/heads/backup/pr-249-before-clean"],
         calls,
     )
+
+
+def test_main_post_intent_failure_is_explicit_manual(monkeypatch,tmp_path):
+    ctx=_good_ctx(tmp_path);args=_args(ctx,str(tmp_path/'decision.json'))
+    monkeypatch.setattr(rebuild,'parse_args',lambda:args)
+    monkeypatch.setattr(rebuild,'validate_inputs',lambda args:None)
+    def run(cmd,check=True):
+        if cmd[:2]==['git','push']:raise RuntimeError('response lost after intent')
+        return 0,'pushed' if cmd[:2]==['git','rev-parse'] else ''
+    monkeypatch.setattr(rebuild,'run',run)
+    def execute(args,decision,out):
+        rebuild.commit_and_push(args,decision,args.allowlist)
+        return rebuild.write_decision(out,decision)
+    monkeypatch.setattr(rebuild,'execute_rebuild',execute)
+    assert rebuild.main()==1
+    result=json.loads((tmp_path/'decision.json').read_text())
+    assert result['AUTO_PR_FLOW_STATUS']=='NEEDS_MANUAL'
+    assert result['REASON']=='post_intent_rebuild_failed'
+    assert result['next_action']=='needs_manual'
+    ledger=rebuild.controller.fix_policy.FixLoopLedger(tmp_path/'budget.sqlite','owner/repo',249)
+    assert ledger.status()['reserved_count']==1
+    assert ledger.status()['completed_count']==0

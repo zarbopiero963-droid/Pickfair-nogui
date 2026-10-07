@@ -2021,9 +2021,10 @@
         "tests/scripts/test_pr_flow_automation.py",
         "tests/scripts/test_pr_fix_loop_policy.py",
         "scripts/pr_clean_scope_rebuild.py",
-        "tests/scripts/test_pr_clean_scope_rebuild.py"
+        "tests/scripts/test_pr_clean_scope_rebuild.py",
+        "tests/scripts/test_codacy_decommissioned.py"
       ],
-      "max_files": 13,
+      "max_files": 14,
       "allow_tests": true,
       "description": "Mandato owner 07/10/2026: una sola PR governance/automation policy/test, baseline main 30fb165 (#494 merged), nessuna PR aperta al preflight. Cap globale FIX_LOOP=5, contatore per-PR persistente cumulativo, sesto ciclo bloccato prima di patch/commit/push, owner override bounded tracciato, triage CURRENT_DEFECT/GUARDRAIL_GAP/THEORETICAL_MUTATION, REVIEW_CHURN e KNOWN_LIMITATION_ACCEPTED_BY_OWNER con prove e gate invariati. Nessun runtime prodotto, DB Pickfair, MCP/Control API o workflow/reviewer riattivato. Merge manuale owner per AGENTS/CLAUDE. Scope include anche il helper clean-scope e i suoi test: il RED-FIRST mostra che il suo push diretto non registrava la completion nel ledger; cablata la stessa authority per impedire un bypass del contatore."
     }

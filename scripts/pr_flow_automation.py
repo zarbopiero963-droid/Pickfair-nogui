@@ -2104,8 +2104,8 @@ class NonFastForwardRetryContext:
     pushed_head: str = ""
 
 
-def _push_initial(run_func: Any, remote: str, branch: str) -> None:
-    run_func(["git", "push", remote, branch], check=True)
+def _push_initial(run_func: Any, remote: str, refspec: str, expected_head: str, branch_name: str) -> None:
+    _push_force_with_lease(run_func, remote, refspec, expected_head, branch_name)
 
 
 def _fetch_branch(run_func: Any, remote: str, branch: str) -> None:
@@ -2308,7 +2308,10 @@ def push_with_retry_once(
         pushed_head = run_func(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], check=True).strip()
         if not pushed_head:
             raise RuntimeError("pushed_head_missing")
-        _push_initial(run_func, remote, f"{pushed_head}:refs/heads/{branch}")
+        expected = context["current_head_sha"]
+        # An explicit lease alone permits rewriting history: retain FF semantics.
+        run_func(["git", "merge-base", "--is-ancestor", expected, pushed_head], check=True)
+        _push_initial(run_func, remote, f"{pushed_head}:refs/heads/{branch}", expected, branch)
         result = _build_push_result(
             True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
         )

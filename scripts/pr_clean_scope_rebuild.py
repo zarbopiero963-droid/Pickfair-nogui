@@ -208,7 +208,7 @@ def initial_decision(args: RebuildArgs) -> dict[str, Any]:
 def write_decision(out_path: Path, decision: dict[str, Any]) -> int:
     out_path.write_text(json.dumps(decision, indent=2, sort_keys=True), encoding="utf-8")
     print(json.dumps(decision, indent=2, sort_keys=True))
-    return 0
+    return 1 if decision.get("AUTO_PR_FLOW_STATUS") == "NEEDS_MANUAL" else 0
 
 
 def block_status(out_path: Path, decision: dict[str, Any], status: str) -> int:
@@ -352,12 +352,26 @@ def gate_block_payload(gate: dict[str, Any], action: str) -> dict[str, Any]:
     }
 
 
+def mark_post_intent_failure(decision: dict[str, Any], error: object,
+                             reason: str = "post_intent_rebuild_failed") -> None:
+    decision.update({"AUTO_PR_FLOW_STATUS": "NEEDS_MANUAL", "REASON": reason,
+                     "reason": reason, "next_action": "needs_manual",
+                     "final_status": "needs_manual", "error": str(error)})
+
+
 def apply_gate_block(decision: dict[str, Any], gate: dict[str, Any], action: str) -> None:
+    if decision.get("fix_loop_push_intent_persisted"):
+        mark_post_intent_failure(decision, gate.get("reason") or "post_intent_gate_denied",
+                                str(gate.get("reason") or "post_intent_gate_denied"))
+        return
     payload = gate_block_payload(gate, action)
     decision["post_fix_audit_gate"] = payload
     decision["reason"] = payload["reason"]
     decision["next_action"] = payload["next_action"]
     decision["final_status"] = "blocked_post_fix_audit_gate"
+    if gate.get("AUTO_PR_FLOW_STATUS") == "NEEDS_MANUAL" or str(payload["reason"]).startswith("fix_loop_"):
+        decision["AUTO_PR_FLOW_STATUS"] = "NEEDS_MANUAL"
+        decision["REASON"] = payload["reason"]
 
 
 def ensure_clean_commit_gate(
@@ -433,25 +447,29 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     if not attempt["allowed"]:
         apply_gate_block(decision, attempt, "push")
         return
-    ensure_git_identity()
-    run(["git", "add", "--", *restored_files])
-    run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
-    _, new_head = run(["git", "rev-parse", "HEAD"])
-    if not new_head.strip():
-        apply_gate_block(decision, controller.fix_policy.stopped("pushed_head_missing"), "push")
-        return
-    expected = context["current_head_sha"]
-    run(["git", "push", f"--force-with-lease=refs/heads/{args.branch}:{expected}", "origin", f"{new_head.strip()}:refs/heads/{args.branch}"])
-    decision["new_head"] = new_head.strip()
-    decision["push_succeeded"] = True
-    budget = context["fix_loop"]
-    ledger = controller.fix_policy.FixLoopLedger(budget["path"], args.repo, int(args.pr_number))
-    completion = ledger.complete(budget["cycle_id"], new_head.strip(), branch=args.branch)
-    decision["fix_loop_budget"] = completion
-    if not completion["allowed"]:
-        apply_gate_block(decision, completion, "record_confirmed_push")
-        return
-    decision["final_status"] = "success"
+    decision["fix_loop_push_intent_persisted"] = True
+    try:
+        ensure_git_identity()
+        run(["git", "add", "--", *restored_files])
+        run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
+        _, new_head = run(["git", "rev-parse", "HEAD"])
+        if not new_head.strip():
+            apply_gate_block(decision, controller.fix_policy.stopped("pushed_head_missing"), "push")
+            return
+        expected = context["current_head_sha"]
+        run(["git", "push", f"--force-with-lease=refs/heads/{args.branch}:{expected}", "origin", f"{new_head.strip()}:refs/heads/{args.branch}"])
+        decision["new_head"] = new_head.strip()
+        decision["push_succeeded"] = True
+        budget = context["fix_loop"]
+        ledger = controller.fix_policy.FixLoopLedger(budget["path"], args.repo, int(args.pr_number))
+        completion = ledger.complete(budget["cycle_id"], new_head.strip(), branch=args.branch)
+        decision["fix_loop_budget"] = completion
+        if not completion["allowed"]:
+            apply_gate_block(decision, completion, "record_confirmed_push")
+            return
+        decision["final_status"] = "success"
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as error:
+        mark_post_intent_failure(decision, error)
 
 
 def execute_rebuild(args: RebuildArgs, decision: dict[str, Any], out_path: Path) -> int:
@@ -490,7 +508,10 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     try:
         return execute_rebuild(args, decision, out_path)
-    except (RuntimeError, ValueError, OSError, subprocess.CalledProcessError) as exc:
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        if decision.get("fix_loop_push_intent_persisted"):
+            mark_post_intent_failure(decision, exc)
+            return write_decision(out_path, decision)
         decision["error"] = str(exc)
         if decision.get("final_status") != "blocked":
             decision["final_status"] = "error"

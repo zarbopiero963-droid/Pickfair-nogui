@@ -1085,3 +1085,22 @@ lista `files_allowed` esplicita del task può autorizzare quei file. Un
 `files_forbidden` esplicito resta prevalente; i gate di scope esistenti restano.
 Un GUARDRAIL_GAP critico ma dichiarato non materiale si ferma per decisione
 manuale; non viene etichettato noncritical né accettato automaticamente.
+
+### Primo push e fallimenti dopo l'intent
+
+Anche il primo push usa una lease esplicita sullo SHA remoto attestato nella
+assessment. Prima dell'invio verifica che lo SHA attestato sia antenato dello
+SHA locale fissato: la lease non autorizza riscritture non fast-forward. Un
+avanzamento remoto, anche già incorporato localmente, richiede nuove prove;
+fetch/merge non amplia la lease. Il solo retry confermato resta nello stesso ciclo.
+
+Ogni path proposto in review richiede un `files_allowed` esplicito del task.
+Scope mancante non autorizza patch: questo protegge ogni modulo prodotto,
+configurazione e package senza indovinare nome, estensione o categoria.
+I divieti espliciti continuano a prevalere.
+
+Clean rebuild: dopo l'intent persistito, errore di commit/ref/push/completion
+produce `AUTO_PR_FLOW_STATUS=NEEDS_MANUAL`, motivo tracciato, `next_action=needs_manual`
+e uscita nonzero. Il ciclo resta incompiuto fino a verifica/recovery manuale;
+nessun replay, refund o completion inventata. La stessa indicazione manuale
+viene preservata quando un gate budget/ledger respinge la chiamata.

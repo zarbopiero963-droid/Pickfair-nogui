@@ -8523,22 +8523,12 @@ def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
         return False
     files_allowed = context.get("files_allowed")
     files_forbidden = context.get("files_forbidden")
-    # Owner task files_allowed may explicitly authorize default core/services scope.
-    if any(path_matches_scope_rule(path, rule) for rule in ("core/", "services/")):
-        if _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(files_allowed):
-            return True
-        if not any(path_matches_scope_rule(path, rule) for rule in normalize_file_scope_rules(files_allowed)):
-            return True
     if _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(files_forbidden):
         return True
     forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
     if any(path_matches_scope_rule(path, rule) for rule in forbidden):
         return True
-    malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
-        files_allowed
-    )
-    if not malformed_allowed and not normalize_file_scope_rules(files_allowed):
-        return False
+    # Missing task scope is not authorization, for product or automation paths.
     return not scope_allows_file_change(path, files_allowed, files_forbidden)
 
 

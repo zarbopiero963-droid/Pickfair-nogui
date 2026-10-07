@@ -7632,6 +7632,11 @@ def test_parse_phase0_preflight_result_skips_generic_manual_wrapper_before_valid
     ASSERTIONS.assertEqual(report["next_action"], "generate_patch_prompt")
 
 
+def _review_task_context(context: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Declared owner task scope for review tests of the controller itself."""
+    return {"files_allowed": ["scripts/pr_automation_controller.py"], **(context or {})}
+
+
 def _review_thread(
     *,
     thread_id: str = "T1",
@@ -7702,10 +7707,10 @@ def test_review_provider_presence_missing_specific_providers_never_block():
 
 
 def test_review_classification_active_p1_and_high_are_blocking():
-    p1 = controller.classify_review_thread(_review_thread(body="P1 bug correctness issue"))
-    high = controller.classify_review_thread(_review_thread(body="HIGH security runtime risk", thread_id="T2"))
+    p1 = controller.classify_review_thread(_review_thread(body="P1 bug correctness issue"), _review_task_context())
+    high = controller.classify_review_thread(_review_thread(body="HIGH security runtime risk", thread_id="T2"), _review_task_context())
     fail_open = controller.classify_review_thread(
-        _review_thread(body="FAIL-OPEN security path remains", thread_id="T3")
+        _review_thread(body="FAIL-OPEN security path remains", thread_id="T3"), _review_task_context()
     )
     ASSERTIONS.assertEqual(p1["classification"], "blocking")
     ASSERTIONS.assertEqual(high["classification"], "blocking")
@@ -7725,7 +7730,7 @@ def test_review_classification_uses_later_comment_when_first_is_irrelevant():
             ]
         },
     }
-    classified = controller.classify_review_thread(thread)
+    classified = controller.classify_review_thread(thread, _review_task_context())
     ASSERTIONS.assertEqual(classified["classification"], "blocking")
     ASSERTIONS.assertEqual(classified["actionability"], "fix_required")
 
@@ -7742,8 +7747,8 @@ def test_review_severity_medium_risk_and_standalone_medium_classify_medium():
 
 
 def test_review_actionability_failing_test_and_missing_test_are_blocking_test_required():
-    failing = controller.classify_review_thread(_review_thread(body="failing test on this path"))
-    missing = controller.classify_review_thread(_review_thread(body="missing test coverage"))
+    failing = controller.classify_review_thread(_review_thread(body="failing test on this path"), _review_task_context())
+    missing = controller.classify_review_thread(_review_thread(body="missing test coverage"), _review_task_context())
     ASSERTIONS.assertEqual(failing["classification"], "blocking")
     ASSERTIONS.assertEqual(failing["actionability"], "test_required")
     ASSERTIONS.assertEqual(missing["classification"], "blocking")
@@ -7776,7 +7781,7 @@ def test_review_keyword_boundaries_for_p1_p2_bug():
 
 
 def test_review_p2_style_suggestion_is_advisory_non_blocking():
-    classified = controller.classify_review_thread(_review_thread(body="P2 style suggestion only"))
+    classified = controller.classify_review_thread(_review_thread(body="P2 style suggestion only"), _review_task_context())
     ASSERTIONS.assertEqual(classified["severity"], "p2")
     ASSERTIONS.assertEqual(classified["actionability"], "advisory")
     ASSERTIONS.assertEqual(classified["classification"], "advisory")
@@ -7784,7 +7789,7 @@ def test_review_p2_style_suggestion_is_advisory_non_blocking():
 
 
 def test_review_p2_missing_test_stays_blocking_by_actionability():
-    classified = controller.classify_review_thread(_review_thread(body="P2 missing test coverage"))
+    classified = controller.classify_review_thread(_review_thread(body="P2 missing test coverage"), _review_task_context())
     ASSERTIONS.assertEqual(classified["severity"], "p2")
     ASSERTIONS.assertEqual(classified["actionability"], "test_required")
     ASSERTIONS.assertEqual(classified["classification"], "blocking")
@@ -7793,9 +7798,9 @@ def test_review_p2_missing_test_stays_blocking_by_actionability():
 
 def test_review_classification_low_nit_is_advisory_and_not_safe_without_evidence():
     thread = _review_thread(body="low nitpick style suggestion docs")
-    classified = controller.classify_review_thread(thread)
+    classified = controller.classify_review_thread(thread, _review_task_context())
     ASSERTIONS.assertEqual(classified["classification"], "advisory")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, {}))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _review_task_context({})))
 
 
 def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
@@ -7813,7 +7818,7 @@ def test_review_stale_fixed_thread_with_evidence_is_safe_to_resolve():
         "tests": ["pytest"],
         "reply_body": "Fixed in latest patch.",
     }
-    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, _review_task_context(evidence)))
 
 
 def test_review_unknown_author_routes_needs_manual():
@@ -7835,9 +7840,9 @@ def test_review_unknown_author_with_strict_generic_evidence_does_not_auto_resolv
         "failing_checks": False,
         "tests": ["pytest"],
     }
-    triage = controller.triage_review_thread_contract(thread, evidence)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(evidence))
     ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _review_task_context(evidence)))
 
 
 def test_review_unknown_author_active_failure_language_routes_patch_required():
@@ -7857,7 +7862,7 @@ def test_review_unknown_author_active_failure_language_routes_patch_required():
     for body in bodies:
         triage = controller.triage_review_thread_contract(
             _review_thread(author="human-reviewer", body=body),
-            evidence,
+            _review_task_context(evidence),
         )
         ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
         ASSERTIONS.assertEqual(triage["next_action"], "patch_required")
@@ -7890,8 +7895,8 @@ def test_review_codacy_safe_resolve_requires_success_and_zero_annotations():
         "reply_body": "stale",
     }
     good = dict(bad) | {"codacy_state": "SUCCESS", "codacy_annotations_count": 0}
-    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, bad))
-    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, good))
+    ASSERTIONS.assertFalse(controller.should_resolve_review_thread(thread, _review_task_context(bad)))
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, _review_task_context(good)))
 
 
 
@@ -7914,8 +7919,8 @@ def test_review_codacy_alias_success_zero_annotations_allows_evidence_resolve():
         "annotations_count": 0,
         "tests": ["pytest"],
     }
-    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, _review_task_context(evidence))["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, _review_task_context(evidence)))
 
 
 def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_resolve():
@@ -7933,8 +7938,8 @@ def test_review_codacy_nested_codacy_annotations_count_zero_allows_evidence_reso
         "codacy": {"codacy_state": "SUCCESS", "codacy_annotations_count": 0},
         "tests": ["pytest"],
     }
-    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, evidence)["decision"], "EVIDENCE_RESOLVE")
-    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, evidence))
+    ASSERTIONS.assertEqual(controller.triage_review_thread_contract(thread, _review_task_context(evidence))["decision"], "EVIDENCE_RESOLVE")
+    ASSERTIONS.assertTrue(controller.should_resolve_review_thread(thread, _review_task_context(evidence)))
 
 
 
@@ -7951,7 +7956,7 @@ def test_deepsource_complexity_with_green_evidence_is_not_patch_required():
         "codacy_conclusion": "success",
         "annotations_count": 0,
     }
-    triage = controller.triage_review_thread_contract(thread, evidence)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(evidence))
     ASSERTIONS.assertEqual(triage["provider"], "deepsource")
     ASSERTIONS.assertEqual(triage["decision"], "EVIDENCE_RESOLVE")
     ASSERTIONS.assertNotEqual(triage["decision"], "PATCH_REQUIRED")
@@ -7998,7 +8003,7 @@ def test_deepsource_required_fix_wording_advisory_routes_needs_manual():
     for phrase in phrases:
         triage = controller.triage_review_thread_contract(
             _review_thread(author="deepsource-io", body=phrase),
-            evidence,
+            _review_task_context(evidence),
         )
         ASSERTIONS.assertEqual(triage["provider"], "deepsource")
         ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
@@ -8017,10 +8022,10 @@ def test_deepsource_collapsible_if_without_required_failure_is_not_patch_require
 
 def test_deepsource_duplicate_complexity_comment_is_not_patch_required():
     triage = controller.triage_review_thread_contract(
-        _review_thread(author="deepsource-app", body="Duplicate repeated cyclomatic complexity advisory")
+        _review_thread(author="deepsource-app", body="Duplicate repeated cyclomatic complexity advisory"), _review_task_context()
     )
     classified = controller.classify_review_thread(
-        _review_thread(author="deepsource-app", body="Duplicate repeated cyclomatic complexity advisory")
+        _review_thread(author="deepsource-app", body="Duplicate repeated cyclomatic complexity advisory"), _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["provider"], "deepsource")
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
@@ -8067,7 +8072,7 @@ def test_deepsource_readability_bypass_advisory_is_not_patch_required():
 
 def test_deepsource_broad_refactor_routes_needs_manual():
     triage = controller.triage_review_thread_contract(
-        _review_thread(author="DeepSource: Python", body="Broad refactor suggestion for future roadmap")
+        _review_thread(author="DeepSource: Python", body="Broad refactor suggestion for future roadmap"), _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["provider"], "deepsource")
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
@@ -8077,7 +8082,7 @@ def test_deepsource_broad_refactor_routes_needs_manual():
 def test_deepsource_required_current_head_failing_check_routes_patch_required():
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high"),
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "failing_current_head_checks": [
                 {
@@ -8087,7 +8092,7 @@ def test_deepsource_required_current_head_failing_check_routes_patch_required():
                     "head_sha": "abc",
                 }
             ],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_required_current_head_check_failing")
@@ -8096,7 +8101,7 @@ def test_deepsource_required_current_head_failing_check_routes_patch_required():
 def test_deepsource_required_check_missing_current_head_sha_fails_closed():
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Required check is failing"),
-        {
+        _review_task_context({
             "failing_current_head_checks": [
                 {
                     "name": "DeepSource: Python",
@@ -8105,7 +8110,7 @@ def test_deepsource_required_check_missing_current_head_sha_fails_closed():
                     "head_sha": "abc",
                 }
             ],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "missing_current_head_sha")
@@ -8114,12 +8119,12 @@ def test_deepsource_required_check_missing_current_head_sha_fails_closed():
 def test_deepsource_required_check_missing_check_head_sha_fails_closed():
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Required check is failing"),
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "failing_current_head_checks": [
                 {"name": "DeepSource: Python", "conclusion": "FAILURE", "required": True}
             ],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "missing_deepsource_check_head_sha")
@@ -8144,8 +8149,8 @@ def test_deepsource_advisory_required_check_missing_head_fails_closed():
             }
         ],
     }
-    triage = controller.triage_review_thread_contract(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "missing_deepsource_check_head_sha")
@@ -8173,9 +8178,9 @@ def test_deepsource_advisory_required_check_matching_head_routes_patch_required(
             }
         ],
     }
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_required_current_head_check_failing")
@@ -8203,9 +8208,9 @@ def test_deepsource_required_failing_checks_matching_head_routes_patch_required(
             }
         ],
     }
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_required_current_head_check_failing")
@@ -8232,9 +8237,9 @@ def test_deepsource_required_failing_checks_missing_head_fails_closed():
             }
         ],
     }
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "missing_deepsource_check_head_sha")
@@ -8264,9 +8269,9 @@ def test_deepsource_required_failing_checks_stale_head_fails_closed():
             }
         ],
     }
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_check_head_mismatch")
@@ -8281,7 +8286,7 @@ def test_deepsource_required_failing_checks_stale_head_fails_closed():
 def test_deepsource_required_check_matching_head_sha_routes_patch_required():
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Required check is failing"),
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "failing_current_head_checks": [
                 {
@@ -8291,7 +8296,7 @@ def test_deepsource_required_check_matching_head_sha_routes_patch_required():
                     "head_sha": "abc",
                 }
             ],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_required_current_head_check_failing")
@@ -8302,7 +8307,7 @@ def test_deepsource_mixed_roadmap_safety_claim_routes_patch_required():
         _review_thread(
             author="deepsource[bot]",
             body="Future roadmap security bypass fail-open behavior remains",
-        )
+        ), _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(
@@ -8313,7 +8318,7 @@ def test_deepsource_mixed_roadmap_safety_claim_routes_patch_required():
 
 def test_deepsource_fail_open_security_bypass_claim_routes_patch_required():
     triage = controller.triage_review_thread_contract(
-        _review_thread(author="deepsource[bot]", body="Security bypass creates a fail-open path")
+        _review_thread(author="deepsource[bot]", body="Security bypass creates a fail-open path"), _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["provider"], "deepsource")
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
@@ -8321,7 +8326,7 @@ def test_deepsource_fail_open_security_bypass_claim_routes_patch_required():
 
 def test_non_deepsource_fail_open_remains_patch_required():
     triage = controller.triage_review_thread_contract(
-        _review_thread(author="coderabbitai[bot]", body="Fail-open security bypass remains") | {"reproducible": True}
+        _review_thread(author="coderabbitai[bot]", body="Fail-open security bypass remains") | {"reproducible": True}, _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["provider"], "coderabbitai")
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
@@ -8347,14 +8352,14 @@ def test_non_deepsource_fail_open_safety_claim_beats_safe_resolve_evidence():
         ("human-reviewer", "", "fail-open behavior allows unsafe resolve"),
     )
     for author, provider, body in cases:
-        triage = controller.triage_review_thread_contract(_review_thread(author=author, body=body), evidence)
+        triage = controller.triage_review_thread_contract(_review_thread(author=author, body=body), _review_task_context(evidence))
         ASSERTIONS.assertEqual(triage["provider"], provider)
         ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
 
 
 def test_codacy_action_required_review_remains_patch_required():
     triage = controller.triage_review_thread_contract(
-        _review_thread(author="codacy", body="Action required: correctness failure remains") | {"reproducible": True}
+        _review_thread(author="codacy", body="Action required: correctness failure remains") | {"reproducible": True}, _review_task_context()
     )
     ASSERTIONS.assertEqual(triage["provider"], "codacy-production")
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
@@ -8370,15 +8375,15 @@ def test_unknown_author_complexity_text_does_not_get_deepsource_advisory_policy(
 
 def test_deepsource_advisory_evidence_resolve_requires_current_head_tests():
     thread = _review_thread(author="deepsource[bot]", body="Maintainability readability advisory")
-    missing_evidence = controller.triage_review_thread_contract(thread, {"checks_green": True})
+    missing_evidence = controller.triage_review_thread_contract(thread, _review_task_context({"checks_green": True}))
     good_evidence = controller.triage_review_thread_contract(
         thread,
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "evidence_head_sha": "abc",
             "checks_green": True,
             "tests": ["pytest tests/scripts/test_pr_automation_controller.py"],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(missing_evidence["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(good_evidence["decision"], "EVIDENCE_RESOLVE")
@@ -8420,7 +8425,7 @@ def test_deepsource_negated_fixed_safety_comments_still_require_patch():
     for phrase in phrases:
         triage = controller.triage_review_thread_contract(
             _review_thread(author="deepsource[bot]", body=phrase),
-            evidence,
+            _review_task_context(evidence),
         )
         ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
         ASSERTIONS.assertEqual(triage["reason"], "deepsource_blocking_safety_or_contract_claim")
@@ -8430,13 +8435,13 @@ def test_deepsource_negated_fixed_non_safety_comments_stay_manual():
     """Generic negated fixed wording should not become evidence resolution."""
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="readability advisory not fixed"),
-        {
+        _review_task_context({
             "issue_fixed_or_stale": True,
             "current_head_sha": "abc",
             "evidence_head_sha": "abc",
             "checks_green": True,
             "tests": ["pytest"],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "not_fixed_or_stale")
@@ -8482,7 +8487,7 @@ def test_deepsource_reproducible_security_regression_routes_patch_required():
     """Reproducible security regression remains blocking for DeepSource."""
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="reproducible security regression"),
-        {"checks_green": False},
+        _review_task_context({"checks_green": False}),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
 
@@ -8491,9 +8496,9 @@ def test_deepsource_reproducible_metadata_security_regression_routes_patch_requi
     """DeepSource reproducible metadata makes active security regressions patch-required."""
     thread = _review_thread(author="deepsource[bot]", body="security regression") | {"reproducible": True}
     context = {"checks_green": False}
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_reproducible_safety_or_correctness_claim")
@@ -8507,9 +8512,9 @@ def test_deepsource_reproducible_metadata_correctness_failure_routes_patch_requi
     """DeepSource reproducible metadata makes active correctness failures patch-required."""
     thread = _review_thread(author="deepsource[bot]", body="correctness failure") | {"reproducible": True}
     context = {"checks_green": False}
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_reproducible_safety_or_correctness_claim")
@@ -8523,9 +8528,9 @@ def test_deepsource_non_reproducible_metadata_security_regression_needs_manual()
     """Explicit non-reproducible DeepSource security claims fail closed without a fix loop."""
     thread = _review_thread(author="deepsource[bot]", body="security regression") | {"reproducible": False}
     context = {"checks_green": False}
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
@@ -8541,9 +8546,9 @@ def test_deepsource_non_reproducible_metadata_correctness_failure_needs_manual()
     """Explicit non-reproducible DeepSource correctness claims fail closed without a fix loop."""
     thread = _review_thread(author="deepsource[bot]", body="correctness failure") | {"reproducible": False}
     context = {"checks_green": False}
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
@@ -8563,12 +8568,12 @@ def test_deepsource_non_reproducible_safety_claim_does_not_evidence_resolve():
     )
     triage = controller.triage_review_thread_contract(
         thread,
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "evidence_head_sha": "abc",
             "checks_green": True,
             "tests": ["pytest tests/scripts/test_pr_automation_controller.py"],
-        },
+        }),
     )
 
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
@@ -8586,7 +8591,7 @@ def test_deepsource_security_bypass_fail_open_routes_patch_required():
     for phrase in phrases:
         triage = controller.triage_review_thread_contract(
             _review_thread(author="deepsource[bot]", body=phrase),
-            {"checks_green": False},
+            _review_task_context({"checks_green": False}),
         )
         ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
 
@@ -8619,7 +8624,7 @@ def test_deepsource_explicit_reproducible_false_blocks_blocking_words():
         ),
     )
     for thread, context in cases:
-        triage = controller.triage_review_thread_contract(thread, context)
+        triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
         ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
         ASSERTIONS.assertEqual(triage["reason"], "explicitly_not_reproducible")
 
@@ -8631,7 +8636,7 @@ def test_deepsource_mixed_advisory_and_blocking_routes_patch_required():
             author="deepsource[bot]",
             body="readability advisory with security bypass fail-open",
         ),
-        {"checks_green": False},
+        _review_task_context({"checks_green": False}),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
 
@@ -8643,7 +8648,7 @@ def test_deepsource_future_roadmap_blocking_words_route_patch_required():
             author="deepsource[bot]",
             body="future roadmap security bypass fail-open",
         ),
-        {"checks_green": False},
+        _review_task_context({"checks_green": False}),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_blocking_safety_or_contract_claim")
@@ -8709,15 +8714,15 @@ def test_deepsource_required_check_state_missing_check_head_fails_closed():
     }
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Required check is failing"),
-        context,
+        _review_task_context(context),
     )
     classified = controller.classify_review_thread(
         _review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high"),
-        context,
+        _review_task_context(context),
     )
     summary = controller.summarize_review_threads(
         [_review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high")],
-        context,
+        _review_task_context(context),
     )
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "missing_deepsource_check_head_sha")
@@ -8743,9 +8748,9 @@ def test_deepsource_required_check_stale_check_head_fails_closed_in_classify_and
         ],
     }
     thread = _review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high")
-    triage = controller.triage_review_thread_contract(thread, context)
-    classified = controller.classify_review_thread(thread, context)
-    summary = controller.summarize_review_threads([thread], context)
+    triage = controller.triage_review_thread_contract(thread, _review_task_context(context))
+    classified = controller.classify_review_thread(thread, _review_task_context(context))
+    summary = controller.summarize_review_threads([thread], _review_task_context(context))
     ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
     ASSERTIONS.assertEqual(triage["reason"], "deepsource_check_head_mismatch")
     ASSERTIONS.assertEqual(classified["classification"], "needs_manual")
@@ -8760,7 +8765,7 @@ def test_deepsource_required_check_matching_head_routes_patch_required():
     """Matching required DeepSource current-head failure remains PATCH_REQUIRED."""
     triage = controller.triage_review_thread_contract(
         _review_thread(author="deepsource[bot]", body="Cyclomatic complexity is high"),
-        {
+        _review_task_context({
             "current_head_sha": "abc",
             "failing_current_head_checks": [
                 {
@@ -8770,7 +8775,7 @@ def test_deepsource_required_check_matching_head_routes_patch_required():
                     "head_sha": "abc",
                 }
             ],
-        },
+        }),
     )
     ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
 
@@ -8787,7 +8792,7 @@ def test_deepsource_resolved_or_outdated_advisory_does_not_evidence_resolve():
         _review_thread(author="deepsource[bot]", body="readability advisory", is_resolved=True),
         _review_thread(author="deepsource[bot]", body="readability advisory", is_outdated=True),
     ):
-        triage = controller.triage_review_thread_contract(thread, evidence)
+        triage = controller.triage_review_thread_contract(thread, _review_task_context(evidence))
         ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
         ASSERTIONS.assertEqual(triage["reason"], "inactive_or_resolved_thread")
 
@@ -8795,7 +8800,7 @@ def test_deepsource_resolved_or_outdated_advisory_does_not_evidence_resolve():
 def test_classify_review_thread_deepsource_blocking_metadata():
     """Classify DeepSource blocking metadata."""
     classified = controller.classify_review_thread(
-        _review_thread(author="deepsource[bot]", body="security bypass fail-open")
+        _review_thread(author="deepsource[bot]", body="security bypass fail-open"), _review_task_context()
     )
     ASSERTIONS.assertEqual(classified["provider"], "deepsource")
     ASSERTIONS.assertEqual(classified["classification"], "blocking")
@@ -8877,7 +8882,7 @@ def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_bl
     thread = _review_thread(thread_id="T9", body="stale advisory style")
     plan = controller.build_review_thread_resolution_plan(
         [thread],
-        {
+        _review_task_context({
             "resolution_evidence": {
                 "T9": {
                     "safe_to_resolve": True,
@@ -8893,7 +8898,7 @@ def test_review_resolution_plan_includes_reply_body_and_missing_providers_not_bl
                     "reply_body": "Addressed in current head.",
                 }
             }
-        },
+        }),
     )
     ASSERTIONS.assertFalse(plan["missing_providers_blocking"])
     ASSERTIONS.assertEqual(plan["items"][0]["reply_body"], "Addressed in current head.")
@@ -8921,7 +8926,7 @@ def test_summarize_review_threads_mixed_blocking_advisory_and_manual():
         _review_thread(thread_id="A", body="nit style suggestion"),
         _review_thread(thread_id="M", author="mystery-user", body="please re-check"),
     ]
-    summary = controller.summarize_review_threads(items)
+    summary = controller.summarize_review_threads(items, _review_task_context())
     ASSERTIONS.assertEqual(summary["blocking_count"], 1)
     ASSERTIONS.assertEqual(summary["advisory_count"], 1)
     ASSERTIONS.assertEqual(summary["needs_manual_count"], 1)
@@ -8937,7 +8942,7 @@ def test_summarize_review_threads_only_manual_needs_manual():
 
 
 def test_summarize_review_threads_only_advisory_continue_checks_and_provider_presence():
-    summary = controller.summarize_review_threads([_review_thread(author="coderabbitai[bot]", body="style suggestion")])
+    summary = controller.summarize_review_threads([_review_thread(author="coderabbitai[bot]", body="style suggestion")], _review_task_context())
     ASSERTIONS.assertEqual(summary["blocking_count"], 0)
     ASSERTIONS.assertEqual(summary["advisory_count"], 1)
     ASSERTIONS.assertEqual(summary["needs_manual_count"], 0)
@@ -8971,7 +8976,7 @@ def test_summarize_review_threads_ignores_outdated_unresolved_from_counts():
 def test_summarize_review_threads_expected_providers_missing_never_block_or_change_next_action():
     summary = controller.summarize_review_threads(
         [_review_thread(author="coderabbitai[bot]", body="style suggestion")],
-        {"expected_providers": ["coderabbitai", "greptile"]},
+        _review_task_context({"expected_providers": ["coderabbitai", "greptile"]}),
     )
     ASSERTIONS.assertIn("coderabbitai", summary["present_providers"])
     ASSERTIONS.assertIn("greptile", summary["missing_providers"])
@@ -8984,7 +8989,7 @@ def test_summarize_review_threads_expected_providers_missing_never_block_or_chan
 def test_summarize_review_threads_expected_providers_present_no_missing_and_blocking_drives_action():
     summary = controller.summarize_review_threads(
         [_review_thread(author="coderabbitai[bot]", body="P1 bug in runtime")],
-        {"expected_providers": ["coderabbitai"]},
+        _review_task_context({"expected_providers": ["coderabbitai"]}),
     )
     ASSERTIONS.assertEqual(summary["present_providers"], ["coderabbitai"])
     ASSERTIONS.assertEqual(summary["missing_providers"], [])
@@ -9957,7 +9962,7 @@ def test_review_triage_contract_review_path_forbidden_over_allowed_precedence():
     ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
 
 
-def test_review_triage_contract_review_path_missing_or_empty_allowlist_does_not_forbid_by_itself():
+def test_review_triage_contract_missing_or_empty_task_scope_is_manual():
     for context in ({}, {"files_allowed": []}, {"files_allowed": ""}, {"files_allowed": None}):
         triage = controller.triage_review_thread_contract(
             {
@@ -9968,8 +9973,8 @@ def test_review_triage_contract_review_path_missing_or_empty_allowlist_does_not_
             },
             dict(context, checks_green=False),
         )
-        ASSERTIONS.assertEqual(triage["decision"], "PATCH_REQUIRED")
-        ASSERTIONS.assertEqual(triage["reason"], "active_safety_or_current_head_failure_or_contract_violation")
+        ASSERTIONS.assertEqual(triage["decision"], "NEEDS_MANUAL")
+        ASSERTIONS.assertEqual(triage["reason"], "forbidden_file_request")
 
 
 def test_review_triage_contract_review_path_malformed_allowlist_fails_closed():

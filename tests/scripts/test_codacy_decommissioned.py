@@ -250,8 +250,12 @@ def _clean_merge_context() -> dict:
 
 
 @pytest.mark.unit
-def test_auto_merge_is_reachable_without_any_codacy_evidence():
-    result = controller.can_auto_merge(_clean_merge_context())
+def test_auto_merge_is_reachable_without_any_codacy_evidence(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 495)
+    ledger.initialize(0, "new PR; verified clean repair history")
+    context = _clean_merge_context()
+    context["fix_loop"] = {"path": str(ledger.path), "repo": "owner/repo", "pr": 495}
+    result = controller.can_auto_merge(context)
     reason = str(result.get("reason") or "")
     # La proprieta' vera: senza UN SOLO dato Codacy il merge dev'essere
     # RAGGIUNGIBILE. Asserire solo "reason non contiene codacy" sarebbe debole:

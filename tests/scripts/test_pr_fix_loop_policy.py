@@ -657,14 +657,17 @@ def test_real_git_same_named_tag_cannot_replace_audited_branch(ledger,tmp_path):
     git('branch','collision')
     git('tag','collision',tag_head)
     assert tag_head != branch_head
-    ledger.reserve('tag-collision',assessment('CURRENT_DEFECT',pr_branch='collision'))
+    ledger.reserve('tag-collision',assessment('CURRENT_DEFECT',pr_branch='collision',current_head_sha=tag_head))
     sent=[]
     def runner(command,**_kwargs):
         if command[1]=='push':
             sent.append(command)
             return ''
         return git(*command[1:])
-    result=flow.push_with_retry_once(runner,'owner/repo','collision',context=repair_context(ledger,'tag-collision',branch='collision'))
+    context=repair_context(ledger,'tag-collision',branch='collision',claim=False)
+    context['current_head_sha']=tag_head
+    assert controller.fix_policy.claim_patch_gate(context)['allowed']
+    result=flow.push_with_retry_once(runner,'owner/repo','collision',context=context)
     assert result['ok']
     assert f'{branch_head}:refs/heads/collision' in sent[0]
 
@@ -1055,3 +1058,44 @@ def test_direct_claim_and_push_cannot_skip_branch(ledger):
     result=ledger.claim_patch('direct-claim','head',branch='branch')
     assert result['allowed']
     assert not ledger.start_push('direct-claim',result['claim_token'])['allowed']
+
+
+@pytest.mark.parametrize('path',['betfair_client.py','order_manager.py','telegram_bot.py',
+    'telegram_listener.py','telegram_bot_runtime.py','simulation_broker.py',
+    'cashout_wiring.py','core/risk_gate.py','services/betfair_service.py',
+    'future_package/exchange_adapter.py','config.json','unknown_package/source.rs'])
+def test_all_product_python_requires_explicit_task_scope(path):
+    t={'id':'T1','path':path,'body':'current bug'}
+    ctx={'current_head_sha':'head','review_assessments':{'T1':assessment('CURRENT_DEFECT')}}
+    assert controller.triage_review_thread_contract(t,ctx)['decision']=='NEEDS_MANUAL'
+    ctx['files_allowed']=[path]
+    assert controller.triage_review_thread_contract(t,ctx)['decision']=='PATCH_REQUIRED'
+    ctx['files_forbidden']=[path]
+    assert controller.triage_review_thread_contract(t,ctx)['decision']=='NEEDS_MANUAL'
+
+
+def test_initial_push_refuses_incorporated_unassessed_remote_head(tmp_path,policy):
+    import subprocess
+    remote=tmp_path/'remote.git'; worker=tmp_path/'worker'; other=tmp_path/'other'
+    def git(where,*args):
+        result=subprocess.run(['git',*args],cwd=where,text=True,capture_output=True)
+        if result.returncode: raise RuntimeError(result.stderr)
+        return result.stdout.strip()
+    git(tmp_path,'init','--bare',str(remote));git(tmp_path,'clone',str(remote),str(worker))
+    git(worker,'config','user.name','test');git(worker,'config','user.email','test@example.test')
+    git(worker,'checkout','-b','branch');git(worker,'commit','--allow-empty','-m','assessed')
+    assessed=git(worker,'rev-parse','HEAD');git(worker,'push','origin','branch')
+    ledger=policy.FixLoopLedger(tmp_path/'initial.sqlite','owner/repo',495)
+    ledger.initialize(0,'new PR');ledger.reserve('initial',assessment('CURRENT_DEFECT',current_head_sha=assessed))
+    ctx=repair_context(ledger,'initial',claim=False);ctx['current_head_sha']=assessed
+    assert policy.claim_patch_gate(ctx)['allowed']
+    git(tmp_path,'clone',str(remote),str(other));git(other,'checkout','branch')
+    git(other,'config','user.name','test');git(other,'config','user.email','test@example.test')
+    git(other,'commit','--allow-empty','-m','unassessed');advanced=git(other,'rev-parse','HEAD')
+    git(other,'push','origin','branch');git(worker,'fetch','origin');git(worker,'merge','--ff-only','origin/branch')
+    git(worker,'commit','--allow-empty','-m','repair')
+    result=flow.push_with_retry_once(lambda cmd,**kwargs:git(worker,*cmd[1:]),'owner/repo','branch',context=ctx)
+    assert not result['ok']
+    assert git(remote,'rev-parse','refs/heads/branch')==advanced
+    assert ledger.status()['completed_count']==0
+    assert ledger.status()['reserved_count']==1
