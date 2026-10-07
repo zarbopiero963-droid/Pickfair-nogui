@@ -137,9 +137,9 @@ def test_block_grok_aspetta_abbastanza_da_ricevere_la_risposta() -> None:
 
 # Sopra `high` il ragionamento e' ancora piu' lungo: Sol a `max` (decisione
 # dell'owner del 07-10-2026) con i suoi 100 s di prima perderebbe la risposta
-# come la perdeva Grok a `high`. 600 s, e il job sale di conseguenza.
+# come la perdeva Grok a `high`. Sol a `max` usa 1800 s, e il job sale di conseguenza.
 EFFORT_MASSIMI = {"xhigh", "max"}
-LIMITE_MINIMO_EFFORT_MASSIMO = 600
+LIMITE_MINIMO_EFFORT_MASSIMO = 1800
 
 
 def _effort(workflow: str) -> str:
@@ -181,7 +181,7 @@ def test_block_merge_readiness_aspetta_il_reviewer(workflow: str) -> None:
     Se il suo budget e' piu' corto del job di review, una review valida ma
     lenta lascia il gate ROSSO, e il gate non si rivaluta da solo (serve un
     `workflow_dispatch` o un nuovo push). Con 900 s succedeva gia' con Grok
-    (job da 20 minuti); con Sol a effort `max` (40 minuti) sarebbe diventato
+    (job da 20 minuti); con Sol a effort `max` (105 minuti) sarebbe diventato
     il caso ordinario dei push lenti. Rilievo di GPT-5.6 Sol sulla #492.
     """
     budget = _budget_merge_readiness()
