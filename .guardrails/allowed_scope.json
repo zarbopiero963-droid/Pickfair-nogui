@@ -2006,6 +2006,26 @@
       ],
       "max_files": 6,
       "description": "Mandato owner 07/10/2026: consolidamento documentale MCP; baseline e068a14, #492/#493 mergiate, nessuna PR aperta. Entrypoint #491, gerarchia, serialita per repository, dipendenze statiche, ownership, API unica, milestone SIM/LIVE/totale e issue operative sincronizzate. Test di governance con mutazioni. Nessuna modifica runtime/workflow/reviewer policy; rinvio P41. MANUAL e alternativa updater LIVE restano decisioni owner. Merge manuale per AGENTS/CLAUDE. QUARTO E ULTIMO ciclo autorizzato dall'owner (deroga al cap 3 FIX_LOOP): integrata la decisione owner SIM/LIVE 07/10 (SIM = Delayed App Key reale + SimulationBroker + bankroll fittizio; LIVE = Live App Key + Betfair reale + saldo reale; parity, un solo set tool MCP, readiness SIM/LIVE, PR15 mode-scoped, matrice e test negativi) e chiusi i 9 thread Codex su 17ce715. Stessi 6 file, nessun runtime/workflow. QUINTO ciclo autorizzato esplicitamente dall'owner il 07/10 per i 4 rilievi Codex su 9165482 (gate PR58→PR59, un solo motore/set tool, modalità REAL, sequenza completa). Stessi 6 file."
+    },
+    "pr-flow-bounded-triage": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "docs/hard_verify_spec.md",
+        "scripts/pr_automation_controller.py",
+        "scripts/pr_flow_automation.py",
+        "scripts/pr_fix_loop_policy.py",
+        "tests/scripts/test_pr_automation_controller.py",
+        "tests/scripts/test_pr_flow_automation.py",
+        "tests/scripts/test_pr_fix_loop_policy.py",
+        "scripts/pr_clean_scope_rebuild.py",
+        "tests/scripts/test_pr_clean_scope_rebuild.py"
+      ],
+      "max_files": 13,
+      "allow_tests": true,
+      "description": "Mandato owner 07/10/2026: una sola PR governance/automation policy/test, baseline main 30fb165 (#494 merged), nessuna PR aperta al preflight. Cap globale FIX_LOOP=5, contatore per-PR persistente cumulativo, sesto ciclo bloccato prima di patch/commit/push, owner override bounded tracciato, triage CURRENT_DEFECT/GUARDRAIL_GAP/THEORETICAL_MUTATION, REVIEW_CHURN e KNOWN_LIMITATION_ACCEPTED_BY_OWNER con prove e gate invariati. Nessun runtime prodotto, DB Pickfair, MCP/Control API o workflow/reviewer riattivato. Merge manuale owner per AGENTS/CLAUDE. Scope include anche il helper clean-scope e i suoi test: il RED-FIRST mostra che il suo push diretto non registrava la completion nel ledger; cablata la stessa authority per impedire un bypass del contatore."
     }
   }
 }

@@ -17,6 +17,18 @@ from unittest import TestCase
 import scripts.pr_automation_controller as controller
 
 ASSERTIONS = TestCase()
+
+
+def _reserved_repair_context(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "budget.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR before review repair")
+    reserved = ledger.reserve("repair-1", {
+        "class": "CURRENT_DEFECT", "current_head_correct": False,
+        "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
+    })
+    ASSERTIONS.assertTrue(reserved["allowed"])
+    return {"fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"}}
+
 NEXT_ACTION_ALLOWED = {
     "wait_pending",
     "fix_codacy_current_issues",
@@ -9772,11 +9784,11 @@ def test_build_review_triage_matrix_patch_required_full_payload():
     ASSERTIONS.assertEqual(matrix["next_action"], "patch_required")
 
 
-def test_build_review_triage_matrix_patch_required_authorized_can_patch_true():
+def test_build_review_triage_matrix_patch_required_authorized_can_patch_true(tmp_path):
     comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
     matrix = controller.build_review_triage_matrix(
         [comment],
-        {"checks_green": False, "standing_owner_authorized": True},
+        {"checks_green": False, "standing_owner_authorized": True, **_reserved_repair_context(tmp_path)},
     )
     item = matrix["items"][0]
     ASSERTIONS.assertTrue(item["requires_patch"])
@@ -9792,9 +9804,11 @@ def test_build_review_triage_matrix_ignores_generic_can_patch_without_explicit_a
     ASSERTIONS.assertFalse(item["can_patch"])
 
 
-def test_build_review_triage_matrix_patch_authorized_key_enables_can_patch():
+def test_build_review_triage_matrix_patch_authorized_key_enables_can_patch(tmp_path):
     comment = {"thread_id": "t-1", "body": "Active bypass failure in guard path", "active": True, "reproducible": True}
-    matrix = controller.build_review_triage_matrix([comment], {"checks_green": False, "patch_authorized": True})
+    matrix = controller.build_review_triage_matrix([comment], {
+        "checks_green": False, "patch_authorized": True, **_reserved_repair_context(tmp_path),
+    })
     item = matrix["items"][0]
     ASSERTIONS.assertTrue(item["requires_patch"])
     ASSERTIONS.assertTrue(item["can_patch"])
@@ -11774,12 +11788,13 @@ def test_automation_mode_action_matrix_core_modes():
     ASSERTIONS.assertTrue(controller.automation_mode_allows("push", live)["allowed"])
 
 
-def test_can_run_live_action_requires_mode_and_per_action_flag():
+def test_can_run_live_action_requires_mode_and_per_action_flag(tmp_path):
     report_only = _automation_ctx("report_only")
     blocked = controller.can_run_live_action("safe_autofix", report_only)
     ASSERTIONS.assertFalse(blocked["allowed"])
 
     live_ctx = _automation_ctx("live")
+    live_ctx.update(_reserved_repair_context(tmp_path))
     ASSERTIONS.assertTrue(controller.can_run_safe_autofix(live_ctx)["allowed"])
 
     no_safe = _automation_ctx(
@@ -11824,11 +11839,12 @@ def test_can_run_safe_autofix_accepts_raw_env_live_with_flag_disabled():
     ASSERTIONS.assertEqual(result["reason"], "safe_autofix_enabled_disabled")
 
 
-def test_can_run_safe_autofix_accepts_raw_env_live_with_flag_enabled():
+def test_can_run_safe_autofix_accepts_raw_env_live_with_flag_enabled(tmp_path):
     result = controller.can_run_safe_autofix(
         {
             "AUTOMATION_MODE": "live",
             "SAFE_AUTOFIX_ENABLED": "true",
+            **_reserved_repair_context(tmp_path),
         }
     )
     ASSERTIONS.assertTrue(result["allowed"])
@@ -11864,13 +11880,14 @@ def test_can_run_safe_autofix_nested_omitted_flag_does_not_inherit_env():
     ASSERTIONS.assertEqual(result["reason"], "safe_autofix_enabled_disabled")
 
 
-def test_can_run_safe_autofix_nested_present_flag_allows_action():
+def test_can_run_safe_autofix_nested_present_flag_allows_action(tmp_path):
     result = controller.can_run_safe_autofix(
         {
             "AUTOMATION_MODE": "live",
             "SAFE_AUTOFIX_ENABLED": "false",
             "automation_mode": "live",
             "automation_flags": {"SAFE_AUTOFIX_ENABLED": True},
+            **_reserved_repair_context(tmp_path),
         }
     )
     ASSERTIONS.assertTrue(result["allowed"])
@@ -12216,14 +12233,14 @@ def test_clean_rebuild_command_skips_post_fix_gate_context_when_missing():
     ASSERTIONS.assertNotIn("--post-fix-gate-context", cmd)
 
 
-def test_maybe_launch_clean_rebuild_populates_decision_gate_context_and_launches(monkeypatch):
+def test_maybe_launch_clean_rebuild_populates_decision_gate_context_and_launches(monkeypatch, tmp_path):
     args = _args()
     args.clean_scope_rebuild = True
     args.clean_scope_rebuild_mode = "execute"
     decision: dict[str, Any] = {
         "actions": [],
         "warnings": [],
-        "post_fix_audit_gate_context": _post_fix_gate_ctx(),
+        "post_fix_audit_gate_context": _post_fix_gate_ctx(**_reserved_repair_context(tmp_path)),
     }
     pr = {"headRefName": "feature/branch", "headRefOid": "abc123"}
     ctx = controller.NextActionContext(args, pr, [], [], [], [], decision)
@@ -12830,11 +12847,13 @@ def test_can_auto_merge_reason_codes_for_missing_merge_evidence():
     ASSERTIONS.assertEqual(unresolved["reason"], "unresolved_active_missing")
 
 
-def test_assert_live_action_allowed_raises_when_blocked():
+def test_assert_live_action_allowed_raises_when_blocked(tmp_path):
     with ASSERTIONS.assertRaises(PermissionError):
         controller.assert_live_action_allowed("push", _automation_ctx("disabled"))
 
-    allowed = controller.assert_live_action_allowed("safe_autofix", _automation_ctx("live"))
+    allowed = controller.assert_live_action_allowed("safe_autofix", {
+        **_automation_ctx("live"), **_reserved_repair_context(tmp_path),
+    })
     ASSERTIONS.assertTrue(allowed["allowed"])
 
 def test_append_automation_ledger_event_rejects_raw_path_outside_configured_base(tmp_path):

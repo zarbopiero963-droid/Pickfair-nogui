@@ -611,34 +611,46 @@ CodeRabbit) non compaiono come thread inline e non arrivano via
 webhook: vivono solo nel corpo della review. Leggere solo i thread
 => triage incompleto.
 
-Il flusso classifica ogni thread attivo:
+La classificazione distingue la **classe del finding** dalla **decisione**.
+Non dipende dal nome del reviewer (Sol/Grok/Codex/qualsiasi provider).
+Leggere il current head, riprodurre il finding e confrontare il contratto owner.
+Il testo del reviewer, il nome del provider o parole come “security/coverage”
+non attestano da soli un difetto corrente.
 
-- PATCH_REQUIRED
-- EVIDENCE_RESOLVE
-- SKIP
-- NEEDS_MANUAL
+| Classe | Current head errato? | Rischio materiale? | Default |
+|---|---:|---:|---|
+| `CURRENT_DEFECT` | sì | qualsiasi | `PATCH_REQUIRED` entro scope/budget |
+| `GUARDRAIL_GAP` safety/contract-critical | no | alto, dimostrato | `PATCH_REQUIRED` entro scope/budget |
+| `GUARDRAIL_GAP` non-critical | no | basso/medio | `NEEDS_MANUAL` / limite accettato dall'owner |
+| `THEORETICAL_MUTATION` | no | non dimostrato | `SKIP` / `NEEDS_MANUAL`, nessuna patch automatica |
+| stale/duplicate/already-covered | no | no | `EVIDENCE_RESOLVE` con prove e gate §13 |
+| scope forbidden / decisione owner | n/a | n/a | `NEEDS_MANUAL` |
 
-Capisce:
+`CURRENT_DEFECT`: bug presente, contratto autorevole contraddittorio, route
+errata, requisito owner violato, test che dimostra regressione, fail-open o
+rischio safety/security/real-money corrente. Fuori scope/budget o con una
+scelta owner necessaria → `NEEDS_MANUAL`, mai un falso verde.
 
-- commento è stale?
-- è su current head?
-- è provider conosciuto?
-- è bug reale?
-- è safety/security?
-- è fail-open?
-- è refactor/style?
-- è DeepSource advisory?
-- è già coperto da test?
-- richiede file vietati?
+`GUARDRAIL_GAP`: contenuto corrente corretto ma un test/checker manca una
+**regressione futura concreta**. Valutare rischio, safety/security/real-money,
+criticità contrattuale, probabilità, copertura esistente, costo/churn e budget.
+Solo una lacuna materialmente importante autorizza `PATCH_REQUIRED`.
 
-DeepSource diventa speciale:
+`THEORETICAL_MUTATION`: contenuto corrente corretto, nuova parafrasi, sinonimo,
+spelling/casing o variante grammaticale senza difetto/rischio corrente né
+regressione introdotta. Non è automaticamente `PATCH_REQUIRED`.
+Nessun checker regex/documentale deve riconoscere ogni possibile frase umana
+prima che una PR possa terminare.
 
-- DeepSource complexity/style/collapsible-if non-required => advisory
-- DeepSource required current-head failing => PATCH_REQUIRED
-- DeepSource fail-open/security claim => PATCH_REQUIRED
-- DeepSource broad refactor => NEEDS_MANUAL
-
-La policy DeepSource dice che DeepSource è advisory di default e va patchato solo se è required failing check current-head o dimostra bug reale/safety/fail-open/violazione contratto.
+DeepSource rimane advisory salvo required failing current-head o prova di
+un bug reale/safety/fail-open/violazione contratto. Il triage legacy può
+segnalare parole sospette, ma non concede il permesso di patch: la prenotazione
+richiede una valutazione verificata, strutturata e legata al current head.
+Input `review_assessments[thread_id]`: `class`, `thread_id`,
+`current_head_sha`, `current_head_correct` booleano e `evidence`; eventuali
+`material`, `contract_critical`, rischi, `scope_forbidden`,
+`owner_decision_required`. Sono risultati dell'ispezione dell'orchestratore,
+**non campi da copiare dal payload/prosa di un reviewer**. Mancata prova → manuale.
 
 ---
 
@@ -668,22 +680,142 @@ Poi riparte da:
 - check status
 - review triage
 
-Se incontra stesso errore ripetuto, churn o retry budget esaurito:
+### Budget definitivo e persistenza
 
+```text
+MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
 ```
+
+Massimo cinque passaggi **patch → push** originati da `PATCH_REQUIRED` per PR.
+Conteggio cumulativo: nuovo commit/head, finding risolti, reviewer/provider,
+CI verde, progresso, cluster o rerun non lo azzerano. La pubblicazione iniziale
+di un nuovo task non è un ciclo di riparazione. Un push di un cluster consuma
+un ciclo; il retry di trasporto dello stesso push non ne consuma un secondo.
+
+Prima della patch prenotare un ciclo nel ledger transazionale di automazione
+`FixLoopLedger` (`scripts/pr_fix_loop_policy.py`). Non è il DB Pickfair.
+Identità `(repo, PR)`; storico iniziale attestato + righe `cycles` completate
+sono il contatore. Prenotazioni incompiute occupano un posto e bloccano nuovi
+cicli: errore di push, response lost o crash → recupero manuale, mai rimborso
+/reset automatico. Dopo push confermato, `push_with_retry_once` registra il
+current head una sola volta. Il ledger registra `reserved → pushing → completed`:
+`pushing` viene persistito **prima** dell'invio, quindi un response lost/crash
+non rende riutilizzabile automaticamente la prenotazione. Soltanto un rifiuto
+non-fast-forward confermato abilita l'unico retry di trasporto già previsto,
+con lo stesso ciclo e nuove prove di audit/head; nessun nuovo slot.
+Anche il push diretto del clean-scope rebuild usa intent e completion comuni.
+Reinvocare una completion identica è idempotente;
+riusare una prenotazione completata per una nuova patch è vietato.
+
+Ledger in storage persistente dell'orchestratore **fuori dai checkout/artefatti
+CI temporanei**. Non crearne uno vuoto a ogni run. Inizializzazione esplicita
+soltanto per PR nuova senza repair push, oppure dopo ricostruzione verificata
+dell'intera storia. `initialize` non sovrascrive una PR già registrata.
+Stato assente/corrotto, identità incoerente o ciclo mancante → `NEEDS_MANUAL`.
+Il vecchio JSON del controller e il conteggio per autore/messaggio dei commit
+sono diagnostica, **non** il contatore autorevole.
+
+`PR_FIX_LOOP_LEDGER` indica il medesimo ledger ai preflight/report del controller.
+Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
+Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
+a una PR, passare sempre l'identità PR (o `PR_NUMBER`): ometterla per fingere
+una pubblicazione iniziale viola il contratto operativo. Tutte le riparazioni
+passano dai gate; il vecchio launcher del supervisor, assente su main, non
+viene dispatchato né riattivato perché privo di enforcement del nuovo budget.
+La pianificazione passiva/dry-run non concede permessi di mutazione.
+
+Al tentativo del sesto ciclo:
+
+```text
 AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
-REASON=patch_required_loop_stopped
+REASON=fix_loop_budget_exhausted
 ```
 
-Retry budget: massimo 3 iterazioni del fix loop per PR. Il conteggio è
-per-PR e cumulativo (non si resetta su progresso parziale), in linea con
-il cap di 3 tentativi auto-fix per PR definito in AGENTS.md. Una nuova
-iterazione si conta a ogni passaggio patch→push innescato da
-PATCH_REQUIRED sulla stessa PR.
+Vietati nuova patch, commit, push, resolve che finga una correzione e merge
+automatico del problema ancora aperto. Cinque cicli completati senza finding
+residui non invalidano le prove né bypassano/alterano Merge Readiness.
+
+### Anti-churn
+
+Contratto/codice corretto + nuove mutation equivalenti nella stessa area senza
+nuovo current defect = `REVIEW_CHURN`; niente altro fix-loop automatico.
+Il ledger conserva osservazioni per area, anche tra run/head differenti.
+Può fermarsi in `NEEDS_MANUAL` prima del quinto ciclo. A budget esaurito:
+
+```text
+AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
+REASON=review_churn_or_fix_loop_budget_exhausted
+```
+
+Un nuovo difetto corrente dimostrato resta bloccante; non viene nascosto come
+churn. Il cap non è un'autorizzazione a ignorare safety/security o contratti.
+
+### Deroga owner bounded
+
+L'owner della repository deve scrivere nella PR un commento dedicato contenente
+soltanto questa riga esplicita (niente esempi citati o testo aggiuntivo):
+
+```text
+OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=5
+```
+
+L'ID commento viene letto via API GitHub autenticata; verificare autore owner,
+repository, PR e URL. Con count=5, abilita esattamente il sesto ciclo;
+ceiling=6. La settima iterazione richiede una **nuova** decisione puntuale.
+Commento e ceiling restano registrati in `grants`; rigiocare l'ID non aggiunge
+budget. Nessuna modifica del cap globale 5, nessun reset, nessuna trasferibilità
+ad altra PR, nessun `IGNORE_FIX_LOOP_LIMIT=true`.
+
+CLI operativa (`--ledger`, `--repo`, `--pr` obbligatori):
+
+```bash
+python scripts/pr_fix_loop_policy.py status --ledger /persistent/pr-flow/budget.sqlite --repo owner/repo --pr 495
+python scripts/pr_fix_loop_policy.py reserve --ledger /persistent/pr-flow/budget.sqlite --repo owner/repo --pr 495 --cycle repair-1 --assessment-file /trusted/current-head-assessment.json
+python scripts/pr_fix_loop_policy.py override --ledger /persistent/pr-flow/budget.sqlite --repo owner/repo --pr 495 --owner-comment-id 123456
+```
+
+`initialize --historical-count N --history-evidence TEXT` è bootstrap esplicito,
+non parte del rerun automatico. `complete --cycle ID --head SHA` è recupero
+esplicito dopo verifica del push; normalmente lo esegue il gate di push.
 
 ---
 
 ## 13. EVIDENCE_RESOLVE — risolve solo con prove
+
+### Limite noto accettato: non è una correzione
+
+`KNOWN_LIMITATION_ACCEPTED_BY_OWNER` significa limite tecnico reale, current
+head corretto, assenza di current defect e scelta owner esplicita di non
+ampliare la copertura. Non dichiarare `FIXED`, non inventare test/evidence.
+Esempi: regex/checker incompleto ma sufficiente, mutation teoriche, advisory
+non material, costo/churn sproporzionati.
+
+L'owner deve annotare nella PR un commento dedicato con soltanto questa riga
+(decisione legata a thread e head):
+
+```text
+KNOWN_LIMITATION_ACCEPTED_BY_OWNER PR=495 THREAD=PRRT_example HEAD=<current-head-sha>
+```
+
+Il planner legge `owner_decision_ids[thread_id]` dalla API autenticata e
+verifica identità/URL/owner, classificazione verificata, head corrente,
+validazione, test pertinenti e tutti i check settled/verdi. Solo allora può
+rispondere con il disposition e il link owner e risolvere formalmente il thread.
+Le condizioni comuni di resolve restano identiche. Non si pretende che il
+limite sia corretto o stale. L'assenza del reviewer da una allowlist non
+trasforma la decisione owner in una correzione né determina la classe.
+
+Sicurezza/credenziali/real-money/fail-open/corruzione dati/bypass risk gate,
+violazioni owner e bug runtime dimostrati non possono essere silently accepted.
+Default `NEEDS_MANUAL`; il percorso automatico di accepted limitation rifiuta
+rischi protetti/material e current defect, anche con un commento owner generico.
+Una vera decisione owner su questi rischi richiede gestione manuale esplicita.
+
+La readiness legge ancora i thread reali: unresolved diventa 0 solo dopo la
+risoluzione formale. Nessun ignore-all-review/ignore-Codex/ignore-unresolved,
+force-green o bypass safety. Reviewer/merge restano #426/P41 e decisioni
+successive; policy files richiedono merge manuale owner.
+
 
 Se un thread è stale/advisory/già coperto:
 

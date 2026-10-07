@@ -324,9 +324,9 @@ def stop_if_forbidden_remains(
 def build_clean_gate_ctx(args: RebuildArgs) -> dict[str, Any]:
     context = dict(args.post_fix_gate_context) if isinstance(args.post_fix_gate_context, dict) else {}
     context.setdefault("action", "clean_scope_rebuild")
-    context.setdefault("pr", args.pr_number)
-    context.setdefault("branch", args.branch)
-    context.setdefault("repo", args.repo)
+    context["pr"] = args.pr_number
+    context["branch"] = args.branch
+    context["repo"] = args.repo
     return context
 
 
@@ -423,10 +423,21 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     ensure_git_identity()
     run(["git", "add", "--", *restored_files])
     run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
+    attempt = controller.fix_policy.start_push_gate(build_clean_gate_ctx(args))
+    if not attempt["allowed"]:
+        apply_gate_block(decision, attempt, "push")
+        return
     run(["git", "push", "--force-with-lease", "origin", f"HEAD:{args.branch}"])
     _, new_head = run(["git", "rev-parse", "HEAD"])
     decision["new_head"] = new_head.strip()
     decision["push_succeeded"] = True
+    budget = build_clean_gate_ctx(args)["fix_loop"]
+    ledger = controller.fix_policy.FixLoopLedger(budget["path"], args.repo, int(args.pr_number))
+    completion = ledger.complete(budget["cycle_id"], new_head.strip())
+    decision["fix_loop_budget"] = completion
+    if not completion["allowed"]:
+        apply_gate_block(decision, completion, "record_confirmed_push")
+        return
     decision["final_status"] = "success"
 
 

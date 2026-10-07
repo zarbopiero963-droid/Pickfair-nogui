@@ -22,8 +22,16 @@ def _args(ctx: dict | None, decision_out: str) -> rebuild.RebuildArgs:
     )
 
 
-def _good_ctx(**overrides: object) -> dict[str, object]:
+def _good_ctx(tmp_path, **overrides: object) -> dict[str, object]:
+    ledger = rebuild.controller.fix_policy.FixLoopLedger(tmp_path / "budget.sqlite", "owner/repo", 249)
+    if not ledger.path.exists():
+        ledger.initialize(0, "new PR before review repair")
+        ASSERTIONS.assertTrue(ledger.reserve("clean-1", {
+            "class": "CURRENT_DEFECT", "current_head_correct": False,
+            "thread_id": "T1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
+        })["allowed"])
     base: dict[str, object] = {
+        "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 249, "cycle_id": "clean-1"},
         "automation_mode": "live",
         "post_fix_audit": "PASS",
         "validation_passed": True,
@@ -90,9 +98,9 @@ def test_push_blocked_gate(monkeypatch, tmp_path):
     """Push gate denial prevents force-with-lease."""
     calls = _run_calls(monkeypatch)
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(can_push=False), decision_out))
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path, can_push=False), decision_out))
     rebuild.commit_and_push(
-        _args(_good_ctx(can_push=False), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"]
+        _args(_good_ctx(tmp_path, can_push=False), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"]
     )
     ASSERTIONS.assertNotIn(["git", "commit", "-m", "Clean rebuild PR 249 scope"], calls)
     ASSERTIONS.assertFalse(any(cmd[:3] == ["git", "push", "--force-with-lease"] for cmd in calls))
@@ -102,8 +110,8 @@ def test_commit_push_allowed(monkeypatch, tmp_path):
     """Full explicit context allows mocked commit and push."""
     calls = _run_calls(monkeypatch, head="def456\n")
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(), decision_out))
-    rebuild.commit_and_push(_args(_good_ctx(), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path), decision_out))
+    rebuild.commit_and_push(_args(_good_ctx(tmp_path), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
     ASSERTIONS.assertIn(["git", "commit", "-m", "Clean rebuild PR 249 scope"], calls)
     ASSERTIONS.assertTrue(any(cmd[:3] == ["git", "push", "--force-with-lease"] for cmd in calls))
     ASSERTIONS.assertEqual(decision["final_status"], "success")
@@ -114,15 +122,15 @@ def test_context_beats_ambient_env(monkeypatch, tmp_path):
     _ = _run_calls(monkeypatch, head="aaa111\n")
     monkeypatch.setenv("POST_FIX_AUDIT", "FAIL")
     decision_out = str(tmp_path / "decision.json")
-    decision = rebuild.initial_decision(_args(_good_ctx(), decision_out))
-    rebuild.commit_and_push(_args(_good_ctx(), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
+    decision = rebuild.initial_decision(_args(_good_ctx(tmp_path), decision_out))
+    rebuild.commit_and_push(_args(_good_ctx(tmp_path), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
     ASSERTIONS.assertEqual(decision["final_status"], "success")
 
 
 def test_backup_push_denied(monkeypatch, tmp_path):
     """Backup branch push is skipped when push gate is denied."""
     decision_out, calls = tmp_path / "decision.json", []
-    args = _args(_good_ctx(can_push=False), str(decision_out))
+    args = _args(_good_ctx(tmp_path, can_push=False), str(decision_out))
     decision = rebuild.initial_decision(args)
     _stub_execute_rebuild(monkeypatch, calls, head="abc123\n")
     monkeypatch.setattr(rebuild, "commit_and_push", lambda *_args, **_kwargs: None)
@@ -134,7 +142,7 @@ def test_backup_push_denied(monkeypatch, tmp_path):
 def test_backup_push_allowed_gate(monkeypatch, tmp_path):
     """Backup branch push runs when gate conditions allow push."""
     decision_out, calls = tmp_path / "decision.json", []
-    args = _args(_good_ctx(), str(decision_out))
+    args = _args(_good_ctx(tmp_path), str(decision_out))
     decision = rebuild.initial_decision(args)
     _stub_execute_rebuild(monkeypatch, calls)
     monkeypatch.setattr(rebuild, "ensure_git_identity", lambda: None)

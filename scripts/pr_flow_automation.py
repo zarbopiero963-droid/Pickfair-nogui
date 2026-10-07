@@ -1529,11 +1529,7 @@ def eligible_review_comments_for_auto_resolve(
             continue
 
         if evidence_only:
-            triage = controller.triage_review_thread_contract(node, ctx)
-            if (
-                triage.get("decision") == "EVIDENCE_RESOLVE"
-                and controller.should_resolve_review_thread(node, ctx)
-            ):
+            if controller.should_resolve_review_thread(node, ctx):
                 eligible.append(node)
             continue
 
@@ -1871,6 +1867,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     checks = split_checks(pr, ignore_self=True)
     issues: list[str] = []
     warnings: list[str] = []
+    ledger_path = os.environ.get("PR_FIX_LOOP_LEDGER", "")
+    budget = (controller.fix_policy.FixLoopLedger(ledger_path, args.repo, int(args.pr)).status()
+              if ledger_path else controller.fix_policy.stopped("fix_loop_state_missing"))
+    if not budget["allowed"]:
+        issues.append(budget["reason"])
+    elif budget["used_slots"] >= budget["ceiling"]:
+        issues.append("fix_loop_budget_exhausted")
 
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
@@ -1885,11 +1888,10 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for f in changed_files_for_commit(c):
             file_touches[f] = file_touches.get(f, 0) + 1
 
-    # Guard anti-loop autofix: prima era gatato su "Codacy sta bloccando"; con
-    # Codacy dismesso il gate diventerebbe morto, quindi il limite vale SEMPRE
-    # (piu' severo, mai piu' permissivo).
+    # Legacy naming is diagnostic only: it cannot replace the durable counter
+    # or invalidate a properly bounded owner grant.
     if len(commits) > args.max_safe_autofix_commits:
-        issues.append(f"safe autofix commit limit exceeded: {len(commits)} > {args.max_safe_autofix_commits}")
+        warnings.append(f"legacy autofix commit diagnostic: {len(commits)} > {args.max_safe_autofix_commits}")
 
     oscillating = [
         {"file": f, "touches": n}
@@ -1906,6 +1908,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         "head": pr.get("headRefOid"),
         "branch": branch,
         "safe_autofix_commits": commits,
+        "fix_loop_budget": budget,
         "file_touches": file_touches,
         "oscillating_files": oscillating,
         "issues": issues,
@@ -2205,6 +2208,8 @@ def _retry_non_fast_forward_push(
     gate_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     retry_gate_context = build_retry_push_gate_context(gate_context)
+    if retry_gate_context.get("fix_loop") != (gate_context or {}).get("fix_loop"):
+        retry_gate_context = {"post_fix_audit": "FAIL", "reason": "retry_fix_loop_identity_mismatch"}
     gate = ensure_post_fix_audit_gate_before_push(retry_gate_context)
     if not gate["allowed"]:
         return _build_push_result(
@@ -2220,6 +2225,9 @@ def _retry_non_fast_forward_push(
             ),
         )
     try:
+        attempt = controller.fix_policy.start_push_gate(retry_gate_context)
+        if not attempt["allowed"]:
+            return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(attempt["reason"]))
         push_retry_with_force_lease(run_func, remote, ctx.branch)
         return _build_push_result(
             True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
@@ -2258,6 +2266,13 @@ def push_with_retry_once(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Push once, recover once on non-fast-forward, then stop with explicit status."""
+    context = {**(context or {}), "repo": repo}
+    budget = controller.fix_policy.reservation_gate(context)
+    if not budget["allowed"]:
+        result = _build_push_result(False, "needs_manual", PushResultContext(
+            repo=repo, branch=branch, retried=False, needs_manual=True, error=budget["reason"],
+        ))
+        return {**result, "AUTO_PR_FLOW_STATUS": "NEEDS_MANUAL", "REASON": budget["reason"]}
     gate = ensure_post_fix_audit_gate_before_push(context)
     if not gate["allowed"]:
         return _build_push_result(
@@ -2272,15 +2287,45 @@ def push_with_retry_once(
             ),
         )
     try:
+        attempt = controller.fix_policy.start_push_gate(context)
+        if not attempt["allowed"]:
+            return _build_push_result(False, "needs_manual", PushResultContext(
+                repo=repo, branch=branch, retried=False, needs_manual=True, error=attempt["reason"],
+            ))
         _push_initial(run_func, remote, branch)
-        return _build_push_result(
+        result = _build_push_result(
             True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
         )
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
+        retry = controller.fix_policy.retry_after_confirmed_rejection(context)
+        if not retry["allowed"]:
+            return _failed_push_result(repo, branch, RuntimeError(retry["reason"]))
         retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
-        return _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
+        result = _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
+    return _complete_fix_loop_push(run_func, repo, result, context)
+
+
+def _complete_fix_loop_push(run_func: Any, repo: str, result: dict[str, Any],
+                            context: dict[str, Any] | None) -> dict[str, Any]:
+    budget = (context or {}).get("fix_loop")
+    if not result.get("ok") or not isinstance(budget, dict):
+        return result
+    if budget.get("repo") != repo:
+        return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                "error": "fix_loop_repository_mismatch"}
+    try:
+        head = run_func(["git", "rev-parse", "HEAD"], check=True).strip()
+        ledger = controller.fix_policy.FixLoopLedger(budget["path"], repo, budget["pr"])
+        completion = ledger.complete(budget["cycle_id"], head)
+        if not completion["allowed"]:
+            return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                    "error": completion["reason"]}
+        return {**result, "fix_loop": completion}
+    except (RuntimeError, KeyError, ValueError, TypeError) as error:
+        return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
+                "error": f"push_completed_budget_confirmation_failed:{error}"}
 
 
 
@@ -2314,7 +2359,9 @@ def main() -> int:
     p = sub.add_parser("preflight")
     p.add_argument("--repo", required=True)
     p.add_argument("--pr", required=True)
-    p.add_argument("--max-safe-autofix-commits", type=int, default=3)
+    p.add_argument("--max-safe-autofix-commits", type=int,
+                   default=controller.fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR,
+                   help="legacy diagnostic only; cannot override the durable per-PR repair cap")
     p.add_argument("--oscillation-touch-limit", type=int, default=3)
     p.add_argument("--output", default="")
     p.add_argument("--comment", action="store_true")

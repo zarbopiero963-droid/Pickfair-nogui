@@ -350,3 +350,23 @@ Una cosa è tecnicamente implementata solo quando puoi mostrare:
 - Solo 1–3: **non basta**
 - 1–6 ma manca 7: **implementata nel codice, non nel flusso finale**
 - 1–9: **fully implemented**
+
+
+## PR-flow bounded repair policy — proof contract
+
+Per modifiche alla policy PR-flow: test RED-FIRST sul codice precedente, poi
+PASS+BLOCK sui gate reali. Fonte normativa: `auto_pr_flow_spec.md` §11–13;
+`AGENTS.md`/`CLAUDE.md` danno il rinvio sintetico; `scripts/pr_*` applicano
+la policy; `tests/scripts/test_pr_fix_loop_policy.py` ne prova l'enforcement.
+
+Verificare cap globale 5, contatore persistente cumulativo per PR, blocco prima
+di patch/commit/push al sesto tentativo, deroga owner scoped/bounded non
+rigiocabile, ripristino da restart senza reset. Provare nuove mutation con
+contratto corrente corretto: nessun push illimitato; un current defect reale
+rimane bloccante. Accepted limitation senza owner/head/prove/check settled
+non risolve; con decisione valida si traccia il limite, mai `FIXED`.
+
+Micro-audit: nessun runtime prodotto/workflow modificato, nessun bypass safety
+o readiness, nessuna auto-accept di rischio material. Un ledger assente,
+corrotto o effimero non vale come count=0. Lo stato JSON legacy/il numero di
+commit nominati autofix non costituiscono prova del budget per-PR.
