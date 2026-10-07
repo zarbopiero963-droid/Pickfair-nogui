@@ -2112,14 +2112,17 @@ def _fetch_branch(run_func: Any, remote: str, branch: str) -> None:
     run_func(["git", "fetch", remote, branch], check=True)
 
 
-def _push_force_with_lease(run_func: Any, remote: str, branch: str) -> None:
-    run_func(["git", "push", remote, branch, "--force-with-lease"], check=True)
+def _push_force_with_lease(run_func: Any, remote: str, branch: str, expected_head: str, branch_name: str) -> None:
+    run_func(["git", "push", remote, branch,
+              f"--force-with-lease=refs/heads/{branch_name}:{expected_head}"], check=True)
 
 
-def push_retry_with_force_lease(run_func: Any, remote: str, branch: str, pushed_head: str) -> None:
-    """Fetch latest remote branch, then retry push with force-with-lease once."""
+def push_retry_with_force_lease(run_func: Any, remote: str, branch: str, pushed_head: str, expected_head: str) -> None:
+    """Retry once against the assessed SHA; fetching cannot widen the lease."""
+    if not expected_head:
+        raise RuntimeError("assessed_remote_head_missing")
     _fetch_branch(run_func, remote, branch)
-    _push_force_with_lease(run_func, remote, f"{pushed_head}:refs/heads/{branch}")
+    _push_force_with_lease(run_func, remote, f"{pushed_head}:refs/heads/{branch}", expected_head, branch)
 
 
 def _build_push_result(
@@ -2236,7 +2239,8 @@ def _retry_non_fast_forward_push(
         attempt = controller.fix_policy.start_push_gate(retry_gate_context, stage="retry_ready")
         if not attempt["allowed"]:
             return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(attempt["reason"]))
-        push_retry_with_force_lease(run_func, remote, ctx.branch, ctx.pushed_head)
+        expected_head = str(retry_gate_context.get("current_head_sha") or retry_gate_context.get("head_sha") or retry_gate_context.get("headRefOid") or "")
+        push_retry_with_force_lease(run_func, remote, ctx.branch, ctx.pushed_head, expected_head)
         return _build_push_result(
             True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
         )

@@ -255,7 +255,10 @@ def build_branch_names(args: RebuildArgs) -> tuple[str, str]:
 
 def fetch_heads(args: RebuildArgs, decision: dict[str, Any]) -> CleanBranches:
     backup_branch, clean_branch = build_branch_names(args)
-    run(["git", "fetch", "origin", "main", args.branch])
+    refs = list(dict.fromkeys(("main", args.branch)))
+    run(["git", "fetch", "origin", *[
+        f"+refs/heads/{name}:refs/remotes/origin/{name}" for name in refs
+    ]])
     _, old_head = run(["git", "rev-parse", "--verify", f"refs/remotes/origin/{args.branch}"])
     decision["old_head"] = old_head.strip()
     decision["backup_branch"] = backup_branch

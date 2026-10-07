@@ -719,6 +719,13 @@ Ogni percorso di push richiede la capability `working` del worker; il salto
 diretto `reserved → pushing` è vietato. Il clean-rebuild confronta l'head
 effettivamente scaricato con quello dell'assessment, ripristina file dallo SHA
 scaricato immutabile e usa una lease esplicita su quello SHA per il push.
+Il fetch del clean rebuild usa refspec espliciti `refs/heads/` verso
+`refs/remotes/origin/`, anche per main: un tag omonimo non può lasciare
+obsoleto il riferimento confrontato prima della patch. Anche il retry del
+push usa una lease esplicita sullo SHA dell'assessment; il fetch non cambia
+il valore atteso. Se un collaboratore ha avanzato il remoto, il retry si
+ferma in `NEEDS_MANUAL` senza sovrascriverlo; serve nuova verifica sul nuovo
+head prima di qualsiasi ulteriore riparazione, mantenendo il budget cumulativo.
 Entrambi i percorsi fissano lo SHA locale prima del push e usano quello stesso
 SHA nel refspec e nella completion; un branch che avanza durante l'invio non
 cambia l'evidenza registrata.

@@ -559,6 +559,41 @@ def test_complete_requires_actual_push_intent(ledger):
     assert ledger.status()['completed_count'] == 0
 
 
+@pytest.mark.parametrize('branch', ['feature', 'main'])
+def test_clean_fetch_uses_branch_ref_despite_older_same_name_tag(tmp_path, monkeypatch, branch):
+    import subprocess
+    remote, seed, worker = (tmp_path / name for name in ('remote.git', 'seed', 'worker'))
+
+    def git(at, *args):
+        result = subprocess.run(['git', '-C', str(at), *args], text=True, capture_output=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        return result.stdout.strip()
+
+    subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+    subprocess.run(['git', 'clone', str(remote), str(seed)], check=True, capture_output=True)
+    git(seed, 'config', 'user.name', 'Test')
+    git(seed, 'config', 'user.email', 'test@example.invalid')
+    (seed / 'base').write_text('old assessed head')
+    git(seed, 'add', 'base')
+    git(seed, 'commit', '-m', 'base')
+    git(seed, 'branch', '-M', 'main')
+    if branch != 'main':
+        git(seed, 'checkout', '-b', branch)
+    git(seed, 'tag', branch)
+    refs = list(dict.fromkeys(['refs/heads/main', f'refs/heads/{branch}', f'refs/tags/{branch}']))
+    git(seed, 'push', 'origin', *refs)
+    subprocess.run(['git', 'clone', '--branch', branch, str(remote), str(worker)], check=True, capture_output=True)
+    (seed / 'advance').write_text('new unassessed head')
+    git(seed, 'add', 'advance')
+    git(seed, 'commit', '-m', 'advance branch but leave tag old')
+    advanced = git(seed, 'rev-parse', 'HEAD')
+    git(seed, 'push', 'origin', f'refs/heads/{branch}')
+    monkeypatch.setattr(rebuild, 'run', lambda cmd, check=True: (0, git(worker, *cmd[1:])))
+    args = rebuild.RebuildArgs('owner/repo', '495', branch, [], [], '', None, False)
+    assert rebuild.fetch_heads(args, {}).old_head == advanced
+
+
 def test_clean_rebuild_stops_before_restore_after_competing_completion(ledger, monkeypatch, tmp_path):
     rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
     for number in range(4): consume(ledger,str(number))
@@ -796,3 +831,60 @@ def test_inconsistent_persisted_rows_fail_closed(ledger,mutation):
     with sqlite3.connect(ledger.path) as connection: connection.execute(mutation)
     assert not ledger.status()['allowed']
     assert not ledger.reserve('next',assessment('CURRENT_DEFECT'))['allowed']
+
+
+def test_retry_preserves_new_unassessed_remote_head(policy, tmp_path):
+    """Real Git: fetching a collaborator commit must not authorize overwriting it."""
+    import subprocess
+    remote, seed, worker, other = (tmp_path / name for name in ('remote.git', 'seed', 'worker', 'other'))
+
+    def git(at, *args):
+        result = subprocess.run(['git', '-C', str(at), *args], text=True, capture_output=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+        return result.stdout.strip()
+
+    subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+    subprocess.run(['git', 'clone', str(remote), str(seed)], check=True, capture_output=True)
+    git(seed, 'config', 'user.name', 'Test')
+    git(seed, 'config', 'user.email', 'test@example.invalid')
+    (seed / 'base').write_text('base')
+    git(seed, 'add', 'base')
+    git(seed, 'commit', '-m', 'base')
+    git(seed, 'branch', '-M', 'feature')
+    git(seed, 'push', 'origin', 'feature')
+    assessed = git(seed, 'rev-parse', 'HEAD')
+    for clone in (worker, other):
+        subprocess.run(['git', 'clone', '--branch', 'feature', str(remote), str(clone)], check=True, capture_output=True)
+        git(clone, 'config', 'user.name', 'Test')
+        git(clone, 'config', 'user.email', 'test@example.invalid')
+    (worker / 'patch').write_text('reviewed patch')
+    git(worker, 'add', 'patch')
+    git(worker, 'commit', '-m', 'reviewed patch')
+    (other / 'collaborator').write_text('unassessed advance')
+    git(other, 'add', 'collaborator')
+    git(other, 'commit', '-m', 'new collaborator head')
+    advanced = git(other, 'rev-parse', 'HEAD')
+    git(other, 'push', 'origin', 'feature')
+    ledger = policy.FixLoopLedger(tmp_path / 'lease-budget.sqlite', 'owner/repo', 495)
+    ledger.initialize(0, 'new PR')
+    assert ledger.reserve('retry', assessment('CURRENT_DEFECT', current_head_sha=assessed))['allowed']
+    context = {
+        'repo': 'owner/repo', 'pr': 495, 'current_head_sha': assessed,
+        'fix_loop': {'path': str(ledger.path), 'repo': 'owner/repo', 'pr': 495, 'cycle_id': 'retry'},
+        'automation_mode': 'live', 'post_fix_audit': 'PASS', 'validation_passed': True,
+        'current_head_matches': True, 'dirty_worktree': False, 'scope_allowed': True,
+        'rollback_attempted': False, 'task_no_commit_push': False,
+        'rollback_succeeded': True, 'can_push': True, 'can_commit': True,
+    }
+    assert policy.claim_patch_gate(context)['allowed']
+    refreshed = dict(context)
+    context['retry_push_gate_context'] = {'explicitly_refreshed': True, 'gate_context': refreshed}
+    result = flow.push_with_retry_once(lambda cmd, **kwargs: git(worker, *cmd[1:]),
+                                       'owner/repo', 'feature', context=context)
+    assert result['retried'], str(result)
+    assert not result['ok']
+    assert result['needs_manual']
+    assert git(remote, 'rev-parse', 'refs/heads/feature') == advanced
+    assert ledger.status()['completed_count'] == 0
+    assert ledger.status()['reserved_count'] == 1

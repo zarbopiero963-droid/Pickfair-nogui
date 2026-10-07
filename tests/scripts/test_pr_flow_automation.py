@@ -435,7 +435,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if cmd[1] == "push" and "--force-with-lease" not in cmd:
+        if cmd[1] == "push" and not any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -456,7 +456,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
             ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
         ],
     )
 
@@ -468,9 +468,9 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if cmd[1] == "push" and "--force-with-lease" not in cmd:
+        if cmd[1] == "push" and not any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("non-fast-forward update rejected")
-        if cmd[1] == "push" and "--force-with-lease" in cmd:
+        if cmd[1] == "push" and any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("failed to push some refs")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -492,7 +492,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp
             ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"],
         ],
     )
 
@@ -522,7 +522,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if cmd[1] == "push" and "--force-with-lease" not in cmd:
+        if cmd[1] == "push" and not any(arg.startswith("--force-with-lease") for arg in cmd):
             gate_ctx["post_fix_audit"] = "FAIL"
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
@@ -544,7 +544,7 @@ def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if cmd[1] == "push" and "--force-with-lease" not in cmd:
+        if cmd[1] == "push" and not any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -554,7 +554,7 @@ def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertTrue(result["retried"])
     ASSERTIONS.assertEqual(calls[2], ["git", "fetch", "origin", "feature/branch"])
-    ASSERTIONS.assertEqual(calls[3], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"])
+    ASSERTIONS.assertEqual(calls[3], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease=refs/heads/feature/branch:abc123"])
 
 
 def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gate_context(tmp_path):
@@ -565,7 +565,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if cmd[1] == "push" and "--force-with-lease" not in cmd:
+        if cmd[1] == "push" and not any(arg.startswith("--force-with-lease") for arg in cmd):
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
