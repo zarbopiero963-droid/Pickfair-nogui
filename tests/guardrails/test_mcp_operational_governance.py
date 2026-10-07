@@ -78,7 +78,7 @@ def check_contract(text, policies, sections):
     require(text, split_order, "sim_before_live")
     require(master, split_order, "sim_before_live")
     # A correct sentence must not mask a contradictory current instruction.
-    current = "\n".join([text, *sections.values()])
+    current = "\n".join([text, *sections.values(), *policies])
     contradictions = [
         r"PR23 = SL/TP", r"PR24 = Trailing", r"PR25 = SL/TP",
         r"MCP-PR01[–…-]0?5", r"MANUAL via MCP = (?:DECISA|DECISO)",
@@ -88,8 +88,14 @@ def check_contract(text, policies, sections):
         r"(?:entrypoint|partire da) #452",
     ]
     for pattern in contradictions:
-        if re.search(pattern, current, re.I):
-            errors.append("contradictory_current_instruction")
+        for match in re.finditer(pattern, current, re.I):
+            # Only an adjacent explicit prohibition negates this instruction;
+            # an earlier "non" must not mask another clause's contradiction.
+            start = max(current.rfind("\n", 0, match.start()),
+                        current.rfind(";", 0, match.start())) + 1
+            prefix = re.sub(r"[*`]", "", current[start:match.start()])
+            if not re.search(r"\b(?:non|vietato|vietata)(?:\s+(?:usare|eseguire))?\s*$", prefix, re.I):
+                errors.append("contradictory_current_instruction")
     # Parse the actual current route table, not prose that merely mentions a route.
     rows = re.findall(r"^\| (Read|Command) \| (GET|POST|PATCH) \| ([^|]+) \|", master, re.M)
     expected_read = {"/v1/meta", "/v1/status", "/v1/account", "/v1/exposure",
@@ -239,3 +245,27 @@ def test_sim_gate_removal_is_rejected(document):
     else:
         sections["1"] = sections["1"].replace(old, new)
     assert "sim_before_live" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("valid_negative", [
+    "non può leggere il DB Pickfair", "non partire da #452", "vietato POST /v1/config",
+])
+def test_explicit_negations_are_valid_governance(valid_negative):
+    text, policies, sections = inputs()
+    assert check_contract(text + "\n" + valid_negative, policies, sections) == []
+
+
+@pytest.mark.parametrize("policy_index", [0, 1])
+@pytest.mark.parametrize("regression", [
+    "POST /v1/config", "Telegram disconnected blocca LIVE", "Può leggere il DB Pickfair",
+])
+def test_other_current_contradictions_in_policies_are_rejected(policy_index, regression):
+    text, policies, sections = inputs()
+    policies[policy_index] += "\n" + regression
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+def test_one_prohibition_does_not_mask_a_later_positive_instruction():
+    text, policies, sections = inputs()
+    text += "\nvietato POST /v1/config; POST /v1/config\n"
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
