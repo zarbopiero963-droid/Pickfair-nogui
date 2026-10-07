@@ -23,6 +23,15 @@ def check_contract(text, policies, sections):
         if phrase not in document:
             errors.append(label)
 
+    def has_positive_instruction(pattern, document):
+        for match in re.finditer(pattern, document, re.I):
+            start = max(document.rfind("\n", 0, match.start()),
+                        document.rfind(";", 0, match.start())) + 1
+            prefix = re.sub(r"[*`]", "", document[start:match.start()])
+            if not re.search(r"\b(?:non|vietato|vietata)(?:\s+(?:usare|eseguire))?\s*$", prefix, re.I):
+                return True
+        return False
+
     require(text, ENTRY, "entrypoint")
     for policy in policies:
         require(policy, ENTRY, "policy_entrypoint")
@@ -40,7 +49,8 @@ def check_contract(text, policies, sections):
     for policy, clauses in zip(policies, operative_clauses):
         for clause in clauses:
             require(policy, clause, "operative_seriality")
-    if re.search(r"una (?:sola )?PR globale|one global (?:open )?PR", "\n".join([text, *policies]), re.I):
+    if has_positive_instruction(r"una (?:sola )?PR globale|one global (?:open )?PR",
+                                "\n".join([text, *policies, *sections.values()])):
         errors.append("global_seriality")
     for phrase in ["PR26-a → PR26 authority → PR27 → PR28 → PR29",
                    "Owner PR primaria", "reload_config | PR28",
@@ -84,18 +94,14 @@ def check_contract(text, policies, sections):
         r"MCP-PR01[–…-]0?5", r"MANUAL via MCP = (?:DECISA|DECISO)",
         r"Telegram disconnected blocca LIVE", r"(?:PUT|POST) /v1/config",
         r"(?:può|puo) leggere il DB Pickfair",
-        r"(?<!NON )implementa master/copy/follow/fan-out",
+        r"implementa master/copy/follow(?:/fan-out)?",
+        r"PF-API-1\s*→\s*PF-API-2",
+        r"Ordine operativo autorizzato:[*`\s]*(?:MCP-\d+\s*→\s*)*MCP-05\s*→\s*MCP-06\s*→\s*MCP-07",
         r"(?:entrypoint|partire da) #452",
     ]
     for pattern in contradictions:
-        for match in re.finditer(pattern, current, re.I):
-            # Only an adjacent explicit prohibition negates this instruction;
-            # an earlier "non" must not mask another clause's contradiction.
-            start = max(current.rfind("\n", 0, match.start()),
-                        current.rfind(";", 0, match.start())) + 1
-            prefix = re.sub(r"[*`]", "", current[start:match.start()])
-            if not re.search(r"\b(?:non|vietato|vietata)(?:\s+(?:usare|eseguire))?\s*$", prefix, re.I):
-                errors.append("contradictory_current_instruction")
+        if has_positive_instruction(pattern, current):
+            errors.append("contradictory_current_instruction")
     # Parse the actual current route table, not prose that merely mentions a route.
     rows = re.findall(r"^\| (Read|Command) \| (GET|POST|PATCH) \| ([^|]+) \|", master, re.M)
     expected_read = {"/v1/meta", "/v1/status", "/v1/account", "/v1/exposure",
@@ -268,4 +274,41 @@ def test_other_current_contradictions_in_policies_are_rejected(policy_index, reg
 def test_one_prohibition_does_not_mask_a_later_positive_instruction():
     text, policies, sections = inputs()
     text += "\nvietato POST /v1/config; POST /v1/config\n"
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("issue", ["1", "351", "426", "453", "461", "489", "491"])
+def test_global_seriality_in_each_managed_issue_is_rejected(issue):
+    text, policies, sections = inputs()
+    sections[issue] += "\nuna sola PR globale\n"
+    assert "global_seriality" in check_contract(text, policies, sections)
+
+
+def test_short_contract_master_copy_follow_prohibition_cannot_be_reversed():
+    text, policies, sections = inputs()
+    old = "NON implementa master/copy/follow."
+    assert old in text
+    text = text.replace(old, "implementa master/copy/follow.")
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("document", ["contract", "1", "351", "426", "453", "461", "489", "491"])
+def test_extra_live_before_sim_instruction_is_rejected(document):
+    text, policies, sections = inputs()
+    bad = "\nOrdine operativo autorizzato: MCP-05 → MCP-06 → MCP-07\n"
+    if document == "contract":
+        text += bad
+    else:
+        sections[document] += bad
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("occurrence", [0, 1])
+def test_each_pf_api_sequence_occurrence_is_protected(occurrence):
+    text, policies, sections = inputs()
+    good = "PF-API-0 → PF-API-1 → PF-API commands"
+    matches = list(re.finditer(re.escape(good), text))
+    assert len(matches) == 2
+    match = matches[occurrence]
+    text = text[:match.start()] + "PF-API-1 → PF-API-2" + text[match.end():]
     assert "contradictory_current_instruction" in check_contract(text, policies, sections)
