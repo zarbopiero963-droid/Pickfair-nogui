@@ -47,8 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     # Il gate ora ASPETTA che i check dell'head finiscano: serve un tetto, o una
     # suite bloccata terrebbe occupato un runner per il default di 6 ore.
-    # 50 minuti: il budget d'attesa (2700 s) piu' checkout e verdetto finale.
-    timeout-minutes: 50
+    # 120 minuti: il budget d'attesa (6600 s) piu' checkout e verdetto finale.
+    timeout-minutes: 120
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -76,9 +76,9 @@ jobs:
           # Senza budget il gate decide ~20s dopo il push, con i check ancora in
           # volo: "non pronta" garantito. Il budget deve coprire il reviewer
           # piu' lento, non la suite media: con 900 s una review di Sol a
-          # effort `max` valida ma lenta (job fino a 40 min) lasciava il gate
-          # rosso, e cosi' gia' Grok (job da 20 min). 2700 s = il job di
-          # review piu' lungo piu' il ritardo con cui parte rispetto a questo
+          # effort `max` valida ma lenta lasciava il gate rosso. Con Sol a
+          # 105 min, 6600 s coprono il job piu' lungo piu' il ritardo con cui
+          # parte rispetto a questo
           # (tests/guardrails/test_ai_review_timeout.py). Il gate esce appena
           # i check sono settled e stabili: il budget lungo costa solo quando
           # qualcosa e' davvero lento. Scaduto il budget si giudica lo stato
@@ -87,7 +87,7 @@ jobs:
             --repo "$REPO" \
             --pr "$PR" \
             --ignore-safe-autofix \
-            --wait-pending-seconds 2700 \
+            --wait-pending-seconds 6600 \
             --poll-seconds 15 \
             --output .merge-readiness/decision.json
 
