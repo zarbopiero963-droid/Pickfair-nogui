@@ -16,6 +16,136 @@ MIRRORS = ROOT / "docs/governance/mcp_issue_sections.json"
 ENTRY = "#491 → #489 → #461 → #426 → #453 → #351 quando serve"
 
 
+def normalize(document):
+    """Markdown fuori: link -> testo, niente grassetto/codice. Le righe restano."""
+    document = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", document)
+    return document.replace("**", "").replace("`", "")
+
+
+def flat(document):
+    """Testo normalizzato su una riga: una clausola a capo resta la stessa clausola."""
+    return re.sub(r"\s+", " ", normalize(document))
+
+
+# Una negazione vale solo se precede direttamente l'istruzione: al massimo un
+# verbo di divieto e un articolo. «non solo X» o una negazione lontana non bastano.
+NEGATION = re.compile(
+    r"\b(?:non|vietato|vietata|nessun|nessuna|mai)"
+    r"(?:\s+(?:usare|eseguire|creare|introdurre|implementare|esporre|aggiungere))?"
+    r"(?:\s+(?:un|una|uno|il|la|lo|i|le|gli))?\s*$", re.I)
+
+ENTRY_SENTENCE = "partire obbligatoriamente da Pickfair-nogui #491"
+POLICY_ENTRY_SENTENCE = "partire da Pickfair-nogui #491"
+REVIEWER_CLAUSES = ["Per reviewer/merge applicare #426/P41",
+                    "non riattivare workflow o label sospese"]
+NO_BYPASS = ["NON importa BetfairClient, TradingEngine o OrderManager",
+             "NON apre il DB Pickfair, neppure in sola lettura",
+             "NON usa credenziali Betfair",
+             "NON parla direttamente con Betfair",
+             "NON duplica formule MM, stake calculation, cashout o reconciliation",
+             "NON implementa master/copy/follow"]
+STOP_SEMANTICS = [
+    "PAUSE: blocca nuovi ordini; NON cancella unmatched; NON avvia cashout.",
+    "STOP/RISK_STOP: blocca nuovi ordini; cancella unmatched pertinenti; "
+    "tenta cashout delle posizioni pertinenti via authority Pickfair.",
+    "EMERGENCY: barriera massima immediata, nessuna eccezione generica.",
+    "RESUME: soltanto dopo nuova readiness completa."]
+STOP_SECTIONS = {"1", "351", "426", "489", "491"}
+STATE_PHRASES = ["#490/#492/#493 MERGIATE", "zero PR aperte al preflight",
+                 "PR05 NON è la prossima attività automatica",
+                 "PR26-a customer_ref/provenance"]
+RESULT_STATES = "PASS/FAIL/BLOCKED_ENV/NOT_RUN/RINVIATO separati"
+RESULT_SECTIONS = {"1", "351", "491"}
+SIMLIVE_CORE = [
+    "SIM usa la vera Betfair Delayed App Key",
+    "Esecuzione finale: SimulationBroker. Nessun ordine reale deve essere inviato a Betfair.",
+    "LIVE usa la vera Betfair Live App Key",
+    "Gli ordini vengono inviati a Betfair soltanto se tutti i gate LIVE sono soddisfatti.",
+    "stesso Money Management", "stessi Risk/Safety gate",
+    "Delayed App Key NON significa dati fittizi",
+    "SIM NON significa mockare il mondo esterno",
+    "Live App Key NON deve essere usata in SIM",
+    "Delayed App Key NON deve essere usata per piazzare ordini reali",
+    "LIVE richiede Live App Key e readiness LIVE completa",
+    "non dedurre l'execution mode dalla sola App Key",
+    "SIM = saldo/bankroll fittizio", "LIVE = saldo reale Betfair",
+    "SIM/LIVE PARITY", "MCP: un solo set di tool", "MCP non implementa due motori",
+    "MCP non decide autonomamente di andare LIVE", "LIVE non pronto → BLOCKED",
+    "nessun passaggio implicito SIM→LIVE",
+    "peak SIM non contamina drawdown LIVE", "balance snapshot mode-scoped",
+    "SIM→LIVE non trasforma il bankroll SIM nel riferimento di rischio LIVE",
+    "La futura PR15 deve implementare/testare questo contratto"]
+SIMLIVE_CORE_SECTIONS = {"1", "351", "426", "461", "491"}
+SIMLIVE_POINTER = ["SIM = Delayed App Key reale + dati Betfair reali delayed + SimulationBroker + bankroll fittizio",
+                   "LIVE = Live App Key + dati reali + Betfair reale + saldo reale, solo con tutti i gate LIVE",
+                   "un solo set di tool MCP", "nessun passaggio implicito SIM→LIVE",
+                   "PR15: peak SIM non contamina drawdown LIVE"]
+SIMLIVE_MATRIX = [
+    "| BACK | simulato | reale | stesso percorso prima del broker |",
+    "| LAY | simulato | reale | stesso percorso prima del broker |",
+    "| cashout | simulato | reale | stesso calcolo/intento |",
+    "| reconciliation | SIM | Betfair | stesso contratto di stato |",
+    "| AMBIGUOUS | simulato/testabile | reale | stesso lifecycle |",
+    "SIM non può raggiungere Betfair order transport",
+    "SIM non può utilizzare Live App Key per piazzare ordini",
+    "LIVE non può usare SimulationBroker per fingere successo",
+    "stessa richiesta non può produrre prima ordine SIM e poi ordine LIVE per replay/retry",
+    "Gate di certificazione SIM/LIVE — stato NOT_RUN finché eseguiti con prova sullo SHA",
+    "crash/restart; concurrency; SQLite reale; SimulationBroker reale; "
+    "Betfair reale/LIVE quando autorizzato; whole-wiring cross-repo"]
+SIMLIVE_MATRIX_SECTIONS = {"1", "351"}
+# Istruzioni correnti che ribalterebbero una clausola vigente. Valgono ovunque
+# (contratto, policy, ogni sezione issue) e cedono solo a una negazione diretta.
+REVERSALS = [
+    # entrypoint diverso da #491, anche formattato
+    r"partire\s+(?:obbligatoriamente\s+)?da\s+(?:Pickfair-nogui\s+)?#(?!491\b)\d+",
+    # no-bypass
+    r"importa\s+(?:BetfairClient|TradingEngine|OrderManager)",
+    r"usa\s+(?:le\s+)?credenziali\s+Betfair",
+    r"parla\s+direttamente\s+con\s+Betfair",
+    r"duplica\s+(?:le\s+)?(?:formule|MM\b|stake|cashout|reconcil)",
+    r"(?:apre|legge|accede\s+al)\s+(?:il\s+)?DB\s+Pickfair",
+    # serialità globale, anche con «attiva»/«aperta»
+    r"una\s+(?:sola\s+)?PR\s+(?:attiva\s+|aperta\s+)?globale",
+    r"PR\s+(?:attiva|aperta)\s+globale", r"serialità\s+globale",
+    r"one\s+global\s+(?:open\s+|active\s+)?PR",
+    # reviewer/merge
+    r"#426/P(?!41\b)\d+", r"riattivare\s+(?:i\s+)?workflow",
+    # updater
+    r"UPDATER_SCOPE\s*=\s*(?!OWNER_OPEN\b)[A-Z_]+",
+    # route cashout alternative o per modalità
+    r"/v1/cashout/[\w{]", r"/v1/cashout-\w", r"/v1/(?:sim|live)/",
+    # PAUSE / STOP / EMERGENCY / RESUME
+    r"(?:PAUSE|STOP/RISK_STOP|RISK_STOP|STOP|EMERGENCY)\s*:?\s+(?:consente|permette|ammette)\s+nuovi\s+ordini",
+    r"RESUME\s*:?\s+(?:senza|immediat|subito|automatic)",
+    r"EMERGENCY\s*:?\s+(?:con\s+eccezioni|ammette\s+eccezioni)",
+    # stati di esito distinti
+    r"(?:PASS|FAIL|BLOCKED_ENV|NOT_RUN|RINVIATO)\s*(?:e|ed|/|=)\s*(?:PASS|FAIL|BLOCKED_ENV|NOT_RUN|RINVIATO)\s+(?:equivalenti|uguali|identici|coincidono)",
+    r"(?:NOT_RUN|BLOCKED_ENV|RINVIATO)\s+(?:=|vale\s+come|equivale\s+a|conta\s+come)\s+PASS",
+    # SIM/LIVE
+    r"SIM\s+(?:è|e'|=)\s+(?:un\s+)?mock", r"SIM\s+(?:significa|=)\s+mockare",
+    r"SIM\s+(?:usa|con)\s+(?:dati|quote|mercati)\s+(?:fittizi|mock)",
+    r"Delayed\s+App\s+Key\s+(?:significa|=)\s+dati\s+fittizi",
+    r"SIM\s+(?:senza|non\s+usa)\s+(?:la\s+)?(?:vera\s+)?(?:Betfair\s+)?Delayed\s+App\s+Key",
+    r"LIVE\s+(?:senza|non\s+richiede)\s+(?:la\s+)?(?:vera\s+)?(?:Betfair\s+)?Live\s+App\s+Key",
+    r"Live\s+App\s+Key\s+(?:deve\s+essere\s+|può\s+essere\s+)?usata\s+in\s+SIM",
+    r"SIM\s+(?:può|puo|deve)\s+(?:inviare|piazzare|raggiungere)\s+(?:ordini|Betfair)",
+    r"LIVE\s*=\s*saldo(?:/bankroll)?\s+fittizio", r"SIM\s*=\s*saldo(?:/bankroll)?\s+reale",
+    r"LIVE\s+con\s+saldo\s+fittizio", r"SIM\s+con\s+saldo\s+reale",
+    r"SIM\s+semplificata",
+    r"(?:MM|Money\s+Management)\s+(?:diverso|separato|dedicato)\s+(?:per|fra|tra)\s+(?:SIM|LIVE|modalità)",
+    r"command\s+contract\s+(?:diverso|separato)",
+    r"\b(?:sim|live)_(?:place_order|cashout|cancel|replace|stop|resume|reconcile)\b",
+    r"(?:passaggio|switch|fallback)\s+(?:automatico|implicito)\s+(?:a\s+|verso\s+|SIM\s*→\s*)LIVE",
+    r"MCP\s+(?:può|puo)\s+decidere\s+(?:autonomamente\s+)?di\s+andare\s+LIVE",
+    r"auto-LIVE",
+    r"LIVE\s+senza\s+(?:gate\s+)?readiness", r"LIVE\s+non\s+pronto\s*→(?!\s*BLOCKED)",
+    r"peak\s+SIM\s+contamina", r"contaminazione\s+SIM\s*(?:→|->)\s*LIVE\s+(?:ammessa|consentita)",
+    r"bankroll\s+SIM\s+(?:diventa|è|come)\s+(?:il\s+)?riferimento\s+di\s+rischio\s+LIVE",
+    r"\b(?:LIVE_DATA_SIM|PAPER|HYBRID)\b",
+]
+
+
 def check_contract(text, policies, sections):
     errors = []
 
@@ -28,9 +158,66 @@ def check_contract(text, policies, sections):
             start = max(document.rfind("\n", 0, match.start()),
                         document.rfind(";", 0, match.start())) + 1
             prefix = re.sub(r"[*`]", "", document[start:match.start()])
-            if not re.search(r"\b(?:non|vietato|vietata)(?:\s+(?:usare|eseguire))?\s*$", prefix, re.I):
+            if not NEGATION.search(prefix):
                 return True
         return False
+
+    # Ogni documento corrente, normalizzato: la formattazione non nasconde nulla.
+    every = {"contract": text, **{f"policy{i}": p for i, p in enumerate(policies)},
+             **{f"issue_{k}": v for k, v in sections.items()}}
+    for name, document in every.items():
+        plain = normalize(document)
+        for pattern in REVERSALS:
+            if has_positive_instruction(pattern, plain):
+                errors.append(f"reversed_clause:{name}:{pattern}")
+    # (1) entrypoint operativo, anche nella forma con link/grassetto
+    require(flat(text), ENTRY_SENTENCE, "entry_sentence_contract")
+    for link in re.findall(r"partire obbligatoriamente da\s*\[[^\]]*\]\(([^)]*)\)", text):
+        if not link.endswith("/issues/491"):
+            errors.append("entry_sentence_contract")
+    for i, policy in enumerate(policies):
+        require(flat(policy), POLICY_ENTRY_SENTENCE, f"entry_sentence_policy{i}")
+    for number, body in sections.items():
+        require(flat(body), ENTRY_SENTENCE, f"entry_sentence_issue_{number}")
+        # (4) P41 e divieto di riattivare, in ogni mirror
+        for clause in REVIEWER_CLAUSES:
+            require(flat(body), clause, f"reviewer_issue_{number}")
+        # (8) stato operativo corrente in ogni mirror
+        for phrase in STATE_PHRASES:
+            require(flat(body), phrase, f"state_issue_{number}")
+        if re.search(r"#(?:490|492|493)\s+(?:APERTA|aperta)|PR05 successiva|"
+                     r"PR05\s+(?:è|e')\s+la\s+prossima|(?<!zero )\buna PR aperta al preflight",
+                     flat(body)):
+            errors.append(f"old_operational_state_issue_{number}")
+    # (2) no-bypass completo nel contratto e nella master
+    for clause in NO_BYPASS:
+        require(flat(text), clause, "no_bypass_contract")
+        require(flat(sections.get("1", "")), clause, "no_bypass_master")
+    # (5) UPDATER aperto anche nella fonte delle decisioni owner
+    require(sections.get("426", ""), "UPDATER_SCOPE = OWNER_OPEN", "updater_open_426")
+    # (7) semantica completa PAUSE/STOP/EMERGENCY/RESUME
+    for clause in STOP_SEMANTICS:
+        require(flat(text), clause, "stop_semantics_contract")
+        for number in STOP_SECTIONS:
+            require(flat(sections.get(number, "")), clause, f"stop_semantics_issue_{number}")
+    # (9) esiti distinti
+    require(flat(text), RESULT_STATES, "result_states_contract")
+    for number in RESULT_SECTIONS:
+        require(flat(sections.get(number, "")), RESULT_STATES, f"result_states_issue_{number}")
+    # SIM/LIVE decisione owner 07/10
+    for phrase in SIMLIVE_CORE:
+        require(flat(text), phrase, "simlive_contract")
+        for number in SIMLIVE_CORE_SECTIONS:
+            require(flat(sections.get(number, "")), phrase, f"simlive_issue_{number}")
+    for number in set(sections) - SIMLIVE_CORE_SECTIONS:
+        for phrase in SIMLIVE_POINTER:
+            require(flat(sections[number]), phrase, f"simlive_pointer_issue_{number}")
+    for phrase in SIMLIVE_MATRIX:
+        require(flat(text), phrase, "simlive_matrix_contract")
+        for number in SIMLIVE_MATRIX_SECTIONS:
+            require(flat(sections.get(number, "")), phrase, f"simlive_matrix_issue_{number}")
+    for i, policy in enumerate(policies):
+        require(flat(policy), "decisione owner SIM/LIVE del contratto consolidato", f"simlive_policy{i}")
 
     require(text, ENTRY, "entrypoint")
     for policy in policies:
@@ -312,3 +499,148 @@ def test_each_pf_api_sequence_occurrence_is_protected(occurrence):
     match = matches[occurrence]
     text = text[:match.start()] + "PF-API-1 → PF-API-2" + text[match.end():]
     assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+# ---------------------------------------------------------------------------
+# Quarto ciclo #494: nove rilievi Codex + decisione owner SIM/LIVE 07/10.
+# Ogni caso ribalta o aggiunge una clausola nel documento REALE e deve essere
+# rifiutato. Il guard sul «cambiato davvero» impedisce una mutazione a vuoto.
+# ---------------------------------------------------------------------------
+ALL_ISSUES = ["1", "351", "426", "453", "461", "489", "491"]
+CORE_TARGETS = ["contract", "1", "351", "426", "461", "491"]
+
+
+def _mutate(target, old, new, append=None):
+    text, policies, sections = inputs()
+    sections = copy.deepcopy(sections)
+    policies = list(policies)
+    if target == "contract":
+        doc = text
+    elif target.startswith("policy"):
+        doc = policies[int(target[-1])]
+    else:
+        doc = sections[target]
+    changed = re.sub(old, new, doc) if old else doc
+    if append:
+        changed += "\n" + append + "\n"
+    assert changed != doc, f"mutazione a vuoto su {target}: {old!r}"
+    if target == "contract":
+        text = changed
+    elif target.startswith("policy"):
+        policies[int(target[-1])] = changed
+    else:
+        sections[target] = changed
+    return text, policies, sections
+
+
+FINDING_CASES = (
+    # 1. entrypoint #491 anche formattato
+    [(f, r"partire obbligatoriamente da \*\*Pickfair-nogui #491\*\*",
+      "partire obbligatoriamente da **Pickfair-nogui #452**", None) for f in ALL_ISSUES]
+    + [("contract", r"\[Pickfair-nogui #491\]\(([^)]*)/issues/491\)",
+        r"[Pickfair-nogui #452](\1/issues/452)", None)]
+    # 2. ogni divieto no-bypass, nel contratto e nella master
+    + [(t, old, new, None) for t in ["contract", "1"] for old, new in [
+        (r"NON parla\s+direttamente con Betfair", "parla direttamente con Betfair"),
+        (r"NON usa credenziali Betfair", "usa credenziali Betfair"),
+        (r"NON duplica formule MM", "duplica formule MM"),
+        (r"NON importa BetfairClient", "importa BetfairClient"),
+        (r"NON apre\s+il DB Pickfair", "apre il DB Pickfair"),
+        (r"NON implementa master/copy/follow", "implementa master/copy/follow")]]
+    # 3. «Una PR attiva globale»
+    + [(t, "Una PR attiva per repository", "Una PR attiva globale", None)
+       for t in ["contract", *ALL_ISSUES]]
+    # 4. P41 e «non riattivare» in ogni mirror
+    + [(f, r"#426/P41", "#426/P40", None) for f in ALL_ISSUES]
+    + [(f, r"non riattivare workflow", "riattivare workflow", None) for f in ALL_ISSUES]
+    # 5. UPDATER aperto anche in #426
+    + [("426", r"UPDATER_SCOPE = OWNER_OPEN", "UPDATER_SCOPE = CASO_B_AUTORIZZATO", None)]
+    # 6. route cashout alternative
+    + [("1", r"Vietato creare /v1/cashout/all", "Creare /v1/cashout/all", None),
+       ("1", None, None, "Creare /v1/cashout/all e /v1/cashout/target."),
+       ("contract", None, None, "Aggiungere POST /v1/cashout/selection.")]
+    # 7. semantica PAUSE / STOP / EMERGENCY / RESUME
+    + [(t, old, new, None) for t in ["contract", "1", "351", "426", "489", "491"] for old, new in [
+        (r"PAUSE:\*\* blocca nuovi ordini", "PAUSE:** consente nuovi ordini"),
+        (r"STOP/RISK_STOP:\*\* blocca nuovi ordini", "STOP/RISK_STOP:** consente nuovi ordini"),
+        (r"RESUME:\*\* soltanto dopo nuova readiness completa", "RESUME:** senza nuova readiness"),
+        (r"EMERGENCY:\*\* barriera massima immediata, nessuna eccezione generica",
+         "EMERGENCY:** barriera con eccezioni")]]
+    # 8. stato operativo obsoleto in ogni issue
+    + [(f, old, new, None) for f in ALL_ISSUES for old, new in [
+        (r"#490/#492/#493 MERGIATE", "#490 APERTA"),
+        (r"zero PR aperte al preflight", "una PR aperta al preflight"),
+        (r"PR05 NON è la prossima attività automatica", "PR05 è la prossima attività automatica")]]
+    # 9. esiti distinti
+    + [(t, r"PASS/FAIL/BLOCKED_ENV/NOT_RUN/RINVIATO separati", "PASS e NOT_RUN equivalenti", None)
+       for t in ["contract", "351", "1", "491"]]
+)
+
+
+@pytest.mark.parametrize("target,old,new,append", FINDING_CASES)
+def test_codex_findings_round4_are_rejected(target, old, new, append):
+    assert check_contract(*_mutate(target, old, new, append))
+
+
+SIMLIVE_CASES = [(t, old, new, add) for t in CORE_TARGETS for old, new, add in [
+    # SIM mock-only
+    (r"SIM NON significa\s+mockare", "SIM significa mockare", None),
+    (None, None, "La SIM è un mock del mondo esterno."),
+    # SIM senza Delayed App Key reale
+    (r"SIM\*\* usa la vera Betfair Delayed App Key", "SIM** non usa la Delayed App Key", None),
+    # LIVE senza Live App Key
+    (r"LIVE richiede Live App Key", "LIVE senza Live App Key", None),
+    # SIM che invia ordini Betfair
+    (r"Nessun ordine reale deve essere inviato a Betfair\.", "SIM può inviare ordini reali a Betfair.", None),
+    # saldi invertiti
+    (r"LIVE = saldo reale Betfair", "LIVE = saldo fittizio", None),
+    (r"SIM = saldo/bankroll fittizio", "SIM = saldo reale", None),
+    # MM / command contract diversi
+    (r"vietato creare un MM diverso per modalità", "usare un MM diverso per modalità", None),
+    (r"vietato creare un command contract diverso", "esiste un command contract diverso", None),
+    # tool duplicati per modalità
+    (None, None, "Tool MCP: sim_place_order e live_place_order."),
+    # passaggio automatico a LIVE
+    (r"MCP non decide autonomamente di andare LIVE", "MCP può decidere autonomamente di andare LIVE", None),
+    (None, None, "Fallback automatico a LIVE se la SIM non è pronta."),
+    # LIVE senza readiness
+    (r"LIVE non pronto → BLOCKED", "LIVE non pronto → ordine inviato", None),
+    (None, None, "LIVE senza readiness ammesso per urgenza."),
+    # contaminazione SIM→LIVE
+    (r"peak SIM non contamina drawdown LIVE", "peak SIM contamina drawdown LIVE", None),
+    (None, None, "Contaminazione SIM→LIVE ammessa al cambio modalità."),
+    # PR15 scollegata
+    (r"La futura PR15 deve implementare/testare questo contratto\.", "PR15 non riguarda le modalità.", None),
+    # nuove modalità
+    (None, None, "Modalità PAPER disponibile."),
+]]
+
+
+@pytest.mark.parametrize("target,old,new,append", SIMLIVE_CASES)
+def test_simlive_regressions_are_rejected(target, old, new, append):
+    assert check_contract(*_mutate(target, old, new, append))
+
+
+@pytest.mark.parametrize("target,old,new,append", [
+    (t, None, None, "SIM con saldo reale e LIVE con saldo fittizio.") for t in ["453", "489"]] + [
+    (t, r"PR15: peak SIM non contamina drawdown LIVE", "PR15: nessun vincolo", None) for t in ["453", "489"]] + [
+    (f"policy{i}", r"decisione owner SIM/LIVE del contratto consolidato", "decisione storica", None) for i in [0, 1]])
+def test_simlive_pointer_and_policy_rinvio_are_protected(target, old, new, append):
+    assert check_contract(*_mutate(target, old, new, append))
+
+
+@pytest.mark.parametrize("valid", [
+    "Vietato creare /v1/cashout/all.", "Non usa credenziali Betfair.",
+    "Vietato creare `sim_cashout`.", "nessun passaggio implicito SIM→LIVE",
+    "La SIM non può inviare ordini reali a Betfair.",
+])
+def test_round4_explicit_negations_stay_valid(valid):
+    text, policies, sections = inputs()
+    assert check_contract(text + "\n" + valid + "\n", policies, sections) == []
+
+
+def test_negation_must_be_adjacent():
+    """Una negazione lontana non copre l'istruzione positiva che segue."""
+    text, policies, sections = inputs()
+    text += "\nNon è un problema: la SIM può inviare ordini reali a Betfair.\n"
+    assert check_contract(text, policies, sections)

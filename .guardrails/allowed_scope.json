@@ -2005,7 +2005,7 @@
         "tests/guardrails/test_mcp_operational_governance.py"
       ],
       "max_files": 6,
-      "description": "Mandato owner 07/10/2026: consolidamento documentale MCP; baseline e068a14, #492/#493 mergiate, nessuna PR aperta. Entrypoint #491, gerarchia, serialita per repository, dipendenze statiche, ownership, API unica, milestone SIM/LIVE/totale e issue operative sincronizzate. Test di governance con mutazioni. Nessuna modifica runtime/workflow/reviewer policy; rinvio P41. MANUAL e alternativa updater LIVE restano decisioni owner. Merge manuale per AGENTS/CLAUDE."
+      "description": "Mandato owner 07/10/2026: consolidamento documentale MCP; baseline e068a14, #492/#493 mergiate, nessuna PR aperta. Entrypoint #491, gerarchia, serialita per repository, dipendenze statiche, ownership, API unica, milestone SIM/LIVE/totale e issue operative sincronizzate. Test di governance con mutazioni. Nessuna modifica runtime/workflow/reviewer policy; rinvio P41. MANUAL e alternativa updater LIVE restano decisioni owner. Merge manuale per AGENTS/CLAUDE. QUARTO E ULTIMO ciclo autorizzato dall'owner (deroga al cap 3 FIX_LOOP): integrata la decisione owner SIM/LIVE 07/10 (SIM = Delayed App Key reale + SimulationBroker + bankroll fittizio; LIVE = Live App Key + Betfair reale + saldo reale; parity, un solo set tool MCP, readiness SIM/LIVE, PR15 mode-scoped, matrice e test negativi) e chiusi i 9 thread Codex su 17ce715. Stessi 6 file, nessun runtime/workflow."
     }
   }
 }

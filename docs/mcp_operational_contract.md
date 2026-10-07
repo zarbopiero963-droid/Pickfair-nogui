@@ -163,12 +163,120 @@ la semantica dal vecchio Telegram o da FIXED/MM. Al punto che la richiede:
 **STOP → domanda owner → annotazione #426 → attesa**. Le parti indipendenti
 FIXED/MM possono procedere; non dichiarare MANUAL certificato o master chiusa.
 
-Switch SIMULATION / Delayed / LIVE e saldo reale/fittizio soltanto su comando
-owner esplicito secondo contratto Pickfair. Key, broker, saldo sono assi distinti;
-Delayed NON autorizza ordini reali. Mai auto-LIVE; owner NON bypassa readiness.
+Switch SIM ↔ LIVE (con il relativo saldo fittizio/reale) soltanto su comando
+owner esplicito secondo contratto Pickfair e decisione SIM/LIVE 07/10. App Key,
+feed, broker, saldo ed execution mode sono assi distinti; Delayed App Key NON
+autorizza ordini reali. Mai auto-LIVE; comando owner NON bypassa readiness.
 P35: nuovo comando NON sostituisce/cancella automaticamente il pendente;
 resta fino alla scadenza/chiusura mercato. Nessun hosting remoto o endpoint
 pubblico: prima fase soltanto locale.
+
+## SIM / LIVE — decisione owner 07/10/2026 (autorevole)
+
+**SIM** usa la vera Betfair Delayed App Key e dati/mercati/quote reali dal percorso
+Delayed; stesso motore Pickfair, stessi contratti, stesso Money Management, stessi
+Risk/Safety gate, stessi comandi, stessi lifecycle e stesse funzionalità di LIVE.
+Bankroll/saldo fittizio; BACK/LAY, cancel/replace, cashout, P/L ed exposure simulati;
+reconciliation con il corrispondente comportamento SIM.
+Esecuzione finale: **SimulationBroker**. Nessun ordine reale deve essere inviato a Betfair.
+
+**LIVE** usa la vera Betfair Live App Key e dati/mercati/quote reali dal percorso
+Live; stesso motore Pickfair della SIM, stessi contratti, stesso Money Management,
+stessi Risk/Safety gate, stessi comandi, stessi lifecycle e stesse funzionalità.
+Bankroll/saldo reale Betfair; BACK/LAY, cancel/replace, cashout, P/L, exposure e
+reconciliation reali. Gli ordini vengono inviati a Betfair soltanto se tutti i gate
+LIVE sono soddisfatti.
+
+SIM e LIVE sono «una goccia d'acqua l'una dell'altra» dal punto di vista funzionale.
+La differenza sta nel confine di esecuzione e nelle credenziali/modalità:
+- SIM: MCP → Control API → Pickfair command/runtime contract → MM / Risk / Safety → SimulationBroker + Delayed App Key + bankroll fittizio.
+- LIVE: MCP → Control API → Pickfair command/runtime contract → MM / Risk / Safety → Betfair reale + Live App Key + bankroll reale.
+
+Vietato creare una SIM semplificata; vietato creare logiche business separate per modalità;
+vietato creare un MM diverso per modalità; vietato creare un cashout diverso per modalità;
+vietato creare un resolver diverso per modalità; vietato creare un command contract diverso
+per modalità; vietato creare un comportamento MCP diverso per modalità.
+
+Feed ≠ execution mode. Delayed App Key NON significa dati fittizi. SIM NON significa
+mockare il mondo esterno: usa dati Betfair reali delayed e non espone denaro reale
+all'esecuzione. Live App Key NON deve essere usata in SIM. Delayed App Key NON deve
+essere usata per piazzare ordini reali. LIVE richiede Live App Key e readiness LIVE completa.
+Saldo, App Key, execution mode e feed mode sono concetti distinti: non dedurre
+l'execution mode dalla sola App Key. Modalità soltanto SIM e LIVE;
+vietato introdurre LIVE_DATA_SIM; vietato introdurre PAPER;
+vietato introdurre REAL; vietato introdurre HYBRID; salvo futura autorizzazione owner.
+
+Saldi: **SIM = saldo/bankroll fittizio**; **LIVE = saldo reale Betfair**.
+Combinazioni normali: Delayed App Key + SIM bankroll; Live App Key + real bankroll.
+
+**SIM/LIVE PARITY** (requisito autorevole). Per ogni capacità MCP/Pickfair disponibile
+in entrambe: stesso schema input, stesso schema output, stessi codici errore applicabili,
+stesso request_id, operation_id, correlation_id e customer_ref, stesso resolver, stessi
+controlli numerici, stessi limiti configurati salvo eccezioni mode-specific dichiarate,
+stesso MM, stesso risk model, stessa semantica STOP, stessa semantica cashout, stessa
+gestione AMBIGUOUS, stessa recovery/reconciliation per quanto applicabile, stesso audit
+trail. Differenze ammesse soltanto quelle inevitabili fra SimulationBroker e Betfair
+real-money execution.
+
+**MCP: un solo set di tool** (place_order, cashout, cancel, replace, stop, resume,
+reconcile): lo stesso tool funziona in SIM o LIVE in base allo stato autorevole
+Pickfair; MCP non implementa due motori.
+Vietato creare `sim_place_order`; vietato creare `live_place_order`;
+vietato creare `sim_cashout`; vietato creare `live_cashout`;
+nessun tool duplicato per modalità salvo necessità tecnica dimostrata e autorizzazione owner.
+
+Switch di modalità: MCP può richiedere SIM/LIVE solo su comando esplicito owner;
+MCP non decide autonomamente di andare LIVE; comando owner ≠ bypass dei gate;
+LIVE non pronto → BLOCKED, nessun ordine reale, nessun fallback automatico,
+nessun passaggio implicito SIM→LIVE.
+
+Readiness SIM: Delayed App Key disponibile/valida, SimulationBroker operativo, bankroll
+simulato inizializzato, runtime sano, MM/Risk/Safety disponibili, reconciliation SIM
+coerente, Control API/MCP compatibili, feed freshness secondo contratto Delayed.
+Readiness LIVE: tutto il pertinente della SIM più Live App Key, sessione/autenticazione
+Live, saldo/account reale, Betfair transport reale, reconciliation reale, tutti i gate
+real-money, gate installazione/backup/H24 richiesti per il collaudo LIVE e readiness
+MCP/control-plane. Telegram disconnected NON blocca LIVE quando MCP è l'ingresso operativo.
+
+PR15 — separazione mode-scoped: peak SIM non contamina drawdown LIVE; balance snapshot
+mode-scoped; state/counter persistenti separati o identificati per modalità; SIM→LIVE
+non trasforma il bankroll SIM nel riferimento di rischio LIVE.
+La futura PR15 deve implementare/testare questo contratto.
+
+#### Matrice SIM/LIVE e test obbligatori
+
+| Funzione | SIM | LIVE | Parità |
+|---|---|---|---|
+| resolver | sì | sì | stesso risultato logico |
+| preview | sì | sì | stesso contratto |
+| BACK | simulato | reale | stesso percorso prima del broker |
+| LAY | simulato | reale | stesso percorso prima del broker |
+| dutching | simulato | reale | stesso calcolo |
+| cancel | simulato | reale | stessa semantica |
+| replace | simulato | reale | stessa semantica |
+| cashout | simulato | reale | stesso calcolo/intento |
+| exposure | simulata | reale | stesso modello |
+| P/L | simulato | reale | stesso modello |
+| STOP | simulato | reale | stessa semantica |
+| AMBIGUOUS | simulato/testabile | reale | stesso lifecycle |
+| reconciliation | SIM | Betfair | stesso contratto di stato |
+| audit | sì | sì | stesso schema |
+
+Test negativi obbligatori:
+- SIM non può raggiungere Betfair order transport;
+- SIM non può utilizzare Live App Key per piazzare ordini;
+- LIVE non può usare SimulationBroker per fingere successo;
+- cambio modalità non deve perdere exposure;
+- cambio modalità non deve perdere pending intent;
+- reload/restart non deve contaminare saldo SIM con saldo LIVE;
+- peak/drawdown/stato MM non devono contaminarsi fra modalità;
+- customer_ref mantiene la stessa semantica;
+- stessa richiesta non può produrre prima ordine SIM e poi ordine LIVE per replay/retry;
+- reconnect MCP non deve ripetere mutazioni precedenti.
+
+**Gate di certificazione SIM/LIVE** — stato NOT_RUN finché eseguiti con prova sullo SHA:
+crash/restart; concurrency; SQLite reale; SimulationBroker reale; Betfair reale/LIVE
+quando autorizzato; whole-wiring cross-repo. Documentazione o CI verde non li rendono PASS.
 
 ## Control API e adapter
 
@@ -229,6 +337,8 @@ finale completa MCP-07 dopo LIVE. Non imporre LIVE per certificare sola SIM.
   STOP/resume, cashout, reload config, version mismatch, no-bypass.
 - [ ] Auth/schema/capability, prompt injection, network allowlist e secret scan.
 - [ ] Prove su SHA esatti dei due repo; DB temporaneo reale/concurrency/chaos.
+- [ ] Readiness SIM e matrice SIM/LIVE della decisione 07/10, prove negative incluse;
+  Delayed App Key reale, SimulationBroker, bankroll fittizio.
 
 MCP-06 LIVE non serve. MANUAL resta fuori fino alla decisione. Il PASS SIM
 non promuove LIVE, installato o chiusura totale; chiusura master richiede
@@ -237,6 +347,8 @@ risolvere anche le decisioni aperte pertinenti.
 ### B. MCP LIVE
 
 - [ ] Tutti i requisiti SIM più comando owner esplicito, sessione/Live key/cert.
+- [ ] Readiness LIVE completa (Live App Key, sessione Live, saldo reale, transport e
+  reconciliation reali) e SIM/LIVE PARITY verificata sugli stessi contratti.
 - [ ] Readiness MCP/control-plane, feed freshness ratificata, risk e deploy gates.
 - [ ] Backup/restore P07 prima dei test reali, package/install Windows poi Linux.
 - [ ] Restart/H24 pertinenti, runtime whole-wiring e sweep sui pacchetti/SHA esatti.

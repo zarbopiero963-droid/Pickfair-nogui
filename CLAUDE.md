@@ -6,6 +6,8 @@ Per qualsiasi lavoro MCP partire da **Pickfair-nogui #491** e leggere
 **#491 → #489 → #461 → #426 → #453 → #351 quando serve collaudo → pickfair-mcp- #1**.
 Applicare [il contratto operativo consolidato](docs/mcp_operational_contract.md):
 gerarchia delle fonti, sequenza tecnica, ownership e tre milestone separate.
+SIM/LIVE: vale la decisione owner SIM/LIVE del contratto consolidato (un solo
+motore e un solo set di tool MCP; nessuna nuova modalità; mai auto-LIVE).
 Una sola PR attiva **per repository**: una in Pickfair-nogui e una in
 pickfair-mcp- possono coesistere; la serialità non è globale.
 Le formulazioni di serialità sotto riguardano questo singolo repository.
