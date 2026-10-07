@@ -27,7 +27,9 @@ def _reserved_repair_context(tmp_path):
         "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
     })
     ASSERTIONS.assertTrue(reserved["allowed"])
-    return {"current_head_sha": "abc123", "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"}}
+    context = {"current_head_sha": "abc123", "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"}}
+    ASSERTIONS.assertTrue(controller.fix_policy.claim_patch_gate(context)["allowed"])
+    return context
 
 NEXT_ACTION_ALLOWED = {
     "wait_pending",

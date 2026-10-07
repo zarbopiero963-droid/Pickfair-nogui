@@ -293,7 +293,7 @@ def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
             "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced bug",
         })
         ASSERTIONS.assertTrue(reservation["allowed"])
-    return {
+    context = {
         "current_head_sha": "abc123",
         "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"},
         "automation_mode": "live",
@@ -308,6 +308,15 @@ def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
         "can_push": True,
         "can_commit": True,
     }
+
+
+    cache = tmp_path / "repair-capability.json"
+    if cache.exists():
+        context['fix_loop']['claim_token'] = json.loads(cache.read_text())['claim_token']
+    else:
+        ASSERTIONS.assertTrue(controller.fix_policy.claim_patch_gate(context)['allowed'])
+        cache.write_text(json.dumps({'claim_token':context['fix_loop']['claim_token']}))
+    return context
 
 
 def _retry_refresh_gate_context(tmp_path) -> dict[str, Any]:
@@ -386,7 +395,7 @@ def test_push_with_retry_once_succeeds_on_first_push(tmp_path):
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertFalse(result["retried"])
     ASSERTIONS.assertFalse(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_allowed(monkeypatch):
@@ -444,7 +453,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "rev-parse", "feature/branch"],
+            ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
@@ -480,7 +489,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "rev-parse", "feature/branch"],
+            ["git", "rev-parse", "--verify", "refs/heads/feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
             ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
@@ -524,7 +533,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_
     ASSERTIONS.assertEqual(result["status"], "needs_manual")
     ASSERTIONS.assertTrue(result["retried"])
     ASSERTIONS.assertTrue(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry_gate_context(tmp_path):
@@ -564,7 +573,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
 
     ASSERTIONS.assertFalse(result["ok"])
     ASSERTIONS.assertTrue(result["retried"])
-    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "--verify", "refs/heads/feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 

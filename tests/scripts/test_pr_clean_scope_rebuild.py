@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest import TestCase
 
 from scripts import pr_clean_scope_rebuild as rebuild
@@ -45,6 +46,12 @@ def _good_ctx(tmp_path, **overrides: object) -> dict[str, object]:
         "can_commit": True,
         "can_push": True,
     }
+    cache = tmp_path / "clean-capability.json"
+    if cache.exists():
+        base['fix_loop']['claim_token'] = json.loads(cache.read_text())['claim_token']
+    else:
+        ASSERTIONS.assertTrue(rebuild.controller.fix_policy.claim_patch_gate(base)['allowed'])
+        cache.write_text(json.dumps({'claim_token':base['fix_loop']['claim_token']}))
     base.update(overrides)
     return base
 
@@ -114,7 +121,7 @@ def test_commit_push_allowed(monkeypatch, tmp_path):
     decision = rebuild.initial_decision(_args(_good_ctx(tmp_path), decision_out))
     rebuild.commit_and_push(_args(_good_ctx(tmp_path), decision_out), decision, ["scripts/pr_clean_scope_rebuild.py"])
     ASSERTIONS.assertIn(["git", "commit", "-m", "Clean rebuild PR 249 scope"], calls)
-    ASSERTIONS.assertTrue(any(cmd[:3] == ["git", "push", "--force-with-lease"] for cmd in calls))
+    ASSERTIONS.assertTrue(any(cmd[:2] == ["git", "push"] and cmd[2].startswith("--force-with-lease=") for cmd in calls))
     ASSERTIONS.assertEqual(decision["final_status"], "success")
 
 
@@ -150,6 +157,6 @@ def test_backup_push_allowed_gate(monkeypatch, tmp_path):
     ASSERTIONS.assertEqual(rebuild.execute_rebuild(args, decision, decision_out), 0)
     ASSERTIONS.assertEqual(decision["final_status"], "success")
     ASSERTIONS.assertIn(
-        ["git", "push", "origin", "origin/chore/pr3h-post-fix-audit-gate:refs/heads/backup/pr-249-before-clean"],
+        ["git", "push", "origin", "abc123:refs/heads/backup/pr-249-before-clean"],
         calls,
     )

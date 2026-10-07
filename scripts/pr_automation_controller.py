@@ -6139,6 +6139,9 @@ def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any],
         snapshot = ctx.decision["fix_loop_budget"]
         if budget_status.get("reason", "").startswith("autofix_commit_count"):
             budget_status = pr_budget_status({**current_state, "autofix_commit_count": 0}, _budget_limits())
+        if snapshot["reserved_count"]:
+            budget_status = {"exhausted": True, "reason": "unfinished_fix_loop_cycle",
+                             "next_action": "needs_manual_unfinished_cycle"}
     ctx.decision["progress"] = progress
     ctx.decision["budget_status"] = budget_status
     ctx.decision["pr_automation_state"] = current_state
@@ -8512,6 +8515,11 @@ def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
         return False
     files_allowed = context.get("files_allowed")
     files_forbidden = context.get("files_forbidden")
+    if _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(files_forbidden):
+        return True
+    forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)
+    if any(path_matches_scope_rule(path, rule) for rule in forbidden):
+        return True
     malformed_allowed = _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(
         files_allowed
     )

@@ -256,21 +256,21 @@ def build_branch_names(args: RebuildArgs) -> tuple[str, str]:
 def fetch_heads(args: RebuildArgs, decision: dict[str, Any]) -> CleanBranches:
     backup_branch, clean_branch = build_branch_names(args)
     run(["git", "fetch", "origin", "main", args.branch])
-    _, old_head = run(["git", "rev-parse", f"origin/{args.branch}"])
+    _, old_head = run(["git", "rev-parse", "--verify", f"refs/remotes/origin/{args.branch}"])
     decision["old_head"] = old_head.strip()
     decision["backup_branch"] = backup_branch
     return CleanBranches(old_head.strip(), backup_branch, clean_branch)
 
 
 def create_backup_and_clean_branch(args: RebuildArgs, branches: CleanBranches) -> None:
-    run(["git", "push", "origin", f"origin/{args.branch}:refs/heads/{branches.backup_branch}"])
-    run(["git", "checkout", "-B", branches.clean_branch, "origin/main"])
+    run(["git", "push", "origin", f"{branches.old_head}:refs/heads/{branches.backup_branch}"])
+    run(["git", "checkout", "-B", branches.clean_branch, "refs/remotes/origin/main"])
 
 
-def restore_files(args: RebuildArgs, restored_files: list[str]) -> None:
+def restore_files(args: RebuildArgs, restored_files: list[str], source_head: str | None = None) -> None:
     for file_path in restored_files:
         try:
-            run(["git", "checkout", f"origin/{args.branch}", "--", file_path])
+            run(["git", "checkout", source_head or f"refs/remotes/origin/{args.branch}", "--", file_path])
         except RuntimeError as exc:
             if "did not match any file(s) known to git" not in str(exc):
                 raise
@@ -436,7 +436,8 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     if not new_head.strip():
         apply_gate_block(decision, controller.fix_policy.stopped("pushed_head_missing"), "push")
         return
-    run(["git", "push", "--force-with-lease", "origin", f"{new_head.strip()}:refs/heads/{args.branch}"])
+    expected = context["current_head_sha"]
+    run(["git", "push", f"--force-with-lease=refs/heads/{args.branch}:{expected}", "origin", f"{new_head.strip()}:refs/heads/{args.branch}"])
     decision["new_head"] = new_head.strip()
     decision["push_succeeded"] = True
     budget = context["fix_loop"]
@@ -456,6 +457,10 @@ def execute_rebuild(args: RebuildArgs, decision: dict[str, Any], out_path: Path)
     branches = fetch_heads(args, decision)
     if args.dry_run:
         return block_status(out_path, decision, "dry_run")
+    assessed_head = str(build_clean_gate_ctx(args).get("current_head_sha") or "")
+    if not assessed_head or branches.old_head != assessed_head:
+        apply_gate_block(decision, controller.fix_policy.stopped("fetched_head_differs_from_assessment"), "claim_patch")
+        return block_status(out_path, decision, "blocked_fetched_head_mismatch")
     if not ensure_clean_push_gate(args, decision):
         return block_status(out_path, decision, "blocked_post_fix_audit_gate")
     claim = controller.fix_policy.claim_patch_gate(build_clean_gate_ctx(args))
@@ -463,7 +468,7 @@ def execute_rebuild(args: RebuildArgs, decision: dict[str, Any], out_path: Path)
         apply_gate_block(decision, claim, "claim_patch")
         return block_status(out_path, decision, "blocked_patch_claim")
     create_backup_and_clean_branch(args, branches)
-    restore_files(args, restored_files)
+    restore_files(args, restored_files, branches.old_head)
     run_diff_guard(decision)
     run_compile_guard(decision, restored_files)
     run_focused_tests(decision, restored_files)

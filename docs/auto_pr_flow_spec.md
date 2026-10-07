@@ -715,6 +715,10 @@ possono acquisire, neppure durante l'audit del retry. Il retry acquisisce
 atomicamente `retry_ready → pushing` dopo il suo audit completo. Prove retry
 assenti, stale o respinte lasciano il ciclo non ripetibile automaticamente.
 Il percorso clean-rebuild acquisisce il gate atomico prima del commit.
+Ogni percorso di push richiede la capability `working` del worker; il salto
+diretto `reserved → pushing` è vietato. Il clean-rebuild confronta l'head
+effettivamente scaricato con quello dell'assessment, ripristina file dallo SHA
+scaricato immutabile e usa una lease esplicita su quello SHA per il push.
 Entrambi i percorsi fissano lo SHA locale prima del push e usano quello stesso
 SHA nel refspec e nella completion; un branch che avanza durante l'invio non
 cambia l'evidenza registrata.
@@ -729,6 +733,11 @@ CI temporanei**. Non crearne uno vuoto a ogni run. Inizializzazione esplicita
 soltanto per PR nuova senza repair push, oppure dopo ricostruzione verificata
 dell'intera storia. `initialize` non sovrascrive una PR già registrata.
 Stato assente/corrotto, identità incoerente o ciclo mancante → `NEEDS_MANUAL`.
+Sono validati anche tipi/range del contatore, coerenza stage/head/claim e prove
+dei grant owner: uno SQLite leggibile con righe invalide non è uno stato valido.
+Errori dopo l'intent, inclusi response lost e risoluzione ref fallita, riportano
+stop manuale. I branch locali sono risolti con `refs/heads/`, senza ambiguità
+con tag omonimi.
 Il vecchio JSON del controller e il conteggio per autore/messaggio dei commit
 sono diagnostica, **non** il contatore autorevole.
 
@@ -736,6 +745,11 @@ sono diagnostica, **non** il contatore autorevole.
 Il controller si ferma in `NEEDS_MANUAL` anche quando il ledger è assente o
 il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 5 non
 richiede un override: il limite blocca la prenotazione del sesto repair.
+Preflight/controller generali si fermano anche davanti a un ciclo incompiuto:
+non pianificano altro lavoro o merge sulla sola leggibilità del ledger. Il
+worker già titolare della capability usa i propri gate di fase, non quel
+preflight generale, per completare il ciclo. `status.allowed` indica soltanto
+la validità dello snapshot; non autorizza patch, push, resolve o merge.
 Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
 Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
 a una PR, passare sempre l'identità PR (o `PR_NUMBER`): ometterla per fingere

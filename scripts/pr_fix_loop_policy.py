@@ -173,16 +173,52 @@ class FixLoopLedger:
 
     def _status(self, connection: sqlite3.Connection) -> dict[str, Any]:
         identity = (self.repo, self.pr)
-        initial = connection.execute("SELECT historical_count FROM prs WHERE repo=? AND pr=?", identity).fetchone()
+        initial = connection.execute("SELECT historical_count, evidence FROM prs WHERE repo=? AND pr=?", identity).fetchone()
         if initial is None:
             raise ValueError("fix_loop_pr_history_missing")
-        completed, reserved = connection.execute(
-            "SELECT count(head), count(*) FROM cycles WHERE repo=? AND pr=?", identity,
-        ).fetchone()
-        grant = connection.execute("SELECT max(ceiling) FROM grants WHERE repo=? AND pr=?", identity).fetchone()[0]
+        if type(initial[0]) is not int or initial[0] < 0 or not isinstance(initial[1], str) or not initial[1].strip():
+            raise ValueError("invalid_persisted_history")
+        rows = connection.execute("SELECT assessment, head, stage FROM cycles WHERE repo=? AND pr=?", identity).fetchall()
+        for row in rows:
+            self._validate_cycle_row(row)
+        completed, reserved = sum(row[1] is not None for row in rows), len(rows)
+        grants = connection.execute("SELECT decision, ceiling, evidence FROM grants WHERE repo=? AND pr=?", identity).fetchall()
+        for row in grants:
+            self._validate_grant_row(row, initial[0] + completed)
+        grant = max((row[1] for row in grants), default=0)
+        if initial[0] + reserved > max(MAX_FIX_LOOP_ITERATIONS_PER_PR, grant):
+            raise ValueError("persisted_budget_exceeds_ceiling")
         return {"completed_count": initial[0] + completed, "reserved_count": reserved - completed,
                 "used_slots": initial[0] + reserved,
                 "ceiling": max(MAX_FIX_LOOP_ITERATIONS_PER_PR, grant or 0)}
+
+    def _validate_cycle_row(self, row: sqlite3.Row) -> None:
+        if not isinstance(row[0], str):
+            raise ValueError("invalid_persisted_assessment")
+        evidence = json.loads(row[0])
+        if triage(evidence)["decision"] != "PATCH_REQUIRED":
+            raise ValueError("invalid_persisted_assessment")
+        stage, head = row[2], row[1]
+        if stage not in {"reserved", "working", "pushing", "retry_ready", "completed"}:
+            raise ValueError("invalid_persisted_stage")
+        if (stage == "completed") != (isinstance(head, str) and bool(head.strip())) or (head is not None and stage != "completed"):
+            raise ValueError("invalid_persisted_head_stage")
+        if stage in {"working", "pushing", "retry_ready"} and not isinstance(evidence.get("claim_token"), str):
+            raise ValueError("invalid_persisted_claim")
+        if stage in {"working", "pushing", "retry_ready"} and not evidence.get("claim_token"):
+            raise ValueError("invalid_persisted_claim")
+
+    def _validate_grant_row(self, row: sqlite3.Row, completed: int) -> None:
+        if not isinstance(row[2], str):
+            raise ValueError("invalid_persisted_grant")
+        comment = json.loads(row[2])
+        if type(row[1]) is not int or row[1] <= MAX_FIX_LOOP_ITERATIONS_PER_PR:
+            raise ValueError("invalid_persisted_grant")
+        if not isinstance(comment, dict) or not owner_comment_matches(comment, self.repo, self.pr) or str(comment.get("id")) != row[0]:
+            raise ValueError("invalid_persisted_owner_grant")
+        match = re.fullmatch(rf"OWNER_FIX_LOOP_OVERRIDE PR={self.pr} ADDITIONAL=([1-9][0-9]*) AT_COUNT=([0-9]+)", str(comment.get("body", "")).strip())
+        if not match or int(match[2]) < MAX_FIX_LOOP_ITERATIONS_PER_PR or int(match[2]) > completed or row[1] != int(match[1]) + int(match[2]):
+            raise ValueError("invalid_persisted_grant_bounds")
 
     def status(self) -> dict[str, Any]:
         try:
@@ -279,9 +315,10 @@ class FixLoopLedger:
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
-    def start_push(self, cycle: str) -> dict[str, Any]:
+    def start_push(self, cycle: str, claim_token: str | None = None) -> dict[str, Any]:
         """Persist intent before dispatch: crash/response lost cannot replay it."""
-        return self._transition_push(cycle, "reserved", "pushing")
+        permission = self.authorize(cycle, stage="working", claim_token=claim_token)
+        return self._transition_push(cycle, "working", "pushing") if permission["allowed"] else permission
 
     def _retry_after_confirmed_rejection(self, cycle: str) -> dict[str, Any]:
         """Internal transport retry only after an actual non-fast-forward rejection."""
@@ -345,14 +382,15 @@ def reservation_gate(context: dict[str, Any] | None, *, stage: str = "reserved")
         return stopped("fix_loop_reservation_malformed")
 
 
-def start_push_gate(context: dict[str, Any], *, stage: str = "reserved") -> dict[str, Any]:
+def start_push_gate(context: dict[str, Any], *, stage: str = "working") -> dict[str, Any]:
+    if stage not in {"working", "retry_ready"}:
+        return stopped("exclusive_patch_claim_required")
     permission = reservation_gate(context, stage=stage)
     if not permission["allowed"]:
         return permission
     budget = context["fix_loop"]
     ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
-    actual_stage = "working" if stage == "reserved" and budget.get("claim_token") else stage
-    return ledger._transition_push(budget["cycle_id"], actual_stage, "pushing")
+    return ledger._transition_push(budget["cycle_id"], stage, "pushing")
 
 
 def claim_patch_gate(context: dict[str, Any] | None) -> dict[str, Any]:

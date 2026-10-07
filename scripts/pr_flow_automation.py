@@ -1872,6 +1872,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
               if ledger_path else controller.fix_policy.stopped("fix_loop_state_missing"))
     if not budget["allowed"]:
         issues.append(budget["reason"])
+    elif budget["reserved_count"]:
+        issues.append("unfinished_fix_loop_cycle_requires_manual_recovery")
 
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
@@ -2176,8 +2178,8 @@ def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None
 def _failed_push_result(repo: str, branch: str, exc: RuntimeError) -> dict[str, Any]:
     return _build_push_result(
         False,
-        "failed",
-        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False, error=str(exc)),
+        "needs_manual",
+        PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=True, error=str(exc)),
     )
 
 
@@ -2299,7 +2301,7 @@ def push_with_retry_once(
             return _build_push_result(False, "needs_manual", PushResultContext(
                 repo=repo, branch=branch, retried=False, needs_manual=True, error=attempt["reason"],
             ))
-        pushed_head = run_func(["git", "rev-parse", branch], check=True).strip()
+        pushed_head = run_func(["git", "rev-parse", "--verify", f"refs/heads/{branch}"], check=True).strip()
         if not pushed_head:
             raise RuntimeError("pushed_head_missing")
         _push_initial(run_func, remote, f"{pushed_head}:refs/heads/{branch}")

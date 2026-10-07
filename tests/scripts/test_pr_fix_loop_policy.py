@@ -49,7 +49,7 @@ def ledger(policy, tmp_path):
 def consume(ledger, name):
     result = ledger.reserve(name, assessment("CURRENT_DEFECT"))
     assert result["allowed"]
-    assert ledger.start_push(name)["allowed"]
+    assert begin_push(ledger, name)["allowed"]
     assert ledger.complete(name, f"head-{name}")["completed_count"] >= 1
 
 
@@ -110,7 +110,7 @@ def test_missing_state_and_pending_cycle_fail_closed(policy, tmp_path, ledger):
     assert ledger.reserve("one", assessment("CURRENT_DEFECT"))["allowed"]
     assert not ledger.reserve("two", assessment("CURRENT_DEFECT"))["allowed"]
     assert ledger.authorize("one")["allowed"]
-    ledger.start_push("one")
+    begin_push(ledger, "one")
     ledger.complete("one", "h1")
     ledger.complete("one", "h1")
     assert ledger.status()["completed_count"] == 1
@@ -163,8 +163,8 @@ def test_accepted_limitation_requires_owner_and_never_says_fixed(policy):
     )["allowed"]
 
 
-def repair_context(ledger, cycle):
-    return {
+def repair_context(ledger, cycle, *, claim=True):
+    context = {
         "repo": "owner/repo", "pr": 495, "current_head_sha": "head", "POST_FIX_AUDIT": "PASS",
         "validation_passed": True, "current_head_matches": True,
         "dirty_worktree": False, "scope_allowed": True,
@@ -175,6 +175,19 @@ def repair_context(ledger, cycle):
         "fix_loop": {"path": str(ledger.path), "repo": "owner/repo",
                      "pr": 495, "cycle_id": cycle},
     }
+    tokens = getattr(ledger, '_test_tokens', {})
+    if claim and cycle in tokens:
+        context['fix_loop']['claim_token'] = tokens[cycle]
+    elif claim and ledger.authorize(cycle)['allowed']:
+        result = controller.fix_policy.claim_patch_gate(context)
+        if result['allowed']:
+            tokens[cycle] = context['fix_loop']['claim_token']
+            ledger._test_tokens = tokens
+    return context
+
+
+def begin_push(ledger, cycle):
+    return controller.fix_policy.start_push_gate(repair_context(ledger, cycle))
 
 
 def test_real_push_persists_once_and_sixth_never_runs(ledger):
@@ -276,7 +289,7 @@ def test_other_pr_and_completed_reservation_cannot_authorize(ledger, policy):
     assert ledger.reserve("one", assessment("CURRENT_DEFECT"))["allowed"]
     context = repair_context(ledger, "one")
     assert not policy.reservation_gate({**context, "pr": 496})["allowed"]
-    ledger.start_push("one")
+    begin_push(ledger, "one")
     ledger.complete("one", "head")
     assert not policy.reservation_gate(context)["allowed"]
 
@@ -381,7 +394,7 @@ def test_clean_commit_cannot_follow_a_competing_fifth_completion(ledger, monkeyp
     args = rebuild.RebuildArgs("owner/repo", "495", "branch", ["scripts/a.py"], [],
                                "unused.json", repair_context(ledger, "fifth"), False)
     def competing_attempt():
-        if ledger.start_push("fifth")["allowed"]:
+        if begin_push(ledger, "fifth")["allowed"]:
             ledger.complete("fifth", "competing-head")
     monkeypatch.setattr(rebuild, "ensure_git_identity", competing_attempt)
     commits = []
@@ -456,11 +469,11 @@ def test_completion_records_pushed_branch_not_checkout_head(ledger):
     def runner(command, **_kwargs):
         if command[:2] == ['git', 'rev-parse']:
             refs.append(command[-1])
-            return 'pushed-head' if command[-1] == 'other-branch' else 'unrelated-head'
+            return 'pushed-head' if command[-1] == 'refs/heads/other-branch' else 'unrelated-head'
         return ''
     assert flow.push_with_retry_once(runner, 'owner/repo', 'other-branch',
                                     context=repair_context(ledger, 'branch'))['ok']
-    assert refs == ['other-branch']
+    assert refs == ['refs/heads/other-branch']
 
 
 def test_rejected_retry_without_refresh_cannot_replay_reservation(ledger):
@@ -550,17 +563,17 @@ def test_clean_rebuild_stops_before_restore_after_competing_completion(ledger, m
     rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
     for number in range(4): consume(ledger,str(number))
     ledger.reserve('restore',assessment('CURRENT_DEFECT'))
-    context=repair_context(ledger,'restore')
+    context=repair_context(ledger,'restore',claim=False)
     args=rebuild.RebuildArgs('owner/repo','495','branch',['scripts/a.py'],[],str(tmp_path/'report.json'),context,False)
     decision={}
     touched=[]
     monkeypatch.setattr(rebuild,'prepare_scope',lambda *_:(['scripts/a.py'],[]))
     monkeypatch.setattr(rebuild,'stop_for_scope_blockers',lambda *_:False)
-    monkeypatch.setattr(rebuild,'fetch_heads',lambda *_:{})
+    monkeypatch.setattr(rebuild,'fetch_heads',lambda *_:rebuild.CleanBranches('head','backup','clean'))
     original=rebuild.ensure_clean_push_gate
     def initial_gate(*params):
         allowed=original(*params)
-        if ledger.start_push('restore')['allowed']: ledger.complete('restore','competing-head')
+        if begin_push(ledger, 'restore')['allowed']: ledger.complete('restore','competing-head')
         return allowed
     monkeypatch.setattr(rebuild,'ensure_clean_push_gate',initial_gate)
     monkeypatch.setattr(rebuild,'create_backup_and_clean_branch',lambda *_:touched.append('branch'))
@@ -583,11 +596,203 @@ def test_exhaustion_template_has_machine_readable_stop():
 
 def test_patch_claim_is_exclusive_and_required_by_other_worker(ledger, policy):
     ledger.reserve('exclusive', assessment('CURRENT_DEFECT'))
-    first=repair_context(ledger,'exclusive')
-    other=repair_context(ledger,'exclusive')
+    first=repair_context(ledger,'exclusive',claim=False)
+    other=repair_context(ledger,'exclusive',claim=False)
     assert policy.claim_patch_gate(first)['allowed']
     assert not policy.claim_patch_gate(other)['allowed']
     assert not policy.start_push_gate(other)['allowed']
     assert policy.reservation_gate(first)['allowed']
     assert policy.start_push_gate(first)['allowed']
     assert ledger.complete('exclusive','new-head')['allowed']
+
+
+def test_real_git_same_named_tag_cannot_replace_audited_branch(ledger,tmp_path):
+    import subprocess
+    repo=tmp_path/'git-repo'
+    repo.mkdir()
+    def git(*args):
+        return subprocess.check_output(['git',*args],cwd=repo,text=True,stderr=subprocess.DEVNULL).strip()
+    git('init','-b','main')
+    git('config','user.name','Policy Test')
+    git('config','user.email','policy@example.test')
+    git('commit','--allow-empty','-m','first')
+    tag_head=git('rev-parse','HEAD')
+    git('commit','--allow-empty','-m','branch')
+    branch_head=git('rev-parse','HEAD')
+    git('branch','collision')
+    git('tag','collision',tag_head)
+    assert tag_head != branch_head
+    ledger.reserve('tag-collision',assessment('CURRENT_DEFECT'))
+    sent=[]
+    def runner(command,**_kwargs):
+        if command[1]=='push':
+            sent.append(command)
+            return ''
+        return git(*command[1:])
+    result=flow.push_with_retry_once(runner,'owner/repo','collision',context=repair_context(ledger,'tag-collision'))
+    assert result['ok']
+    assert f'{branch_head}:refs/heads/collision' in sent[0]
+
+
+def test_claim_twice_keeps_original_worker_capability(ledger,policy):
+    ledger.reserve('idempotent-claim',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'idempotent-claim')
+    assert policy.claim_patch_gate(context)['allowed']
+    token=context['fix_loop']['claim_token']
+    assert policy.claim_patch_gate(context)['allowed']
+    assert context['fix_loop']['claim_token'] == token
+
+
+def test_simultaneous_claims_have_exactly_one_winner(ledger,policy):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    ledger.reserve('concurrent-claim',assessment('CURRENT_DEFECT'))
+    barrier=Barrier(2)
+    def claim():
+        barrier.wait(timeout=5)
+        return policy.FixLoopLedger(ledger.path,'owner/repo',495).claim_patch('concurrent-claim','head')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results=list(pool.map(lambda _:claim(),range(2)))
+    assert sum(r['allowed'] for r in results) == 1
+
+
+def test_phase_zero_handoff_preserves_claim_in_worker_context(ledger,monkeypatch,policy):
+    ledger.reserve('handoff',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'handoff',claim=False)
+    monkeypatch.setattr(controller,'decide_phase0_gate',lambda _: {'can_patch':True})
+    assert controller.build_codex_patch_task_after_phase0('patch',{},context)['can_patch']
+    assert context['fix_loop']['claim_token']
+    assert policy.reservation_gate(context)['allowed']
+    assert policy.start_push_gate(context)['allowed']
+
+
+@pytest.mark.parametrize('scope', [{}, {'files_allowed':[]}, {'files_forbidden':['core/']}])
+def test_verified_forbidden_path_without_allowlist_is_manual(scope):
+    path='core/engine.py' if scope.get('files_forbidden') else '.github/workflows/policy.yml'
+    context={'current_head_sha':'head','review_assessments':{'T1':assessment('CURRENT_DEFECT')},**scope}
+    assert controller.triage_review_thread_contract({'id':'T1','path':path},context)['decision']=='NEEDS_MANUAL'
+
+
+def test_ambiguous_post_intent_failure_reports_manual(ledger):
+    ledger.reserve('ambiguous-report',assessment('CURRENT_DEFECT'))
+    def runner(command,**_kwargs):
+        if command[1]=='push': raise RuntimeError('response lost after push')
+        return 'pinned-head'
+    result=flow.push_with_retry_once(runner,'owner/repo','branch',context=repair_context(ledger,'ambiguous-report'))
+    assert result['needs_manual'] and result['status']=='needs_manual'
+
+
+def test_clean_rebuild_rejects_fetched_unassessed_head(ledger,monkeypatch,tmp_path):
+    rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
+    ledger.reserve('fetched-head',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'fetched-head')
+    args=rebuild.RebuildArgs('owner/repo','495','branch',['scripts/a.py'],[],str(tmp_path/'report.json'),context,False)
+    touched=[]
+    monkeypatch.setattr(rebuild,'prepare_scope',lambda *_:(['scripts/a.py'],[]))
+    monkeypatch.setattr(rebuild,'stop_for_scope_blockers',lambda *_:False)
+    monkeypatch.setattr(rebuild,'fetch_heads',lambda *_:rebuild.CleanBranches('collaborator-head','backup','clean'))
+    monkeypatch.setattr(rebuild,'create_backup_and_clean_branch',lambda *_:touched.append('branch'))
+    monkeypatch.setattr(rebuild,'restore_files',lambda *_:touched.append('restore'))
+    for name in ['run_diff_guard','run_compile_guard','run_focused_tests']:
+        monkeypatch.setattr(rebuild,name,lambda *_:None)
+    monkeypatch.setattr(rebuild,'stop_if_forbidden_remains',lambda *_:False)
+    monkeypatch.setattr(rebuild,'commit_and_push',lambda *_:None)
+    monkeypatch.setattr(rebuild,'write_decision',lambda *_:0)
+    rebuild.execute_rebuild(args,{},tmp_path/'report.json')
+    assert not touched
+
+
+def test_direct_push_cannot_skip_exclusive_claim(ledger):
+    ledger.reserve('unclaimed',assessment('CURRENT_DEFECT'))
+    calls=[]
+    result=flow.push_with_retry_once(lambda cmd,**_:(calls.append(cmd) or 'head'),'owner/repo','branch',
+                                    context=repair_context(ledger,'unclaimed',claim=False))
+    assert not result['ok'] and result['needs_manual']
+    assert not calls
+
+
+@pytest.mark.parametrize('value',[-100,'not-a-counter',1.5])
+def test_invalid_persisted_history_fails_closed(ledger,value):
+    import sqlite3
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute('UPDATE prs SET historical_count=?',(value,))
+    assert not ledger.status()['allowed']
+    assert not ledger.reserve('corrupt',assessment('CURRENT_DEFECT'))['allowed']
+
+
+@pytest.mark.parametrize('stage',['reserved','working','pushing','retry_ready'])
+def test_unfinished_cycle_blocks_general_preflight(ledger,monkeypatch,stage):
+    import sqlite3
+    ledger.reserve('unfinished',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'unfinished',claim=False)
+    if stage != 'reserved': controller.fix_policy.claim_patch_gate(context)
+    if stage in {'pushing','retry_ready'}: controller.fix_policy.start_push_gate(context)
+    if stage == 'retry_ready': controller.fix_policy.retry_after_confirmed_rejection(context)
+    monkeypatch.setenv('PR_FIX_LOOP_LEDGER',str(ledger.path))
+    monkeypatch.setattr(flow,'pr_view',lambda *_:{'headRefName':'branch','headRefOid':'head'})
+    monkeypatch.setattr(flow,'split_checks',lambda *_a,**_k:{})
+    monkeypatch.setattr(flow,'sh',lambda *_a,**_k:'')
+    monkeypatch.setattr(flow,'safe_autofix_commits',lambda *_:[])
+    args=argparse.Namespace(repo='owner/repo',pr='495',output='',max_safe_autofix_commits=5,
+                            oscillation_touch_limit=3,comment=False,no_fail=False)
+    assert flow.cmd_preflight(args)==1
+
+
+def test_clean_push_lease_is_bound_to_assessed_head(ledger,monkeypatch):
+    rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
+    ledger.reserve('lease',assessment('CURRENT_DEFECT'))
+    args=rebuild.RebuildArgs('owner/repo','495','branch',['scripts/a.py'],[],'unused.json',repair_context(ledger,'lease'),False)
+    commands=[]
+    def runner(command):
+        commands.append(command)
+        return 0,'new-head' if command[1]=='rev-parse' else ''
+    monkeypatch.setattr(rebuild,'run',runner)
+    monkeypatch.setattr(rebuild,'ensure_git_identity',lambda:None)
+    rebuild.commit_and_push(args,{},['scripts/a.py'])
+    pushed=next(command for command in commands if command[1]=='push')
+    assert '--force-with-lease=refs/heads/branch:head' in pushed
+
+
+def test_clean_restore_uses_fetched_immutable_source(ledger,monkeypatch,tmp_path):
+    rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
+    ledger.reserve('restore-source',assessment('CURRENT_DEFECT'))
+    args=rebuild.RebuildArgs('owner/repo','495','branch',['scripts/a.py'],[],str(tmp_path/'report.json'),repair_context(ledger,'restore-source'),False)
+    sources=[]
+    monkeypatch.setattr(rebuild,'prepare_scope',lambda *_:(['scripts/a.py'],[]))
+    monkeypatch.setattr(rebuild,'stop_for_scope_blockers',lambda *_:False)
+    monkeypatch.setattr(rebuild,'fetch_heads',lambda *_:rebuild.CleanBranches('head','backup','clean'))
+    monkeypatch.setattr(rebuild,'create_backup_and_clean_branch',lambda *_:None)
+    monkeypatch.setattr(rebuild,'restore_files',lambda _args,_files,source=None:sources.append(source))
+    for name in ['run_diff_guard','run_compile_guard','run_focused_tests','commit_and_push']:
+        monkeypatch.setattr(rebuild,name,lambda *_:None)
+    monkeypatch.setattr(rebuild,'stop_if_forbidden_remains',lambda *_:False)
+    monkeypatch.setattr(rebuild,'write_decision',lambda *_:0)
+    rebuild.execute_rebuild(args,{},tmp_path/'report.json')
+    assert sources==['head']
+
+
+def test_general_controller_stops_on_unfinished_cycle(ledger,monkeypatch,tmp_path):
+    ledger.reserve('active-worker',assessment('CURRENT_DEFECT'))
+    controller.fix_policy.claim_patch_gate(repair_context(ledger,'active-worker'))
+    monkeypatch.setenv('PR_FIX_LOOP_LEDGER',str(ledger.path))
+    args=argparse.Namespace(repo='owner/repo',pr='495',output=str(tmp_path/'report.json'))
+    decision={'review':{'unresolved_active':0}}
+    ctx=controller.NextActionContext(args,{},[],[],[],[],decision)
+    controller.update_decision_state_tracking(args,{'headRefOid':'head'},ctx)
+    assert decision['budget_status']['exhausted']
+    assert decision['budget_status']['next_action'].startswith('needs_manual')
+
+
+@pytest.mark.parametrize('mutation',[
+    "UPDATE cycles SET assessment=NULL",
+    "UPDATE cycles SET assessment='[]'",
+    "UPDATE cycles SET stage='completed'",
+    "UPDATE cycles SET head='invented-head'",
+    "INSERT INTO grants VALUES ('owner/repo',495,'1','bad-ceiling','{}')",
+])
+def test_inconsistent_persisted_rows_fail_closed(ledger,mutation):
+    import sqlite3
+    ledger.reserve('invalid-row',assessment('CURRENT_DEFECT'))
+    with sqlite3.connect(ledger.path) as connection: connection.execute(mutation)
+    assert not ledger.status()['allowed']
+    assert not ledger.reserve('next',assessment('CURRENT_DEFECT'))['allowed']
