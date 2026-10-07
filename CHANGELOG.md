@@ -80,7 +80,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   start-up delay: with 900 s a valid but slow review left the gate red, which
   could already happen with Grok's 20-minute job. The gate still exits as soon
   as the checks are settled, and still fails when the budget runs out. A test
-  ties the budget to the five review workflows' timeouts.
+  ties the budget to the five review workflows' timeouts. The worst-case test
+  of the review workflows now also counts a GitHub call written over several
+  lines: there are seven calls per workflow, not six, and every call must be
+  recognised or the test fails.
 - AI review workflow for Grok 4.7 (`pr-review-xai-grok46.yml`): each request to
   the model may now wait 240 s instead of 100 s, and the job timeout rises from
   10 to 20 minutes. The request is not streamed, so the answer arrives only

@@ -25,8 +25,9 @@ GROK = ".github/workflows/pr-review-xai-grok46.yml"
 LIMITE_MINIMO_GROK = 240  # secondi per richiesta (DECISIONE-426 P24)
 TENTATIVI_ATTESI = 3
 # Avvio del runner e dell'interprete. Le chiamate a GitHub si contano a parte,
-# dal file: erano un margine fisso di 120 s, meno delle sei chiamate da 30 s
-# che ogni workflow fa davvero (Codex sulla #484).
+# dal file: erano un margine fisso di 120 s, meno delle chiamate da 30 s che
+# ogni workflow fa davvero (Codex sulla #484). Sono sette, non sei: una e'
+# scritta su piu' righe e la prima regex non la vedeva (Codex sulla #492).
 AVVIO_RUNNER = 60
 
 
@@ -87,8 +88,20 @@ def _attesa_github(workflow: str) -> int:
     assert len(definizioni) == 1, f"{workflow}: atteso un solo gh_request, trovati {len(definizioni)}"
     limiti = re.findall(r"urlopen\(req, timeout=(\d+)\)", _corpo(righe, definizioni[0]))
     assert len(limiti) == 1, f"{workflow}: timeout di gh_request non riconosciuto: {limiti}"
-    chiamate = re.findall(r'gh_request\("(?:GET|POST|PATCH|PUT|DELETE)"', testo)
+    # `\s*`: una chiamata scritta su piu' righe (`gh_request(\n    "GET", ...`)
+    # e' una chiamata come le altre. La prima regex la saltava, e su tutti e
+    # cinque i reviewer contava 6 chiamate invece di 7 — 30 s di caso peggiore
+    # che il test non vedeva (Codex sulla #492, in `comment_exists`).
+    chiamate = re.findall(r'gh_request\(\s*"(?:GET|POST|PATCH|PUT|DELETE)"', testo)
     assert chiamate, f"{workflow}: nessuna chiamata a gh_request riconosciuta"
+    # Ogni `gh_request(` che non e' la definizione deve essere riconosciuto
+    # sopra: una forma nuova (metodo da variabile, keyword) uscirebbe dal conto
+    # in silenzio e il caso peggiore risulterebbe piu' corto del vero.
+    tutte = re.findall(r"(?<!def )gh_request\(", testo)
+    assert len(chiamate) == len(tutte), (
+        f"{workflow}: {len(tutte)} chiamate a gh_request, ma solo {len(chiamate)} "
+        f"riconosciute col metodo HTTP letterale: il caso peggiore le conterebbe in meno"
+    )
     return len(chiamate) * int(limiti[0])
 
 

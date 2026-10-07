@@ -185,10 +185,10 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   07-10-2026): il ragionamento più lungo che il modello faccia. Aspettare di
   più non costa, perché si pagano i token generati. Il caso peggiore deve stare
   dentro il `timeout-minutes` del job: tre tentativi, le attese fra i
-  tentativi, le chiamate a GitHub al loro tetto di 30 s (sei per workflow) e un
-  minuto di avvio del runner. Per Grok fa 974 s, e il suo job ha 20 minuti; per
-  Sol fa 2054 s, e il suo job ha 40 minuti. Altrimenti GitHub interrompe il
-  job prima del commento d'errore, e il reviewer tace. I 346 s di margine di
+  tentativi, le chiamate a GitHub al loro tetto di 30 s (sette per workflow) e un
+  minuto di avvio del runner. Per Grok fa 1004 s, e il suo job ha 20 minuti; per
+  Sol fa 2084 s, e il suo job ha 40 minuti. Altrimenti GitHub interrompe il
+  job prima del commento d'errore, e il reviewer tace. I 316 s di margine di
   Sol servono alle pagine di commenti in più sulle PR con oltre 100 commenti,
   che il conto per punti di chiamata non vede (Codex sulla #492). Lo verifica
   `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,

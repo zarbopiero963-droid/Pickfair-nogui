@@ -63,9 +63,9 @@ jobs:
   review:
     name: GPT-6.1 Sol push-range review
     runs-on: ubuntu-latest
-    # Caso peggiore: 3 tentativi x 600 s + backoff 14 s + sei chiamate a GitHub
-    # al tetto di 30 s + 60 s di avvio = 2054 s, dentro i 2400 s del job
-    # (tests/guardrails/test_ai_review_timeout.py). I 346 s di margine (come
+    # Caso peggiore: 3 tentativi x 600 s + backoff 14 s + sette chiamate a
+    # GitHub al tetto di 30 s + 60 s di avvio = 2084 s, dentro i 2400 s del job
+    # (tests/guardrails/test_ai_review_timeout.py). I 316 s di margine (come
     # Fable) servono alle pagine in piu' di `comment_exists`/`upsert_comment`
     # sulle PR con oltre 100 commenti, che il conto per punti di chiamata non
     # vede (Codex sulla #492). Con 12 minuti GitHub ucciderebbe il job a meta'
