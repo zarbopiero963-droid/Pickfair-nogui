@@ -1872,8 +1872,6 @@ def cmd_preflight(args: argparse.Namespace) -> int:
               if ledger_path else controller.fix_policy.stopped("fix_loop_state_missing"))
     if not budget["allowed"]:
         issues.append(budget["reason"])
-    elif budget["used_slots"] >= budget["ceiling"]:
-        issues.append("fix_loop_budget_exhausted")
 
     if os.environ.get("HAS_PICKFAIR_ACTIONS_TOKEN", "").lower() not in {"true", "1", "yes"}:
         warnings.append("PICKFAIR_ACTIONS_TOKEN appears missing/empty")
@@ -2209,9 +2207,15 @@ def _retry_non_fast_forward_push(
 ) -> dict[str, Any]:
     retry_gate_context = build_retry_push_gate_context(gate_context)
     if retry_gate_context.get("fix_loop") != (gate_context or {}).get("fix_loop"):
-        retry_gate_context = {"post_fix_audit": "FAIL", "reason": "retry_fix_loop_identity_mismatch"}
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc,
+                                         RuntimeError("retry_fix_loop_identity_mismatch_or_missing_refresh"))
+    retry = controller.fix_policy.retry_after_confirmed_rejection(gate_context)
+    if not retry["allowed"]:
+        return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(retry["reason"]))
     gate = ensure_post_fix_audit_gate_before_push(retry_gate_context)
     if not gate["allowed"]:
+        budget = gate_context["fix_loop"]
+        controller.fix_policy.FixLoopLedger(budget["path"], budget["repo"], budget["pr"]).start_push(budget["cycle_id"])
         return _build_push_result(
             False,
             "needs_manual",
@@ -2299,16 +2303,13 @@ def push_with_retry_once(
     except RuntimeError as exc:
         if not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-        retry = controller.fix_policy.retry_after_confirmed_rejection(context)
-        if not retry["allowed"]:
-            return _failed_push_result(repo, branch, RuntimeError(retry["reason"]))
         retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
         result = _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
-    return _complete_fix_loop_push(run_func, repo, result, context)
+    return _complete_fix_loop_push(run_func, repo, result, context, branch)
 
 
 def _complete_fix_loop_push(run_func: Any, repo: str, result: dict[str, Any],
-                            context: dict[str, Any] | None) -> dict[str, Any]:
+                            context: dict[str, Any] | None, branch: str) -> dict[str, Any]:
     budget = (context or {}).get("fix_loop")
     if not result.get("ok") or not isinstance(budget, dict):
         return result
@@ -2316,7 +2317,7 @@ def _complete_fix_loop_push(run_func: Any, repo: str, result: dict[str, Any],
         return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
                 "error": "fix_loop_repository_mismatch"}
     try:
-        head = run_func(["git", "rev-parse", "HEAD"], check=True).strip()
+        head = run_func(["git", "rev-parse", branch], check=True).strip()
         ledger = controller.fix_policy.FixLoopLedger(budget["path"], repo, budget["pr"])
         completion = ledger.complete(budget["cycle_id"], head)
         if not completion["allowed"]:

@@ -222,16 +222,18 @@ class FixLoopLedger:
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
-    def authorize(self, cycle: str) -> dict[str, Any]:
+    def authorize(self, cycle: str, current_head: str | None = None) -> dict[str, Any]:
         try:
             with self._connect() as connection:
                 state = self._status(connection)
-                row = connection.execute("SELECT head, stage FROM cycles WHERE repo=? AND pr=? AND cycle=?",
+                row = connection.execute("SELECT head, stage, assessment FROM cycles WHERE repo=? AND pr=? AND cycle=?",
                                          (self.repo, self.pr, cycle)).fetchone()
                 if row is None and state["used_slots"] >= state["ceiling"]:
                     return stopped("fix_loop_budget_exhausted")
                 if row is None or row[0] is not None or row[1] != "reserved" or state["used_slots"] > state["ceiling"]:
                     return stopped("fix_loop_reservation_invalid")
+                if current_head is not None and (not current_head or json.loads(row[2]).get("current_head_sha") != current_head):
+                    return stopped("fix_loop_assessed_head_mismatch")
                 return {"allowed": True, **state}
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
@@ -309,7 +311,8 @@ def reservation_gate(context: dict[str, Any] | None) -> dict[str, Any]:
             return stopped("fix_loop_identity_mismatch")
     try:
         ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
-        return ledger.authorize(budget["cycle_id"])
+        head = str((context or {}).get("current_head_sha") or (context or {}).get("head_sha") or (context or {}).get("headRefOid") or "")
+        return ledger.authorize(budget["cycle_id"], head)
     except (KeyError, ValueError, TypeError):
         return stopped("fix_loop_reservation_malformed")
 

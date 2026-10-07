@@ -31,6 +31,7 @@ def _good_ctx(tmp_path, **overrides: object) -> dict[str, object]:
             "thread_id": "T1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
         })["allowed"])
     base: dict[str, object] = {
+        "current_head_sha": "abc123",
         "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 249, "cycle_id": "clean-1"},
         "automation_mode": "live",
         "post_fix_audit": "PASS",

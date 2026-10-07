@@ -698,11 +698,15 @@ Identità `(repo, PR)`; storico iniziale attestato + righe `cycles` completate
 sono il contatore. Prenotazioni incompiute occupano un posto e bloccano nuovi
 cicli: errore di push, response lost o crash → recupero manuale, mai rimborso
 /reset automatico. Dopo push confermato, `push_with_retry_once` registra il
-current head una sola volta. Il ledger registra `reserved → pushing → completed`:
+lo SHA del branch effettivamente inviato una sola volta. La prenotazione è legata
+allo SHA dell'assessment: un contesto relativo a un altro head non autorizza
+patch/commit/push. Il ledger registra `reserved → pushing → completed`:
 `pushing` viene persistito **prima** dell'invio, quindi un response lost/crash
 non rende riutilizzabile automaticamente la prenotazione. Soltanto un rifiuto
 non-fast-forward confermato abilita l'unico retry di trasporto già previsto,
-con lo stesso ciclo e nuove prove di audit/head; nessun nuovo slot.
+con lo stesso ciclo e nuove prove di audit/head; nessun nuovo slot. Prove retry
+assenti, stale o respinte lasciano il ciclo non ripetibile automaticamente.
+Il percorso clean-rebuild acquisisce il gate atomico prima del commit.
 Anche il push diretto del clean-scope rebuild usa intent e completion comuni.
 Reinvocare una completion identica è idempotente;
 riusare una prenotazione completata per una nuova patch è vietato.
@@ -716,6 +720,9 @@ Il vecchio JSON del controller e il conteggio per autore/messaggio dei commit
 sono diagnostica, **non** il contatore autorevole.
 
 `PR_FIX_LOOP_LEDGER` indica il medesimo ledger ai preflight/report del controller.
+Il controller si ferma in `NEEDS_MANUAL` anche quando il ledger è assente o
+il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 5 non
+richiede un override: il limite blocca la prenotazione del sesto repair.
 Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
 Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
 a una PR, passare sempre l'identità PR (o `PR_NUMBER`): ometterla per fingere

@@ -6129,6 +6129,11 @@ def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any],
             )
     progress = detect_pr_progress(previous_state, current_state)
     budget_status = pr_budget_status(current_state, _budget_limits())
+    if not ledger_path or not ctx.decision["fix_loop_budget"]["allowed"]:
+        snapshot = ctx.decision.get("fix_loop_budget") or fix_policy.stopped("fix_loop_state_missing")
+        ctx.decision["fix_loop_budget"] = snapshot
+        budget_status = {"exhausted": True, "reason": snapshot["reason"],
+                         "next_action": "needs_manual_budget_unavailable"}
     if ledger_path and ctx.decision["fix_loop_budget"]["allowed"]:
         snapshot = ctx.decision["fix_loop_budget"]
         if snapshot["completed_count"] >= snapshot["ceiling"] and (ctx.blockers or counters["review_active_count"]):
@@ -7075,6 +7080,8 @@ def _verified_review_triage(thread: dict[str, Any], context: dict[str, Any],
     thread_id = _review_thread_id(thread)
     head = str(context.get("current_head_sha") or "")
     result = fix_policy.triage(assessment)
+    if context.get("forbidden_file_request") or _is_out_of_scope_review_path(str(thread.get("path") or ""), context):
+        result = {"decision": "NEEDS_MANUAL", "reason": "forbidden_file_request"}
     if not head or assessment.get("current_head_sha") != head or assessment.get("thread_id") != thread_id:
         result = {"decision": "NEEDS_MANUAL", "reason": "assessment_head_or_thread_mismatch"}
     if result["decision"] == "PATCH_REQUIRED" and context.get("fix_loop"):

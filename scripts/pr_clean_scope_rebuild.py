@@ -420,18 +420,19 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
         return
     if not ensure_clean_push_gate(args, decision):
         return
-    ensure_git_identity()
-    run(["git", "add", "--", *restored_files])
-    run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
-    attempt = controller.fix_policy.start_push_gate(build_clean_gate_ctx(args))
+    context = build_clean_gate_ctx(args)
+    attempt = controller.fix_policy.start_push_gate(context)
     if not attempt["allowed"]:
         apply_gate_block(decision, attempt, "push")
         return
+    ensure_git_identity()
+    run(["git", "add", "--", *restored_files])
+    run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
     run(["git", "push", "--force-with-lease", "origin", f"HEAD:{args.branch}"])
     _, new_head = run(["git", "rev-parse", "HEAD"])
     decision["new_head"] = new_head.strip()
     decision["push_succeeded"] = True
-    budget = build_clean_gate_ctx(args)["fix_loop"]
+    budget = context["fix_loop"]
     ledger = controller.fix_policy.FixLoopLedger(budget["path"], args.repo, int(args.pr_number))
     completion = ledger.complete(budget["cycle_id"], new_head.strip())
     decision["fix_loop_budget"] = completion

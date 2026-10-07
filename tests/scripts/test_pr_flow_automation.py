@@ -294,6 +294,7 @@ def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
         })
         ASSERTIONS.assertTrue(reservation["allowed"])
     return {
+        "current_head_sha": "abc123",
         "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"},
         "automation_mode": "live",
         "post_fix_audit": "PASS",
@@ -385,7 +386,7 @@ def test_push_with_retry_once_succeeds_on_first_push(tmp_path):
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertFalse(result["retried"])
     ASSERTIONS.assertFalse(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"], ["git", "rev-parse", "HEAD"]])
+    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"], ["git", "rev-parse", "feature/branch"]])
 
 
 def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_allowed(monkeypatch):
@@ -446,7 +447,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
             ["git", "push", "origin", "feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
             ["git", "push", "origin", "feature/branch", "--force-with-lease"],
-            ["git", "rev-parse", "HEAD"],
+            ["git", "rev-parse", "feature/branch"],
         ],
     )
 

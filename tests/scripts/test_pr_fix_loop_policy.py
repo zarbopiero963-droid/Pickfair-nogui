@@ -161,7 +161,7 @@ def test_accepted_limitation_requires_owner_and_never_says_fixed(policy):
 
 def repair_context(ledger, cycle):
     return {
-        "repo": "owner/repo", "pr": 495, "POST_FIX_AUDIT": "PASS",
+        "repo": "owner/repo", "pr": 495, "current_head_sha": "head", "POST_FIX_AUDIT": "PASS",
         "validation_passed": True, "current_head_matches": True,
         "dirty_worktree": False, "scope_allowed": True,
         "rollback_attempted": False, "rollback_succeeded": True,
@@ -365,3 +365,106 @@ def test_response_lost_cannot_reuse_reservation_for_another_push(ledger):
     previous = len(calls)
     assert not flow.push_with_retry_once(lost, "owner/repo", "branch", context=context)["ok"]
     assert len(calls) == previous
+
+
+def test_clean_commit_cannot_follow_a_competing_fifth_completion(ledger, monkeypatch):
+    for number in range(4):
+        consume(ledger, str(number))
+    assert ledger.reserve("fifth", assessment("CURRENT_DEFECT"))["allowed"]
+    args = rebuild.RebuildArgs("owner/repo", "495", "branch", ["scripts/a.py"], [],
+                               "unused.json", repair_context(ledger, "fifth"), False)
+    def competing_attempt():
+        if ledger.start_push("fifth")["allowed"]:
+            ledger.complete("fifth", "competing-head")
+    monkeypatch.setattr(rebuild, "ensure_git_identity", competing_attempt)
+    commits = []
+    def runner(command, **_kwargs):
+        if command[:2] == ["git", "commit"]:
+            commits.append(ledger.status()["completed_count"])
+        return 0, "new-head" if command[:2] == ["git", "rev-parse"] else ""
+    monkeypatch.setattr(rebuild, "run", runner)
+    decision = rebuild.initial_decision(args)
+    rebuild.commit_and_push(args, decision, ["scripts/a.py"])
+    assert all(count < 5 for count in commits), "commit after budget exhaustion"
+
+
+def test_clean_context_copies_preserve_the_same_reservation(ledger):
+    assert ledger.reserve("clean", assessment("CURRENT_DEFECT"))["allowed"]
+    context = repair_context(ledger, "clean")
+    args = rebuild.RebuildArgs("owner/repo", "495", "branch", [], [], "unused.json", context, False)
+    first = rebuild.build_clean_gate_ctx(args)
+    assert rebuild.controller.fix_policy.start_push_gate(first)["allowed"]
+    second = rebuild.build_clean_gate_ctx(args)
+    assert first["fix_loop"] == second["fix_loop"] == context["fix_loop"]
+    assert ledger.complete(second["fix_loop"]["cycle_id"], "new-head")["completed_count"] == 1
+
+
+@pytest.mark.parametrize('state', ['unset', 'missing', 'corrupt'])
+def test_controller_unavailable_ledger_stops_manual(monkeypatch, tmp_path, state):
+    monkeypatch.delenv('PR_FIX_LOOP_LEDGER', raising=False)
+    if state != 'unset':
+        path = tmp_path / 'unavailable.sqlite'
+        if state == 'corrupt':
+            path.write_text('invalid database')
+        monkeypatch.setenv('PR_FIX_LOOP_LEDGER', str(path))
+    args = argparse.Namespace(repo='owner/repo', pr='495', output=str(tmp_path / 'report.json'))
+    decision = {'review': {'unresolved_active': 0}}
+    ctx = controller.NextActionContext(args, {}, [], [], [], [], decision)
+    controller.update_decision_state_tracking(args, {'headRefOid': 'head'}, ctx)
+    assert decision['budget_status']['exhausted']
+    assert decision['budget_status']['next_action'].startswith('needs_manual')
+
+
+def test_clean_preflight_at_five_does_not_request_sixth(ledger, monkeypatch, tmp_path):
+    for number in range(5):
+        consume(ledger, str(number))
+    monkeypatch.setenv('PR_FIX_LOOP_LEDGER', str(ledger.path))
+    monkeypatch.setattr(flow, 'pr_view', lambda *_: {'headRefName':'branch', 'headRefOid':'head'})
+    monkeypatch.setattr(flow, 'split_checks', lambda *_a, **_k: {})
+    monkeypatch.setattr(flow, 'sh', lambda *_a, **_k: '')
+    monkeypatch.setattr(flow, 'safe_autofix_commits', lambda *_: [])
+    args = argparse.Namespace(repo='owner/repo', pr='495', output='', max_safe_autofix_commits=5,
+                              oscillation_touch_limit=3, comment=False, no_fail=False)
+    assert flow.cmd_preflight(args) == 0
+
+
+def test_verified_assessment_cannot_bypass_file_scope(ledger):
+    ledger.reserve('scope', assessment('CURRENT_DEFECT'))
+    context = {**repair_context(ledger, 'scope'), 'current_head_sha':'head',
+               'files_allowed':['scripts/pr_fix_loop_policy.py'],
+               'review_assessments':{'T1': assessment('CURRENT_DEFECT')}}
+    thread = {'id':'T1', 'path':'.github/workflows/suspended.yml', 'body':'current bug'}
+    assert controller.triage_review_thread_contract(thread, context)['decision'] == 'NEEDS_MANUAL'
+
+
+def test_reservation_rejects_changed_assessed_head(ledger, policy):
+    ledger.reserve('head-bound', assessment('CURRENT_DEFECT'))
+    context = {**repair_context(ledger, 'head-bound'), 'current_head_sha':'collaborator-head'}
+    assert not policy.reservation_gate(context)['allowed']
+
+
+def test_completion_records_pushed_branch_not_checkout_head(ledger):
+    ledger.reserve('branch', assessment('CURRENT_DEFECT'))
+    refs = []
+    def runner(command, **_kwargs):
+        if command[:2] == ['git', 'rev-parse']:
+            refs.append(command[-1])
+            return 'pushed-head' if command[-1] == 'other-branch' else 'unrelated-head'
+        return ''
+    assert flow.push_with_retry_once(runner, 'owner/repo', 'other-branch',
+                                    context=repair_context(ledger, 'branch'))['ok']
+    assert refs == ['other-branch']
+
+
+def test_rejected_retry_without_refresh_cannot_replay_reservation(ledger):
+    ledger.reserve('rejection', assessment('CURRENT_DEFECT'))
+    pushes = []
+    def runner(command, **_kwargs):
+        if command[:2] == ['git', 'push']:
+            pushes.append(command)
+            raise RuntimeError('non-fast-forward')
+        return ''
+    context = repair_context(ledger, 'rejection')
+    assert not flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=context)['ok']
+    assert not flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=context)['ok']
+    assert len(pushes) == 1
