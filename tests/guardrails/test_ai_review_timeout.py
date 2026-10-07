@@ -122,6 +122,31 @@ def test_block_grok_aspetta_abbastanza_da_ricevere_la_risposta() -> None:
     )
 
 
+# Sopra `high` il ragionamento e' ancora piu' lungo: Sol a `max` (decisione
+# dell'owner del 07-10-2026) con i suoi 100 s di prima perderebbe la risposta
+# come la perdeva Grok a `high`. 600 s, e il job sale di conseguenza.
+EFFORT_MASSIMI = {"xhigh", "max"}
+LIMITE_MINIMO_EFFORT_MASSIMO = 600
+
+
+def _effort(workflow: str) -> str:
+    m = re.search(r'^      REVIEW_EFFORT: +"?([a-z]+)"?\s*$', _testo(workflow), re.M)
+    return m.group(1) if m else ""
+
+
+@pytest.mark.parametrize("workflow", _reviewer())
+def test_block_a_effort_massimo_si_aspetta_abbastanza(workflow: str) -> None:
+    effort = _effort(workflow)
+    if effort not in EFFORT_MASSIMI:
+        pytest.skip(f"{workflow}: effort {effort or 'assente'!r}, non e' fra {sorted(EFFORT_MASSIMI)}")
+    _, limite, _ = _attesa_modello(workflow)
+    assert limite >= LIMITE_MINIMO_EFFORT_MASSIMO, (
+        f"{workflow}: REVIEW_EFFORT={effort!r} con {limite} s per richiesta. La richiesta "
+        f"non e' in streaming: a quel livello la risposta arriva a ragionamento finito, "
+        f"servono almeno {LIMITE_MINIMO_EFFORT_MASSIMO} s"
+    )
+
+
 def test_block_i_percorsi_hanno_la_barra_anche_su_windows() -> None:
     """Su Windows `str()` di un percorso usa `\\`: `GROK` non si troverebbe e la
     raccolta dei test fallirebbe prima di eseguirli (GPT-6 Astra sulla #484)."""

@@ -9,7 +9,7 @@ controllo umano** e **non approvano né mergiano** nulla.
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
 |---|---|---|---|
-| `pr-review-openrouter-gpt56-sol.yml` | GPT-5.6 Sol | OpenRouter `chat/completions` | ogni push della PR |
+| `pr-review-openrouter-gpt56-sol.yml` | GPT-6.1 Sol (reasoning `max`) | OpenRouter `chat/completions` | ogni push della PR |
 | `pr-review-xai-grok46.yml` | Grok 4.7 | xAI API | ogni push della PR |
 | `pr-review-openrouter-fugu-ultra.yml` | Sakana Fugu Ultra | OpenRouter | solo su push che tocca file **core o critici** oppure con label `final-fugu-review` |
 | `pr-review-claude-fable5.yml` | Claude Fable 5.1 | Anthropic Messages API | solo su push che tocca file **core o critici** oppure con label `final-fable-review` |
@@ -107,7 +107,7 @@ Configurare in *Settings → Secrets and variables → Actions*:
 
 | Secret (nome nel repo) | Provider | Usato da |
 |---|---|---|
-| `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra, GPT-5.6 Sol **e** GPT-6 Astra |
+| `OPENROUTER_PICKFAIR` | OpenRouter | Fugu Ultra, GPT-6.1 Sol **e** GPT-6 Astra |
 | `GROK_PICKFAIR` | xAI API | Grok 4.7 |
 | `CLAUDE_PICKFAIR` | Anthropic API | Claude Fable 5.1 |
 
@@ -176,19 +176,36 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 - **Attesa del provider.** La richiesta al modello non è in streaming: la
   risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
   tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito
-  aspetta 2, 4 e poi 8 s. Il limite è di 100 s per Fable e per Sol, di 120 s
-  per Fugu e per Astra, di 240 s per Grok. Quello di Grok era 100 s ed è salito
-  con la DECISIONE-426 P24: a reasoning `high` Grok 4.7 rispondeva spesso oltre
-  i 100 s. Sulla #478 non ha mai completato, sulla #483 ha completato 1
-  tentativo su 8. Aspettare di più non costa, perché si pagano i token
-  generati. Il caso peggiore deve stare dentro il `timeout-minutes` del job: tre
-  tentativi, le attese fra i tentativi, le chiamate a GitHub al loro tetto di
-  30 s (sei per workflow) e un minuto di avvio del runner. Per Grok fa 974 s, e
-  il suo job ha 20 minuti. Altrimenti GitHub interrompe il job prima del
-  commento d'errore, e il reviewer tace. Lo verifica
+  aspetta 2, 4 e poi 8 s. Il limite è di 100 s per Fable, di 120 s per Fugu e
+  per Astra, di 240 s per Grok, di 600 s per Sol. Quello di Grok era 100 s ed è
+  salito con la DECISIONE-426 P24: a reasoning `high` Grok 4.7 rispondeva
+  spesso oltre i 100 s. Sulla #478 non ha mai completato, sulla #483 ha
+  completato 1 tentativo su 8. Quello di Sol era 100 s ed è salito a 600 s col
+  passaggio a GPT-6.1 Sol a reasoning `max` (decisione dell'owner del
+  07-10-2026): il ragionamento più lungo che il modello faccia. Aspettare di
+  più non costa, perché si pagano i token generati. Il caso peggiore deve stare
+  dentro il `timeout-minutes` del job: tre tentativi, le attese fra i
+  tentativi, le chiamate a GitHub al loro tetto di 30 s (sei per workflow) e un
+  minuto di avvio del runner. Per Grok fa 974 s, e il suo job ha 20 minuti; per
+  Sol fa 2054 s, e il suo job ha 35 minuti. Altrimenti GitHub interrompe il job
+  prima del commento d'errore, e il reviewer tace. Lo verifica
   `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,
   contando le chiamate a GitHub dal file e pretendendo esattamente tre
-  tentativi.
+  tentativi; lo stesso file pretende almeno 600 s per richiesta da chi gira a
+  `xhigh` o `max`.
+- **Sol a reasoning `max`.** Il tetto di output di Sol è 100.000 token (sotto i
+  128.000 che il modello accetta su OpenRouter): a `max` il tetto da 25.000
+  tarato su `high` troncherebbe la review. Due conseguenze da sapere. La prima:
+  il caso peggiore del job (35 minuti) supera l'attesa del gate «Merge
+  readiness» (900 s), quindi una risposta di Sol molto lenta lascia il gate
+  rosso finché non lo si rilancia (`workflow_dispatch` sul branch della PR) —
+  il caso normale sta ben dentro. La seconda: OpenRouter rifiuta (HTTP 402) una
+  richiesta il cui tetto non è coperto dal credito residuo, anche se la review
+  ne userebbe una frazione: a $10/M sono $1,00 di credito che deve esserci,
+  altrimenti Sol risponde «non completata» e vale CREDITI ESAURITI. La
+  whitelist dei livelli di Sol ammette `xhigh` e `max` perché verificati sui
+  metadati OpenRouter di `openai/gpt-6.1-sol`; `tests/guardrails/test_ai_review_effort.py`
+  la lega all'id del modello, così cambiare modello impone di riverificarla.
 
 ## Label
 

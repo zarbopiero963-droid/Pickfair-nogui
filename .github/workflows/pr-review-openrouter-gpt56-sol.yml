@@ -1,7 +1,15 @@
-name: PR Review OpenRouter GPT-5.6 Sol
+name: PR Review OpenRouter GPT-6.1 Sol
 
-# Review AI automatica di ogni push sulla PR con GPT-5.6 Sol via OPENROUTER,
+# Review AI automatica di ogni push sulla PR con GPT-6.1 Sol via OPENROUTER,
 # endpoint `chat/completions`.
+#
+# Decisione dell'owner del 07-10-2026: il reviewer per-push Sol passa da
+# `openai/gpt-5.6-sol` a `openai/gpt-6.1-sol` (stesso listino OpenRouter, $2/M
+# input e $10/M output sull'endpoint OpenAI) con il ragionamento al livello
+# piu' alto che il modello offre, `max` (5.6 Sol girava a `high`). Il nome del
+# file e `REVIEW_ID: gpt56sol` restano quelli storici, come per Grok 4.7 nel
+# file `grok46` (#477): il nome-file e' un identificatore, non documentazione,
+# e lo referenziano le liste di esclusione di CLAUDE.md/AGENTS.md e i test.
 #
 # Perche' esiste. Il credito dell'API OpenAI diretta e' esaurito: il workflow
 # gemello su quella chiave rispondeva `credit_balance_exhausted` (HTTP 429) su
@@ -10,10 +18,10 @@ name: PR Review OpenRouter GPT-5.6 Sol
 # Decisione dell'owner: il ruolo passa su OpenRouter, con il Secret che gia'
 # esisteva per Fugu Ultra (`OPENROUTER_PICKFAIR`). Nessuna chiave nuova.
 #
-# NON e' un cambio di reviewer: il modello resta `gpt-5.6-sol`, cambia il
-# FORNITORE. Il ruolo resta lo stesso del gemello OpenAI: gira su OGNI push
-# della PR, qualunque file tocchi, ed e' uno dei due reviewer per-push
-# (con Grok 4.6) accanto ai due forti a label (Fugu Ultra, Fable 5).
+# Quel passaggio (14-09-2026) non cambio' il reviewer: il modello restava
+# `gpt-5.6-sol`, cambiava il FORNITORE. Neanche il passaggio a GPT-6.1 Sol
+# cambia il RUOLO: gira su OGNI push della PR, qualunque file tocchi, ed e'
+# uno dei due reviewer per-push (con Grok 4.7).
 #
 # Cosa cambia rispetto al gemello, ed e' la parte che si sbaglia:
 #   - endpoint `chat/completions`, non `v1/responses`: il prompt sta in
@@ -23,7 +31,7 @@ name: PR Review OpenRouter GPT-5.6 Sol
 #     `incomplete_details`). Leggere il campo dell'ALTRA API significa non
 #     accorgersi MAI di un troncamento, cioe' pubblicare una review parziale
 #     come se fosse completa: un falso verde su un gate di review;
-#   - l'id del modello porta il prefisso del produttore: `openai/gpt-5.6-sol`.
+#   - l'id del modello porta il prefisso del produttore: `openai/gpt-6.1-sol`.
 #
 # Analizza il range `base...head` della PR via GitHub Compare API
 # (un done_marker per range evita di ripagare la stessa review). Diff-only: niente
@@ -53,9 +61,14 @@ concurrency:
 
 jobs:
   review:
-    name: GPT-5.6 Sol push-range review
+    name: GPT-6.1 Sol push-range review
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    # Caso peggiore: 3 tentativi x 600 s + backoff 14 s + sei chiamate a GitHub
+    # al tetto di 30 s + 60 s di avvio = 2054 s, dentro i 2100 s del job
+    # (tests/guardrails/test_ai_review_timeout.py). Con 12 minuti GitHub
+    # ucciderebbe il job a meta' del primo tentativo a effort `max`, e il
+    # reviewer tacerebbe senza nemmeno il commento d'errore.
+    timeout-minutes: 35
 
     if: >
       github.event.pull_request.draft == false &&
@@ -66,7 +79,7 @@ jobs:
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
       # Il prefisso del produttore e' OBBLIGATORIO su OpenRouter: senza
       # `openai/` la richiesta viene rifiutata come modello sconosciuto.
-      OPENROUTER_MODEL: openai/gpt-5.6-sol
+      OPENROUTER_MODEL: openai/gpt-6.1-sol
 
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       REPO: ${{ github.repository }}
@@ -78,11 +91,12 @@ jobs:
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
 
       REVIEW_ID: gpt56sol
-      MODEL_LABEL: GPT-5.6 Sol
+      MODEL_LABEL: GPT-6.1 Sol
 
       MAX_PATCH_PER_FILE_CHARS: "7000"
       MAX_TOTAL_PATCH_CHARS: "24000"
-      # openai/gpt-5.6-sol: se è un modello reasoning, i token di reasoning contano nel budget di output.
+      # openai/gpt-6.1-sol e' un modello reasoning (su OpenRouter il ragionamento
+      # e' obbligatorio): i token di reasoning contano nel budget di output.
       # Tetto ALTO anti-troncamento (CEILING, non costo): con reasoning effort
       # "low" + prompt MIRATO (150 parole, 2 sezioni) l'output reale resta corto,
       # ma 3000 lascia spazio a reasoning+testo così NON tronca mai. Si pagano
@@ -94,7 +108,13 @@ jobs:
       # profondita', e' l'unico che trovava difetti veri. Si alzano a `high` e si
       # confrontano costo e reperti contro il periodo a `low`. Per tornare
       # indietro basta rimettere "low" qui.
-      REVIEW_EFFORT: "high"
+      # Sol esce dall'esperimento per decisione dell'owner (07-10-2026): con
+      # GPT-6.1 Sol gira a `max`, il livello piu' alto che il modello offre.
+      # Verificato sul provider, non per analogia: i metadati OpenRouter di
+      # `openai/gpt-6.1-sol` dichiarano `reasoning.supported_efforts` =
+      # max, xhigh, high, medium, low (default `medium`). Per tornare indietro
+      # basta rimettere "high" qui.
+      REVIEW_EFFORT: "max"
       # A effort alto il ragionamento MANGIA questo tetto:
       #   OpenAI    - "i reasoning token contano dentro max_output_tokens",
       #               raccomandano di riservarne >= 25.000
@@ -108,22 +128,35 @@ jobs:
       # e se i reperti in piu' lo giustificano. Il controllo non e' un tetto di
       # spesa automatico, sono due: i workflow stampano costo e token a ogni
       # review, e REVIEW_EFFORT qui sopra lo ferma cambiando una riga.
-      MAX_OUTPUT_TOKENS: "25000"
+      # A `max` il ragionamento e' il piu' lungo che il modello faccia: 25.000,
+      # il tetto tarato su `high`, lo troncherebbe — review pagata e persa.
+      # 100.000 resta sotto il massimo di output del modello su OpenRouter
+      # (`max_completion_tokens` = 128.000): oltre, la richiesta rischia il 400.
+      # Limite da sapere: OpenRouter rifiuta (402) una richiesta il cui tetto
+      # non e' coperto dal credito residuo, anche se la review ne userebbe una
+      # frazione. A $10/M sono $1,00 di credito che deve esserci.
+      MAX_OUTPUT_TOKENS: "100000"
 
-      PRICE_INPUT_PER_MILLION: "5.00"
-      PRICE_OUTPUT_PER_MILLION: "30.00"
+      # Listino OpenRouter di openai/gpt-6.1-sol sull'endpoint OpenAI (07-10-2026).
+      # Il 5.00/30.00 di prima non era il listino OpenRouter ne' di 5.6 ne' di
+      # 6.1 Sol (entrambi 2/10): il costo riportato nei commenti era gonfiato di
+      # circa tre volte, perche' l'output pesa piu' dell'input. Altri
+      # endpoint dello stesso modello costano diversamente (1/5 flex, 4/20 fast):
+      # la riga di costo resta una STIMA a listino, come dice la sua etichetta.
+      PRICE_INPUT_PER_MILLION: "2.00"
+      PRICE_OUTPUT_PER_MILLION: "10.00"
 
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
-      - name: Review pushed commit range with GPT-5.6 Sol (OpenRouter)
+      - name: Review pushed commit range with GPT-6.1 Sol (OpenRouter)
         shell: bash
         run: |
           set -euo pipefail
 
           # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
           if [ -z "${OPENROUTER_API_KEY:-}" ]; then
-            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GPT-5.6 Sol saltato (nessun check rosso)."
+            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GPT-6.1 Sol saltato (nessun check rosso)."
             exit 0
           fi
 
@@ -150,7 +183,7 @@ jobs:
           # .strip(): un segreto incollato con newline/spazio finale renderebbe
           # invalido l'header Authorization (Bearer ...\n) -> request fallita.
           OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"].strip()
-          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-5.6-sol")
+          OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "openai/gpt-6.1-sol")
           REVIEW_ID = os.environ.get("REVIEW_ID", "gpt56sol")
           MODEL_LABEL = os.environ.get("MODEL_LABEL", OPENROUTER_MODEL)
 
@@ -160,12 +193,17 @@ jobs:
           # Effort del ragionamento: da env, cosi' l'esperimento si ferma senza
           # toccare il codice. Un valore non valido farebbe 400 e ucciderebbe la
           # review, quindi si ripiega su "high" segnalandolo.
-          # Solo l'intersezione sicura fra i tre provider. `xhigh`/`max` sono
-          # documentati da alcuni ma non da tutti: un valore rifiutato darebbe 400
-          # e ucciderebbe la review, cioe' proprio il guasto che questa guardia
-          # deve evitare. Se un domani serve un livello piu' alto, si allarga qui
-          # dopo aver verificato il provider, non per analogia con un altro.
-          _EFFORT_AMMESSI = {"low", "medium", "high"}
+          # Gli altri reviewer ammettono solo l'intersezione sicura fra i
+          # provider (low, medium, high). Qui la lista e' allargata a `xhigh` e
+          # `max` dopo aver verificato IL provider di questo modello, non per
+          # analogia: i metadati OpenRouter di `openai/gpt-6.1-sol` dichiarano
+          # `reasoning.supported_efforts` = max, xhigh, high, medium, low
+          # (07-10-2026). Senza `max` qui, il `REVIEW_EFFORT: "max"` dell'env
+          # ripiegherebbe in silenzio su "high" — un warning nel log e una
+          # configurazione che dice il falso. Se cambia il modello, la lista va
+          # riverificata: tests/guardrails/test_ai_review_effort.py la lega
+          # all'id del modello.
+          _EFFORT_AMMESSI = {"low", "medium", "high", "xhigh", "max"}
           REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT", "high").strip().lower()
           if REVIEW_EFFORT not in _EFFORT_AMMESSI:
               print(f"::warning::REVIEW_EFFORT={REVIEW_EFFORT!r} non valido "
@@ -604,7 +642,11 @@ jobs:
               data = json.dumps(payload).encode("utf-8")
               last_error = None
 
-              # 3 tentativi × 100s + backoff: worst-case < timeout-minutes del job.
+              # 3 tentativi × 600s + backoff: worst-case < timeout-minutes del job.
+              # 600 s e non 100: la richiesta non e' in streaming e a effort
+              # `max` la risposta arriva solo a ragionamento finito. Grok 4.7 a
+              # `high` superava gia' i 100 s (DECISIONE-426 P24); aspettare di
+              # piu' non costa, si pagano i token generati.
               for attempt in range(1, 4):
                   req = urllib.request.Request(
                       # Il segmento /api/v1 e' OBBLIGATORIO: senza, OpenRouter
@@ -616,12 +658,12 @@ jobs:
                           "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                           "Content-Type": "application/json",
                           "HTTP-Referer": f"https://github.com/{REPO}",
-                          "X-Title": "Pickfair GPT-5.6 Sol PR Review",
+                          "X-Title": "Pickfair GPT-6.1 Sol PR Review",
                           "User-Agent": f"{REVIEW_ID}-push-range-review",
                       },
                   )
                   try:
-                      with urllib.request.urlopen(req, timeout=100) as resp:
+                      with urllib.request.urlopen(req, timeout=600) as resp:
                           body = json.loads(resp.read().decode("utf-8"))
 
                       choices = body.get("choices") or []
@@ -831,7 +873,7 @@ jobs:
 
           if not diff_text.strip():
               upsert_comment(marker, f"""{marker}
-          # GPT-5.6 Sol PR Review
+          # GPT-6.1 Sol PR Review
 
           Nessun patch testuale analizzabile trovato.
 
@@ -893,7 +935,7 @@ jobs:
               review, usage = call_model(system_prompt, user_prompt)
           except Exception as exc:
               review = (
-                  "## Review GPT-5.6 Sol non completata\n\n"
+                  "## Review GPT-6.1 Sol non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
               )
               usage = {}
@@ -919,12 +961,12 @@ jobs:
               # guard dal file OpenAI, dove `choices` non esiste: il difetto e'
               # nato nel trapianto. Fugu Ultra questa voce ce l'ha gia'.
               "Il modello non ha restituito choices",
-              "## Review GPT-5.6 Sol non completata",
+              "## Review GPT-6.1 Sol non completata",
           ))
           done_line = done_marker if review_complete else ""
 
           body = f"""{marker}{done_line}
-          # GPT-5.6 Sol PR Review
+          # GPT-6.1 Sol PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
           **Scope:** `{range_scope}`

@@ -902,7 +902,7 @@ Every PR is covered by five AI review workflows (GitHub Actions driven by API
 keys in the repo Secrets) plus CodeRabbit. Operational detail and security
 posture live in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.6 Sol** and **Grok 4.7** run on every push. Output is TARGETED and short
+- **GPT-6.1 Sol** and **Grok 4.7** run on every push. Output is TARGETED and short
   (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
   they never truncate — only generated tokens are billed.
 - **Fugu Ultra**, **Claude Fable 5.1** and **GPT-6 Astra** (strong, costly
@@ -914,7 +914,7 @@ posture live in `docs/ai_audit_workflows.md`.
   workflows, config/secrets, or the safety areas (money management, dutching,
   safety_layer, reconciliation, runtime, catalog) — OR when the final label is
   added. On pushes touching only docs/tests all three jobs start but exit without
-  calling the model (zero cost); those are still covered by GPT-5.6 Sol/Grok.
+  calling the model (zero cost); those are still covered by GPT-6.1 Sol/Grok.
 - **Since #475 the files that DEFINE or ENFORCE the gates are critical too**:
   `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
   `docs/hard_verify_spec.md` and `scripts/guardrail_check.py`. Five of the
@@ -944,13 +944,15 @@ prompt and hope.
 **Levers that actually save** (by yield): (1) never pay twice for the same range
 — the per-range `done_marker` is already wired into all 5 workflows, do not
 remove it and do not force a re-fire; (2) fewer pushes, not smaller ones — each
-push pays TWO calls (GPT-5.6 Sol + Grok 4.7), so batch the fixes; (3) owner
+push pays TWO calls (GPT-6.1 Sol + Grok 4.7), so batch the fixes; (3) owner
 authorization on the three labels (below) — the biggest lever, since Fugu,
 Fable and Astra are the expensive ones; (4) `reasoning_effort`, where the model
 reasons — reasoning tokens are billed as output, so lowering it IS a real lever,
-but it is **not in use today**: the four non-Anthropic reviewers (Sol, Grok,
-Fugu, Astra) run at `REVIEW_EFFORT: high` for the experiment declared in their
-workflows, and Fable has no such knob (the Anthropic API does not expose one).
+but it is **not in use today**: among the four non-Anthropic reviewers, Grok,
+Fugu and Astra run at `REVIEW_EFFORT: high` for the experiment declared in their
+workflows, and Sol at `REVIEW_EFFORT: max`, the highest level GPT-6.1 Sol
+offers (owner decision of 07-10-2026, checked against the model's OpenRouter
+metadata); Fable has no such knob (the Anthropic API does not expose one).
 While the experiment is open the lever stays suspended and its cost is visible
 in every review's cost lines. Do not write a value here that differs from what
 the workflows actually set: `tests/guardrails/test_policy_reviewer_consistency.py`
@@ -1026,7 +1028,7 @@ with a commit: re-fire the labels and read the full-range.
 
 **Timing: the strong gates are the LAST pre-merge step.** Fire the three labels
 when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-5.6 Sol, Grok 4.7) have COMPLETED and their real findings are handled (patched
+(GPT-6.1 Sol, Grok 4.7) have COMPLETED and their real findings are handled (patched
 or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
 completed handle its real findings; if it is in rate-limit/usage-quota it is
 absent and is NOT awaited; if it is "processing" it is still reviewing — not
@@ -1058,7 +1060,7 @@ which blocker is still open and why. With blockers, auto-merge is forbidden
 (owner-authorized, gated)" below.
 
 **Who to wait for / not wait for.** Default coverage on every PR is the five API
-workflows (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) plus
+workflows (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) plus
 CodeRabbit. Codex,
 Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
 rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
@@ -1127,7 +1129,7 @@ treat it as ABSENT and proceed (note that it did not review).
   settled CI checks + Fugu/Fable/Astra label); if it completes in time handle its
   real
   findings, else post-merge. If it has already completed, handle its real findings.
-- **The 5 API workflows** (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
+- **The 5 API workflows** (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
   Astra): these
   can NOT be downgraded to absent. If a round reports provider usage-quota /
   rate-limit, do not wait for it on a timer and do not count it in the
@@ -1355,7 +1357,7 @@ them, merge stays manual and owner-only.
 **Conditions to auto-merge (ALL required, fail-closed):**
 
 1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 5 AI reviewers (GPT-5.6 Sol, Grok 4.7, Fugu Ultra,
+2. Zero blockers from the 5 AI reviewers (GPT-6.1 Sol, Grok 4.7, Fugu Ultra,
    Fable 5.1, GPT-6 Astra) and — if it completed its review — from CodeRabbit.
    CodeRabbit is NEVER a waiting gate (no cap-timer): rate-limit / usage-quota /
    unavailable = ABSENT immediately, proceed and defer late findings to
@@ -1523,7 +1525,7 @@ need-manual goes through this cycle (stop → ask → record in the dedicated is
 
 **OUT OF CREDITS => DO NOT MERGE, STOP AND TELL THE OWNER.** This is the only
 exception to the autonomy, and it applies to the **five reviewers the owner pays
-for**: GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. If any of them
+for**: GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. If any of them
 cannot review
 because the provider answers usage-quota / rate-limit / out of credits — the
 workflow starts but the model does not answer — then that PR **has not been
