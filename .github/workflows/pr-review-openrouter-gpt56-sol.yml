@@ -63,15 +63,12 @@ jobs:
   review:
     name: GPT-6.1 Sol push-range review
     runs-on: ubuntu-latest
-    # Caso peggiore: 3 tentativi x 600 s + backoff 14 s + sette chiamate a
-    # GitHub al tetto di 30 s + 60 s di avvio = 2084 s, dentro i 2400 s del job
-    # (tests/guardrails/test_ai_review_timeout.py). I 316 s di margine (come
-    # Fable) servono alle pagine in piu' di `comment_exists`/`upsert_comment`
-    # sulle PR con oltre 100 commenti, che il conto per punti di chiamata non
-    # vede (Codex sulla #492). Con 12 minuti GitHub ucciderebbe il job a meta'
-    # del primo tentativo a effort `max`, e il reviewer tacerebbe senza
-    # nemmeno il commento d'errore.
-    timeout-minutes: 40
+    # Caso peggiore: 3 tentativi x 1800 s + backoff 14 s + sette chiamate a
+    # GitHub al tetto di 30 s + 60 s di avvio = 5684 s. Il job dura 105 minuti
+    # (6300 s), quindi restano 616 s di margine anche per paginazione/commenti.
+    # A effort `max` la richiesta non e' in streaming: 600 s potevano troncare
+    # una risposta lunga prima che il ceiling fosse realmente utilizzabile.
+    timeout-minutes: 105
 
     if: >
       github.event.pull_request.draft == false &&
@@ -133,12 +130,10 @@ jobs:
       # review, e REVIEW_EFFORT qui sopra lo ferma cambiando una riga.
       # A `max` il ragionamento e' il piu' lungo che il modello faccia: 25.000,
       # il tetto tarato su `high`, lo troncherebbe — review pagata e persa.
-      # 100.000 resta sotto il massimo di output del modello su OpenRouter
-      # (`max_completion_tokens` = 128.000): oltre, la richiesta rischia il 400.
-      # Limite da sapere: OpenRouter rifiuta (402) una richiesta il cui tetto
-      # non e' coperto dal credito residuo, anche se la review ne userebbe una
-      # frazione. A $10/M sono $1,00 di credito che deve esserci.
-      MAX_OUTPUT_TOKENS: "100000"
+      # 64.000 lascia ampio margine al reasoning, resta sotto il massimo del
+      # modello (128.000) ed e' coerente col timeout di 1800 s anche al throughput
+      # basso osservato. A $10/M il credito richiesto dal ceiling e' $0,64.
+      MAX_OUTPUT_TOKENS: "64000"
 
       # Listino OpenRouter di openai/gpt-6.1-sol sull'endpoint OpenAI (07-10-2026).
       # Il 5.00/30.00 di prima non era il listino OpenRouter ne' di 5.6 ne' di
@@ -645,11 +640,11 @@ jobs:
               data = json.dumps(payload).encode("utf-8")
               last_error = None
 
-              # 3 tentativi × 600s + backoff: worst-case < timeout-minutes del job.
-              # 600 s e non 100: la richiesta non e' in streaming e a effort
-              # `max` la risposta arriva solo a ragionamento finito. Grok 4.7 a
-              # `high` superava gia' i 100 s (DECISIONE-426 P24); aspettare di
-              # piu' non costa, si pagano i token generati.
+              # 3 tentativi × 1800s + backoff: worst-case < timeout-minutes del job.
+              # La richiesta non e' in streaming e a effort `max` la risposta
+              # arriva solo a ragionamento finito. 1800 s rendono utilizzabile il
+              # ceiling da 64k anche per risposte lente; aspettare non costa,
+              # si pagano i token generati.
               for attempt in range(1, 4):
                   req = urllib.request.Request(
                       # Il segmento /api/v1 e' OBBLIGATORIO: senza, OpenRouter
@@ -666,7 +661,7 @@ jobs:
                       },
                   )
                   try:
-                      with urllib.request.urlopen(req, timeout=600) as resp:
+                      with urllib.request.urlopen(req, timeout=1800) as resp:
                           body = json.loads(resp.read().decode("utf-8"))
 
                       choices = body.get("choices") or []
