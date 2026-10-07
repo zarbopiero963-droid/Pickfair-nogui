@@ -1,10 +1,12 @@
-"""GPT-5.6 Sol gira su OpenRouter, e NON deve mescolare le due forme di API.
+"""Sol gira su OpenRouter, e NON deve mescolare le due forme di API.
 
-Dal 2026-09-14 il reviewer GPT-5.6 Sol non passa piu' dall'API OpenAI diretta —
-quella chiave e' esaurita e rispondeva `credit_balance_exhausted` (HTTP 429) su
-OGNI push — ma da OpenRouter, con il secret che gia' esisteva per Fugu Ultra.
-Cambia il FORNITORE, non il reviewer: il modello resta `gpt-5.6-sol` e il ruolo
-resta per-push.
+Dal 2026-09-14 il reviewer Sol (allora GPT-5.6 Sol) non passa piu' dall'API
+OpenAI diretta — quella chiave e' esaurita e rispondeva
+`credit_balance_exhausted` (HTTP 429) su OGNI push — ma da OpenRouter, con il
+secret che gia' esisteva per Fugu Ultra. Dal 07-10-2026, per decisione
+dell'owner, il modello e' `openai/gpt-6.1-sol` a reasoning `max`; il ruolo
+resta per-push. Il nome del file (e di questo test) resta `gpt56sol`: e' un
+identificatore, come `grok46` per Grok 4.7.
 
 **Il difetto che questo test esiste per impedire.** Le due API hanno forme
 diverse e i campi si somigliano abbastanza da scambiarli:
@@ -36,6 +38,10 @@ ROOT = Path(__file__).resolve().parents[2]
 
 WORKFLOW = ".github/workflows/pr-review-openrouter-gpt56-sol.yml"
 WORKFLOW_RITIRATO = ".github/workflows/pr-review-openai-gpt56-sol.yml"
+# Decisione dell'owner del 07-10-2026.
+MODELLO = "openai/gpt-6.1-sol"
+# `top_provider.max_completion_tokens` di MODELLO nei metadati OpenRouter.
+MASSIMO_OUTPUT_DEL_MODELLO = 128000
 
 
 def _testo() -> str:
@@ -168,7 +174,7 @@ def test_block_model_id_col_prefisso_del_produttore() -> None:
     """
     env = _env()
     modello = env.get("OPENROUTER_MODEL")
-    assert modello == "openai/gpt-5.6-sol", (
+    assert modello == MODELLO, (
         f"OPENROUTER_MODEL = {modello!r}. Su OpenRouter l'id porta il prefisso "
         f"del produttore: senza `openai/` la richiesta viene rifiutata come "
         f"modello sconosciuto, e il reviewer sembra rotto invece che mal "
@@ -176,6 +182,30 @@ def test_block_model_id_col_prefisso_del_produttore() -> None:
     )
     assert "OPENAI_MODEL" not in env, (
         "resta la env del vecchio trasporto OpenAI"
+    )
+
+
+def test_block_il_valore_di_riserva_nel_codice_e_lo_stesso_modello() -> None:
+    """Se la chiave sparisse dall'env, il codice non deve tornare a 5.6 di nascosto."""
+    riserva = re.search(r'os\.environ\.get\("OPENROUTER_MODEL", "([^"]+)"\)',
+                        _senza_commenti(_script_python()))
+    assert riserva, "lettura di OPENROUTER_MODEL non trovata nello script"
+    assert riserva.group(1) == MODELLO, (
+        f"valore di riserva {riserva.group(1)!r} diverso dal modello {MODELLO!r}"
+    )
+
+
+def test_block_il_tetto_di_output_sta_sotto_il_massimo_del_modello() -> None:
+    """Alzare il tetto e' gratis, ma solo fino al massimo che il modello accetta.
+
+    A effort `max` il tetto e' salito a 100.000. Oltre `max_completion_tokens`
+    del modello su OpenRouter (128.000 per `openai/gpt-6.1-sol`) la richiesta
+    rischia il rifiuto, e la review non arriverebbe proprio.
+    """
+    tetto = int(_env()["MAX_OUTPUT_TOKENS"])
+    assert 0 < tetto <= MASSIMO_OUTPUT_DEL_MODELLO, (
+        f"MAX_OUTPUT_TOKENS={tetto}, oltre il massimo di output del modello "
+        f"({MASSIMO_OUTPUT_DEL_MODELLO})"
     )
 
 
@@ -241,9 +271,9 @@ def test_block_resta_un_reviewer_per_push_senza_label_gate() -> None:
     # non puo' esfiltrare i secret modificando il proprio .yml.
     tipi = _tipi_del_trigger("pull_request_target")
     assert set(tipi) == {"opened", "synchronize", "reopened", "ready_for_review"}, (
-        f"il gating per-push e' cambiato: {tipi}. GPT-5.6 Sol e' uno dei due "
-        f"reviewer che girano su OGNI push (con Grok 4.6); i due forti a label "
-        f"sono Fugu Ultra e Fable 5."
+        f"il gating per-push e' cambiato: {tipi}. GPT-6.1 Sol e' uno dei due "
+        f"reviewer che girano su OGNI push (con Grok 4.7); i gate a label "
+        f"sono dei reviewer forti."
     )
     assert "labeled" not in tipi, (
         "aggiunto un gate a label: cosi' Sol smetterebbe di coprire i push "
@@ -319,4 +349,51 @@ def test_block_ogni_non_review_fa_scattare_il_guard() -> None:
         f"Conseguenza: review_complete=True, done_marker scritto, il range "
         f"registrato come recensito e i re-run deduplicati — una non-review "
         f"pubblicata come completa."
+    )
+
+
+# ---------------------------------------------------------------------------
+# BLOCK — l'intestazione dell'errore di chiamata e il guard vanno rinominati
+# INSIEME
+#
+# Quando `call_model` solleva, il workflow pubblica "## Review <modello> non
+# completata" e il guard di `review_complete` lo riconosce dallo STESSO testo,
+# scritto due volte. Un cambio di modello che rinomina l'una e dimentica
+# l'altro non rompe niente di visibile: una chiamata fallita diventa una
+# review completa, il done_marker viene scritto e i re-run la deduplicano via.
+# Il test sopra guarda solo i messaggi dentro `call_model`; questo guarda il
+# ramo `except` intorno alla chiamata.
+# ---------------------------------------------------------------------------
+def _intestazioni_di_errore_di_chiamata(albero: ast.Module) -> set[str]:
+    trovate: set[str] = set()
+    for nodo in ast.walk(albero):
+        if not isinstance(nodo, ast.Try):
+            continue
+        chiama_il_modello = any(
+            isinstance(n, ast.Call) and getattr(n.func, "id", "") == "call_model"
+            for parte in nodo.body for n in ast.walk(parte)
+        )
+        if not chiama_il_modello:
+            continue
+        for gestore in nodo.handlers:
+            for n in ast.walk(gestore):
+                if (isinstance(n, ast.Constant) and isinstance(n.value, str)
+                        and n.value.startswith("## Review ")):
+                    trovate.add(n.value)
+    return trovate
+
+
+def test_block_lerrore_di_chiamata_fa_scattare_il_guard() -> None:
+    albero = ast.parse(_script_python())
+    intestazioni = _intestazioni_di_errore_di_chiamata(albero)
+    assert intestazioni, (
+        "nessuna intestazione '## Review ...' nel ramo except intorno a "
+        "call_model: il codice ha cambiato forma e questo test va aggiornato"
+    )
+    guard = _prefissi_del_guard(albero)
+    sfuggite = sorted(i for i in intestazioni if not i.startswith(guard))
+    assert not sfuggite, (
+        f"l'errore di chiamata pubblica {sfuggite} ma il guard riconosce solo "
+        f"{list(guard)}: una chiamata fallita verrebbe registrata come review "
+        f"completa, col done_marker che impedisce di rifarla"
     )

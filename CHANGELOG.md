@@ -60,6 +60,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `pyproject.toml` packaging metadata.
 
 ### Changed
+- AI review workflow for Sol (`pr-review-openrouter-gpt56-sol.yml`, file name
+  kept): the per-push reviewer moves from `openai/gpt-5.6-sol` to
+  `openai/gpt-6.1-sol` on OpenRouter, with reasoning effort `max` instead of
+  `high` — the highest level the model offers, checked against its OpenRouter
+  metadata. The effort whitelist of this workflow now admits `xhigh` and `max`
+  (without it `max` would silently fall back to `high`); the output ceiling
+  rises from 25,000 to 64,000 tokens (model maximum 128,000), each request may
+  wait 1800 s instead of 100 s and the job timeout rises from 12 to 105 minutes.
+  The cost estimate now uses the OpenRouter list price, $2/M input and $10/M
+  output: the previous 5.00/30.00 overstated the reported cost about threefold.
+  New tests pin the model id, tie the widened whitelist to that id, require a
+  higher ceiling and a longer wait at `xhigh`/`max`, and check that the
+  failed-call heading is recognised by the done-marker guard. (Owner decision,
+  07-10-2026)
+- Merge readiness gate (`pr-merge-readiness.yml`): the wait for the head's
+  checks rises from 900 s to 6600 s and the job timeout from 25 to 120 minutes.
+  The budget must cover the slowest review job (Sol, 105 minutes) plus its
+  start-up delay: with 900 s a valid but slow review left the gate red, which
+  could already happen with Grok's 20-minute job. The gate still exits as soon
+  as the checks are settled, and still fails when the budget runs out. A test
+  ties the budget to the five review workflows' timeouts. The worst-case test
+  of the review workflows now also counts a GitHub call written over several
+  lines: there are seven calls per workflow, not six, and every call must be
+  recognised or the test fails.
 - AI review workflow for Grok 4.7 (`pr-review-xai-grok46.yml`): each request to
   the model may now wait 240 s instead of 100 s, and the job timeout rises from
   10 to 20 minutes. The request is not streamed, so the answer arrives only

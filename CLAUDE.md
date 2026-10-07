@@ -188,7 +188,7 @@ Ogni PR è coperta da cinque workflow di review AI (GitHub Actions con API
 key nei Secret del repo) più CodeRabbit. Dettaglio operativo e postura di
 sicurezza in `docs/ai_audit_workflows.md`.
 
-- **GPT-5.6 Sol** e **Grok 4.7**: girano a OGNI push della PR. Review MIRATA e
+- **GPT-6.1 Sol** e **Grok 4.7**: girano a OGNI push della PR. Review MIRATA e
   corta: solo `## Bloccanti` + `## Verdetto finale` (tetti di output alti →
   non troncano; si pagano solo i token generati).
 - **Fugu Ultra**, **Claude Fable 5.1** e **GPT-6 Astra** (reviewer forti,
@@ -233,7 +233,7 @@ prompt sperando che basti.
 1. **Non chiamare due volte lo stesso range.** Il `done_marker` per range è già
    cablato nei 5 workflow: non toglierlo e non "forzare" un ri-lancio per
    vedere se stavolta va meglio.
-2. **Meno push, non push più piccoli.** Ogni push paga DUE chiamate (GPT-5.6 Sol
+2. **Meno push, non push più piccoli.** Ogni push paga DUE chiamate (GPT-6.1 Sol
    + Grok 4.7). Accorpa i fix e pusha una volta sola quando il lavoro è
    completo: tre push da un fix ciascuno costano il triplo di un push da tre fix
    e producono la stessa review.
@@ -241,8 +241,10 @@ prompt sperando che basti.
    grossa, perché Fugu, Fable e Astra sono i costosi.
 4. **`reasoning_effort`, dove il modello ragiona.** I token di ragionamento si
    pagano come output, quindi abbassarlo È una leva vera — ma **oggi non è in
-   uso**: i quattro reviewer non-Anthropic (Sol, Grok, Fugu, Astra) girano a
-   `REVIEW_EFFORT: high` per l'esperimento dichiarato nei loro workflow, e
+   uso**: fra i quattro reviewer non-Anthropic, Grok, Fugu e Astra girano a
+   `REVIEW_EFFORT: high` per l'esperimento dichiarato nei loro workflow, e Sol
+   a `REVIEW_EFFORT: max`, il livello più alto che GPT-6.1 Sol offre (decisione
+   dell'owner del 07-10-2026, verificato sui metadati OpenRouter del modello);
    Fable la manopola non ce l'ha (l'API Anthropic non la espone). Finché
    l'esperimento è aperto la leva resta sospesa, e quanto costa si legge nelle
    righe di costo di ogni review. Non scrivere qui un valore diverso da quello
@@ -322,7 +324,7 @@ push-range: ri-lancia le label e leggi la full-range.
 
 **Timing: i gate forti sono l'ULTIMO passo pre-merge.** Fai scattare le tre
 label quando la PR è stabile e in teoria pronta al merge: i reviewer per-push
-(GPT-5.6 Sol, Grok 4.7) hanno COMPLETATO e i loro rilievi reali sono stati trattati
+(GPT-6.1 Sol, Grok 4.7) hanno COMPLETATO e i loro rilievi reali sono stati trattati
 (patch o evidenza in-thread). CodeRabbit NON è un gate d'attesa: se ha completato
 tratta i suoi rilievi reali; se è in rate-limit/usage-quota è assente e NON lo si
 aspetta; se è «processing» sta ancora revisionando: non lo si aspetta come gate
@@ -354,7 +356,7 @@ quale bloccante resta aperto e perché. In presenza di bloccanti l'auto-merge
 nei limiti della sezione AUTO-MERGE.
 
 **Reviewer da aspettare / non aspettare.** La copertura di default su OGNI PR è:
-i 5 workflow API (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) +
+i 5 workflow API (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) +
 CodeRabbit. Codex,
 Sourcery **e CodeRabbit** NON sono un gate d'attesa: se pubblicano usage-limit /
 rate-limit / usage-quota, trattali come ASSENTI (non pending) — non aspettarli,
@@ -419,7 +421,7 @@ trattalo come ASSENTE e prosegui (annota che non ha revisionato).
   completa
   in tempo tratta i rilievi reali, altrimenti post-merge. Se ha già completato,
   tratta i rilievi reali.
-- **I 5 workflow API** (GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
+- **I 5 workflow API** (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
   Astra): NON sono
   declassabili ad assenti. Se un giro riporta usage-quota / rate-limit del
   provider, non lo si aspetta a timer e non lo si conta nel check-completion gate
@@ -471,7 +473,7 @@ perché si guarda meno.
 
 **Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
 1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
-2. Zero bloccanti dai 5 reviewer AI (GPT-5.6 Sol, Grok 4.7, Fugu Ultra,
+2. Zero bloccanti dai 5 reviewer AI (GPT-6.1 Sol, Grok 4.7, Fugu Ultra,
    Fable 5.1, GPT-6 Astra) e — se ha completato la review — da CodeRabbit. CodeRabbit NON è
    mai un gate d'attesa (nessun cap-timer). Distinzione fail-closed:
    rate-limit / usage-quota / non disponibile = ASSENTE da subito (vedi
@@ -639,7 +641,7 @@ della decisione owner → prosegui).
 
 **CREDITI ESAURITI => NON MERGIARE, FERMARSI E AVVISARE.** È la sola
 eccezione all'autonomia, e vale per i **cinque reviewer che l'owner paga**:
-GPT-5.6 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. Se uno qualsiasi di
+GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. Se uno qualsiasi di
 loro non può
 revisionare perché il provider risponde usage-quota / rate-limit / crediti
 esauriti — il workflow parte ma il modello non risponde — allora quella PR

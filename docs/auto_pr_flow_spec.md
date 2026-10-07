@@ -469,9 +469,18 @@ volo, il gate **aspetta** che siano settled prima di decidere:
 
 | chiave | valore | significato |
 |---|---|---|
-| `--wait-pending-seconds` | `900` | budget d'attesa; `0` = non aspetta (default dello script) |
+| `--wait-pending-seconds` | `6600` | budget d'attesa; `0` = non aspetta (default dello script) |
 | `--poll-seconds` | `15` | intervallo fra due letture |
-| `timeout-minutes` (job) | `25` | rete di sicurezza se la suite si blocca |
+| `timeout-minutes` (job) | `120` | rete di sicurezza se la suite si blocca |
+
+Il budget e' tarato sul **reviewer piu' lento**, non sulla suite media: deve
+coprire il `timeout-minutes` del job di review piu' lungo (oggi Sol, 105 minuti a
+effort `max`) piu' il ritardo con cui quel job parte rispetto al gate. Era 900 s
+fino al passaggio di Sol a GPT-6.1 Sol a `max` (decisione dell'owner del
+07-10-2026), e gia' allora era sotto il job di Grok (20 minuti): una review
+valida ma lenta lasciava il gate rosso. Lo verifica
+`tests/guardrails/test_ai_review_timeout.py`, che legge il budget da
+`pr-merge-readiness.yml` e i `timeout-minutes` dai cinque `pr-review-*.yml`.
 
 **Fail-closed.** Scaduto il budget si giudica lo stato REALE: se i check non
 sono finiti, `can_merge` resta falso e il gate FALLISCE. L'attesa serve a dare
@@ -524,9 +533,9 @@ rivaluta da solo: serve `workflow_dispatch` (input `pr_number`, lanciato sul
 branch della PR) o un nuovo push. E' una scelta, non una svista: rimettere quei trigger significherebbe
 ripubblicare il verdetto su `main` invece che sull'head — il difetto che teneva
 il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
-(900s) e' circa il triplo della durata osservata della suite (~322s), e perche'
-un budget scaduto con check fermi e' un caso in cui il rosso e' la risposta
-giusta.
+(6600s) copre il caso peggiore del job di review piu' lungo, mentre la suite
+osservata dura ~322s, e perche' un budget scaduto con check fermi e' un caso in
+cui il rosso e' la risposta giusta.
 
 **Il riepilogo legge solo chiavi che la decisione produce.** Il job summary
 estrae i suoi dati con `jq` da `decision.json`. Una chiave sbagliata non rompe

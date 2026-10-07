@@ -25,8 +25,9 @@ GROK = ".github/workflows/pr-review-xai-grok46.yml"
 LIMITE_MINIMO_GROK = 240  # secondi per richiesta (DECISIONE-426 P24)
 TENTATIVI_ATTESI = 3
 # Avvio del runner e dell'interprete. Le chiamate a GitHub si contano a parte,
-# dal file: erano un margine fisso di 120 s, meno delle sei chiamate da 30 s
-# che ogni workflow fa davvero (Codex sulla #484).
+# dal file: erano un margine fisso di 120 s, meno delle chiamate da 30 s che
+# ogni workflow fa davvero (Codex sulla #484). Sono sette, non sei: una e'
+# scritta su piu' righe e la prima regex non la vedeva (Codex sulla #492).
 AVVIO_RUNNER = 60
 
 
@@ -87,8 +88,20 @@ def _attesa_github(workflow: str) -> int:
     assert len(definizioni) == 1, f"{workflow}: atteso un solo gh_request, trovati {len(definizioni)}"
     limiti = re.findall(r"urlopen\(req, timeout=(\d+)\)", _corpo(righe, definizioni[0]))
     assert len(limiti) == 1, f"{workflow}: timeout di gh_request non riconosciuto: {limiti}"
-    chiamate = re.findall(r'gh_request\("(?:GET|POST|PATCH|PUT|DELETE)"', testo)
+    # `\s*`: una chiamata scritta su piu' righe (`gh_request(\n    "GET", ...`)
+    # e' una chiamata come le altre. La prima regex la saltava, e su tutti e
+    # cinque i reviewer contava 6 chiamate invece di 7 — 30 s di caso peggiore
+    # che il test non vedeva (Codex sulla #492, in `comment_exists`).
+    chiamate = re.findall(r'gh_request\(\s*"(?:GET|POST|PATCH|PUT|DELETE)"', testo)
     assert chiamate, f"{workflow}: nessuna chiamata a gh_request riconosciuta"
+    # Ogni `gh_request(` che non e' la definizione deve essere riconosciuto
+    # sopra: una forma nuova (metodo da variabile, keyword) uscirebbe dal conto
+    # in silenzio e il caso peggiore risulterebbe piu' corto del vero.
+    tutte = re.findall(r"(?<!def )gh_request\(", testo)
+    assert len(chiamate) == len(tutte), (
+        f"{workflow}: {len(tutte)} chiamate a gh_request, ma solo {len(chiamate)} "
+        f"riconosciute col metodo HTTP letterale: il caso peggiore le conterebbe in meno"
+    )
     return len(chiamate) * int(limiti[0])
 
 
@@ -119,6 +132,74 @@ def test_block_grok_aspetta_abbastanza_da_ricevere_la_risposta() -> None:
     assert limite >= LIMITE_MINIMO_GROK, (
         f"Grok 4.7 ha {limite} s per richiesta: a reasoning high non basta (DECISIONE-426 P24, "
         f"#478 e #483), servono almeno {LIMITE_MINIMO_GROK} s"
+    )
+
+
+# Sopra `high` il ragionamento e' ancora piu' lungo: Sol a `max` (decisione
+# dell'owner del 07-10-2026) con i suoi 100 s di prima perderebbe la risposta
+# come la perdeva Grok a `high`. Sol a `max` usa 1800 s, e il job sale di conseguenza.
+EFFORT_MASSIMI = {"xhigh", "max"}
+LIMITE_MINIMO_EFFORT_MASSIMO = 1800
+
+
+def _effort(workflow: str) -> str:
+    m = re.search(r'^      REVIEW_EFFORT: +"?([a-z]+)"?\s*$', _testo(workflow), re.M)
+    return m.group(1) if m else ""
+
+
+@pytest.mark.parametrize("workflow", _reviewer())
+def test_block_a_effort_massimo_si_aspetta_abbastanza(workflow: str) -> None:
+    effort = _effort(workflow)
+    if effort not in EFFORT_MASSIMI:
+        pytest.skip(f"{workflow}: effort {effort or 'assente'!r}, non e' fra {sorted(EFFORT_MASSIMI)}")
+    _, limite, _ = _attesa_modello(workflow)
+    assert limite >= LIMITE_MINIMO_EFFORT_MASSIMO, (
+        f"{workflow}: REVIEW_EFFORT={effort!r} con {limite} s per richiesta. La richiesta "
+        f"non e' in streaming: a quel livello la risposta arriva a ragionamento finito, "
+        f"servono almeno {LIMITE_MINIMO_EFFORT_MASSIMO} s"
+    )
+
+
+MERGE_READINESS = ".github/workflows/pr-merge-readiness.yml"
+# Ritardo con cui un job di review parte rispetto al gate di merge readiness,
+# che scatta sullo stesso push: misurato 48 s sulla #492 (Sol), con margine.
+RITARDO_PARTENZA_REVIEWER = 120
+# Checkout del merge-ref e verdetto finale, dentro il job del gate.
+CONTORNO_GATE = 180
+
+
+def _budget_merge_readiness() -> int:
+    valori = re.findall(r"--wait-pending-seconds (\d+)", _testo(MERGE_READINESS))
+    assert len(valori) == 1, f"{MERGE_READINESS}: atteso un solo --wait-pending-seconds, trovati {valori}"
+    return int(valori[0])
+
+
+@pytest.mark.parametrize("workflow", _reviewer())
+def test_block_merge_readiness_aspetta_il_reviewer(workflow: str) -> None:
+    """Il gate di merge aspetta i check dell'head, reviewer compresi.
+
+    Se il suo budget e' piu' corto del job di review, una review valida ma
+    lenta lascia il gate ROSSO, e il gate non si rivaluta da solo (serve un
+    `workflow_dispatch` o un nuovo push). Con 900 s succedeva gia' con Grok
+    (job da 20 minuti); con Sol a effort `max` (105 minuti) sarebbe diventato
+    il caso ordinario dei push lenti. Rilievo di GPT-5.6 Sol sulla #492.
+    """
+    budget = _budget_merge_readiness()
+    serve = _timeout_job(workflow) + RITARDO_PARTENZA_REVIEWER
+    assert budget >= serve, (
+        f"{MERGE_READINESS} aspetta {budget} s, ma il job di {workflow} puo' durare "
+        f"{_timeout_job(workflow)} s e parte fino a {RITARDO_PARTENZA_REVIEWER} s dopo: "
+        f"servono almeno {serve} s, altrimenti una review lenta ma valida lascia il gate rosso"
+    )
+
+
+def test_block_il_job_del_gate_contiene_il_suo_budget() -> None:
+    """Un budget piu' lungo del job verrebbe troncato da GitHub senza verdetto."""
+    budget = _budget_merge_readiness()
+    assert _timeout_job(MERGE_READINESS) >= budget + CONTORNO_GATE, (
+        f"{MERGE_READINESS}: timeout del job {_timeout_job(MERGE_READINESS)} s, budget "
+        f"d'attesa {budget} s + {CONTORNO_GATE} s di contorno: GitHub ucciderebbe il gate "
+        f"prima che scriva il verdetto"
     )
 
 

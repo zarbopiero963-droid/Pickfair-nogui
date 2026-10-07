@@ -17,6 +17,13 @@ opposta a quella vera, e l'esperimento direbbe il falso.
 
 Il tetto e' un massimale, non un addebito: si paga cio' che viene generato.
 Alzarlo non costa nulla di per se'; non alzarlo costa la validita' della misura.
+
+Dal 07-10-2026 Sol esce dall'esperimento per decisione dell'owner: con
+GPT-6.1 Sol gira a `max`, il livello piu' alto che il modello offre. Lo
+stesso file pinna quel che serve perche' `max` sia vero e non solo scritto:
+la whitelist del workflow deve ammetterlo (altrimenti ripiega su `high` in
+silenzio), deve essere stata verificata sul provider di QUEL modello, e il
+tetto di output deve lasciare spazio al ragionamento piu' lungo.
 """
 from __future__ import annotations
 
@@ -41,6 +48,30 @@ EFFORT_PROFONDI = {"high", "xhigh", "max"}
 # Soglia dal consiglio OpenAI (>= 25.000 riservati) con un margine: sotto questo
 # valore un effort profondo non ha spazio per ragionare E rispondere.
 TETTO_MINIMO_PER_EFFORT_PROFONDO = 20000
+
+# I due livelli sopra `high` ragionano piu' a lungo di quello su cui e' tarato
+# il tetto da 25.000: tenerlo li' vorrebbe dire troncare proprio le review per
+# cui si e' pagato il ragionamento piu' profondo. Soglia: oltre il doppio.
+EFFORT_MASSIMI = {"xhigh", "max"}
+TETTO_MINIMO_PER_EFFORT_MASSIMO = 64000
+
+# Livelli documentati per TUTTI i provider dei reviewer: e' la whitelist di
+# default. Un workflow ne ammette di piu' SOLO se il provider e' stato
+# verificato per quel modello preciso — mai per analogia con un altro.
+INTERSEZIONE_SICURA = {"low", "medium", "high"}
+
+# workflow -> (chiave env del modello, id verificato, livelli verificati).
+# GPT-6.1 Sol: metadati OpenRouter di `openai/gpt-6.1-sol` letti il 07-10-2026,
+# `reasoning.supported_efforts` = max, xhigh, high, medium, low.
+# La verifica vale per l'id, non per il file: se l'id cambia e la whitelist
+# resta larga, il test va rosso finche' il nuovo modello non e' verificato.
+WHITELIST_VERIFICATE = {
+    ".github/workflows/pr-review-openrouter-gpt56-sol.yml": (
+        "OPENROUTER_MODEL",
+        "openai/gpt-6.1-sol",
+        {"low", "medium", "high", "xhigh", "max"},
+    ),
+}
 
 
 def _testo(workflow: str) -> str:
@@ -116,6 +147,26 @@ def test_block_effort_profondo_richiede_un_tetto_adeguato(workflow: str) -> None
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
+def test_block_effort_massimo_richiede_un_tetto_ancora_piu_alto(workflow: str) -> None:
+    """A `xhigh`/`max` il tetto tarato su `high` (25.000) non basta.
+
+    Sol passa a `max` col suo tetto di prima: il ragionamento piu' lungo che il
+    modello faccia, dentro lo spazio pensato per uno piu' corto. La review
+    uscirebbe troncata — pagata per intero e inutile.
+    """
+    env = _env(workflow)
+    effort = env["REVIEW_EFFORT"].strip().lower()
+    if effort not in EFFORT_MASSIMI:
+        pytest.skip(f"{workflow}: effort '{effort}', non e' fra {sorted(EFFORT_MASSIMI)}")
+    tetto = int(env.get("MAX_OUTPUT_TOKENS", "0"))
+    assert tetto >= TETTO_MINIMO_PER_EFFORT_MASSIMO, (
+        f"{workflow}: REVIEW_EFFORT='{effort}' con MAX_OUTPUT_TOKENS={tetto}, "
+        f"sotto {TETTO_MINIMO_PER_EFFORT_MASSIMO}: il ragionamento a quel livello "
+        f"riempirebbe il tetto prima della risposta (finish_reason=length)"
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
 def test_block_effort_arriva_da_env_non_scritto_nel_payload(workflow: str) -> None:
     """L'esperimento deve potersi fermare senza toccare il codice.
 
@@ -128,34 +179,76 @@ def test_block_effort_arriva_da_env_non_scritto_nel_payload(workflow: str) -> No
     assert 'REVIEW_EFFORT = os.environ.get("REVIEW_EFFORT"' in testo, (
         f"{workflow}: l'effort non viene letto dall'ambiente"
     )
-    for scritto in ('"reasoning": {"effort": "low"}', '"reasoning_effort": "low"',
-                    '"reasoning": {"effort": "high"}', '"reasoning_effort": "high"'):
-        assert scritto not in testo, (
-            f"{workflow}: effort scritto nel payload ({scritto}): non si potrebbe "
-            f"piu' fermare l'esperimento dall'ambiente"
-        )
+    livelli = sorted(INTERSEZIONE_SICURA | EFFORT_MASSIMI)
+    for livello in livelli:
+        for scritto in (f'"reasoning": {{"effort": "{livello}"}}',
+                        f'"reasoning_effort": "{livello}"'):
+            assert scritto not in testo, (
+                f"{workflow}: effort scritto nel payload ({scritto}): non si potrebbe "
+                f"piu' fermare l'esperimento dall'ambiente"
+            )
+
+
+def _whitelist(workflow: str) -> set:
+    """I livelli di `_EFFORT_AMMESSI`, letti dalla riga di assegnazione nel codice."""
+    codice = _senza_commenti(_testo(workflow))
+    riga = next((r for r in codice.splitlines() if "_EFFORT_AMMESSI" in r and "=" in r), "")
+    assert riga, f"{workflow}: _EFFORT_AMMESSI non trovata"
+    ammessi = {v.strip().strip('"').strip("'") for v in
+               riga.split("{", 1)[1].rsplit("}", 1)[0].split(",") if v.strip()}
+    assert ammessi, f"{workflow}: _EFFORT_AMMESSI letta vuota: il parser non capisce piu' la riga"
+    return ammessi
 
 
 @pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
-def test_block_whitelist_solo_intersezione_sicura(workflow: str) -> None:
+def test_block_whitelist_solo_livelli_verificati_sul_provider(workflow: str) -> None:
     """La whitelist non deve ammettere livelli che un provider potrebbe rifiutare.
 
     Rilievo di GPT-5.6 Sol e Fable: la validazione era la stessa per tutti e tre
     ma i provider non accettano gli stessi livelli. Un valore rifiutato produce
     400 e uccide la review — proprio il guasto che la guardia dovrebbe evitare —
     e lo fa solo in CI, dove nessuno lo prova prima.
-    Si ammette percio' la sola intersezione documentata per tutti e tre. Allargarla
-    richiede di verificare il provider, non di procedere per analogia.
+    Di default si ammette percio' la sola intersezione documentata per tutti.
+    Allargarla richiede di verificare il provider DI QUEL MODELLO, non di
+    procedere per analogia: la verifica e' registrata in WHITELIST_VERIFICATE
+    insieme all'id del modello, e vale solo finche' l'id e' quello.
     """
-    codice = _senza_commenti(_testo(workflow))
-    riga = next((r for r in codice.splitlines() if "_EFFORT_AMMESSI" in r and "=" in r), "")
-    assert riga, f"{workflow}: _EFFORT_AMMESSI non trovata"
-    ammessi = {v.strip().strip('"').strip("'") for v in
-               riga.split("{", 1)[1].rsplit("}", 1)[0].split(",") if v.strip()}
-    assert ammessi <= {"low", "medium", "high"}, (
-        f"{workflow}: la whitelist ammette {sorted(ammessi - {'low','medium','high'})}, "
-        f"livelli non documentati per tutti e tre i provider: un valore rifiutato "
+    ammessi = _whitelist(workflow)
+    consentiti = INTERSEZIONE_SICURA
+    if not ammessi <= INTERSEZIONE_SICURA and workflow in WHITELIST_VERIFICATE:
+        chiave, modello, verificati = WHITELIST_VERIFICATE[workflow]
+        reale = _env(workflow).get(chiave)
+        assert reale == modello, (
+            f"{workflow}: la whitelist allargata {sorted(ammessi - INTERSEZIONE_SICURA)} "
+            f"era verificata per {modello!r}, ma {chiave} ora vale {reale!r}. "
+            f"Riverifica i livelli sul provider del nuovo modello e aggiorna "
+            f"WHITELIST_VERIFICATE, oppure riporta la whitelist a "
+            f"{sorted(INTERSEZIONE_SICURA)}"
+        )
+        consentiti = verificati
+    assert ammessi <= consentiti, (
+        f"{workflow}: la whitelist ammette {sorted(ammessi - consentiti)}, livelli "
+        f"non verificati sul provider di questo modello: un valore rifiutato "
         f"darebbe 400 e la review andrebbe persa"
+    )
+
+
+@pytest.mark.parametrize("workflow", WORKFLOWS_ESPERIMENTO)
+def test_block_leffort_dellenv_e_ammesso_dalla_whitelist(workflow: str) -> None:
+    """Un effort fuori whitelist non da' errore: ripiega su `high` in silenzio.
+
+    Il workflow stampa un `::warning::` e prosegue a `high`. Quindi
+    `REVIEW_EFFORT: "max"` con una whitelist che `max` non lo conosce produce
+    una review a `high` con una configurazione che dice `max`: il livello
+    deciso dall'owner non verrebbe mai applicato, e nessun check diventerebbe
+    rosso per dirlo.
+    """
+    effort = _env(workflow)["REVIEW_EFFORT"].strip().lower()
+    ammessi = _whitelist(workflow)
+    assert effort in ammessi, (
+        f"{workflow}: REVIEW_EFFORT={effort!r} non e' in _EFFORT_AMMESSI "
+        f"{sorted(ammessi)}: a runtime ripiegherebbe su 'high' con un solo "
+        f"warning nel log"
     )
 
 
