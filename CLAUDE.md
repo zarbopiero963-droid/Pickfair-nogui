@@ -1,5 +1,24 @@
 # CLAUDE.md
 
+## Percorso MCP — ingresso obbligatorio e policy corrente
+
+Per qualsiasi lavoro MCP partire da **Pickfair-nogui #491** e leggere
+**#491 → #489 → #461 → #426 → #453 → #351 quando serve collaudo → pickfair-mcp- #1**.
+Applicare [il contratto operativo consolidato](docs/mcp_operational_contract.md):
+gerarchia delle fonti, sequenza tecnica, ownership e tre milestone separate.
+SIM/LIVE: vale la decisione owner SIM/LIVE del contratto consolidato (un solo
+motore e un solo set di tool MCP; nessuna nuova modalità; mai auto-LIVE).
+Una sola PR attiva **per repository**: una in Pickfair-nogui e una in
+pickfair-mcp- possono coesistere; la serialità non è globale.
+Le formulazioni di serialità sotto riguardano questo singolo repository.
+
+Per reviewer e merge applicare la decisione owner vigente **#426/P41** e
+successive decisioni pertinenti, inclusi #492/#493. Non riattivare workflow o
+label sospese sulla base di istruzioni storiche. Una modifica presente in una
+PR aperta non equivale a comportamento già presente sul main.
+Questo rinvio non riscrive la policy reviewer storica: P41 prevale sui punti
+espressamente sospesi. Resta il merge manuale owner per i file-policy esclusi.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le
@@ -82,12 +101,12 @@ REGOLE NON NEGOZIABILI (valgono sempre):
 
 - Fail-closed: evidence mancante, ambigua o contraddittoria
   => AUTO_PR_FLOW_STATUS=NEEDS_MANUAL. Non inventare, non forzare.
-- UNA SOLA PR aperta / UN SOLO task attivo alla volta (allineato ad
+- UNA SOLA PR aperta / UN SOLO task attivo alla volta PER REPOSITORY (allineato ad
   AGENTS.md «Core rules»: "Only one active task/one open pull request
   is allowed at a time"). Se esiste già una PR aperta: lavoro NON
   correlato => fermati (BLOCKED), non aprire una seconda PR; lavoro di
   fix sulla PR aperta => continua sullo STESSO branch. Mai lavorare
-  direttamente su `main`, mai task in parallelo. Nuova PR (e nuovo
+  direttamente su `main`, mai task in parallelo nello stesso repository. Nuova PR (e nuovo
   branch) SOLO dopo che la precedente è merged/closed: per follow-up si
   ristabilisce il branch designato dal `main` aggiornato.
 - Lavora SOLO sul current head della PR. Head mismatch => NEEDS_MANUAL.
