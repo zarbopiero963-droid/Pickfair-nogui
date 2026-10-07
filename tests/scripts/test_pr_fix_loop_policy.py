@@ -31,7 +31,7 @@ def policy():
 def assessment(kind, **extra):
     return {
         "class": kind, "thread_id": "T1", "current_head_sha": "head",
-        "evidence": "local contract inspection and reproducible test",
+        "evidence": "local contract inspection and reproducible test", "pr_branch": "branch",
         "current_head_correct": kind != "CURRENT_DEFECT",
         "material": False,
         **{risk: False for risk in controller.fix_policy.PROTECTED_RISKS},
@@ -464,7 +464,7 @@ def test_reservation_rejects_changed_assessed_head(ledger, policy):
 
 
 def test_completion_records_pushed_branch_not_checkout_head(ledger):
-    ledger.reserve('branch', assessment('CURRENT_DEFECT'))
+    ledger.reserve('branch', assessment('CURRENT_DEFECT', pr_branch='other-branch'))
     refs = []
     def runner(command, **_kwargs):
         if command[:2] == ['git', 'rev-parse']:
@@ -657,7 +657,7 @@ def test_real_git_same_named_tag_cannot_replace_audited_branch(ledger,tmp_path):
     git('branch','collision')
     git('tag','collision',tag_head)
     assert tag_head != branch_head
-    ledger.reserve('tag-collision',assessment('CURRENT_DEFECT'))
+    ledger.reserve('tag-collision',assessment('CURRENT_DEFECT',pr_branch='collision'))
     sent=[]
     def runner(command,**_kwargs):
         if command[1]=='push':
@@ -868,7 +868,7 @@ def test_retry_preserves_new_unassessed_remote_head(policy, tmp_path):
     git(other, 'push', 'origin', 'feature')
     ledger = policy.FixLoopLedger(tmp_path / 'lease-budget.sqlite', 'owner/repo', 495)
     ledger.initialize(0, 'new PR')
-    assert ledger.reserve('retry', assessment('CURRENT_DEFECT', current_head_sha=assessed))['allowed']
+    assert ledger.reserve('retry', assessment('CURRENT_DEFECT', current_head_sha=assessed,pr_branch='feature'))['allowed']
     context = {
         'repo': 'owner/repo', 'pr': 495, 'current_head_sha': assessed,
         'fix_loop': {'path': str(ledger.path), 'repo': 'owner/repo', 'pr': 495, 'cycle_id': 'retry'},
@@ -888,3 +888,107 @@ def test_retry_preserves_new_unassessed_remote_head(policy, tmp_path):
     assert git(remote, 'rev-parse', 'refs/heads/feature') == advanced
     assert ledger.status()['completed_count'] == 0
     assert ledger.status()['reserved_count'] == 1
+
+
+@pytest.mark.parametrize('state', [{'isResolved': True}, {'is_resolved': True}, {'isOutdated': True}, {'isActive': False}, {'active': False}])
+def test_cached_defect_cannot_repatch_inactive_thread(state):
+    thread = {'id': 'T1', 'body': 'runtime bug', **state}
+    context = {'current_head_sha': 'head', 'review_assessments': {'T1': assessment('CURRENT_DEFECT')}}
+    assert controller.triage_review_thread_contract(thread, context)['decision'] != 'PATCH_REQUIRED'
+    assert not controller.classify_review_thread(thread, context)['blocking']
+
+
+def test_push_destination_must_be_the_assessed_pr_branch(ledger):
+    assert ledger.reserve('wrong-branch', assessment('CURRENT_DEFECT', pr_branch='pr-branch'))['allowed']
+    context = repair_context(ledger, 'wrong-branch')
+    calls = []
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        return 'unrelated-head' if cmd[1] == 'rev-parse' else ''
+    result = flow.push_with_retry_once(runner, 'owner/repo', 'unrelated-branch', context=context)
+    assert not result['ok']
+    assert result['needs_manual']
+    assert calls == []
+    assert ledger.status()['completed_count'] == 0
+
+
+@pytest.mark.parametrize('stage', ['reserved', 'completed'])
+def test_invalid_claim_token_stage_is_corrupt(ledger, stage):
+    import sqlite3, json
+    ledger.reserve('invalid-claim', assessment('CURRENT_DEFECT'))
+    if stage == 'completed':
+        begin_push(ledger, 'invalid-claim')
+        ledger.complete('invalid-claim', 'pushed')
+    with sqlite3.connect(ledger.path) as connection:
+        payload = json.loads(connection.execute('SELECT assessment FROM cycles').fetchone()[0])
+        if stage == 'reserved': payload['claim_token'] = 'impossible-existing-token'
+        else: payload.pop('claim_token')
+        connection.execute('UPDATE cycles SET assessment=?', (json.dumps(payload),))
+    assert not ledger.status()['allowed']
+
+
+@pytest.mark.parametrize('budget', [
+    {'fix_loop_budget': {'allowed': True, 'reserved_count': 1}},
+    {'fix_loop_budget': {'allowed': False, 'reason': 'fix_loop_state_missing'}},
+    {'budget_status': {'exhausted': True, 'reason': 'unfinished_fix_loop_cycle'}},
+])
+def test_auto_merge_cannot_bypass_durable_manual_stop(budget):
+    context = {'automation_mode':'live', 'automation_flags':{'AUTO_MERGE_ENABLED':True,
+        'GITHUB_MUTATION_ENABLED':True,'EXTERNAL_SIDE_EFFECT_ENABLED':True},
+        'task_no_commit_push':False,'mergeable':'MERGEABLE','mergeStateStatus':'CLEAN',
+        'bad':[],'pending':[],'unresolved_active':0,'current_head_matches':True,
+        'explicit_merge_authorization':True, **budget}
+    assert not controller.can_auto_merge(context)['allowed']
+
+
+def merge_context(**extra):
+    return {'automation_mode':'live','automation_flags':{'AUTO_MERGE_ENABLED':True,
+        'GITHUB_MUTATION_ENABLED':True,'EXTERNAL_SIDE_EFFECT_ENABLED':True},
+        'task_no_commit_push':False,'mergeable':'MERGEABLE','mergeStateStatus':'CLEAN',
+        'bad':[],'pending':[],'unresolved_active':0,'current_head_matches':True,
+        'explicit_merge_authorization':True, **extra}
+
+
+@pytest.mark.parametrize('stage', ['reserved','working','pushing','retry_ready'])
+def test_merge_rechecks_actual_ledger_despite_green_cached_snapshot(ledger, stage):
+    ledger.reserve('held',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'held',claim=stage!='reserved')
+    if stage in {'pushing','retry_ready'}: assert controller.fix_policy.start_push_gate(context)['allowed']
+    if stage=='retry_ready': assert controller.fix_policy.retry_after_confirmed_rejection(context)['allowed']
+    descriptor={'path':str(ledger.path),'repo':'owner/repo','pr':495}
+    result=controller.can_auto_merge(merge_context(fix_loop=descriptor,
+        fix_loop_budget={'allowed':True,'reserved_count':0}))
+    assert not result['allowed']
+    assert 'unfinished_fix_loop_cycle' in result['reason']
+
+
+def test_real_pr_merge_without_ledger_is_not_authorized(monkeypatch):
+    monkeypatch.delenv('PR_FIX_LOOP_LEDGER',raising=False)
+    assert not controller.can_auto_merge(merge_context(repo='owner/repo',pr=495,
+        fix_loop_budget={'allowed':True,'reserved_count':0}))['allowed']
+
+
+def test_clean_merge_at_five_keeps_existing_guards(ledger):
+    for number in range(5): consume(ledger,str(number))
+    context=merge_context(fix_loop={'path':str(ledger.path),'repo':'owner/repo','pr':495})
+    assert controller.can_auto_merge(context)['allowed']
+    assert not controller.can_auto_merge({**context,'pending':['CI']})['allowed']
+    assert not controller.can_auto_merge({**context,'unresolved_active':1})['allowed']
+    assert ledger.status()['completed_count']==5
+
+
+def test_completion_rejects_wrong_branch_and_corrupt_assessment(ledger):
+    import sqlite3
+    ledger.reserve('completion-branch',assessment('CURRENT_DEFECT'))
+    begin_push(ledger,'completion-branch')
+    assert not ledger.complete('completion-branch','pushed',branch='other')['allowed']
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("UPDATE cycles SET assessment='[]'")
+    assert not ledger.complete('completion-branch','pushed',branch='branch')['allowed']
+
+
+@pytest.mark.parametrize('snapshot', [{'allowed':False,'reason':'fix_loop_budget_exhausted'},
+                                      {'allowed':True,'reserved_count':1}])
+def test_fresh_clean_ledger_does_not_clear_explicit_manual_merge_stop(ledger,snapshot):
+    descriptor={'path':str(ledger.path),'repo':'owner/repo','pr':495}
+    assert not controller.can_auto_merge(merge_context(fix_loop=descriptor,fix_loop_budget=snapshot))['allowed']

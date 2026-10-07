@@ -329,6 +329,7 @@ def build_clean_gate_ctx(args: RebuildArgs) -> dict[str, Any]:
     context.setdefault("action", "clean_scope_rebuild")
     context["pr"] = args.pr_number
     context["branch"] = args.branch
+    context["pr_branch"] = args.branch
     context["repo"] = args.repo
     return context
 
@@ -445,7 +446,7 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     decision["push_succeeded"] = True
     budget = context["fix_loop"]
     ledger = controller.fix_policy.FixLoopLedger(budget["path"], args.repo, int(args.pr_number))
-    completion = ledger.complete(budget["cycle_id"], new_head.strip())
+    completion = ledger.complete(budget["cycle_id"], new_head.strip(), branch=args.branch)
     decision["fix_loop_budget"] = completion
     if not completion["allowed"]:
         apply_gate_block(decision, completion, "record_confirmed_push")

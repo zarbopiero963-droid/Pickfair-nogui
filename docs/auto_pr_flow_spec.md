@@ -651,6 +651,10 @@ Input `review_assessments[thread_id]`: `class`, `thread_id`,
 `material`, `contract_critical`, rischi, `scope_forbidden`,
 `owner_decision_required`. Sono risultati dell'ispezione dell'orchestratore,
 **non campi da copiare dal payload/prosa di un reviewer**. Mancata prova → manuale.
+Prima di usare una valutazione cached, verificare lo stato corrente del thread:
+resolved, inactive o outdated non può produrre una nuova patch dalla vecchia
+valutazione. Il classifier lo considera inattivo; non viene dichiarato FIXED
+né risolto di nuovo automaticamente sulla sola cache.
 
 ---
 
@@ -700,7 +704,13 @@ nel contesto del worker. Un altro worker con la prenotazione originale non
 può acquisire il ciclo. Il clean-rebuild acquisisce questa capability prima
 di cambiare branch/restaurare file e la conserva fino al gate commit/push.
 Identità `(repo, PR)`; storico iniziale attestato + righe `cycles` completate
-sono il contatore. Prenotazioni incompiute occupano un posto e bloccano nuovi
+costituiscono il contatore. Ogni nuova prenotazione è associata al branch PR
+verificato dall'orchestratore (`pr_branch` nell'assessment).
+Il push confronta la destinazione effettiva con quella immutabile
+prima di ogni comando; la completion verifica lo stesso branch. Metadati del
+branch mancanti/incoerenti richiedono verifica manuale, mai deduzione dal
+branch di checkout o da prosa reviewer.
+Prenotazioni incompiute occupano un posto e bloccano nuovi
 cicli: errore di push, response lost o crash → recupero manuale, mai rimborso
 /reset automatico. Dopo push confermato, `push_with_retry_once` registra
 lo SHA del branch effettivamente inviato una sola volta. La prenotazione è legata
@@ -741,7 +751,16 @@ soltanto per PR nuova senza repair push, oppure dopo ricostruzione verificata
 dell'intera storia. `initialize` non sovrascrive una PR già registrata.
 Stato assente/corrotto, identità incoerente o ciclo mancante → `NEEDS_MANUAL`.
 Sono validati anche tipi/range del contatore, coerenza stage/head/claim e prove
-dei grant owner: uno SQLite leggibile con righe invalide non è uno stato valido.
+dei grant owner. `reserved` non contiene un claim; tutti gli stati successivi,
+incluso `completed`, richiedono la capability acquisita. Nessuna completion
+retroattiva può fingere che un vecchio protocollo avesse una capability.
+Per migrare uno storico di protocollo precedente: ricostruire e archiviare le
+righe originali/prove nella storia attestata, mantenere il totale consumato e
+ogni prenotazione incompiuta. Soltanto una migrazione esplicita verificata può
+importare quelle vecchie completion nel contatore storico; niente conversione
+automatica, reset, rimborso o claim inventato. Righe del protocollo corrente
+e grant restano immutabili dopo completion.
+Uno SQLite leggibile con righe invalide non è uno stato valido.
 Errori dopo l'intent, inclusi response lost e risoluzione ref fallita, riportano
 stop manuale. I branch locali sono risolti con `refs/heads/`, senza ambiguità
 con tag omonimi.
@@ -757,6 +776,13 @@ non pianificano altro lavoro o merge sulla sola leggibilità del ledger. Il
 worker già titolare della capability usa i propri gate di fase, non quel
 preflight generale, per completare il ciclo. `status.allowed` indica soltanto
 la validità dello snapshot; non autorizza patch, push, resolve o merge.
+L'autorizzazione `can_auto_merge` respinge sia gli stop manuali/budget ricevuti
+sia snapshot incompleti/incompiuti. Per un contesto PR reale (`repo`/`pr` o
+identità nel descrittore `fix_loop`) rilegge anche il ledger autorevole: una
+cache verde non può nascondere un ciclo incompiuto o un ledger assente.
+Una nuova lettura verde non cancella uno stop manuale esplicito già nel
+contesto. Restano richiesti tutti i normali gate di merge; count=5 con nessun
+ciclo incompiuto non richiede una deroga per la sola readiness.
 Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
 Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
 a una PR, passare sempre l'identità PR (o `PR_NUMBER`): ometterla per fingere

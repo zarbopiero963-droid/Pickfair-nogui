@@ -2278,7 +2278,7 @@ def push_with_retry_once(
     context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Push once, recover once on non-fast-forward, then stop with explicit status."""
-    context = {**(context or {}), "repo": repo}
+    context = {**(context or {}), "repo": repo, "pr_branch": branch}
     budget = controller.fix_policy.reservation_gate(context)
     if not budget["allowed"]:
         result = _build_push_result(False, "needs_manual", PushResultContext(
@@ -2330,7 +2330,7 @@ def _complete_fix_loop_push(repo: str, result: dict[str, Any],
                 "error": "fix_loop_repository_mismatch"}
     try:
         ledger = controller.fix_policy.FixLoopLedger(budget["path"], repo, budget["pr"])
-        completion = ledger.complete(budget["cycle_id"], pushed_head)
+        completion = ledger.complete(budget["cycle_id"], pushed_head, branch=context.get("pr_branch"))
         if not completion["allowed"]:
             return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
                     "error": completion["reason"]}

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
 import subprocess
@@ -21,6 +22,10 @@ PROTECTED_RISKS = (
     "safety", "security", "credentials", "real_money", "fail_open",
     "data_corruption", "risk_bypass", "runtime_bug", "owner_contract_violation",
 )
+
+
+def valid_pr_branch(value: Any) -> bool:
+    return isinstance(value, str) and bool(re.fullmatch(r"[A-Za-z0-9._/-]+", value))
 
 
 def stopped(reason: str) -> dict[str, Any]:
@@ -198,14 +203,18 @@ class FixLoopLedger:
         evidence = json.loads(row[0])
         if triage(evidence)["decision"] != "PATCH_REQUIRED":
             raise ValueError("invalid_persisted_assessment")
+        if not valid_pr_branch(evidence.get("pr_branch")):
+            raise ValueError("assessed_pr_branch_missing")
         stage, head = row[2], row[1]
         if stage not in {"reserved", "working", "pushing", "retry_ready", "completed"}:
             raise ValueError("invalid_persisted_stage")
         if (stage == "completed") != (isinstance(head, str) and bool(head.strip())) or (head is not None and stage != "completed"):
             raise ValueError("invalid_persisted_head_stage")
-        if stage in {"working", "pushing", "retry_ready"} and not isinstance(evidence.get("claim_token"), str):
+        if stage == "reserved" and "claim_token" in evidence:
             raise ValueError("invalid_persisted_claim")
-        if stage in {"working", "pushing", "retry_ready"} and not evidence.get("claim_token"):
+        if stage != "reserved" and not isinstance(evidence.get("claim_token"), str):
+            raise ValueError("invalid_persisted_claim")
+        if stage != "reserved" and not evidence.get("claim_token"):
             raise ValueError("invalid_persisted_claim")
 
     def _validate_grant_row(self, row: sqlite3.Row, completed: int) -> None:
@@ -253,6 +262,8 @@ class FixLoopLedger:
                     return stopped("unfinished_fix_loop_cycle")
                 if state["used_slots"] >= state["ceiling"]:
                     return stopped("fix_loop_budget_exhausted")
+                if not valid_pr_branch(assessment.get("pr_branch")):
+                    return stopped("assessed_pr_branch_missing")
                 connection.execute("INSERT INTO cycles VALUES (?, ?, ?, ?, NULL, 'reserved')",
                                    (self.repo, self.pr, cycle, json.dumps(assessment)))
                 return {"allowed": True, "cycle_id": cycle, **self._status(connection)}
@@ -260,7 +271,7 @@ class FixLoopLedger:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
     def authorize(self, cycle: str, current_head: str | None = None, stage: str = "reserved",
-                  claim_token: str | None = None) -> dict[str, Any]:
+                  claim_token: str | None = None, current_branch: str | None = None) -> dict[str, Any]:
         try:
             with self._connect() as connection:
                 state = self._status(connection)
@@ -271,6 +282,8 @@ class FixLoopLedger:
                 if stage not in {"reserved", "working", "retry_ready"} or row is None or row[0] is not None or row[1] != stage or state["used_slots"] > state["ceiling"]:
                     return stopped("fix_loop_reservation_invalid")
                 evidence = json.loads(row[2])
+                if current_branch is not None and evidence.get("pr_branch") != current_branch:
+                    return stopped("fix_loop_pr_branch_mismatch")
                 if evidence.get("claim_token") and evidence["claim_token"] != claim_token:
                     return stopped("fix_loop_claim_mismatch")
                 if current_head is not None and (not current_head or evidence.get("current_head_sha") != current_head):
@@ -324,15 +337,18 @@ class FixLoopLedger:
         """Internal transport retry only after an actual non-fast-forward rejection."""
         return self._transition_push(cycle, "pushing", "retry_ready")
 
-    def complete(self, cycle: str, head: str) -> dict[str, Any]:
+    def complete(self, cycle: str, head: str, *, branch: str | None = None) -> dict[str, Any]:
         if not isinstance(head, str) or not head.strip():
             return stopped("confirmed_push_head_missing")
         try:
             with self._connect() as connection:
-                row = connection.execute("SELECT head, stage FROM cycles WHERE repo=? AND pr=? AND cycle=?",
+                self._status(connection)
+                row = connection.execute("SELECT head, stage, assessment FROM cycles WHERE repo=? AND pr=? AND cycle=?",
                                          (self.repo, self.pr, cycle)).fetchone()
                 if row is None or (row[0] is not None and row[0] != head):
                     return stopped("fix_loop_completion_mismatch")
+                if branch is not None and json.loads(row[2]).get("pr_branch") != branch:
+                    return stopped("fix_loop_pr_branch_mismatch")
                 if row[0] is None and row[1] != "pushing":
                     return stopped("fix_loop_push_intent_missing")
                 connection.execute("UPDATE cycles SET head=?, stage='completed' WHERE repo=? AND pr=? AND cycle=? AND head IS NULL",
@@ -377,9 +393,43 @@ def reservation_gate(context: dict[str, Any] | None, *, stage: str = "reserved")
         ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
         head = str((context or {}).get("current_head_sha") or (context or {}).get("head_sha") or (context or {}).get("headRefOid") or "")
         actual_stage = "working" if stage == "reserved" and budget.get("claim_token") else stage
-        return ledger.authorize(budget["cycle_id"], head, actual_stage, budget.get("claim_token"))
+        branch = next((context[key] for key in ("pr_branch", "branch", "headRefName") if key in context), None)
+        return ledger.authorize(budget["cycle_id"], head, actual_stage, budget.get("claim_token"), branch)
     except (KeyError, ValueError, TypeError):
         return stopped("fix_loop_reservation_malformed")
+
+
+def _merge_snapshot_gate(snapshot: Any) -> dict[str, Any]:
+    if snapshot is None:
+        return {"allowed": True}
+    if not isinstance(snapshot, dict) or snapshot.get("allowed") is not True:
+        return stopped("fix_loop_merge_state_unavailable")
+    pending = snapshot.get("reserved_count")
+    if type(pending) is not int or pending < 0:
+        return stopped("fix_loop_merge_state_malformed")
+    return stopped("unfinished_fix_loop_cycle") if pending else {"allowed": True}
+
+
+def merge_budget_gate(context: dict[str, Any]) -> dict[str, Any]:
+    """Add durable/manual stops to merge authorization, never replace readiness."""
+    stop = context.get("budget_status")
+    if isinstance(stop, dict) and stop.get("exhausted") is True:
+        return stopped(str(stop.get("reason") or "fix_loop_manual_stop"))
+    snapshot = context.get("fix_loop_budget")
+    cached_gate = _merge_snapshot_gate(snapshot)
+    if not cached_gate["allowed"]:
+        return cached_gate
+    descriptor = context.get("fix_loop") if isinstance(context.get("fix_loop"), dict) else {}
+    repo, pr = context.get("repo") or descriptor.get("repo"), context.get("pr") or descriptor.get("pr")
+    if repo or pr:
+        if not repo or not str(pr).isdigit():
+            return stopped("fix_loop_identity_malformed")
+        path = descriptor.get("path") or os.environ.get("PR_FIX_LOOP_LEDGER", "")
+        try:
+            snapshot = FixLoopLedger(path, str(repo), int(pr)).status()
+        except (TypeError, ValueError):
+            return stopped("fix_loop_identity_malformed")
+    return _merge_snapshot_gate(snapshot)
 
 
 def start_push_gate(context: dict[str, Any], *, stage: str = "working") -> dict[str, Any]:

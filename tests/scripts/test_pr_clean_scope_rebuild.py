@@ -28,7 +28,7 @@ def _good_ctx(tmp_path, **overrides: object) -> dict[str, object]:
     if not ledger.path.exists():
         ledger.initialize(0, "new PR before review repair")
         ASSERTIONS.assertTrue(ledger.reserve("clean-1", {
-            "class": "CURRENT_DEFECT", "current_head_correct": False,
+            "class": "CURRENT_DEFECT", "current_head_correct": False, "pr_branch": "chore/pr3h-post-fix-audit-gate",
             "thread_id": "T1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
         })["allowed"])
     base: dict[str, object] = {

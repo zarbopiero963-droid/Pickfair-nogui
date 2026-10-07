@@ -289,7 +289,7 @@ def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
     if not ledger.path.exists():
         ledger.initialize(0, "new PR before review repair")
         reservation = ledger.reserve("repair-1", {
-            "class": "CURRENT_DEFECT", "current_head_correct": False,
+            "class": "CURRENT_DEFECT", "current_head_correct": False, "pr_branch": "feature/branch",
             "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced bug",
         })
         ASSERTIONS.assertTrue(reservation["allowed"])

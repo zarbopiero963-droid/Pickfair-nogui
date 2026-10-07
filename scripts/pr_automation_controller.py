@@ -1324,6 +1324,10 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not base["allowed"]:
         return base
     ctx = build_automation_enablement_context(context, context)
+    budget_gate = fix_policy.merge_budget_gate(ctx)
+    if not budget_gate["allowed"]:
+        return automation_disabled_result("merge", normalize_automation_mode(ctx.get("automation_mode")),
+                                          budget_gate["reason"], next_action="needs_manual")
 
     def _first_present(*values: object) -> object:
         for value in values:
@@ -7081,6 +7085,8 @@ def _verified_review_triage(thread: dict[str, Any], context: dict[str, Any],
     thread_id = _review_thread_id(thread)
     head = str(context.get("current_head_sha") or "")
     result = fix_policy.triage(assessment)
+    if not _review_thread_active(thread) or thread.get("active") is False:
+        result = {"decision": "NEEDS_MANUAL", "reason": "cached_assessment_thread_inactive"}
     if context.get("forbidden_file_request") or _is_out_of_scope_review_path(str(thread.get("path") or ""), context):
         result = {"decision": "NEEDS_MANUAL", "reason": "forbidden_file_request"}
     if not head or assessment.get("current_head_sha") != head or assessment.get("thread_id") != thread_id:
@@ -7703,11 +7709,12 @@ def classify_review_thread(thread: dict[str, Any], context: dict[str, Any] | Non
     if isinstance(assessments, dict) and isinstance(assessments.get(_review_thread_id(thread)), dict):
         triage = triage_review_thread_contract(thread, ctx)
         decision = triage["decision"]
+        inactive = not _review_thread_active(thread) or thread.get("active") is False
         return {
             **triage, "verified_classification": True,
-            "blocking": decision == "PATCH_REQUIRED", "advisory": decision == "EVIDENCE_RESOLVE",
-            "needs_manual": decision == "NEEDS_MANUAL", "unknown_author": not bool(triage.get("provider")),
-            "classification": "blocking" if decision == "PATCH_REQUIRED" else
+            "blocking": decision == "PATCH_REQUIRED" and not inactive, "advisory": decision == "EVIDENCE_RESOLVE" and not inactive,
+            "needs_manual": decision == "NEEDS_MANUAL" and not inactive, "unknown_author": not bool(triage.get("provider")),
+            "classification": "inactive" if inactive else "blocking" if decision == "PATCH_REQUIRED" else
                               "needs_manual" if decision == "NEEDS_MANUAL" else "advisory",
         }
     author = _review_thread_author(thread)

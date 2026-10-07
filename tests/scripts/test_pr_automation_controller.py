@@ -23,7 +23,7 @@ def _reserved_repair_context(tmp_path):
     ledger = controller.fix_policy.FixLoopLedger(tmp_path / "budget.sqlite", "owner/repo", 225)
     ledger.initialize(0, "new PR before review repair")
     reserved = ledger.reserve("repair-1", {
-        "class": "CURRENT_DEFECT", "current_head_correct": False,
+        "class": "CURRENT_DEFECT", "current_head_correct": False, "pr_branch": "feature/branch",
         "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
     })
     ASSERTIONS.assertTrue(reserved["allowed"])
