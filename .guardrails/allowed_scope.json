@@ -1994,6 +1994,18 @@
       ],
       "max_files": 5,
       "description": "Decisione owner 07-10-2026, follow-up separato dopo merge #492: aumentare il limite per tentativo di Grok 4.7 da 240 a 400 s per dare margine sui diff grandi ed evitare tentativi pagati e persi. Il workflow resta reasoning high, stesso modello/provider/prompt/redazione/done_marker/prezzi. Con 3 tentativi da 400 s, backoff 14 s, 7 chiamate GitHub da 30 s e 60 s avvio, caso peggiore 1484 s; job 20 -> 30 minuti (1800 s), margine 316 s. Merge Readiness non cambia: dopo #492 aspetta 6600 s e copre gia ampiamente il job Grok. Test hard alza LIMITE_MINIMO_GROK 240 -> 400 e continua a verificare che caso peggiore stia nel timeout job. Docs e CHANGELOG allineati. Nessun impatto su Betfair, ordini, MM, parser, DB o runtime."
+    },
+    "mcp-operational-consolidation": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "docs/mcp_operational_contract.md",
+        "docs/governance/mcp_issue_sections.json",
+        "tests/guardrails/test_mcp_operational_governance.py"
+      ],
+      "max_files": 6,
+      "description": "Mandato owner 07/10/2026: consolidamento documentale MCP; baseline e068a14, #492/#493 mergiate, nessuna PR aperta. Entrypoint #491, gerarchia, serialita per repository, dipendenze statiche, ownership, API unica, milestone SIM/LIVE/totale e issue operative sincronizzate. Test di governance con mutazioni. Nessuna modifica runtime/workflow/reviewer policy; rinvio P41. MANUAL e alternativa updater LIVE restano decisioni owner. Merge manuale per AGENTS/CLAUDE."
     }
   }
 }

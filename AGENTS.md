@@ -1,5 +1,22 @@
 # AGENTS.md
 
+## Percorso MCP — ingresso obbligatorio e policy corrente
+
+Per qualsiasi lavoro MCP partire da **Pickfair-nogui #491** e leggere
+**#491 → #489 → #461 → #426 → #453 → #351 quando serve collaudo → pickfair-mcp- #1**.
+Applicare [il contratto operativo consolidato](docs/mcp_operational_contract.md):
+gerarchia delle fonti, sequenza tecnica, ownership e tre milestone separate.
+Una sola PR attiva **per repository**: una in Pickfair-nogui e una in
+pickfair-mcp- possono coesistere; la serialità non è globale.
+Le formulazioni di serialità sotto riguardano questo singolo repository.
+
+Per reviewer e merge applicare la decisione owner vigente **#426/P41** e
+successive decisioni pertinenti, inclusi #492/#493. Non riattivare workflow o
+label sospese sulla base di istruzioni storiche. Una modifica presente in una
+PR aperta non equivale a comportamento già presente sul main.
+Questo rinvio non riscrive la policy reviewer storica: P41 prevale sui punti
+espressamente sospesi. Resta il merge manuale owner per i file-policy esclusi.
+
 ## GLOBAL EXECUTION POLICY
 
 This repository uses strict, safe, SERIAL TASK EXECUTION with gated automation.
@@ -60,11 +77,11 @@ wins, and the conflict must be reported.
 
 ## Core rules
 
-- Only one active task is allowed at a time.
-- Only one open pull request is allowed at a time.
+- Only one active task per repository is allowed at a time.
+- Only one open pull request per repository is allowed at a time.
 - Never work directly on `main`.
-- Never execute multiple tasks in parallel.
-- Never create a second PR while another PR is open.
+- Never execute multiple tasks in parallel within this repository.
+- Never create a second PR while another PR is open in this repository.
 - Merge is gated: auto-merge is allowed ONLY under the conditions of the
   "Auto-merge (owner-authorized, gated)" section; outside them merge is
   manual and owner-only. Safety-critical PRs are never auto-merged without
