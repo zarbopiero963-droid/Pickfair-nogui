@@ -161,6 +161,11 @@ class RiskMiddleware:
             route_target = payload.get("telegram_route_target")
             if isinstance(route_target, str) and route_target.strip():
                 normalized["telegram_route_target"] = route_target.strip()
+            # PR26-a: l'identita' del chiamante sopravvive all'inoltro 1:1.
+            # Nessun ref inventato qui: senza ref l'engine resta fail-closed.
+            customer_ref = str(payload.get("customer_ref") or "").strip()
+            if customer_ref:
+                normalized["customer_ref"] = customer_ref
             if isinstance(copy_meta, dict):
                 normalized["copy_meta"] = dict(copy_meta)
             if isinstance(pattern_meta, dict):

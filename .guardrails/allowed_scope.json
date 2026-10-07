@@ -2027,6 +2027,20 @@
       "max_files": 14,
       "allow_tests": true,
       "description": "Mandato owner 07/10/2026: una sola PR governance/automation policy/test, baseline main 30fb165 (#494 merged), nessuna PR aperta al preflight. Cap globale FIX_LOOP=5, contatore per-PR persistente cumulativo, sesto ciclo bloccato prima di patch/commit/push, owner override bounded tracciato, triage CURRENT_DEFECT/GUARDRAIL_GAP/THEORETICAL_MUTATION, REVIEW_CHURN e KNOWN_LIMITATION_ACCEPTED_BY_OWNER con prove e gate invariati. Nessun runtime prodotto, DB Pickfair, MCP/Control API o workflow/reviewer riattivato. Merge manuale owner per AGENTS/CLAUDE. Scope include anche il helper clean-scope e i suoi test: il RED-FIRST mostra che il suo push diretto non registrava la completion nel ledger; cablata la stessa authority per impedire un bypass del contatore."
+    },
+    "issue461-pr26a-customer-ref-provenance": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/order_identity.py",
+        "core/risk_middleware.py",
+        "core/runtime_controller.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "max_files": 7,
+      "allow_tests": true,
+      "description": "#461 PR26-a customer_ref/provenance dei produttori esistenti, baseline main 452dde1 (#496), nessuna PR aperta. Runtime segnale, auto-trade post-settlement, gambe dutching e manual_bet pubblicano CMD_QUICK_BET con customer_ref stabile (preservato a monte o derivato deterministico Betfair-conforme da core/order_identity.py); RiskMiddleware preserva il ref nell'inoltro REQ->CMD senza inventarlo. Engine invariato (CUSTOMER_REF_REQUIRED resta), fallback compat Telegram REQ_QUICK_BET resta rifiutato. Nessun cambio a MM/rischio/esposizione/cashout/STOP/riconciliazione/schema DB/endpoint Betfair/MCP/Control API."
     }
   }
 }

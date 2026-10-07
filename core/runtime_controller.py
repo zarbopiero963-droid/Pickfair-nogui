@@ -28,6 +28,7 @@ from cashout_router import CashoutRouter
 from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
+from core.order_identity import derive_customer_ref, resolve_customer_ref
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import (
     AUTO_GREEN_DELAY_SEC,
@@ -3025,6 +3026,16 @@ class RuntimeController:
             "roserpina_reason": decision.reason,
             "roserpina_mode": decision.desk_mode.value,
         }
+        # PR26-a: identita' stabile dell'intento (core/order_identity.py). Un
+        # customer_ref a monte si preserva; altrimenti si deriva dal segnale
+        # COSI' COM'E' ARRIVATO (received_at/chat_id del listener inclusi),
+        # senza l'event_key aggiunto qui e senza lo stake MM: la riconsegna
+        # dello stesso messaggio ha lo stesso ref e l'engine la blocca.
+        payload["customer_ref"] = resolve_customer_ref(
+            signal.get("customer_ref"),
+            "sig",
+            {key: value for key, value in signal.items() if key != "event_key"},
+        )
         routing_contract = signal.get("telegram_routing_contract")
         if isinstance(routing_contract, str) and routing_contract.strip():
             payload["telegram_routing_contract"] = routing_contract.strip()
@@ -4265,6 +4276,21 @@ class RuntimeController:
                 recovery_status=result["recovery_status"],
             )
             submit_payload = self._build_auto_trade_payload(signal=signal or {}, decision_stake=result["next_stake"])
+            # PR26-a: un submit per settlement (settlement_key + checkpoint),
+            # quindi l'identita' e' legata al settlement che lo genera, mai al
+            # next_signal (template riusabile fra step) ne' a stake/step index
+            # (ricalcolati / in memoria): stesso settlement dopo restart = stesso ref.
+            submit_payload["customer_ref"] = derive_customer_ref(
+                "at",
+                {
+                    "settlement_key": settlement_key,
+                    "source_settlement_correlation_id": source_corr_id,
+                    "cycle_id": cycle_id,
+                    "market_id": submit_payload["market_id"],
+                    "selection_id": submit_payload["selection_id"],
+                    "bet_type": submit_payload["bet_type"],
+                },
+            )
         except Exception as exc:
             result["auto_trade_status"] = "AUTO_TRADE_SUBMIT_FAILED"
             result["cycle_executor_status"] = "CYCLE_SUBMIT_FAILED"

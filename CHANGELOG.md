@@ -104,6 +104,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Order identity for existing producers (#461 PR26-a): the runtime signal
+  path, the post-settlement auto-trade, every dutching leg and
+  `DutchingController.manual_bet` now publish `CMD_QUICK_BET` with a
+  `customer_ref`. Before, the engine rejected all of them with
+  `CUSTOMER_REF_REQUIRED`. An upstream `customer_ref` is preserved (signal,
+  manual bet); otherwise `core/order_identity.py` derives a deterministic,
+  Betfair-compliant ref (`<prefix>-<28 hex>`, 32 chars) from the intent: the
+  signal as received (not the MM stake), the triggering settlement, or the
+  batch id plus leg. The same intent keeps the same ref across redelivery,
+  restart and batch recomputation, so the engine blocks the duplicate.
+  Distinct intents get distinct refs. The `RiskMiddleware` REQ_QUICK_BET
+  forward keeps the caller's ref and never invents one. The engine gate is
+  unchanged, and the Telegram REQ_QUICK_BET compat fallback (no runtime
+  gate) stays rejected.
 - Betfair credentials (#461 PR04-quater, DEC-426-P28–P32): separate encrypted
   Delayed and Live App Keys; the legacy key migrates only to Delayed. LIVE
   requires the explicit Live key, and the real client never uses Delayed.

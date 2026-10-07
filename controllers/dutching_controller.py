@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import trading_config
+from core.order_identity import derive_customer_ref, resolve_customer_ref
 
 try:
     from dutching import calculate_dutching
@@ -1329,6 +1330,18 @@ class DutchingController:
                     "batch_id": batch_id,
                     "batch_size": len(results),
                     "batch_leg_index": idx,
+                    # PR26-a: una identita' per gamba. batch_id e' gia' lo
+                    # SHA-256 deterministico di mercato + gambe (stake/quote):
+                    # stesso batch ricalcolato = stessi ref, gambe distinte.
+                    "customer_ref": derive_customer_ref(
+                        "dut",
+                        {
+                            "batch_id": batch_id,
+                            "leg": idx,
+                            "selection_id": int(item["selectionId"]),
+                            "side": str(item.get("side", "BACK")).upper(),
+                        },
+                    ),
                     "batch_avg_profit": float(avg_profit),
                     "batch_book_pct": float(book_pct),
                     "batch_exposure": float(batch_exposure),
@@ -1499,6 +1512,20 @@ class DutchingController:
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
                 "table_id": payload.get("table_id"),
                 "event_key": event_key,
+                # PR26-a: ref a monte preservato, altrimenti derivato dal bet.
+                "customer_ref": resolve_customer_ref(
+                    payload.get("customer_ref"),
+                    "man",
+                    {
+                        "event_key": event_key,
+                        "market_id": market_id,
+                        "selection_id": selection_id,
+                        "bet_type": side,
+                        "price": price,
+                        "stake": stake,
+                        "simulation_mode": bool(payload.get("simulation_mode", False)),
+                    },
+                ),
             }
 
             try:
