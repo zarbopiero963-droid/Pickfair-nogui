@@ -31,9 +31,10 @@ jobs:
   review:
     name: Grok 4.7 push-range review
     runs-on: ubuntu-latest
-    # 20 e non 10: tre tentativi da 240 s, il backoff, le chiamate a GitHub al
-    # loro tetto e l'avvio del runner, vedi call_model (DECISIONE-426 P24).
-    timeout-minutes: 20
+    # 30 minuti: tre tentativi da 400 s, il backoff, sette chiamate a GitHub
+    # al tetto di 30 s e un minuto di avvio = 1484 s. Il job lascia 316 s di
+    # margine per paginazione/commenti senza troncare una review valida.
+    timeout-minutes: 30
 
     if: >
       github.event.pull_request.draft == false &&
@@ -597,13 +598,13 @@ jobs:
               data = json.dumps(payload).encode("utf-8")
               last_error = None
 
-              # 3 tentativi × 240 s + backoff (2+4+8 s) = 734 s. Con le sei chiamate
-              # a GitHub al tetto di 30 s e un minuto di avvio del runner si arriva
-              # a 974 s: sta nei 20 minuti del job. Erano 100 s. La richiesta non e' in streaming e a reasoning high
-              # Grok 4.7 risponde solo a ragionamento finito, spesso oltre i 100 s:
-              # sulla #478 non ha mai completato, sulla #483 1 tentativo su 8
-              # (DECISIONE-426 P24). Aspettare di piu' non costa: si pagano i
-              # token generati, non l'attesa.
+              # 3 tentativi × 400 s + backoff (2+4+8 s) = 1214 s. Con sette
+              # chiamate a GitHub al tetto di 30 s e un minuto di avvio del runner
+              # si arriva a 1484 s: sta nei 30 minuti del job. Erano 240 s.
+              # La richiesta non e' in streaming e a reasoning high Grok 4.7
+              # risponde solo a ragionamento finito: piu' margine evita tentativi
+              # pagati e persi. Aspettare di piu' non costa: si pagano i token
+              # generati, non l'attesa.
               for attempt in range(1, 4):
                   req = urllib.request.Request(
                       "https://api.x.ai/v1/chat/completions",
@@ -616,7 +617,7 @@ jobs:
                       },
                   )
                   try:
-                      with urllib.request.urlopen(req, timeout=240) as resp:
+                      with urllib.request.urlopen(req, timeout=400) as resp:
                           body = json.loads(resp.read().decode("utf-8"))
 
                       choices = body.get("choices") or []
