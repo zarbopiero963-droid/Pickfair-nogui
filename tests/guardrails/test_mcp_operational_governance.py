@@ -29,7 +29,7 @@ def check_contract(text, policies, sections):
         require(policy, "per repository", "policy_seriality")
         require(policy, "#426/P41", "reviewer_precedence")
         require(policy, "docs/mcp_operational_contract.md", "policy_contract_link")
-    if re.search(r"una (?:sola )?PR globale|one global (?:open )?PR", text, re.I):
+    if re.search(r"una (?:sola )?PR globale|one global (?:open )?PR", "\n".join([text, *policies]), re.I):
         errors.append("global_seriality")
     for phrase in ["PR26-a → PR26 authority → PR27 → PR28 → PR29",
                    "Owner PR primaria", "reload_config | PR28",
@@ -63,6 +63,19 @@ def check_contract(text, policies, sections):
                    "MCP-01 → MCP-02 → MCP-03 → MCP-04 → MCP-05 → MCP-06 → MCP-07",
                    "MANUAL via MCP = DECISIONE ANCORA APERTA"]:
         require(master, phrase, f"master_{phrase}")
+    # A correct sentence must not mask a contradictory current instruction.
+    current = "\n".join([text, *sections.values()])
+    contradictions = [
+        r"PR23 = SL/TP", r"PR24 = Trailing", r"PR25 = SL/TP",
+        r"MCP-PR01[–…-]0?5", r"MANUAL via MCP = (?:DECISA|DECISO)",
+        r"Telegram disconnected blocca LIVE", r"(?:PUT|POST) /v1/config",
+        r"(?:può|puo) leggere il DB Pickfair",
+        r"(?<!NON )implementa master/copy/follow/fan-out",
+        r"(?:entrypoint|partire da) #452",
+    ]
+    for pattern in contradictions:
+        if re.search(pattern, current, re.I):
+            errors.append("contradictory_current_instruction")
     # Parse the actual current route table, not prose that merely mentions a route.
     rows = re.findall(r"^\| (Read|Command) \| (GET|POST|PATCH) \| ([^|]+) \|", master, re.M)
     expected_read = {"/v1/meta", "/v1/status", "/v1/account", "/v1/exposure",
@@ -159,3 +172,22 @@ def test_policy_entrypoint_removal_is_rejected(policy_index):
     text, policies, sections = inputs()
     policies[policy_index] = policies[policy_index].replace(ENTRY, "#461 → #426")
     assert "policy_entrypoint" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("regression", [
+    "PR23 = SL/TP", "PR24 = Trailing", "PR25 = SL/TP", "MCP-PR01…05",
+    "MANUAL via MCP = DECISA", "Telegram disconnected blocca LIVE",
+    "POST /v1/config", "Può leggere il DB Pickfair",
+    "implementa master/copy/follow/fan-out", "entrypoint #452",
+])
+def test_added_contradictions_cannot_hide_behind_valid_text(regression):
+    text, policies, sections = inputs()
+    sections["1"] += "\n" + regression
+    assert "contradictory_current_instruction" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("policy_index", [0, 1])
+def test_global_rule_in_either_policy_is_rejected(policy_index):
+    text, policies, sections = inputs()
+    policies[policy_index] += "\nuna sola PR globale\n"
+    assert "global_seriality" in check_contract(text, policies, sections)
