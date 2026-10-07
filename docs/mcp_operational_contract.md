@@ -353,7 +353,7 @@ risolvere anche le decisioni aperte pertinenti.
 - [ ] Backup/restore P07 prima dei test reali, package/install Windows poi Linux.
 - [ ] Restart/H24 pertinenti, runtime whole-wiring e sweep sui pacchetti/SHA esatti.
 - [ ] MCP-06 e certificazione LIVE MCP-07, nessun PASS dedotto da CI verde.
-- [ ] **Gate corrente PR53/54/59/60 e #351 conservato**, incluso PR59→PR58.
+- [ ] **Gate corrente PR53/54/59/60 e #351 conservato**, incluso PR58→PR59.
 
 **UPDATER_SCOPE = OWNER_OPEN; default conservativo Caso A.** Le fonti correnti
 richiedono PR59 totale prima del go-live e PR59 dipende da PR58. Non è dimostrata

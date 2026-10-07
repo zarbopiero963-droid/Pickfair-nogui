@@ -74,7 +74,8 @@ SIMLIVE_CORE = [
     "nessun passaggio implicito SIM→LIVE",
     "peak SIM non contamina drawdown LIVE", "balance snapshot mode-scoped",
     "SIM→LIVE non trasforma il bankroll SIM nel riferimento di rischio LIVE",
-    "La futura PR15 deve implementare/testare questo contratto"]
+    "La futura PR15 deve implementare/testare questo contratto",
+    "vietato introdurre REAL"]
 SIMLIVE_CORE_SECTIONS = {"1", "351", "426", "461", "491"}
 SIMLIVE_POINTER = ["SIM = Delayed App Key reale + dati Betfair reali delayed + SimulationBroker + bankroll fittizio",
                    "LIVE = Live App Key + dati reali + Betfair reale + saldo reale, solo con tutti i gate LIVE",
@@ -143,7 +144,23 @@ REVERSALS = [
     r"peak\s+SIM\s+contamina", r"contaminazione\s+SIM\s*(?:→|->)\s*LIVE\s+(?:ammessa|consentita)",
     r"bankroll\s+SIM\s+(?:diventa|è|come)\s+(?:il\s+)?riferimento\s+di\s+rischio\s+LIVE",
     r"\b(?:LIVE_DATA_SIM|PAPER|HYBRID)\b",
+    # REAL come modalità: solo nel contesto di modalità, non l'etichetta di verifica
+    r"(?:introdurre|abilitare|attivare|aggiungere|modalità|mode)\s+(?-i:REAL)\b",
+    r"(?-i:\bREAL)\s+(?:disponibile|ammess|abilitat|attiv)",
+    # un solo motore e un solo set di tool
+    r"(?:usa|usano|ha|hanno|implementa|implementano|espone|espongono|crea|creano)"
+    r"\s+due\s+(?:motori|set\s+di\s+tool)",
+    r"due\s+(?:motori|set\s+di\s+tool)\s+(?:distinti|separati|diversi|per\s+modalità)",
+    # gate updater: PR58 precede PR59, mai il contrario
+    r"PR59\s*(?:→|->)\s*PR58",
 ]
+# Sequenza tecnica completa: un riordino oltre PR29 non deve passare.
+SEQUENCE = ("PR26-a → PR26 authority → PR27 → PR28 → PR29 → PR30 → PR31 → PR32 → "
+            "PR33 → PR34 → PR35 → PR36 → PR37 → PR38 → PR08 → PR11 → PR09 → PR12 "
+            "(FIXED/MM; MANUAL escluso finché deciso) → PR15 → PR16 → PR17 → PR19 → "
+            "PR20 → PR22 → PR23 → PR24 → PR25 → PR43 → PR44 → PR45 → PR46 → PR47 "
+            "(audit necessario) → PF-API-0 → PF-API-1 → PF-API commands")
+SEQUENCE_SECTIONS = {"1", "453", "461", "491"}
 
 
 def check_contract(text, policies, sections):
@@ -218,6 +235,11 @@ def check_contract(text, policies, sections):
             require(flat(sections.get(number, "")), phrase, f"simlive_matrix_issue_{number}")
     for i, policy in enumerate(policies):
         require(flat(policy), "decisione owner SIM/LIVE del contratto consolidato", f"simlive_policy{i}")
+    # sequenza completa e gate updater nel verso corretto
+    require(flat(text), SEQUENCE, "full_sequence_contract")
+    for number in SEQUENCE_SECTIONS:
+        require(flat(sections.get(number, "")), SEQUENCE, f"full_sequence_issue_{number}")
+    require(flat(text), "incluso PR58→PR59", "updater_gate_contract")
 
     require(text, ENTRY, "entrypoint")
     for policy in policies:
@@ -644,3 +666,40 @@ def test_negation_must_be_adjacent():
     text, policies, sections = inputs()
     text += "\nNon è un problema: la SIM può inviare ordini reali a Betfair.\n"
     assert check_contract(text, policies, sections)
+
+
+# ---------------------------------------------------------------------------
+# Quinto ciclo #494 (autorizzato dall'owner): quattro rilievi Codex su 9165482.
+# ---------------------------------------------------------------------------
+PR58_SECTIONS = ["1", "351", "489", "491"]
+
+FIFTH_CASES = (
+    # 1. gate updater nel verso giusto: PR58 prima di PR59
+    [(t, r"PR58→PR59", "PR59→PR58", None) for t in ["contract", *PR58_SECTIONS]]
+    + [(t, None, None, "Gate LIVE: PR59 → PR58.") for t in ["contract", "461"]]
+    # 2. un solo motore e un solo set di tool
+    + [(t, None, None, add) for t in ["contract", *ALL_ISSUES] for add in [
+        "SIM e LIVE usano due motori distinti.", "MCP espone due set di tool."]]
+    # 3. nessuna modalità REAL
+    + [(t, r"vietato introdurre REAL", "introdurre REAL", None) for t in CORE_TARGETS]
+    + [(t, None, None, "Modalità REAL disponibile.") for t in ["contract", "453", "489"]]
+    # 4. sequenza completa protetta, non solo il prefisso fino a PR29
+    + [(t, r"PR29 → PR30 → PR31 → PR32", "PR29 → PR31 → PR30 → PR32", None)
+       for t in ["contract", *sorted(SEQUENCE_SECTIONS)]]
+    + [(t, r"PR44 → PR45 → PR46 → PR47", "PR44 → PR46 → PR45 → PR47", None)
+       for t in ["contract", *sorted(SEQUENCE_SECTIONS)]]
+)
+
+
+@pytest.mark.parametrize("target,old,new,append", FIFTH_CASES)
+def test_codex_findings_round5_are_rejected(target, old, new, append):
+    assert check_contract(*_mutate(target, old, new, append))
+
+
+@pytest.mark.parametrize("valid", [
+    "MCP non implementa due motori.", "Vietato introdurre REAL.",
+    "Verdetto hard verify: REAL / PARTIAL / MANUAL_ONLY.", "PR58 → PR59 resta il gate.",
+])
+def test_round5_valid_wording_stays_valid(valid):
+    text, policies, sections = inputs()
+    assert check_contract(text + "\n" + valid + "\n", policies, sections) == []
