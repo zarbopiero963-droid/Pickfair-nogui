@@ -1324,10 +1324,6 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not base["allowed"]:
         return base
     ctx = build_automation_enablement_context(context, context)
-    budget_gate = fix_policy.merge_budget_gate(ctx)
-    if not budget_gate["allowed"]:
-        return automation_disabled_result("merge", normalize_automation_mode(ctx.get("automation_mode")),
-                                          budget_gate["reason"], next_action="needs_manual")
 
     def _first_present(*values: object) -> object:
         for value in values:
@@ -1428,6 +1424,11 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
             ",".join(merge_guard_failures),
             next_action="needs_manual",
         )
+    budget_gate = fix_policy.merge_budget_gate(ctx)
+    if not budget_gate["allowed"]:
+        return automation_disabled_result("merge", normalize_automation_mode(ctx.get("automation_mode")),
+                                          budget_gate["reason"], next_action="needs_manual")
+
     return _automation_allowed_result("merge", normalize_automation_mode(ctx.get("automation_mode")), "enabled")
 
 
@@ -8522,6 +8523,12 @@ def _is_out_of_scope_review_path(path: str, context: dict[str, Any]) -> bool:
         return False
     files_allowed = context.get("files_allowed")
     files_forbidden = context.get("files_forbidden")
+    # Owner task files_allowed may explicitly authorize default core/services scope.
+    if any(path_matches_scope_rule(path, rule) for rule in ("core/", "services/")):
+        if _malformed_scope_rules_input(files_allowed) or _scope_rules_contain_invalid_entries(files_allowed):
+            return True
+        if not any(path_matches_scope_rule(path, rule) for rule in normalize_file_scope_rules(files_allowed)):
+            return True
     if _malformed_scope_rules_input(files_forbidden) or _scope_rules_contain_invalid_entries(files_forbidden):
         return True
     forbidden = normalize_file_scope_rules(files_forbidden, include_defaults=True)

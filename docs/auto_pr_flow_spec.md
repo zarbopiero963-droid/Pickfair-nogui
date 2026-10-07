@@ -777,8 +777,9 @@ worker già titolare della capability usa i propri gate di fase, non quel
 preflight generale, per completare il ciclo. `status.allowed` indica soltanto
 la validità dello snapshot; non autorizza patch, push, resolve o merge.
 L'autorizzazione `can_auto_merge` respinge sia gli stop manuali/budget ricevuti
-sia snapshot incompleti/incompiuti. Per un contesto PR reale (`repo`/`pr` o
-identità nel descrittore `fix_loop`) rilegge anche il ledger autorevole: una
+sia snapshot incompleti/incompiuti. Ogni autorizzazione richiede identità PR completa
+(`repo`/`pr` o nel descrittore `fix_loop`) e una sorgente ledger: rilegge
+sempre il ledger autorevole prima di consentire il merge. Una
 cache verde non può nascondere un ciclo incompiuto o un ledger assente.
 Una nuova lettura verde non cancella uno stop manuale esplicito già nel
 contesto. Restano richiesti tutti i normali gate di merge; count=5 con nessun
@@ -867,7 +868,8 @@ KNOWN_LIMITATION_ACCEPTED_BY_OWNER PR=495 THREAD=PRRT_example HEAD=<current-head
 Il planner legge `owner_decision_ids[thread_id]` dalla API autenticata e
 verifica identità/URL/owner, classificazione verificata, head corrente,
 validazione, test pertinenti e tutti i check settled/verdi. Richiede
-`material is False` e ogni flag di rischio protetto esplicitamente `False`:
+`material is False`, `contract_critical is False` e ogni flag di rischio
+protetto esplicitamente `False`:
 un campo mancante è evidenza sconosciuta, mai assenza di rischio. Solo allora può
 rispondere con il disposition e il link owner e risolvere formalmente il thread.
 Le condizioni comuni di resolve restano identiche. Non si pretende che il
@@ -1067,3 +1069,19 @@ Capisce queste cose:
 17. I required checks includono DeepSource Python?
 18. Readiness può passare?
 20. Devo patchare, evidence-resolve, skippare o fermarmi?
+
+### Metadati branch e scope verificati
+
+Ogni gate di fase richiede un branch PR esplicito e coerente fra `pr_branch`,
+`branch` e `headRefName` quando presenti. Nessun alias presente può essere
+nullo o discordante. Anche le operazioni dirette del ledger di claim,
+authorize, start-push e completion rifiutano branch mancante o errato.
+Authorize/start-push richiedono anche lo SHA corrente attestato; ometterlo
+non consente di saltare il confronto con l'head ispezionato.
+La CLI completion richiede `--branch` corrispondente alla prenotazione.
+
+Il triage applica il divieto default di `core/*` e `services/*`: soltanto una
+lista `files_allowed` esplicita del task può autorizzare quei file. Un
+`files_forbidden` esplicito resta prevalente; i gate di scope esistenti restano.
+Un GUARDRAIL_GAP critico ma dichiarato non materiale si ferma per decisione
+manuale; non viene etichettato noncritical né accettato automaticamente.

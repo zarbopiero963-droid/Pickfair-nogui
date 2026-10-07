@@ -62,6 +62,8 @@ def _correct_head_decision(assessment: dict[str, Any]) -> tuple[str, str]:
         )
         if critical and assessment.get("material") is True:
             return "PATCH_REQUIRED", "material_guardrail_gap"
+        if critical:
+            return "NEEDS_MANUAL", "critical_guardrail_requires_manual_decision"
         return "NEEDS_MANUAL", "noncritical_guardrail_gap"
     return "NEEDS_MANUAL", "unclassified_finding"
 
@@ -102,6 +104,8 @@ def accept_limitation(assessment: dict[str, Any], comment: dict[str, Any],
         return stopped("finding_not_a_verified_limitation")
     if decision["decision"] != "NEEDS_MANUAL" or assessment.get("current_head_correct") is not True:
         return stopped("current_defect_cannot_be_accepted")
+    if assessment.get("contract_critical") is not False:
+        return stopped("contract_critical_clearance_required")
     if assessment.get("material") is not False or any(assessment.get(risk) is not False
                                                      for risk in PROTECTED_RISKS):
         return stopped("material_risk_requires_manual_decision")
@@ -282,17 +286,17 @@ class FixLoopLedger:
                 if stage not in {"reserved", "working", "retry_ready"} or row is None or row[0] is not None or row[1] != stage or state["used_slots"] > state["ceiling"]:
                     return stopped("fix_loop_reservation_invalid")
                 evidence = json.loads(row[2])
-                if current_branch is not None and evidence.get("pr_branch") != current_branch:
+                if not valid_pr_branch(current_branch) or evidence.get("pr_branch") != current_branch:
                     return stopped("fix_loop_pr_branch_mismatch")
                 if evidence.get("claim_token") and evidence["claim_token"] != claim_token:
                     return stopped("fix_loop_claim_mismatch")
-                if current_head is not None and (not current_head or evidence.get("current_head_sha") != current_head):
+                if not isinstance(current_head, str) or not current_head or evidence.get("current_head_sha") != current_head:
                     return stopped("fix_loop_assessed_head_mismatch")
                 return {"allowed": True, **state}
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
-    def claim_patch(self, cycle: str, head: str) -> dict[str, Any]:
+    def claim_patch(self, cycle: str, head: str, *, branch: str | None = None) -> dict[str, Any]:
         """Give one worker an exclusive capability before any file mutation."""
         try:
             with self._connect() as connection:
@@ -302,6 +306,8 @@ class FixLoopLedger:
                 if row is None or row[1] != "reserved" or state["used_slots"] > state["ceiling"]:
                     return stopped("fix_loop_reservation_invalid")
                 evidence = json.loads(row[0])
+                if not valid_pr_branch(branch) or evidence.get("pr_branch") != branch:
+                    return stopped("fix_loop_pr_branch_mismatch")
                 if not head or evidence.get("current_head_sha") != head:
                     return stopped("fix_loop_assessed_head_mismatch")
                 token = uuid.uuid4().hex
@@ -328,9 +334,9 @@ class FixLoopLedger:
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
-    def start_push(self, cycle: str, claim_token: str | None = None) -> dict[str, Any]:
+    def start_push(self, cycle: str, claim_token: str | None = None, *, branch: str | None = None, current_head: str | None = None) -> dict[str, Any]:
         """Persist intent before dispatch: crash/response lost cannot replay it."""
-        permission = self.authorize(cycle, stage="working", claim_token=claim_token)
+        permission = self.authorize(cycle, current_head, stage="working", claim_token=claim_token, current_branch=branch)
         return self._transition_push(cycle, "working", "pushing") if permission["allowed"] else permission
 
     def _retry_after_confirmed_rejection(self, cycle: str) -> dict[str, Any]:
@@ -347,7 +353,7 @@ class FixLoopLedger:
                                          (self.repo, self.pr, cycle)).fetchone()
                 if row is None or (row[0] is not None and row[0] != head):
                     return stopped("fix_loop_completion_mismatch")
-                if branch is not None and json.loads(row[2]).get("pr_branch") != branch:
+                if not valid_pr_branch(branch) or json.loads(row[2]).get("pr_branch") != branch:
                     return stopped("fix_loop_pr_branch_mismatch")
                 if row[0] is None and row[1] != "pushing":
                     return stopped("fix_loop_push_intent_missing")
@@ -393,7 +399,10 @@ def reservation_gate(context: dict[str, Any] | None, *, stage: str = "reserved")
         ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
         head = str((context or {}).get("current_head_sha") or (context or {}).get("head_sha") or (context or {}).get("headRefOid") or "")
         actual_stage = "working" if stage == "reserved" and budget.get("claim_token") else stage
-        branch = next((context[key] for key in ("pr_branch", "branch", "headRefName") if key in context), None)
+        branches = [context[key] for key in ("pr_branch", "branch", "headRefName") if key in context]
+        if not branches or any(not valid_pr_branch(value) or value != branches[0] for value in branches):
+            return stopped("fix_loop_pr_branch_mismatch")
+        branch = branches[0]
         return ledger.authorize(budget["cycle_id"], head, actual_stage, budget.get("claim_token"), branch)
     except (KeyError, ValueError, TypeError):
         return stopped("fix_loop_reservation_malformed")
@@ -421,14 +430,18 @@ def merge_budget_gate(context: dict[str, Any]) -> dict[str, Any]:
         return cached_gate
     descriptor = context.get("fix_loop") if isinstance(context.get("fix_loop"), dict) else {}
     repo, pr = context.get("repo") or descriptor.get("repo"), context.get("pr") or descriptor.get("pr")
-    if repo or pr:
-        if not repo or not str(pr).isdigit():
-            return stopped("fix_loop_identity_malformed")
-        path = descriptor.get("path") or os.environ.get("PR_FIX_LOOP_LEDGER", "")
-        try:
-            snapshot = FixLoopLedger(path, str(repo), int(pr)).status()
-        except (TypeError, ValueError):
-            return stopped("fix_loop_identity_malformed")
+    if not repo or not str(pr).isdigit():
+        return stopped("fix_loop_identity_malformed")
+    for key, value in (("repo", repo), ("pr", pr)):
+        if key in descriptor and str(descriptor[key]) != str(value):
+            return stopped("fix_loop_identity_mismatch")
+    path = descriptor.get("path") or os.environ.get("PR_FIX_LOOP_LEDGER", "")
+    if not isinstance(path, (str, Path)) or not str(path):
+        return stopped("fix_loop_merge_state_unavailable")
+    try:
+        snapshot = FixLoopLedger(path, str(repo), int(pr)).status()
+    except (TypeError, ValueError):
+        return stopped("fix_loop_identity_malformed")
     return _merge_snapshot_gate(snapshot)
 
 
@@ -452,7 +465,7 @@ def claim_patch_gate(context: dict[str, Any] | None) -> dict[str, Any]:
         return permission
     ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
     head = str(context.get("current_head_sha") or context.get("head_sha") or context.get("headRefOid") or "")
-    result = ledger.claim_patch(budget["cycle_id"], head)
+    result = ledger.claim_patch(budget["cycle_id"], head, branch=next(context[key] for key in ("pr_branch", "branch", "headRefName") if key in context))
     if result["allowed"]:
         budget["claim_token"] = result["claim_token"]
     return result
@@ -489,6 +502,7 @@ def main() -> int:
     parser.add_argument("--cycle", default="")
     parser.add_argument("--assessment-file", default="")
     parser.add_argument("--head", default="")
+    parser.add_argument("--branch", default="")
     parser.add_argument("--historical-count", type=int, default=None)
     parser.add_argument("--history-evidence", default="")
     parser.add_argument("--owner-comment-id", default="")
@@ -501,7 +515,7 @@ def main() -> int:
         elif args.action == "reserve":
             result = ledger.reserve(args.cycle, json.loads(Path(args.assessment_file).read_text(encoding="utf-8")))
         elif args.action == "complete":
-            result = ledger.complete(args.cycle, args.head)
+            result = ledger.complete(args.cycle, args.head, branch=args.branch)
         elif args.action == "override":
             ledger.grant_override(fetch_owner_comment(args.repo, args.pr, args.owner_comment_id))
             result = ledger.status()

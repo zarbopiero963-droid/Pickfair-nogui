@@ -27,7 +27,7 @@ def _reserved_repair_context(tmp_path):
         "thread_id": "t-1", "current_head_sha": "abc123", "evidence": "reproduced current defect",
     })
     ASSERTIONS.assertTrue(reserved["allowed"])
-    context = {"current_head_sha": "abc123", "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"}}
+    context = {"pr_branch": "feature/branch", "current_head_sha": "abc123", "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"}}
     ASSERTIONS.assertTrue(controller.fix_policy.claim_patch_gate(context)["allowed"])
     return context
 
@@ -12535,8 +12535,11 @@ def test_can_auto_merge_bad_missing_with_non_empty_blockers_denies_bad_checks_pr
     ASSERTIONS.assertEqual(result["reason"], "bad_checks_present")
 
 
-def test_can_auto_merge_bad_missing_with_empty_blockers_and_all_green_allows():
-    result = controller.can_auto_merge(_automation_ctx("live", bad="not-a-list", blockers=[]))
+def test_can_auto_merge_bad_missing_with_empty_blockers_and_all_green_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
+    result = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, bad="not-a-list", blockers=[]))
     ASSERTIONS.assertTrue(result["allowed"])
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
@@ -12547,8 +12550,11 @@ def test_can_auto_merge_bad_empty_and_blockers_non_empty_denies_bad_checks_prese
     ASSERTIONS.assertEqual(result["reason"], "bad_checks_present")
 
 
-def test_can_auto_merge_bad_and_blockers_both_empty_with_all_green_allows():
-    result = controller.can_auto_merge(_automation_ctx("live", bad=[], blockers=[]))
+def test_can_auto_merge_bad_and_blockers_both_empty_with_all_green_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
+    result = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, bad=[], blockers=[]))
     ASSERTIONS.assertTrue(result["allowed"])
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
@@ -12571,9 +12577,12 @@ def test_can_auto_merge_bad_missing_and_blockers_missing_denies_bad_checks_missi
 
 
 
-def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_green():
+def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_green(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
-        _automation_ctx("live", annotations_count=None, codacy_annotations_count=0)
+        _automation_ctx("live", fix_loop=descriptor, annotations_count=None, codacy_annotations_count=0)
     )
     ASSERTIONS.assertTrue(result["allowed"])
     ASSERTIONS.assertEqual(result["reason"], "enabled")
@@ -12583,10 +12592,13 @@ def test_can_auto_merge_codacy_annotations_count_zero_allows_when_other_guards_g
 
 
 
-def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_green():
+def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_green(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
         _automation_ctx(
-            "live",
+            "live", fix_loop=descriptor,
             annotations_count=None,
             codacy={"conclusion": "SUCCESS", "annotations": []},
         )
@@ -12599,16 +12611,22 @@ def test_can_auto_merge_codacy_annotations_empty_list_allows_when_other_guards_g
 
 
 
-def test_can_auto_merge_all_green_with_explicit_auth_allows():
-    ctx = _automation_ctx("live")
+def test_can_auto_merge_all_green_with_explicit_auth_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
+    ctx = _automation_ctx("live", fix_loop=descriptor)
     result = controller.can_auto_merge(ctx)
     ASSERTIONS.assertTrue(result["allowed"])
     ASSERTIONS.assertFalse(result["needs_manual"])
 
 
-def test_can_auto_merge_raw_env_live_all_green_allows():
+def test_can_auto_merge_raw_env_live_all_green_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
-        {
+        {"fix_loop": descriptor,
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12628,9 +12646,12 @@ def test_can_auto_merge_raw_env_live_all_green_allows():
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_raw_env_live_with_codacy_conclusion_success_allows():
+def test_can_auto_merge_raw_env_live_with_codacy_conclusion_success_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
-        {
+        {"fix_loop": descriptor,
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12649,9 +12670,12 @@ def test_can_auto_merge_raw_env_live_with_codacy_conclusion_success_allows():
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_raw_env_live_with_codacy_status_success_allows():
+def test_can_auto_merge_raw_env_live_with_codacy_status_success_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
-        {
+        {"fix_loop": descriptor,
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12670,9 +12694,12 @@ def test_can_auto_merge_raw_env_live_with_codacy_status_success_allows():
     ASSERTIONS.assertEqual(result["reason"], "enabled")
 
 
-def test_can_auto_merge_raw_env_live_with_codacy_check_status_success_allows():
+def test_can_auto_merge_raw_env_live_with_codacy_check_status_success_allows(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
-        {
+        {"fix_loop": descriptor,
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",

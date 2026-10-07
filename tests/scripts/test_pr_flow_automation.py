@@ -294,6 +294,7 @@ def _full_pr3h_push_gate_context(tmp_path) -> dict[str, Any]:
         })
         ASSERTIONS.assertTrue(reservation["allowed"])
     context = {
+        "pr_branch": "feature/branch",
         "current_head_sha": "abc123",
         "fix_loop": {"path": str(ledger.path), "repo": "owner/repo", "pr": 225, "cycle_id": "repair-1"},
         "automation_mode": "live",

@@ -33,7 +33,7 @@ def assessment(kind, **extra):
         "class": kind, "thread_id": "T1", "current_head_sha": "head",
         "evidence": "local contract inspection and reproducible test", "pr_branch": "branch",
         "current_head_correct": kind != "CURRENT_DEFECT",
-        "material": False,
+        "material": False, "contract_critical": False,
         **{risk: False for risk in controller.fix_policy.PROTECTED_RISKS},
         **extra,
     }
@@ -50,7 +50,7 @@ def consume(ledger, name):
     result = ledger.reserve(name, assessment("CURRENT_DEFECT"))
     assert result["allowed"]
     assert begin_push(ledger, name)["allowed"]
-    assert ledger.complete(name, f"head-{name}")["completed_count"] >= 1
+    assert ledger.complete(name, f"head-{name}", branch="branch")["completed_count"] >= 1
 
 
 def test_cycles_one_through_five_then_six_stops(ledger, policy):
@@ -62,7 +62,7 @@ def test_cycles_one_through_five_then_six_stops(ledger, policy):
     assert not stopped["allowed"]
     assert stopped["AUTO_PR_FLOW_STATUS"] == "NEEDS_MANUAL"
     assert stopped["REASON"] == "fix_loop_budget_exhausted"
-    assert not ledger.authorize("6")["allowed"]
+    assert not ledger.authorize("6", current_branch="branch")["allowed"]
 
 
 @pytest.mark.parametrize("change", [
@@ -109,12 +109,12 @@ def test_missing_state_and_pending_cycle_fail_closed(policy, tmp_path, ledger):
     assert not missing.reserve("x", assessment("CURRENT_DEFECT"))["allowed"]
     assert ledger.reserve("one", assessment("CURRENT_DEFECT"))["allowed"]
     assert not ledger.reserve("two", assessment("CURRENT_DEFECT"))["allowed"]
-    assert ledger.authorize("one")["allowed"]
+    assert ledger.authorize("one", "head", current_branch="branch")["allowed"]
     begin_push(ledger, "one")
-    ledger.complete("one", "h1")
-    ledger.complete("one", "h1")
+    ledger.complete("one", "h1", branch="branch")
+    ledger.complete("one", "h1", branch="branch")
     assert ledger.status()["completed_count"] == 1
-    assert not ledger.authorize("one")["allowed"]
+    assert not ledger.authorize("one", "head", current_branch="branch")["allowed"]
 
 
 @pytest.mark.parametrize("kind,extra,expected", [
@@ -163,9 +163,9 @@ def test_accepted_limitation_requires_owner_and_never_says_fixed(policy):
     )["allowed"]
 
 
-def repair_context(ledger, cycle, *, claim=True):
+def repair_context(ledger, cycle, *, claim=True, branch="branch"):
     context = {
-        "repo": "owner/repo", "pr": 495, "current_head_sha": "head", "POST_FIX_AUDIT": "PASS",
+        "repo": "owner/repo", "pr": 495, "pr_branch": branch, "current_head_sha": "head", "POST_FIX_AUDIT": "PASS",
         "validation_passed": True, "current_head_matches": True,
         "dirty_worktree": False, "scope_allowed": True,
         "rollback_attempted": False, "rollback_succeeded": True,
@@ -178,7 +178,7 @@ def repair_context(ledger, cycle, *, claim=True):
     tokens = getattr(ledger, '_test_tokens', {})
     if claim and cycle in tokens:
         context['fix_loop']['claim_token'] = tokens[cycle]
-    elif claim and ledger.authorize(cycle)['allowed']:
+    elif claim and ledger.authorize(cycle, "head", current_branch=branch)['allowed']:
         result = controller.fix_policy.claim_patch_gate(context)
         if result['allowed']:
             tokens[cycle] = context['fix_loop']['claim_token']
@@ -290,7 +290,7 @@ def test_other_pr_and_completed_reservation_cannot_authorize(ledger, policy):
     context = repair_context(ledger, "one")
     assert not policy.reservation_gate({**context, "pr": 496})["allowed"]
     begin_push(ledger, "one")
-    ledger.complete("one", "head")
+    ledger.complete("one", "head", branch="branch")
     assert not policy.reservation_gate(context)["allowed"]
 
 
@@ -381,7 +381,7 @@ def test_response_lost_cannot_reuse_reservation_for_another_push(ledger):
             raise RuntimeError("connection lost after sending push")
         return "pinned-head"
     assert not flow.push_with_retry_once(lost, "owner/repo", "branch", context=context)["ok"]
-    assert not ledger.authorize("lost")["allowed"]
+    assert not ledger.authorize("lost", current_branch="branch")["allowed"]
     previous = len(calls)
     assert not flow.push_with_retry_once(lost, "owner/repo", "branch", context=context)["ok"]
     assert len(calls) == previous
@@ -395,7 +395,7 @@ def test_clean_commit_cannot_follow_a_competing_fifth_completion(ledger, monkeyp
                                "unused.json", repair_context(ledger, "fifth"), False)
     def competing_attempt():
         if begin_push(ledger, "fifth")["allowed"]:
-            ledger.complete("fifth", "competing-head")
+            ledger.complete("fifth", "competing-head", branch="branch")
     monkeypatch.setattr(rebuild, "ensure_git_identity", competing_attempt)
     commits = []
     def runner(command, **_kwargs):
@@ -416,7 +416,7 @@ def test_clean_context_copies_preserve_the_same_reservation(ledger):
     assert rebuild.controller.fix_policy.start_push_gate(first)["allowed"]
     second = rebuild.build_clean_gate_ctx(args)
     assert first["fix_loop"] == second["fix_loop"] == context["fix_loop"]
-    assert ledger.complete(second["fix_loop"]["cycle_id"], "new-head")["completed_count"] == 1
+    assert ledger.complete(second["fix_loop"]["cycle_id"], "new-head", branch="branch")["completed_count"] == 1
 
 
 @pytest.mark.parametrize('state', ['unset', 'missing', 'corrupt'])
@@ -472,7 +472,7 @@ def test_completion_records_pushed_branch_not_checkout_head(ledger):
             return 'pushed-head' if command[-1] == 'refs/heads/other-branch' else 'unrelated-head'
         return ''
     assert flow.push_with_retry_once(runner, 'owner/repo', 'other-branch',
-                                    context=repair_context(ledger, 'branch'))['ok']
+                                    context=repair_context(ledger, 'branch',branch='other-branch'))['ok']
     assert refs == ['refs/heads/other-branch']
 
 
@@ -524,7 +524,7 @@ def test_push_and_completion_use_one_immutable_sha(ledger):
     result = flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=repair_context(ledger,'pinned'))
     assert result['ok']
     assert 'pinned-head:refs/heads/branch' in sent[0]
-    assert ledger.complete('pinned','pinned-head')['allowed']
+    assert ledger.complete('pinned','pinned-head', branch="branch")['allowed']
 
 
 @pytest.mark.parametrize('context', [None, {}, {'fix_loop':None}])
@@ -554,7 +554,7 @@ def test_controller_five_with_nonpatch_thread_is_not_sixth(ledger, monkeypatch, 
 
 def test_complete_requires_actual_push_intent(ledger):
     ledger.reserve('not-pushed', assessment('CURRENT_DEFECT'))
-    assert not ledger.complete('not-pushed','invented-head')['allowed']
+    assert not ledger.complete('not-pushed','invented-head', branch="branch")['allowed']
     assert ledger.status()['reserved_count'] == 1
     assert ledger.status()['completed_count'] == 0
 
@@ -608,7 +608,7 @@ def test_clean_rebuild_stops_before_restore_after_competing_completion(ledger, m
     original=rebuild.ensure_clean_push_gate
     def initial_gate(*params):
         allowed=original(*params)
-        if begin_push(ledger, 'restore')['allowed']: ledger.complete('restore','competing-head')
+        if begin_push(ledger, 'restore')['allowed']: ledger.complete('restore','competing-head', branch="branch")
         return allowed
     monkeypatch.setattr(rebuild,'ensure_clean_push_gate',initial_gate)
     monkeypatch.setattr(rebuild,'create_backup_and_clean_branch',lambda *_:touched.append('branch'))
@@ -638,7 +638,7 @@ def test_patch_claim_is_exclusive_and_required_by_other_worker(ledger, policy):
     assert not policy.start_push_gate(other)['allowed']
     assert policy.reservation_gate(first)['allowed']
     assert policy.start_push_gate(first)['allowed']
-    assert ledger.complete('exclusive','new-head')['allowed']
+    assert ledger.complete('exclusive','new-head', branch="branch")['allowed']
 
 
 def test_real_git_same_named_tag_cannot_replace_audited_branch(ledger,tmp_path):
@@ -664,7 +664,7 @@ def test_real_git_same_named_tag_cannot_replace_audited_branch(ledger,tmp_path):
             sent.append(command)
             return ''
         return git(*command[1:])
-    result=flow.push_with_retry_once(runner,'owner/repo','collision',context=repair_context(ledger,'tag-collision'))
+    result=flow.push_with_retry_once(runner,'owner/repo','collision',context=repair_context(ledger,'tag-collision',branch='collision'))
     assert result['ok']
     assert f'{branch_head}:refs/heads/collision' in sent[0]
 
@@ -685,7 +685,7 @@ def test_simultaneous_claims_have_exactly_one_winner(ledger,policy):
     barrier=Barrier(2)
     def claim():
         barrier.wait(timeout=5)
-        return policy.FixLoopLedger(ledger.path,'owner/repo',495).claim_patch('concurrent-claim','head')
+        return policy.FixLoopLedger(ledger.path,'owner/repo',495).claim_patch('concurrent-claim','head', branch="branch")
     with ThreadPoolExecutor(max_workers=2) as pool:
         results=list(pool.map(lambda _:claim(),range(2)))
     assert sum(r['allowed'] for r in results) == 1
@@ -870,7 +870,7 @@ def test_retry_preserves_new_unassessed_remote_head(policy, tmp_path):
     ledger.initialize(0, 'new PR')
     assert ledger.reserve('retry', assessment('CURRENT_DEFECT', current_head_sha=assessed,pr_branch='feature'))['allowed']
     context = {
-        'repo': 'owner/repo', 'pr': 495, 'current_head_sha': assessed,
+        'repo': 'owner/repo', 'pr': 495, 'pr_branch':'feature', 'current_head_sha': assessed,
         'fix_loop': {'path': str(ledger.path), 'repo': 'owner/repo', 'pr': 495, 'cycle_id': 'retry'},
         'automation_mode': 'live', 'post_fix_audit': 'PASS', 'validation_passed': True,
         'current_head_matches': True, 'dirty_worktree': False, 'scope_allowed': True,
@@ -918,7 +918,7 @@ def test_invalid_claim_token_stage_is_corrupt(ledger, stage):
     ledger.reserve('invalid-claim', assessment('CURRENT_DEFECT'))
     if stage == 'completed':
         begin_push(ledger, 'invalid-claim')
-        ledger.complete('invalid-claim', 'pushed')
+        ledger.complete('invalid-claim', 'pushed', branch="branch")
     with sqlite3.connect(ledger.path) as connection:
         payload = json.loads(connection.execute('SELECT assessment FROM cycles').fetchone()[0])
         if stage == 'reserved': payload['claim_token'] = 'impossible-existing-token'
@@ -992,3 +992,66 @@ def test_completion_rejects_wrong_branch_and_corrupt_assessment(ledger):
 def test_fresh_clean_ledger_does_not_clear_explicit_manual_merge_stop(ledger,snapshot):
     descriptor={'path':str(ledger.path),'repo':'owner/repo','pr':495}
     assert not controller.can_auto_merge(merge_context(fix_loop=descriptor,fix_loop_budget=snapshot))['allowed']
+
+
+@pytest.mark.parametrize('metadata', [{}, {'pr_branch':None},
+    {'pr_branch':None,'branch':'other'}, {'pr_branch':'branch','branch':'other'},
+    {'pr_branch':'branch','headRefName':'other'}])
+def test_branch_metadata_is_mandatory_and_consistent(ledger,policy,metadata):
+    ledger.reserve('branch-required',assessment('CURRENT_DEFECT'))
+    ctx=repair_context(ledger,'branch-required',claim=False)
+    for key in ('pr_branch','branch','headRefName'): ctx.pop(key,None)
+    ctx.update(metadata)
+    assert not policy.claim_patch_gate(ctx)['allowed']
+    assert ledger.status()['completed_count']==0
+
+
+def test_direct_authorization_and_completion_require_branch(ledger):
+    ledger.reserve('branch-required',assessment('CURRENT_DEFECT'))
+    assert not ledger.authorize('branch-required','head')['allowed']
+    assert begin_push(ledger,'branch-required')['allowed']
+    assert not ledger.complete('branch-required','pushed')['allowed']
+    assert ledger.status()['reserved_count']==1
+
+
+def test_auto_merge_without_pr_identity_is_denied(policy,monkeypatch):
+    monkeypatch.delenv('PR_FIX_LOOP_LEDGER',raising=False)
+    assert not controller.can_auto_merge(merge_context())['allowed']
+    assert not policy.merge_budget_gate({'fix_loop_budget':{'allowed':True,'reserved_count':0}})['allowed']
+
+
+@pytest.mark.parametrize('path',['core/engine.py','services/foo.py'])
+def test_verified_review_respects_repository_default_scope(path):
+    thread={'id':'T1','path':path,'body':'current bug'}
+    ctx={'current_head_sha':'head','review_assessments':{'T1':assessment('CURRENT_DEFECT')}}
+    assert controller.triage_review_thread_contract(thread,ctx)['decision']=='NEEDS_MANUAL'
+    ctx['files_allowed']=[path]
+    assert controller.triage_review_thread_contract(thread,ctx)['decision']=='PATCH_REQUIRED'
+    ctx['files_forbidden']=[path]
+    assert controller.triage_review_thread_contract(thread,ctx)['decision']=='NEEDS_MANUAL'
+
+
+@pytest.mark.parametrize('critical',[True,None])
+def test_critical_or_unknown_guardrail_cannot_be_accepted(critical,policy):
+    a=assessment('GUARDRAIL_GAP')
+    if critical is not None: a['contract_critical']=critical
+    else: a.pop('contract_critical')
+    c={'repo':'owner/repo','pr':495,'author':'owner','id':'99',
+       'html_url':'https://github.com/owner/repo/pull/495#issuecomment-99',
+       'body':'KNOWN_LIMITATION_ACCEPTED_BY_OWNER PR=495 THREAD=T1 HEAD=head'}
+    assert not policy.accept_limitation(a,c,'owner/repo',495)['allowed']
+    if critical is True: assert policy.triage(a)['reason']!='noncritical_guardrail_gap'
+
+
+def test_direct_ledger_cannot_skip_current_head_evidence(ledger):
+    ledger.reserve('direct-head',assessment('CURRENT_DEFECT'))
+    assert not ledger.authorize('direct-head',current_branch='branch')['allowed']
+    assert not ledger.authorize('direct-head','other',current_branch='branch')['allowed']
+
+
+def test_direct_claim_and_push_cannot_skip_branch(ledger):
+    ledger.reserve('direct-claim',assessment('CURRENT_DEFECT'))
+    assert not ledger.claim_patch('direct-claim','head')['allowed']
+    result=ledger.claim_patch('direct-claim','head',branch='branch')
+    assert result['allowed']
+    assert not ledger.start_push('direct-claim',result['claim_token'])['allowed']
