@@ -177,7 +177,7 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
   tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito
   aspetta 2, 4 e poi 8 s. Il limite è di 100 s per Fable, di 120 s per Fugu e
-  per Astra, di 240 s per Grok, di 1800 s per Sol. Quello di Grok era 100 s ed è
+  per Astra, di 400 s per Grok, di 1800 s per Sol. Quello di Grok era 100 s ed è
   salito con la DECISIONE-426 P24: a reasoning `high` Grok 4.7 rispondeva
   spesso oltre i 100 s. Sulla #478 non ha mai completato, sulla #483 ha
   completato 1 tentativo su 8. Quello di Sol era 100 s ed è salito a 1800 s col
@@ -186,7 +186,7 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   più non costa, perché si pagano i token generati. Il caso peggiore deve stare
   dentro il `timeout-minutes` del job: tre tentativi, le attese fra i
   tentativi, le chiamate a GitHub al loro tetto di 30 s (sette per workflow) e un
-  minuto di avvio del runner. Per Grok fa 1004 s, e il suo job ha 20 minuti; per
+  minuto di avvio del runner. Per Grok fa 1484 s, e il suo job ha 30 minuti; per
   Sol fa 5684 s, e il suo job ha 105 minuti. Altrimenti GitHub interrompe il
   job prima del commento d'errore, e il reviewer tace. I 316 s di margine di
   Sol servono alle pagine di commenti in più sulle PR con oltre 100 commenti,
@@ -202,7 +202,7 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   suo budget d'attesa è salito da 900 a 6600 s (job da 25 a 120 minuti) per
   coprire il job di Sol (105 minuti) più il ritardo con cui parte. Con 900 s una
   review valida ma lenta lasciava il gate rosso — succedeva già con Grok, il cui
-  job dura 20 minuti (rilievo di GPT-5.6 Sol sulla #492). Il gate esce appena i
+  job dura ora 30 minuti (era 20; decisione owner 07-10-2026). Il gate esce appena i
   check sono finiti, quindi il budget lungo pesa solo quando qualcosa è davvero
   lento; lo verifica `tests/guardrails/test_ai_review_timeout.py` per tutti e
   cinque i reviewer. La seconda: OpenRouter rifiuta (HTTP 402) una
