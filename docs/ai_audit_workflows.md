@@ -177,30 +177,30 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   risposta arriva tutta alla fine, dopo il ragionamento. Ogni reviewer fa tre
   tentativi, ciascuno con un limite di attesa, e dopo ogni tentativo fallito
   aspetta 2, 4 e poi 8 s. Il limite è di 100 s per Fable, di 120 s per Fugu e
-  per Astra, di 240 s per Grok, di 600 s per Sol. Quello di Grok era 100 s ed è
+  per Astra, di 240 s per Grok, di 1800 s per Sol. Quello di Grok era 100 s ed è
   salito con la DECISIONE-426 P24: a reasoning `high` Grok 4.7 rispondeva
   spesso oltre i 100 s. Sulla #478 non ha mai completato, sulla #483 ha
-  completato 1 tentativo su 8. Quello di Sol era 100 s ed è salito a 600 s col
+  completato 1 tentativo su 8. Quello di Sol era 100 s ed è salito a 1800 s col
   passaggio a GPT-6.1 Sol a reasoning `max` (decisione dell'owner del
   07-10-2026): il ragionamento più lungo che il modello faccia. Aspettare di
   più non costa, perché si pagano i token generati. Il caso peggiore deve stare
   dentro il `timeout-minutes` del job: tre tentativi, le attese fra i
   tentativi, le chiamate a GitHub al loro tetto di 30 s (sette per workflow) e un
   minuto di avvio del runner. Per Grok fa 1004 s, e il suo job ha 20 minuti; per
-  Sol fa 2084 s, e il suo job ha 40 minuti. Altrimenti GitHub interrompe il
+  Sol fa 5684 s, e il suo job ha 105 minuti. Altrimenti GitHub interrompe il
   job prima del commento d'errore, e il reviewer tace. I 316 s di margine di
   Sol servono alle pagine di commenti in più sulle PR con oltre 100 commenti,
   che il conto per punti di chiamata non vede (Codex sulla #492). Lo verifica
   `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,
   contando le chiamate a GitHub dal file e pretendendo esattamente tre
-  tentativi; lo stesso file pretende almeno 600 s per richiesta da chi gira a
+  tentativi; lo stesso file pretende almeno 1800 s per richiesta da chi gira a
   `xhigh` o `max`.
-- **Sol a reasoning `max`.** Il tetto di output di Sol è 100.000 token (sotto i
+- **Sol a reasoning `max`.** Il tetto di output di Sol è 64.000 token (sotto i
   128.000 che il modello accetta su OpenRouter): a `max` il tetto da 25.000
   tarato su `high` troncherebbe la review. Due conseguenze da sapere. La prima:
   il gate «Merge readiness» aspetta i check dell'head, Sol compreso, quindi il
-  suo budget d'attesa è salito da 900 a 2700 s (job da 25 a 50 minuti) per
-  coprire il job di Sol (40 minuti) più il ritardo con cui parte. Con 900 s una
+  suo budget d'attesa è salito da 900 a 6600 s (job da 25 a 120 minuti) per
+  coprire il job di Sol (105 minuti) più il ritardo con cui parte. Con 900 s una
   review valida ma lenta lasciava il gate rosso — succedeva già con Grok, il cui
   job dura 20 minuti (rilievo di GPT-5.6 Sol sulla #492). Il gate esce appena i
   check sono finiti, quindi il budget lungo pesa solo quando qualcosa è davvero
