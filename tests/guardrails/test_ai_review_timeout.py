@@ -4,7 +4,7 @@ La richiesta al modello non e' in streaming: la risposta arriva tutta alla
 fine, dopo il ragionamento. Grok 4.7 a reasoning `high` ragiona a lungo, e con
 100 s per richiesta il workflow chiudeva la connessione prima della risposta:
 sulla #478 Grok non ha mai completato, sulla #483 ha completato 1 tentativo
-su 8. La DECISIONE-426 P24 alza il suo limite a 240 s.
+su 8. La DECISIONE-426 P24 lo aveva alzato a 240 s; la decisione owner del 07-10-2026 lo porta a 400 s per ridurre i tentativi pagati e persi sui diff grandi.
 
 Il limite piu' alto va pagato col timeout del job. Tre tentativi, il backoff,
 le chiamate a GitHub al loro tetto e l'avvio del runner devono stare dentro
@@ -22,7 +22,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 GROK = ".github/workflows/pr-review-xai-grok46.yml"
-LIMITE_MINIMO_GROK = 240  # secondi per richiesta (DECISIONE-426 P24)
+LIMITE_MINIMO_GROK = 400  # secondi per richiesta (owner 07-10-2026)
 TENTATIVI_ATTESI = 3
 # Avvio del runner e dell'interprete. Le chiamate a GitHub si contano a parte,
 # dal file: erano un margine fisso di 120 s, meno delle chiamate da 30 s che
