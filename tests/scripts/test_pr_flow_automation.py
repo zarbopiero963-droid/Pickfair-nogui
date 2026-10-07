@@ -386,7 +386,7 @@ def test_push_with_retry_once_succeeds_on_first_push(tmp_path):
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertFalse(result["retried"])
     ASSERTIONS.assertFalse(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"], ["git", "rev-parse", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 def test_ensure_post_fix_audit_gate_before_push_shape_stable_for_allowed(monkeypatch):
@@ -426,7 +426,7 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and "--force-with-lease" not in cmd:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -444,10 +444,10 @@ def test_push_with_retry_once_non_fast_forward_then_retry_success(tmp_path):
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "push", "origin", "feature/branch"],
-            ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
             ["git", "rev-parse", "feature/branch"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
+            ["git", "fetch", "origin", "feature/branch"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
         ],
     )
 
@@ -459,9 +459,9 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and "--force-with-lease" not in cmd:
             raise RuntimeError("non-fast-forward update rejected")
-        if len(calls) == 3:
+        if cmd[1] == "push" and "--force-with-lease" in cmd:
             raise RuntimeError("failed to push some refs")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -480,9 +480,10 @@ def test_push_with_retry_once_non_fast_forward_then_retry_fails_needs_manual(tmp
     ASSERTIONS.assertEqual(
         calls,
         [
-            ["git", "push", "origin", "feature/branch"],
+            ["git", "rev-parse", "feature/branch"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch"],
             ["git", "fetch", "origin", "feature/branch"],
-            ["git", "push", "origin", "feature/branch", "--force-with-lease"],
+            ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"],
         ],
     )
 
@@ -512,7 +513,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and "--force-with-lease" not in cmd:
             gate_ctx["post_fix_audit"] = "FAIL"
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
@@ -523,7 +524,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_before_retry_without_pr3h_
     ASSERTIONS.assertEqual(result["status"], "needs_manual")
     ASSERTIONS.assertTrue(result["retried"])
     ASSERTIONS.assertTrue(result["needs_manual"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry_gate_context(tmp_path):
@@ -534,7 +535,7 @@ def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and "--force-with-lease" not in cmd:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -543,8 +544,8 @@ def test_push_with_retry_once_non_fast_forward_allows_retry_with_refreshed_retry
     ASSERTIONS.assertTrue(result["ok"])
     ASSERTIONS.assertEqual(result["status"], "success")
     ASSERTIONS.assertTrue(result["retried"])
-    ASSERTIONS.assertEqual(calls[1], ["git", "fetch", "origin", "feature/branch"])
-    ASSERTIONS.assertEqual(calls[2], ["git", "push", "origin", "feature/branch", "--force-with-lease"])
+    ASSERTIONS.assertEqual(calls[2], ["git", "fetch", "origin", "feature/branch"])
+    ASSERTIONS.assertEqual(calls[3], ["git", "push", "origin", "abc123:refs/heads/feature/branch", "--force-with-lease"])
 
 
 def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gate_context(tmp_path):
@@ -555,7 +556,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
     def fake_run(cmd: list[str], *, check: bool = True) -> str:
         ASSERTIONS.assertTrue(check)
         calls.append(list(cmd))
-        if len(calls) == 1:
+        if cmd[1] == "push" and "--force-with-lease" not in cmd:
             raise RuntimeError("failed to push some refs to origin (non-fast-forward)")
         return "abc123" if cmd[1] == "rev-parse" else ""
 
@@ -563,7 +564,7 @@ def test_push_with_retry_once_non_fast_forward_blocks_retry_with_stale_retry_gat
 
     ASSERTIONS.assertFalse(result["ok"])
     ASSERTIONS.assertTrue(result["retried"])
-    ASSERTIONS.assertEqual(calls, [["git", "push", "origin", "feature/branch"]])
+    ASSERTIONS.assertEqual(calls, [["git", "rev-parse", "feature/branch"], ["git", "push", "origin", "abc123:refs/heads/feature/branch"]])
 
 
 

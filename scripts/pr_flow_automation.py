@@ -2099,6 +2099,7 @@ class NonFastForwardRetryContext:
     repo: str
     branch: str
     initial_exc: RuntimeError
+    pushed_head: str = ""
 
 
 def _push_initial(run_func: Any, remote: str, branch: str) -> None:
@@ -2113,10 +2114,10 @@ def _push_force_with_lease(run_func: Any, remote: str, branch: str) -> None:
     run_func(["git", "push", remote, branch, "--force-with-lease"], check=True)
 
 
-def push_retry_with_force_lease(run_func: Any, remote: str, branch: str) -> None:
+def push_retry_with_force_lease(run_func: Any, remote: str, branch: str, pushed_head: str) -> None:
     """Fetch latest remote branch, then retry push with force-with-lease once."""
     _fetch_branch(run_func, remote, branch)
-    _push_force_with_lease(run_func, remote, branch)
+    _push_force_with_lease(run_func, remote, f"{pushed_head}:refs/heads/{branch}")
 
 
 def _build_push_result(
@@ -2165,9 +2166,10 @@ def _post_fix_push_gate_response(gate: dict[str, Any], allowed: bool) -> dict[st
     }
 
 
-def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None) -> dict[str, Any]:
+def ensure_post_fix_audit_gate_before_push(context: dict[str, Any] | None = None, *, reservation_stage: str = "reserved") -> dict[str, Any]:
     """Evaluate PR3H gate before any push path; fail closed on malformed payloads."""
-    gate = _post_fix_push_gate_raw(context)
+    gate = (_post_fix_push_gate_raw(context) if reservation_stage == "reserved" else
+            controller.evaluate_post_fix_audit_gate(context, reservation_stage=reservation_stage))
     return _post_fix_push_gate_response(gate, _post_fix_push_gate_allowed(gate))
 
 
@@ -2206,16 +2208,14 @@ def _retry_non_fast_forward_push(
     gate_context: dict[str, Any] | None,
 ) -> dict[str, Any]:
     retry_gate_context = build_retry_push_gate_context(gate_context)
-    if retry_gate_context.get("fix_loop") != (gate_context or {}).get("fix_loop"):
+    if not isinstance((gate_context or {}).get("fix_loop"), dict) or retry_gate_context.get("fix_loop") != gate_context["fix_loop"]:
         return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc,
                                          RuntimeError("retry_fix_loop_identity_mismatch_or_missing_refresh"))
     retry = controller.fix_policy.retry_after_confirmed_rejection(gate_context)
     if not retry["allowed"]:
         return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(retry["reason"]))
-    gate = ensure_post_fix_audit_gate_before_push(retry_gate_context)
+    gate = ensure_post_fix_audit_gate_before_push(retry_gate_context, reservation_stage="retry_ready")
     if not gate["allowed"]:
-        budget = gate_context["fix_loop"]
-        controller.fix_policy.FixLoopLedger(budget["path"], budget["repo"], budget["pr"]).start_push(budget["cycle_id"])
         return _build_push_result(
             False,
             "needs_manual",
@@ -2229,10 +2229,12 @@ def _retry_non_fast_forward_push(
             ),
         )
     try:
-        attempt = controller.fix_policy.start_push_gate(retry_gate_context)
+        if not ctx.pushed_head:
+            return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError("pushed_head_missing"))
+        attempt = controller.fix_policy.start_push_gate(retry_gate_context, stage="retry_ready")
         if not attempt["allowed"]:
             return _needs_manual_push_result(ctx.repo, ctx.branch, ctx.initial_exc, RuntimeError(attempt["reason"]))
-        push_retry_with_force_lease(run_func, remote, ctx.branch)
+        push_retry_with_force_lease(run_func, remote, ctx.branch, ctx.pushed_head)
         return _build_push_result(
             True, "success", PushResultContext(repo=ctx.repo, branch=ctx.branch, retried=True, needs_manual=False)
         )
@@ -2290,26 +2292,30 @@ def push_with_retry_once(
                 error=f"post-fix audit gate denied before push: {gate['reason']}",
             ),
         )
+    pushed_head = ""
     try:
         attempt = controller.fix_policy.start_push_gate(context)
         if not attempt["allowed"]:
             return _build_push_result(False, "needs_manual", PushResultContext(
                 repo=repo, branch=branch, retried=False, needs_manual=True, error=attempt["reason"],
             ))
-        _push_initial(run_func, remote, branch)
+        pushed_head = run_func(["git", "rev-parse", branch], check=True).strip()
+        if not pushed_head:
+            raise RuntimeError("pushed_head_missing")
+        _push_initial(run_func, remote, f"{pushed_head}:refs/heads/{branch}")
         result = _build_push_result(
             True, "success", PushResultContext(repo=repo, branch=branch, retried=False, needs_manual=False)
         )
     except RuntimeError as exc:
-        if not is_non_fast_forward_push_error(exc):
+        if not pushed_head or not is_non_fast_forward_push_error(exc):
             return _failed_push_result(repo, branch, exc)
-        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc)
+        retry_ctx = NonFastForwardRetryContext(repo=repo, branch=branch, initial_exc=exc, pushed_head=pushed_head)
         result = _retry_non_fast_forward_push(run_func, retry_ctx, remote, context)
-    return _complete_fix_loop_push(run_func, repo, result, context, branch)
+    return _complete_fix_loop_push(repo, result, context, pushed_head)
 
 
-def _complete_fix_loop_push(run_func: Any, repo: str, result: dict[str, Any],
-                            context: dict[str, Any] | None, branch: str) -> dict[str, Any]:
+def _complete_fix_loop_push(repo: str, result: dict[str, Any],
+                            context: dict[str, Any] | None, pushed_head: str) -> dict[str, Any]:
     budget = (context or {}).get("fix_loop")
     if not result.get("ok") or not isinstance(budget, dict):
         return result
@@ -2317,9 +2323,8 @@ def _complete_fix_loop_push(run_func: Any, repo: str, result: dict[str, Any],
         return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
                 "error": "fix_loop_repository_mismatch"}
     try:
-        head = run_func(["git", "rev-parse", branch], check=True).strip()
         ledger = controller.fix_policy.FixLoopLedger(budget["path"], repo, budget["pr"])
-        completion = ledger.complete(budget["cycle_id"], head)
+        completion = ledger.complete(budget["cycle_id"], pushed_head)
         if not completion["allowed"]:
             return {**result, "ok": False, "status": "needs_manual", "needs_manual": True,
                     "error": completion["reason"]}

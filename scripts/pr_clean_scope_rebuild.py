@@ -421,6 +421,10 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     if not ensure_clean_push_gate(args, decision):
         return
     context = build_clean_gate_ctx(args)
+    claim = controller.fix_policy.claim_patch_gate(context)
+    if not claim["allowed"]:
+        apply_gate_block(decision, claim, "claim_patch")
+        return
     attempt = controller.fix_policy.start_push_gate(context)
     if not attempt["allowed"]:
         apply_gate_block(decision, attempt, "push")
@@ -428,8 +432,11 @@ def commit_and_push(args: RebuildArgs, decision: dict[str, Any], restored_files:
     ensure_git_identity()
     run(["git", "add", "--", *restored_files])
     run(["git", "commit", "-m", f"Clean rebuild PR {args.pr_number} scope"])
-    run(["git", "push", "--force-with-lease", "origin", f"HEAD:{args.branch}"])
     _, new_head = run(["git", "rev-parse", "HEAD"])
+    if not new_head.strip():
+        apply_gate_block(decision, controller.fix_policy.stopped("pushed_head_missing"), "push")
+        return
+    run(["git", "push", "--force-with-lease", "origin", f"{new_head.strip()}:refs/heads/{args.branch}"])
     decision["new_head"] = new_head.strip()
     decision["push_succeeded"] = True
     budget = context["fix_loop"]
@@ -451,6 +458,10 @@ def execute_rebuild(args: RebuildArgs, decision: dict[str, Any], out_path: Path)
         return block_status(out_path, decision, "dry_run")
     if not ensure_clean_push_gate(args, decision):
         return block_status(out_path, decision, "blocked_post_fix_audit_gate")
+    claim = controller.fix_policy.claim_patch_gate(build_clean_gate_ctx(args))
+    if not claim["allowed"]:
+        apply_gate_block(decision, claim, "claim_patch")
+        return block_status(out_path, decision, "blocked_patch_claim")
     create_backup_and_clean_branch(args, branches)
     restore_files(args, restored_files)
     run_diff_guard(decision)

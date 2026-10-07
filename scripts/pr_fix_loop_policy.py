@@ -11,6 +11,7 @@ import json
 import re
 import sqlite3
 import subprocess
+import uuid
 from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
@@ -96,8 +97,8 @@ def accept_limitation(assessment: dict[str, Any], comment: dict[str, Any],
         return stopped("finding_not_a_verified_limitation")
     if decision["decision"] != "NEEDS_MANUAL" or assessment.get("current_head_correct") is not True:
         return stopped("current_defect_cannot_be_accepted")
-    if assessment.get("material") is True or any(assessment.get(risk) is not False
-                                                 for risk in PROTECTED_RISKS if risk in assessment):
+    if assessment.get("material") is not False or any(assessment.get(risk) is not False
+                                                     for risk in PROTECTED_RISKS):
         return stopped("material_risk_requires_manual_decision")
     if assessment.get("class") not in {"GUARDRAIL_GAP", "THEORETICAL_MUTATION"}:
         return stopped("finding_not_a_known_limitation")
@@ -222,7 +223,8 @@ class FixLoopLedger:
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
-    def authorize(self, cycle: str, current_head: str | None = None) -> dict[str, Any]:
+    def authorize(self, cycle: str, current_head: str | None = None, stage: str = "reserved",
+                  claim_token: str | None = None) -> dict[str, Any]:
         try:
             with self._connect() as connection:
                 state = self._status(connection)
@@ -230,11 +232,34 @@ class FixLoopLedger:
                                          (self.repo, self.pr, cycle)).fetchone()
                 if row is None and state["used_slots"] >= state["ceiling"]:
                     return stopped("fix_loop_budget_exhausted")
-                if row is None or row[0] is not None or row[1] != "reserved" or state["used_slots"] > state["ceiling"]:
+                if stage not in {"reserved", "working", "retry_ready"} or row is None or row[0] is not None or row[1] != stage or state["used_slots"] > state["ceiling"]:
                     return stopped("fix_loop_reservation_invalid")
-                if current_head is not None and (not current_head or json.loads(row[2]).get("current_head_sha") != current_head):
+                evidence = json.loads(row[2])
+                if evidence.get("claim_token") and evidence["claim_token"] != claim_token:
+                    return stopped("fix_loop_claim_mismatch")
+                if current_head is not None and (not current_head or evidence.get("current_head_sha") != current_head):
                     return stopped("fix_loop_assessed_head_mismatch")
                 return {"allowed": True, **state}
+        except (ValueError, sqlite3.Error, OSError) as error:
+            return stopped(f"fix_loop_state_unavailable:{error}")
+
+    def claim_patch(self, cycle: str, head: str) -> dict[str, Any]:
+        """Give one worker an exclusive capability before any file mutation."""
+        try:
+            with self._connect() as connection:
+                state = self._status(connection)
+                row = connection.execute("SELECT assessment, stage FROM cycles WHERE repo=? AND pr=? AND cycle=?",
+                                         (self.repo, self.pr, cycle)).fetchone()
+                if row is None or row[1] != "reserved" or state["used_slots"] > state["ceiling"]:
+                    return stopped("fix_loop_reservation_invalid")
+                evidence = json.loads(row[0])
+                if not head or evidence.get("current_head_sha") != head:
+                    return stopped("fix_loop_assessed_head_mismatch")
+                token = uuid.uuid4().hex
+                evidence["claim_token"] = token
+                connection.execute("UPDATE cycles SET stage='working', assessment=? WHERE repo=? AND pr=? AND cycle=?",
+                                   (json.dumps(evidence), self.repo, self.pr, cycle))
+                return {"allowed": True, "claim_token": token}
         except (ValueError, sqlite3.Error, OSError) as error:
             return stopped(f"fix_loop_state_unavailable:{error}")
 
@@ -260,17 +285,19 @@ class FixLoopLedger:
 
     def _retry_after_confirmed_rejection(self, cycle: str) -> dict[str, Any]:
         """Internal transport retry only after an actual non-fast-forward rejection."""
-        return self._transition_push(cycle, "pushing", "reserved")
+        return self._transition_push(cycle, "pushing", "retry_ready")
 
     def complete(self, cycle: str, head: str) -> dict[str, Any]:
         if not isinstance(head, str) or not head.strip():
             return stopped("confirmed_push_head_missing")
         try:
             with self._connect() as connection:
-                row = connection.execute("SELECT head FROM cycles WHERE repo=? AND pr=? AND cycle=?",
+                row = connection.execute("SELECT head, stage FROM cycles WHERE repo=? AND pr=? AND cycle=?",
                                          (self.repo, self.pr, cycle)).fetchone()
                 if row is None or (row[0] is not None and row[0] != head):
                     return stopped("fix_loop_completion_mismatch")
+                if row[0] is None and row[1] != "pushing":
+                    return stopped("fix_loop_push_intent_missing")
                 connection.execute("UPDATE cycles SET head=?, stage='completed' WHERE repo=? AND pr=? AND cycle=? AND head IS NULL",
                                    (head, self.repo, self.pr, cycle))
                 return {"allowed": True, **self._status(connection)}
@@ -300,7 +327,7 @@ class FixLoopLedger:
                                (self.repo, self.pr, str(comment["id"]), at_count + extra, json.dumps(comment)))
 
 
-def reservation_gate(context: dict[str, Any] | None) -> dict[str, Any]:
+def reservation_gate(context: dict[str, Any] | None, *, stage: str = "reserved") -> dict[str, Any]:
     """Do not infer/reset the budget from head, author, CI or resolved threads."""
     budget = (context or {}).get("fix_loop")
     if not isinstance(budget, dict):
@@ -312,24 +339,44 @@ def reservation_gate(context: dict[str, Any] | None) -> dict[str, Any]:
     try:
         ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
         head = str((context or {}).get("current_head_sha") or (context or {}).get("head_sha") or (context or {}).get("headRefOid") or "")
-        return ledger.authorize(budget["cycle_id"], head)
+        actual_stage = "working" if stage == "reserved" and budget.get("claim_token") else stage
+        return ledger.authorize(budget["cycle_id"], head, actual_stage, budget.get("claim_token"))
     except (KeyError, ValueError, TypeError):
         return stopped("fix_loop_reservation_malformed")
 
 
-def start_push_gate(context: dict[str, Any]) -> dict[str, Any]:
-    permission = reservation_gate(context)
+def start_push_gate(context: dict[str, Any], *, stage: str = "reserved") -> dict[str, Any]:
+    permission = reservation_gate(context, stage=stage)
     if not permission["allowed"]:
         return permission
     budget = context["fix_loop"]
     ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
-    return ledger.start_push(budget["cycle_id"])
+    actual_stage = "working" if stage == "reserved" and budget.get("claim_token") else stage
+    return ledger._transition_push(budget["cycle_id"], actual_stage, "pushing")
+
+
+def claim_patch_gate(context: dict[str, Any] | None) -> dict[str, Any]:
+    permission = reservation_gate(context)
+    if not permission["allowed"]:
+        return permission
+    budget = context["fix_loop"]
+    if budget.get("claim_token"):
+        return permission
+    ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
+    head = str(context.get("current_head_sha") or context.get("head_sha") or context.get("headRefOid") or "")
+    result = ledger.claim_patch(budget["cycle_id"], head)
+    if result["allowed"]:
+        budget["claim_token"] = result["claim_token"]
+    return result
 
 
 def retry_after_confirmed_rejection(context: dict[str, Any]) -> dict[str, Any]:
-    budget = context["fix_loop"]
-    ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
-    return ledger._retry_after_confirmed_rejection(budget["cycle_id"])
+    try:
+        budget = context["fix_loop"]
+        ledger = FixLoopLedger(budget["path"], budget["repo"], budget["pr"])
+        return ledger._retry_after_confirmed_rejection(budget["cycle_id"])
+    except (KeyError, ValueError, TypeError):
+        return stopped("fix_loop_reservation_malformed")
 
 
 def fetch_owner_comment(repo: str, pr: int, identifier: str) -> dict[str, Any]:

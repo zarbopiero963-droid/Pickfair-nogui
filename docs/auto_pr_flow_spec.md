@@ -694,21 +694,34 @@ un ciclo; il retry di trasporto dello stesso push non ne consuma un secondo.
 
 Prima della patch prenotare un ciclo nel ledger transazionale di automazione
 `FixLoopLedger` (`scripts/pr_fix_loop_policy.py`). Non è il DB Pickfair.
+Prima di consegnare un task di patch o modificare file, acquisire
+`claim_patch_gate`: `reserved → working` con capability esclusiva conservata
+nel contesto del worker. Un altro worker con la prenotazione originale non
+può acquisire il ciclo. Il clean-rebuild acquisisce questa capability prima
+di cambiare branch/restaurare file e la conserva fino al gate commit/push.
 Identità `(repo, PR)`; storico iniziale attestato + righe `cycles` completate
 sono il contatore. Prenotazioni incompiute occupano un posto e bloccano nuovi
 cicli: errore di push, response lost o crash → recupero manuale, mai rimborso
-/reset automatico. Dopo push confermato, `push_with_retry_once` registra il
+/reset automatico. Dopo push confermato, `push_with_retry_once` registra
 lo SHA del branch effettivamente inviato una sola volta. La prenotazione è legata
 allo SHA dell'assessment: un contesto relativo a un altro head non autorizza
-patch/commit/push. Il ledger registra `reserved → pushing → completed`:
+patch/commit/push. Il ledger registra `reserved → working → pushing → completed`:
 `pushing` viene persistito **prima** dell'invio, quindi un response lost/crash
 non rende riutilizzabile automaticamente la prenotazione. Soltanto un rifiuto
 non-fast-forward confermato abilita l'unico retry di trasporto già previsto,
-con lo stesso ciclo e nuove prove di audit/head; nessun nuovo slot. Prove retry
+con lo stesso ciclo e nuove prove di audit/head; nessun nuovo slot. Il ciclo passa
+a `retry_ready`, mai di nuovo a `reserved`: patch/commit/push ordinari non lo
+possono acquisire, neppure durante l'audit del retry. Il retry acquisisce
+atomicamente `retry_ready → pushing` dopo il suo audit completo. Prove retry
 assenti, stale o respinte lasciano il ciclo non ripetibile automaticamente.
 Il percorso clean-rebuild acquisisce il gate atomico prima del commit.
+Entrambi i percorsi fissano lo SHA locale prima del push e usano quello stesso
+SHA nel refspec e nella completion; un branch che avanza durante l'invio non
+cambia l'evidenza registrata.
 Anche il push diretto del clean-scope rebuild usa intent e completion comuni.
 Reinvocare una completion identica è idempotente;
+una completion nuova richiede lo stato `pushing`: non può dichiarare inviato
+un ciclo ancora soltanto prenotato o in lavorazione.
 riusare una prenotazione completata per una nuova patch è vietato.
 
 Ledger in storage persistente dell'orchestratore **fuori dai checkout/artefatti
@@ -806,7 +819,9 @@ KNOWN_LIMITATION_ACCEPTED_BY_OWNER PR=495 THREAD=PRRT_example HEAD=<current-head
 
 Il planner legge `owner_decision_ids[thread_id]` dalla API autenticata e
 verifica identità/URL/owner, classificazione verificata, head corrente,
-validazione, test pertinenti e tutti i check settled/verdi. Solo allora può
+validazione, test pertinenti e tutti i check settled/verdi. Richiede
+`material is False` e ogni flag di rischio protetto esplicitamente `False`:
+un campo mancante è evidenza sconosciuta, mai assenza di rischio. Solo allora può
 rispondere con il disposition e il link owner e risolvere formalmente il thread.
 Le condizioni comuni di resolve restano identiche. Non si pretende che il
 limite sia corretto o stale. L'assenza del reviewer da una allowlist non

@@ -33,6 +33,8 @@ def assessment(kind, **extra):
         "class": kind, "thread_id": "T1", "current_head_sha": "head",
         "evidence": "local contract inspection and reproducible test",
         "current_head_correct": kind != "CURRENT_DEFECT",
+        "material": False,
+        **{risk: False for risk in controller.fix_policy.PROTECTED_RISKS},
         **extra,
     }
 
@@ -47,6 +49,7 @@ def ledger(policy, tmp_path):
 def consume(ledger, name):
     result = ledger.reserve(name, assessment("CURRENT_DEFECT"))
     assert result["allowed"]
+    assert ledger.start_push(name)["allowed"]
     assert ledger.complete(name, f"head-{name}")["completed_count"] >= 1
 
 
@@ -107,6 +110,7 @@ def test_missing_state_and_pending_cycle_fail_closed(policy, tmp_path, ledger):
     assert ledger.reserve("one", assessment("CURRENT_DEFECT"))["allowed"]
     assert not ledger.reserve("two", assessment("CURRENT_DEFECT"))["allowed"]
     assert ledger.authorize("one")["allowed"]
+    ledger.start_push("one")
     ledger.complete("one", "h1")
     ledger.complete("one", "h1")
     assert ledger.status()["completed_count"] == 1
@@ -272,6 +276,7 @@ def test_other_pr_and_completed_reservation_cannot_authorize(ledger, policy):
     assert ledger.reserve("one", assessment("CURRENT_DEFECT"))["allowed"]
     context = repair_context(ledger, "one")
     assert not policy.reservation_gate({**context, "pr": 496})["allowed"]
+    ledger.start_push("one")
     ledger.complete("one", "head")
     assert not policy.reservation_gate(context)["allowed"]
 
@@ -359,7 +364,9 @@ def test_response_lost_cannot_reuse_reservation_for_another_push(ledger):
     calls = []
     def lost(command, **_kwargs):
         calls.append(command)
-        raise RuntimeError("connection lost after sending push")
+        if command[1] == "push":
+            raise RuntimeError("connection lost after sending push")
+        return "pinned-head"
     assert not flow.push_with_retry_once(lost, "owner/repo", "branch", context=context)["ok"]
     assert not ledger.authorize("lost")["allowed"]
     previous = len(calls)
@@ -463,8 +470,124 @@ def test_rejected_retry_without_refresh_cannot_replay_reservation(ledger):
         if command[:2] == ['git', 'push']:
             pushes.append(command)
             raise RuntimeError('non-fast-forward')
-        return ''
+        return 'pinned-head'
     context = repair_context(ledger, 'rejection')
     assert not flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=context)['ok']
     assert not flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=context)['ok']
     assert len(pushes) == 1
+
+
+def test_retry_audit_never_exposes_reservation_to_competitor(ledger, monkeypatch, policy):
+    ledger.reserve('concurrent-retry', assessment('CURRENT_DEFECT'))
+    context = repair_context(ledger, 'concurrent-retry')
+    context['retry_push_gate_context'] = {'explicitly_refreshed':True, 'gate_context':dict(context)}
+    original = flow.ensure_post_fix_audit_gate_before_push
+    checks = []
+    competing = []
+    def audit(ctx, **kwargs):
+        checks.append(ctx)
+        if len(checks) > 1:
+            competing.append(policy.start_push_gate(context)['allowed'])
+            return {'allowed':False, 'reason':'refreshed_audit_denied'}
+        return original(ctx, **kwargs)
+    monkeypatch.setattr(flow, 'ensure_post_fix_audit_gate_before_push', audit)
+    def runner(command, **_kwargs):
+        if command[:2] == ['git','push']:
+            raise RuntimeError('non-fast-forward')
+        return 'pinned-head'
+    assert not flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=context)['ok']
+    assert competing == [False]
+
+
+def test_push_and_completion_use_one_immutable_sha(ledger):
+    ledger.reserve('pinned', assessment('CURRENT_DEFECT'))
+    sent = []
+    def runner(command, **_kwargs):
+        if command[:2] == ['git','push']:
+            sent.append(command)
+        if command[:2] == ['git','rev-parse']:
+            return 'already-advanced-head' if sent else 'pinned-head'
+        return ''
+    result = flow.push_with_retry_once(runner, 'owner/repo', 'branch', context=repair_context(ledger,'pinned'))
+    assert result['ok']
+    assert 'pinned-head:refs/heads/branch' in sent[0]
+    assert ledger.complete('pinned','pinned-head')['allowed']
+
+
+@pytest.mark.parametrize('context', [None, {}, {'fix_loop':None}])
+def test_retry_missing_identity_returns_manual(context):
+    retry = flow.NonFastForwardRetryContext('owner/repo','branch',RuntimeError('non-fast-forward'))
+    result = flow._retry_non_fast_forward_push(lambda *_a, **_k:'', retry, 'origin', context)
+    assert not result['ok'] and result['needs_manual']
+
+
+@pytest.mark.parametrize('missing', [*controller.fix_policy.PROTECTED_RISKS, 'material'])
+def test_accepted_limitation_unknown_risk_is_not_clearance(policy, missing):
+    current = assessment('THEORETICAL_MUTATION', material=False,
+                         **{risk:False for risk in policy.PROTECTED_RISKS})
+    current.pop(missing)
+    assert not policy.accept_limitation(current, owner_acceptance(), 'owner/repo',495)['allowed']
+
+
+def test_controller_five_with_nonpatch_thread_is_not_sixth(ledger, monkeypatch, tmp_path):
+    for number in range(5): consume(ledger, str(number))
+    monkeypatch.setenv('PR_FIX_LOOP_LEDGER',str(ledger.path))
+    args=argparse.Namespace(repo='owner/repo',pr='495',output=str(tmp_path/'report.json'))
+    decision={'review':{'unresolved_active':1},'review_triage':{'decision':'EVIDENCE_RESOLVE'}}
+    ctx=controller.NextActionContext(args,{},[],[],[],[],decision)
+    controller.update_decision_state_tracking(args,{'headRefOid':'head'},ctx)
+    assert not decision['budget_status']['exhausted']
+
+
+def test_complete_requires_actual_push_intent(ledger):
+    ledger.reserve('not-pushed', assessment('CURRENT_DEFECT'))
+    assert not ledger.complete('not-pushed','invented-head')['allowed']
+    assert ledger.status()['reserved_count'] == 1
+    assert ledger.status()['completed_count'] == 0
+
+
+def test_clean_rebuild_stops_before_restore_after_competing_completion(ledger, monkeypatch, tmp_path):
+    rebuild=importlib.import_module('scripts.pr_clean_scope_rebuild')
+    for number in range(4): consume(ledger,str(number))
+    ledger.reserve('restore',assessment('CURRENT_DEFECT'))
+    context=repair_context(ledger,'restore')
+    args=rebuild.RebuildArgs('owner/repo','495','branch',['scripts/a.py'],[],str(tmp_path/'report.json'),context,False)
+    decision={}
+    touched=[]
+    monkeypatch.setattr(rebuild,'prepare_scope',lambda *_:(['scripts/a.py'],[]))
+    monkeypatch.setattr(rebuild,'stop_for_scope_blockers',lambda *_:False)
+    monkeypatch.setattr(rebuild,'fetch_heads',lambda *_:{})
+    original=rebuild.ensure_clean_push_gate
+    def initial_gate(*params):
+        allowed=original(*params)
+        if ledger.start_push('restore')['allowed']: ledger.complete('restore','competing-head')
+        return allowed
+    monkeypatch.setattr(rebuild,'ensure_clean_push_gate',initial_gate)
+    monkeypatch.setattr(rebuild,'create_backup_and_clean_branch',lambda *_:touched.append('branch'))
+    monkeypatch.setattr(rebuild,'restore_files',lambda *_:touched.append('restore'))
+    for name in ['run_diff_guard','run_compile_guard','run_focused_tests']:
+        monkeypatch.setattr(rebuild,name,lambda *_:None)
+    monkeypatch.setattr(rebuild,'stop_if_forbidden_remains',lambda *_:False)
+    monkeypatch.setattr(rebuild,'write_decision',lambda *_:0)
+    rebuild.execute_rebuild(args,decision,tmp_path/'report.json')
+    assert touched == []
+
+
+def test_exhaustion_template_has_machine_readable_stop():
+    agents=(Path(__file__).resolve().parents[2]/'AGENTS.md').read_text()
+    tail=agents.split('If another PATCH_REQUIRED cycle would exceed the allowed cumulative budget:')[-1]
+    assert 'AUTO_PR_FLOW_STATUS=NEEDS_MANUAL' in tail
+    assert 'REASON=fix_loop_budget_exhausted' in tail
+    assert 'PARTIAL' not in tail
+
+
+def test_patch_claim_is_exclusive_and_required_by_other_worker(ledger, policy):
+    ledger.reserve('exclusive', assessment('CURRENT_DEFECT'))
+    first=repair_context(ledger,'exclusive')
+    other=repair_context(ledger,'exclusive')
+    assert policy.claim_patch_gate(first)['allowed']
+    assert not policy.claim_patch_gate(other)['allowed']
+    assert not policy.start_push_gate(other)['allowed']
+    assert policy.reservation_gate(first)['allowed']
+    assert policy.start_push_gate(first)['allowed']
+    assert ledger.complete('exclusive','new-head')['allowed']

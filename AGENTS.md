@@ -2067,10 +2067,11 @@ MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
 Cumulative per PR; bounded explicit owner override only.
 ```
 
-If the maximum attempt limit is reached:
+If another PATCH_REQUIRED cycle would exceed the allowed cumulative budget:
 
 ```text
-PARTIAL
+AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
+REASON=fix_loop_budget_exhausted
 
 Summary:
 - Automatic repair attempts reached the configured limit.

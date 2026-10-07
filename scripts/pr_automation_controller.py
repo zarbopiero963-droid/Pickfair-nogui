@@ -652,7 +652,8 @@ def build_codex_patch_task_after_phase0(
     """Build a passive Codex patch task only after Phase 0 passes."""
     gate = decide_phase0_gate(phase0_result)
     if repair_context is not None or os.environ.get("PR_NUMBER"):
-        budget = fix_policy.reservation_gate(repair_context)
+        budget = (fix_policy.claim_patch_gate(repair_context) if bool(gate.get("can_patch"))
+                  else fix_policy.reservation_gate(repair_context))
         if not budget["allowed"]:
             gate = {**gate, "can_patch": False, **budget}
     if not bool(gate.get("can_patch")):
@@ -1192,7 +1193,7 @@ def build_post_fix_audit_gate_result(
     }
 
 
-def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[str, Any]:
+def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None, *, reservation_stage: str = "reserved") -> dict[str, Any]:
     normalized = normalize_post_fix_audit_gate_input(context)
     post_fix_audit = normalized["post_fix_audit"]
     mode = normalized["automation_mode"]
@@ -1251,7 +1252,7 @@ def evaluate_post_fix_audit_gate(context: dict[str, Any] | None = None) -> dict[
     repair = bool(ctx.get("pr") or ctx.get("pr_number") or ctx.get("fix_loop")
                   or ctx.get("review_fix") or os.environ.get("PR_NUMBER"))
     if reason == "allowed" and repair:
-        budget = fix_policy.reservation_gate(ctx)
+        budget = fix_policy.reservation_gate(ctx, stage=reservation_stage)
         if not budget["allowed"]:
             reason = budget["reason"]
     can_commit = reason == "allowed"
@@ -6136,10 +6137,7 @@ def update_decision_state_tracking(args: argparse.Namespace, pr: dict[str, Any],
                          "next_action": "needs_manual_budget_unavailable"}
     if ledger_path and ctx.decision["fix_loop_budget"]["allowed"]:
         snapshot = ctx.decision["fix_loop_budget"]
-        if snapshot["completed_count"] >= snapshot["ceiling"] and (ctx.blockers or counters["review_active_count"]):
-            budget_status = {"exhausted": True, "reason": "fix_loop_budget_exhausted",
-                             "next_action": "needs_manual_budget_exhausted"}
-        elif budget_status.get("reason", "").startswith("autofix_commit_count"):
+        if budget_status.get("reason", "").startswith("autofix_commit_count"):
             budget_status = pr_budget_status({**current_state, "autofix_commit_count": 0}, _budget_limits())
     ctx.decision["progress"] = progress
     ctx.decision["budget_status"] = budget_status
