@@ -47,7 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     # Il gate ora ASPETTA che i check dell'head finiscano: serve un tetto, o una
     # suite bloccata terrebbe occupato un runner per il default di 6 ore.
-    timeout-minutes: 25
+    # 45 minuti: il budget d'attesa (2400 s) piu' checkout e verdetto finale.
+    timeout-minutes: 45
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
@@ -73,15 +74,20 @@ jobs:
 
           mkdir -p .merge-readiness
           # Senza budget il gate decide ~20s dopo il push, con i check ancora in
-          # volo: "non pronta" garantito. 900s coprono la suite completa (~5
-          # min) con margine; il tetto del job (25 min) resta la rete di
-          # sicurezza. Scaduto il budget si giudica lo stato reale: se i check
-          # non sono finiti il gate FALLISCE (fail-closed).
+          # volo: "non pronta" garantito. Il budget deve coprire il reviewer
+          # piu' lento, non la suite media: con 900 s una review di Sol a
+          # effort `max` valida ma lenta (job fino a 35 min) lasciava il gate
+          # rosso, e cosi' gia' Grok (job da 20 min). 2400 s = il job di
+          # review piu' lungo piu' il ritardo con cui parte rispetto a questo
+          # (tests/guardrails/test_ai_review_timeout.py). Il gate esce appena
+          # i check sono settled e stabili: il budget lungo costa solo quando
+          # qualcosa e' davvero lento. Scaduto il budget si giudica lo stato
+          # reale: se i check non sono finiti il gate FALLISCE (fail-closed).
           python3 scripts/pr_merge_readiness.py \
             --repo "$REPO" \
             --pr "$PR" \
             --ignore-safe-autofix \
-            --wait-pending-seconds 900 \
+            --wait-pending-seconds 2400 \
             --poll-seconds 15 \
             --output .merge-readiness/decision.json
 

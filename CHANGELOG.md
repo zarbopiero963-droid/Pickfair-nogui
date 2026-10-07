@@ -74,6 +74,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   higher ceiling and a longer wait at `xhigh`/`max`, and check that the
   failed-call heading is recognised by the done-marker guard. (Owner decision,
   07-10-2026)
+- Merge readiness gate (`pr-merge-readiness.yml`): the wait for the head's
+  checks rises from 900 s to 2400 s and the job timeout from 25 to 45 minutes.
+  The budget must cover the slowest review job (Sol, 35 minutes) plus its
+  start-up delay: with 900 s a valid but slow review left the gate red, which
+  could already happen with Grok's 20-minute job. The gate still exits as soon
+  as the checks are settled, and still fails when the budget runs out. A test
+  ties the budget to the five review workflows' timeouts.
 - AI review workflow for Grok 4.7 (`pr-review-xai-grok46.yml`): each request to
   the model may now wait 240 s instead of 100 s, and the job timeout rises from
   10 to 20 minutes. The request is not streamed, so the answer arrives only

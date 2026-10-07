@@ -147,6 +147,49 @@ def test_block_a_effort_massimo_si_aspetta_abbastanza(workflow: str) -> None:
     )
 
 
+MERGE_READINESS = ".github/workflows/pr-merge-readiness.yml"
+# Ritardo con cui un job di review parte rispetto al gate di merge readiness,
+# che scatta sullo stesso push: misurato 48 s sulla #492 (Sol), con margine.
+RITARDO_PARTENZA_REVIEWER = 120
+# Checkout del merge-ref e verdetto finale, dentro il job del gate.
+CONTORNO_GATE = 180
+
+
+def _budget_merge_readiness() -> int:
+    valori = re.findall(r"--wait-pending-seconds (\d+)", _testo(MERGE_READINESS))
+    assert len(valori) == 1, f"{MERGE_READINESS}: atteso un solo --wait-pending-seconds, trovati {valori}"
+    return int(valori[0])
+
+
+@pytest.mark.parametrize("workflow", _reviewer())
+def test_block_merge_readiness_aspetta_il_reviewer(workflow: str) -> None:
+    """Il gate di merge aspetta i check dell'head, reviewer compresi.
+
+    Se il suo budget e' piu' corto del job di review, una review valida ma
+    lenta lascia il gate ROSSO, e il gate non si rivaluta da solo (serve un
+    `workflow_dispatch` o un nuovo push). Con 900 s succedeva gia' con Grok
+    (job da 20 minuti); con Sol a effort `max` (35 minuti) sarebbe diventato
+    il caso ordinario dei push lenti. Rilievo di GPT-5.6 Sol sulla #492.
+    """
+    budget = _budget_merge_readiness()
+    serve = _timeout_job(workflow) + RITARDO_PARTENZA_REVIEWER
+    assert budget >= serve, (
+        f"{MERGE_READINESS} aspetta {budget} s, ma il job di {workflow} puo' durare "
+        f"{_timeout_job(workflow)} s e parte fino a {RITARDO_PARTENZA_REVIEWER} s dopo: "
+        f"servono almeno {serve} s, altrimenti una review lenta ma valida lascia il gate rosso"
+    )
+
+
+def test_block_il_job_del_gate_contiene_il_suo_budget() -> None:
+    """Un budget piu' lungo del job verrebbe troncato da GitHub senza verdetto."""
+    budget = _budget_merge_readiness()
+    assert _timeout_job(MERGE_READINESS) >= budget + CONTORNO_GATE, (
+        f"{MERGE_READINESS}: timeout del job {_timeout_job(MERGE_READINESS)} s, budget "
+        f"d'attesa {budget} s + {CONTORNO_GATE} s di contorno: GitHub ucciderebbe il gate "
+        f"prima che scriva il verdetto"
+    )
+
+
 def test_block_i_percorsi_hanno_la_barra_anche_su_windows() -> None:
     """Su Windows `str()` di un percorso usa `\\`: `GROK` non si troverebbe e la
     raccolta dei test fallirebbe prima di eseguirli (GPT-6 Astra sulla #484)."""

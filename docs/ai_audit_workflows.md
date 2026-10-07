@@ -196,10 +196,14 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 - **Sol a reasoning `max`.** Il tetto di output di Sol è 100.000 token (sotto i
   128.000 che il modello accetta su OpenRouter): a `max` il tetto da 25.000
   tarato su `high` troncherebbe la review. Due conseguenze da sapere. La prima:
-  il caso peggiore del job (35 minuti) supera l'attesa del gate «Merge
-  readiness» (900 s), quindi una risposta di Sol molto lenta lascia il gate
-  rosso finché non lo si rilancia (`workflow_dispatch` sul branch della PR) —
-  il caso normale sta ben dentro. La seconda: OpenRouter rifiuta (HTTP 402) una
+  il gate «Merge readiness» aspetta i check dell'head, Sol compreso, quindi il
+  suo budget d'attesa è salito da 900 a 2400 s (job da 25 a 45 minuti) per
+  coprire il job di Sol (35 minuti) più il ritardo con cui parte. Con 900 s una
+  review valida ma lenta lasciava il gate rosso — succedeva già con Grok, il cui
+  job dura 20 minuti (rilievo di GPT-5.6 Sol sulla #492). Il gate esce appena i
+  check sono finiti, quindi il budget lungo pesa solo quando qualcosa è davvero
+  lento; lo verifica `tests/guardrails/test_ai_review_timeout.py` per tutti e
+  cinque i reviewer. La seconda: OpenRouter rifiuta (HTTP 402) una
   richiesta il cui tetto non è coperto dal credito residuo, anche se la review
   ne userebbe una frazione: a $10/M sono $1,00 di credito che deve esserci,
   altrimenti Sol risponde «non completata» e vale CREDITI ESAURITI. La
