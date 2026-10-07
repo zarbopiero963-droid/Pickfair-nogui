@@ -187,8 +187,10 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   dentro il `timeout-minutes` del job: tre tentativi, le attese fra i
   tentativi, le chiamate a GitHub al loro tetto di 30 s (sei per workflow) e un
   minuto di avvio del runner. Per Grok fa 974 s, e il suo job ha 20 minuti; per
-  Sol fa 2054 s, e il suo job ha 35 minuti. Altrimenti GitHub interrompe il job
-  prima del commento d'errore, e il reviewer tace. Lo verifica
+  Sol fa 2054 s, e il suo job ha 40 minuti. Altrimenti GitHub interrompe il
+  job prima del commento d'errore, e il reviewer tace. I 346 s di margine di
+  Sol servono alle pagine di commenti in più sulle PR con oltre 100 commenti,
+  che il conto per punti di chiamata non vede (Codex sulla #492). Lo verifica
   `tests/guardrails/test_ai_review_timeout.py` per tutti e cinque i reviewer,
   contando le chiamate a GitHub dal file e pretendendo esattamente tre
   tentativi; lo stesso file pretende almeno 600 s per richiesta da chi gira a
@@ -197,8 +199,8 @@ modello lascerebbe il difetto intatto con un test verde sopra.
   128.000 che il modello accetta su OpenRouter): a `max` il tetto da 25.000
   tarato su `high` troncherebbe la review. Due conseguenze da sapere. La prima:
   il gate «Merge readiness» aspetta i check dell'head, Sol compreso, quindi il
-  suo budget d'attesa è salito da 900 a 2400 s (job da 25 a 45 minuti) per
-  coprire il job di Sol (35 minuti) più il ritardo con cui parte. Con 900 s una
+  suo budget d'attesa è salito da 900 a 2700 s (job da 25 a 50 minuti) per
+  coprire il job di Sol (40 minuti) più il ritardo con cui parte. Con 900 s una
   review valida ma lenta lasciava il gate rosso — succedeva già con Grok, il cui
   job dura 20 minuti (rilievo di GPT-5.6 Sol sulla #492). Il gate esce appena i
   check sono finiti, quindi il budget lungo pesa solo quando qualcosa è davvero

@@ -469,12 +469,12 @@ volo, il gate **aspetta** che siano settled prima di decidere:
 
 | chiave | valore | significato |
 |---|---|---|
-| `--wait-pending-seconds` | `2400` | budget d'attesa; `0` = non aspetta (default dello script) |
+| `--wait-pending-seconds` | `2700` | budget d'attesa; `0` = non aspetta (default dello script) |
 | `--poll-seconds` | `15` | intervallo fra due letture |
-| `timeout-minutes` (job) | `45` | rete di sicurezza se la suite si blocca |
+| `timeout-minutes` (job) | `50` | rete di sicurezza se la suite si blocca |
 
 Il budget e' tarato sul **reviewer piu' lento**, non sulla suite media: deve
-coprire il `timeout-minutes` del job di review piu' lungo (oggi Sol, 35 minuti a
+coprire il `timeout-minutes` del job di review piu' lungo (oggi Sol, 40 minuti a
 effort `max`) piu' il ritardo con cui quel job parte rispetto al gate. Era 900 s
 fino al passaggio di Sol a GPT-6.1 Sol a `max` (decisione dell'owner del
 07-10-2026), e gia' allora era sotto il job di Grok (20 minuti): una review
@@ -533,7 +533,7 @@ rivaluta da solo: serve `workflow_dispatch` (input `pr_number`, lanciato sul
 branch della PR) o un nuovo push. E' una scelta, non una svista: rimettere quei trigger significherebbe
 ripubblicare il verdetto su `main` invece che sull'head — il difetto che teneva
 il gate rosso 24 volte su 27. Il rischio residuo e' limitato perche' il budget
-(2400s) copre il caso peggiore del job di review piu' lungo, mentre la suite
+(2700s) copre il caso peggiore del job di review piu' lungo, mentre la suite
 osservata dura ~322s, e perche' un budget scaduto con check fermi e' un caso in
 cui il rosso e' la risposta giusta.
 
