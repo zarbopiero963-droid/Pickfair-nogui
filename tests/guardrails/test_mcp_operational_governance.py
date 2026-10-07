@@ -29,6 +29,17 @@ def check_contract(text, policies, sections):
         require(policy, "per repository", "policy_seriality")
         require(policy, "#426/P41", "reviewer_precedence")
         require(policy, "docs/mcp_operational_contract.md", "policy_contract_link")
+    operative_clauses = [
+        ["Only one active task per repository is allowed at a time.",
+         "Only one open pull request per repository is allowed at a time.",
+         "Never execute multiple tasks in parallel within this repository.",
+         "Never create a second PR while another PR is open in this repository."],
+        ["UNA SOLA PR aperta / UN SOLO task attivo alla volta PER REPOSITORY",
+         "mai task in parallelo nello stesso repository"],
+    ]
+    for policy, clauses in zip(policies, operative_clauses):
+        for clause in clauses:
+            require(policy, clause, "operative_seriality")
     if re.search(r"una (?:sola )?PR globale|one global (?:open )?PR", "\n".join([text, *policies]), re.I):
         errors.append("global_seriality")
     for phrase in ["PR26-a → PR26 authority → PR27 → PR28 → PR29",
@@ -63,6 +74,9 @@ def check_contract(text, policies, sections):
                    "MCP-01 → MCP-02 → MCP-03 → MCP-04 → MCP-05 → MCP-06 → MCP-07",
                    "MANUAL via MCP = DECISIONE ANCORA APERTA"]:
         require(master, phrase, f"master_{phrase}")
+    split_order = "MCP-05 → MCP-07 (SIM) → MCP-06 → MCP-07 (finale LIVE/cross-repo)"
+    require(text, split_order, "sim_before_live")
+    require(master, split_order, "sim_before_live")
     # A correct sentence must not mask a contradictory current instruction.
     current = "\n".join([text, *sections.values()])
     contradictions = [
@@ -191,3 +205,37 @@ def test_global_rule_in_either_policy_is_rejected(policy_index):
     text, policies, sections = inputs()
     policies[policy_index] += "\nuna sola PR globale\n"
     assert "global_seriality" in check_contract(text, policies, sections)
+
+
+@pytest.mark.parametrize("policy_index,old,new", [
+    (0, "Only one active task per repository is allowed at a time.", "Only one active task is allowed at a time."),
+    (0, "Only one open pull request per repository is allowed at a time.", "Only one open pull request is allowed at a time."),
+    (0, "Never execute multiple tasks in parallel within this repository.", "Never execute multiple tasks in parallel."),
+    (0, "Never create a second PR while another PR is open in this repository.", "Never create a second PR while another PR is open."),
+    (1, "UNA SOLA PR aperta / UN SOLO task attivo alla volta PER REPOSITORY", "UNA SOLA PR aperta / UN SOLO task attivo alla volta"),
+    (1, "mai task in parallelo nello stesso repository", "mai task in parallelo"),
+])
+def test_actual_operative_policy_reversions_are_rejected(policy_index, old, new):
+    text, policies, sections = inputs()
+    assert old in policies[policy_index]
+    policies[policy_index] = policies[policy_index].replace(old, new)
+    assert "operative_seriality" in check_contract(text, policies, sections)
+
+
+def test_sim_certification_is_explicitly_before_live():
+    text, _, sections = inputs()
+    order = "MCP-05 → MCP-07 (SIM) → MCP-06 → MCP-07 (finale LIVE/cross-repo)"
+    assert order in text
+    assert order in sections["1"]
+
+
+@pytest.mark.parametrize("document", ["contract", "master"])
+def test_sim_gate_removal_is_rejected(document):
+    text, policies, sections = inputs()
+    old = "MCP-05 → MCP-07 (SIM) → MCP-06 → MCP-07 (finale LIVE/cross-repo)"
+    new = "MCP-05 → MCP-06 → MCP-07"
+    if document == "contract":
+        text = text.replace(old, new)
+    else:
+        sections["1"] = sections["1"].replace(old, new)
+    assert "sim_before_live" in check_contract(text, policies, sections)

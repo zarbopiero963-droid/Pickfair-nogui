@@ -210,7 +210,11 @@ o reconciliation; NON implementa master/copy/follow. Tutto passa dalla Control A
 | MCP-07 | Certificazione E2E/cross-repo |
 
 PF-API-0 → PF-API-1 → PF-API commands.
+Numerazione nominale delle schede (NON ordine dei gate di certificazione):
 MCP-01 → MCP-02 → MCP-03 → MCP-04 → MCP-05 → MCP-06 → MCP-07.
+
+**Ordine operativo autorizzato:** MCP-01 → MCP-02 → MCP-03 → MCP-04 →
+MCP-05 → MCP-07 (SIM) → MCP-06 → MCP-07 (finale LIVE/cross-repo).
 La parte SIM di MCP-07 si esegue dopo MCP-05 e PRIMA di MCP-06; il dossier
 finale completa MCP-07 dopo LIVE. Non imporre LIVE per certificare sola SIM.
 
