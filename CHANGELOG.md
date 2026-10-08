@@ -104,6 +104,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Single order authority and durable intent de-dup (#461 PR26, gate
+  `LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE`): the engine marks a
+  `customer_ref` as consumed in the new additive SQLite table
+  `consumed_order_intents`, committed right before every transport call
+  (LIVE branch, declared SIM broker, `OrderManager`, fallback). The mark does
+  not follow the order status: the same intent is `DUPLICATE_BLOCKED` after
+  COMPLETED, FAILED after send (broker rejection), AMBIGUOUS, and after a
+  restart, and two processes on the same file cannot both send (PRIMARY KEY).
+  Before, de-dup only saw INFLIGHT/SUBMITTED rows and in-memory keys released
+  on terminal outcomes. The mark is removed only with proof that nothing was
+  sent: an engine pre-send error, or an argument error raised by the real
+  `BetfairClient` or by the identity-proven `SimulationBroker`. Timeout and
+  unknown outcomes stay AMBIGUOUS and go to reconciliation, never to a replay.
+  STOP and every gate before the transport consume nothing. In declared LIVE a
+  DB without the capability sends nothing (`DURABLE_DEDUPE_UNAVAILABLE`). A
+  `DUPLICATE_BLOCKED` no longer releases the original's in-memory key.
+- `TradingEngine` with `simulation_broker` set and a getter that does not
+  return it: places through the broker's `place_bet` with the same side and
+  signature adapter instead of failing with `NO_VALID_EXECUTION_PATH`
+  (`SimulationBroker` has no `execute()`).
+- `SimulationBroker` (F8, F10 of #453): an accepted unmatched order reports
+  `SUCCESS` with `orderStatus` `EXECUTABLE`, not `FAILURE`; an invalid market,
+  selection, price or size (NaN/Inf included) raises the same
+  `INVALID_*` code as `BetfairClient.place_bet` before matching, storage or
+  writes, and `place_orders` reports that leg as `FAILURE` with nothing stored.
+- `OrderManager` (F14 of #453 and adapter signatures): the client pre-send
+  codes are certain rejections (PERMANENT), not AMBIGUOUS; non-finite price or
+  stake and an invalid or conflicting side are rejected before saga and client
+  (a typo no longer becomes BACK); the `BetfairClient` envelope is read
+  (`ok`/`result`/`order_unknown`), so a placed order is no longer FAILED and a
+  lost response is AMBIGUOUS; cancel uses each broker's signature for one bet
+  id and refuses an empty bet id (never cancel-all) and `size_reduction`.
+- `SafetyLayer.validate_cashout_request` (F15 of #453) rejects NaN/Inf price
+  and stake.
 - Order identity for existing producers (#461 PR26-a): the runtime signal
   path, the post-settlement auto-trade, every dutching leg and
   `DutchingController.manual_bet` now publish `CMD_QUICK_BET` with a

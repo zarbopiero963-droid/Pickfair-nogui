@@ -1652,6 +1652,72 @@ class Database:
         ) or []
         return [str(row["correlation_id"]) for row in rows if row["correlation_id"]]
 
+    # =========================================================
+    # DE-DUP DUREVOLE DEGLI INTENTI CONSUMATI (#461 PR26)
+    # =========================================================
+    # `order_exists_inflight` vede solo INFLIGHT/SUBMITTED: dopo COMPLETED,
+    # FAILED o AMBIGUOUS, o dopo un restart, lo stesso intento tornava nuovo.
+    # Qui la prova che un `customer_ref` e' gia' stato consegnato al trasporto
+    # non dipende dallo stato dell'ordine. La PRIMARY KEY rende la marcatura
+    # atomica anche fra due engine sullo stesso file SQLite.
+    def consume_order_intent(
+        self,
+        customer_ref: str,
+        *,
+        attempt_id: str,
+        correlation_id: str = "",
+    ) -> bool:
+        """Marca il `customer_ref` come consumato. True solo se questa chiamata
+        ha creato la riga; False se l'intento era gia' consumato.
+
+        La riga e' scritta e committata PRIMA dell'invio: se il processo cade
+        subito dopo, l'intento resta consumato e un restart non lo rispedisce.
+        """
+        ref = str(customer_ref or "").strip()
+        attempt = str(attempt_id or "").strip()
+        if not ref or not attempt:
+            raise ValueError("consume_order_intent requires customer_ref and attempt_id")
+        with self._write_lock:
+            cur = self._execute(
+                """
+                INSERT OR IGNORE INTO consumed_order_intents(
+                    customer_ref, attempt_id, correlation_id, consumed_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (ref, attempt, str(correlation_id or ""), float(time.time())),
+            )
+            return int(cur.rowcount or 0) == 1
+
+    def release_order_intent(self, customer_ref: str, *, attempt_id: str) -> bool:
+        """Toglie la marcatura, ma solo quella creata da `attempt_id`.
+
+        Si usa solo quando c'e' la prova che nulla e' partito. Un tentativo che
+        ha perso la corsa non puo' cancellare la riga del vincitore.
+        """
+        ref = str(customer_ref or "").strip()
+        attempt = str(attempt_id or "").strip()
+        if not ref or not attempt:
+            return False
+        with self._write_lock:
+            cur = self._execute(
+                "DELETE FROM consumed_order_intents WHERE customer_ref = ? AND attempt_id = ?",
+                (ref, attempt),
+            )
+            return int(cur.rowcount or 0) == 1
+
+    def is_order_intent_consumed(self, customer_ref: str) -> bool:
+        ref = str(customer_ref or "").strip()
+        if not ref:
+            return False
+        row = self._execute(
+            "SELECT 1 FROM consumed_order_intents WHERE customer_ref = ? LIMIT 1",
+            (ref,),
+            fetchone=True,
+            commit=False,
+        )
+        return row is not None
+
     def insert_audit_event(self, event: Dict[str, Any]) -> None:
         self._execute(
             "INSERT INTO audit_events(ts, event_json) VALUES (?, ?)",

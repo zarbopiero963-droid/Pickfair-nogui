@@ -30,6 +30,7 @@ from requests.exceptions import Timeout
 
 from betfair_client import BetfairClient
 from core.trading_constants import AMBIGUITY_SUBMIT_UNKNOWN
+from tests.helpers.fake_consumed_intents import FakeConsumedIntentsMixin
 
 
 class FakeResponse:
@@ -224,7 +225,7 @@ class _Bus:
         pass
 
 
-class _DB:
+class _DB(FakeConsumedIntentsMixin):
     def insert_order(self, payload):
         return "OID-NET-1"
 

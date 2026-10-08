@@ -41,11 +41,16 @@ class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
         return broker.state.orders[report["betId"]]
 
     def assert_invalid_order_unchanged(self, broker, report):
-        """Validate deterministic invalid-order outcome."""
-        order = self.stored_order(broker, report)
+        """Validate deterministic invalid-order outcome.
+
+        F10 (#453, #461 PR26): an invalid leg is rejected before matching,
+        storage or writes, like BetfairClient.place_bet in LIVE. It used to be
+        stored as a resting EXECUTABLE order with selection 0 or price 0.
+        """
         self.assertEqual(report["status"], "FAILURE")
-        self.assertEqual(order.matched_size, 0.0)
-        self.assertEqual(order.status, "EXECUTABLE")
+        self.assertEqual(report["betId"], "")
+        self.assertEqual(report["sizeMatched"], 0.0)
+        self.assertEqual(broker.state.orders, {})
 
     def test_load_invalid_numbers(self):
         """Malformed state restore values should not crash."""
@@ -86,7 +91,7 @@ class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
         )
         report = self.first_report(out)
         self.assert_invalid_order_unchanged(broker, report)
-        self.assertEqual(self.stored_order(broker, report).selection_id, 0)
+        self.assertEqual(report["errorCode"], "INVALID_SELECTION_ID")
 
     def test_bad_selection_fails(self):
         """String selection id should fail match without crashing."""
@@ -97,7 +102,7 @@ class TestSimBrokerRuntime(unittest.TestCase):  # noqa: D203,D211
         )
         report = self.first_report(out)
         self.assert_invalid_order_unchanged(broker, report)
-        self.assertEqual(self.stored_order(broker, report).selection_id, 0)
+        self.assertEqual(report["errorCode"], "INVALID_SELECTION_ID")
 
     def test_conflict_selection_fails(self):
         """Conflicting/invalid selection keys should fail deterministically."""

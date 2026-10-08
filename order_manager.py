@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import time
 import uuid
 from enum import Enum, unique
@@ -188,6 +189,13 @@ _ERROR_MAP: Dict[str, ErrorClass] = {
     "BET_ACTION_ERROR": ErrorClass.PERMANENT,
     "INVALID_INPUT": ErrorClass.PERMANENT,
     "LOSS_LIMIT_EXCEEDED": ErrorClass.PERMANENT,
+    # F14 (#453, #461 PR26): errori che BetfairClient.place_bet e il
+    # SimulationBroker sollevano PRIMA di costruire la richiesta o di toccare lo
+    # stato. Nulla e' partito: rifiuto certo, non AMBIGUOUS.
+    "INVALID_SELECTION_ID": ErrorClass.PERMANENT,
+    "INVALID_PRICE": ErrorClass.PERMANENT,
+    "INVALID_SIZE": ErrorClass.PERMANENT,
+    "INVALID_SIDE": ErrorClass.PERMANENT,
     # ambiguous
     "UNKNOWN": ErrorClass.AMBIGUOUS,
     "PROCESSED_WITH_ERRORS": ErrorClass.AMBIGUOUS,
@@ -425,9 +433,7 @@ class OrderManager:
         n["selection_id"] = self._safe_int(
             n.get("selection_id", n.get("selectionId"))
         )
-        n["bet_type"] = self._safe_side(
-            n.get("bet_type") or n.get("side") or n.get("action") or "BACK"
-        )
+        n["bet_type"] = self._lato_dal_payload(n)
         n["price"] = self._safe_float(n.get("price", n.get("odds")))
         n["stake"] = self._safe_float(n.get("stake", n.get("size")))
         n["simulation_mode"] = bool(n.get("simulation_mode", False))
@@ -449,15 +455,49 @@ class OrderManager:
         )
         return n
 
+    @staticmethod
+    def _lato_dal_payload(payload: Dict[str, Any]) -> str:
+        """Lato BACK/LAY con il contratto dell'engine (`_con_lato_valido`).
+
+        `safe_side` convertiva in BACK qualunque valore non BACK/LAY: un refuso
+        o un `bet_type` in conflitto con `side` diventavano la scommessa
+        opposta. DECISIONE-426 P13 al confine adapter (#461 PR26). Alias vuoti
+        valgono come assenti; alias presenti devono essere stringhe e
+        coincidere. Lato invalido => "" e `_validate_payload` rifiuta prima di
+        saga e broker. Nessun alias: resta il default storico BACK.
+        """
+        lati = set()
+        for valore in (payload.get("bet_type"), payload.get("side")):
+            if valore is None:
+                continue
+            if not isinstance(valore, str):
+                return ""
+            if valore.strip():
+                lati.add(valore.strip().upper())
+        if not lati:
+            azione = payload.get("action")
+            if azione is None or (isinstance(azione, str) and not azione.strip()):
+                return "BACK"
+            if not isinstance(azione, str):
+                return ""
+            lati.add(azione.strip().upper())
+        if len(lati) != 1 or not lati <= {"BACK", "LAY"}:
+            return ""
+        return lati.pop()
+
     def _validate_payload(self, payload: Dict[str, Any]) -> None:
         if not payload["market_id"]:
             raise ValidationError("market_id mancante")
         if payload["selection_id"] <= 0:
             raise ValidationError("selection_id non valido")
-        if payload["price"] <= 1.0:
-            raise ValidationError("price non valido (deve essere > 1.0)")
-        if payload["stake"] <= 0.0:
-            raise ValidationError("stake non valido (deve essere > 0)")
+        if payload["bet_type"] not in ("BACK", "LAY"):
+            raise ValidationError("bet_type non valido (BACK o LAY)")
+        # F14: NaN supera `<= 1.0` e `<= 0.0` (confronto sempre falso) e +Inf
+        # li supera comunque. Senza finitezza il payload arrivava al client.
+        if not math.isfinite(payload["price"]) or payload["price"] <= 1.0:
+            raise ValidationError("price non valido (deve essere finito e > 1.0)")
+        if not math.isfinite(payload["stake"]) or payload["stake"] <= 0.0:
+            raise ValidationError("stake non valido (deve essere finito e > 0)")
 
     # ---------------------------------------------------------
     # SAGA PERSISTENCE  (idempotent on two axes)
@@ -693,38 +733,39 @@ class OrderManager:
                 rc = ReasonCode.BROKER_REJECTED
                 saga_status = OrderStatus.FAILED
 
-            self._transition_saga(
-                customer_ref=customer_ref,
-                new_status=saga_status,
-                error_text=str(exc),
-                reason_code=rc,
-            )
-            exc_event = (
-                "QUICK_BET_AMBIGUOUS"
-                if saga_status == OrderStatus.AMBIGUOUS
-                else "QUICK_BET_FAILED"
-            )
-            self._publish(exc_event, {
-                **payload, "error": str(exc),
-                "error_class": ec.value, "reason_code": rc.value,
-            })
-            return {
-                "ok": False,
-                "status": saga_status.value,
-                "customer_ref": customer_ref,
-                "error": str(exc),
-                "error_class": ec.value,
-                "reason_code": rc.value,
-            }
+            return self._place_non_riuscito(
+                payload, saga_status=saga_status, rc=rc, ec=ec, error=str(exc))
+
+        # --- BetfairClient envelope (#461 PR26) ---
+        # `BetfairClient.place_bet` non solleva sugli errori dell'exchange:
+        # restituisce `{"ok": False, "error", "order_unknown"}`, e su successo
+        # annida la risposta grezza in `result`. Letta al livello top, un place
+        # riuscito diventava FAILED e un esito ignoto (timeout, risposta persa,
+        # DUPLICATE_TRANSACTION) un FAILED definitivo invece di AMBIGUOUS.
+        report_source = response
+        if isinstance(response, dict) and "ok" in response:
+            if response.get("ok") is not True:
+                error_text = str(response.get("error") or "BROKER_NOT_OK")
+                if response.get("order_unknown") is True:
+                    return self._place_non_riuscito(
+                        payload, saga_status=OrderStatus.AMBIGUOUS,
+                        rc=ReasonCode.AMBIGUOUS_OUTCOME, ec=ErrorClass.AMBIGUOUS,
+                        error=error_text, response=response)
+                return self._place_non_riuscito(
+                    payload, saga_status=OrderStatus.FAILED,
+                    rc=ReasonCode.BROKER_REJECTED, ec=ErrorClass.PERMANENT,
+                    error=error_text, response=response)
+            nested = response.get("result")
+            report_source = nested if isinstance(nested, dict) else {}
 
         # --- interpret response ---
-        instruction_report = self._extract_instruction_report(response)
+        instruction_report = self._extract_instruction_report(report_source)
         leg_status = str(instruction_report.get("status") or "").upper()
         bet_id = str(instruction_report.get("betId") or "")
         size_matched = self._safe_float(
             instruction_report.get("sizeMatched"), 0.0
         )
-        overall_status = str(response.get("status") or "").upper()
+        overall_status = str(report_source.get("status") or "").upper()
 
         saga_status, reason_code = map_betfair_status(
             leg_status, overall_status, size_matched, stake
@@ -771,6 +812,67 @@ class OrderManager:
             "response": response,
         }
 
+    def _place_non_riuscito(
+        self,
+        payload: Dict[str, Any],
+        *,
+        saga_status: OrderStatus,
+        rc: ReasonCode,
+        ec: ErrorClass,
+        error: str,
+        response: Any = None,
+    ) -> Dict[str, Any]:
+        """Esito FAILED/AMBIGUOUS di un place: saga, evento e risultato."""
+        customer_ref = payload["customer_ref"]
+        self._transition_saga(
+            customer_ref=customer_ref,
+            new_status=saga_status,
+            error_text=error,
+            reason_code=rc,
+        )
+        exc_event = (
+            "QUICK_BET_AMBIGUOUS"
+            if saga_status == OrderStatus.AMBIGUOUS
+            else "QUICK_BET_FAILED"
+        )
+        self._publish(exc_event, {
+            **payload, "error": error,
+            "error_class": ec.value, "reason_code": rc.value,
+        })
+        out = {
+            "ok": False,
+            "status": saga_status.value,
+            "customer_ref": customer_ref,
+            "error": error,
+            "error_class": ec.value,
+            "reason_code": rc.value,
+        }
+        if response is not None:
+            out["response"] = response
+        return out
+
+    @staticmethod
+    def _kwargs_cancel_singolo(cancel_fn, market_id: str, bet_id: str) -> Dict[str, Any]:
+        """Kwargs di `cancel_orders` per UN solo bet, secondo la firma del broker.
+
+        `BetfairClient.cancel_orders(*, market_id, bet_ids)` e
+        `SimulationBroker.cancel_orders(*, market_id, instructions)` non
+        accettano `bet_id`: l'OrderManager mandava `bet_id=` e sollevava
+        `TypeError` con entrambi (#461 PR26). Firma non ispezionabile o con
+        `**kwargs` (doppi dei test): forma storica `market_id`/`bet_id`.
+        """
+        try:
+            params = inspect.signature(cancel_fn).parameters
+        except (TypeError, ValueError):
+            return {"market_id": market_id, "bet_id": bet_id}
+        if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return {"market_id": market_id, "bet_id": bet_id}
+        if "bet_ids" in params:
+            return {"market_id": market_id, "bet_ids": [bet_id]}
+        if "instructions" in params:
+            return {"market_id": market_id, "instructions": [{"betId": bet_id}]}
+        return {"market_id": market_id, "bet_id": bet_id}
+
     # ---------------------------------------------------------
     # CANCEL ORDER
     # ---------------------------------------------------------
@@ -781,7 +883,15 @@ class OrderManager:
         market_id: str = "",
         size_reduction: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Cancel (or reduce) an existing order."""
+        """Cancel an existing order (one bet id, never the whole market)."""
+        # Pre-invio (#461 PR26): un bet_id vuoto diventerebbe `bet_ids=[]` o
+        # `instructions=[]`, che per entrambi i broker vuol dire "cancella TUTTO
+        # il mercato". La riduzione parziale non esiste nella firma di nessuno
+        # dei due broker (il SIM cancellerebbe l'intero ordine): rifiutata.
+        if not str(bet_id or "").strip():
+            raise ValidationError("bet_id mancante: cancel singolo richiesto")
+        if size_reduction is not None:
+            raise ValidationError("size_reduction non supportato dai broker")
         self._transition_saga(
             customer_ref=customer_ref,
             new_status=OrderStatus.CANCEL_PENDING,
@@ -804,12 +914,9 @@ class OrderManager:
                     "reason_code": ReasonCode.BROKER_UNAVAILABLE.value}
 
         try:
-            cancel_kwargs: Dict[str, Any] = {
-                "market_id": market_id, "bet_id": bet_id,
-            }
-            if size_reduction is not None:
-                cancel_kwargs["size_reduction"] = size_reduction
-            response = client.cancel_orders(**cancel_kwargs)
+            cancel_fn = client.cancel_orders
+            response = cancel_fn(**self._kwargs_cancel_singolo(
+                cancel_fn, market_id, str(bet_id).strip()))
         except Exception as exc:
             self._transition_saga(
                 customer_ref=customer_ref,
@@ -823,7 +930,15 @@ class OrderManager:
             return {"ok": False, "status": OrderStatus.FAILED.value,
                     "error": str(exc), "reason_code": ReasonCode.CANCEL_REJECTED.value}
 
-        instruction_report = self._extract_instruction_report(response)
+        # Busta BetfairClient: `ok` False => rifiuto; i report stanno in `result`.
+        report_source = response if isinstance(response, dict) else {}
+        if "ok" in report_source:
+            nested = report_source.get("result")
+            report_source = (
+                nested if report_source.get("ok") is True and isinstance(nested, dict)
+                else {}
+            )
+        instruction_report = self._extract_instruction_report(report_source)
         cancel_status = str(instruction_report.get("status") or "").upper()
 
         if cancel_status == "SUCCESS":

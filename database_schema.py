@@ -282,6 +282,20 @@ SCHEMA_DDL: tuple[str, ...] = (
         updated_at REAL NOT NULL
     )
     """,
+    # De-dup DUREVOLE degli intenti consumati (#461 PR26, gate
+    # LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE). Una riga = un customer_ref che
+    # l'engine ha consegnato al trasporto. Non segue lo stato dell'ordine: resta
+    # anche dopo COMPLETED/FAILED/AMBIGUOUS e dopo un restart. Si cancella solo
+    # la riga del proprio tentativo (`attempt_id`) e solo con la prova che nulla
+    # e' partito. Tabella nuova e additiva: nessuna colonna esistente cambia.
+    """
+    CREATE TABLE IF NOT EXISTS consumed_order_intents (
+        customer_ref TEXT PRIMARY KEY,
+        attempt_id TEXT NOT NULL,
+        correlation_id TEXT NOT NULL DEFAULT '',
+        consumed_at REAL NOT NULL
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS audit_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

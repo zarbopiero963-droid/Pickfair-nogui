@@ -32,6 +32,14 @@ def _to_int(value: Any, default: int = 0) -> int:
         return default
 
 
+# Argument errors that place_bet raises before matching, storage or writes:
+# the same codes BetfairClient.place_bet raises before building the request.
+_PRE_SEND_REJECTIONS = frozenset({
+    "INVALID_MARKET_ID", "INVALID_SELECTION_ID", "INVALID_PRICE", "INVALID_SIZE",
+    "INVALID_SIDE",
+})
+
+
 @dataclass
 class SimOrder:
     bet_id: str
@@ -782,6 +790,32 @@ class SimulationBroker:
         market_name: str = "",
         runner_name: str = "",
     ) -> Dict[str, Any]:
+        # F10 (#453, #461 PR26): the PAPER boundary validates every argument
+        # like BetfairClient.place_bet, in the same order and with the same
+        # error codes, BEFORE matching, storage or writes. An invalid market,
+        # selection, price or size used to be stored as a resting order (and a
+        # NaN/Inf one reached the funds math) where LIVE sends nothing.
+        market_id_s = str(market_id or "").strip()
+        if not market_id_s:
+            raise RuntimeError("INVALID_MARKET_ID")
+        try:
+            selection_id_i = int(selection_id)
+        except Exception as exc:
+            raise RuntimeError("INVALID_SELECTION_ID") from exc
+        if selection_id_i <= 0:
+            raise RuntimeError("INVALID_SELECTION_ID")
+        try:
+            price_f = float(price)
+        except Exception as exc:
+            raise RuntimeError("INVALID_PRICE") from exc
+        if not math.isfinite(price_f) or price_f <= 1.0:
+            raise RuntimeError("INVALID_PRICE")
+        try:
+            size_f = float(size)
+        except Exception as exc:
+            raise RuntimeError("INVALID_SIZE") from exc
+        if not math.isfinite(size_f) or size_f <= 0.0:
+            raise RuntimeError("INVALID_SIZE")
         # DECISIONE-426 P15: the PAPER boundary has the same side contract as
         # BetfairClient.place_bet. Reject before matching, storage, or writes.
         normalized_side = side.strip().upper() if isinstance(side, str) else ""
@@ -790,11 +824,11 @@ class SimulationBroker:
 
         order = SimOrder(
             bet_id="SIMBET-" + uuid.uuid4().hex[:14],
-            market_id=str(market_id),
-            selection_id=int(selection_id),
+            market_id=market_id_s,
+            selection_id=selection_id_i,
             side=normalized_side,
-            price=float(price),
-            size=float(size),
+            price=price_f,
+            size=size_f,
             customer_ref=str(customer_ref or ""),
             event_key=str(event_key or ""),
             table_id=table_id,
@@ -809,12 +843,18 @@ class SimulationBroker:
             self.state.orders[order.bet_id] = order
         self._persist_order(order)
 
+        # F8 (#453, #461 PR26): an accepted order that rests unmatched is a
+        # Betfair SUCCESS with orderStatus EXECUTABLE, not a FAILURE. Only an
+        # order that cannot rest (LAPSED: market already settled) is reported
+        # as a failure, as before.
+        accepted = order.matched_size > 0 or order.status != "LAPSED"
         return {
             "status": "SUCCESS",
             "marketId": order.market_id,
             "instructionReports": [
                 {
-                    "status": "SUCCESS" if order.matched_size > 0 else "FAILURE",
+                    "status": "SUCCESS" if accepted else "FAILURE",
+                    "orderStatus": order.status,
                     "betId": order.bet_id,
                     "sizeMatched": order.matched_size,
                     "averagePriceMatched": order.avg_price_matched,
@@ -872,20 +912,30 @@ class SimulationBroker:
                 })
                 continue
             normalized_side = sides.pop()
-            result = self.place_bet(
-                market_id=str(market_id),
-                selection_id=selection_id,
-                side=normalized_side,
-                price=_to_float(raw_price, 0.0),
-                size=_to_float(raw_size, 0.0),
-                customer_ref=customer_ref,
-                event_key=event_key,
-                table_id=table_id,
-                batch_id=batch_id,
-                event_name=event_name,
-                market_name=market_name,
-                runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
-            )
+            try:
+                result = self.place_bet(
+                    market_id=str(market_id),
+                    selection_id=selection_id,
+                    side=normalized_side,
+                    price=_to_float(raw_price, 0.0),
+                    size=_to_float(raw_size, 0.0),
+                    customer_ref=customer_ref,
+                    event_key=event_key,
+                    table_id=table_id,
+                    batch_id=batch_id,
+                    event_name=event_name,
+                    market_name=market_name,
+                    runner_name=str(item.get("runner_name") or item.get("runnerName") or ""),
+                )
+            except RuntimeError as exc:
+                # F10: place_bet rejected the leg before storing anything.
+                if str(exc) not in _PRE_SEND_REJECTIONS:
+                    raise
+                reports.append({
+                    "status": "FAILURE", "betId": "", "sizeMatched": 0.0,
+                    "averagePriceMatched": 0.0, "errorCode": str(exc),
+                })
+                continue
             reports.extend(result.get("instructionReports") or [])
 
         return {

@@ -6,7 +6,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from typing import Any, Deque, Dict, Optional, Set
+from typing import Any, Callable, Deque, Dict, Optional, Set
 
 from circuit_breaker import CircuitBreaker
 from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
@@ -967,9 +967,13 @@ class TradingEngine:
             )
             finalization_persisted = self._safe_write_order_metadata(order_id, meta)
 
-        # Release keys (ONLY on terminal)
+        # Release keys (ONLY on terminal). Un DUPLICATE_BLOCKED non ha mai
+        # registrato chiavi sue: la chiave in memoria e' quella dell'ORIGINALE,
+        # e rilasciarla qui riapriva l'intento mentre l'originale era ancora in
+        # volo (#461 PR26).
         try:
-            if outcome in (OUTCOME_SUCCESS, OUTCOME_FAILURE):
+            if (outcome in (OUTCOME_SUCCESS, OUTCOME_FAILURE)
+                    and status != STATUS_DUPLICATE_BLOCKED):
                 self._release_customer_ref_if_terminal(ctx)
         except Exception:
             logger.exception("Failed to release inflight keys")
@@ -1386,9 +1390,120 @@ class TradingEngine:
             return False
         if self._is_duplicate_in_db(ctx):
             return False
+        if self._intento_gia_consumato(ctx):
+            return False
 
         self._register_dedup_keys(ctx)
         return True
+
+    def _intento_gia_consumato(self, ctx: _ExecutionContext) -> bool:
+        """Il `customer_ref` e' gia' stato consegnato al trasporto, in qualunque
+        stato sia finito l'ordine e anche prima di un restart? (#461 PR26)
+
+        Qui si decide solo l'esito leggibile (DUPLICATE_BLOCKED). La garanzia
+        vera e' la marcatura atomica al punto di invio
+        (`_consuma_intento_prima_dell_invio`): se questa lettura fallisce si
+        prosegue, e sara' quella scrittura a decidere, fail-closed.
+        """
+        fn = getattr(self.db, "is_order_intent_consumed", None)
+        if not callable(fn):
+            return False
+        try:
+            consumato = fn(ctx.customer_ref) is True
+        except Exception:
+            logger.exception("is_order_intent_consumed failed - decide la marcatura all'invio")
+            return False
+        if consumato:
+            logger.warning("Intento gia' consumato: cref=%s cid=%s",
+                           ctx.customer_ref, ctx.correlation_id)
+        return consumato
+
+    def _consuma_intento_prima_dell_invio(
+            self, ctx: _ExecutionContext, modalita_dichiarata: str) -> Optional[str]:
+        """Marca DUREVOLMENTE il `customer_ref` come consumato, subito prima di
+        chiamare il trasporto. Restituisce l'id del tentativo, che serve solo a
+        togliere la propria marcatura quando c'e' la prova che nulla e' partito.
+
+        Requisiti owner per PR26 (#461, LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE):
+        un intento inviato resta deduplicabile dopo ogni stato terminale e dopo
+        un restart, senza contare sulla sola finestra di 60 s di Betfair.
+
+        Ogni errore qui e' `_ErrorePrimaDellInvio`: il trasporto non e' stato
+        chiamato, quindi FAILED e' la verita'. Marcatura gia' presente (un altro
+        tentativo, anche di un altro processo, ha vinto la corsa) => nessun invio.
+        DB senza la capacita': in LIVE dichiarato niente invio; altrove (doppi
+        dei test, SIM senza DB reale) si prosegue senza marcatura, con un log.
+        """
+        consume = getattr(self.db, "consume_order_intent", None)
+        if not callable(consume):
+            if modalita_dichiarata == "LIVE":
+                raise _ErrorePrimaDellInvio("DURABLE_DEDUPE_UNAVAILABLE")
+            logger.warning("DB senza consume_order_intent: de-dup durevole assente (cref=%s)",
+                           ctx.customer_ref)
+            return None
+        tentativo = uuid.uuid4().hex
+        try:
+            esito = consume(ctx.customer_ref, attempt_id=tentativo,
+                            correlation_id=ctx.correlation_id)
+        except Exception as exc:
+            logger.exception("consume_order_intent failed - nessun invio")
+            raise _ErrorePrimaDellInvio("DURABLE_DEDUPE_WRITE_FAILED") from exc
+        if esito is True:
+            return tentativo
+        if esito is False:
+            raise _ErrorePrimaDellInvio("INTENT_ALREADY_CONSUMED")
+        # Risposta non booleana: non e' una prova di marcatura.
+        if modalita_dichiarata == "LIVE":
+            raise _ErrorePrimaDellInvio("DURABLE_DEDUPE_UNAVAILABLE")
+        logger.warning("consume_order_intent senza esito booleano: de-dup durevole assente (cref=%s)",
+                       ctx.customer_ref)
+        return None
+
+    def _nulla_e_partito(self, exc: Exception, client: Any) -> bool:
+        """Prova che il trasporto NON ha spedito nulla.
+
+        Due casi soli: l'errore l'ha sollevato l'engine prima di chiamare il
+        client (`_ErrorePrimaDellInvio`, per tipo), oppure e' uno degli errori di
+        validazione degli argomenti che il `BetfairClient` reale o il broker di
+        simulazione riconosciuto per identita' sollevano prima di costruire la
+        richiesta o di toccare lo stato. Tutto il resto, compreso un timeout,
+        un rifiuto del broker o un `TypeError` di post-processing, NON prova
+        niente: la marcatura resta.
+        """
+        if isinstance(exc, _ErrorePrimaDellInvio):
+            return True
+        return (
+            isinstance(exc, RuntimeError)
+            and str(exc) in self._ERRORI_PRIMA_DELL_INVIO
+            and (self._e_il_client_betfair_reale(client)
+                 or self._e_il_broker_di_simulazione(client))
+        )
+
+    def _rilascia_se_nulla_e_partito(self, ctx: _ExecutionContext, tentativo: Optional[str],
+                                     exc: Exception, client: Any) -> None:
+        if tentativo is None or not self._nulla_e_partito(exc, client):
+            return
+        release = getattr(self.db, "release_order_intent", None)
+        if not callable(release):
+            return
+        try:
+            release(ctx.customer_ref, attempt_id=tentativo)
+        except Exception:
+            # Fail-closed: l'intento resta consumato; un nuovo tentativo dello
+            # stesso intento sara' DUPLICATE_BLOCKED invece di un doppio ordine.
+            logger.exception("release_order_intent failed - intento resta consumato (cref=%s)",
+                             ctx.customer_ref)
+
+    def _invia_marcando_l_intento(self, ctx: _ExecutionContext, modalita_dichiarata: str,
+                                  client: Any, invia: Callable[[], Any]) -> Any:
+        """Unico punto in cui l'engine chiama un trasporto fuori dal ramo LIVE:
+        marcatura durevole, invio, e rilascio solo con la prova del non invio."""
+        tentativo = self._consuma_intento_prima_dell_invio(ctx, modalita_dichiarata)
+        try:
+            return invia()
+        except Exception as exc:
+            self._rilascia_se_nulla_e_partito(ctx, tentativo, exc, client)
+            raise
 
     def _is_duplicate_in_memory(self, ctx: _ExecutionContext) -> bool:
         return ctx.customer_ref in self._inflight_keys or ctx.correlation_id in self._seen_correlation_ids
@@ -1683,8 +1798,21 @@ class TradingEngine:
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             modalita_dichiarata = mode
             if mode == "SIMULATION":
-                if self.simulation_broker is not None and callable(getattr(self.simulation_broker, "execute", None)):
-                    return self.simulation_broker.execute(payload)
+                broker = self.simulation_broker
+                if broker is not None and callable(getattr(broker, "execute", None)):
+                    return self._invia_marcando_l_intento(
+                        ctx, modalita_dichiarata, broker,
+                        lambda: broker.execute(payload))
+                # Il `SimulationBroker` vero non ha `execute()`: con il broker
+                # dichiarato sull'engine e un getter che non lo restituisce si
+                # cadeva su NO_VALID_EXECUTION_PATH. Stesso adapter del fallback
+                # (lato validato, firma rispettata). #461 PR26.
+                sim_place = getattr(broker, "place_bet", None) if broker is not None else None
+                if callable(sim_place):
+                    return self._invia_marcando_l_intento(
+                        ctx, modalita_dichiarata, broker,
+                        lambda: sim_place(**self._kwargs_per_place_bet(
+                            sim_place, self._con_lato_valido(payload))))
             elif mode == "LIVE":
                 if not bool(getattr(runtime, "is_live_allowed", lambda: False)()):
                     raise RuntimeError("LIVE_EXECUTION_BLOCKED")
@@ -1715,9 +1843,14 @@ class TradingEngine:
                         )
 
                     if place_fn is not None:
+                        # Marcatura durevole PRIMA dell'invio, fuori dal try: un
+                        # errore qui e' pre-invio e non conta per il breaker.
+                        tentativo = self._consuma_intento_prima_dell_invio(
+                            ctx, modalita_dichiarata)
                         try:
                             result = place_fn(payload)
                         except Exception as _exc:
+                            self._rilascia_se_nulla_e_partito(ctx, tentativo, _exc, live_client)
                             self._order_submission_breaker.record_failure(_exc)
                             if self._esito_certo_o_gia_classificato(_exc, live_client):
                                 raise
@@ -1764,7 +1897,9 @@ class TradingEngine:
             for mn in ("submit", "place_order"):
                 fn = getattr(self.order_manager, mn, None)
                 if callable(fn):
-                    return fn(payload)
+                    return self._invia_marcando_l_intento(
+                        ctx, modalita_dichiarata, self.order_manager,
+                        lambda: fn(payload))
 
         if callable(self.client_getter) and not live_client_risolto:
             client = self.client_getter()
@@ -1822,7 +1957,9 @@ class TradingEngine:
                     # DECISIONE-426 P17.
                     if self._e_il_broker_di_simulazione(client):
                         payload = self._con_lato_valido(payload)
-                    return place(**self._kwargs_per_place_bet(place, payload))
+                    return self._invia_marcando_l_intento(
+                        ctx, modalita_dichiarata, client,
+                        lambda: place(**self._kwargs_per_place_bet(place, payload)))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
 

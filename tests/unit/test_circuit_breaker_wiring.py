@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from circuit_breaker import CircuitBreaker, State
+from tests.helpers.fake_consumed_intents import FakeConsumedIntentsMixin
 
 
 # ===========================================================================
@@ -135,7 +136,7 @@ class _MockBus:
     def publish(self, *a, **kw): pass
 
 
-class _MockDB:
+class _MockDB(FakeConsumedIntentsMixin):
     def insert_order(self, *a, **kw): return None
     def insert_audit_event(self, *a, **kw): return None
     def get_settings(self): return {}
@@ -237,12 +238,13 @@ def test_trading_engine_order_failures_trip_breaker():
     fake_client.place_order.side_effect = RuntimeError("TIMEOUT")
     engine.betfair_client = fake_client
 
-    ctx = _make_ctx(engine)
     payload = {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0}
 
+    # Tre intenti DISTINTI: dalla PR26 (#461) lo stesso customer_ref gia'
+    # consegnato al trasporto non riparte, quindi non conterebbe come invio.
     for _ in range(3):
         try:
-            engine._submit_to_order_path(ctx, payload)
+            engine._submit_to_order_path(_make_ctx(engine), payload)
         except RuntimeError:
             pass
 
@@ -298,14 +300,14 @@ def test_trading_engine_ok_false_non_session_trips_breaker():
     fake_client.place_order.return_value = {"ok": False, "error": "MARKET_SUSPENDED"}
     engine.betfair_client = fake_client
 
-    ctx = _make_ctx(engine)
     payload = {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0}
 
     breaker = engine._order_submission_breaker
     threshold = breaker.max_failures
 
+    # Intenti distinti: vedi test_trading_engine_order_failures_trip_breaker.
     for _ in range(threshold):
-        result = engine._submit_to_order_path(ctx, payload)
+        result = engine._submit_to_order_path(_make_ctx(engine), payload)
         assert result == {"ok": False, "error": "MARKET_SUSPENDED"}, \
             "ok=False result must be returned to caller"
 
@@ -377,7 +379,7 @@ def _make_ctx(engine: Any) -> Any:
     import uuid
     return _ExecutionContext(
         correlation_id=str(uuid.uuid4()),
-        customer_ref="test-ref",
+        customer_ref=f"test-ref-{uuid.uuid4().hex[:12]}",
         created_at=0.0,
     )
 
@@ -500,11 +502,11 @@ def test_lazy_client_failure_ripetute_aprono_il_breaker():
     engine.betfair_client = None
     engine.client_getter = lambda: fake_client
 
-    ctx = _make_ctx(engine)
     payload = {"market_id": "1.1", "selection_id": 123, "side": "BACK", "price": 2.0, "size": 10.0}
+    # Intenti distinti: vedi test_trading_engine_order_failures_trip_breaker.
     for _ in range(3):
         try:
-            engine._submit_to_order_path(ctx, payload)
+            engine._submit_to_order_path(_make_ctx(engine), payload)
         except RuntimeError:
             pass
 
