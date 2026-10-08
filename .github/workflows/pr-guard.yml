@@ -64,7 +64,7 @@ jobs:
           # contenere gli input del guard, quindi trovarceli e' un attacco o un
           # errore, e in entrambi i casi merita uno stop visibile invece di una
           # scrittura dirottata in silenzio. -L prende anche i symlink rotti.
-          for GUARD_INPUT in pr_meta.json pr_files_raw.json allowed_scope_base.json; do
+          for GUARD_INPUT in pr_meta.json pr_files_raw.json allowed_scope_base.json pr_full_diff.patch; do
             if [ -e "$GUARD_INPUT" ] || [ -L "$GUARD_INPUT" ]; then
               echo "${GUARD_INPUT} esiste gia' nel checkout: gli input del guard non possono venire dalla PR (fail-closed)" >&2
               exit 1
@@ -119,6 +119,10 @@ jobs:
           git diff --no-renames --name-only "${PR_BASE_SHA}"...HEAD \
             | jq -R -s 'split("\n") | map(select(length > 0))' \
             > pr_files_raw.json
+          # Patch Python dell'INTERO diff assemblato (base...head), stesso SHA
+          # immutabile e stessa guardia anti-symlink: serve al controllo full
+          # diff del contratto di autonomia (docs/auto_pr_flow_spec.md §0.10).
+          git diff --no-renames -U0 "${PR_BASE_SHA}"...HEAD -- '*.py' > pr_full_diff.patch
 
           # Copia del registro di scope dal BASE, per il confronto che
           # guardrail_check.py fa sull'invariante `files` == diff. La estrae il
@@ -152,3 +156,31 @@ jobs:
           # file, non le sue dipendenze. La modalita' isolata toglie la directory
           # dello script da sys.path e ignora le variabili d'ambiente Python.
           python -I scripts/guardrail_check.py
+
+      - name: Full-diff autonomy check
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # Contratto di autonomia §0.10 (owner 08/10/2026): il controllo guarda
+          # l'INTERO diff della PR, non l'ultimo push. BLOCK su materiale segreto,
+          # input del guard nel diff, scope != diff e nuove dipendenze di
+          # produzione non dichiarate; riporta file a merge owner, safety-critical
+          # e nuovi chiamanti del percorso denaro. `python -I` per la stessa
+          # ragione del guard. Nessun file scritto: il report va solo nel summary.
+          set +e
+          REPORT="$(python -I scripts/pr_autonomy_policy.py full-diff \
+            --meta pr_meta.json --files pr_files_raw.json \
+            --patch pr_full_diff.patch --scope .guardrails/allowed_scope.json \
+            --base-sha "${PR_BASE_SHA}" --head-sha "${PR_HEAD_SHA}")"
+          RC=$?
+          set -e
+          printf '%s\n' "${REPORT}"
+          {
+            echo "### Full-diff autonomy check"
+            echo '```json'
+            printf '%s\n' "${REPORT}"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          exit "${RC}"

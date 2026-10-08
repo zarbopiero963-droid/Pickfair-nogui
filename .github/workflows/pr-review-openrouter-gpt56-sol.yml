@@ -248,6 +248,29 @@ jobs:
               r"(?i)(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)$",
           ]
 
+          # Contratto di autonomia (docs/auto_pr_flow_spec.md §0.8, owner 08/10/2026):
+          # `CRITICAL_PATTERNS` qui sopra resta la lista SAFETY-CRITICAL, che e'
+          # INFORMATIVA — elenca i file sensibili nel commento ma non blocca da sola
+          # l'auto-merge. La label `manual-review-required` (blocker reale) la mette
+          # SOLO questa lista: file che definiscono autorita'/gate/review/merge, tutti
+          # i workflow, i manifest di dipendenze e il materiale segreto. Copia
+          # identica di `scripts/pr_autonomy_policy.py::MANUAL_AUTHORITY_PATTERNS`,
+          # verificata da tests/scripts/test_pr_autonomy_policy.py.
+          MANUAL_AUTHORITY_PATTERNS = [
+              r"(^|/)\.github/workflows/",
+              r"^(CLAUDE|AGENTS)\.md$",
+              r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
+              r"^scripts/(guardrail_check|pr_autonomy_policy|pr_fix_loop_policy|pr_flow_automation|pr_merge_readiness|pr_automation_controller)\.py$",
+              r"(^|/)requirements[^/]*\.(txt|in|lock)$",
+              r"(^|/)pyproject\.toml$",
+              r"(^|/)poetry\.lock$",
+              r"(^|/)\.env($|\.)",
+              r"(?i)(^|/)[^/]*\.(pem|pfx|p12|key|keystore|jks)$",
+              r"(?i)(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519)$",
+          ]
+          # Modelli senza segreti (es. `.env.example`): non chiedono il merge owner.
+          MANUAL_TEMPLATE_SUFFIXES = (".example", ".sample", ".template", ".dist")
+
           REDACTIONS = [
               (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----"), "[REDACTED_PRIVATE_KEY]"),
               (re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_\-]{20,}\b"), "[REDACTED_OPENAI_KEY]"),
@@ -484,6 +507,26 @@ jobs:
 
           def is_critical(filename: str) -> bool:
               return any(re.search(pattern, filename) for pattern in CRITICAL_PATTERNS)
+
+          def is_manual_authority(filename: str) -> bool:
+              if filename.endswith(MANUAL_TEMPLATE_SUFFIXES):
+                  return False
+              return any(re.search(pattern, filename) for pattern in MANUAL_AUTHORITY_PATTERNS)
+
+          def manual_authority_files(files):
+              """File del range che chiedono il merge manuale owner (§0.8).
+
+              Stesso trattamento di `build_patch_payload` per rename e path
+              redatto: un nome che contiene un segreto resta fail-closed.
+              """
+              trovati = []
+              for f in files:
+                  filename = safe_display(f.get("filename", ""))
+                  prev = f.get("previous_filename")
+                  if (is_manual_authority(filename) or "[REDACTED" in filename
+                          or (prev and (is_manual_authority(safe_display(prev)) or "[REDACTED" in safe_display(prev)))):
+                      trovati.append(filename)
+              return sorted(set(trovati))
 
           def blocco_copertura(files, skipped):
               """Dice al modello che cosa NON ha visto, e come deve leggerlo.
@@ -771,6 +814,7 @@ jobs:
                     f"{', '.join(files_dal_base[:10])}")
           commit_count = len(compared.get("commits") or [])
           diff_text, skipped_files, critical_files = build_patch_payload(files)
+          manual_files = manual_authority_files(files)
 
           # La Compare API tronca i file a 300: se raggiunto il tetto non possiamo
           # garantire di aver visto tutti i file sensibili del range → forziamo il
@@ -827,7 +871,7 @@ jobs:
               # dopo), il re-run non deve uscire lasciando un range critico senza
               # `manual-review-required` (Codex P2). try_add_label è fail-open e
               # idempotente: se la label c'è già, è un no-op.
-              if critical_files or compare_truncated:
+              if manual_files or compare_truncated:
                   try_add_label()
               print(
                   f"{REVIEW_ID}: review già presente per {range_base[:12]}...{range_head[:12]} "
@@ -838,13 +882,13 @@ jobs:
           # Label e avviso calcolati PRIMA di ogni uscita: una push-range di soli
           # file binari/oversized che tocca aree sensibili non perde il segnale.
           manual_warning = ""
-          if critical_files or compare_truncated:
+          if manual_files or compare_truncated:
               try_add_label()
               righe = []
-              if critical_files:
-                  righe.append("**File/aree sensibili rilevati:**")
-                  righe.extend(f"- `{name}`" for name in critical_files[:40])
-                  if len(critical_files) > 40:
+              if manual_files:
+                  righe.append("**File di autorita'/gate/dipendenze/segreti nel range:**")
+                  righe.extend(f"- `{name}`" for name in manual_files[:40])
+                  if len(manual_files) > 40:
                       righe.append("- ... altri file omessi")
               if compare_truncated:
                   righe.append(
@@ -852,10 +896,23 @@ jobs:
                       "alcuni file del range potrebbero NON essere stati analizzati."
                   )
               manual_warning = (
-                  "## ⚠️ RICHIEDE CONTROLLO MANUALE\n\n"
-                  "Il range tocca aree sensibili del progetto Pickfair. "
-                  "Non usare auto-merge finché Piero non controlla manualmente.\n\n"
+                  "## ⚠️ RICHIEDE MERGE MANUALE DELL'OWNER\n\n"
+                  "Il range tocca file che definiscono autorita', gate o merge "
+                  "(o non e' interamente visibile): niente auto-merge, decide Piero "
+                  "(docs/auto_pr_flow_spec.md §0.8).\n\n"
                   + "\n".join(righe)
+                  + "\n"
+              )
+          if critical_files:
+              righe_sc = ["**File/aree safety-critical rilevati:**"]
+              righe_sc.extend(f"- `{name}`" for name in critical_files[:40])
+              if len(critical_files) > 40:
+                  righe_sc.append("- ... altri file omessi")
+              manual_warning += (
+                  "\n## Safety-critical (informativo)\n\n"
+                  "Review e hard verify completi obbligatori. Da solo NON blocca "
+                  "l'auto-merge: valgono i gate di docs/auto_pr_flow_spec.md §0.9.\n\n"
+                  + "\n".join(righe_sc)
                   + "\n"
               )
 

@@ -51,6 +51,246 @@
 > Implementazione di riferimento: `scripts/pr_automation_controller.py`,
 > `scripts/pr_flow_automation.py`, `scripts/pr_merge_readiness.py`.
 
+## 0. Contratto di autonomia end-to-end (owner 08/10/2026) — NORMATIVO
+
+Questa sezione è il contratto operativo stabile per l'intera roadmap Pickfair +
+Control API + #495 + MCP. Prevale sulle sezioni seguenti dove sono meno
+specifiche; dove una regola successiva è più severa su un punto di sicurezza,
+resta valida quella più severa. Enforcement eseguibile:
+`scripts/pr_autonomy_policy.py` (puro, solo stdlib, fail-closed); test:
+`tests/scripts/test_pr_autonomy_policy.py`.
+
+### 0.1 Principio
+
+L'owner decide **COSA** (prodotto e vincoli); l'agente decide **COME** (tecnica).
+
+> L’agente non deve comportarsi come un esecutore che chiede conferma per ogni scelta tecnica.
+>
+> Deve comportarsi come il responsabile tecnico operativo del progetto, entro le decisioni owner e la roadmap.
+>
+> Quando il contratto e il risultato atteso sono già determinati, l’agente deve scegliere autonomamente la soluzione tecnica più sicura, implementarla, provarla, triagiarla, mergiarla se consentito e continuare.
+>
+> L’owner non deve essere coinvolto per risolvere problemi che il contratto già rende deterministici.
+>
+> L’agente deve chiedere l’owner solo quando la risposta cambierebbe il prodotto, il rischio accettato, il denaro, l’infrastruttura, le credenziali o una decisione owner esistente.
+
+### 0.2 Ruoli
+
+**OWNER** — autorità su prodotto, vincoli, denaro, modalità operative e decisioni aperte.
+
+**AGENTE** — autorità tecnica operativa. PUÒ: scegliere l'implementazione;
+correggere difetti; refactor minimo; aggiungere test e guardrail; rinviare per
+policy (§0.4); chiudere finding teorici per policy (§0.6); scegliere la PR
+successiva determinabile (§0.14); lavorare cross-repo dove consentito (§0.12);
+auto-mergiare le PR non-policy quando tutti i gate passano (§0.9).
+
+NON PUÒ: cambiare una decisione owner; cambiare il significato di SIM/LIVE;
+cambiare STOP/PAUSE/EMERGENCY; inventare MANUAL via MCP; cambiare i limiti di
+denaro; attivare LIVE da solo; acquistare servizi; creare infrastruttura a
+pagamento; introdurre nuove modalità; aggirare gate di safety/security;
+lasciar cadere un requisito owner.
+
+### 0.3 Tassonomia a due assi
+
+Origine/disposizione e severità sono assi **separati**.
+
+Origine: `CURRENT_DEFECT_INTRODUCED_BY_PR`, `CURRENT_DEFECT_PREEXISTING`,
+`CURRENT_DEFECT_OUT_OF_SCOPE`, `GUARDRAIL_GAP`, `THEORETICAL_MUTATION`,
+`STALE`, `DUPLICATE`, `ALREADY_COVERED`, `KNOWN_LIMITATION_ACCEPTED_BY_OWNER`,
+`REVIEW_CHURN`.
+
+Severità: `P0_SECURITY`, `P0_REAL_MONEY`, `P1_SAFETY`, `P1_ARCHITECTURE`,
+`P2_COMPLETENESS`, `P3_DOCS`.
+
+Preesistente **non** significa automaticamente rinviabile. Raccordo con il
+ledger del fix loop (§11–§12, `scripts/pr_fix_loop_policy.py`, invariato):
+introdotto dalla PR o preesistente attivato/aggravato → `CURRENT_DEFECT` →
+`PATCH_REQUIRED` (consuma un ciclo); ogni altra disposizione non consuma cicli.
+
+| Origine | Azione |
+|---|---|
+| introdotto dalla PR | fix ora → test → niente merge finché aperto; owner solo se il fix richiede una nuova decisione di prodotto |
+| preesistente / fuori scope / gap non introdotto | `DEFERRED_BY_POLICY` solo alle condizioni §0.4; altrimenti blocker corrente o prove da completare |
+| teorico | §0.6 |
+| stale | provato sul current head → resolve |
+| duplicate | link al finding canonico → resolve |
+| already covered | comportamento o test esistente mostrato → resolve |
+| limitazione owner | link all'accettazione owner; mai per P0/`P1_SAFETY`; non è FIXED |
+| churn | nessuna patch artificiale; risposta con prova → resolve |
+
+### 0.4 `DEFERRED_BY_POLICY`
+
+Ammesso solo se TUTTE valgono: provato su base/main; non introdotto, non
+aggravato, non rende raggiungibile un percorso irraggiungibile; non necessario
+all'accettazione e non compromette il percorso consegnato; esiste una scheda
+futura canonica con owner tecnico; blocker registrato, registrazione riuscita e
+riletta; nessuna decisione owner lo vieta.
+
+Procedura: prova base/head → classificazione → `finding_id` → scheda futura →
+blocker → commento nel thread → `DEFERRED_BY_POLICY` → resolve del thread.
+**Mai** marcarlo FIXED. Un P1 preesistente segue le stesse condizioni; se la
+PR lo attiva diventa blocker corrente.
+
+### 0.5 Blocker strutturati
+
+`BLOCKS_NEXT_PR`, `BLOCKS_LIVE`, `BLOCKS_MCP_MUTATION`,
+`BLOCKS_DUTCHING_ACTIVATION`, `BLOCKS_CASHOUT_ACTIVATION`,
+`BLOCKS_SIM_CERTIFICATION`, `BLOCKS_FINAL_CERTIFICATION`,
+`BLOCKS_DISTRIBUTION`, `BLOCKS_CONCURRENT_OPERATION`,
+`BLOCKS_SECURITY_ACCEPTANCE`. Un rinvio senza almeno uno di questi non vale.
+
+### 0.6 `THEORETICAL_MUTATION`, P0 e P1
+
+Teorico solo se TUTTE: nessun chiamante reale; nessun wiring; nessuna config
+che lo renda raggiungibile; nessun cambio di comportamento; nessun impatto
+safety/security/denaro; prova sul current head; nessuna dipendenza imminente
+che lo attivi. Allora: nessuna patch → commento con prova → resolve → non
+bloccante. Prova incompleta → non teorico: si riclassifica, non si risolve.
+
+`P0_SECURITY` / `P0_REAL_MONEY`: nessun auto-defer generico; fail-closed;
+si ferma il percorso interessato; niente merge se raggiungibile dalla PR.
+L'agente corregge da solo se il fix resta nel contratto deciso. Owner solo per
+cambio di contratto, accettazione del rischio, nuova credenziale/infra/costo o
+due semantiche di prodotto plausibili.
+
+### 0.7 Reviewer e validità delle review (#426/P41)
+
+Attivi: **GPT-6.1 Sol** e **Grok 4.7**, a ogni push. **Codex** è advisory:
+la sua assenza non è né PASS né blocker; i suoi rilievi si triagiano tutti con
+prova. **SOSPESI** da P41: Fugu Ultra, Claude Fable 5.1, GPT-6 Astra (workflow
+disattivati nella UI, file presenti): non si attendono, non si riattivano.
+
+Una review conta solo se: è sul current head o il suo range finisce sul head;
+porta il proprio marker di completamento; non ha bloccanti irrisolti; è
+leggibile (non un errore). Schema/API incompleti → UNKNOWN. Timeout Grok: un
+solo rerun; secondo timeout → STOP owner («PRONTA PER MERGE — Grok assente per
+timeout»). Quota/crediti → STOP (P41, CREDITI ESAURITI). Prima del merge:
+zero thread irrisolti.
+
+### 0.8 Label: safety-critical informativo, manuale bloccante
+
+- **Safety-critical** (`CRITICAL_PATTERNS` dei workflow): INFORMATIVO. Il
+  commento del reviewer elenca i file; review e hard verify completi sono
+  obbligatori; da solo non blocca l'auto-merge.
+- **`manual-review-required`**: blocker REALE. Sol e Grok la applicano solo
+  tramite `MANUAL_AUTHORITY_PATTERNS` (copia identica di
+  `scripts/pr_autonomy_policy.py`): file di autorità/governance (§0.9), tutti
+  i `.github/workflows/`, manifest di dipendenze, materiale segreto, o diff
+  troncato dalla Compare API. L'agente la applica inoltre per: decisione owner
+  necessaria; stop esplicito; fix loop esaurito; accettazione del rischio;
+  policy che lo richiede espressamente.
+- Non si applica più a ogni PR runtime/core. Non si rimuove in modo
+  opportunistico: decide il classifier (`manual_label_decision`) sul diff
+  completo, e solo se nessun motivo owner è registrato.
+- Fugu/Fable/Astra, sospesi, conservano la vecchia regola larga: riattivarli
+  richiede prima l'allineamento a questa sezione.
+
+### 0.9 Merge
+
+**Merge manuale owner** (almeno): `AGENTS.md`, `CLAUDE.md`,
+`docs/auto_pr_flow_spec.md`, `docs/hard_verify_spec.md`, i workflow reviewer,
+`pr-merge-readiness.yml`, `ci-quarantine-guard.yml`, `pr-guard.yml`,
+`scripts/guardrail_check.py` e gli script che definiscono autorizzazione e
+autorità di merge (`scripts/pr_autonomy_policy.py`,
+`scripts/pr_fix_loop_policy.py`, `scripts/pr_flow_automation.py`,
+`scripts/pr_merge_readiness.py`, `scripts/pr_automation_controller.py`);
+inoltre, per fail-closed, ogni altro workflow e i manifest di dipendenze.
+Esito: `READY_FOR_OWNER_MANUAL_MERGE`.
+
+**Auto-merge runtime/core** consentito quando TUTTE: head stabile; scope
+valido; accettazione completa; suite PASS; hard verify PASS; Sol e Grok
+settled senza bloccanti; Codex triagiato; thread irrisolti = 0; Merge
+Readiness PASS; nessun P0/P1 introdotto; nessun preesistente attivato o
+aggravato; nessuna decisione owner pertinente aperta; fix loop valido; nessuno
+stop manuale; nessun file a merge owner toccato; nessuna violazione di
+dipendenze. Allora `AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE` e l'agente
+mergia. Head cambiato → la valutazione si invalida e si rifà.
+
+Limite noto #472 (rischio accettato dall'owner): l'agente mergia con la stessa
+identità GitHub che apre la PR, quindi l'esclusione dei file a merge owner è
+applicata dalla procedura e dalla label, non da un'identità separata.
+
+### 0.10 Controllo sul diff completo
+
+Sul diff ASSEMBLATO della PR (base...head, non l'ultimo push): base, head,
+diff completo, path vietati, scope, nuovi chiamanti, dipendenze, regressioni.
+`pr-guard.yml` esegue `python -I scripts/pr_autonomy_policy.py full-diff`:
+BLOCK su materiale segreto presente, input del guard nel diff, scope ≠ diff,
+nuove dipendenze di produzione non dichiarate; riporta file a merge owner,
+safety-critical, nuovi chiamanti del percorso denaro e dipendenze solo-test.
+Nessun nuovo servizio, nessun costo.
+
+### 0.11 Readiness fail-closed
+
+Struttura mancante, paginazione incompleta, schema inatteso o errori →
+UNKNOWN/NEEDS_MANUAL, mai PASS. `fetch_all_review_threads` solleva su
+`errors` GraphQL, livelli mancanti, `nodes` non lista, `pageInfo` assente,
+`hasNextPage` senza `endCursor` o cursore ripetuto; readiness e report
+riportano `review_threads_api_unavailable` e `can_merge=false`.
+
+### 0.12 Roadmap, #495, Control API, MCP, #497
+
+- Vale la roadmap autoritativa corrente (PR26 → … → MCP-07) nella catena
+  [#491](https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/491) →
+  #489 → #461 → #426/#453 → #351 → pickfair-mcp- #1 e in
+  [docs/mcp_operational_contract.md](mcp_operational_contract.md). Qui non si duplica.
+- #495: le slice vanno nelle schede corrette; nessuna seconda roadmap; nessun
+  bypass di PR26–31; nessuna mutazione MCP prima dell'authority; MCP non parla
+  mai direttamente con Betfair.
+- Control API: si procede in autonomia quando determinata. Non si cambiano:
+  no-bypass, loopback in prima fase, auth/scopes, `request_id`,
+  `operation_id`, handshake, SIM/LIVE.
+- MCP: una PR per repository; due PR parallele si classificano
+  `SAFE_PARALLEL` / `DEPENDENT` / `FORBIDDEN_PARALLEL`
+  (`parallel_classification`). MCP è solo adapter: niente Betfair, niente DB
+  Pickfair, niente credenziali Betfair, niente MM/risk/cashout/reconciliation
+  duplicati (`full-diff --repo-kind mcp`).
+- #497 resta DEFERRED: nessun servizio persistente, VPS, DB remoto o costo. Si
+  estraggono solo controlli minimi autorizzati; una funzione che richiede
+  l'intero #497 fallisce chiusa; nessuna persistenza finta.
+
+### 0.13 Decisioni owner e STOP minimi
+
+**Chiuse** (non si richiedono di nuovo; fonte tra parentesi): SIM Delayed +
+SimulationBroker, LIVE reale, parità stesso motore, mai auto-LIVE
+(mcp_operational_contract §SIM/LIVE, #426/6026322035); STOP/PAUSE/EMERGENCY/
+RESUME (contratto §Contratti prodotto vigenti, P38); Telegram rinviabile non
+rimosso; master/copy/follow non via MCP; UX per nome; una PR per repository
+(#426/6026322035); superficie Betfair personale completa (#426/6043516714);
+vendor/developer/subscription esclusi (#426/6043516714); P35 attesa/nessuna sostituzione; Void P39; solo calcio
+P40; limiti di denaro P37/P02; Sol + Grok (P41); fix loop 5 (CLAUDE.md
+§PR-flow, #496); limitazioni #471/#472 (registri di limite noto/rischio
+accettato, #489); nessun costo senza owner (#497).
+
+**Aperte** (mai inventarle): MANUAL via MCP; updater Caso B; nuove semantiche
+di prodotto; costi/servizi/infrastruttura; limiti di denaro; modalità
+operative. Se una decisione aperta tocca solo una sotto-parte, si blocca solo
+quella sotto-parte.
+
+**STOP owner** solo per: `NEW_PRODUCT_DECISION`, `SPEND_OR_INFRASTRUCTURE`,
+`CREDENTIAL_OR_SERVICE`, `NEW_P0_NOT_FIXABLE_WITHIN_CONTRACT`,
+`CONTRACT_CHANGE_OR_RISK_ACCEPTANCE`, `MANUAL_VIA_MCP`,
+`FIX_LOOP_EXHAUSTED`, `SUBSTANTIVE_SOURCE_CONFLICT`,
+`AUTHORIZATION_OR_GATE_NOT_VERIFIABLE`, `REAL_ACTION_REQUIRES_OWNER_COMMAND`
+(soprattutto LIVE). Un'incertezza puramente tecnica non è uno STOP: l'agente
+sceglie la soluzione più sicura, la prova e la documenta.
+
+### 0.14 PR successiva dopo ogni merge
+
+Verificare che il merge sia avvenuto davvero e il suo SHA; rileggere main;
+nessuna PR aperta nello stesso repository; rileggere roadmap e nuove decisioni;
+individuare la scheda successiva; verificarne le dipendenze; se nessuno STOP,
+avviare Phase 0 in automatico (`next_pr_decision`). Una scheda già
+soddisfatta riceve evidenza, non una PR artificiale.
+
+### 0.15 Fix loop
+
+Cap 5, cumulativo per PR, nessun reset (§12, invariato). `REVIEW_CHURN` non
+riceve patch artificiali. Cap esaurito → STOP. Deroga owner solo per quella
+PR e limitata; mai un cambio globale 5→6/7.
+
+---
+
 ## 1. INIT — carica il task
 
 All'inizio legge il task:
@@ -626,6 +866,11 @@ non attestano da soli un difetto corrente.
 | stale/duplicate/already-covered | no | no | `EVIDENCE_RESOLVE` con prove e gate §13 |
 | scope forbidden / decisione owner | n/a | n/a | `NEEDS_MANUAL` |
 
+Questa tabella governa il **budget di patch**. La disposizione finale del
+finding (rinvio, teorico, stale, P0, blocker strutturati) segue la tassonomia a
+due assi di §0.3–§0.6: `THEORETICAL_MUTATION` con tutte le prove di §0.6 si
+risolve con evidenza senza patch e senza owner.
+
 `CURRENT_DEFECT`: bug presente, contratto autorevole contraddittorio, route
 errata, requisito owner violato, test che dimostra regressione, fail-open o
 rischio safety/security/real-money corrente. Fuori scope/budget o con una
@@ -959,12 +1204,17 @@ solo se:
 
 L'orchestrator prevede READY_TO_MERGE solo con bad vuoti, pending vuoti e unresolved_active 0. (Il vincolo storico «Codacy success» non esiste più.)
 
-Ma il merge resta manuale:
+READY_TO_MERGE della readiness è **una** delle condizioni di §0.9, non il
+merge. L'esito finale è uno solo fra:
 
 ```
-AUTO_MERGE_ENABLED=false
-merge manuale owner
+AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE          # tutte le condizioni §0.9, nessun file a merge owner: l'agente mergia
+AUTO_PR_FLOW_STATUS=READY_FOR_OWNER_MANUAL_MERGE  # tutte le condizioni, ma tocca file a merge owner: decide l'owner
 ```
+
+L'automazione non presidiata non mergia da sola (`AUTO_MERGE_ENABLED=false`
+resta il default del controller): il merge lo esegue l'agente dopo aver
+verificato §0.9 sul current head.
 
 ---
 
@@ -983,13 +1233,18 @@ quando trova:
 - required-check evidence mancante
 - file vietati necessari
 - workflow edit richiesto ma non autorizzato
-- review comment architetturale
+- rilievo architetturale che richiede una decisione di prodotto (quelli
+  tecnici li decide l'agente come `P1_ARCHITECTURE`, §0.3)
 - provider sconosciuto non classificabile
 - checks in progress senza bug riproducibile
 - test failure non recuperabile
 - scope troppo largo
-- segreti/runtime/live Betfair/Telegram
+- segreti/credenziali, o un'azione reale (LIVE) che richiede un comando owner
 - merge conflict unsafe
+- una delle condizioni STOP owner di §0.13
+
+Lavoro su runtime/Betfair/Telegram dentro lo scope del task NON è di per sé
+NEEDS_MANUAL: si applicano Phase 0, review e i gate di §0.9.
 
 Questo è il comportamento corretto: quando non può dimostrare sicurezza, non inventa, non forza, non bypassa.
 

@@ -43,6 +43,31 @@ PR fuori dai checkout temporanei; stato assente/corrotto → arresto prudenziale
 Merge Readiness mantiene tutti i gate vigenti. Reviewer/merge: #426/P41 e
 successive decisioni pertinenti; non riattivare workflow o label sospesi.
 
+## Contratto di autonomia end-to-end (owner 08/10/2026)
+
+Normative text: [docs/auto_pr_flow_spec.md §0](docs/auto_pr_flow_spec.md).
+Executable classifier (findings, reviews, labels, full diff, merge decision,
+next PR, cross-repo parallelism): `scripts/pr_autonomy_policy.py`, tested by
+`tests/scripts/test_pr_autonomy_policy.py`. The owner decides WHAT (product,
+constraints, money, modes, open decisions); the agent decides HOW and is the
+project's operating technical lead:
+
+> L’agente non deve comportarsi come un esecutore che chiede conferma per ogni scelta tecnica.
+> Deve comportarsi come il responsabile tecnico operativo del progetto, entro le decisioni owner e la roadmap.
+> Quando il contratto e il risultato atteso sono già determinati, l’agente deve scegliere autonomamente la soluzione tecnica più sicura, implementarla, provarla, triagiarla, mergiarla se consentito e continuare.
+> L’owner non deve essere coinvolto per risolvere problemi che il contratto già rende deterministici.
+> L’agente deve chiedere l’owner solo quando la risposta cambierebbe il prodotto, il rischio accettato, il denaro, l’infrastruttura, le credenziali o una decisione owner esistente.
+
+In short: two-axis finding taxonomy, `DEFERRED_BY_POLICY` and
+`THEORETICAL_MUTATION` only under their full conditions, P0 fail-closed,
+structured `BLOCKS_*` blockers, Sol + Grok active (Codex advisory, Fugu/Fable/
+Astra suspended), safety-critical informational vs `manual-review-required`
+blocking, runtime/core auto-merge when every §0.9 gate holds, owner manual
+merge for authority files, full-diff check, fail-closed readiness, automatic
+next-PR Phase 0, owner STOP only for the ten §0.13 conditions. Where this
+section and older text below differ, this section and the spec prevail; on a
+safety point the stricter rule still wins.
+
 ## GLOBAL EXECUTION POLICY
 
 This repository uses strict, safe, SERIAL TASK EXECUTION with gated automation.
@@ -939,272 +964,113 @@ with real evidence.
 
 ---
 
-## AI PR review — reviewers and final label gate
+## AI PR review — reviewers (owner #426/P41)
 
-Every PR is covered by five AI review workflows (GitHub Actions driven by API
-keys in the repo Secrets) plus CodeRabbit. Operational detail and security
-posture live in `docs/ai_audit_workflows.md`.
+Normative source: `docs/auto_pr_flow_spec.md` §0.7–§0.8 (end-to-end autonomy
+contract, 08-10-2026); executable checks in `scripts/pr_autonomy_policy.py`.
+Operational detail and security posture: `docs/ai_audit_workflows.md`. This
+section REPLACES the earlier five-reviewer / label-round operating text.
 
-- **GPT-6.1 Sol** and **Grok 4.7** run on every push. Output is TARGETED and short
-  (only `## Bloccanti` + `## Verdetto finale`); output ceilings are high so
-  they never truncate — only generated tokens are billed.
-- **Fugu Ultra**, **Claude Fable 5.1** and **GPT-6 Astra** (strong, costly
-  reviewers) fire on their own ONLY when a push touches **core or critical**
-  Pickfair files —
-  `core/`, `services/`, `controllers/`, the root modules (`headless_main`,
-  `mini_gui`, `betfair_client`, `betfair_market_api`, `order_manager`,
-  `dutching`, `database`, `database_schema`, `trading_config`), dependencies,
-  workflows, config/secrets, or the safety areas (money management, dutching,
-  safety_layer, reconciliation, runtime, catalog) — OR when the final label is
-  added. On pushes touching only docs/tests all three jobs start but exit without
-  calling the model (zero cost); those are still covered by GPT-6.1 Sol/Grok.
-- **Since #475 the files that DEFINE or ENFORCE the gates are critical too**:
-  `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
-  `docs/hard_verify_spec.md` and `scripts/guardrail_check.py`. Five of the
-  thirteen reserved for the owner's manual merge, and none of them triggered the
-  label or the strong reviewers: a PR touching only these was **silent**.
-  Observed on #473, which touched `guardrail_check.py` and produced nothing
-  until the agent applied the labels by hand — the gate was holding on a rule
-  the agent applies to itself. Cost consequence, stated rather than discovered:
-  **a push to `CLAUDE.md` or to either spec now pays the three strong reviewers.**
-  That is deliberate; it is where strong review matters most.
+- **Active:** **GPT-6.1 Sol** and **Grok 4.7**, on every push. Output is
+  TARGETED and short (only `## Bloccanti` + `## Verdetto finale`); output
+  ceilings are high so they never truncate — only generated tokens are billed.
+- **Advisory:** Codex (and CodeRabbit/Sourcery when present). Their absence is
+  neither a PASS nor a blocker; every real finding they post is triaged with
+  evidence (§0.3–§0.6) and no thread stays unresolved at merge.
+- **SUSPENDED by P41** (workflows disabled in the GitHub UI, files still on
+  disk): Fugu Ultra, Claude Fable 5.1 and GPT-6 Astra. Do not wait for them and
+  do not re-enable them. Their final labels `final-fugu-review`,
+  `final-fable-review` and `final-astra-review` are NOT applied while the
+  suspension holds: the 16-09-2026 "the labels are always applied" rule is
+  suspended by P41. Re-enabling any of them first requires aligning its
+  label logic to spec §0.8 (they still carry the old broad rule).
+
+**A review counts only if** it is on the current head (or its range ends at
+the head), carries its completion marker (`gpt56sol-pr-review-done` /
+`grok46-pr-review-done`), has no unresolved blockers, and is readable — not an
+error comment. A green job without the marker is a failure; incomplete
+schema/API is UNKNOWN. Grok timeout: one rerun; a second timeout → STOP to the
+owner ("PRONTA PER MERGE — Grok assente per timeout"). Usage-quota / credits on
+Sol or Grok → OUT OF CREDITS (see "Auto-merge").
+
+**Labels (spec §0.8).** "Safety-critical" (`CRITICAL_PATTERNS`, listed in the
+review comment) is INFORMATIONAL: full review and hard verify are mandatory,
+but it does not block auto-merge by itself. `manual-review-required` is a REAL
+blocker and Sol/Grok apply it only through `MANUAL_AUTHORITY_PATTERNS`:
+authority/governance files, every `.github/workflows/` file, dependency
+manifests, secret material, or a truncated Compare API diff. The agent also
+applies it when an owner decision is needed, on an explicit stop, when the fix
+loop is exhausted, for a risk acceptance, or where policy expressly requires
+it. It is never removed opportunistically: `manual_label_decision` on the full
+diff decides, and only when no owner reason is recorded.
+
+**Diff-only / push-range note (learned on #393).** The reviewers are diff-only
+(no checkout, no execution) and Sol/Grok review the push range, so they can
+produce false positives on imports/consistency/"missing code" when the cited
+code lives in earlier commits. Answer those in-thread with evidence from the
+full PR diff; do not chase them with a commit.
 
 ### Reviewer cost: do NOT truncate, do NOT burn credits
 
 Entry rule, because this is where nearly everyone gets it wrong:
 **`max_tokens` / `MAX_OUTPUT_TOKENS` is a CEILING, not a charge.** You pay for
 what the model actually GENERATES, never for the ceiling you allowed it.
+Raising the ceiling is free and removes truncation; lowering it saves nothing
+and buys a truncated review at full price. When a review comes back truncated,
+**raise the ceiling**; do not shorten the prompt and hope.
 
-- **Raising the ceiling is FREE** and removes truncation. A high ceiling on a
-  review the prompt caps at 150 words costs not one extra token.
-- **Lowering the ceiling saves NOTHING.** It does not reduce what the model
-  generates — it cuts it in half. The result is a truncated review: full price,
-  zero value. That is not a saving lever, it is a way of paying for nothing.
-
-So when a review comes back truncated, **raise the ceiling**; do not shorten the
-prompt and hope.
-
-**Levers that actually save** (by yield): (1) never pay twice for the same range
-— the per-range `done_marker` is already wired into all 5 workflows, do not
-remove it and do not force a re-fire; (2) fewer pushes, not smaller ones — each
-push pays TWO calls (GPT-6.1 Sol + Grok 4.7), so batch the fixes; (3) owner
-authorization on the three labels (below) — the biggest lever, since Fugu,
-Fable and Astra are the expensive ones; (4) `reasoning_effort`, where the model
-reasons — reasoning tokens are billed as output, so lowering it IS a real lever,
-but it is **not in use today**: among the four non-Anthropic reviewers, Grok,
-Fugu and Astra run at `REVIEW_EFFORT: high` for the experiment declared in their
+**Levers that actually save:** (1) never pay twice for the same range — the
+per-range `done_marker` is wired into every review workflow, do not remove it
+and do not force a re-fire; (2) fewer pushes, not smaller ones — each push pays
+GPT-6.1 Sol + Grok 4.7, so batch the fixes; (3) `reasoning_effort`, where the
+model reasons — reasoning tokens are billed as output, so lowering it IS a real
+lever, but it is **not in use today**: among the non-Anthropic reviewers, Grok
+and the suspended Fugu and Astra run at `REVIEW_EFFORT: high` for the experiment declared in their
 workflows, and Sol at `REVIEW_EFFORT: max`, the highest level GPT-6.1 Sol
 offers (owner decision of 07-10-2026, checked against the model's OpenRouter
-metadata); Fable has no such knob (the Anthropic API does not expose one).
-While the experiment is open the lever stays suspended and its cost is visible
-in every review's cost lines. Do not write a value here that differs from what
-the workflows actually set: `tests/guardrails/test_policy_reviewer_consistency.py`
-compares the two and goes red if they diverge.
+metadata); Fable has no such knob (the Anthropic API does not expose one). Do
+not write a value here that differs from what the workflows actually set:
+`tests/guardrails/test_policy_reviewer_consistency.py` compares the two.
 
-**Forbidden fake savings:** lowering output ceilings (above); tightening
-`MAX_TOTAL_PATCH_CHARS` until the reviewer stops seeing the code (a reviewer that
-cannot see is a false green, not a saving); disabling a reviewer to go faster. If
-budget is the problem, cut the NUMBER of calls, never the quality of one.
+**Forbidden fake savings:** lowering output ceilings; tightening
+`MAX_TOTAL_PATCH_CHARS` until the reviewer stops seeing the code (a reviewer
+that cannot see is a false green, not a saving); disabling an active reviewer
+to go faster. If budget is the problem, cut the NUMBER of calls, never the
+quality of one.
 
-### The three labels are ALWAYS applied — standing owner authorization
-
-**Owner decision, 2026-09-16, REPLACING the earlier "only on owner
-authorization, never unprompted".** `final-fugu-review`, `final-fable-review` and `final-astra-review`
-are applied to EVERY PR, always, without asking.
-
-The reason is not cost, it is **gate legibility**. A PR whose labels are missing
-is indistinguishable, looking at it on GitHub, from one where the gate was
-skipped: the gate must be VISIBLE, not merely satisfied in fact. It is the same
-ambiguity PRs #465-#468 removed elsewhere.
-
-How: with the GitHub MCP tools, **one at a time**, and if a label is already
-present **remove and re-add** it (GitHub emits no new `labeled` event for a
-label already there). Keep the `manual-review-required` label the workflows add
-on their own.
-
-**What it costs: almost always nothing.** The `done_marker` is per range: if the
-three strong reviewers already published for that range — which happens by itself
-when the push touches critical files — the runs fired by the label event finish
-`success` without calling the model. Measured on #468: labels applied, **exactly
-one published review per reviewer**, zero extra spend. When the range is new,
-the cost is the label round's, and it is budgeted: you pay for the gate, not for
-waste.
-
-It remains true that **fewer pushes cost less**: every push pays the per-push
-reviewers, and one extra push on critical files also pays the three strong ones.
-Batching fixes is still the real lever. Measured in one session: `$0.42` with a
-single push (#468), `$1.35` with three (#467), `$1.81` with five (#466) — the
-same order of work.
-
-**The automatic critical-files fire stays.** When a push touches `core/`,
-`services/`, `controllers/`, the root modules, dependencies, workflows,
-config/secrets or the safety areas, Fugu, Fable and Astra fire on their own:
-that is
-not agent initiative, it is the safety net. Do not disable it, do not work
-around it.
-
-**Repeat the fire until Fugu/Fable/Astra come back with NO blockers (owner
-decision).**
-Every time the head changes (a fix, an alignment) another round is needed: declare
-it and **re-fire the three labels** on the new stable head — always, without
-asking (owner decision 16-09-2026) — then wait for their full-range outcome. The gate is satisfied ONLY
-when ALL THREE come back with no real blockers. A persistent false positive is
-NOT a
-real blocker (see the diff-only note): answer it with evidence, do not loop
-forever — if after the full-range fire only a structural false positive remains,
-declare ready and document it. If Fugu, Fable or Astra are in usage-quota (the
-workflow
-starts but the model does not answer), the OUT OF CREDITS rule applies: do not
-merge, tell the owner credits are needed, stop the queue until they say
-"prosegui".
-
-**Diff-only / push-range vs full-range note (learned on #393).** The reviewers
-are diff-only (no checkout, no execution). The **per-push** reviews (auto on every
-push: GPT/Grok always; Fugu/Fable/Astra on core files) see ONLY the latest commit
-of the
-range, so they can produce false positives on imports/consistency/"missing code"
-when the cited code lives in earlier commits. The **label** reviews instead run
-over the WHOLE PR range (`base…head`) and see the full diff, so they resolve those
-false positives. For the final verdict what counts is Fugu/Fable/Astra's **full-range
-label** review, not the per-push ones. Do not chase a push-range false positive
-with a commit: re-fire the labels and read the full-range.
-
-**Timing: the strong gates are the LAST pre-merge step.** Fire the three labels
-when the PR is stable and in theory ready to merge: the per-push reviewers
-(GPT-6.1 Sol, Grok 4.7) have COMPLETED and their real findings are handled (patched
-or answered in-thread with evidence). CodeRabbit is NOT a waiting gate: if it has
-completed handle its real findings; if it is in rate-limit/usage-quota it is
-absent and is NOT awaited; if it is "processing" it is still reviewing — not
-awaited as a binding gate, but its real findings (if they arrive before you
-finalize) are handled, else deferred to post-merge. This way Fugu Ultra,
-Fable 5.1 and GPT-6 Astra review a STABLE head and are not wasted on versions that will still
-change (each push to the strong reviewers costs). Sequence: work complete →
-push → GPT/Grok done and findings handled (CodeRabbit only if available) →
-stable head → fire `final-fugu-review` + `final-fable-review` +
-`final-astra-review` → wait for the **full-range** outcome → **deliver the
-verdict to the owner**, which comes AFTER the label round and never before →
-if real blockers remain: fix, re-push, re-fire the labels on the new head and
-re-deliver the verdict, until all three come back clean → merge per the
-"Auto-merge" section.
-
-The labels are NOT requested: the owner's 16-09-2026 decision makes them
-automatic on EVERY PR. What is delivered to the owner is the VERDICT, not a
-request for permission — and it is delivered once the label round is done.
-
-**The agent never sees the API keys**: it only adds the label; secrets stay in
-GitHub Secrets and Actions stays read-only on the code (diff-only, no checkout
-and no execution of PR code, secret redaction).
-
-**If a review reports blockers** (bugs, security, Betfair/dutching/money-
-management risks, secret handling, workflow risks, or `manual-review-required`):
-do NOT declare the PR ready and do NOT auto-merge. Leave the PR open and state
-which blocker is still open and why. With blockers, auto-merge is forbidden
-(fail-closed); otherwise auto-merge follows the gated policy in "Auto-merge
-(owner-authorized, gated)" below.
-
-**Who to wait for / not wait for.** Default coverage on every PR is the five API
-workflows (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) plus
-CodeRabbit. Codex,
-Sourcery **and CodeRabbit** are NOT a waiting gate: if they post usage-limit /
-rate-limit / usage-quota messages, treat them as ABSENT (not pending) — do not
-wait, do not count them in the check-completion gate, do not block DONE on them.
-Owner decision: an **advisory** reviewer (CodeRabbit, Codex, Sourcery) in
-rate-limit/usage-quota is absent immediately, no wait and no cap-timer (see
-"Skip on unavailability"). For the **five paid reviewers** "do not wait" does
-NOT mean "merge anyway": you do not wait on a timer, but if one of them is dry
-**on the current head** the PR is not merged — OUT OF CREDITS applies. The only
-binding final gate is the three strong label reviewers (Fugu Ultra + Fable 5.1
-+ GPT-6 Astra): see
-"Final label gate".
-
-**Fail-closed preserved (anti-regression note).** Downgrading unavailable ADVISORY
-reviewers (CodeRabbit/Codex/Sourcery) to "absent" does NOT weaken fail-closed: they
-are NOT required CI checks and do NOT replace the binding gates. The BINDING gates
-are ALWAYS active and never skipped — (a) settled current-head CI checks and
-(b) the three strong label reviewers Fugu Ultra + Fable 5.1 + GPT-6 Astra
-(full-range, repeated
-until a clean outcome). Late findings from reviewers marked absent are covered by
-post-merge tracking (Issue + fix PR). If a PAID reviewer is in usage-quota on the current
-head — any of the five, not just Fugu/Fable/Astra via label — DONE is NOT
-declared by
-skipping it: the OUT OF CREDITS rule applies (do not merge, tell the owner
-credits are needed, stop the queue until they say "prosegui"). The owner can also always merge manually (human override).
-
-**Event-driven review window (no fixed timer).** The five synchronous reviewers
-answer in ~1 min. **CodeRabbit is NOT a waiting gate**: if it has already
-COMPLETED, read and handle its real findings (inline + review body); if it is in
-rate-limit / usage-quota, treat it as ABSENT (no wait, no cap-timer) and defer
-to post-merge tracking. If it is "processing" it is still reviewing: not
-awaited as a binding gate, but not "absent" either — if it completes before
-you finalize handle its findings, else post-merge; do not stall on it. The
-AGENT's verdict (ready / DONE) does NOT depend on CodeRabbit: it depends on
-settled CI checks and the strong
-label gates (Fugu/Fable/Astra). The owner may merge manually at
-any time.
-
-**Be frugal with pushes (API + CI cost).** Every push that updates the head pays
-the models (GPT/Grok always; Fugu/Fable/Astra on core/critical pushes). Batch
-review
-fixes into ONE push per round; never push for cosmetic cleanups or to chase
-per-push-range false positives — answer those in-thread with evidence, not a
-commit.
-
-**Post-merge tracking + last-5 PR sweep.** Because there is no timed window, bot
-comments can land after the merge: if a review event hits a closed PR, re-read
-it and for each real/actionable finding open an Issue (PR number, head SHA,
-file:line, bot, severity, comment link) and a dedicated fix PR branched from
-the latest main (Phase 0 + micro-audit + hard PASS/BLOCK tests; never reuse or
-stack on the merged PR). In Phase 0 of every task, sweep the last 5 merged PRs
-for AI findings never addressed, de-duplicating against existing Issues (open
-and closed). Fix-PR creation is deferred while another task/PR is active: the
-one-active-task / one-open-PR rule wins — the Issue holds the findings until no
-other PR/task is active.
-
-**Skip on unavailability (usage-quota / rate-limit) — applies to ALL
-reviewers.** A reviewer that cannot review is NOT a gate and is NOT "pending":
-treat it as ABSENT and proceed (note that it did not review).
-
-- **Codex**: usage-limit => absent, skipped.
-- **Sourcery**: rate-limit => absent, skipped.
-- **CodeRabbit**: rate-limit / usage-quota => absent, skipped (like Codex/
-  Sourcery); do not wait, no cap-timer, defer to post-merge tracking. "processing"
-  = still reviewing: NOT "absent" but NOT a binding waiting gate (DONE rests on
-  settled CI checks + Fugu/Fable/Astra label); if it completes in time handle its
-  real
-  findings, else post-merge. If it has already completed, handle its real findings.
-- **The 5 API workflows** (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
-  Astra): these
-  can NOT be downgraded to absent. If a round reports provider usage-quota /
-  rate-limit, do not wait for it on a timer and do not count it in the
-  check-completion gate (the check settles anyway), but **DONE stays blocked**:
-  OUT OF CREDITS applies. The criterion is the **current head**, not the
-  individual push: merge only if all five produced a real review of the head
-  being merged (for Fugu, Fable and Astra, the full-range label round). Quota on an
-  intermediate push blocks **nothing** if that reviewer then reviewed the final
-  head; quota on the final head blocks, even if earlier pushes were clean.
+### Working the findings
 
 **Reading findings is mandatory.** On every check-in read BOTH the inline
-comments (review comments on file:line) AND the review bodies AND the PR
-conversation comments — "outside diff range" findings live only in the review
-body. Do not stop at check names/status.
+comments AND the review bodies AND the PR conversation comments — "outside
+diff range" findings live only in the review body.
 
-**What to patch: real logic bugs ONLY.** Patch only real logic/behavioral bugs,
-regressions and safety risks (Betfair, dutching, money management, secret
-handling, race/idempotency, fail-open). Do NOT chase cosmetic findings (style,
-naming, formatting, preferences) or per-push-range false positives — answer
-those in-thread with evidence, never with a commit.
+**Classify every finding on the two axes of spec §0.3** (origin/disposition and
+severity) with current-head evidence, independently of the reviewer's name.
+Introduced by the PR → fix now, test, no merge until fixed. Preexisting →
+`DEFERRED_BY_POLICY` only under §0.4, never marked FIXED. Theoretical → §0.6.
+P0 → fail closed (§0.6). Do NOT chase cosmetic findings or push-range false
+positives with commits: answer them in-thread with evidence.
 
-**Every fix verified with a hard test.** A fix that comes from a review finding
-must have a hard test covering it: write the test that reproduces the bug FIRST
-(it fails on the old code), then the patch that makes it pass (PASS + BLOCK).
-`py_compile` + targeted `pytest` actually run, exit observed. No DONE if the fix
-is uncovered.
+**Every fix verified with a hard test.** Write the test that reproduces the bug
+FIRST (it fails on the old code), then the patch that makes it pass (PASS +
+BLOCK). `py_compile` + targeted `pytest` actually run, exit observed.
 
-**Reply in the thread ("resolved").** For each addressed finding, comment in the
-GitHub thread `Fatto in commit <SHA>` with evidence (test command: PASS,
-file:line changed). For skipped findings: `Skipped / already covered` with the
-reason (outdated / duplicate / cosmetic / out of scope) and evidence. Marking a
-thread "resolved" is gated: current-head + all checks settled + evidence.
+**Reply in the thread.** For each addressed finding: `Fatto in commit <SHA>`
+with evidence. For the others: the classification (STALE / DUPLICATE /
+ALREADY_COVERED / THEORETICAL_MUTATION / DEFERRED_BY_POLICY / REVIEW_CHURN)
+with its evidence. Resolving is gated: current-head + all checks settled +
+evidence.
+
+**Post-merge tracking + last-5 PR sweep.** Bot comments can land after the
+merge: if a review event hits a closed PR, re-read it and for each real finding
+open an Issue (PR number, head SHA, file:line, bot, severity, link) and a
+dedicated fix PR from the latest main. In Phase 0 of every task, sweep the last
+5 merged PRs for AI findings never addressed, de-duplicating against existing
+Issues. Fix-PR creation waits while another PR is open in the same repository.
+
+**The agent never sees the API keys**: secrets stay in GitHub Secrets and
+Actions stays read-only on the code (diff-only, no checkout and no execution of
+PR code, secret redaction).
 
 ---
 
@@ -1331,10 +1197,17 @@ For every review comment or inline thread, classify it as one of:
 - **EVIDENCE_RESOLVE** — already fixed or outdated, but needs evidence.
 - **SKIP_OUTDATED** — outdated and not applicable to the current head.
 - **SKIP_DUPLICATE** — duplicate of another handled finding.
-- **NEEDS_MANUAL** — unclear, risky, product decision, or outside safe scope.
+- **NEEDS_MANUAL** — evidence not provable, an owner STOP condition of spec
+  §0.13 (product decision, risk acceptance, …), or outside safe scope.
 
 Blockers = unresolved `PATCH_REQUIRED`, `TEST_REQUIRED` and `NEEDS_MANUAL`:
 do NOT declare the work complete while any of them remain.
+
+These route labels sit on top of the two-axis taxonomy of spec §0.3
+(origin/disposition × severity): `DEFERRED_BY_POLICY` (§0.4) and a fully
+proven `THEORETICAL_MUTATION` (§0.6) are resolved with evidence, without a
+patch and without the owner. `scripts/pr_autonomy_policy.py classify-finding`
+encodes the decision.
 
 The agent must fix only active, non-outdated, non-resolved, current-head
 issues. Do not chase stale, duplicate, resolved, or unrelated comments.
@@ -1397,41 +1270,41 @@ a gated way. This UPDATES/SUPERSEDES the earlier "never merge / auto-merge
 disabled" statements: under the conditions below the agent MAY merge; outside
 them, merge stays manual and owner-only.
 
-**Conditions to auto-merge (ALL required, fail-closed):**
+**Conditions to auto-merge (ALL required, fail-closed — spec §0.9):**
 
-1. All current-head checks SETTLED and green (check-completion gate passed).
-2. Zero blockers from the 5 AI reviewers (GPT-6.1 Sol, Grok 4.7, Fugu Ultra,
-   Fable 5.1, GPT-6 Astra) and — if it completed its review — from CodeRabbit.
-   CodeRabbit is NEVER a waiting gate (no cap-timer): rate-limit / usage-quota /
-   unavailable = ABSENT immediately, proceed and defer late findings to
-   post-merge tracking; "processing" is not absent but is not awaited either.
-3. No `manual-review-required` label, no unresolved blocking thread, no open
-   `PATCH_REQUIRED` / `NEEDS_MANUAL` finding.
-4. The PR is "able to merge" on GitHub (mergeable, no conflicts, branch
+1. Stable head; valid scope; complete acceptance; required suite PASS; hard
+   verify PASS (hard PASS+BLOCK tests actually run).
+2. All current-head checks SETTLED and green (check-completion gate passed);
+   Merge Readiness PASS, read fail-closed (§0.11).
+3. GPT-6.1 Sol and Grok 4.7 settled on the current head with no blocker
+   (§0.7); Codex triaged; zero unresolved threads; no open `PATCH_REQUIRED` /
+   `NEEDS_MANUAL` finding.
+4. No P0/P1 introduced; no preexisting finding activated or aggravated; no
+   pertinent owner decision open; fix loop valid; no manual stop.
+5. No `manual-review-required` label, no file reserved for owner merge in the
+   FULL PR diff, no dependency violation (`pr-guard` full-diff check, §0.10).
+6. The PR is "able to merge" on GitHub (mergeable, no conflicts, branch
    protection satisfied, not draft).
-5. Hard verify PASS for the change; hard PASS+BLOCK tests actually run.
 
-If ALL conditions hold, the agent merges and reports the merge SHA — **with no
-distinction between safety-critical and other PRs** (owner decision,
-2026-09-16). Right after the merge it moves on to the next PR in the queue,
-re-establishing the designated branch from the updated `main` (the ONE OPEN PR
-AT A TIME rule still holds).
+If ALL conditions hold: `AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE`, the agent
+merges and reports the merge SHA — **safety-critical runtime/core PRs
+included** (owner decisions 2026-09-16 and P41). Right after the merge it runs
+the next-PR procedure of spec §0.14 (ONE OPEN PR PER REPOSITORY still holds).
+If everything holds but the PR touches a file reserved for owner merge:
+`READY_FOR_OWNER_MANUAL_MERGE` and the owner merges. A changed head
+invalidates the evaluation. `scripts/pr_autonomy_policy.py merge-decision`
+encodes these conditions.
 
-What changed and what did NOT, stated precisely because the whole difference is
-here: the **exclusion by file category** is gone; **no quality gate** is. All
-five conditions above remain mandatory and fail-closed. The merge becomes
-automatic because the gates are verified, not because less is checked.
-
-**Safety-critical PRs are no longer excluded, but stay identifiable.** A PR is
+**Safety-critical PRs are not excluded, but stay identifiable.** A PR is
 safety-critical if it touches `core/`, safety areas of `services/`, money
 management, `betfair_client`/`betfair_market_api`, `dutching*`, `order_manager`,
-`safety_layer`, `reconciliation`, `runtime_controller`, `.github/workflows/*`,
-config/secrets. On these the agent:
+`safety_layer`, `reconciliation`, `runtime_controller`, config/secrets. On
+these the agent:
 
 - DECLARES it in the verdict (`PR safety-critical: yes — <files/areas>`), so the
   owner always knows what was merged autonomously;
 - applies the same gates with no discount: if even one does not hold, it does
-  not merge and goes through the need-manual cycle;
+  not merge;
 - NEVER uses urgency or "it's green anyway" as a substitute for a missing gate.
 
 **THE ONE EXCLUSION: whatever defines or enforces the gates themselves.** PRs
@@ -1456,6 +1329,11 @@ The workflows that ARE the gates the auto-merge decision rests on:
 - `.github/workflows/pr-guard.yml`
 - `.github/workflows/pr-merge-readiness.yml`
 - `scripts/guardrail_check.py`
+- `scripts/pr_autonomy_policy.py`
+- `scripts/pr_fix_loop_policy.py`
+- `scripts/pr_flow_automation.py`
+- `scripts/pr_merge_readiness.py`
+- `scripts/pr_automation_controller.py`
 
 `scripts/guardrail_check.py` is on the list for the same reason as the
 workflows, and GPT-5.6 Sol is who put it there: "a gate that is independent and
@@ -1485,9 +1363,13 @@ The first case cannot see the change, the second one is subject to it. In
 neither can the gate notice its own weakening — and that is what sets these
 apart from any other safety-critical area.
 
-The other workflows — build, packaging, tests, chaos, lockfile — are NOT
-excluded: they do not decide whether a PR may be merged, they only verify it.
-The agent merges those on its own under the gates above.
+The five `scripts/pr_*` entries above define merge authority, readiness,
+fix-loop budget and this contract's classifier: same structural reason (owner
+item 19, 08-10-2026). Every OTHER workflow — build, packaging, tests, chaos,
+lockfile — is also owner-merge since 08-10-2026, fail-closed: workflows run
+with repository secrets and permissions, and `MANUAL_AUTHORITY_PATTERNS`
+labels the whole `.github/workflows/` tree. Dependency manifests likewise
+(supply chain). This supersedes the #469 paragraph below on that point.
 
 Flagged on #469 independently by GPT-5.6 Sol and Claude Fable 5.1 (the policy
 files) and by Fugu Ultra (the workflow gates). Owner decision: exclude the
@@ -1551,25 +1433,29 @@ files is already the number in the diff.
 The per-issue override that used to lift the exclusion case by case is no longer
 needed and is withdrawn: the authorization is global and lives here.
 
-**Need-manual => STOP + ASK + RECORD + WAIT.** If a condition is not met, or an
-owner decision is required (ambiguity, risk, product choice, a blocker not
-fixable with a narrow patch), the agent does NOT merge and:
+**Owner STOP => STOP + ASK + RECORD + WAIT — only for the minimal conditions.**
+The owner decides WHAT, the agent decides HOW. The agent stops and asks ONLY
+for the ten conditions of spec §0.13: new product decision; spend or
+infrastructure; credential or service; new P0 not fixable within the decided
+contract; contract change or risk acceptance; MANUAL via MCP; fix loop
+exhausted; substantive conflict between authoritative sources; authorization
+or gate not verifiable; a real action needing an owner command (especially
+LIVE). Then it:
 
 1. STOPS (fail-closed: no forcing, no guessing, no bypass);
 2. puts the question to the owner as an explicit QUESTION, with the options;
-3. RECORDS in the task's dedicated issue the question AND the owner's answer
-   when it arrives — owner decisions are the tracked source of truth for the
-   next steps;
-4. WAITS for the decision before proceeding.
+3. RECORDS the question and the answer in the task's dedicated issue / #426;
+4. WAITS for the decision before proceeding on THAT part only (an open
+   decision touching a sub-part blocks only that sub-part).
 
-This applies across the whole roadmap: while developing the PRs, every
-need-manual goes through this cycle (stop → ask → record in the dedicated issue
-→ wait for the owner's decision → proceed).
+A purely technical uncertainty is NOT a stop: when the contract and the
+expected result are determined, the agent picks the safest technical solution,
+proves it, triages it and continues. A gate that cannot be verified is not a
+technical uncertainty: it is UNKNOWN/NEEDS_MANUAL (§0.11).
 
-**OUT OF CREDITS => DO NOT MERGE, STOP AND TELL THE OWNER.** This is the only
-exception to the autonomy, and it applies to the **five reviewers the owner pays
-for**: GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. If any of them
-cannot review
+**OUT OF CREDITS => DO NOT MERGE, STOP AND TELL THE OWNER.** It applies to the
+**active reviewers the owner pays for** (P41): GPT-6.1 Sol and Grok 4.7. If
+either cannot review
 because the provider answers usage-quota / rate-limit / out of credits — the
 workflow starts but the model does not answer — then that PR **has not been
 reviewed**, and a merge without review is not an authorized merge. The agent:
@@ -1588,7 +1474,8 @@ on would mean stacking unreviewed work behind a stuck PR.
 they are third parties on limited availability (Codex permanently usage-limited,
 CodeRabbit stopped at `<10 stars`). They stay **absent immediately**, block
 nothing and do not stop the queue — otherwise the queue would never restart. The
-stop rule above concerns **only** the five API workflows.
+stop rule above concerns **only** the active Sol and Grok workflows; the
+suspended Fugu Ultra, Claude Fable 5.1 and GPT-6 Astra are not awaited.
 
 ---
 
@@ -1612,7 +1499,8 @@ Final hard verify requires:
 - design handoff (`docs/design/design_handoff.md`) updated when the
   design/UI/UX aspect changed, or N/A with reason;
 - no blocking review comments left unevidenced;
-- final labels fired and the strong reviewers' full-range outcome read;
+- Sol and Grok reviews valid on the current head (spec §0.7) and the full PR
+  diff audited (`pr-guard` full-diff check, §0.10);
 - last-5 merged PR sweep done;
 - no ungated merge.
 
@@ -1657,7 +1545,7 @@ Inline comments checked:
 Unresolved threads checked:
 - YES / NO
 
-Final labels fired + strong reviewers (Fugu/Fable/Astra) full-range outcome read:
+Sol + Grok valid on current head (spec §0.7) + full-diff check (§0.10):
 - YES / NO
 
 Last-5 PR post-merge sweep:
@@ -1667,7 +1555,7 @@ Safety invariants:
 - PASS / FAIL
 
 Merge:
-- AUTO-MERGE (gated conditions met, non-safety-critical) / MANUAL OWNER
+- READY_FOR_AUTO_MERGE (all spec §0.9 conditions) / READY_FOR_OWNER_MANUAL_MERGE
 
 Implementation label:
 - MISSING / PARTIAL / IMPLEMENTED_WITH_NOTE / FULLY_IMPLEMENTED /
@@ -1781,8 +1669,8 @@ A task is not complete until:
   is explained.
 - Blocking review comments are resolved, outdated, or explicitly handled
   with evidence.
-- The final label gate has been fired and the strong reviewers' full-range
-  outcome read.
+- Sol and Grok have valid reviews on the current head and the full PR diff
+  has been audited (spec §0.7, §0.10).
 - The final hard verify has been performed.
 - The PR is ready for owner review (or auto-merged under the gated policy).
 
@@ -1842,6 +1730,10 @@ Stop immediately and report `BLOCKED` if:
   validation) without explicit owner approval.
 - The task would produce malformed or partial order instructions.
 - The requested mode cannot be determined safely.
+- One of the owner STOP conditions of spec §0.13 applies.
+
+Do not stop for a technical choice that the contract and roadmap already
+determine (spec §0.1): choose the safest solution, prove it, continue.
 
 Do not stop if:
 

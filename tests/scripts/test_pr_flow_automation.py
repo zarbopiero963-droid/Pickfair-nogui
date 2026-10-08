@@ -1921,7 +1921,10 @@ def _stub_review_threads_for_report(monkeypatch) -> None:
                             "nodes": [
                                 {"id": "a", "isResolved": False, "isOutdated": False},
                                 {"id": "b", "isResolved": True, "isOutdated": False},
-                            ]
+                            ],
+                            # The query always asks for pageInfo: a response
+                            # without it is now rejected (spec §0.11).
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
                         }
                     }
                 }

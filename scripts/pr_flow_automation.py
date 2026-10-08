@@ -1932,11 +1932,19 @@ def cmd_preflight(args: argparse.Namespace) -> int:
 
 def cmd_report(args: argparse.Namespace) -> int:
     review_nodes: list[dict[str, Any]] = []
+    review_api_ok = True
     try:
         review_nodes = fetch_all_review_threads(args.repo, args.pr)
     except (RuntimeError, ValueError, OSError, AttributeError):
         review_nodes = []
+        review_api_ok = False
     decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes)
+    if not review_api_ok:
+        # Fail-closed (§0.11): unreadable threads are UNKNOWN, never "0 open".
+        reasons = decision.get("reasons")
+        if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
+            reasons.append("review_threads_api_unavailable")
+        decision["can_merge"] = False
     blockers = decision.get("blockers")
     _ = blockers if isinstance(blockers, list) else []
     unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
@@ -1948,7 +1956,9 @@ def cmd_report(args: argparse.Namespace) -> int:
         "unresolved_active": unresolved_active,
         "mergeable": decision.get("mergeable"),
         "mergeStateStatus": decision.get("mergeStateStatus"),
-    })
+    }) and review_api_ok
+    if not review_api_ok:
+        decision["next_action"] = "needs_manual_review_api"
     decision["review_auto_resolve_candidates"] = unresolved_active
     decision["telegram_summary"] = build_telegram_summary({
         "pr": decision.get("pr"),
@@ -1991,12 +2001,16 @@ def fetch_all_review_threads(repo: str, pr_number: str | int) -> list[dict[str, 
     """Fetch every review-thread node for a PR using GraphQL pagination."""
     after_cursor: str | None = None
     collected: list[dict[str, Any]] = []
+    seen_cursors: set[str] = set()
     while True:
         page = _review_threads_page(repo, pr_number, after_cursor)
         collected.extend(_review_threads_nodes(page))
         next_cursor = _review_threads_next_cursor(page)
         if not next_cursor:
             break
+        if next_cursor in seen_cursors:
+            raise ValueError("review threads: pagination cursor repeated")
+        seen_cursors.add(next_cursor)
         after_cursor = next_cursor
     return collected
 
@@ -2025,35 +2039,44 @@ def _review_threads_page(repo: str, pr_number: str | int, after_cursor: str | No
     return gh_json(cmd)
 
 
+def _review_threads_connection(review_raw: Any) -> dict[str, Any]:
+    """The `reviewThreads` connection, or ValueError on any unexpected shape.
+
+    Fail-closed (docs/auto_pr_flow_spec.md §0.11): GraphQL `errors`, a missing
+    level or a non-object connection used to read as "zero threads", i.e. a
+    readiness PASS built on an unreadable answer. Now the caller sees an error
+    and readiness reports `review_threads_api_unavailable`.
+    """
+    if not isinstance(review_raw, dict):
+        raise ValueError("review threads: response is not an object")
+    if review_raw.get("errors"):
+        raise ValueError("review threads: GraphQL errors in response")
+    node: Any = review_raw
+    for key in ("data", "repository", "pullRequest", "reviewThreads"):
+        node = node.get(key) if isinstance(node, dict) else None
+        if not isinstance(node, dict):
+            raise ValueError(f"review threads: missing or invalid '{key}'")
+    return node
+
+
 def _review_threads_nodes(review_raw: dict[str, Any]) -> list[dict[str, Any]]:
-    review_threads = (
-        review_raw.get("data", {})
-        .get("repository", {})
-        .get("pullRequest", {})
-        .get("reviewThreads", {})
-    )
-    if not isinstance(review_threads, dict):
-        return []
-    nodes = review_threads.get("nodes", [])
-    if not isinstance(nodes, list):
-        return []
-    return [node for node in nodes if isinstance(node, dict)]
+    nodes = _review_threads_connection(review_raw).get("nodes")
+    if not isinstance(nodes, list) or not all(isinstance(node, dict) for node in nodes):
+        raise ValueError("review threads: 'nodes' is not a list of objects")
+    return list(nodes)
 
 
 def _review_threads_next_cursor(review_raw: dict[str, Any]) -> str:
-    review_threads = (
-        review_raw.get("data", {})
-        .get("repository", {})
-        .get("pullRequest", {})
-        .get("reviewThreads", {})
-    )
-    if not isinstance(review_threads, dict):
-        return ""
-    page_info = review_threads.get("pageInfo", {})
-    if not isinstance(page_info, dict) or not page_info.get("hasNextPage"):
+    page_info = _review_threads_connection(review_raw).get("pageInfo")
+    if not isinstance(page_info, dict) or not isinstance(page_info.get("hasNextPage"), bool):
+        raise ValueError("review threads: pageInfo missing or invalid")
+    if not page_info["hasNextPage"]:
         return ""
     next_cursor = page_info.get("endCursor")
-    return str(next_cursor) if next_cursor else ""
+    if not isinstance(next_cursor, str) or not next_cursor:
+        # hasNextPage without a cursor = incomplete pagination, never "done".
+        raise ValueError("review threads: hasNextPage without endCursor")
+    return next_cursor
 
 
 

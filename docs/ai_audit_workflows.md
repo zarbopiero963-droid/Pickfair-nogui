@@ -5,6 +5,13 @@ Request di Pickfair-nogui. Sono **reviewer opzionali e diff-only**: aiutano a
 individuare bug, regressioni e problemi di sicurezza, ma **non sostituiscono il
 controllo umano** e **non approvano né mergiano** nulla.
 
+> **Stato vigente (owner #426/P41, contratto di autonomia 08/10/2026 —
+> `docs/auto_pr_flow_spec.md` §0.7–§0.8):** attivi **GPT-6.1 Sol** e **Grok
+> 4.7**; Codex advisory; **SOSPESI** Fugu Ultra, Claude Fable 5.1 e GPT-6 Astra
+> (workflow disattivati nella UI GitHub, file presenti: non si attendono, non si
+> riattivano, le loro label finali non si applicano). Le righe sotto descrivono
+> come i workflow sono costruiti, non un obbligo di attenderli.
+
 ## I cinque reviewer
 
 | Workflow | Modello | Provider | Quando chiama il modello (costo) |
@@ -90,12 +97,16 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   modello a non seguire istruzioni contenute in codice/commenti/stringhe/nomi
   file (anti prompt-injection); i fence ```` ``` ```` nel diff vengono
   neutralizzati.
-- **Aree sensibili → controllo manuale**: se il diff tocca aree critiche
-  (`CRITICAL_PATTERNS`: workflow, dipendenze, betfair/telegram/parser,
-  money management, dutching, safety, reconciliation, runtime, order manager,
-  segreti/credenziali/certlogin/config…) o la Compare API tronca la lista
-  (>= 300 file), il workflow applica la label `manual-review-required` e segnala
-  di non usare auto-merge.
+- **Safety-critical (informativo) vs merge manuale owner** (spec §0.8): nei
+  workflow attivi di Sol e Grok `CRITICAL_PATTERNS` (workflow, dipendenze,
+  betfair/telegram/parser, money management, dutching, safety, reconciliation,
+  runtime, order manager, segreti/credenziali/certlogin/config…) produce solo la
+  sezione «Safety-critical (informativo)» del commento. La label
+  `manual-review-required` la applica `MANUAL_AUTHORITY_PATTERNS` (copia
+  identica di `scripts/pr_autonomy_policy.py`): file di autorità/governance,
+  tutti i workflow, manifest di dipendenze, materiale segreto, o Compare API
+  troncata (>= 300 file). I tre workflow sospesi conservano la vecchia regola
+  larga e vanno allineati prima di un'eventuale riattivazione.
 - **Reviewer opzionali**: se il secret del provider non è configurato, il job
   esce con successo (skip) e **non** fa fallire la PR. Eccezione: sul gate
   finale a label (Fugu/Fable/Astra) una review non eseguibile fallisce di proposito
@@ -216,18 +227,14 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 ## Label
 
 - `final-fugu-review` / `final-fable-review` / `final-astra-review`:
-  attivano il gate finale del
-  rispettivo reviewer forte sull'intera PR (pre-merge). **Si applicano a OGNI
-  PR, sempre, senza chiedere** (decisione dell'owner del 16-09-2026): il
-  motivo non è il costo ma la leggibilità del gate — una PR dove le label non
-  compaiono non si distingue, guardandola su GitHub, da una dove il gate è
-  stato saltato. Sono i tre reviewer costosi e ogni lancio è spesa, ma grazie
-  al `done_marker` per range il giro a label costa quasi sempre zero quando i
-  forti hanno già pubblicato su quel range (vedi CLAUDE.md / AGENTS.md, che
-  restano autoritativi). Resta automatica la partenza sui push che toccano
-  file **core o critici**: quella è la rete di sicurezza.
-- `manual-review-required`: applicata automaticamente quando il diff tocca aree
-  sensibili o la Compare API è troncata.
+  attivano il gate finale del rispettivo reviewer forte sull'intera PR.
+  **SOSPESE con i loro reviewer (P41):** non si applicano; la regola del
+  16-09-2026 «si applicano a OGNI PR» è sospesa finché vale P41.
+- `manual-review-required`: bloccante REALE, applicato da Sol/Grok solo per i
+  file di `MANUAL_AUTHORITY_PATTERNS` o per Compare API troncata; l'agente la
+  applica inoltre per decisione owner necessaria, stop esplicito, fix loop
+  esaurito, accettazione del rischio o policy espressa. Non si rimuove in modo
+  opportunistico (spec §0.8).
 
 > Nota: questi reviewer sono un filtro tecnico avanzato. **Nessuno di questi
 > workflow esegue auto-merge o auto-approve** — si limitano a commentare e a
@@ -250,5 +257,7 @@ modello lascerebbe il difetto intatto con un test verde sopra.
 > sezione «AUTO-MERGE» di `CLAUDE.md` / `AGENTS.md`: se questa nota e quella
 > sezione divergono, vale la sezione.
 >
-> Resta il blocco se un reviewer **pagato** è in usage-quota sul head corrente:
-> uno qualsiasi dei cinque, non solo i tre forti a label.
+> Resta il blocco se un reviewer **attivo** (Sol o Grok) è in usage-quota sul
+> head corrente (P41, CREDITI ESAURITI). Dal 08/10/2026 l'elenco a merge owner
+> comprende anche gli `scripts/pr_*` che definiscono autorità di merge e tutti
+> gli altri workflow (spec §0.9).
