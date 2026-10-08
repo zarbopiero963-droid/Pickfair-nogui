@@ -241,6 +241,54 @@ def test_pass_redelivery_after_restart_with_new_received_at_is_blocked(tmp_path)
     assert _broker_refs(first.broker) == [ref], "la riconsegna post-restart ha piazzato un secondo ordine"
 
 
+def _gui_publish(c, listener_signal, *, stake):
+    """Percorso mini-GUI reale: TelegramModule normalizza il segnale del
+    listener, costruisce il payload DIRECT, ci copia ``raw_signal`` (con il
+    ``received_at`` di consegna annidato) e lo instrada al gate runtime."""
+    from telegram_module import TelegramModule
+    from telegram_sanitizer import sanitize_telegram_payload
+
+    class _Gui(TelegramModule):
+        def __init__(self, bus):
+            self.bus = bus
+            self.simulation_mode = True
+
+    gui = _Gui(c.bus)
+    payload, mode = gui._resolve_signal_to_payload(dict(listener_signal), stake=stake)
+    assert mode == "DIRECT" and payload
+    payload["raw_signal"] = sanitize_telegram_payload(dict(listener_signal))
+    payload["resolution_mode"] = mode
+    assert gui._publish_order_signal(payload) == "SIGNAL_RECEIVED"
+
+
+def test_pass_gui_redelivery_with_nested_received_at_is_blocked(tmp_path):
+    # Codex P1 (head 9eb6c7f): sul percorso mini-GUI il received_at di
+    # consegna sopravvive annidato in raw_signal. Riconsegna post-restart con
+    # received_at nuovo (e stake GUI cambiato) = stesso intento = stesso ref.
+    listener = {
+        "market_id": "1.234", "selection_id": 11, "price": 2.0,
+        "bet_type": "BACK", "chat_id": -100123, "raw_text": "OVER 2.5 @2.0",
+        "event": "Alpha v Beta", "market": "Over/Under 2.5", "selection": "Over 2.5",
+    }
+    first = _chain(tmp_path, db_name="gui.db")
+    _gui_publish(first, {**listener, "received_at": "2026-10-08T10:00:00.1+00:00"}, stake=3.0)
+    ref = first.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref")
+    assert ref and _broker_refs(first.broker) == [ref]
+
+    second = _chain(tmp_path, db_name="gui.db")
+    second.rc.betfair_service.simulation_broker = first.broker
+    _gui_publish(second, {**listener, "received_at": "2026-10-08T10:02:30.9+00:00"}, stake=5.0)
+
+    assert second.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    assert _broker_refs(first.broker) == [ref], "riconsegna GUI post-restart: secondo ordine piazzato"
+
+    # Messaggio diverso nella stessa chat = intento diverso.
+    _gui_publish(second, {**listener, "selection_id": 12, "selection": "Under 2.5",
+                          "raw_text": "UNDER 2.5 @2.0", "received_at": "2026-10-08T10:03:00+00:00"}, stake=5.0)
+    other = second.bus.payloads("CMD_QUICK_BET")[1].get("customer_ref")
+    assert other and other != ref
+
+
 def test_pass_distinct_signals_get_distinct_identities(tmp_path):
     c = _chain(tmp_path)
 
@@ -619,6 +667,33 @@ def test_pass_helper_is_deterministic_compliant_and_preserves_upstream():
     assert resolve_customer_ref("  up-1 ", "sig", {"a": 1}) == "up-1"
     assert resolve_customer_ref("", "sig", {"a": 1}) == derive_customer_ref("sig", {"a": 1})
     assert resolve_customer_ref(None, "sig", {"a": 1}) == derive_customer_ref("sig", {"a": 1})
+
+
+def test_pass_helper_signal_material_ignores_delivery_and_derived_fields():
+    from core.order_identity import derive_customer_ref, signal_identity_material
+
+    def ref(signal):
+        return derive_customer_ref("sig", signal_identity_material(signal))
+
+    raw = {"raw_text": "OVER 2.5", "chat_id": -1, "received_at": "t1",
+           "nested": [{"received_at": "t1", "k": 1}]}
+    gui = {"raw_signal": raw, "price": 2.0, "stake": 3.0, "event_key": "e1"}
+    # Riconsegna: received_at nuovo a ogni profondita', prezzo risolto e stake GUI diversi.
+    redelivered = {"raw_signal": {**raw, "received_at": "t2",
+                                  "nested": [{"received_at": "t2", "k": 1}]},
+                   "price": 2.1, "stake": 5.0, "event_key": "e2"}
+    assert ref(gui) == ref(redelivered)
+    # Messaggio diverso o chat diversa = intento diverso.
+    assert ref(gui) != ref({**gui, "raw_signal": {**raw, "raw_text": "UNDER 2.5"}})
+    assert ref(gui) != ref({**gui, "raw_signal": {**raw, "chat_id": -2}})
+    assert ref(gui) != ref({**gui, "raw_signal": {**raw, "nested": [{"k": 2}]}})
+    # chat_id solo al primo livello (raw_signal senza chat) resta identita'.
+    bare = {"raw_signal": {"raw_text": "OVER 2.5"}, "chat_id": -1}
+    assert ref(bare) != ref({**bare, "chat_id": -2})
+    # Headless (senza raw_signal): il prezzo del messaggio resta identita'.
+    headless = {"price": 2.0, "chat_id": -1, "received_at": "t1"}
+    assert ref(headless) == ref({**headless, "received_at": "t2"})
+    assert ref(headless) != ref({**headless, "price": 2.2})
 
 
 def test_pass_helper_upstream_normalization_and_operation_refs():

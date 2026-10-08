@@ -28,7 +28,11 @@ from cashout_router import CashoutRouter
 from direct_best_price import SOURCE_FALLBACK_MASTER, resolve_direct_best_price
 from direct_unmatched_ttl import select_expired_unmatched
 from order_manager import TERMINAL_LIFECYCLE_EVENTS
-from core.order_identity import derive_customer_ref, resolve_customer_ref
+from core.order_identity import (
+    derive_customer_ref,
+    resolve_customer_ref,
+    signal_identity_material,
+)
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import (
     AUTO_GREEN_DELAY_SEC,
@@ -3027,21 +3031,18 @@ class RuntimeController:
             "roserpina_mode": decision.desk_mode.value,
         }
         # PR26-a: identita' stabile dell'intento (core/order_identity.py). Un
-        # customer_ref a monte si preserva; altrimenti si deriva dal contenuto
-        # del segnale (chat_id incluso) SENZA cio' che cambia a ogni consegna:
-        # received_at (ora di ricezione del listener, rigenerata a una
-        # riconsegna dopo reconnect/restart), event_key (aggiunto qui) e lo
-        # stake MM. Stesso messaggio riconsegnato = stesso ref = doppione
-        # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
-        # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
+        # customer_ref a monte si preserva; altrimenti si deriva dal messaggio
+        # (chat_id incluso) SENZA cio' che cambia a ogni consegna: received_at
+        # (rigenerato dal listener a una riconsegna dopo reconnect/restart, anche
+        # annidato in raw_signal sul percorso mini-GUI), event_key, i campi
+        # derivati dalla GUI (prezzo risolto, stake) e lo stake MM. Stesso
+        # messaggio riconsegnato = stesso ref = doppione bloccato. Due messaggi
+        # dal contenuto identico nella stessa chat sono trattati come lo stesso
+        # intento (fail-closed: mai una puntata doppia).
         payload["customer_ref"] = resolve_customer_ref(
             signal.get("customer_ref"),
             "sig",
-            {
-                key: value
-                for key, value in signal.items()
-                if key not in ("event_key", "received_at")
-            },
+            signal_identity_material(signal),
         )
         routing_contract = signal.get("telegram_routing_contract")
         if isinstance(routing_contract, str) and routing_contract.strip():

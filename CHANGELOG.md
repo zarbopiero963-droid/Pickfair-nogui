@@ -113,9 +113,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   comes from:
   - an upstream ref is preserved; a non-compliant one is mapped
     deterministically instead of being silently dropped by `BetfairClient`;
-  - signal: derived from its content, without `received_at`, `event_key`
-    or the MM stake. A redelivery after reconnect or restart keeps the same
-    ref, and the engine blocks it;
+  - signal: derived from the message and its chat, without `received_at`
+    or `event_key` (at any depth) and without the MM stake. On the mini-GUI
+    path the message is `raw_signal`, so the resolved price and the GUI stake
+    are not part of the identity. A redelivery after reconnect or restart
+    keeps the same ref, and the engine blocks it;
   - auto-trade: derived from the triggering settlement;
   - dutching leg: derived from the batch id plus the leg. The ref is also
     stored in `dutching_batch_legs`;
