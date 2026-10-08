@@ -202,7 +202,10 @@ autorità di merge (`scripts/pr_autonomy_policy.py`,
 `scripts/pr_clean_scope_rebuild.py`, `scripts/pr_refresh_self_checks.py` e ogni
 altro `scripts/pr_*.py`), `scripts/ci/check_ci_quarantine.py`; inoltre, per
 fail-closed, ogni altro workflow e i manifest di dipendenze. La label
-`manual-review-required` non blocca: instrada qui.
+`manual-review-required` non blocca: instrada qui. Il merge live
+dell'automazione (`pr_automation_controller.can_auto_merge`) richiede, oltre ai
+gate generici, `merge_decision(autonomy_merge_state) == READY_FOR_AUTO_MERGE`:
+prove assenti o qualunque altro esito → niente merge automatico.
 Esito: `READY_FOR_OWNER_MANUAL_MERGE`.
 
 **Auto-merge runtime/core** consentito quando TUTTE: head stabile; scope
@@ -224,8 +227,9 @@ Sul diff ASSEMBLATO della PR (base...head, non l'ultimo push): base, head,
 diff completo, path vietati, scope, nuovi chiamanti, dipendenze, regressioni.
 `pr-guard.yml` esegue `python -I scripts/pr_autonomy_policy.py full-diff`:
 BLOCK su materiale segreto presente (per path e per contenuto con forma di
-segreto in qualunque file; in `tests/` le chiavi sintetiche non bloccano ma
-portano a merge owner), input del guard nel diff, scope ≠ diff, nuove
+segreto in qualunque file; in `tests/` una chiave non blocca solo se la riga
+si dichiara sintetica — `SYNTHETIC`/`fake`/`dummy`/`placeholder` — e porta
+comunque a merge owner), input del guard nel diff, scope ≠ diff, nuove
 dipendenze di produzione non dichiarate; riporta file a merge owner,
 safety-critical, nuovi chiamanti del percorso denaro e dipendenze solo-test.
 Il report contiene solo path e codici, mai righe del diff. Confine di fiducia:

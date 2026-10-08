@@ -2053,14 +2053,18 @@
         "CLAUDE.md",
         "docs/ai_audit_workflows.md",
         "docs/auto_pr_flow_spec.md",
+        "scripts/pr_automation_controller.py",
         "scripts/pr_autonomy_policy.py",
         "scripts/pr_flow_automation.py",
+        "tests/scripts/test_codacy_decommissioned.py",
+        "tests/scripts/test_pr_automation_controller.py",
         "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_pr_fix_loop_policy.py",
         "tests/scripts/test_pr_flow_automation.py"
       ],
-      "max_files": 12,
+      "max_files": 16,
       "allow_tests": true,
-      "description": "Mandato owner 08/10/2026: una sola PR di governance che rende stabile il contratto di autonomia end-to-end (spec §0) per Pickfair + Control API + #495 + MCP. Ruoli owner/agente, tassonomia a due assi, DEFERRED_BY_POLICY, THEORETICAL_MUTATION, P0/P1, blocker strutturati, reviewer P41 (Sol+Grok attivi, Codex advisory, Fugu/Fable/Astra sospesi), label safety-critical informativa vs manual-review-required bloccante (MANUAL_AUTHORITY_PATTERNS in Sol/Grok), merge owner per i file di autorita', auto-merge runtime/core a gate completi, controllo full-diff in pr-guard, readiness fail-closed sui thread GraphQL, PR successiva, parallelismo cross-repo, #497 DEFERRED, decisioni chiuse/aperte per riferimento, STOP owner minimi, principio verbatim. scripts/pr_autonomy_policy.py puro + test. NESSUN cambio di prodotto/runtime/Betfair/MCP/Control API/denaro/SIM-LIVE. PR a merge manuale owner: mai auto-merge."
+      "description": "Mandato owner 08/10/2026: una sola PR di governance che rende stabile il contratto di autonomia end-to-end (spec §0) per Pickfair + Control API + #495 + MCP. Ruoli owner/agente, tassonomia a due assi, DEFERRED_BY_POLICY, THEORETICAL_MUTATION, P0/P1, blocker strutturati, reviewer P41 (Sol+Grok attivi, Codex advisory, Fugu/Fable/Astra sospesi), label safety-critical informativa vs manual-review-required bloccante (MANUAL_AUTHORITY_PATTERNS in Sol/Grok), merge owner per i file di autorita', auto-merge runtime/core a gate completi, controllo full-diff in pr-guard, readiness fail-closed sui thread GraphQL, PR successiva, parallelismo cross-repo, #497 DEFERRED, decisioni chiuse/aperte per riferimento, STOP owner minimi, principio verbatim. scripts/pr_autonomy_policy.py puro + test; can_auto_merge del controller richiede anche merge_decision == READY_FOR_AUTO_MERGE (gate aggiunto, fail-closed). NESSUN cambio di prodotto/runtime/Betfair/MCP/Control API/denaro/SIM-LIVE. PR a merge manuale owner: mai auto-merge."
     }
   }
 }

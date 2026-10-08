@@ -16,6 +16,7 @@ SIM/LIVE: classifica finding, review, path, merge e PR successiva.
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import sys
@@ -217,6 +218,8 @@ SECRET_CONTENT_RE = re.compile(
     r"|\bAKIA[0-9A-Z]{16}\b"
     r"|\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b"
 )
+
+SYNTHETIC_MARKER_RE = re.compile(r"(?i)(synthetic|sintetic|fake|dummy|placeholder|not[-_ ]a[-_ ]real)")
 
 STDLIB_EXTRA = frozenset({"__future__"})
 
@@ -446,7 +449,11 @@ _DONE_RE = re.compile(r"<!-- ([a-z0-9]+-pr-review-done):pickfair-nogui:([0-9a-f]
 
 
 def _bloccanti_section(body: str) -> str | None:
-    m = re.search(r"^##\s*Bloccanti\s*$(.*?)(?=^##\s|\Z)", body, re.MULTILINE | re.DOTALL)
+    return _section(body, "Bloccanti")
+
+
+def _section(body: str, title: str) -> str | None:
+    m = re.search(rf"^##\s*{title}\s*$(.*?)(?=^##\s|\Z)", body, re.MULTILINE | re.DOTALL)
     return None if m is None else m.group(1).strip()
 
 
@@ -487,7 +494,13 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
     section = _bloccanti_section(body)
     if section is None:
         return {"status": "UNKNOWN", "reason": "sezione Bloccanti assente: schema inatteso"}
-    if not section or _NO_BLOCKERS.fullmatch(section.strip()):
+    # Schema a due sezioni completo (rilievi Codex/Sol #499): «Bloccanti» vuota
+    # o «Verdetto finale» assente/vuoto = review incompleta, mai pulita.
+    if not section:
+        return {"status": "UNKNOWN", "reason": "sezione Bloccanti vuota: review incompleta"}
+    if not _section(body, "Verdetto finale"):
+        return {"status": "UNKNOWN", "reason": "Verdetto finale assente o vuoto: review incompleta"}
+    if _NO_BLOCKERS.fullmatch(section.strip()):
         return {"status": "VALID_CLEAN", "reason": ""}
     return {"status": "VALID_WITH_BLOCKERS", "reason": "bloccanti da triagiare"}
 
@@ -577,7 +590,27 @@ _IMPORT_RE = re.compile(r"^\+\s*(?:from\s+([A-Za-z_][\w.]*)\s+import\b|import\s+
 
 
 def _top_modules(line: str) -> list[str]:
-    m = _IMPORT_RE.match(line)
+    """Moduli di primo livello importati da una riga aggiunta.
+
+    Parsing strutturale con `ast` (rilievo Codex #499: `import a as b, c` deve
+    dare a e c); fallback regex solo per le righe non parsabili da sole
+    (es. `from x import (` su più righe)."""
+    src = line[1:].strip() if line.startswith("+") else line.strip()
+    if not src.startswith(("import ", "from ")):
+        return []
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        tree = None
+    if tree is not None:
+        mods: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                mods.extend(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                mods.append(node.module.split(".")[0])
+        return mods
+    m = _IMPORT_RE.match("+" + src)
     if not m:
         return []
     if m.group(1):
@@ -644,9 +677,14 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         is_py = path.endswith(".py")
         for line in added:
             if SECRET_CONTENT_RE.search(line):
-                # In tests/ esistono chiavi SINTETICHE (fixture TLS, redazione):
-                # non blocca ma porta la PR a merge owner, che verifica.
-                (secret_content_tests if path.startswith("tests/") else secret_content).add(path)
+                # Il rilevatore non distingue una fixture da una credenziale
+                # (rilievo Codex #499): blocca SEMPRE, salvo una riga sotto
+                # tests/ che si DICHIARA sintetica (marker sulla stessa riga);
+                # anche allora la PR va a merge owner, che verifica.
+                if path.startswith("tests/") and SYNTHETIC_MARKER_RE.search(line):
+                    secret_content_tests.add(path)
+                else:
+                    secret_content.add(path)
             if is_py:
                 for mod in _top_modules(line):
                     if mod and mod not in stdlib and mod not in local and mod.lower() not in deps:
@@ -796,14 +834,20 @@ def next_pr_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         return {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}
     if open_prs:
         return {"status": "BLOCKED_OPEN_PR", "reason": "una sola PR attiva per repository"}
-    stops = [s for s in state.get("active_stop_conditions") or [] if s in OWNER_STOP_CONDITIONS]
-    unknown_stops = [s for s in state.get("active_stop_conditions") or [] if s not in OWNER_STOP_CONDITIONS]
+    # Prove esplicite, non default (rilievo Codex #499): campo assente o non
+    # lista = non verificabile, mai «nessuno stop / nessuna decisione aperta».
+    active = state.get("active_stop_conditions")
+    open_decisions = state.get("pertinent_open_owner_decisions")
+    if not isinstance(active, list) or not isinstance(open_decisions, list):
+        return {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}
+    stops = [s for s in active if s in OWNER_STOP_CONDITIONS]
+    unknown_stops = [s for s in active if s not in OWNER_STOP_CONDITIONS]
     if stops or unknown_stops:
         return {"status": "STOP_OWNER", "reason": ",".join(stops + unknown_stops)}
     card = state.get("next_card")
     if not _nonempty_str(card):
         return {"status": "STOP_OWNER", "reason": "prossima scheda non determinabile dalla roadmap"}
-    if state.get("pertinent_open_owner_decisions"):
+    if open_decisions:
         return {"status": "STOP_OWNER", "reason": "decisione owner aperta pertinente alla scheda"}
     deps = state.get("dependencies_satisfied")
     if deps is not True:
@@ -818,12 +862,21 @@ def parallel_classification(pickfair: Mapping[str, Any], mcp: Mapping[str, Any])
     """SAFE_PARALLEL / DEPENDENT / FORBIDDEN_PARALLEL fra una PR per repository."""
     if not isinstance(pickfair, Mapping) or not isinstance(mcp, Mapping):
         return "FORBIDDEN_PARALLEL"
-    if mcp.get("exposes_mutation") and not mcp.get("core_authority_ready"):
+    # Solo booleani e liste veri (rilievo Codex #499): "false" stringa non autorizza.
+    flags = (mcp.get("exposes_mutation"), mcp.get("core_authority_ready"),
+             pickfair.get("changes_control_api_contract"), mcp.get("consumes_control_api_contract"))
+    if not all(isinstance(f, bool) for f in flags):
         return "FORBIDDEN_PARALLEL"
-    if pickfair.get("changes_control_api_contract") and mcp.get("consumes_control_api_contract"):
+    lists = (mcp.get("depends_on", []), pickfair.get("depends_on", []),
+             pickfair.get("unmerged_outputs", []), mcp.get("unmerged_outputs", []))
+    if not all(isinstance(x, list) for x in lists):
         return "FORBIDDEN_PARALLEL"
-    needs = set(mcp.get("depends_on") or []) | set(pickfair.get("depends_on") or [])
-    unmerged = set(pickfair.get("unmerged_outputs") or []) | set(mcp.get("unmerged_outputs") or [])
+    if mcp["exposes_mutation"] and not mcp["core_authority_ready"]:
+        return "FORBIDDEN_PARALLEL"
+    if pickfair["changes_control_api_contract"] and mcp["consumes_control_api_contract"]:
+        return "FORBIDDEN_PARALLEL"
+    needs = set(lists[0]) | set(lists[1])
+    unmerged = set(lists[2]) | set(lists[3])
     if needs & unmerged:
         return "DEPENDENT"
     return "SAFE_PARALLEL"

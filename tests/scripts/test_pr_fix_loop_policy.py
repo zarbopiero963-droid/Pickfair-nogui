@@ -944,12 +944,26 @@ def test_auto_merge_cannot_bypass_durable_manual_stop(budget):
     assert not controller.can_auto_merge(context)['allowed']
 
 
+# Prove del contratto di autonomia (§0.9) per un merge automatico pulito: dal
+# #499 `can_auto_merge` richiede anche `merge_decision == READY_FOR_AUTO_MERGE`.
+AUTONOMY_READY_STATE = {
+    "evaluated_head": "abc123", "current_head": "abc123",
+    "scope_valid": True, "acceptance_complete": True, "suite_pass": True,
+    "hard_verify_pass": True, "codex_triaged": True, "fix_loop_valid": True,
+    "dependencies_satisfied": True, "pertinent_owner_decision_open": False,
+    "manual_stop": False, "manual_label_present": False,
+    "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
+    "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
+    "full_diff": {"status": "PASS", "owner_manual_merge_required": False},
+}
+
+
 def merge_context(**extra):
     return {'automation_mode':'live','automation_flags':{'AUTO_MERGE_ENABLED':True,
         'GITHUB_MUTATION_ENABLED':True,'EXTERNAL_SIDE_EFFECT_ENABLED':True},
         'task_no_commit_push':False,'mergeable':'MERGEABLE','mergeStateStatus':'CLEAN',
         'bad':[],'pending':[],'unresolved_active':0,'current_head_matches':True,
-        'explicit_merge_authorization':True, **extra}
+        'explicit_merge_authorization':True,'autonomy_merge_state':AUTONOMY_READY_STATE, **extra}
 
 
 @pytest.mark.parametrize('stage', ['reserved','working','pushing','retry_ready'])

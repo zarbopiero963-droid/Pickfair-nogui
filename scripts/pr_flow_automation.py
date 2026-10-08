@@ -1947,8 +1947,16 @@ def cmd_report(args: argparse.Namespace) -> int:
         decision["can_merge"] = False
     blockers = decision.get("blockers")
     _ = blockers if isinstance(blockers, list) else []
-    unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
-    review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes)}
+    # Conteggi sconosciuti restano sconosciuti (rilievo Codex #499): dopo un
+    # errore dell'API non si scrive «0 thread», né nel JSON né nel riepilogo.
+    unresolved_active: int | None
+    if review_api_ok:
+        unresolved_active = len(eligible_review_comments_for_auto_resolve(review_nodes))
+        review = {"unresolved_active": unresolved_active, "total_threads": len(review_nodes),
+                  "threads_known": True}
+    else:
+        unresolved_active = None
+        review = {"unresolved_active": None, "total_threads": None, "threads_known": False}
     decision["review"] = review
 
     decision["ready_to_merge_notification"] = should_notify_ready_to_merge({

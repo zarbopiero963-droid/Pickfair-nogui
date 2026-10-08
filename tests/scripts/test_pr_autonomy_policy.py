@@ -250,6 +250,26 @@ def test_errori_provider_non_sono_timeout(errore, atteso):
     assert gate == {"PROVIDER_ERROR": "BLOCKED", "QUOTA": "STOP_OWNER", "TIMEOUT": "RERUN_GROK_ONCE"}[atteso]
 
 
+@pytest.mark.parametrize("body_fn", [
+    lambda r: review_body(r).replace("## Verdetto finale\nOK\n", ""),
+    lambda r: review_body(r).replace("## Verdetto finale\nOK\n", "## Verdetto finale\n"),
+    lambda r: review_body(r, bloccanti=""),
+])
+def test_review_con_schema_incompleto_e_unknown(body_fn):
+    assert policy.validate_review(review("sol", body=body_fn("sol")), HEAD)["status"] == "UNKNOWN"
+
+
+def test_import_con_alias_e_lista_vede_tutti_i_moduli():
+    patch = ("+++ b/core/x.py\n+import requests as req, missing_package\n"
+             "+from other_missing.sub import y as z\n+from . import locale\n"
+             "+from yaml_like import (\n")
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=patch,
+                                  declared_files=["core/x.py"], local_modules=["core"],
+                                  declared_dependencies=["requests"])
+    assert diff["new_dependencies"] == ["missing_package", "other_missing", "yaml_like"]
+    assert "undeclared_new_dependency" in diff["problems"]
+
+
 def test_grok_primo_timeout_rerun_secondo_stop():
     timeout = {"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN,
                "body": "Review Grok non completata: The read operation timed out"}
@@ -435,8 +455,16 @@ def test_full_diff_contenuto_segreto_in_qualunque_file_blocca(path, line):
     assert _FAKE_GH not in json.dumps(diff) and "PRIVATE KEY" not in json.dumps(diff)
 
 
-def test_full_diff_chiave_sintetica_nei_test_non_blocca_ma_va_a_merge_owner():
+def test_full_diff_segreto_nei_test_senza_marker_blocca():
     patch = f"+++ b/tests/fixtures/tls.py\n+KEY = '{_FAKE_KEY}'\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/fixtures/tls.py"],
+                                  patch_text=patch, declared_files=["tests/fixtures/tls.py"],
+                                  local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "BLOCK" and diff["secret_like_content"] == ["tests/fixtures/tls.py"]
+
+
+def test_full_diff_chiave_sintetica_dichiarata_nei_test_va_a_merge_owner():
+    patch = f"+++ b/tests/fixtures/tls.py\n+SYNTHETIC_KEY = '{_FAKE_KEY}'\n"
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/fixtures/tls.py"],
                                   patch_text=patch, declared_files=["tests/fixtures/tls.py"],
                                   local_modules=[], declared_dependencies=[])
@@ -623,6 +651,18 @@ def test_merge_verificato_repo_libero_dipendenze_ok_parte_phase0():
     assert policy.next_pr_decision(next_state()) == {"status": "START_PHASE_0", "card": "PR26", "reason": ""}
 
 
+@pytest.mark.parametrize("campo", ["pertinent_open_owner_decisions", "active_stop_conditions"])
+@pytest.mark.parametrize("valore", ["__omesso__", None, "nessuna", 0])
+def test_prove_su_stop_e_decisioni_devono_essere_esplicite(campo, valore):
+    state = next_state()
+    if valore == "__omesso__":
+        state.pop(campo)
+    else:
+        state[campo] = valore
+    res = policy.next_pr_decision(state)
+    assert res["status"] == "STOP_OWNER" and res["reason"] == "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"
+
+
 def test_decisione_aperta_pertinente_ferma():
     assert policy.next_pr_decision(next_state(pertinent_open_owner_decisions=["X"]))["status"] == "STOP_OWNER"
 
@@ -643,13 +683,34 @@ def test_merge_non_verificato_pr_aperta_e_scheda_gia_soddisfatta():
     assert policy.next_pr_decision(next_state(active_stop_conditions=["MANUAL_VIA_MCP"]))["status"] == "STOP_OWNER"
 
 
+def _pf(**extra):
+    return {"changes_control_api_contract": False, **extra}
+
+
+def _mcp(**extra):
+    return {"exposes_mutation": False, "core_authority_ready": False,
+            "consumes_control_api_contract": False, **extra}
+
+
 def test_parallelismo_cross_repo():
-    assert policy.parallel_classification({}, {"exposes_mutation": True}) == "FORBIDDEN_PARALLEL"
-    assert policy.parallel_classification({"changes_control_api_contract": True},
-                                          {"consumes_control_api_contract": True}) == "FORBIDDEN_PARALLEL"
-    assert policy.parallel_classification({"unmerged_outputs": ["PF-API-1"]},
-                                          {"depends_on": ["PF-API-1"]}) == "DEPENDENT"
-    assert policy.parallel_classification({}, {"depends_on": []}) == "SAFE_PARALLEL"
+    assert policy.parallel_classification(_pf(), _mcp(exposes_mutation=True)) == "FORBIDDEN_PARALLEL"
+    assert policy.parallel_classification(_pf(changes_control_api_contract=True),
+                                          _mcp(consumes_control_api_contract=True)) == "FORBIDDEN_PARALLEL"
+    assert policy.parallel_classification(_pf(unmerged_outputs=["PF-API-1"]),
+                                          _mcp(depends_on=["PF-API-1"])) == "DEPENDENT"
+    assert policy.parallel_classification(_pf(), _mcp(depends_on=[])) == "SAFE_PARALLEL"
+    assert policy.parallel_classification(_pf(), _mcp(exposes_mutation=True,
+                                                      core_authority_ready=True)) == "SAFE_PARALLEL"
+
+
+@pytest.mark.parametrize("pf,mcp", [
+    (_pf(), _mcp(exposes_mutation=True, core_authority_ready="false")),
+    (_pf(), {"exposes_mutation": False}),
+    (_pf(changes_control_api_contract="no"), _mcp()),
+    (_pf(depends_on="PF-API-1"), _mcp()),
+])
+def test_parallelismo_prove_non_booleane_sono_vietate(pf, mcp):
+    assert policy.parallel_classification(pf, mcp) == "FORBIDDEN_PARALLEL"
 
 
 def test_stop_owner_solo_per_le_dieci_condizioni():
@@ -744,6 +805,32 @@ def test_cli_full_diff_risolve_il_task_come_il_guard(tmp_path, meta):
     assert res.returncode == 0, res.stdout + res.stderr
     out = json.loads(res.stdout)
     assert out["status"] == "PASS" and out["task_key"] == "k"
+
+
+def test_cli_dipendenza_dichiarata_nel_manifest_del_diff_passa(tmp_path):
+    """Rilievo Grok #499: senza la scorciatoia sul manifest, una dipendenza
+    DICHIARATA nel manifest del diff resta dichiarata (si legge il manifest
+    dell'head), quindi PASS; solo l'import non dichiarato blocca."""
+    files = ["core/x.py", "requirements.txt"]
+    (tmp_path / "meta.json").write_text(json.dumps({"title": "[TASK: k] x"}), encoding="utf-8")
+    (tmp_path / "files.json").write_text(json.dumps(files), encoding="utf-8")
+    (tmp_path / "scope.json").write_text(json.dumps({"tasks": {"k": {"files": files}}}), encoding="utf-8")
+    (tmp_path / "core").mkdir()
+    (tmp_path / "core/x.py").write_text("import nuovo_pacchetto\n", encoding="utf-8")
+    (tmp_path / "requirements.txt").write_text("requests\nnuovo-pacchetto>=1.0\n", encoding="utf-8")
+    patch = ("+++ b/core/x.py\n+import nuovo_pacchetto\n"
+             "+++ b/requirements.txt\n+nuovo-pacchetto>=1.0\n")
+    (tmp_path / "p.patch").write_text(patch, encoding="utf-8")
+    cmd = [sys.executable, "-I", str(ROOT / "scripts/pr_autonomy_policy.py"), "full-diff",
+           "--meta", "meta.json", "--files", "files.json", "--patch", "p.patch",
+           "--scope", "scope.json", "--base-sha", BASE, "--head-sha", HEAD]
+    res = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, check=False)
+    out = json.loads(res.stdout)
+    assert res.returncode == 0 and out["status"] == "PASS", res.stdout
+    assert out["owner_manual_merge_required"] is True  # manifest → merge owner
+    (tmp_path / "p.patch").write_text(patch + "+++ b/core/x.py\n+import non_dichiarato\n", encoding="utf-8")
+    res = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert res.returncode == 1 and json.loads(res.stdout)["new_dependencies"] == ["non_dichiarato"]
 
 
 def test_docs_dichiarano_il_contratto_e_il_principio_verbatim():

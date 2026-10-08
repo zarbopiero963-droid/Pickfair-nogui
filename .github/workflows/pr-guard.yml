@@ -119,7 +119,7 @@ jobs:
           git diff --no-renames --name-only "${PR_BASE_SHA}"...HEAD \
             | jq -R -s 'split("\n") | map(select(length > 0))' \
             > pr_files_raw.json
-          # Patch Python dell'INTERO diff assemblato (base...head), stesso SHA
+          # Patch (tutti i file) dell'INTERO diff assemblato (base...head), stesso SHA
           # immutabile e stessa guardia anti-symlink: serve al controllo full
           # diff del contratto di autonomia (docs/auto_pr_flow_spec.md §0.10).
           git diff --no-renames -U0 "${PR_BASE_SHA}"...HEAD > pr_full_diff.patch
