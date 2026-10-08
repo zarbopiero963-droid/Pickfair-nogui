@@ -122,12 +122,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     (the PR28-b model). If the db cannot be written, the same version goes to a
     marker file next to the db (`<db>.risk_stop_pending.json`). At restart the
     readable copy with the higher `seq` wins; an equal or unknown `seq`, or an
-    unreadable copy, gives the conservative result (stop active). A reset is
-    saved as a NEW version (`active=false`, higher `seq`) BEFORE the runtime
-    reopens, so an old active copy cannot bring the stop back; a reset that
-    cannot be saved anywhere is refused and the runtime stays blocked. Only if
-    neither store can be written does an activation hold for the running
-    process alone (KNOWN_LIMITATION, as in PR28-b).
+    unreadable copy, gives the conservative result (stop active).
+  - Reset is a fail-closed two-phase commit. An independent
+    `risk_stop_reset_guard` plus `<db>.risk_stop_reset_guard.json` is armed
+    BEFORE any `active=false` write and remains active through persistence and
+    readback. Only after the inactive state is verified is the DB guard cleared
+    and the guard marker removed last. Any failure before that commit leaves a
+    durable guard, so a rejected/incomplete reset cannot reopen after restart.
+    Only if neither normal stop store can be written during activation does the
+    stop hold for the running process alone (KNOWN_LIMITATION, as in PR28-b).
   - Neither a restart nor `start()` clears the stop: tables live in memory
     (exposure reads 0 after a restart) and the session loss restarts, so
     neither can prove the positions are closed. Only an explicit

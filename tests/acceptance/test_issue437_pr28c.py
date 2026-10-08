@@ -19,6 +19,7 @@ proven by tests/unit/test_cashout_router.py::test_non_bot_orders_are_not_closed.
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -383,6 +384,93 @@ def test_block_reset_marker_non_armabile_non_scrive_stato_inattivo(tmp_path, mon
     saved = json.loads(c.rc.db.get_settings()["risk_stop_state"])
     assert saved["active"] is True
     assert _catena(tmp_path).rc._risk_stop_reason != ""
+
+
+def test_block_reset_readback_e_scritture_successive_fallite_guard_indipendente(tmp_path):
+    """Fix c5 (Sol): dopo active=False, readback KO e nessuna write successiva
+    non possono perdere lo stop: il reset_guard era gia' durevole e indipendente."""
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:final")
+    original_get, original_save = c.rc.db.get_settings, c.rc.db.save_settings
+    get_calls = 0
+    save_calls = 0
+
+    def _get_flaky():
+        nonlocal get_calls
+        get_calls += 1
+        # before + guard lookup sono leggibili; il readback del reset fallisce.
+        if get_calls <= 2:
+            return original_get()
+        raise OSError("readback failed")
+
+    def _save_flaky(data):
+        nonlocal save_calls
+        save_calls += 1
+        # guard DB + active=False DB riescono; qualunque write successiva fallisce.
+        if save_calls <= 2:
+            return original_save(data)
+        raise OSError("all later writes failed")
+
+    c.rc.db.get_settings = _get_flaky
+    c.rc.db.save_settings = _save_flaky
+    esito = c.rc.reset_risk_stop()
+    c.rc.db.get_settings, c.rc.db.save_settings = original_get, original_save
+
+    assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:final"
+    assert _catena(tmp_path).rc._risk_stop_reason != ""
+
+
+def test_block_clear_guard_db_fallito_lascia_marker_guard_attivo(tmp_path):
+    """Fix c5: se il commit DB del guard fallisce, il marker indipendente resta."""
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:clear")
+    original_save = c.rc.db.save_settings
+    calls = 0
+
+    def _save(data):
+        nonlocal calls
+        calls += 1
+        # 1 guard, 2 state inactive, 3 clear guard -> failure.
+        if calls == 3:
+            raise OSError("guard clear failed")
+        return original_save(data)
+
+    c.rc.db.save_settings = _save
+    esito = c.rc.reset_risk_stop()
+    c.rc.db.save_settings = original_save
+
+    assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+    assert _catena(tmp_path).rc._risk_stop_reason != ""
+
+
+def test_pass_reset_confermato_rimuove_guard_indipendente(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:ok")
+
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}
+
+    settings = c.rc.db.get_settings()
+    assert settings.get("risk_stop_reset_guard", "") == ""
+    assert not os.path.exists(str(tmp_path / "pickfair.db.risk_stop_reset_guard.json"))
+    assert _catena(tmp_path).rc._risk_stop_reason == ""
+
+
+def test_block_grok_db_illeggibile_marker_inattivo_resta_fail_closed(tmp_path):
+    """Triage Grok c4: DB active scritto, marker stale/inattivo; se il DB diventa
+    illeggibile, _UNREADABLE mantiene comunque il RISK_STOP fail-closed."""
+    from core import risk_stop as stop_rules
+
+    c = _catena(tmp_path)
+    _scrivi(c, marker=_stato(False, "", 1))
+    c.rc.risk_stop("exposure_stop_reached:grok")
+    original_get = c.rc.db.get_settings
+    c.rc.db.get_settings = lambda: (_ for _ in ()).throw(OSError("db unreadable"))
+    try:
+        assert stop_rules.restore_risk_stop(c.rc.db) != ""
+    finally:
+        c.rc.db.get_settings = original_get
+
 
 @pytest.mark.parametrize("db, marker, atteso", [
     (_stato(True, "exposure_stop_reached:x", 2), _stato(False, "", 3), ""),          # newer reset wins

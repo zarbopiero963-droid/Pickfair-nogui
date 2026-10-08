@@ -28,6 +28,7 @@ from core.atomic_io import atomic_write_text
 logger = logging.getLogger(__name__)
 
 RISK_STOP_STATE_KEY = "risk_stop_state"
+RISK_STOP_RESET_GUARD_KEY = "risk_stop_reset_guard"
 _TRIGGERS = ("exposure_stop_reached", "session_loss_breached")
 
 
@@ -61,6 +62,15 @@ def _marker_path(db: Any) -> str:
     """Marker accanto al db, stesso schema di PR28-b (core/daily_loss_store)."""
     path = daily_loss_store._marker_path(db)
     return path[: -len(".daily_loss_pending.json")] + ".risk_stop_pending.json" if path else ""
+
+
+def _reset_guard_path(db: Any) -> str:
+    """Barriera indipendente del reset: non viene mai sovrascritta da active=False."""
+    marker = _marker_path(db)
+    return (
+        marker[: -len(".risk_stop_pending.json")] + ".risk_stop_reset_guard.json"
+        if marker else ""
+    )
 
 
 _UNREADABLE = object()
@@ -98,6 +108,40 @@ def _copies(db: Any) -> tuple:
     return from_db, from_marker
 
 
+def _reset_guard_copies(db: Any) -> tuple:
+    """Guard reset da DB + marker indipendente.
+
+    Qualunque copia illeggibile o incoerente e' una barriera attiva: un reset
+    mai confermato non deve trasformarsi in riapertura al restart.
+    """
+    try:
+        settings = db.get_settings() if hasattr(db, "get_settings") else {}
+        raw = settings.get(RISK_STOP_RESET_GUARD_KEY) if isinstance(settings, dict) else None
+        from_db = _record(raw)
+    except Exception:
+        from_db = _UNREADABLE
+    try:
+        marker, from_marker = _reset_guard_path(db), None
+        if marker and os.path.exists(marker):
+            with open(marker, encoding="utf-8") as fh:
+                from_marker = _record(fh.read())
+    except Exception:
+        from_marker = _UNREADABLE
+    return from_db, from_marker
+
+
+def _reset_guard_reason(db: Any) -> str:
+    copies = _reset_guard_copies(db)
+    if _UNREADABLE in copies:
+        return "risk_stop_reset_guard_illeggibile"
+    records = [r for r in copies if isinstance(r, dict)]
+    if any(not r["active"] for r in records):
+        return "risk_stop_reset_guard_illeggibile"
+    if records:
+        return records[0]["reason"] or "risk_stop_reset_pending"
+    return ""
+
+
 def _reconcile(a: Any, b: Any) -> str:
     """Vince la copia verificabile con seq maggiore; seq uguale/ignota o copia
     illeggibile => risultato conservativo (stop attivo)."""
@@ -128,16 +172,17 @@ def _state_payload(*, active: bool, reason: str, seq: Any) -> str:
 
 
 def persist_risk_stop(db: Any, reason: str) -> bool:
-    """Persiste una transizione RISK_STOP senza permettere fail-open.
+    """Persiste RISK_STOP e reset senza finestre fail-open.
 
-    Attivazione: se una copia ha versione ignota/illeggibile, la nuova barriera
-    usa seq=None e quindi resta conservativa rispetto a qualunque vecchio reset.
+    Attivazione: resta il modello versionato db+marker. Se la versione e'
+    ignota, seq=None rende lo stop conservativo.
 
-    Reset: protocollo write-ahead fail-closed. Prima di scrivere active=False
-    persiste una barriera active=True a versione ignota su tutti gli store
-    disponibili. Solo dopo scrive la nuova versione di reset e la rilegge.
-    Qualunque errore lascia o ripristina una barriera durevole e il caller
-    mantiene il runtime bloccato.
+    Reset: protocollo a due fasi con una barriera INDIPENDENTE
+    (risk_stop_reset_guard + marker dedicato). Il guard viene armato prima di
+    qualsiasi active=False e rimane intatto durante write/readback del reset.
+    Solo dopo aver verificato lo stato inattivo viene disarmato; il marker guard
+    e' l'ultimo commit point. Se qualunque fase fallisce, almeno un guard resta
+    durevole e il caller mantiene il runtime bloccato.
     """
     if not hasattr(db, "save_settings"):
         return False
@@ -145,6 +190,7 @@ def persist_risk_stop(db: Any, reason: str) -> bool:
     before = _copies(db)
     seqs = [r["seq"] for r in before if isinstance(r, dict) and r["seq"] is not None]
     marker = _marker_path(db)
+    guard_marker = _reset_guard_path(db)
     active = bool(reason)
 
     if active:
@@ -163,63 +209,70 @@ def persist_risk_stop(db: Any, reason: str) -> bool:
             logger.critical("risk-stop: neanche il marker e' scrivibile (KNOWN_LIMITATION)", exc_info=True)
         return False
 
-    previous_reason = _reconcile(*before) or "risk_stop_reset_pending"
+    existing_guard = _reset_guard_reason(db)
+    previous_reason = existing_guard or _reconcile(*before) or "risk_stop_reset_pending"
     guard_payload = _state_payload(active=True, reason=previous_reason, seq=None)
-    reset_payload = _state_payload(
-        active=False,
-        reason="",
-        seq=max(seqs, default=0) + 1,
-    )
+    reset_payload = _state_payload(active=False, reason="", seq=max(seqs, default=0) + 1)
 
-    # Write-ahead barrier: mai scrivere active=False se prima non esiste una
-    # barriera durevole che sopravvive a errore/crash del reset.
+    # Fase 1: arma una barriera indipendente PRIMA di toccare lo stato principale.
     try:
-        db.save_settings({RISK_STOP_STATE_KEY: guard_payload})
+        db.save_settings({RISK_STOP_RESET_GUARD_KEY: guard_payload})
     except Exception:
-        logger.critical("risk-stop: impossibile armare la barriera pre-reset nel db", exc_info=True)
+        logger.critical("risk-stop: impossibile armare reset guard nel db", exc_info=True)
         return False
-
-    if marker:
+    if guard_marker:
         try:
-            atomic_write_text(marker, guard_payload)
+            atomic_write_text(guard_marker, guard_payload)
         except Exception:
-            logger.critical("risk-stop: impossibile armare il marker pre-reset", exc_info=True)
+            logger.critical("risk-stop: impossibile armare reset guard marker", exc_info=True)
             return False
 
+    # Fase 2: prepara lo stato inattivo, ma il guard resta ACTIVE e separato.
     try:
         db.save_settings({RISK_STOP_STATE_KEY: reset_payload})
     except Exception:
-        logger.critical("risk-stop: reset db fallito; barriera active resta durevole", exc_info=True)
+        logger.critical("risk-stop: reset stato db fallito; guard resta attivo", exc_info=True)
         return False
-
     if marker:
         try:
             atomic_write_text(marker, reset_payload)
         except Exception:
-            logger.critical("risk-stop: reset marker fallito; marker active conserva il blocco", exc_info=True)
+            logger.critical("risk-stop: reset state marker fallito; guard resta attivo", exc_info=True)
             return False
 
-    if _reconcile(*_copies(db)) == "":
-        return True
+    # Il reset non e' committabile finche' lo stato principale non e'
+    # verificabilmente inattivo.
+    if _reconcile(*_copies(db)) != "":
+        logger.critical("risk-stop: reset non verificabile; guard resta attivo")
+        return False
 
-    # Readback incerto: il reset non e' confermato. Compensa ripristinando
-    # active=True prima di restituire False, cosi' un restart non puo' vedere
-    # soltanto l'active=False scritto a meta' percorso.
-    logger.critical("risk-stop: reset non verificabile; ripristino barriera active")
+    # Commit in due passi. Prima si disarma il guard DB: se fallisce il marker
+    # guard e' ancora intatto. Il marker guard viene rimosso PER ULTIMO.
     try:
-        db.save_settings({RISK_STOP_STATE_KEY: guard_payload})
+        db.save_settings({RISK_STOP_RESET_GUARD_KEY: ""})
     except Exception:
-        logger.critical("risk-stop: compensazione active su db fallita", exc_info=True)
-    if marker:
-        try:
-            atomic_write_text(marker, guard_payload)
-        except Exception:
-            logger.critical("risk-stop: compensazione active su marker fallita", exc_info=True)
-    return False
+        logger.critical("risk-stop: clear reset guard db fallito", exc_info=True)
+        return False
 
+    if guard_marker:
+        try:
+            os.remove(guard_marker)
+        except FileNotFoundError:
+            # Era stato scritto con successo sopra: assenza equivale a guard gia'
+            # rimosso, quindi non resta una barriera fantasma.
+            pass
+        except Exception:
+            logger.critical("risk-stop: clear reset guard marker fallito", exc_info=True)
+            return False
+
+    return True
 
 def restore_risk_stop(db: Any) -> str:
-    """Motivo del RISK_STOP da db + marker ("" se non attivo), vedi `_reconcile`."""
+    """Motivo del RISK_STOP, incluso un reset iniziato ma non committato."""
+    guard = _reset_guard_reason(db)
+    if guard:
+        logger.error("risk-stop: reset guard attivo/illeggibile, fail-closed")
+        return guard
     reason = _reconcile(*_copies(db))
     if reason == "risk_stop_state_illeggibile":
         logger.error("risk-stop: stato salvato illeggibile, fail-closed")
