@@ -285,6 +285,8 @@ def test_import_con_alias_e_lista_vede_tutti_i_moduli():
                                   declared_dependencies=["requests"])
     assert diff["new_dependencies"] == ["missing_package", "other_missing", "yaml_like"]
     assert "undeclared_new_dependency" in diff["problems"]
+    # `from yaml_like import (` aperto oltre il blocco: modulo riportato E file non verificato.
+    assert "import_statement_unverifiable" in diff["problems"] and diff["status"] == "BLOCK"
 
 
 @pytest.mark.parametrize("sol,atteso", [
@@ -325,7 +327,8 @@ def test_gate_reviewer_pass_solo_con_entrambi_puliti():
 # Merge
 # ---------------------------------------------------------------------------
 def full_diff(manual=False, status="PASS"):
-    return {"status": status, "owner_manual_merge_required": manual}
+    return {"status": status, "owner_manual_merge_required": manual,
+            "classification": {"safety_critical": []}}
 
 
 def merge_state(**extra):
@@ -354,7 +357,11 @@ def test_runtime_safety_critical_con_tutti_i_gate_va_in_auto_merge():
     assert diff["status"] == "PASS" and diff["owner_manual_merge_required"] is False
     label = policy.manual_label_decision(["core/runtime_controller.py"])
     assert label["label"] == "NOT_REQUIRED"
-    assert policy.merge_decision(merge_state(full_diff=diff))["status"] == "READY_FOR_AUTO_MERGE"
+    # Override #1 (rilievo Codex #499): serve la dichiarazione safety-critical sull'head.
+    decl = {"head_sha": HEAD, "declared": True, "paths": diff["classification"]["safety_critical"]}
+    assert policy.merge_decision(merge_state(full_diff=diff))["status"] == "NEEDS_MANUAL"
+    res = policy.merge_decision(merge_state(full_diff=diff, safety_critical_declaration=decl))
+    assert res["status"] == "READY_FOR_AUTO_MERGE"
 
 
 def test_file_gate_resta_merge_manuale_owner():
@@ -1066,3 +1073,215 @@ def test_docs_dichiarano_il_contratto_e_il_principio_verbatim():
         assert nome in spec, nome
     for doc in ("AGENTS.md", "CLAUDE.md"):
         assert "scripts/pr_autonomy_policy.py" in (ROOT / doc).read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# #499 OWNER OVERRIDE #1 — i 4 rilievi Codex su a7682a6
+# ---------------------------------------------------------------------------
+def _deps_check(patch, files, *, deps=("requests",), prod=None, sources=None, roots=None):
+    kwargs = {}
+    if sources is not None:
+        kwargs["head_sources"] = sources
+    return policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+                                  declared_files=files, local_modules=["core", "tests"],
+                                  local_root_modules=roots, declared_dependencies=list(deps),
+                                  declared_production_dependencies=prod, **kwargs)
+
+
+# A. Import continuati analizzati come istruzione intera -----------------------
+@pytest.mark.parametrize("righe,modulo", [
+    (["from \\", "    mancante_a import x"], "mancante_a"),
+    (["import \\", "    mancante_b"], "mancante_b"),
+    (["import os, \\", "    mancante_c"], "mancante_c"),
+    (["from mancante_d import (", "    x,", "    y,", ")"], "mancante_d"),
+    (["def f():", "    from \\", "        mancante_e import z"], "mancante_e"),
+])
+def test_import_continuati_sono_una_istruzione(righe, modulo):
+    patch = hunks("+++ b/core/x.py\n" + "".join(f"+{r}\n" for r in righe))
+    diff = _deps_check(patch, ["core/x.py"])
+    assert diff["new_dependencies"] == [modulo] and diff["status"] == "BLOCK"
+
+
+def test_import_normale_invariato():
+    ok = _deps_check(hunks("+++ b/core/x.py\n+import requests\n+import os\n+from core import y\n"), ["core/x.py"])
+    assert ok["status"] == "PASS" and ok["new_dependencies"] == []
+    ko = _deps_check(hunks("+++ b/core/x.py\n+import mancante_f\n"), ["core/x.py"])
+    assert ko["status"] == "BLOCK" and ko["new_dependencies"] == ["mancante_f"]
+
+
+def test_codice_non_import_con_la_parola_import_non_e_dipendenza():
+    patch = hunks('+++ b/core/x.py\n+important = "import is a word"\n+# import commentato\n'
+                  '+s = """\n+import dentro_stringa\n+"""\n')
+    diff = _deps_check(patch, ["core/x.py"])
+    assert diff["status"] == "PASS" and diff["new_dependencies"] == []
+
+
+@pytest.mark.parametrize("righe", [["from \\"], ["import \\"], ["from mancante_g import (", "    x,"]])
+def test_continuazione_malformata_non_e_pass(righe):
+    patch = hunks("+++ b/core/x.py\n" + "".join(f"+{r}\n" for r in righe))
+    diff = _deps_check(patch, ["core/x.py"])
+    assert diff["status"] in ("UNKNOWN", "BLOCK") and diff["status"] != "PASS"
+    assert "import_statement_unverifiable" in diff["problems"] or diff["new_dependencies"]
+
+
+def test_continuazione_su_riga_di_contesto_vista_dal_sorgente_head():
+    # La PR cambia solo la riga 2; la riga 1 (`from \`) è contesto, invisibile con -U0.
+    patch = ("diff --git a/core/x.py b/core/x.py\n--- a/core/x.py\n+++ b/core/x.py\n"
+             "@@ -2 +2 @@\n-    requests import get\n+    mancante_h import get\n")
+    sources = {"core/x.py": "from \\\n    mancante_h import get\n"}
+    diff = _deps_check(patch, ["core/x.py"], sources=sources)
+    assert diff["new_dependencies"] == ["mancante_h"] and diff["status"] == "BLOCK"
+
+
+def test_sorgente_head_non_parsabile_ricade_sul_patch_fail_closed():
+    patch = hunks("+++ b/core/x.py\n+from \\\n")
+    diff = _deps_check(patch, ["core/x.py"], sources={"core/x.py": "from \\\n"})
+    assert diff["status"] != "PASS"
+
+
+# B. Dipendenze di produzione = solo manifest runtime -------------------------
+def _repo_manifest(tmp_path, requirements="requests>=2\n", pyproject=None):
+    (tmp_path / "requirements.txt").write_text(requirements)
+    (tmp_path / "requirements-lock.txt").write_text("requests==2.32.5\npytest==9.1.1\npytest-asyncio==1.4.0\n")
+    (tmp_path / "requirements-dev.txt").write_text("pytest\nruff\n")
+    (tmp_path / "requirements-test.txt").write_text("pytest-mock\n")
+    (tmp_path / "pyproject.toml").write_text(pyproject or (
+        '[project]\nname = "x"\ndependencies = ["httpx>=0.27"]\n'
+        '[project.optional-dependencies]\ntest = ["hypothesis"]\n'))
+    return tmp_path
+
+
+def test_dipendenze_di_produzione_escludono_lock_dev_test_e_opzionali(tmp_path):
+    prod = policy._production_dependencies(str(_repo_manifest(tmp_path)))
+    assert prod == {"requests", "httpx"}
+    every = policy._all_declared_dependencies(str(tmp_path))
+    assert {"requests", "httpx", "pytest", "pytest_asyncio", "ruff", "pytest_mock", "hypothesis"} <= every
+
+
+def test_import_pytest_nel_prodotto_blocca_nei_test_e_ammesso(tmp_path):
+    root = str(_repo_manifest(tmp_path))
+    prod, every = policy._production_dependencies(root), policy._all_declared_dependencies(root)
+    core = _deps_check(hunks("+++ b/core/x.py\n+import pytest\n"), ["core/x.py"], deps=every, prod=prod)
+    assert core["status"] == "BLOCK" and core["new_dependencies"] == ["pytest"]
+    test = _deps_check(hunks("+++ b/tests/test_x.py\n+import pytest\n"), ["tests/test_x.py"], deps=every, prod=prod)
+    assert test["status"] == "PASS" and test["new_test_only_dependencies"] == []
+    real = _deps_check(hunks("+++ b/core/x.py\n+import requests\n+import httpx\n"), ["core/x.py"], deps=every, prod=prod)
+    assert real["status"] == "PASS"
+    local = _deps_check(hunks("+++ b/core/x.py\n+from core import y\n"), ["core/x.py"], deps=every, prod=prod,
+                        roots=["core"])
+    assert local["status"] == "PASS"
+
+
+def test_dipendenza_aggiunta_al_manifest_di_produzione_nella_stessa_pr(tmp_path):
+    root = str(_repo_manifest(tmp_path, requirements="requests>=2\nnuovo-pacchetto>=1\n"))
+    prod, every = policy._production_dependencies(root), policy._all_declared_dependencies(root)
+    files = ["core/x.py", "requirements.txt"]
+    patch = hunks("+++ b/core/x.py\n+import nuovo_pacchetto\n+++ b/requirements.txt\n+nuovo-pacchetto>=1\n")
+    diff = _deps_check(patch, files, deps=every, prod=prod)
+    # §0.10: dichiarata nel manifest di produzione → nessuna violazione, ma
+    # una PR che tocca un manifest va sempre a merge owner.
+    assert diff["status"] == "PASS" and diff["owner_manual_merge_required"] is True
+
+
+def test_cli_full_diff_usa_solo_il_manifest_di_produzione():
+    src = Path(policy.__file__).read_text(encoding="utf-8")
+    body = src[src.index("def _cmd_full_diff"):src.index("def _cmd_eval")]
+    assert "requirements-lock.txt" not in body and "_production_dependencies(" in body
+
+
+# C. Elementi delle liste di dipendenza validati -----------------------------
+_BAD_ELEMENTS = [{}, None, 1, True, False, "", "   ", [], 1.5]
+
+
+@pytest.mark.parametrize("bad", _BAD_ELEMENTS, ids=repr)
+@pytest.mark.parametrize("where", ["mcp.depends_on", "pf.depends_on", "pf.unmerged_outputs", "mcp.unmerged_outputs"])
+def test_parallelismo_elementi_malformati_mai_safe(where, bad):
+    side, key = where.split(".")
+    pf, mcp = _pf(), _mcp()
+    (pf if side == "pf" else mcp)[key] = [bad]
+    assert policy.parallel_classification(pf, mcp) == "FORBIDDEN_PARALLEL"
+    (pf if side == "pf" else mcp)[key] = ["PF-API-1", bad]  # misto valido + invalido
+    assert policy.parallel_classification(pf, mcp) == "FORBIDDEN_PARALLEL"
+
+
+def test_parallelismo_liste_valide():
+    assert policy.parallel_classification(_pf(), _mcp(depends_on=["PF-API-1"])) == "SAFE_PARALLEL"
+    assert policy.parallel_classification(_pf(unmerged_outputs=["PF-API-1"]),
+                                          _mcp(depends_on=["PF-API-1"])) == "DEPENDENT"
+
+
+# D. Dichiarazione safety-critical richiesta per l'auto-merge -----------------
+SAFETY_FILES = ["core/runtime_controller.py", "tests/core/test_x.py", ".guardrails/allowed_scope.json"]
+
+
+def _safety_diff():
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=SAFETY_FILES, patch_text="",
+                                  declared_files=SAFETY_FILES, local_modules=[], declared_dependencies=[])
+    assert diff["classification"]["safety_critical"] and diff["owner_manual_merge_required"] is False
+    return diff
+
+
+def _declaration(diff, head=HEAD, **extra):
+    return {"head_sha": head, "declared": True, "paths": list(diff["classification"]["safety_critical"]), **extra}
+
+
+def test_safety_critical_con_dichiarazione_valida_puo_andare_in_auto_merge():
+    diff = _safety_diff()
+    res = policy.merge_decision(merge_state(full_diff=diff, safety_critical_declaration=_declaration(diff)))
+    assert res["status"] == "READY_FOR_AUTO_MERGE"
+    assert res["safety_critical"] == diff["classification"]["safety_critical"]
+
+
+@pytest.mark.parametrize("decl", [
+    None, "PR safety-critical: yes", {}, {"head_sha": HEAD, "declared": "true", "paths": ["core/runtime_controller.py"]},
+    {"head_sha": HEAD, "declared": True, "paths": []}, {"head_sha": HEAD, "declared": True, "paths": [None]},
+    {"head_sha": HEAD, "declared": True},
+], ids=repr)
+def test_safety_critical_senza_dichiarazione_valida_niente_auto_merge(decl):
+    diff = _safety_diff()
+    state = merge_state(full_diff=diff)
+    if decl is not None:
+        state["safety_critical_declaration"] = decl
+    res = policy.merge_decision(state)
+    assert res["status"] == "NEEDS_MANUAL" and any(r.startswith("safety_critical_declaration") for r in res["reasons"])
+
+
+def test_safety_critical_dichiarazione_di_un_head_vecchio_niente_auto_merge():
+    diff = _safety_diff()
+    res = policy.merge_decision(merge_state(full_diff=diff, safety_critical_declaration=_declaration(diff, head="0" * 40)))
+    assert res["status"] == "NEEDS_MANUAL" and "safety_critical_declaration_stale" in res["reasons"]
+
+
+def test_safety_critical_dichiarazione_che_non_copre_tutti_i_path():
+    diff = _safety_diff()
+    decl = _declaration(diff, paths=["core/altro.py"])
+    res = policy.merge_decision(merge_state(full_diff=diff, safety_critical_declaration=decl))
+    assert res["status"] == "NEEDS_MANUAL" and "safety_critical_declaration_incomplete" in res["reasons"]
+
+
+def test_non_safety_critical_non_richiede_dichiarazione():
+    files = ["docs/x.md", ".guardrails/allowed_scope.json"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text="",
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    assert diff["classification"]["safety_critical"] == []
+    assert policy.merge_decision(merge_state(full_diff=diff))["status"] == "READY_FOR_AUTO_MERGE"
+
+
+@pytest.mark.parametrize("with_decl", [False, True])
+def test_file_di_autorita_resta_manuale_con_o_senza_dichiarazione(with_decl):
+    files = ["core/runtime_controller.py", "scripts/pr_autonomy_policy.py", ".guardrails/allowed_scope.json"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text="",
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    state = merge_state(full_diff=diff, manual_label_present=True)
+    if with_decl:
+        state["safety_critical_declaration"] = _declaration(diff)
+    assert policy.merge_decision(state)["status"] == "READY_FOR_OWNER_MANUAL_MERGE"
+
+
+@pytest.mark.parametrize("classification", [None, {}, {"safety_critical": "core/x.py"}, {"safety_critical": [1]}], ids=repr)
+def test_classificazione_safety_critical_illeggibile_niente_auto_merge(classification):
+    full = {"status": "PASS", "owner_manual_merge_required": False}
+    if classification is not None:
+        full["classification"] = classification
+    res = policy.merge_decision(merge_state(full_diff=full))
+    assert res["status"] == "NEEDS_MANUAL" and "safety_critical_classification_unknown" in res["reasons"]

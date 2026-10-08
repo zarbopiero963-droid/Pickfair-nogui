@@ -215,8 +215,14 @@ settled senza bloccanti; Codex triagiato; thread irrisolti = 0; Merge
 Readiness PASS; nessun P0/P1 introdotto; nessun preesistente attivato o
 aggravato; nessuna decisione owner pertinente aperta; fix loop valido; nessuno
 stop manuale; nessun file a merge owner toccato; nessuna violazione di
-dipendenze. Allora `AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE` e l'agente
-mergia. Head cambiato → la valutazione si invalida e si rifà.
+dipendenze; se il diff tocca file safety-critical, la dichiarazione
+`PR safety-critical: yes — <file>` provata sull'head corrente
+(`safety_critical_declaration`: `head_sha` = head, `declared` true, `paths` che
+coprono tutti i file safety-critical del diff). La dichiarazione non è
+un'approvazione owner e non rende la PR manuale; assente, malformata, vecchia o
+incompleta → niente auto-merge (NEEDS_MANUAL). Allora
+`AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE` e l'agente mergia. Head cambiato →
+la valutazione si invalida e si rifà.
 
 Limite noto #472 (rischio accettato dall'owner): l'agente mergia con la stessa
 identità GitHub che apre la PR, quindi l'esclusione dei file a merge owner è
@@ -236,10 +242,16 @@ safety-critical, nuovi chiamanti del percorso denaro e dipendenze solo-test.
 Il report contiene solo path e codici, mai righe del diff. Header git tra
 virgolette (path non ASCII) decodificati; parser a stati sui conteggi degli
 hunk; header/hunk non interpretabili o file di testo mostrato come binario →
-UNKNOWN. Il patch si genera con `--text --no-textconv --no-ext-diff`. Il codice
-di prodotto si confronta solo con le dipendenze di produzione
-(`requirements.txt`, `requirements-lock.txt`, `[project].dependencies`);
-`tests/` e `scripts/` con tutte le dichiarate. Per il codice di prodotto
+UNKNOWN. Il patch si genera con `--text --no-textconv --no-ext-diff`. Gli
+import si analizzano come ISTRUZIONI, non righe: AST del file completo
+all'head (nodi che intersecano righe aggiunte, anche se la prima riga è
+contesto); senza sorgente coerente, istruzioni logiche ricostruite dai blocchi
+contigui (continuazioni `\`, parentesi, stringhe triple). Istruzione import
+aperta o non analizzabile → `import_statement_unverifiable` (UNKNOWN, mai
+PASS). Il codice di prodotto si confronta solo con le dipendenze di produzione
+(`requirements.txt` e `[project].dependencies`; NON il lock, che contiene
+tooling di test, né requirements dev/test o gruppi opzionali); `tests/` e
+`scripts/` con tutte le dichiarate. Per il codice di prodotto
 sono locali solo i moduli/package alla radice del repository. Confine di fiducia:
 il checker gira dal checkout della PR come `guardrail_check.py`; una PR che
 modifica `scripts/` o i workflow è sempre a merge owner (§0.8), quindi non può
@@ -268,7 +280,8 @@ riportano `review_threads_api_unavailable` e `can_merge=false`.
   `operation_id`, handshake, SIM/LIVE.
 - MCP: una PR per repository; due PR parallele si classificano
   `SAFE_PARALLEL` / `DEPENDENT` / `FORBIDDEN_PARALLEL`
-  (`parallel_classification`). MCP è solo adapter: niente Betfair, niente DB
+  (`parallel_classification`; elementi di `depends_on`/`unmerged_outputs`
+  che non sono stringhe non vuote → `FORBIDDEN_PARALLEL`). MCP è solo adapter: niente Betfair, niente DB
   Pickfair, niente credenziali Betfair, niente MM/risk/cashout/reconciliation
   duplicati (`full-diff --repo-kind mcp`).
 - #497 resta DEFERRED: nessun servizio persistente, VPS, DB remoto o costo. Si

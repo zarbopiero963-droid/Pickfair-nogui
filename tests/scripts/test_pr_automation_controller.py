@@ -11705,7 +11705,8 @@ AUTONOMY_READY_STATE = {
     "manual_stop": False, "manual_label_present": False,
     "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
     "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
-    "full_diff": {"status": "PASS", "owner_manual_merge_required": False},
+    "full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                  "classification": {"safety_critical": []}},
     "fix_loop_exhausted": False,
 }
 
@@ -12662,8 +12663,13 @@ def test_can_auto_merge_requires_autonomy_contract_evidence(tmp_path):
 def test_can_auto_merge_denies_unless_ready_for_auto_merge(tmp_path):
     cases = [
         ({"manual_label_present": True}, "autonomy_contract_ready_for_owner_manual_merge"),
-        ({"full_diff": {"status": "PASS", "owner_manual_merge_required": True}},
+        ({"full_diff": {"status": "PASS", "owner_manual_merge_required": True,
+                        "classification": {"safety_critical": []}}},
          "autonomy_contract_ready_for_owner_manual_merge"),
+        # PR safety-critical senza dichiarazione sull'head → niente auto-merge (#499).
+        ({"full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                        "classification": {"safety_critical": ["core/runtime_controller.py"]}}},
+         "autonomy_contract_needs_manual:safety_critical_declaration_missing"),
         ({"reviewer_gate": "BLOCKED"}, "autonomy_contract_blocked"),
         ({"current_head": "other"}, "autonomy_contract_invalidated"),
         ({"codex_triaged": None}, "autonomy_contract_needs_manual"),

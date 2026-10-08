@@ -954,7 +954,8 @@ AUTONOMY_READY_STATE = {
     "manual_stop": False, "manual_label_present": False,
     "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
     "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
-    "full_diff": {"status": "PASS", "owner_manual_merge_required": False},
+    "full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                  "classification": {"safety_critical": []}},
     "fix_loop_exhausted": False,
 }
 

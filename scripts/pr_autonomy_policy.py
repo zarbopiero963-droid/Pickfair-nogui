@@ -681,7 +681,7 @@ def _unquote_git_path(text: str) -> str:
     return out.decode("utf-8")
 
 
-_HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,(?P<old>\d+))? \+(?P<start>\d+)(?:,(?P<new>\d+))? @@")
 _BINARY_RE = re.compile(r"^Binary files (.+) and (.+) differ$")
 # File che devono essere ispezionabili come testo: se il diff li dà «Binary»
 # (es. `.gitattributes` con `-diff`) il controllo non li ha visti → UNKNOWN.
@@ -696,17 +696,24 @@ _HEADER_PREFIXES = ("diff --git ", "index ", "--- ", "new file mode", "deleted f
 
 
 def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
-    """Righe aggiunte per file + file mostrati come binari.
+    """Righe aggiunte per file + file mostrati come binari (vedi _parse_patch_numbered)."""
+    numbered, binary = _parse_patch_numbered(patch_text)
+    return {path: [line for _, line in rows] for path, rows in numbered.items()}, binary
+
+
+def _parse_patch_numbered(patch_text: str) -> tuple[dict[str, list[tuple[int, str]]], set[str]]:
+    """Righe aggiunte per file, col numero di riga nel file NUOVO, + file binari.
 
     Parser a stati sui conteggi degli hunk (rilievo Codex #499): una riga
     aggiunta il cui contenuto inizia con `++ ` appare come `+++ ` ma DENTRO un
     hunk è contenuto, non un header. Header `+++` tra virgolette decodificato;
     header o hunk non interpretabili → ValueError (il chiamante va in UNKNOWN),
     mai un file saltato in silenzio."""
-    out: dict[str, list[str]] = {}
+    out: dict[str, list[tuple[int, str]]] = {}
     binary: set[str] = set()
     current: str | None = None
     old_left = new_left = 0
+    new_no = 0
     # split("\n") e non splitlines(): \r, \x0c, \x1c… dentro una riga di
     # contenuto non devono spezzarla e sfasare i conteggi dell'hunk.
     for line in patch_text.split("\n"):
@@ -714,12 +721,14 @@ def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
             if line.startswith("+"):
                 new_left -= 1
                 if current is not None:
-                    out[current].append(line)
+                    out[current].append((new_no, line))
+                new_no += 1
             elif line.startswith("-"):
                 old_left -= 1
             elif line.startswith(" "):
                 old_left -= 1
                 new_left -= 1
+                new_no += 1
             elif line.startswith("\\"):
                 continue
             else:
@@ -742,8 +751,9 @@ def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
             continue
         hunk = _HUNK_RE.match(line)
         if hunk:
-            old_left = int(hunk.group(1)) if hunk.group(1) is not None else 1
-            new_left = int(hunk.group(2)) if hunk.group(2) is not None else 1
+            old_left = int(hunk.group("old")) if hunk.group("old") is not None else 1
+            new_left = int(hunk.group("new")) if hunk.group("new") is not None else 1
+            new_no = int(hunk.group("start"))
             continue
         binary_line = _BINARY_RE.match(line)
         if binary_line:
@@ -758,6 +768,130 @@ def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
     return out, binary
 
 
+def _logical_lines(lines: Sequence[str]) -> tuple[list[tuple[str, str]], tuple[str, str] | None]:
+    """Righe fisiche CONTIGUE → istruzioni logiche (rilievo Codex #499).
+
+    Unisce continuazioni `\\`, parentesi aperte e stringhe triple, come il
+    tokenizer Python. Ritorna (istruzioni, istruzione_incompleta_finale); ogni
+    istruzione è (testo, solo_codice) con stringhe e commenti oscurati."""
+    statements: list[tuple[str, str]] = []
+    text: list[str] = []
+    code: list[str] = []
+    depth, quote, triple = 0, "", False
+    for raw in lines:
+        i, n = 0, len(raw)
+        continued = False
+        while i < n:
+            ch = raw[i]
+            if quote:
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    code.append("  ")
+                    continue
+                if raw.startswith(quote * (3 if triple else 1), i):
+                    i += 3 if triple else 1
+                    quote, triple = "", False
+                    code.append(" ")
+                    continue
+                code.append(" ")
+                i += 1
+                continue
+            if ch == "#":
+                break
+            if ch in "\"'":
+                triple = raw.startswith(ch * 3, i)
+                quote = ch
+                i += 3 if triple else 1
+                code.append(" ")
+                continue
+            if ch == "\\" and raw[i + 1:].strip() == "":
+                continued = True
+                break
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(depth - 1, 0)
+            code.append(ch)
+            i += 1
+        text.append(raw)
+        code.append("\n")
+        if quote and not triple:
+            quote = ""  # stringa semplice non chiusa: Python la rifiuta, la riga finisce
+        if not (continued or depth or (quote and triple)):
+            statements.append(("\n".join(text), "".join(code)))
+            text, code = [], []
+    pending = ("\n".join(text), "".join(code)) if text else None
+    return statements, pending
+
+
+def _statement_imports(text: str, code: str) -> tuple[list[str], bool]:
+    """Moduli di un'istruzione logica; True se contiene `import` come codice ma
+    non è analizzabile (fail-closed: UNKNOWN, mai PASS)."""
+    if not re.search(r"\bimport\b", code):
+        return [], False
+    mods = _top_modules(text)
+    if mods:
+        return mods, False
+    src = text.strip()
+    header = _COMPOUND_HEADER_RE.match(src)
+    if _ast_imports(src) is not None or (header and _ast_imports(src[header.end():]) is not None):
+        return [], False  # codice valido senza import di primo livello (es. relativo)
+    return [], True
+
+
+def _added_python_imports(path: str, rows: Sequence[tuple[int, str]],
+                          head_sources: Mapping[str, Any] | None) -> tuple[list[str], bool]:
+    """Import toccati dalle righe aggiunte di un file .py.
+
+    Preferito: AST del file COMPLETO all'head (se fornito, parsabile e coerente
+    col patch riga per riga): ogni nodo Import/ImportFrom che interseca una riga
+    aggiunta conta, anche se la sua prima riga è contesto invariato. Altrimenti
+    istruzioni logiche ricostruite dai blocchi contigui di righe aggiunte; una
+    continuazione lasciata aperta o un `import` non analizzabile → True."""
+    source = head_sources.get(path) if isinstance(head_sources, Mapping) else None
+    if isinstance(source, str) and rows:
+        src_lines = source.split("\n")
+        coherent = all(0 < no <= len(src_lines) and src_lines[no - 1] == line[1:] for no, line in rows)
+        try:
+            tree = ast.parse(source) if coherent else None
+        except (SyntaxError, ValueError):
+            tree = None
+        if tree is not None:
+            added = {no for no, _ in rows}
+            mods: list[str] = []
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    end = getattr(node, "end_lineno", None) or node.lineno
+                    if not any(no in added for no in range(node.lineno, end + 1)):
+                        continue
+                    if isinstance(node, ast.Import):
+                        mods.extend(alias.name.split(".")[0] for alias in node.names)
+                    elif node.level == 0 and node.module:
+                        mods.append(node.module.split(".")[0])
+            return mods, False
+    mods, unverifiable = [], False
+    blocks: list[list[str]] = []
+    previous = None
+    for no, line in rows:
+        if previous is None or no != previous + 1:
+            blocks.append([])
+        blocks[-1].append(line[1:])
+        previous = no
+    for block in blocks:
+        statements, pending = _logical_lines(block)
+        for text, code in statements:
+            found, bad = _statement_imports(text, code)
+            mods.extend(found)
+            unverifiable = unverifiable or bad
+        if pending is not None and (re.search(r"\bimport\b", pending[1])
+                                    or re.match(r"\s*from\b", pending[1])):
+            # Istruzione import aperta oltre il blocco visibile: i moduli
+            # leggibili si riportano comunque, e il file resta non verificato.
+            mods.extend(_top_modules(pending[0]))
+            unverifiable = True
+    return mods, unverifiable
+
+
 def _patch_by_file(patch_text: str) -> dict[str, list[str]]:
     return _parse_patch(patch_text)[0]
 
@@ -767,7 +901,8 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                     declared_dependencies: Iterable[str], repo_kind: str = "pickfair",
                     deleted_files: Iterable[str] = (),
                     declared_production_dependencies: Iterable[str] | None = None,
-                    local_root_modules: Iterable[str] | None = None) -> dict[str, Any]:
+                    local_root_modules: Iterable[str] | None = None,
+                    head_sources: Mapping[str, str] | None = None) -> dict[str, Any]:
     """§0.10: controllo sull'INTERO diff assemblato della PR (base...head).
 
     Un file segreto CANCELLATO dalla PR (es. #429, `config.json` tolto dal
@@ -815,16 +950,30 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     secret_content: set[str] = set()
     secret_content_tests: set[str] = set()
     try:
-        by_file, binary_files = _parse_patch(patch_text)
+        numbered, binary_files = _parse_patch_numbered(patch_text)
     except (ValueError, UnicodeDecodeError):
         problems.append("patch_unreadable")
-        by_file, binary_files = {}, set()
+        numbered, binary_files = {}, set()
+    by_file = {path: [line for _, line in rows] for path, rows in numbered.items()}
+    unverifiable_imports: set[str] = set()
     unscanned = sorted(p for p in binary_files
                        if p.lower().endswith(SCANNABLE_SUFFIXES) or "." not in p.rsplit("/", 1)[-1])
     if unscanned:
         problems.append("unscanned_text_file")
     for path, added in by_file.items():
         is_py = path.endswith(".py")
+        if is_py:
+            # Import analizzati come ISTRUZIONI, non righe (rilievo Codex #499:
+            # `from \\` + `pkg import x`, parentesi, stringhe triple).
+            tooling = path.startswith(("tests/", "scripts/"))
+            allowed = deps if tooling else prod_deps
+            importable = local if tooling else local_roots
+            mods, unverifiable = _added_python_imports(path, numbered[path], head_sources)
+            if unverifiable:
+                unverifiable_imports.add(path)
+            for mod in mods:
+                if mod and mod not in stdlib and mod not in importable and mod.lower() not in allowed:
+                    (test_deps if path.startswith("tests/") else new_deps).add(mod)
         for line in added:
             if SECRET_CONTENT_RE.search(line):
                 # Il rilevatore non distingue una fixture da una credenziale
@@ -838,12 +987,6 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                 else:
                     secret_content.add(path)
             if is_py:
-                tooling = path.startswith(("tests/", "scripts/"))
-                allowed = deps if tooling else prod_deps
-                importable = local if tooling else local_roots
-                for mod in _top_modules(line):
-                    if mod and mod not in stdlib and mod not in importable and mod.lower() not in allowed:
-                        (test_deps if path.startswith("tests/") else new_deps).add(mod)
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
                     callers.append(path)
@@ -856,12 +999,14 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("undeclared_new_dependency")
     if mcp_violations:
         problems.append("mcp_adapter_violation")
+    if unverifiable_imports:
+        problems.append("import_statement_unverifiable")
     if not stdlib:
         problems.append("stdlib_list_unavailable")
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
                                      "declared_scope_unknown", "stdlib_list_unavailable",
-                                     "unscanned_text_file"}:
+                                     "unscanned_text_file", "import_statement_unverifiable"}:
         status = "UNKNOWN"
     return {
         "status": status,
@@ -873,6 +1018,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         "mcp_adapter_violations": sorted(set(mcp_violations)),
         "secret_like_content": sorted(secret_content),
         "unscanned_text_files": unscanned,
+        "unverifiable_import_files": sorted(unverifiable_imports),
         "secret_like_content_tests": sorted(secret_content_tests),
         "owner_manual_merge_required": bool(classification["owner_manual"]
                                             or classification["dependency_manifest"]
@@ -963,6 +1109,14 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         stops.append("full_diff_unknown")
     elif full.get("status") != "PASS":
         (stops if full.get("status") == "UNKNOWN" else reasons).append("full_diff_" + str(full.get("status")))
+    safety: list[str] = []
+    if isinstance(full, Mapping):
+        cls = full.get("classification")
+        listed = cls.get("safety_critical") if isinstance(cls, Mapping) else None
+        if not isinstance(listed, list) or not all(_nonempty_str(p) for p in listed):
+            stops.append("safety_critical_classification_unknown")
+        else:
+            safety = sorted(set(listed))
     exhausted = state.get("fix_loop_exhausted")
     if not isinstance(exhausted, bool):  # prova esplicita (rilievo Codex #499)
         stops.append("fix_loop_exhausted_unknown")
@@ -975,8 +1129,34 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
     if manual_label or full.get("owner_manual_merge_required") is not False:
         why = (["owner_manual_merge_files"] if full.get("owner_manual_merge_required") is not False else [])
         return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
-                "reasons": why + (["manual_review_label"] if manual_label else [])}
-    return {"status": "READY_FOR_AUTO_MERGE", "reasons": []}
+                "reasons": why + (["manual_review_label"] if manual_label else []),
+                "safety_critical": safety}
+    # PR safety-critical: l'auto-merge richiede la DICHIARAZIONE della policy
+    # (`PR safety-critical: yes — <file>`) provata sull'head corrente (rilievo
+    # Codex #499). Non è un'approvazione owner e non rende la PR manuale: prova
+    # che il percorso safety-critical è stato riconosciuto. Assente/malformata/
+    # vecchia/incompleta → niente auto-merge (NEEDS_MANUAL).
+    if safety:
+        problem = _safety_declaration_problem(state.get("safety_critical_declaration"), current, safety)
+        if problem:
+            return {"status": "NEEDS_MANUAL", "reasons": [problem], "safety_critical": safety}
+    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety}
+
+
+def _safety_declaration_problem(declaration: Any, current_head: str, safety: Sequence[str]) -> str | None:
+    if declaration is None:
+        return "safety_critical_declaration_missing"
+    if not isinstance(declaration, Mapping):
+        return "safety_critical_declaration_malformed"
+    paths = declaration.get("paths")
+    if (declaration.get("declared") is not True or not _nonempty_str(declaration.get("head_sha"))
+            or not isinstance(paths, list) or not paths or not all(_nonempty_str(p) for p in paths)):
+        return "safety_critical_declaration_malformed"
+    if declaration["head_sha"] != current_head:
+        return "safety_critical_declaration_stale"
+    if not set(safety) <= set(paths):
+        return "safety_critical_declaration_incomplete"
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1031,6 +1211,10 @@ def parallel_classification(pickfair: Mapping[str, Any], mcp: Mapping[str, Any])
     lists = (mcp.get("depends_on", []), pickfair.get("depends_on", []),
              pickfair.get("unmerged_outputs", []), mcp.get("unmerged_outputs", []))
     if not all(isinstance(x, list) for x in lists):
+        return "FORBIDDEN_PARALLEL"
+    # Ogni elemento deve essere un identificativo stringa non vuoto (rilievo
+    # Codex #499): `{}` faceva TypeError, `1`/`True` arrivavano a SAFE_PARALLEL.
+    if not all(_nonempty_str(item) for x in lists for item in x):
         return "FORBIDDEN_PARALLEL"
     if mcp["exposes_mutation"] and not mcp["core_authority_ready"]:
         return "FORBIDDEN_PARALLEL"
@@ -1108,6 +1292,46 @@ def _pyproject_dependencies(path: str, *, include_optional: bool = True) -> set[
     return names
 
 
+# Manifest runtime autorevoli (README: `pip install -r requirements.txt`).
+# NON sono produzione: lock con tooling/test (requirements-lock.txt contiene
+# pytest), requirements-dev/test, gruppi opzionali (rilievo Codex #499).
+PRODUCTION_REQUIREMENTS = ("requirements.txt",)
+
+
+def _production_dependencies(root: str) -> set[str]:
+    """Dipendenze dichiarate per il codice di PRODOTTO."""
+    import os
+    files = [os.path.join(root, f) for f in PRODUCTION_REQUIREMENTS if os.path.isfile(os.path.join(root, f))]
+    return (_declared_dependencies(files)
+            | _pyproject_dependencies(os.path.join(root, "pyproject.toml"), include_optional=False))
+
+
+def _all_declared_dependencies(root: str) -> set[str]:
+    """Tutte le dichiarate (anche dev/test/lock/opzionali): per tests/ e scripts/."""
+    import glob
+    import os
+    req = [f for pattern in ("requirements*.txt", "requirements*.in", "requirements*.lock")
+           for f in sorted(glob.glob(os.path.join(glob.escape(root), pattern)))]
+    return _declared_dependencies(req) | _pyproject_dependencies(os.path.join(root, "pyproject.toml"))
+
+
+def _head_python_sources(files: Any) -> dict[str, str]:
+    """Sorgenti .py all'head (checkout) per l'analisi AST degli import; solo
+    path relativi, file regolari, niente symlink."""
+    import os
+    out: dict[str, str] = {}
+    for f in files if isinstance(files, list) else []:
+        if (not isinstance(f, str) or not f.endswith(".py") or f.startswith("/")
+                or ".." in f.split("/") or os.path.islink(f) or not os.path.isfile(f)):
+            continue
+        try:
+            with open(f, encoding="utf-8", errors="replace", newline="") as fh:
+                out[f] = fh.read()
+        except OSError:
+            continue
+    return out
+
+
 _SKIP_DIRS = frozenset({".git", "venv", ".venv", "node_modules", "__pycache__", "build", "dist"})
 
 
@@ -1169,7 +1393,6 @@ def _load_json(path: str) -> Any:
 
 
 def _cmd_full_diff(args: argparse.Namespace) -> int:
-    import glob
     import os
     try:
         meta = _load_json(args.meta)
@@ -1184,12 +1407,8 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
     key = _resolve_task_key(meta, files, scope)
     task = ((scope or {}).get("tasks") or {}).get(key) if key else None
     declared = task.get("files") if isinstance(task, dict) else None
-    req_files = (sorted(glob.glob("requirements*.txt")) + sorted(glob.glob("requirements*.in"))
-                 + sorted(glob.glob("requirements*.lock")))
-    deps = _declared_dependencies(req_files) | _pyproject_dependencies("pyproject.toml")
-    prod_files = [f for f in ("requirements.txt", "requirements-lock.txt") if os.path.exists(f)]
-    prod_deps = (_declared_dependencies(prod_files)
-                 | _pyproject_dependencies("pyproject.toml", include_optional=False))
+    deps = _all_declared_dependencies(".")
+    prod_deps = _production_dependencies(".")
     result = full_diff_check(
         base_sha=args.base_sha, head_sha=args.head_sha, files=files, patch_text=patch_text,
         declared_files=declared, local_modules=_local_modules("."), declared_dependencies=deps,
@@ -1197,6 +1416,7 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
         repo_kind=args.repo_kind,
         deleted_files=[f for f in files or [] if isinstance(f, str) and not os.path.lexists(f)],
         declared_production_dependencies=prod_deps,
+        head_sources=_head_python_sources(files),
     )
     result["task_key"] = key
     print(json.dumps(result, indent=2, sort_keys=True))
