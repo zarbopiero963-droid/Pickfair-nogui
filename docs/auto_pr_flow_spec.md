@@ -167,7 +167,8 @@ porta il proprio marker di completamento; non ha bloccanti irrisolti (la
 sezione «Bloccanti» è pulita solo se è interamente «Nessun bloccante
 [evidente]»); è leggibile (non un errore). Schema/API incompleti → UNKNOWN.
 Timeout Grok (solo segnali di timeout veri): un solo rerun; secondo timeout →
-STOP owner («PRONTA PER MERGE — Grok assente per timeout»). Quota/crediti
+STOP owner («PRONTA PER MERGE — Grok assente per timeout») solo se Sol è
+pulita sul current head; altrimenti BLOCKED/UNKNOWN. Quota/crediti
 (incluso `credit_balance_exhausted`) → STOP (P41, CREDITI ESAURITI). Altro
 errore del provider → PROVIDER_ERROR, review non valida. Prima del merge:
 zero thread irrisolti.
@@ -232,7 +233,13 @@ si dichiara sintetica — `SYNTHETIC`/`fake`/`dummy`/`placeholder` — e porta
 comunque a merge owner), input del guard nel diff, scope ≠ diff, nuove
 dipendenze di produzione non dichiarate; riporta file a merge owner,
 safety-critical, nuovi chiamanti del percorso denaro e dipendenze solo-test.
-Il report contiene solo path e codici, mai righe del diff. Confine di fiducia:
+Il report contiene solo path e codici, mai righe del diff. Header git tra
+virgolette (path non ASCII) decodificati; parser a stati sui conteggi degli
+hunk; header/hunk non interpretabili o file di testo mostrato come binario →
+UNKNOWN. Il patch si genera con `--text --no-textconv --no-ext-diff`. Il codice
+di prodotto si confronta solo con le dipendenze di produzione
+(`requirements.txt`, `requirements-lock.txt`, `[project].dependencies`);
+`tests/` e `scripts/` con tutte le dichiarate. Confine di fiducia:
 il checker gira dal checkout della PR come `guardrail_check.py`; una PR che
 modifica `scripts/` o i workflow è sempre a merge owner (§0.8), quindi non può
 indebolire il proprio controllo e auto-mergiarsi.

@@ -122,7 +122,9 @@ jobs:
           # Patch (tutti i file) dell'INTERO diff assemblato (base...head), stesso SHA
           # immutabile e stessa guardia anti-symlink: serve al controllo full
           # diff del contratto di autonomia (docs/auto_pr_flow_spec.md §0.10).
-          git diff --no-renames -U0 "${PR_BASE_SHA}"...HEAD > pr_full_diff.patch
+          # --text/--no-textconv/--no-ext-diff: un `.gitattributes` della PR (`-diff`,
+          # driver) non puo' nascondere un file al controllo (rilievo Codex #499).
+          git diff --no-ext-diff --no-textconv --text --no-renames -U0 "${PR_BASE_SHA}"...HEAD > pr_full_diff.patch
 
           # Copia del registro di scope dal BASE, per il confronto che
           # guardrail_check.py fa sull'invariante `files` == diff. La estrae il

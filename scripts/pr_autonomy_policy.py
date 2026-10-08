@@ -515,7 +515,14 @@ def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any) 
     if statuses.get("grok") == "TIMEOUT":
         if grok_attempts < MAX_GROK_ATTEMPTS:
             return {"status": "RERUN_GROK_ONCE", "reason": "primo timeout Grok: un solo rerun"}
-        return {"status": "STOP_OWNER", "reason": "PRONTA PER MERGE — Grok assente per timeout"}
+        # «PRONTA PER MERGE» solo se Sol è pulita sul current head (rilievo
+        # Codex #499): il secondo timeout non deve nascondere un blocco di Sol.
+        sol = statuses.get("sol")
+        if sol == "VALID_CLEAN":
+            return {"status": "STOP_OWNER", "reason": "PRONTA PER MERGE — Grok assente per timeout"}
+        if sol in (None, "UNKNOWN"):
+            return {"status": "UNKNOWN", "reason": "Grok assente per timeout e Sol non leggibile"}
+        return {"status": "BLOCKED", "reason": f"Grok assente per timeout e Sol non valida: {sol}"}
     if any(s in (None, "UNKNOWN") for s in statuses.values()):
         return {"status": "UNKNOWN", "reason": "review non leggibile o assente"}
     bad = {n: s for n, s in statuses.items() if s != "VALID_CLEAN"}
@@ -596,7 +603,7 @@ def _top_modules(line: str) -> list[str]:
     dare a e c); fallback regex solo per le righe non parsabili da sole
     (es. `from x import (` su più righe)."""
     src = line[1:].strip() if line.startswith("+") else line.strip()
-    if not src.startswith(("import ", "from ")):
+    if not re.match(r"(?:import|from)\s", src):  # anche tab (rilievo Sol #499)
         return []
     try:
         tree = ast.parse(src)
@@ -618,25 +625,122 @@ def _top_modules(line: str) -> list[str]:
     return [part.strip().split(".")[0].split()[0] for part in m.group(2).split(",") if part.strip()]
 
 
-def _patch_by_file(patch_text: str) -> dict[str, list[str]]:
-    out: dict[str, list[str]] = {}
-    current = None
-    for line in patch_text.splitlines():
-        if line.startswith("+++ "):
-            target = line[4:].strip()
-            current = target[2:] if target.startswith("b/") else None
-            if current is not None:
-                out.setdefault(current, [])
+_C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
+
+
+def _unquote_git_path(text: str) -> str:
+    """Path del header `+++` come lo scrive git: tra virgolette con escape C e
+    byte ottali (default per path non ASCII) oppure nudo. Formato non
+    riconosciuto → ValueError (il chiamante va in UNKNOWN, mai PASS)."""
+    if not text.startswith('"'):
+        return text
+    if len(text) < 2 or not text.endswith('"'):
+        raise ValueError("header git tra virgolette non chiuso")
+    body, out, i = text[1:-1], bytearray(), 0
+    while i < len(body):
+        ch = body[i]
+        if ch != "\\":
+            out.extend(ch.encode("utf-8"))
+            i += 1
             continue
-        if current is not None and line.startswith("+") and not line.startswith("+++"):
-            out[current].append(line)
-    return out
+        nxt = body[i + 1:i + 2]
+        if nxt in _C_ESCAPES:
+            out.append(_C_ESCAPES[nxt])
+            i += 2
+        elif len(body[i + 1:i + 4]) == 3 and all(c in "01234567" for c in body[i + 1:i + 4]):
+            out.append(int(body[i + 1:i + 4], 8))
+            i += 4
+        else:
+            raise ValueError("escape non riconosciuto nel header git")
+    return out.decode("utf-8")
+
+
+_HUNK_RE = re.compile(r"^@@ -\d+(?:,(\d+))? \+\d+(?:,(\d+))? @@")
+_BINARY_RE = re.compile(r"^Binary files (.+) and (.+) differ$")
+# File che devono essere ispezionabili come testo: se il diff li dà «Binary»
+# (es. `.gitattributes` con `-diff`) il controllo non li ha visti → UNKNOWN.
+SCANNABLE_SUFFIXES = (".py", ".pyi", ".md", ".rst", ".txt", ".yml", ".yaml", ".json", ".toml",
+                      ".cfg", ".ini", ".sh", ".in", ".lock", ".env", ".csv", ".sql", ".js",
+                      ".ts", ".html", ".css", ".xml", ".example", ".sample", ".template")
+
+
+_HEADER_PREFIXES = ("diff --git ", "index ", "--- ", "new file mode", "deleted file mode", "old mode",
+                    "new mode", "similarity index", "dissimilarity index", "rename from", "rename to",
+                    "copy from", "copy to", "\\ ")
+
+
+def _parse_patch(patch_text: str) -> tuple[dict[str, list[str]], set[str]]:
+    """Righe aggiunte per file + file mostrati come binari.
+
+    Parser a stati sui conteggi degli hunk (rilievo Codex #499): una riga
+    aggiunta il cui contenuto inizia con `++ ` appare come `+++ ` ma DENTRO un
+    hunk è contenuto, non un header. Header `+++` tra virgolette decodificato;
+    header o hunk non interpretabili → ValueError (il chiamante va in UNKNOWN),
+    mai un file saltato in silenzio."""
+    out: dict[str, list[str]] = {}
+    binary: set[str] = set()
+    current: str | None = None
+    old_left = new_left = 0
+    # split("\n") e non splitlines(): \r, \x0c, \x1c… dentro una riga di
+    # contenuto non devono spezzarla e sfasare i conteggi dell'hunk.
+    for line in patch_text.split("\n"):
+        if old_left > 0 or new_left > 0:
+            if line.startswith("+"):
+                new_left -= 1
+                if current is not None:
+                    out[current].append(line)
+            elif line.startswith("-"):
+                old_left -= 1
+            elif line.startswith(" "):
+                old_left -= 1
+                new_left -= 1
+            elif line.startswith("\\"):
+                continue
+            else:
+                raise ValueError("hunk troncato o malformato")
+            if old_left < 0 or new_left < 0:
+                raise ValueError("hunk con più righe del dichiarato")
+            continue
+        if line.startswith("diff --git "):
+            current = None
+            continue
+        if line.startswith("+++ "):
+            target = _unquote_git_path(line[4:].rstrip("\t").strip())
+            if target == "/dev/null":
+                current = None
+                continue
+            if not target.startswith("b/"):
+                raise ValueError(f"header +++ inatteso: {target[:40]!r}")
+            current = target[2:]
+            out.setdefault(current, [])
+            continue
+        hunk = _HUNK_RE.match(line)
+        if hunk:
+            old_left = int(hunk.group(1)) if hunk.group(1) is not None else 1
+            new_left = int(hunk.group(2)) if hunk.group(2) is not None else 1
+            continue
+        binary_line = _BINARY_RE.match(line)
+        if binary_line:
+            target = _unquote_git_path(binary_line.group(2).strip())
+            if target.startswith("b/"):
+                binary.add(target[2:])
+            continue
+        if line and not line.startswith(_HEADER_PREFIXES):
+            raise ValueError("riga fuori hunk non riconosciuta")
+    if old_left > 0 or new_left > 0:
+        raise ValueError("hunk incompleto a fine patch")
+    return out, binary
+
+
+def _patch_by_file(patch_text: str) -> dict[str, list[str]]:
+    return _parse_patch(patch_text)[0]
 
 
 def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any,
                     declared_files: Any, local_modules: Iterable[str],
                     declared_dependencies: Iterable[str], repo_kind: str = "pickfair",
-                    deleted_files: Iterable[str] = ()) -> dict[str, Any]:
+                    deleted_files: Iterable[str] = (),
+                    declared_production_dependencies: Iterable[str] | None = None) -> dict[str, Any]:
     """§0.10: controllo sull'INTERO diff assemblato della PR (base...head).
 
     Un file segreto CANCELLATO dalla PR (es. #429, `config.json` tolto dal
@@ -667,13 +771,27 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     stdlib = set(getattr(sys, "stdlib_module_names", ())) | STDLIB_EXTRA
     local = set(local_modules)
     deps = {d.lower().replace("-", "_") for d in declared_dependencies}
+    # Il codice di prodotto si confronta SOLO con le dipendenze di produzione
+    # (rilievo Codex #499: `import pytest` in core/ non è dichiarato per
+    # un'installazione normale). tests/ e scripts/ usano tutte le dichiarate.
+    prod_deps = (deps if declared_production_dependencies is None
+                 else {d.lower().replace("-", "_") for d in declared_production_dependencies})
     new_deps: set[str] = set()
     test_deps: set[str] = set()
     callers: list[str] = []
     mcp_violations: list[str] = []
     secret_content: set[str] = set()
     secret_content_tests: set[str] = set()
-    for path, added in _patch_by_file(patch_text).items():
+    try:
+        by_file, binary_files = _parse_patch(patch_text)
+    except (ValueError, UnicodeDecodeError):
+        problems.append("patch_unreadable")
+        by_file, binary_files = {}, set()
+    unscanned = sorted(p for p in binary_files
+                       if p.lower().endswith(SCANNABLE_SUFFIXES) or "." not in p.rsplit("/", 1)[-1])
+    if unscanned:
+        problems.append("unscanned_text_file")
+    for path, added in by_file.items():
         is_py = path.endswith(".py")
         for line in added:
             if SECRET_CONTENT_RE.search(line):
@@ -681,13 +799,17 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                 # (rilievo Codex #499): blocca SEMPRE, salvo una riga sotto
                 # tests/ che si DICHIARA sintetica (marker sulla stessa riga);
                 # anche allora la PR va a merge owner, che verifica.
-                if path.startswith("tests/") and SYNTHETIC_MARKER_RE.search(line):
+                # Il marker conta solo FUORI dal valore con forma di segreto
+                # (rilievo Sol #499: un token reale che contiene «fake»).
+                if path.startswith("tests/") and SYNTHETIC_MARKER_RE.search(SECRET_CONTENT_RE.sub(" ", line)):
                     secret_content_tests.add(path)
                 else:
                     secret_content.add(path)
             if is_py:
+                tooling = path.startswith(("tests/", "scripts/"))
+                allowed = deps if tooling else prod_deps
                 for mod in _top_modules(line):
-                    if mod and mod not in stdlib and mod not in local and mod.lower() not in deps:
+                    if mod and mod not in stdlib and mod not in local and mod.lower() not in allowed:
                         (test_deps if path.startswith("tests/") else new_deps).add(mod)
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
@@ -705,7 +827,8 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         problems.append("stdlib_list_unavailable")
     status = "BLOCK" if problems else "PASS"
     if problems and set(problems) <= {"base_or_head_unknown", "patch_unreadable",
-                                     "declared_scope_unknown", "stdlib_list_unavailable"}:
+                                     "declared_scope_unknown", "stdlib_list_unavailable",
+                                     "unscanned_text_file"}:
         status = "UNKNOWN"
     return {
         "status": status,
@@ -716,6 +839,7 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         "new_money_path_callers": sorted(set(callers)),
         "mcp_adapter_violations": sorted(set(mcp_violations)),
         "secret_like_content": sorted(secret_content),
+        "unscanned_text_files": unscanned,
         "secret_like_content_tests": sorted(secret_content_tests),
         "owner_manual_merge_required": bool(classification["owner_manual"]
                                             or classification["dependency_manifest"]
@@ -736,8 +860,8 @@ def interpret_readiness(raw: Any) -> str:
     reasons = raw.get("reasons")
     if not isinstance(can_merge, bool) or not isinstance(reasons, list):
         return "UNKNOWN"
-    if raw.get("pagination_complete") is False:
-        return "UNKNOWN"
+    if "pagination_complete" in raw and raw.get("pagination_complete") is not True:
+        return "UNKNOWN"  # presente ma non True (False, "false", 0, null) → mai PASS
     if "review_threads_api_unavailable" in reasons:
         return "NEEDS_MANUAL"
     if can_merge and not reasons:
@@ -806,7 +930,10 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         stops.append("full_diff_unknown")
     elif full.get("status") != "PASS":
         (stops if full.get("status") == "UNKNOWN" else reasons).append("full_diff_" + str(full.get("status")))
-    if state.get("fix_loop_exhausted") is True:
+    exhausted = state.get("fix_loop_exhausted")
+    if not isinstance(exhausted, bool):  # prova esplicita (rilievo Codex #499)
+        stops.append("fix_loop_exhausted_unknown")
+    elif exhausted:
         stops.append("fix_loop_exhausted")
     if stops:
         return {"status": "NEEDS_MANUAL", "reasons": sorted(set(stops + reasons))}
@@ -919,7 +1046,7 @@ def _declared_dependencies(paths: Iterable[str]) -> set[str]:
     return names
 
 
-def _pyproject_dependencies(path: str) -> set[str]:
+def _pyproject_dependencies(path: str, *, include_optional: bool = True) -> set[str]:
     """[project] dependencies e optional-dependencies (tomllib, stdlib 3.11+)."""
     try:
         import tomllib
@@ -931,8 +1058,9 @@ def _pyproject_dependencies(path: str) -> set[str]:
     if not isinstance(project, dict):
         return set()
     specs = list(project.get("dependencies") or [])
-    for group in (project.get("optional-dependencies") or {}).values():
-        specs.extend(group or [])
+    if include_optional:
+        for group in (project.get("optional-dependencies") or {}).values():
+            specs.extend(group or [])
     names = set()
     for spec in specs:
         m = _REQ_NAME_RE.match(str(spec))
@@ -998,7 +1126,7 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
         meta = _load_json(args.meta)
         raw_files = _load_json(args.files)
         scope = _load_json(args.scope)
-        with open(args.patch, encoding="utf-8", errors="replace") as fh:
+        with open(args.patch, encoding="utf-8", errors="replace", newline="") as fh:
             patch_text = fh.read()
     except (OSError, ValueError) as exc:
         print(json.dumps({"status": "UNKNOWN", "problems": [f"input_unreadable:{type(exc).__name__}"]}))
@@ -1010,11 +1138,15 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
     req_files = (sorted(glob.glob("requirements*.txt")) + sorted(glob.glob("requirements*.in"))
                  + sorted(glob.glob("requirements*.lock")))
     deps = _declared_dependencies(req_files) | _pyproject_dependencies("pyproject.toml")
+    prod_files = [f for f in ("requirements.txt", "requirements-lock.txt") if os.path.exists(f)]
+    prod_deps = (_declared_dependencies(prod_files)
+                 | _pyproject_dependencies("pyproject.toml", include_optional=False))
     result = full_diff_check(
         base_sha=args.base_sha, head_sha=args.head_sha, files=files, patch_text=patch_text,
         declared_files=declared, local_modules=_local_modules("."), declared_dependencies=deps,
         repo_kind=args.repo_kind,
         deleted_files=[f for f in files or [] if isinstance(f, str) and not os.path.lexists(f)],
+        declared_production_dependencies=prod_deps,
     )
     result["task_key"] = key
     print(json.dumps(result, indent=2, sort_keys=True))

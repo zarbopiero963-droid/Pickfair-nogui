@@ -21,6 +21,23 @@ from scripts import pr_flow_automation as flow
 
 ROOT = Path(__file__).resolve().parents[2]
 HEAD = "0123456789abcdef0123456789abcdef01234567"
+
+def hunks(simple: str) -> str:
+    """Da «+++ b/f + righe» a un patch git reale (header + hunk con conteggi):
+    dal #499 il parser legge le righe aggiunte solo dentro hunk dichiarati."""
+    blocks: list[tuple[str, list[str]]] = []
+    for line in simple.splitlines():
+        if line.startswith("+++ b/"):
+            blocks.append((line[6:], []))
+        elif blocks:
+            blocks[-1][1].append(line)
+    out = []
+    for path, body in blocks:
+        added = sum(1 for b in body if b.startswith("+"))
+        removed = sum(1 for b in body if b.startswith("-"))
+        out += [f"diff --git a/{path} b/{path}", f"--- a/{path}", f"+++ b/{path}",
+                f"@@ -{1 if removed else 0},{removed} +1,{added} @@", *body]
+    return "\n".join(out) + "\n"
 BASE = "fedcba9876543210fedcba9876543210fedcba98"
 
 
@@ -263,11 +280,21 @@ def test_import_con_alias_e_lista_vede_tutti_i_moduli():
     patch = ("+++ b/core/x.py\n+import requests as req, missing_package\n"
              "+from other_missing.sub import y as z\n+from . import locale\n"
              "+from yaml_like import (\n")
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=hunks(patch),
                                   declared_files=["core/x.py"], local_modules=["core"],
                                   declared_dependencies=["requests"])
     assert diff["new_dependencies"] == ["missing_package", "other_missing", "yaml_like"]
     assert "undeclared_new_dependency" in diff["problems"]
+
+
+@pytest.mark.parametrize("sol,atteso", [
+    ("VALID_WITH_BLOCKERS", "BLOCKED"), ("STALE_HEAD", "BLOCKED"), ("MISSING_MARKER", "BLOCKED"),
+    ("UNKNOWN", "UNKNOWN"), (None, "UNKNOWN"),
+])
+def test_secondo_timeout_grok_non_nasconde_blocchi_di_sol(sol, atteso):
+    results = {"sol": {"status": sol} if sol else {}, "grok": {"status": "TIMEOUT"}}
+    res = policy.reviewer_gate(results, 2)
+    assert res["status"] == atteso and "PRONTA PER MERGE" not in res["reason"]
 
 
 def test_grok_primo_timeout_rerun_secondo_stop():
@@ -310,7 +337,7 @@ def merge_state(**extra):
         "manual_stop": False, "manual_label_present": False,
         "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
         "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
-        "full_diff": full_diff(),
+        "full_diff": full_diff(), "fix_loop_exhausted": False,
     }
     state.update(extra)
     return state
@@ -397,7 +424,7 @@ def test_label_manuale_solo_per_motivi_ammessi():
 def test_full_diff_blocca_segreti_input_guard_e_dipendenze_non_dichiarate():
     patch = "+++ b/core/x.py\n+import requests_toolbelt\n+from core import y\n"
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD,
-                                  files=["core/x.py", ".env", "pr_meta.json"], patch_text=patch,
+                                  files=["core/x.py", ".env", "pr_meta.json"], patch_text=hunks(patch),
                                   declared_files=["core/x.py", ".env", "pr_meta.json"],
                                   local_modules=["core"], declared_dependencies=["requests"])
     assert {"secret_material_in_diff", "guard_generated_input_in_diff",
@@ -417,7 +444,7 @@ def test_full_diff_riporta_nuovi_chiamanti_del_percorso_denaro_e_dipendenze_test
     patch = ("+++ b/services/new.py\n+    client.place_orders(market, ins)\n"
              "+++ b/tests/test_new.py\n+    from PIL import ImageGrab\n")
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD,
-                                  files=["services/new.py", "tests/test_new.py"], patch_text=patch,
+                                  files=["services/new.py", "tests/test_new.py"], patch_text=hunks(patch),
                                   declared_files=["services/new.py", "tests/test_new.py"],
                                   local_modules=[], declared_dependencies=[])
     assert diff["status"] == "PASS"
@@ -428,7 +455,7 @@ def test_full_diff_riporta_nuovi_chiamanti_del_percorso_denaro_e_dipendenze_test
 def test_full_diff_menzione_o_commento_non_e_un_chiamante():
     patch = ("+++ b/scripts/x.py\n+RE = r\"place_bet|place_orders\"\n"
              "+    # place_bet(x) era il vecchio percorso\n")
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["scripts/x.py"], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["scripts/x.py"], patch_text=hunks(patch),
                                   declared_files=["scripts/x.py"], local_modules=[],
                                   declared_dependencies=[])
     assert diff["new_money_path_callers"] == []
@@ -446,7 +473,7 @@ _FAKE_KEY = "-----BEGIN " + "RSA PRIVATE KEY-----"
 ])
 def test_full_diff_contenuto_segreto_in_qualunque_file_blocca(path, line):
     patch = f"+++ b/{path}\n+{line}\n"
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=[path], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=[path], patch_text=hunks(patch),
                                   declared_files=[path], local_modules=[], declared_dependencies=[])
     assert diff["status"] == "BLOCK"
     assert "secret_like_content_in_diff" in diff["problems"]
@@ -458,7 +485,7 @@ def test_full_diff_contenuto_segreto_in_qualunque_file_blocca(path, line):
 def test_full_diff_segreto_nei_test_senza_marker_blocca():
     patch = f"+++ b/tests/fixtures/tls.py\n+KEY = '{_FAKE_KEY}'\n"
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/fixtures/tls.py"],
-                                  patch_text=patch, declared_files=["tests/fixtures/tls.py"],
+                                  patch_text=hunks(patch), declared_files=["tests/fixtures/tls.py"],
                                   local_modules=[], declared_dependencies=[])
     assert diff["status"] == "BLOCK" and diff["secret_like_content"] == ["tests/fixtures/tls.py"]
 
@@ -466,7 +493,7 @@ def test_full_diff_segreto_nei_test_senza_marker_blocca():
 def test_full_diff_chiave_sintetica_dichiarata_nei_test_va_a_merge_owner():
     patch = f"+++ b/tests/fixtures/tls.py\n+SYNTHETIC_KEY = '{_FAKE_KEY}'\n"
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/fixtures/tls.py"],
-                                  patch_text=patch, declared_files=["tests/fixtures/tls.py"],
+                                  patch_text=hunks(patch), declared_files=["tests/fixtures/tls.py"],
                                   local_modules=[], declared_dependencies=[])
     assert diff["status"] == "PASS"
     assert diff["secret_like_content_tests"] == ["tests/fixtures/tls.py"]
@@ -475,7 +502,7 @@ def test_full_diff_chiave_sintetica_dichiarata_nei_test_va_a_merge_owner():
 
 def test_full_diff_riga_rimossa_con_segreto_non_blocca():
     patch = f"+++ b/docs/note.md\n-incollato {_FAKE_GH}\n+incollato <rimosso>\n"
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/note.md"], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/note.md"], patch_text=hunks(patch),
                                   declared_files=["docs/note.md"], local_modules=[], declared_dependencies=[])
     assert diff["status"] == "PASS"
 
@@ -489,7 +516,7 @@ def test_pattern_segreti_non_corrispondono_ai_sorgenti_del_contratto():
 
 def test_mcp_documentazione_non_e_violazione_adapter():
     patch = "+++ b/docs/limits.md\n+MCP non chiama mai api.betfair.com\n"
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/limits.md"], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/limits.md"], patch_text=hunks(patch),
                                   declared_files=["docs/limits.md"], local_modules=[],
                                   declared_dependencies=[], repo_kind="mcp")
     assert diff["mcp_adapter_violations"] == [] and diff["status"] == "PASS"
@@ -497,14 +524,15 @@ def test_mcp_documentazione_non_e_violazione_adapter():
 
 def test_pr_guard_patch_copre_tutti_i_file():
     wf = (ROOT / ".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
-    assert "git diff --no-renames -U0 \"${PR_BASE_SHA}\"...HEAD > pr_full_diff.patch" in wf
+    assert ("git diff --no-ext-diff --no-textconv --text --no-renames -U0 \"${PR_BASE_SHA}\"...HEAD"
+            " > pr_full_diff.patch") in wf
     assert "-- '*.py' > pr_full_diff.patch" not in wf
 
 
 def test_manifest_toccato_non_copre_import_non_dichiarato():
     patch = "+++ b/core/x.py\n+import missing_package\n+++ b/requirements.txt\n+# commento\n"
     files = ["core/x.py", "requirements.txt"]
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=hunks(patch),
                                   declared_files=files, local_modules=["core"],
                                   declared_dependencies=["requests"])
     assert diff["status"] == "BLOCK" and "undeclared_new_dependency" in diff["problems"]
@@ -520,7 +548,7 @@ def test_mcp_test_e_commenti_non_sono_violazioni():
     patch = ("+++ b/tests/test_tools.py\n+assert 'betfair_client' not in src\n"
              "+++ b/src/tools.py\n+# MCP non chiama mai betfair_client\n")
     files = ["tests/test_tools.py", "src/tools.py"]
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=hunks(patch),
                                   declared_files=files, local_modules=[], declared_dependencies=[],
                                   repo_kind="mcp")
     assert diff["mcp_adapter_violations"] == [] and diff["status"] == "PASS"
@@ -533,6 +561,134 @@ def test_script_di_automazione_pr_sono_a_merge_owner(path):
     assert policy.manual_label_decision([path])["label"] == "REQUIRED"
 
 
+def test_full_diff_header_git_tra_virgolette_e_decodificato(tmp_path):
+    """Rilievo Codex #499: path non ASCII → header quotato, il file non va saltato."""
+    repo = tmp_path / "r"
+    repo.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True)
+    run("init", "-q")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base")
+    (repo / "tést.py").write_text(f"import modulo_ignoto\nX = '{_FAKE_GH}'\n", encoding="utf-8")
+    run("add", "-A")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+    patch = run("diff", "--no-renames", "-U0", "HEAD~1", "HEAD").stdout
+    assert '+++ "b/t\\303\\251st.py"' in patch  # git quota davvero il path
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tést.py"], patch_text=patch,
+                                  declared_files=["tést.py"], local_modules=[], declared_dependencies=[])
+    assert diff["secret_like_content"] == ["tést.py"]
+    assert diff["new_dependencies"] == ["modulo_ignoto"]
+    assert diff["status"] == "BLOCK"
+
+
+@pytest.mark.parametrize("header", ['+++ "b/rotto.py', '+++ "b/x\\q.py"', "+++ c/strano.py"])
+def test_full_diff_header_non_interpretabile_e_unknown(header):
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["rotto.py"],
+                                  patch_text=f"{header}\n+import os\n",
+                                  declared_files=["rotto.py"], local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "UNKNOWN" and "patch_unreadable" in diff["problems"]
+
+
+def test_full_diff_file_cancellato_dev_null_non_e_errore():
+    patch = "diff --git a/old.py b/old.py\ndeleted file mode 100644\n--- a/old.py\n+++ /dev/null\n@@ -1 +0,0 @@\n-import os\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["old.py"], patch_text=patch,
+                                  declared_files=["old.py"], local_modules=[], declared_dependencies=[],
+                                  deleted_files=["old.py"])
+    assert diff["status"] == "PASS"
+
+
+def test_import_con_tab_e_visto():
+    patch = "+++ b/core/x.py\n+import\tpacchetto_tab\n+from\taltro_tab import y\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=hunks(patch),
+                                  declared_files=["core/x.py"], local_modules=["core"], declared_dependencies=[])
+    assert diff["new_dependencies"] == ["altro_tab", "pacchetto_tab"] and diff["status"] == "BLOCK"
+
+
+def test_marker_sintetico_dentro_il_valore_non_conta():
+    token = "gh" + "p_" + "fake" + "A1b2C3d4" * 5
+    patch = f"+++ b/tests/test_x.py\n+T = '{token}'\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/test_x.py"], patch_text=hunks(patch),
+                                  declared_files=["tests/test_x.py"], local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "BLOCK" and diff["secret_like_content"] == ["tests/test_x.py"]
+
+
+def test_riga_aggiunta_che_inizia_con_piu_piu_non_e_un_header():
+    patch = ("diff --git a/core/x.py b/core/x.py\n--- a/core/x.py\n+++ b/core/x.py\n"
+             "@@ -0,0 +1,2 @@\n+++ counter\n+import missing_package\n")
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=patch,
+                                  declared_files=["core/x.py"], local_modules=["core"], declared_dependencies=[])
+    assert diff["new_dependencies"] == ["missing_package"] and diff["status"] == "BLOCK"
+
+
+@pytest.mark.parametrize("patch", [
+    "--- a/x.py\n+++ b/x.py\n@@ -0,0 +1,3 @@\n+a\n",              # hunk incompleto
+    "--- a/x.py\n+++ b/x.py\n@@ -0,0 +1,1 @@\n+a\n+b\n",          # riga oltre il conteggio
+    "--- a/x.py\n+++ b/x.py\n+import fuori_hunk\n",                  # aggiunta senza hunk
+])
+def test_hunk_malformato_e_unknown(patch):
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["x.py"], patch_text=patch,
+                                  declared_files=["x.py"], local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "UNKNOWN" and "patch_unreadable" in diff["problems"]
+
+
+def test_dipendenze_di_prodotto_separate_da_quelle_di_test():
+    patch = ("+++ b/core/new.py\n+import pytest\n+++ b/tests/test_new.py\n+import pytest\n"
+             "+++ b/scripts/tool.py\n+import pytest\n")
+    files = ["core/new.py", "tests/test_new.py", "scripts/tool.py"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=hunks(patch),
+                                  declared_files=files, local_modules=["core"],
+                                  declared_dependencies=["requests", "pytest"],
+                                  declared_production_dependencies=["requests"])
+    assert diff["new_dependencies"] == ["pytest"] and diff["status"] == "BLOCK"
+    assert diff["new_test_only_dependencies"] == []
+
+
+def test_cli_dipendenze_di_prodotto_lette_da_requirements_e_pyproject():
+    prod = policy._pyproject_dependencies(str(ROOT / "pyproject.toml"), include_optional=False)
+    assert "betfairlightweight" in prod and "pytest" not in prod and "pytest_xdist" not in prod
+
+
+@pytest.mark.parametrize("valore", [None, "true", 1, "__omesso__"])
+def test_fix_loop_esaurito_deve_essere_booleano(valore):
+    state = merge_state()
+    if valore == "__omesso__":
+        state.pop("fix_loop_exhausted")
+    else:
+        state["fix_loop_exhausted"] = valore
+    assert policy.merge_decision(state)["status"] == "NEEDS_MANUAL"
+    assert policy.merge_decision(merge_state(fix_loop_exhausted=True))["status"] == "NEEDS_MANUAL"
+
+
+def test_file_di_testo_mostrato_come_binario_non_e_ispezionato():
+    patch = ("diff --git a/core/x.py b/core/x.py\nindex 1..2 100644\n"
+             "Binary files a/core/x.py and b/core/x.py differ\n"
+             "diff --git a/img/logo.png b/img/logo.png\nBinary files a/img/logo.png and b/img/logo.png differ\n")
+    files = ["core/x.py", "img/logo.png"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "UNKNOWN" and diff["unscanned_text_files"] == ["core/x.py"]
+
+
+def test_gitattributes_meno_diff_non_nasconde_il_file_con_i_flag_di_pr_guard(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    run = lambda *a: subprocess.run(["git", *a], cwd=repo, check=True, capture_output=True, text=True)
+    run("init", "-q")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "base")
+    (repo / ".gitattributes").write_text("*.py -diff\n", encoding="utf-8")
+    (repo / "x.py").write_text("import modulo_nascosto\n", encoding="utf-8")
+    run("add", "-A")
+    run("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x")
+    files = [".gitattributes", "x.py"]
+    nudo = run("diff", "--no-renames", "-U0", "HEAD~1", "HEAD").stdout
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=nudo,
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "UNKNOWN" and "x.py" in diff["unscanned_text_files"]
+    guard = run("diff", "--no-ext-diff", "--no-textconv", "--text", "--no-renames", "-U0", "HEAD~1", "HEAD").stdout
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=guard,
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    assert diff["new_dependencies"] == ["modulo_nascosto"] and diff["status"] == "BLOCK"
+
+
 def test_full_diff_illeggibile_e_unknown():
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=None, patch_text="",
                                   declared_files=[], local_modules=[], declared_dependencies=[])
@@ -541,7 +697,7 @@ def test_full_diff_illeggibile_e_unknown():
 
 def test_mcp_resta_adapter():
     patch = "+++ b/src/tools.py\n+URL = 'https://api.betfair.com/exchange'\n"
-    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["src/tools.py"], patch_text=patch,
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["src/tools.py"], patch_text=hunks(patch),
                                   declared_files=["src/tools.py"], local_modules=[],
                                   declared_dependencies=[], repo_kind="mcp")
     assert "mcp_adapter_violation" in diff["problems"]
@@ -553,6 +709,10 @@ def test_mcp_resta_adapter():
     ({"can_merge": True}, "UNKNOWN"),
     ({"can_merge": True, "reasons": [], "errors": ["boom"]}, "UNKNOWN"),
     ({"can_merge": True, "reasons": [], "pagination_complete": False}, "UNKNOWN"),
+    ({"can_merge": True, "reasons": [], "pagination_complete": "false"}, "UNKNOWN"),
+    ({"can_merge": True, "reasons": [], "pagination_complete": 0}, "UNKNOWN"),
+    ({"can_merge": True, "reasons": [], "pagination_complete": None}, "UNKNOWN"),
+    ({"can_merge": True, "reasons": [], "pagination_complete": True}, "PASS"),
     ({"can_merge": False, "reasons": ["review_threads_api_unavailable"]}, "NEEDS_MANUAL"),
     (None, "UNKNOWN"),
 ])
@@ -820,7 +980,7 @@ def test_cli_dipendenza_dichiarata_nel_manifest_del_diff_passa(tmp_path):
     (tmp_path / "requirements.txt").write_text("requests\nnuovo-pacchetto>=1.0\n", encoding="utf-8")
     patch = ("+++ b/core/x.py\n+import nuovo_pacchetto\n"
              "+++ b/requirements.txt\n+nuovo-pacchetto>=1.0\n")
-    (tmp_path / "p.patch").write_text(patch, encoding="utf-8")
+    (tmp_path / "p.patch").write_text(hunks(patch), encoding="utf-8")
     cmd = [sys.executable, "-I", str(ROOT / "scripts/pr_autonomy_policy.py"), "full-diff",
            "--meta", "meta.json", "--files", "files.json", "--patch", "p.patch",
            "--scope", "scope.json", "--base-sha", BASE, "--head-sha", HEAD]
@@ -828,7 +988,7 @@ def test_cli_dipendenza_dichiarata_nel_manifest_del_diff_passa(tmp_path):
     out = json.loads(res.stdout)
     assert res.returncode == 0 and out["status"] == "PASS", res.stdout
     assert out["owner_manual_merge_required"] is True  # manifest → merge owner
-    (tmp_path / "p.patch").write_text(patch + "+++ b/core/x.py\n+import non_dichiarato\n", encoding="utf-8")
+    (tmp_path / "p.patch").write_text(hunks(patch + "+++ b/core/x.py\n+import non_dichiarato\n"), encoding="utf-8")
     res = subprocess.run(cmd, cwd=tmp_path, capture_output=True, text=True, check=False)
     assert res.returncode == 1 and json.loads(res.stdout)["new_dependencies"] == ["non_dichiarato"]
 
