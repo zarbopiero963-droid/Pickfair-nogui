@@ -278,6 +278,25 @@ def test_block_f4_db_e_marker_non_scrivibili_blocco_in_sessione(tmp_path, monkey
     assert _rifiuti(c)[-1] == "daily_loss_state_non_persistito"
 
 
+def test_block_f4_marker_scritto_anche_con_db_path_pathlike(tmp_path):
+    """Sol #503 cycle 3: a db object exposing `db_path` as os.PathLike must
+    still get the marker when the db save fails."""
+    import pathlib
+
+    from core import daily_loss_store as store
+
+    class _Db:
+        db_path = pathlib.Path(tmp_path / "x.db")
+
+        def save_settings(self, _valori):
+            raise OSError("disk full")
+
+    stato = {"day_utc": "2026-10-08", "intraday_realized_pnl": -8.0, "breached": False, "breached_at": ""}
+    assert store.persist_failed(store.persist_daily_loss(_Db(), stato, None))
+    marker = json.loads((tmp_path / "x.db.daily_loss_pending.json").read_text())
+    assert (marker["intraday_realized_pnl"], marker["seq"]) == (-8.0, 1)
+
+
 def test_pass_f4_riavvio_normale_non_va_in_breach(tmp_path):
     c = _catena(tmp_path, max_daily_loss=10.0)
     _perdi(c.rc, 3.0)

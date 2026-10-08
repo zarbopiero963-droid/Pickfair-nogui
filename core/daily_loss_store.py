@@ -85,7 +85,7 @@ def reconcile(a: Optional[dict], b: Optional[dict], realized_pnl: float) -> dict
     if not a or not b:
         return a or b or {}
     sa, sb = a[SEQ_KEY], b[SEQ_KEY]
-    breached = [f for f in (a, b) if f["breached"]]  # breach del giorno: mai annullato
+    breached = [f for f in (a, b) if f["breached"]]
     seqs = [s for s in (sa, sb) if s is not None]
     if sa is not None and sb is not None and sa != sb:
         intraday = (a if sa > sb else b)["intraday_realized_pnl"]
@@ -96,7 +96,10 @@ def reconcile(a: Optional[dict], b: Optional[dict], realized_pnl: float) -> dict
 
 
 def _marker_path(db: Any) -> str:
-    path = getattr(db, "db_path", None)
+    try:
+        path = os.fspath(getattr(db, "db_path", None))  # str o os.PathLike
+    except TypeError:
+        return ""
     if not isinstance(path, str) or path in ("", ":memory:"):
         return ""
     return path + ".daily_loss_pending.json"

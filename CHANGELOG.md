@@ -120,7 +120,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     never lower the loss. Known limitation (declared): if neither the db nor
     the marker can be written, the block holds for the session only; a
     restart in that condition cannot rebuild the unsaved loss.
-    Persistence lives in the new `core/daily_loss_store.py`.
+    Persistence lives in the new `core/daily_loss_store.py` (`db_path` may
+    be a str or an `os.PathLike`).
   - `reset_cycle()` and the drawdown auto-reset no longer wipe the day's or the
     session's loss (they zero the desk `realized_pnl`; the baselines now shift
     with it).
