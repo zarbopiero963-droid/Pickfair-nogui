@@ -215,9 +215,15 @@ applicata dalla procedura e dalla label, non da un'identità separata.
 Sul diff ASSEMBLATO della PR (base...head, non l'ultimo push): base, head,
 diff completo, path vietati, scope, nuovi chiamanti, dipendenze, regressioni.
 `pr-guard.yml` esegue `python -I scripts/pr_autonomy_policy.py full-diff`:
-BLOCK su materiale segreto presente, input del guard nel diff, scope ≠ diff,
-nuove dipendenze di produzione non dichiarate; riporta file a merge owner,
+BLOCK su materiale segreto presente (per path e per contenuto con forma di
+segreto in qualunque file; in `tests/` le chiavi sintetiche non bloccano ma
+portano a merge owner), input del guard nel diff, scope ≠ diff, nuove
+dipendenze di produzione non dichiarate; riporta file a merge owner,
 safety-critical, nuovi chiamanti del percorso denaro e dipendenze solo-test.
+Il report contiene solo path e codici, mai righe del diff. Confine di fiducia:
+il checker gira dal checkout della PR come `guardrail_check.py`; una PR che
+modifica `scripts/` o i workflow è sempre a merge owner (§0.8), quindi non può
+indebolire il proprio controllo e auto-mergiarsi.
 Nessun nuovo servizio, nessun costo.
 
 ### 0.11 Readiness fail-closed

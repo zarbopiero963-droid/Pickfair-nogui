@@ -122,7 +122,7 @@ jobs:
           # Patch Python dell'INTERO diff assemblato (base...head), stesso SHA
           # immutabile e stessa guardia anti-symlink: serve al controllo full
           # diff del contratto di autonomia (docs/auto_pr_flow_spec.md §0.10).
-          git diff --no-renames -U0 "${PR_BASE_SHA}"...HEAD -- '*.py' > pr_full_diff.patch
+          git diff --no-renames -U0 "${PR_BASE_SHA}"...HEAD > pr_full_diff.patch
 
           # Copia del registro di scope dal BASE, per il confronto che
           # guardrail_check.py fa sull'invariante `files` == diff. La estrae il
@@ -169,6 +169,12 @@ jobs:
           # produzione non dichiarate; riporta file a merge owner, safety-critical
           # e nuovi chiamanti del percorso denaro. `python -I` per la stessa
           # ragione del guard. Nessun file scritto: il report va solo nel summary.
+          # Il patch copre TUTTI i file (segreti incollati in .md/.yml inclusi);
+          # il report contiene solo path e codici, mai righe del diff, quindi
+          # stamparlo non pubblica valori. Confine di fiducia: come il guard,
+          # gira dal checkout della PR (in `pull_request` anche questo workflow
+          # viene dalla PR); una PR che tocca scripts/ o workflow e' comunque a
+          # merge manuale dell'owner (label dai reviewer `pull_request_target`).
           set +e
           REPORT="$(python -I scripts/pr_autonomy_policy.py full-diff \
             --meta pr_meta.json --files pr_files_raw.json \

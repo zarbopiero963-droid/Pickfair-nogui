@@ -377,6 +377,65 @@ def test_full_diff_menzione_o_commento_non_e_un_chiamante():
     assert diff["new_money_path_callers"] == []
 
 
+# Valori finti costruiti a pezzi: il sorgente del test non ha forma di segreto.
+_FAKE_GH = "gh" + "p_" + "A1b2C3d4" * 5
+_FAKE_KEY = "-----BEGIN " + "RSA PRIVATE KEY-----"
+
+
+@pytest.mark.parametrize("path,line", [
+    ("docs/note.md", f"token: {_FAKE_GH}"),
+    (".github/workflows/x.yml", f"  KEY: {_FAKE_GH}"),
+    ("core/a.py", f"PEM = '{_FAKE_KEY}'"),
+])
+def test_full_diff_contenuto_segreto_in_qualunque_file_blocca(path, line):
+    patch = f"+++ b/{path}\n+{line}\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=[path], patch_text=patch,
+                                  declared_files=[path], local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "BLOCK"
+    assert "secret_like_content_in_diff" in diff["problems"]
+    assert diff["secret_like_content"] == [path]
+    # Il report porta solo path e codici: il valore non esce mai.
+    assert _FAKE_GH not in json.dumps(diff) and "PRIVATE KEY" not in json.dumps(diff)
+
+
+def test_full_diff_chiave_sintetica_nei_test_non_blocca_ma_va_a_merge_owner():
+    patch = f"+++ b/tests/fixtures/tls.py\n+KEY = '{_FAKE_KEY}'\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["tests/fixtures/tls.py"],
+                                  patch_text=patch, declared_files=["tests/fixtures/tls.py"],
+                                  local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "PASS"
+    assert diff["secret_like_content_tests"] == ["tests/fixtures/tls.py"]
+    assert diff["owner_manual_merge_required"] is True
+
+
+def test_full_diff_riga_rimossa_con_segreto_non_blocca():
+    patch = f"+++ b/docs/note.md\n-token: {_FAKE_GH}\n+token: <redatto>\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/note.md"], patch_text=patch,
+                                  declared_files=["docs/note.md"], local_modules=[], declared_dependencies=[])
+    assert diff["status"] == "PASS"
+
+
+def test_pattern_segreti_non_corrispondono_ai_sorgenti_del_contratto():
+    for rel in ("scripts/pr_autonomy_policy.py", "tests/scripts/test_pr_autonomy_policy.py",
+                ".github/workflows/pr-guard.yml", "docs/auto_pr_flow_spec.md"):
+        testo = (ROOT / rel).read_text(encoding="utf-8")
+        assert not any(policy.SECRET_CONTENT_RE.search(r) for r in testo.splitlines()), rel
+
+
+def test_mcp_documentazione_non_e_violazione_adapter():
+    patch = "+++ b/docs/limits.md\n+MCP non chiama mai api.betfair.com\n"
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/limits.md"], patch_text=patch,
+                                  declared_files=["docs/limits.md"], local_modules=[],
+                                  declared_dependencies=[], repo_kind="mcp")
+    assert diff["mcp_adapter_violations"] == [] and diff["status"] == "PASS"
+
+
+def test_pr_guard_patch_copre_tutti_i_file():
+    wf = (ROOT / ".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
+    assert "git diff --no-renames -U0 \"${PR_BASE_SHA}\"...HEAD > pr_full_diff.patch" in wf
+    assert "-- '*.py' > pr_full_diff.patch" not in wf
+
+
 def test_full_diff_illeggibile_e_unknown():
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=None, patch_text="",
                                   declared_files=[], local_modules=[], declared_dependencies=[])

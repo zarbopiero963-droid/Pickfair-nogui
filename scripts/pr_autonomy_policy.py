@@ -189,6 +189,21 @@ MCP_FORBIDDEN_RE = re.compile(
     r"sqlite3|\bpickfair\.db\b|betfair_client|betfairlightweight)"
 )
 
+# Contenuto con forma di segreto (§0.10, rilievo Grok su #499): il controllo per
+# path non vede un token incollato in un .md/.yml/.py. Il report riporta SOLO il
+# path, mai la riga: nessun valore finisce in log o summary. I pattern sono
+# scritti in modo da non corrispondere al proprio sorgente.
+SECRET_CONTENT_RE = re.compile(
+    r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----"
+    r"|\bgh[pousr]_[A-Za-z0-9]{36,}"
+    r"|\bgithub_pat_[A-Za-z0-9_]{40,}"
+    r"|\bxox[abprs]-[A-Za-z0-9-]{10,}"
+    r"|\bsk-[A-Za-z0-9_-]{32,}"
+    r"|\bxai-[A-Za-z0-9]{40,}"
+    r"|\bAKIA[0-9A-Z]{16}\b"
+    r"|\b[0-9]{8,10}:AA[A-Za-z0-9_-]{33}\b"
+)
+
 STDLIB_EXTRA = frozenset({"__future__"})
 
 
@@ -607,9 +622,15 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
     test_deps: set[str] = set()
     callers: list[str] = []
     mcp_violations: list[str] = []
+    secret_content: set[str] = set()
+    secret_content_tests: set[str] = set()
     for path, added in _patch_by_file(patch_text).items():
         is_py = path.endswith(".py")
         for line in added:
+            if SECRET_CONTENT_RE.search(line):
+                # In tests/ esistono chiavi SINTETICHE (fixture TLS, redazione):
+                # non blocca ma porta la PR a merge owner, che verifica.
+                (secret_content_tests if path.startswith("tests/") else secret_content).add(path)
             if is_py:
                 for mod in _top_modules(line):
                     if mod and mod not in stdlib and mod not in local and mod.lower() not in deps:
@@ -617,8 +638,10 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
                     callers.append(path)
-            if repo_kind == "mcp" and MCP_FORBIDDEN_RE.search(line):
+            if is_py and repo_kind == "mcp" and MCP_FORBIDDEN_RE.search(line):
                 mcp_violations.append(path)
+    if secret_content:
+        problems.append("secret_like_content_in_diff")
     if new_deps and not classification["dependency_manifest"]:
         problems.append("undeclared_new_dependency")
     if mcp_violations:
@@ -637,8 +660,11 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
         "new_test_only_dependencies": sorted(test_deps),
         "new_money_path_callers": sorted(set(callers)),
         "mcp_adapter_violations": sorted(set(mcp_violations)),
+        "secret_like_content": sorted(secret_content),
+        "secret_like_content_tests": sorted(secret_content_tests),
         "owner_manual_merge_required": bool(classification["owner_manual"]
-                                            or classification["dependency_manifest"]),
+                                            or classification["dependency_manifest"]
+                                            or secret_content_tests),
     }
 
 
