@@ -60,14 +60,49 @@ class TableManager:
     def _get(self, table_id: int) -> Optional[TableState]:
         return self._tables.get(int(table_id))
 
+    @staticmethod
+    def _is_clean_free(table: TableState) -> bool:
+        return (
+            table.status == "FREE"
+            and not table.in_recovery
+            and table.loss_amount <= 0.0
+            and not table.current_event_key
+            and not table.current_exposure
+        )
+
+    def _prune_if_surplus(self, table: TableState) -> None:
+        # Un tavolo oltre `table_count` (dopo una riduzione) resta finche' ha
+        # stato; tornato libero e pulito si toglie (#461 PR28).
+        if table.table_id > self.table_count and self._is_clean_free(table):
+            self._tables.pop(table.table_id, None)
+
+    def resize(self, table_count: int) -> None:
+        """Adegua il numero di tavoli SENZA perdere stato (#461 PR28).
+
+        Patch di config a bot acceso: i tavoli esistenti restano con stato,
+        evento, esposizione e memoria perdite; i mancanti si aggiungono liberi.
+        Riducendo, si tolgono solo i tavoli liberi e puliti oltre il nuovo
+        numero; gli altri restano (esposizione contata nei cap) e non vengono
+        riassegnati come liberi. `int()` solleva su un valore illeggibile
+        PRIMA di toccare lo stato."""
+        count = max(1, int(table_count or 1))
+        with self._lock:
+            for idx in range(1, count + 1):
+                if idx not in self._tables:
+                    self._tables[idx] = TableState(table_id=idx)
+            self.table_count = count
+            for table in list(self._tables.values()):
+                self._prune_if_surplus(table)
+
     # =========================================================
     # ALLOCATION
     # =========================================================
     def allocate(self, *, event_key: str, allow_recovery: bool = True) -> Optional[TableState]:
         with self._lock:
-            # 1) tavolo libero
+            # 1) tavolo libero (entro table_count: un tavolo oltre il numero
+            #    configurato, rimasto dopo una riduzione, non si riassegna)
             for table in self._tables.values():
-                if table.status == "FREE":
+                if table.status == "FREE" and table.table_id <= self.table_count:
                     return TableState(**table.to_dict())
 
             # 2) recovery consentito
@@ -146,6 +181,7 @@ class TableManager:
             table.selection_id = ""
             table.meta = {}
             self._touch(table)
+            self._prune_if_surplus(table)
 
     def force_unlock(self, table_id: int) -> None:
         with self._lock:
@@ -167,6 +203,7 @@ class TableManager:
                 table.in_recovery = False
 
             self._touch(table)
+            self._prune_if_surplus(table)
 
     # =========================================================
     # LOOKUPS

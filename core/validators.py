@@ -138,6 +138,85 @@ def order_stake(value) -> float:
     return f
 
 
+# ---------------------------------------------------------------------------
+# Rischio dell'ordine (#461 PR28, PKG-P24-B): formula UNICA per tutti i
+# consumer dei cap owner (money management, cap A2, tavoli, auto-next,
+# RiskGate). BACK rischia lo stake; LAY rischia la liability stake*(prezzo-1)
+# (decisione owner #393, H-14). La soglia vale con tolleranza +-epsilon: la
+# somma float 0.1+0.2 o il prodotto 0.1*3 non devono negare un ordine esatto
+# al cap, e un superamento reale (anche di un centesimo) resta un superamento.
+# ---------------------------------------------------------------------------
+EXPOSURE_REL_TOL = 1e-9
+EXPOSURE_ABS_TOL = 1e-9
+
+
+def order_exposure(side, stake, price) -> float:
+    """Euro a rischio dell'ordine: BACK = stake, LAY = stake * (price - 1).
+
+    Lato diverso da BACK/LAY (assente, bool, testo) => ValueError: il rischio
+    di un lato sconosciuto non si stima."""
+    lato = side.strip().upper() if isinstance(side, str) else None
+    if lato not in ("BACK", "LAY"):
+        raise ValueError("INVALID_SIDE")
+    importo = order_stake(stake)
+    if lato == "BACK":
+        return importo
+    return importo * (order_price(price) - 1.0)
+
+
+def signal_side(signal) -> str:
+    """Lato di un segnale runtime, risolto come il payload `CMD_QUICK_BET`
+    (`bet_type` / `side` / `action`, maiuscolo). L'assenza ricade su BACK come
+    il payload storico: il finding "lato assente => BACK" resta tracciato a
+    parte e qui NON si cambia, si misura solo lo stesso lato che parte."""
+    raw = None
+    if isinstance(signal, dict):
+        raw = signal.get("bet_type") or signal.get("side") or signal.get("action")
+    return str(raw or "BACK").upper()
+
+
+def order_exposure_or_inf(side, stake, price) -> float:
+    """Come `order_exposure`, ma un ordine non stimabile vale inf (fail-closed)."""
+    try:
+        return order_exposure(side, stake, price)
+    except ValueError:
+        return float("inf")
+
+
+def open_exposure_cap_reason(cap_raw, total_exposure, order_risk) -> str:
+    """Cap A2 `max_open_exposure` (euro assoluti) sul rischio dell'ordine.
+
+    Assente => "" (nessun cap); configurato ma illeggibile (NaN dal loader,
+    inf, bool, testo) => nega (PR27); soglia esatta con tolleranza (PR28).
+    Ritorna il motivo del rifiuto oppure ""."""
+    if cap_raw is None:
+        return ""
+    cap = finite_number(cap_raw)
+    if cap is None:
+        return "max_open_exposure_non_valido"
+    if exceeds_cap(total_exposure + order_risk, cap):
+        return f"max_open_exposure_exceeded:limit={cap_raw}€"
+    return ""
+
+
+def signal_cap_reason(signal, stake, cap_raw, total_exposure) -> str:
+    """Cap A2 sul rischio di un segnale (lato e quota come nel payload)."""
+    sig = signal if isinstance(signal, dict) else {}
+    risk = order_exposure_or_inf(signal_side(sig), stake, sig.get("price") or sig.get("odds"))
+    if not math.isfinite(risk):
+        return "lato_o_quota_non_validi"
+    return open_exposure_cap_reason(cap_raw, total_exposure, risk)
+
+
+def exceeds_cap(amount, cap) -> bool:
+    """True se `amount` supera `cap` oltre la tolleranza float.
+
+    Alla soglia esatta (anche con errore di arrotondamento) non supera."""
+    if amount <= cap:
+        return False
+    return not math.isclose(amount, cap, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
+
+
 def safe_filename_core(name: str) -> str:
     """Nucleo condiviso della sanitizzazione di un nome file (Windows).
 
