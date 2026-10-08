@@ -320,6 +320,29 @@ def test_pass_same_message_same_identity_across_headless_and_gui_entrypoints(tmp
     assert _broker_refs(headless.broker) == [ref], "cambio entrypoint: secondo ordine piazzato"
 
 
+def test_pass_upstream_ref_survives_gui_normalization_across_entrypoints(tmp_path):
+    # Codex P1 (head f876110): un customer_ref a monte arriva al primo livello
+    # in headless ma solo annidato in raw_signal sul mini-GUI: stesso ref.
+    from services.telegram_service import TelegramService
+
+    listener = {
+        "market_id": "1.234", "selection_id": 11, "price": 2.0, "bet_type": "BACK",
+        "chat_id": -100123, "raw_text": "OVER 2.5 @2.0", "selection": "Over 2.5",
+        "simulation_mode": True, "customer_ref": "tg-777",
+    }
+    headless = _chain(tmp_path, db_name="upref.db")
+    TelegramService(settings_service=None, db=headless.db, bus=headless.bus)._handle_signal(
+        {**listener, "received_at": "2026-10-08T10:00:00+00:00"}
+    )
+    gui = _chain(tmp_path, db_name="upref.db")
+    gui.rc.betfair_service.simulation_broker = headless.broker
+    _gui_publish(gui, {**listener, "received_at": "2026-10-08T10:01:00+00:00"}, stake=5.0)
+
+    assert headless.bus.payloads("CMD_QUICK_BET")[0]["customer_ref"] == "tg-777"
+    assert gui.bus.payloads("CMD_QUICK_BET")[0]["customer_ref"] == "tg-777"
+    assert _broker_refs(headless.broker) == ["tg-777"]
+
+
 def test_pass_distinct_signals_get_distinct_identities(tmp_path):
     c = _chain(tmp_path)
 
@@ -596,6 +619,41 @@ def test_pass_dutching_leg_identity_ignores_leg_order(tmp_path, monkeypatch):
 
     assert replay == refs
     assert len(c.broker.state.orders) == 3, "ordine gambe diverso: batch piazzato due volte"
+
+
+def test_pass_dutching_identity_ignores_order_sensitive_stake_rounding(tmp_path):
+    # Codex P1 (head f876110): con quote uguali il calculate_dutching REALE
+    # assegna il centesimo di arrotondamento in base all'ordine (4.04/4.05).
+    # L'identita' deriva dagli input (selezioni ordinate + stake totale), non
+    # dagli stake calcolati.
+    payload = _dutching_payload()
+    payload["total_stake"] = 10.0
+    payload["selections"] = [
+        {"selectionId": 10, "price": 2.5, "side": "BACK"},
+        {"selectionId": 20, "price": 2.5, "side": "BACK"},
+        {"selectionId": 30, "price": 5.3, "side": "BACK"},
+    ]
+    c = _chain(tmp_path, db_name="dutch_round.db")
+    DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(payload)
+    first = {leg["selection_id"]: (leg["customer_ref"], leg["stake"]) for leg in c.bus.payloads("CMD_QUICK_BET")}
+    assert len(first) == 3
+
+    permuted = {**payload, "selections": [payload["selections"][i] for i in (1, 0, 2)]}
+    DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(permuted)
+    replay = {leg["selection_id"]: (leg["customer_ref"], leg["stake"]) for leg in c.bus.payloads("CMD_QUICK_BET")[3:]}
+
+    # Gli stake delle due gambe a quota uguale si scambiano davvero...
+    assert first[10][1] != replay[10][1]
+    # ...ma l'identita' resta la stessa e il batch non viene ripiazzato.
+    assert {k: v[0] for k, v in replay.items()} == {k: v[0] for k, v in first.items()}
+    assert len(c.broker.state.orders) == 3, "arrotondamento diverso: batch piazzato due volte"
+
+    # Stake totale diverso = richiesta diversa = intento nuovo.
+    DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(
+        {**payload, "total_stake": 12.0}
+    )
+    bigger = {leg["selection_id"]: leg["customer_ref"] for leg in c.bus.payloads("CMD_QUICK_BET")[6:]}
+    assert len(bigger) == 3 and not set(bigger.values()) & {v[0] for v in first.values()}
 
 
 # =========================================================================

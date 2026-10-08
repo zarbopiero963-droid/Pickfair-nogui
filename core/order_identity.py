@@ -36,6 +36,7 @@ __all__ = [
     "normalize_upstream_customer_ref",
     "resolve_customer_ref",
     "signal_identity_material",
+    "signal_upstream_customer_ref",
 ]
 
 _PREFIX_RE = re.compile(r"[a-z]{1,3}")
@@ -134,6 +135,31 @@ def _strip_signal_delivery_metadata(value: Any) -> Any:
     return value
 
 
+def _signal_message_chain(signal: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    """Il segnale e i suoi ``raw_signal`` annidati, dall'esterno all'interno."""
+    chain = [signal]
+    raw_signal = signal.get("raw_signal")
+    while isinstance(raw_signal, Mapping) and raw_signal:
+        chain.append(raw_signal)
+        raw_signal = raw_signal.get("raw_signal")
+    return chain
+
+
+def signal_upstream_customer_ref(signal: Mapping[str, Any]) -> Any:
+    """``customer_ref`` a monte del segnale, anche se annidato in ``raw_signal``.
+
+    Il mini-GUI normalizza il messaggio e il ref del chiamante resta solo
+    dentro ``raw_signal``; headless lo porta al primo livello. Si prende il
+    primo non vuoto dall'esterno all'interno, cosi' i due entrypoint
+    preservano lo stesso ref.
+    """
+    for message in _signal_message_chain(signal):
+        upstream = message.get("customer_ref")
+        if str(upstream or "").strip():
+            return upstream
+    return None
+
+
 def signal_identity_material(signal: Mapping[str, Any]) -> dict[str, Any]:
     """Materiale d'identita' di un segnale: il messaggio, non la sua consegna.
 
@@ -147,12 +173,7 @@ def signal_identity_material(signal: Mapping[str, Any]) -> dict[str, Any]:
     profondita'; la chat resta identita' (dal messaggio o, se assente, dal
     primo livello).
     """
-    message: Mapping[str, Any] = signal
-    raw_signal = message.get("raw_signal")
-    while isinstance(raw_signal, Mapping) and raw_signal:
-        message = raw_signal
-        raw_signal = message.get("raw_signal")
-    stripped = _strip_signal_delivery_metadata(message)
+    stripped = _strip_signal_delivery_metadata(_signal_message_chain(signal)[-1])
     chat_id = stripped.pop("chat_id", None)
     if chat_id is None:
         chat_id = signal.get("chat_id")

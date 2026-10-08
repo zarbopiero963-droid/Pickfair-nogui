@@ -1320,18 +1320,18 @@ class DutchingController:
         published_orders = []
         batch_created = False
 
-        # PR26-a: identita' delle gambe indipendente dall'ordine delle
-        # selezioni. Il batch e' l'elenco ORDINATO delle gambe (stessi campi di
-        # _build_batch_id); una gamba e' la sua chiave, mai la posizione nella
-        # lista del chiamante (selectionId duplicati sono gia' rifiutati in
-        # validazione; due chiavi identiche darebbero comunque lo stesso ref,
-        # cioe' doppione bloccato: fail-closed).
+        # PR26-a: identita' delle gambe dagli INPUT della richiesta, non dagli
+        # stake calcolati (con quote uguali calculate_dutching assegna il
+        # centesimo di arrotondamento in base all'ordine delle selezioni). Il
+        # batch e' mercato + stake totale + elenco ORDINATO delle gambe; una
+        # gamba e' la sua chiave, mai la posizione nella lista del chiamante
+        # (selectionId duplicati sono gia' rifiutati in validazione; due chiavi
+        # identiche darebbero comunque lo stesso ref: doppione bloccato).
         def _leg_key(item):
             return (
                 int(item["selectionId"]),
                 str(item.get("side", "BACK")).upper(),
                 float(item["price"]),
-                float(item["stake"]),
             )
 
         leg_batch_identity = {
@@ -1339,6 +1339,7 @@ class DutchingController:
             "event_name": str(payload.get("event_name") or ""),
             "market_name": str(payload.get("market_name") or ""),
             "simulation_mode": bool(payload.get("simulation_mode", False)),
+            "total_stake": float(payload.get("total_stake") or 0.0),
             "legs": sorted(_leg_key(item) for item in results),
         }
 

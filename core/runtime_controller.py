@@ -32,6 +32,7 @@ from core.order_identity import (
     derive_customer_ref,
     resolve_customer_ref,
     signal_identity_material,
+    signal_upstream_customer_ref,
 )
 from services.streaming_feed import StreamingConfigError, StreamingFeed
 from trading_config import (
@@ -3031,7 +3032,8 @@ class RuntimeController:
             "roserpina_mode": decision.desk_mode.value,
         }
         # PR26-a: identita' stabile dell'intento (core/order_identity.py). Un
-        # customer_ref a monte si preserva; altrimenti si deriva dal messaggio
+        # customer_ref a monte (anche annidato in raw_signal) si preserva;
+        # altrimenti si deriva dal messaggio
         # (chat_id incluso) SENZA cio' che cambia a ogni consegna: received_at
         # (rigenerato dal listener a una riconsegna dopo reconnect/restart, anche
         # annidato in raw_signal sul percorso mini-GUI), event_key, i campi
@@ -3041,7 +3043,7 @@ class RuntimeController:
         # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
         # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
         payload["customer_ref"] = resolve_customer_ref(
-            signal.get("customer_ref"),
+            signal_upstream_customer_ref(signal),
             "sig",
             {
                 **signal_identity_material(signal),

@@ -111,7 +111,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `CUSTOMER_REF_REQUIRED`. `core/order_identity.py` gives every ref the
   Betfair-compliant shape `<prefix>-<28 hex>` (32 chars). Where each ref
   comes from:
-  - an upstream ref is preserved; a non-compliant one is mapped
+  - an upstream ref is preserved, also when the mini-GUI nests it in
+    `raw_signal`; a non-compliant one is mapped
     deterministically instead of being silently dropped by `BetfairClient`;
   - signal: derived from the message and its chat, without `received_at`
     or `event_key` (at any depth) and without the MM stake. The message has
@@ -121,8 +122,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     reconnect or restart, even on the other entrypoint, keeps the same ref,
     and the engine blocks it;
   - auto-trade: derived from the triggering settlement;
-  - dutching leg: derived from the sorted leg set plus the leg itself, so
-    the order of the selections does not matter. The ref is also stored in
+  - dutching leg: derived from the request inputs (market, total stake,
+    sorted selections) plus the leg itself, not from the computed stakes, so
+    neither the order of the selections nor the order-sensitive rounding of
+    equal odds matters. The ref is also stored in
     `dutching_batch_legs`;
   - `manual_bet` without an upstream ref: a fresh operation ref per call.
   The `RiskMiddleware` REQ_QUICK_BET forward keeps the caller's ref and never
