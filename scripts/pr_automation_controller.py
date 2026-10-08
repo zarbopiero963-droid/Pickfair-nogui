@@ -25,6 +25,10 @@ try:
     from scripts import pr_fix_loop_policy as fix_policy
 except ModuleNotFoundError:
     import pr_fix_loop_policy as fix_policy
+try:
+    from scripts import pr_autonomy_policy as autonomy_policy
+except ModuleNotFoundError:
+    import pr_autonomy_policy as autonomy_policy
 
 FAIL_STATES = {"FAILURE", "ERROR", "ACTION_REQUIRED", "TIMED_OUT"}
 PENDING_STATES = {"", "PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"}
@@ -1428,6 +1432,31 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     if not budget_gate["allowed"]:
         return automation_disabled_result("merge", normalize_automation_mode(ctx.get("automation_mode")),
                                           budget_gate["reason"], next_action="needs_manual")
+    # Contratto di autonomia §0.9 (rilievo Codex #499): il merge live passa
+    # ANCHE dalla decisione del contratto, non solo dai controlli generici
+    # sopra. Senza le prove (`autonomy_merge_state`: Sol/Grok, hard verify,
+    # label manuale, full diff, readiness, thread, fix loop) o con esito
+    # diverso da READY_FOR_AUTO_MERGE — incluso READY_FOR_OWNER_MANUAL_MERGE —
+    # il merge automatico è negato. Aggiunge un gate, non ne toglie.
+    autonomy_state = ctx.get("autonomy_merge_state")
+    autonomy = (autonomy_policy.merge_decision(autonomy_state) if isinstance(autonomy_state, dict)
+                else {"status": "NEEDS_MANUAL", "reasons": ["autonomy_merge_state_missing"]})
+    # Le prove valgono solo per l'head LIVE della PR (rilievo Codex #499):
+    # `merge_decision` confronta due campi della stessa prova fra loro; qui si
+    # confrontano con l'head reale del contesto. Head live assente → niente merge.
+    live_head = _first_present(ctx.get("headRefOid"), ctx.get("head_sha"))
+    if autonomy.get("status") == "READY_FOR_AUTO_MERGE":
+        evidence_head = autonomy_state.get("current_head") if isinstance(autonomy_state, dict) else None
+        if not isinstance(live_head, str) or not live_head.strip():
+            autonomy = {"status": "NEEDS_MANUAL", "reasons": ["live_head_unknown"]}
+        elif evidence_head != live_head.strip():
+            autonomy = {"status": "INVALIDATED", "reasons": ["evidence_head_not_live_head"]}
+    if autonomy.get("status") != "READY_FOR_AUTO_MERGE":
+        detail = ",".join(str(r) for r in autonomy.get("reasons") or [])
+        return automation_disabled_result(
+            "merge", normalize_automation_mode(ctx.get("automation_mode")),
+            f"autonomy_contract_{str(autonomy.get('status')).lower()}" + (f":{detail}" if detail else ""),
+            next_action="needs_manual")
 
     return _automation_allowed_result("merge", normalize_automation_mode(ctx.get("automation_mode")), "enabled")
 

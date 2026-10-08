@@ -1921,7 +1921,10 @@ def _stub_review_threads_for_report(monkeypatch) -> None:
                             "nodes": [
                                 {"id": "a", "isResolved": False, "isOutdated": False},
                                 {"id": "b", "isResolved": True, "isOutdated": False},
-                            ]
+                            ],
+                            # The query always asks for pageInfo: a response
+                            # without it is now rejected (spec §0.11).
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
                         }
                     }
                 }
@@ -2212,6 +2215,27 @@ def test_cmd_report_wires_real_context_into_helpers(tmp_path, monkeypatch):
     rc = _run_cmd_report_no_fail(tmp_path)
     ASSERTIONS.assertEqual(rc, 0)
     _assert_cmd_report_context_output(tmp_path)
+
+
+def test_cmd_report_review_api_failure_keeps_counts_unknown(tmp_path, monkeypatch):
+    """After a review-thread API failure the report must not claim 0 threads (spec §0.11)."""
+    _stub_pr_view_for_report(monkeypatch)
+
+    def _boom(*_args, **_kwargs):
+        raise RuntimeError("graphql unavailable")
+
+    monkeypatch.setattr(flow, "fetch_all_review_threads", _boom)
+    rc = _run_cmd_report_no_fail(tmp_path)
+    ASSERTIONS.assertEqual(rc, 0)
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertIn("review_threads_api_unavailable", decision["reasons"])
+    ASSERTIONS.assertEqual(decision["review"],
+                           {"unresolved_active": None, "total_threads": None, "threads_known": False})
+    ASSERTIONS.assertIsNone(decision["review_auto_resolve_candidates"])
+    ASSERTIONS.assertIsNone(decision["telegram_summary"]["active_unresolved_review_count"])
+    ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
+    ASSERTIONS.assertEqual(decision["next_action"], "needs_manual_review_api")
 
 
 def test_taxonomy_summary_prioritizes_pending_and_manual_blockers():

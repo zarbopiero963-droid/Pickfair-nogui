@@ -223,6 +223,22 @@ def test_codacy_check_never_blocks_nor_hangs_readiness(state):
 # per sempre. Un gate superabile solo fabbricando evidenza di un servizio che
 # non esiste piu' e' peggio che inutile: invita a inventarla (vietato da AGENTS).
 # ---------------------------------------------------------------------------
+# Prove del contratto di autonomia (§0.9) per un merge automatico pulito: dal
+# #499 `can_auto_merge` richiede anche `merge_decision == READY_FOR_AUTO_MERGE`.
+AUTONOMY_READY_STATE = {
+    "evaluated_head": "abc123", "current_head": "abc123",
+    "scope_valid": True, "acceptance_complete": True, "suite_pass": True,
+    "hard_verify_pass": True, "codex_triaged": True, "fix_loop_valid": True,
+    "dependencies_satisfied": True, "pertinent_owner_decision_open": False,
+    "manual_stop": False, "manual_label_present": False,
+    "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
+    "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
+    "full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                  "classification": {"safety_critical": []}},
+    "fix_loop_exhausted": False,
+}
+
+
 def _clean_merge_context() -> dict:
     """Contesto REALISTICO post-dismissione: tutto verde, zero dati Codacy."""
     return {
@@ -246,6 +262,8 @@ def _clean_merge_context() -> dict:
         "unresolved_active": 0,
         "current_head_matches": True,
         "explicit_merge_authorization": True,
+        "autonomy_merge_state": AUTONOMY_READY_STATE,
+        "headRefOid": "abc123",
     }
 
 

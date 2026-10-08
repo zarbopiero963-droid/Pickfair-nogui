@@ -11695,6 +11695,22 @@ def test_manual_unblock_package_supports_pr_and_number_head_fallback_keys():
     ASSERTIONS.assertEqual(package_number_head["head_sha"], "def456")
 
 
+# Prove del contratto di autonomia (§0.9) per un merge automatico pulito: dal
+# #499 `can_auto_merge` richiede anche `merge_decision == READY_FOR_AUTO_MERGE`.
+AUTONOMY_READY_STATE = {
+    "evaluated_head": "abc123", "current_head": "abc123",
+    "scope_valid": True, "acceptance_complete": True, "suite_pass": True,
+    "hard_verify_pass": True, "codex_triaged": True, "fix_loop_valid": True,
+    "dependencies_satisfied": True, "pertinent_owner_decision_open": False,
+    "manual_stop": False, "manual_label_present": False,
+    "preexisting_activated_or_aggravated": False, "unresolved_threads": 0,
+    "introduced_p0_p1_open": 0, "reviewer_gate": "PASS", "merge_readiness": "PASS",
+    "full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                  "classification": {"safety_critical": []}},
+    "fix_loop_exhausted": False,
+}
+
+
 def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
     ctx: dict[str, object] = {
         "automation_mode": mode,
@@ -11720,6 +11736,8 @@ def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
         # non esiste piu' (rilievo Codex P2 su #462).
         "current_head_matches": True,
         "explicit_merge_authorization": True,
+        "autonomy_merge_state": AUTONOMY_READY_STATE,
+        "headRefOid": "abc123",
     }
     ctx.update(overrides)
     return ctx
@@ -12626,12 +12644,69 @@ def test_can_auto_merge_all_green_with_explicit_auth_allows(tmp_path):
     ASSERTIONS.assertFalse(result["needs_manual"])
 
 
+def _merge_ledger_descriptor(tmp_path):
+    ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
+    ledger.initialize(0, "new PR; clean durable history")
+    return {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
+
+
+def test_can_auto_merge_requires_autonomy_contract_evidence(tmp_path):
+    """#499: merge live passa dalla decisione §0.9, non solo dai gate generici."""
+    descriptor = _merge_ledger_descriptor(tmp_path)
+    ctx = _automation_ctx("live", fix_loop=descriptor)
+    ctx.pop("autonomy_merge_state")
+    result = controller.can_auto_merge(ctx)
+    ASSERTIONS.assertFalse(result["allowed"])
+    ASSERTIONS.assertIn("autonomy_contract_needs_manual", result["reason"])
+
+
+def test_can_auto_merge_denies_unless_ready_for_auto_merge(tmp_path):
+    cases = [
+        ({"manual_label_present": True}, "autonomy_contract_ready_for_owner_manual_merge"),
+        ({"full_diff": {"status": "PASS", "owner_manual_merge_required": True,
+                        "classification": {"safety_critical": []}}},
+         "autonomy_contract_ready_for_owner_manual_merge"),
+        # PR safety-critical senza dichiarazione sull'head → niente auto-merge (#499).
+        ({"full_diff": {"status": "PASS", "owner_manual_merge_required": False,
+                        "classification": {"safety_critical": ["core/runtime_controller.py"]}}},
+         "autonomy_contract_needs_manual:safety_critical_declaration_missing"),
+        ({"reviewer_gate": "BLOCKED"}, "autonomy_contract_blocked"),
+        ({"current_head": "other"}, "autonomy_contract_invalidated"),
+        ({"codex_triaged": None}, "autonomy_contract_needs_manual"),
+    ]
+    descriptor = _merge_ledger_descriptor(tmp_path)
+    for override, expected in cases:
+        state = {**AUTONOMY_READY_STATE, **override}
+        result = controller.can_auto_merge(
+            _automation_ctx("live", fix_loop=descriptor, autonomy_merge_state=state))
+        ASSERTIONS.assertFalse(result["allowed"], override)
+        ASSERTIONS.assertTrue(result["reason"].startswith(expected), result["reason"])
+
+
+def test_can_auto_merge_binds_autonomy_evidence_to_live_head(tmp_path):
+    """#499: prove valide ma per un head vecchio, o head live assente → niente merge."""
+    descriptor = _merge_ledger_descriptor(tmp_path)
+    stale = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, headRefOid="new"))
+    ASSERTIONS.assertFalse(stale["allowed"])
+    ASSERTIONS.assertTrue(stale["reason"].startswith("autonomy_contract_invalidated"), stale["reason"])
+    ctx = _automation_ctx("live", fix_loop=descriptor)
+    ctx.pop("headRefOid")
+    missing = controller.can_auto_merge(ctx)
+    ASSERTIONS.assertFalse(missing["allowed"])
+    ASSERTIONS.assertIn("live_head_unknown", missing["reason"])
+    ok = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, head_sha="abc123",
+                                                   headRefOid=None))
+    ASSERTIONS.assertTrue(ok["allowed"], ok)
+
+
 def test_can_auto_merge_raw_env_live_all_green_allows(tmp_path):
     ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
     ledger.initialize(0, "new PR; clean durable history")
     descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
+            "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12657,6 +12732,8 @@ def test_can_auto_merge_raw_env_live_with_codacy_conclusion_success_allows(tmp_p
     descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
+            "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12681,6 +12758,8 @@ def test_can_auto_merge_raw_env_live_with_codacy_status_success_allows(tmp_path)
     descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
+            "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12705,6 +12784,8 @@ def test_can_auto_merge_raw_env_live_with_codacy_check_status_success_allows(tmp
     descriptor = {"path": str(ledger.path), "repo": "owner/repo", "pr": 225}
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
+            "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",

@@ -43,6 +43,27 @@ PR fuori dai checkout temporanei; stato assente/corrotto → arresto prudenziale
 Merge Readiness mantiene tutti i gate vigenti. Reviewer/merge: #426/P41 e
 successive decisioni pertinenti; non riattivare workflow o label sospesi.
 
+## Contratto di autonomia end-to-end (owner 08/10/2026)
+
+Testo normativo: [docs/auto_pr_flow_spec.md §0](docs/auto_pr_flow_spec.md).
+Classifier eseguibile (finding, review, label, full diff, decisione di merge,
+PR successiva, parallelismo cross-repo): `scripts/pr_autonomy_policy.py`,
+test in `tests/scripts/test_pr_autonomy_policy.py`. L'owner decide COSA
+(prodotto, vincoli, denaro, modalità, decisioni aperte); l'agente decide COME
+ed è il responsabile tecnico operativo:
+
+> L’agente non deve comportarsi come un esecutore che chiede conferma per ogni scelta tecnica.
+> Deve comportarsi come il responsabile tecnico operativo del progetto, entro le decisioni owner e la roadmap.
+> Quando il contratto e il risultato atteso sono già determinati, l’agente deve scegliere autonomamente la soluzione tecnica più sicura, implementarla, provarla, triagiarla, mergiarla se consentito e continuare.
+> L’owner non deve essere coinvolto per risolvere problemi che il contratto già rende deterministici.
+> L’agente deve chiedere l’owner solo quando la risposta cambierebbe il prodotto, il rischio accettato, il denaro, l’infrastruttura, le credenziali o una decisione owner esistente.
+
+Dove questa sezione e il testo più vecchio qui sotto divergono, prevalgono
+questa sezione e la spec. Su un punto di sicurezza che il contratto NON decide
+vale la regola più severa; dove decide esplicitamente (PR safety-critical
+runtime/core in auto-merge con tutti i gate di §0.9, senza override per-issue)
+sostituisce il testo più vecchio.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le
@@ -85,9 +106,10 @@ Per domande, spiegazioni o analisi read-only non serve il flusso.
 
 L'agente porta avanti l'intero ciclo PR **in autonomia, senza fermarsi ad
 aspettare istruzioni intermedie**: push → attesa check settled → lettura e
-triage review → patch strette → gate finale a label → hard verify. Niente
-domande all'owner per i passi che le policy già coprono; ci si ferma solo per
-i need-manual reali (decisioni owner, ambiguità, rischio).
+triage review → patch strette → gate di merge (spec §0.9) → hard verify →
+merge se consentito → PR successiva (§0.14). Niente domande all'owner per i
+passi che il contratto già rende deterministici; ci si ferma solo per le
+condizioni STOP owner di spec §0.13.
 
 Il ciclo termina SEMPRE in uno di questi due esiti — mai in attesa passiva:
 
@@ -95,9 +117,10 @@ Il ciclo termina SEMPRE in uno di questi due esiti — mai in attesa passiva:
    merge da solo** — anche se la PR è safety-critical — riporta lo SHA di
    merge e **prosegue con la PR successiva**.
 2. **Qualsiasi altra situazione** (bloccante reale, condizione gated
-   mancante, e soprattutto **crediti esauriti su uno dei cinque reviewer
-   pagati**) => l'agente **NON resta in silenzio**: dichiara esplicitamente
-   all'owner **"PRONTA PER MERGE"** (o lo stato reale: NEEDS_MANUAL /
+   mancante, file a merge owner, e soprattutto **crediti esauriti su Sol o
+   Grok**) => l'agente **NON resta in silenzio**: dichiara esplicitamente
+   all'owner **"PRONTA PER MERGE"** (o lo stato reale:
+   READY_FOR_OWNER_MANUAL_MERGE / NEEDS_MANUAL /
    CHECKS_PENDING / FAILED / CREDITI_ESAURITI) con il motivo preciso per cui
    non ha mergiato, e **ferma la coda** finché l'owner non dice di
    proseguire.
@@ -161,10 +184,10 @@ REGOLE NON NEGOZIABILI (valgono sempre):
   al push/resolve sulla PR in lavorazione; le flag restano
   obbligatorie per l'automazione non presidiata.
 - AUTO-MERGE: l'owner ha autorizzato l'auto-merge GATED dell'agente, **anche
-  per le PR safety-critical** (vedi sezione AUTO-MERGE). Consentito SOLO a verde
-  totale + able-to-merge + zero bloccanti + nessun need-manual. Fuori da queste
-  condizioni non si mergia. Unico stop assoluto: **crediti esauriti** su uno dei
-  cinque reviewer pagati => non si mergia, si avvisa l'owner e si aspetta.
+  per le PR safety-critical runtime/core** (sezione AUTO-MERGE, spec §0.9).
+  Consentito SOLO con tutte le condizioni di §0.9. Fuori da queste condizioni
+  non si mergia. **Crediti esauriti** su Sol o Grok => non si mergia, si
+  avvisa l'owner e si aspetta.
 - DeepSource è advisory di default: patcha solo se è required
   failing current-head o dimostra bug reale/safety/fail-open.
 - Check-completion gate: le decisioni FINALI (READY_TO_MERGE,
@@ -225,280 +248,118 @@ etichette: MISSING, PARTIAL, IMPLEMENTED_WITH_NOTE, FULLY_IMPLEMENTED,
 MERGED_BUT_NOT_FULLY_AUTOMATED. "PR merged" da sola non è prova di
 implementazione.
 
-## AI PR REVIEW — 5 REVIEWER + GATE LABEL (OBBLIGATORIO)
+## AI PR REVIEW — REVIEWER ATTIVI (owner #426/P41)
 
-Ogni PR è coperta da cinque workflow di review AI (GitHub Actions con API
-key nei Secret del repo) più CodeRabbit. Dettaglio operativo e postura di
-sicurezza in `docs/ai_audit_workflows.md`.
+Fonte normativa: `docs/auto_pr_flow_spec.md` §0.7–§0.8 (contratto di autonomia
+end-to-end, 08/10/2026); controlli eseguibili in `scripts/pr_autonomy_policy.py`.
+Dettaglio operativo e postura di sicurezza in `docs/ai_audit_workflows.md`.
+Questa sezione SOSTITUISCE il vecchio testo operativo a cinque reviewer e a
+giro di label.
 
-- **GPT-6.1 Sol** e **Grok 4.7**: girano a OGNI push della PR. Review MIRATA e
+- **Attivi:** **GPT-6.1 Sol** e **Grok 4.7**, a OGNI push. Review MIRATA e
   corta: solo `## Bloccanti` + `## Verdetto finale` (tetti di output alti →
   non troncano; si pagano solo i token generati).
-- **Fugu Ultra**, **Claude Fable 5.1** e **GPT-6 Astra** (reviewer forti,
-  costosi): partono da soli SOLO su push che tocca file **core o critici**
-  di Pickfair — `core/`,
-  `services/`, `controllers/`, i moduli root (`headless_main`, `mini_gui`,
-  `betfair_client`, `betfair_market_api`, `order_manager`, `dutching`,
-  `database`, `database_schema`, `trading_config`), dipendenze, workflow,
-  config/segreti, o le aree safety (money management, dutching, safety_layer,
-  reconciliation, runtime, catalog) — OPPURE con la label finale. Su push di
-  soli docs/test i tre job partono ma NON spendono (costo zero).
-- **Dalla #475 sono critici anche i file che DEFINISCONO o APPLICANO i gate**:
-  `CLAUDE.md`, `AGENTS.md`, `docs/auto_pr_flow_spec.md`,
-  `docs/hard_verify_spec.md` e `scripts/guardrail_check.py`. Sono cinque dei
-  tredici a merge manuale dell'owner, e nessuno di loro faceva scattare né
-  l'etichetta né i reviewer forti: una PR che toccasse solo questi era **muta**.
-  Visto dal vivo sulla #473, che toccava `guardrail_check.py` e non ha prodotto
-  nulla finché l'agente non ha applicato le label a mano — cioè il gate reggeva
-  su una regola che l'agente applica a se stesso. Conseguenza da mettere in
-  conto: **un push a `CLAUDE.md` o alle due spec ora paga i tre reviewer forti**.
-  È voluto, ed è il posto dove la review forte conta di più.
+- **Advisory:** Codex (e CodeRabbit/Sourcery quando presenti). L'assenza non è
+  né PASS né bloccante; ogni rilievo reale si triagia con prova (§0.3–§0.6) e
+  al merge non resta nessun thread irrisolto.
+- **SOSPESI da P41** (workflow disattivati nella UI GitHub, file ancora su
+  disco): Fugu Ultra, Claude Fable 5.1 e GPT-6 Astra. Non si aspettano e non si
+  riattivano. Le loro label finali `final-fugu-review`, `final-fable-review` e
+  `final-astra-review` NON si applicano finché vale la sospensione: la regola
+  del 16-09-2026 «si mettono sempre» è sospesa da P41. Riattivarne uno richiede
+  prima di allinearne la logica della label a spec §0.8 (portano ancora la
+  vecchia regola larga).
+
+**Una review conta solo se** è sul head corrente (o il suo range finisce sul
+head), porta il marker di completamento (`gpt56sol-pr-review-done` /
+`grok46-pr-review-done`), non ha bloccanti irrisolti ed è leggibile — non un
+commento d'errore. Job verde senza marker = fallimento; schema/API incompleti
+= UNKNOWN. Timeout Grok: un solo rerun; secondo timeout → STOP all'owner
+(«PRONTA PER MERGE — Grok assente per timeout»). Quota/crediti su Sol o Grok →
+CREDITI ESAURITI (sezione AUTO-MERGE).
+
+**Label (spec §0.8).** «Safety-critical» (`CRITICAL_PATTERNS`, elencati nel
+commento del reviewer) è INFORMATIVO: review e hard verify completi
+obbligatori, ma da solo non blocca l'auto-merge. `manual-review-required` è un
+bloccante REALE e Sol/Grok la applicano solo tramite
+`MANUAL_AUTHORITY_PATTERNS`: file di autorità/governance, tutti i
+`.github/workflows/`, manifest di dipendenze, materiale segreto, o diff
+troncato dalla Compare API. L'agente la applica inoltre per decisione owner
+necessaria, stop esplicito, fix loop esaurito, accettazione del rischio o dove
+la policy lo richiede espressamente. Non si rimuove in modo opportunistico:
+decide `manual_label_decision` sul diff completo, e solo se non è registrato
+alcun motivo owner.
+
+**Nota diff-only / push-range (appreso su #393).** I reviewer sono diff-only
+(no checkout, no esecuzione) e Sol/Grok revisionano il range del push, quindi
+possono dare falsi positivi su import/coerenza/«codice assente» quando il
+codice citato sta in commit precedenti. Si risponde in-thread con la prova dal
+diff completo della PR; non si insegue con un commit.
 
 ### Costo dei reviewer: NON troncare, ma non bruciare crediti
 
 Regola d'ingresso, perché quasi tutti sbagliano qui: **`max_tokens` /
 `MAX_OUTPUT_TOKENS` è un TETTO, non un addebito.** Si paga ciò che il modello
-GENERA davvero, non il tetto che gli hai concesso. Conseguenze operative, da
-non ri-litigare a ogni giro:
+GENERA davvero, non il tetto che gli hai concesso. Alzare il tetto è gratis e
+toglie il troncamento; abbassarlo non fa risparmiare e compra una review
+troncata a prezzo pieno. Se una review esce troncata **si alza il tetto**, non
+si accorcia il prompt sperando che basti.
 
-- **Alzare il tetto è GRATIS** e toglie il troncamento. Un tetto alto su una
-  review che il prompt vincola a 150 parole non costa un token in più.
-- **Abbassare il tetto NON fa risparmiare.** Non riduce quel che il modello
-  genera: lo taglia a metà. Il risultato è una review troncata — cioè spesa
-  piena e valore zero, il peggiore dei due mondi. Non è una leva di risparmio,
-  è un modo di pagare per niente.
+**Le leve che risparmiano davvero:**
 
-Quindi: se una review esce troncata **si alza il tetto**, non si accorcia il
-prompt sperando che basti.
-
-**Le leve che risparmiano davvero** (in ordine di resa):
-
-1. **Non chiamare due volte lo stesso range.** Il `done_marker` per range è già
-   cablato nei 5 workflow: non toglierlo e non "forzare" un ri-lancio per
-   vedere se stavolta va meglio.
-2. **Meno push, non push più piccoli.** Ogni push paga DUE chiamate (GPT-6.1 Sol
-   + Grok 4.7). Accorpa i fix e pusha una volta sola quando il lavoro è
-   completo: tre push da un fix ciascuno costano il triplo di un push da tre fix
-   e producono la stessa review.
-3. **Autorizzazione owner sulle tre label** (sezione sotto): è la leva più
-   grossa, perché Fugu, Fable e Astra sono i costosi.
-4. **`reasoning_effort`, dove il modello ragiona.** I token di ragionamento si
+1. **Non chiamare due volte lo stesso range.** Il `done_marker` per range è
+   cablato in ogni workflow di review: non toglierlo e non "forzare" un
+   ri-lancio.
+2. **Meno push, non push più piccoli.** Ogni push paga GPT-6.1 Sol + Grok 4.7:
+   accorpa i fix e pusha una volta sola quando il lavoro è completo.
+3. **`reasoning_effort`, dove il modello ragiona.** I token di ragionamento si
    pagano come output, quindi abbassarlo È una leva vera — ma **oggi non è in
-   uso**: fra i quattro reviewer non-Anthropic, Grok, Fugu e Astra girano a
+   uso**: fra i reviewer non-Anthropic, Grok e i sospesi Fugu e Astra girano a
    `REVIEW_EFFORT: high` per l'esperimento dichiarato nei loro workflow, e Sol
    a `REVIEW_EFFORT: max`, il livello più alto che GPT-6.1 Sol offre (decisione
    dell'owner del 07-10-2026, verificato sui metadati OpenRouter del modello);
-   Fable la manopola non ce l'ha (l'API Anthropic non la espone). Finché
-   l'esperimento è aperto la leva resta sospesa, e quanto costa si legge nelle
-   righe di costo di ogni review. Non scrivere qui un valore diverso da quello
-   che i workflow hanno davvero: `tests/guardrails/test_policy_reviewer_consistency.py`
-   confronta le due cose e va rosso se divergono.
+   Fable la manopola non ce l'ha (l'API Anthropic non la espone). Non scrivere
+   qui un valore diverso da quello che i workflow hanno davvero:
+   `tests/guardrails/test_policy_reviewer_consistency.py` confronta le due cose.
 
 **Leve VIETATE, che sembrano risparmio e non lo sono:** abbassare i tetti di
-output (vedi sopra); stringere `MAX_TOTAL_PATCH_CHARS` finché il reviewer
-smette di vedere il codice (un reviewer che non vede è un check verde falso,
-non un risparmio); disattivare un reviewer per "fare prima". Se il budget è il
-problema, si riduce il NUMERO delle chiamate, mai la QUALITÀ della singola.
+output; stringere `MAX_TOTAL_PATCH_CHARS` finché il reviewer smette di vedere
+il codice (un reviewer che non vede è un check verde falso, non un risparmio);
+disattivare un reviewer attivo per "fare prima". Se il budget è il problema,
+si riduce il NUMERO delle chiamate, mai la QUALITÀ della singola.
 
-### Le tre label si mettono SEMPRE — autorizzazione permanente dell'owner
+### Lavorare i rilievi
 
-**Decisione dell'owner, 16-09-2026, che SOSTITUISCE il vecchio «solo l'owner
-autorizza, mai di iniziativa».** `final-fugu-review`, `final-fable-review` e `final-astra-review` si
-applicano a OGNI PR, sempre, senza chiedere.
+**Lettura obbligatoria.** A ogni check-in leggi SIA i commenti inline SIA i
+corpi delle review SIA i commenti di conversazione della PR — i rilievi
+"outside diff range" vivono solo nel corpo della review.
 
-Il motivo non è il costo, è la **leggibilità del gate**. Una PR dove le label
-non compaiono non si distingue, guardandola su GitHub, da una dove il gate è
-stato saltato: il gate dev'essere VISIBILE, non solo soddisfatto nei fatti. È
-la stessa ambiguità che le PR #465-#468 hanno tolto di mezzo altrove.
+**Classifica ogni rilievo sui due assi di spec §0.3** (origine/disposizione e
+severità) con prova sul current head, indipendentemente dal nome del
+reviewer. Introdotto dalla PR → fix ora, test, niente merge finché aperto.
+Preesistente → `DEFERRED_BY_POLICY` solo alle condizioni di §0.4, mai FIXED.
+Teorico → §0.6. P0 → fail-closed (§0.6). NON inseguire rilievi cosmetici o
+falsi positivi da push-range con commit: si risponde in-thread con evidenza.
 
-Come si mettono: con i tool MCP GitHub, **una alla volta**, e se sono già
-presenti si **rimuove e si riaggiunge** (GitHub non emette un nuovo evento
-`labeled` per una label già presente). Il `manual-review-required` che i
-workflow aggiungono da soli si conserva.
-
-**Quanto costa: quasi sempre zero.** Il `done_marker` è per range: se i tre
-reviewer forti hanno già pubblicato su quel range — cosa che succede da sé
-quando il push tocca file critici — i job ripartiti dall'evento label si
-chiudono `success` senza chiamare il modello. Misurato sulla #468: label
-applicate, **una sola review pubblicata per reviewer**, spesa aggiuntiva nulla.
-Quando invece il range è nuovo, la spesa è quella del giro a label, ed è
-preventivata: si paga il gate, non uno spreco.
-
-Resta vero che **meno push costano meno**: ogni push paga i reviewer per-push, e
-un push in più su file critici paga anche i due forti. Accorpare i fix resta la
-leva vera. Misurato in una sessione: `$0.42` con un push (#468), `$1.35` con tre
-(#467), `$1.81` con cinque (#466) — stesso ordine di lavoro.
-
-**La partenza automatica sui file critici resta.** Quando un push tocca `core/`,
-`services/`, `controllers/`, i moduli root, dipendenze, workflow, config/segreti
-o le aree safety, Fugu, Fable e Astra partono da soli: non è iniziativa
-dell'agente, è
-la rete di sicurezza. Non disattivarla e non aggirarla.
-
-**Il gate resta da RIPETERE finché tornano puliti.** A ogni cambio di head serve
-un giro nuovo: si rimettono le label e si aspetta l'esito full-range. Il gate è
-soddisfatto solo quando TUTTI E TRE tornano senza bloccanti reali. Un falso
-positivo strutturale persistente non è un bloccante reale (vedi nota diff-only):
-si tratta con evidenza e si documenta, non si cicla all'infinito.
-
-**Ripeti il lancio finché Fugu/Fable/Astra non tornano SENZA bloccanti (decisione
-owner).** Ogni volta che il head cambia (un fix, un allineamento) serve un nuovo
-giro: dichiaralo e **ri-lancia le tre label** sul nuovo head stabile — sempre,
-senza chiedere (decisione owner 16-09-2026) — poi attendi il loro esito
-full-range. Il gate è
-soddisfatto SOLO quando TUTTI E TRE tornano senza bloccanti reali. Un falso positivo
-persistente NON è un bloccante reale (vedi nota diff-only): trattalo con evidenza,
-non ciclare all'infinito — se dopo il lancio full-range resta solo un falso
-positivo strutturale, dichiara pronto documentandolo. Se Fugu, Fable o Astra sono in
-usage-quota (il workflow parte ma il modello non risponde) vale la regola
-CREDITI ESAURITI della sezione AUTO-MERGE: non si mergia, si avvisa l'owner che
-servono crediti e si ferma la coda finché non dice di proseguire.
-
-**Nota diff-only / push-range vs full-range (appreso su #393).** I reviewer sono
-diff-only (no checkout, no esecuzione). Le review **per-push** (auto su ogni push:
-GPT/Grok sempre; Fugu/Fable/Astra su file core) vedono SOLO l'ultimo commit del
-range,
-quindi possono dare falsi positivi su import/coerenza/«codice assente» quando il
-codice citato sta in commit precedenti. Le review **a label** girano invece
-sull'INTERA range della PR (`base…head`) e vedono tutto il diff, quindi risolvono
-quei falsi positivi. Per il verdetto finale conta la **full-range a label** di
-Fugu/Fable/Astra, non le per-push. Non inseguire con un commit un falso positivo
-push-range: ri-lancia le label e leggi la full-range.
-
-**Timing: i gate forti sono l'ULTIMO passo pre-merge.** Fai scattare le tre
-label quando la PR è stabile e in teoria pronta al merge: i reviewer per-push
-(GPT-6.1 Sol, Grok 4.7) hanno COMPLETATO e i loro rilievi reali sono stati trattati
-(patch o evidenza in-thread). CodeRabbit NON è un gate d'attesa: se ha completato
-tratta i suoi rilievi reali; se è in rate-limit/usage-quota è assente e NON lo si
-aspetta; se è «processing» sta ancora revisionando: non lo si aspetta come gate
-vincolante, ma i suoi rilievi reali — se arrivano prima di finalizzare — si
-trattano, altrimenti post-merge tracking. Così Fugu Ultra, Fable 5.1 e GPT-6
-Astra revisionano un head
-STABILE e non si sprecano su versioni che cambieranno ancora (ogni push ai forti
-costa). Sequenza: lavoro completo → push → GPT/Grok finiti e finding trattati
-(CodeRabbit solo se disponibile) → head stabile → fai partire
-`final-fugu-review` + `final-fable-review` + `final-astra-review` → attendi
-l'esito **full-range** → **consegna il verdetto all'owner**, che arriva DOPO
-il giro a label e mai prima → se restano bloccanti reali: fixa, ri-pusha,
-ri-lancia le label sul nuovo head e ri-consegna il verdetto, finché tutti e
-tre tornano puliti → merge secondo la sezione AUTO-MERGE.
-
-Le label NON si chiedono: la decisione dell'owner del 16-09-2026 le rende
-automatiche su OGNI PR. Quel che si consegna all'owner è il VERDETTO, non la
-richiesta di permesso — e lo si consegna quando il giro a label è finito.
-
-**L'agente non vede mai le API key**: aggiunge solo la label; i secret restano
-nei GitHub Secrets e Actions resta read-only sul codice (diff-only, niente
-checkout né esecuzione del codice PR, redazione segreti).
-
-**Se una review segnala bloccanti** (bug, security, rischi Betfair/dutching/
-money management, gestione segreti, rischi workflow o `manual-review-required`):
-NON dichiarare la PR pronta e NON auto-mergiare. Lascia la PR aperta e scrivi:
-quale bloccante resta aperto e perché. In presenza di bloccanti l'auto-merge
-è VIETATO (fail-closed): si auto-mergia solo a verde totale senza bloccanti e
-nei limiti della sezione AUTO-MERGE.
-
-**Reviewer da aspettare / non aspettare.** La copertura di default su OGNI PR è:
-i 5 workflow API (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra) +
-CodeRabbit. Codex,
-Sourcery **e CodeRabbit** NON sono un gate d'attesa: se pubblicano usage-limit /
-rate-limit / usage-quota, trattali come ASSENTI (non pending) — non aspettarli,
-non contarli nel check-completion gate, non bloccare il DONE su di loro; annota
-solo che non hanno revisionato. Decisione owner: un reviewer **advisory**
-(CodeRabbit, Codex, Sourcery) in rate-limit/usage-quota è assente da SUBITO,
-nessuna attesa e nessun cap-timer (vedi «Skip per indisponibilità»). Per i
-**cinque reviewer pagati** «non aspettare» non vuol dire «mergiare lo stesso»:
-non li si aspetta a timer, ma se uno di loro è a secco **sul head corrente** la
-PR non si mergia — vale CREDITI ESAURITI. L'unico gate finale vincolante sono i
-tre reviewer forti a label (Fugu Ultra + Fable 5.1 + GPT-6 Astra): vedi «Gate
-finale a label».
-
-**Fail-closed preservato (nota anti-regressione).** Declassare ad «assente» i
-reviewer ADVISORY non disponibili (CodeRabbit/Codex/Sourcery) NON indebolisce il
-fail-closed: NON sono check CI richiesti e NON sostituiscono i gate vincolanti. I
-gate VINCOLANTI restano SEMPRE attivi e non si saltano mai — (a) i check CI
-current-head SETTLED e (b) i tre reviewer forti a label Fugu Ultra + Fable 5.1
-+ GPT-6 Astra (full-range, ripetuti fino a esito pulito). I rilievi tardivi dei reviewer
-advertiti come assenti sono coperti dal tracciamento post-merge (Issue + fix PR).
-Se un reviewer PAGATO è in usage-quota sul head corrente — uno qualsiasi dei
-cinque, non solo Fugu/Fable/Astra a label — NON si dichiara DONE saltandolo: vale la
-regola CREDITI ESAURITI (non si mergia, si avvisa l'owner, si ferma la coda). L'owner può inoltre sempre mergiare a mano (override umano).
-
-**Finestra review event-driven (non a timer).** I cinque reviewer sincroni
-rispondono in ~1 min. **CodeRabbit NON è un gate d'attesa**: se ha già COMPLETATO
-leggi e tratta i suoi rilievi reali (inline + corpo review); se è in rate-limit /
-usage-quota, trattalo come ASSENTE (nessuna attesa, nessun cap-timer) e demanda al
-tracciamento post-merge. Se è «processing» sta ancora revisionando: non lo si
-aspetta come gate vincolante, ma non è 'assente' — se completa prima che finalizzi
-tratta i suoi rilievi, altrimenti post-merge; non restare in stallo su di lui. Il
-verdetto dell'AGENTE (pronto / DONE) NON dipende da CodeRabbit: dipende dai check
-CI settled e dai gate forti a label (Fugu/Fable/Astra). L'owner può mergiare a
-mano in
-qualsiasi momento.
-
-**Parsimonia push (costo API + minuti CI).** Ogni push che aggiorna il head
-paga i modelli (GPT/Grok sempre; Fugu/Fable/Astra su push core/critici).
-Accorpa i fix
-di review in UN push per giro; non pushare per cleanup cosmetici o per
-rincorrere falsi positivi da diff-per-push (rispondi in-thread con evidenza,
-mai con un commit).
-
-**Tracciamento post-merge + sweep ultime 5 PR.** Poiché non si aspetta una
-finestra a timer, i commenti-bot possono arrivare dopo il merge: se un evento
-review atterra su una PR chiusa, rileggila e per ogni finding reale/azionabile
-apri una Issue (numero PR, head SHA, file:riga, bot, severità P1/P2/nitpick,
-link al commento) e una fix PR dedicata dal main aggiornato (Phase 0 +
-micro-audit + test hard PASS/BLOCK; niente riuso/stack della PR mergiata). In
-Phase 0 di ogni task ispeziona le ultime 5 PR mergiate per finding AI mai
-indirizzati, deduplicando su Issue esistenti (aperte e chiuse).
-
-**Skip per indisponibilità (usage-quota / rate-limit) — vale per TUTTI i
-reviewer.** Un reviewer che non può revisionare NON è un gate e NON è "pending":
-trattalo come ASSENTE e prosegui (annota che non ha revisionato).
-- **Codex**: usage-limit => assente, saltato.
-- **Sourcery**: rate-limit => assente, saltato.
-- **CodeRabbit**: rate-limit / usage-quota => assente, saltato (come Codex/
-  Sourcery); non aspettarlo, nessun cap-timer, demanda al tracciamento post-merge.
-  «processing» = sta revisionando: NON è 'assente' ma NON è un gate d'attesa
-  vincolante (il DONE poggia su check CI settled + Fugu/Fable/Astra a label); se
-  completa
-  in tempo tratta i rilievi reali, altrimenti post-merge. Se ha già completato,
-  tratta i rilievi reali.
-- **I 5 workflow API** (GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6
-  Astra): NON sono
-  declassabili ad assenti. Se un giro riporta usage-quota / rate-limit del
-  provider, non lo si aspetta a timer e non lo si conta nel check-completion gate
-  (il check chiude comunque), ma **il DONE resta bloccato**: vale CREDITI
-  ESAURITI. Il criterio è il **head corrente**, non il singolo push: si mergia
-  solo se tutti e cinque hanno prodotto una review reale del head che si sta
-  mergiando (per Fugu, Fable e Astra, la full-range a label). Una quota su un push
-  intermedio **non** blocca nulla se poi quel reviewer ha revisionato il head
-  finale; una quota sul head finale blocca, anche se i push precedenti erano
-  puliti.
-
-**Lettura obbligatoria dei rilievi.** A ogni check-in leggi SIA i commenti inline
-(review comments su file:riga) SIA i corpi delle review (review bodies) SIA i
-commenti di conversazione della PR — i rilievi "outside diff range" vivono solo
-nel corpo della review. Non fermarti ai soli nomi/stato dei check.
-
-**Cosa patchare: SOLO bug logici reali.** Patcha solo bug logici/comportamentali
-reali, regressioni e rischi safety (Betfair, dutching, money management, gestione
-segreti, race/idempotenza, fail-open). NON inseguire rilievi estetici/cosmetici
-(stile, naming, formattazione, preferenze) né falsi positivi da diff-per-push: a
-quelli rispondi in-thread con evidenza, MAI con un commit.
-
-**Ogni fix verificato con test hard.** Un fix che nasce da un rilievo review deve
-avere un test hard che lo copre: scrivi PRIMA il test che riproduce il bug
+**Ogni fix verificato con test hard.** PRIMA il test che riproduce il bug
 (fallisce sul vecchio codice), poi la patch che lo fa passare (PASS + BLOCK).
-`py_compile` + `pytest` mirato eseguiti davvero, esito osservato. Niente DONE se
-il fix non è coperto.
+`py_compile` + `pytest` mirato eseguiti davvero, esito osservato.
 
-**Rispondi nel thread ("risolti").** Per ogni rilievo indirizzato commenta nel
-thread GitHub `Fatto in commit <SHA>` con evidenza (comando test: PASS, file:riga
-modificato). Per i rilievi saltati: `Skipped / già coperto` col motivo (outdated
-/ duplicato / cosmetico / fuori scope) e evidenza. Marcare il thread "resolved" è
-azione gated: current-head + tutti i check settled + evidenza (vedi
-auto_pr_flow_spec §11/§13).
+**Rispondi nel thread.** Per ogni rilievo indirizzato: `Fatto in commit <SHA>`
+con evidenza. Per gli altri: la classificazione (STALE / DUPLICATE /
+ALREADY_COVERED / THEORETICAL_MUTATION / DEFERRED_BY_POLICY / REVIEW_CHURN)
+con la sua prova. Il resolve è gated: current-head + tutti i check settled +
+evidenza (auto_pr_flow_spec §11/§13).
+
+**Tracciamento post-merge + sweep ultime 5 PR.** I commenti-bot possono
+arrivare dopo il merge: per ogni finding reale su una PR chiusa apri una Issue
+(numero PR, head SHA, file:riga, bot, severità, link) e una fix PR dedicata dal
+main aggiornato. In Phase 0 di ogni task ispeziona le ultime 5 PR mergiate per
+finding AI mai indirizzati, deduplicando sulle Issue esistenti.
+
+**L'agente non vede mai le API key**: i secret restano nei GitHub Secrets e
+Actions resta read-only sul codice (diff-only, niente checkout né esecuzione
+del codice PR, redazione segreti).
 
 ## AUTO-MERGE (autorizzato dall'owner — GATED)
 
@@ -508,44 +369,40 @@ soddisfatte, e poi **prosegue da solo con la PR successiva**. Questo
 AGGIORNA/SUPERA sia i precedenti "AUTO_MERGE_ENABLED=false sempre" sia
 l'esclusione safety-critical che valeva fino alla #468.
 
-Cosa cambia e cosa NON cambia, detto con precisione perché la differenza è
-tutta qui: cade l'**esclusione per categoria di file**, non cade **nessun
-gate di qualità**. Le cinque condizioni sotto restano tutte obbligatorie e
-fail-closed. Il merge diventa automatico perché i gate sono verificati, non
-perché si guarda meno.
-
-**Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed):**
-1. Tutti i check current-head SETTLED e verdi (check-completion gate passato).
-2. Zero bloccanti dai 5 reviewer AI (GPT-6.1 Sol, Grok 4.7, Fugu Ultra,
-   Fable 5.1, GPT-6 Astra) e — se ha completato la review — da CodeRabbit. CodeRabbit NON è
-   mai un gate d'attesa (nessun cap-timer). Distinzione fail-closed:
-   rate-limit / usage-quota / non disponibile = ASSENTE da subito (vedi
-   «Skip per indisponibilità»): si procede, e i suoi eventuali rilievi
-   tardivi vanno al tracciamento post-merge. «Processing» (sta ancora
-   revisionando) NON è assente ma NON si aspetta: se i suoi rilievi reali
-   arrivano PRIMA della finalizzazione vanno trattati, altrimenti
-   post-merge tracking.
-3. Nessuna label `manual-review-required`, nessun thread bloccante irrisolto,
-   nessun rilievo `PATCH_REQUIRED`/`NEEDS_MANUAL` aperto.
-4. La PR è "able to merge" su GitHub (mergeable, nessun conflitto, branch
+**Condizioni per auto-mergiare (TUTTE obbligatorie, fail-closed — spec §0.9):**
+1. Head stabile; scope valido; accettazione completa; suite richiesta PASS;
+   hard verify PASS (test hard PASS+BLOCK realmente eseguiti).
+2. Tutti i check current-head SETTLED e verdi (check-completion gate passato);
+   Merge Readiness PASS, letta fail-closed (§0.11).
+3. GPT-6.1 Sol e Grok 4.7 settled sul head corrente senza bloccanti (§0.7);
+   Codex triagiato; zero thread irrisolti; nessun rilievo
+   `PATCH_REQUIRED`/`NEEDS_MANUAL` aperto.
+4. Nessun P0/P1 introdotto; nessun preesistente attivato o aggravato; nessuna
+   decisione owner pertinente aperta; fix loop valido; nessuno stop manuale.
+5. Nessuna label `manual-review-required`, nessun file a merge owner nel diff
+   COMPLETO della PR, nessuna violazione di dipendenze (controllo full-diff di
+   `pr-guard`, §0.10).
+6. La PR è "able to merge" su GitHub (mergeable, nessun conflitto, branch
    protection soddisfatta, non draft).
-5. Hard verify PASS per il cambiamento; test hard PASS+BLOCK realmente eseguiti.
 
-Se TUTTE le condizioni valgono, l'agente mergia e riporta lo SHA di merge —
-**senza distinzione fra PR safety-critical e non**. Subito dopo il merge
-riparte con la PR successiva della coda, ristabilendo il branch designato dal
-`main` aggiornato (resta valida la regola UNA SOLA PR aperta alla volta).
+Se TUTTE valgono: `AUTO_PR_FLOW_STATUS=READY_FOR_AUTO_MERGE`, l'agente mergia
+e riporta lo SHA — **PR safety-critical runtime/core comprese** (decisioni
+owner 16-09-2026 e P41). Subito dopo esegue la procedura PR successiva di spec
+§0.14 (resta UNA SOLA PR aperta PER REPOSITORY). Se tutto vale ma la PR tocca
+un file a merge owner: `READY_FOR_OWNER_MANUAL_MERGE` e mergia l'owner. Un head
+cambiato invalida la valutazione. `scripts/pr_autonomy_policy.py
+merge-decision` codifica queste condizioni.
 
-**Le PR safety-critical non sono più escluse, ma restano riconoscibili.** Una
+**Le PR safety-critical non sono escluse, ma restano riconoscibili.** Una
 PR è safety-critical se tocca `core/`, aree safety di `services/`, money
 management, `betfair_client`/`betfair_market_api`, `dutching*`,
 `order_manager`, `safety_layer`, `reconciliation`, `runtime_controller`,
-`.github/workflows/*`, config/segreti. Su queste l'agente:
+config/segreti. Su queste l'agente:
 
 - lo DICHIARA nel verdetto (`PR safety-critical: sì — <file/aree>`), così
   l'owner sa sempre cosa è stato mergiato in autonomia;
 - applica gli stessi gate, senza sconti: se anche uno solo non regge, non
-  mergia e passa dal ciclo need-manual;
+  mergia;
 - non usa MAI l'urgenza o "tanto è verde" come sostituto di un gate mancante.
 
 **UNICA ESCLUSIONE: ciò che definisce o applica i gate stessi.** Restano a
@@ -570,6 +427,15 @@ I workflow che SONO i gate su cui poggia la decisione di auto-merge:
 - `.github/workflows/pr-guard.yml`
 - `.github/workflows/pr-merge-readiness.yml`
 - `scripts/guardrail_check.py`
+- `scripts/pr_autonomy_policy.py`
+- `scripts/pr_fix_loop_policy.py`
+- `scripts/pr_flow_automation.py`
+- `scripts/pr_merge_readiness.py`
+- `scripts/pr_automation_controller.py`
+- `scripts/pr_clean_scope_rebuild.py`
+- `scripts/pr_refresh_self_checks.py`
+- `scripts/ci/check_ci_quarantine.py`
+- (e, per fail-closed, ogni altro `scripts/pr_*.py`: il pattern della label li copre)
 
 `scripts/guardrail_check.py` e' in lista per la stessa ragione dei workflow, e
 ce l'ha messo GPT-5.6 Sol: «un gate indipendente e **non modificabile nello
@@ -600,9 +466,14 @@ Il primo caso non vede la modifica, il secondo la subisce. In nessuno dei due il
 gate può accorgersi del proprio indebolimento, ed è questo che lo distingue da
 una qualsiasi altra area safety-critical.
 
-Gli altri workflow — build, packaging, test, chaos, lockfile — NON sono in
-esclusione: non decidono se una PR può essere mergiata, la verificano soltanto.
-L'agente li mergia da solo ai gate qui sopra.
+I cinque `scripts/pr_*` qui sopra definiscono autorità di merge, readiness,
+budget del fix loop e il classifier di questo contratto: stessa ragione
+strutturale (owner, punto 19 del 08/10/2026). Dal 08/10/2026 anche OGNI ALTRO
+workflow — build, packaging, test, chaos, lockfile — è a merge owner, per
+fail-closed: i workflow girano con secret e permessi del repository, e
+`MANUAL_AUTHORITY_PATTERNS` etichetta tutto `.github/workflows/`. Idem i
+manifest di dipendenze (supply chain). Su questo punto supera il paragrafo
+#469 qui sotto.
 
 Rilevato da GPT-5.6 Sol e Claude Fable 5.1 sulla #469 (i file-policy),
 indipendentemente, e da Fugu Ultra sulla stessa PR (i workflow-gate). Decisione
@@ -667,25 +538,28 @@ un controllo. `max_files` resta documentazione e non e' applicato: imposto
 L'override per-issue che serviva a togliere l'esclusione caso per caso non
 serve più ed è ritirato: l'autorizzazione è globale e sta qui.
 
-**Need-manual => STOP + DOMANDA + ANNOTA + ATTENDI.** Se una condizione non è
-soddisfatta, o emerge una decisione che spetta all'owner (ambiguità, rischio,
-scelta di prodotto, bloccante non risolvibile con patch stretta), l'agente NON
-mergia e:
+**STOP owner => STOP + DOMANDA + ANNOTA + ATTENDI — solo per le condizioni minime.**
+L'owner decide COSA, l'agente decide COME. L'agente si ferma e chiede SOLO per
+le dieci condizioni di spec §0.13: nuova decisione di prodotto; spesa o
+infrastruttura; credenziale o servizio; nuovo P0 non correggibile entro il
+contratto deciso; cambio di contratto o accettazione del rischio; MANUAL via
+MCP; fix loop esaurito; conflitto sostanziale fra fonti autorevoli;
+autorizzazione o gate non verificabile; azione reale che richiede un comando
+owner (soprattutto LIVE). Allora:
 1. si FERMA (fail-closed: non forza, non inventa, non aggira);
 2. pone la questione all'owner come DOMANDA esplicita, con le opzioni;
-3. ANNOTA nella issue dedicata del task la domanda E la risposta dell'owner
-   quando arriva — le decisioni owner sono la fonte di verità tracciata per i
-   passi successivi;
-4. ATTENDE la decisione prima di procedere.
+3. ANNOTA domanda e risposta nella issue dedicata del task / #426;
+4. ATTENDE la decisione prima di procedere su QUELLA parte (una decisione
+   aperta che tocca una sotto-parte blocca solo quella sotto-parte).
 
-Vale per tutta la roadmap: durante lo sviluppo delle PR, ogni need-manual passa
-da questo ciclo (stop → domanda → annotazione nella issue dedicata → attesa
-della decisione owner → prosegui).
+Un'incertezza puramente tecnica NON è uno stop: quando contratto e risultato
+atteso sono determinati, l'agente sceglie la soluzione tecnica più sicura, la
+prova, la triagia e prosegue. Un gate non verificabile non è un'incertezza
+tecnica: è UNKNOWN/NEEDS_MANUAL (§0.11).
 
-**CREDITI ESAURITI => NON MERGIARE, FERMARSI E AVVISARE.** È la sola
-eccezione all'autonomia, e vale per i **cinque reviewer che l'owner paga**:
-GPT-6.1 Sol, Grok 4.7, Fugu Ultra, Fable 5.1, GPT-6 Astra. Se uno qualsiasi di
-loro non può
+**CREDITI ESAURITI => NON MERGIARE, FERMARSI E AVVISARE.** Vale per i
+**reviewer attivi che l'owner paga** (P41): GPT-6.1 Sol e Grok 4.7. Se uno dei
+due non può
 revisionare perché il provider risponde usage-quota / rate-limit / crediti
 esauriti — il workflow parte ma il modello non risponde — allora quella PR
 **non è stata revisionata**, e un merge senza review non è un merge
@@ -706,7 +580,8 @@ ferma.
 dell'owner: sono terze parti a disposizione limitata (Codex in usage-limit
 permanente, CodeRabbit fermo a `<10 stelle`). Restano **assenti da subito**, non
 bloccano nulla e non fanno fermare la coda — altrimenti la coda non ripartirebbe
-mai. La regola di stop qui sopra riguarda **solo** i cinque workflow API.
+mai. La regola di stop qui sopra riguarda **solo** i workflow attivi di Sol e
+Grok; i sospesi Fugu Ultra, Claude Fable 5.1 e GPT-6 Astra non si aspettano.
 
 ## GENERAZIONE AUTOMATICA TEST HARD (OBBLIGATORIO)
 
@@ -847,33 +722,22 @@ Una PR non è consegnata quando il codice è verde: è consegnata quando l'owner
 ha in mano ciò che gli serve per decidere. Cinque passi, in quest'ordine.
 Nessuno saltabile in silenzio.
 
-### 1. Giro a label sul range completo — PRIMA del verdetto
+### 1. Copertura del diff completo — PRIMA del verdetto
 
 Se la PR ha PIÙ DI UN PUSH, le review automatiche hanno visto `push range`,
 cioè i singoli delta, non il diff assemblato. Si controlla la riga `Range:`
-nell'intestazione di ogni review: solo `Scope: current PR range` copre la PR
-intera.
+nell'intestazione di ogni review di Sol e Grok. Il giro a label sul range
+completo dei reviewer forti è SOSPESO con loro (P41); la copertura del diff
+assemblato la danno:
 
-- le tre label si lanciano SEMPRE, anche con un push solo: la decisione
-  dell'owner del 16-09-2026 le rende automatiche su OGNI PR, perché un gate
-  che non si vede su GitHub non si distingue da un gate saltato;
-- più di un push => si attende l'esito full-range PRIMA di dichiarare
-  qualsiasi verdetto: è quella review, non le per-push, che ha visto il diff
-  assemblato;
-- un push solo, con `Range:` che copre già `base...head` => le label si
-  lanciano lo stesso e non costano: il `done_marker` è per range, quindi i
-  forti che hanno già pubblicato su quel range chiudono `success` senza
-  chiamare il modello. Il gate diventa visibile a spesa zero.
+- il controllo full-diff di `pr-guard` (`scripts/pr_autonomy_policy.py
+  full-diff`, spec §0.10) sul `base...head` reale;
+- l'audit dell'agente sul diff completo (base, head, path vietati, scope,
+  nuovi chiamanti, dipendenze, regressioni), dichiarato nel verdetto;
+- una review di Sol e di Grok il cui range finisce sul head corrente.
 
-Qui c'era, fino alla #477, l'eccezione «un push solo => si dichiara, e non si
-lanciano», che contraddiceva la decisione del 16-09-2026 poche righe più sotto.
-L'ha rilevata Fugu Ultra sulla full-range come bloccante; Claude Fable 5.1
-aveva segnalato la stessa coesistenza sullo stesso head come nota da confermare
-prima del merge. Su un gate una policy ambigua è fail-open, perché la lettura
-che salta il gate è sempre la più comoda.
-
-Violato su #427: tre push, verdetto «PRONTA PER MERGE» dichiarato senza il
-giro a range completo. L'ha notato l'owner, non il processo.
+Violato su #427: tre push, verdetto «PRONTA PER MERGE» dichiarato senza
+guardare il diff assemblato. L'ha notato l'owner, non il processo.
 
 Limite noto, da mettere in conto: i workflow di review girano su
 `pull_request_target`, quindi partono dal branch BASE. Una PR non può alzare i
