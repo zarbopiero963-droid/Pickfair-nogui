@@ -339,6 +339,51 @@ def test_block_reset_non_riapre_se_marker_ignoto_non_si_aggiorna(tmp_path, monke
     assert _catena(tmp_path).rc._risk_stop_reason == "exposure_stop_reached:unknown"
 
 
+
+def test_block_reset_readback_fallito_ripristina_barriera_durevole(tmp_path):
+    """Fix c4 (Sol): write reset riuscite ma readback fallito => reset rifiutato
+    e restart ancora bloccato, mai active=False durevole come unico stato."""
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:readback")
+    original_get = c.rc.db.get_settings
+    calls = 0
+
+    def _get_flaky():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return original_get()
+        raise OSError("readback failed")
+
+    c.rc.db.get_settings = _get_flaky
+    esito = c.rc.reset_risk_stop()
+    c.rc.db.get_settings = original_get
+
+    assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:readback"
+    assert _catena(tmp_path).rc._risk_stop_reason != ""
+
+
+def test_block_reset_marker_non_armabile_non_scrive_stato_inattivo(tmp_path, monkeypatch):
+    """Fix c4: il marker write-ahead deve essere armato prima di active=False."""
+    from core import risk_stop as stop_rules
+
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:marker")
+    monkeypatch.setattr(
+        stop_rules,
+        "atomic_write_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("marker unavailable")),
+    )
+
+    esito = c.rc.reset_risk_stop()
+
+    assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:marker"
+    saved = json.loads(c.rc.db.get_settings()["risk_stop_state"])
+    assert saved["active"] is True
+    assert _catena(tmp_path).rc._risk_stop_reason != ""
+
 @pytest.mark.parametrize("db, marker, atteso", [
     (_stato(True, "exposure_stop_reached:x", 2), _stato(False, "", 3), ""),          # newer reset wins
     (_stato(False, "", 3), _stato(True, "exposure_stop_reached:x", 2), ""),          # stale copy loses
@@ -357,8 +402,8 @@ def test_block_ripristino_versionato_e_conservativo(tmp_path, db, marker, atteso
 
 
 def test_pass_reset_esplicito_nuova_versione_non_risorge(tmp_path):
-    """Fix c2 (owner 23:30): a valid reset is a NEW version; the stale active copy
-    (left on purpose, never deleted) cannot resurrect the stop at restart."""
+    """Fix c2/c4: un reset valido sincronizza una nuova versione inattiva e
+    una vecchia barriera non puo\' risorgere al restart."""
     c = _catena(tmp_path, max_exposure_stop=1000.0)
     salva = c.rc.db.save_settings
     c.rc.db.save_settings = lambda _v: (_ for _ in ()).throw(OSError("disk full"))
@@ -367,7 +412,7 @@ def test_pass_reset_esplicito_nuova_versione_non_risorge(tmp_path):
 
     assert c.rc.reset_risk_stop()["risk_stop_reset"] is True
     import os
-    assert os.path.exists(_marker(c))                       # stale active copy still there
+    assert os.path.exists(_marker(c))                       # marker sincronizzato alla versione di reset
     riavvio = _catena(tmp_path)
     assert riavvio.rc._risk_stop_reason == ""
 

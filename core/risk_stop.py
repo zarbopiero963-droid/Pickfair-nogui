@@ -118,74 +118,104 @@ def _version_unknown(copies: tuple) -> bool:
     )
 
 
+def _state_payload(*, active: bool, reason: str, seq: Any) -> str:
+    return json.dumps({
+        "active": bool(active),
+        "reason": str(reason or ""),
+        "seq": seq,
+        "at": datetime.utcnow().isoformat(),
+    })
+
+
 def persist_risk_stop(db: Any, reason: str) -> bool:
-    """Persiste una transizione RISK_STOP senza permettere regressioni di versione.
+    """Persiste una transizione RISK_STOP senza permettere fail-open.
 
-    Se durante l'ATTIVAZIONE una copia e' illeggibile/ha seq ignota, la nuova
-    attivazione viene scritta con seq=None: _reconcile la tratta come barriera
-    conservativa e quindi non puo' perdere contro un vecchio reset con seq
-    numerica quando lo store torna leggibile.
+    Attivazione: se una copia ha versione ignota/illeggibile, la nuova barriera
+    usa seq=None e quindi resta conservativa rispetto a qualunque vecchio reset.
 
-    Un RESET usa invece la prossima seq numerica conosciuta, ma viene considerato
-    riuscito soltanto se una rilettura di db+marker riconcilia davvero a stato
-    inattivo. Se un marker attivo a versione ignota impedisce la prova, si tenta
-    di sostituire anche il marker con la stessa versione di reset; se non si
-    riesce, il reset fallisce e il runtime resta bloccato.
+    Reset: protocollo write-ahead fail-closed. Prima di scrivere active=False
+    persiste una barriera active=True a versione ignota su tutti gli store
+    disponibili. Solo dopo scrive la nuova versione di reset e la rilegge.
+    Qualunque errore lascia o ripristina una barriera durevole e il caller
+    mantiene il runtime bloccato.
     """
     if not hasattr(db, "save_settings"):
         return False
 
     before = _copies(db)
     seqs = [r["seq"] for r in before if isinstance(r, dict) and r["seq"] is not None]
-    active = bool(reason)
-    seq = None if active and _version_unknown(before) else max(seqs, default=0) + 1
-    payload = json.dumps({
-        "active": active,
-        "reason": str(reason or ""),
-        "seq": seq,
-        "at": datetime.utcnow().isoformat(),
-    })
     marker = _marker_path(db)
-
-    db_written = False
-    try:
-        db.save_settings({RISK_STOP_STATE_KEY: payload})
-        db_written = True
-    except Exception:
-        logger.critical("risk-stop: stato non salvato su db, uso il marker", exc_info=True)
-
-    # Un'attivazione e' fail-closed per costruzione: se almeno una copia e'
-    # stata scritta, una seq ignota resta conservativa al restore.
-    if active and db_written:
-        return True
-
-    # Per un reset non basta che una write abbia risposto OK: occorre provare
-    # che l'insieme db+marker non contenga ancora una copia attiva/ignota che
-    # vincerebbe al restart.
-    if not active and db_written and _reconcile(*_copies(db)) == "":
-        return True
-
-    marker_written = False
-    try:
-        if marker:
-            atomic_write_text(marker, payload)
-            marker_written = True
-    except Exception:
-        logger.critical("risk-stop: marker non scrivibile", exc_info=True)
+    active = bool(reason)
 
     if active:
-        if marker_written:
+        seq = None if _version_unknown(before) else max(seqs, default=0) + 1
+        payload = _state_payload(active=True, reason=str(reason or "risk_stop"), seq=seq)
+        try:
+            db.save_settings({RISK_STOP_STATE_KEY: payload})
             return True
-        if not db_written:
-            logger.critical("risk-stop: ne' db ne' marker scrivibili (KNOWN_LIMITATION)")
-        return db_written
-
-    if not (db_written or marker_written):
+        except Exception:
+            logger.critical("risk-stop: stato non salvato su db, uso il marker", exc_info=True)
+        try:
+            if marker:
+                atomic_write_text(marker, payload)
+                return True
+        except Exception:
+            logger.critical("risk-stop: neanche il marker e' scrivibile (KNOWN_LIMITATION)", exc_info=True)
         return False
 
-    # Reset riuscito soltanto se la rilettura dimostra che nessuna copia
-    # conservativa/attiva puo' riaprire il RISK_STOP al boot.
-    return _reconcile(*_copies(db)) == ""
+    previous_reason = _reconcile(*before) or "risk_stop_reset_pending"
+    guard_payload = _state_payload(active=True, reason=previous_reason, seq=None)
+    reset_payload = _state_payload(
+        active=False,
+        reason="",
+        seq=max(seqs, default=0) + 1,
+    )
+
+    # Write-ahead barrier: mai scrivere active=False se prima non esiste una
+    # barriera durevole che sopravvive a errore/crash del reset.
+    try:
+        db.save_settings({RISK_STOP_STATE_KEY: guard_payload})
+    except Exception:
+        logger.critical("risk-stop: impossibile armare la barriera pre-reset nel db", exc_info=True)
+        return False
+
+    if marker:
+        try:
+            atomic_write_text(marker, guard_payload)
+        except Exception:
+            logger.critical("risk-stop: impossibile armare il marker pre-reset", exc_info=True)
+            return False
+
+    try:
+        db.save_settings({RISK_STOP_STATE_KEY: reset_payload})
+    except Exception:
+        logger.critical("risk-stop: reset db fallito; barriera active resta durevole", exc_info=True)
+        return False
+
+    if marker:
+        try:
+            atomic_write_text(marker, reset_payload)
+        except Exception:
+            logger.critical("risk-stop: reset marker fallito; marker active conserva il blocco", exc_info=True)
+            return False
+
+    if _reconcile(*_copies(db)) == "":
+        return True
+
+    # Readback incerto: il reset non e' confermato. Compensa ripristinando
+    # active=True prima di restituire False, cosi' un restart non puo' vedere
+    # soltanto l'active=False scritto a meta' percorso.
+    logger.critical("risk-stop: reset non verificabile; ripristino barriera active")
+    try:
+        db.save_settings({RISK_STOP_STATE_KEY: guard_payload})
+    except Exception:
+        logger.critical("risk-stop: compensazione active su db fallita", exc_info=True)
+    if marker:
+        try:
+            atomic_write_text(marker, guard_payload)
+        except Exception:
+            logger.critical("risk-stop: compensazione active su marker fallita", exc_info=True)
+    return False
 
 
 def restore_risk_stop(db: Any) -> str:
