@@ -2121,6 +2121,26 @@
       "max_files": 8,
       "allow_tests": true,
       "description": "#461 PR28 (prima parte) limiti owner misurati sul rischio dell'ordine (PKG-P24-B), baseline main feb2302 (#501), nessuna PR aperta. Formula unica core/validators.order_exposure: BACK=stake, LAY=stake*(quota-1), lato ignoto => errore; soglia esatta con tolleranza float (exceeds_cap, 1e-9) con parità tra RiskGate, MM, cap A2 runtime, tavoli e auto-next. MM: cap singolo/totale/evento sul rischio, LAY oltre cap rifiutato senza ridimensionamento, lato ignoto => lato_non_valido. Runtime: A2 e tavolo sulla liability; best price non può aumentare il rischio approvato; auto-next con esposizione evento reale e cap A2. reload_config preserva TableManager, esposizione, memoria recovery e ReconciliationEngine (resize senza toccare tavoli occupati); start() invariato (reset_session=True). A1 drawdown LIVE già fail-closed (test). Residui a PR28-b: P37 stop sessione/esposizione 10€, P38 azioni allo stop, F4 perdita giornaliera al riavvio, nuovi cap assoluti evento/strategia/drawdown, lato assente => BACK, hard-stop True; cap aggregati per produttori non-segnale a PR29; start() che azzera i tavoli a PR29/PR31."
+    },
+    "issue461-pr28b-loss-limits": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/daily_loss_store.py",
+        "core/loss_limits.py",
+        "core/runtime_controller.py",
+        "core/system_state.py",
+        "core/validators.py",
+        "mini_gui.py",
+        "services/setting_service.py",
+        "tests/acceptance/test_issue437_pr28b.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "tests/unit/test_runtime_controller_gate_proofs.py",
+        "tests/unit/test_session_expiry_recovery.py"
+      ],
+      "max_files": 13,
+      "allow_tests": true,
+      "description": "#461 PR28-b (PKG-P24-B: F4, P37), baseline main 54e9d17 (#502), nessuna PR aperta. Fonti riconciliate: #426 P37 confermata (stop perdita sessione, valore owner 10€) e decisione #426 06/10 (nessun importo fisso 10€/10€ per il cashout; i limiti monetari owner sono limiti di rischio separati): max_session_loss e' un limite owner configurabile senza default, fail-closed se illeggibile, non parametro del cashout. F4: perdita realizzata del giorno salvata (setting daily_loss_state) e ricostruita al riavvio nello stesso giorno UTC prima di nuovo rischio; stato illeggibile => breach; nuovo giorno => zero. reset_cycle e auto-reset da drawdown non azzerano piu' la perdita del giorno/sessione. P37: max_session_loss in GUI/loader/salvataggio; raggiunto => nuove entrate, auto-next e resume rifiutati, SESSION_LOSS_BREACH_TRIGGERED; cashout/uscite invariati. Logica in core/loss_limits.py; persistenza in core/daily_loss_store.py (record db e marker con giorno UTC e seq monotona; al riavvio vince la seq maggiore, a seq uguale/ignota la perdita maggiore, breach del giorno mai annullato; KNOWN_LIMITATION dichiarata: db e marker entrambi non scrivibili + riavvio). Test fake con catch-all __getattr__=0 riallineati con max_session_loss=None (stesso precedente di max_open_exposure). Residui: P38 cancel unmatched pertinenti + tentativo cashout allo stop (RISK_STOP distinto da EMERGENCY, PR28-c con PR37/PR45); stop esposizione 10€ come RISK_STOP (PR28-c/PR29); cap assoluti mercato/evento 2€, ordine 1€, drawdown assoluto 10€ (PR28-c); 'strategia' non definita nel codice => domanda owner; produttori non-segnale (GUI manuale/dutching) a PR29; durabilita' crash drill a PR34."
     }
   }
 }

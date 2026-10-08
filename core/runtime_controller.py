@@ -9,7 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from core import validators
+from core import loss_limits, validators
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
@@ -283,6 +283,11 @@ class RuntimeController:
             "last_alert_event": "",
             "last_checked_at": datetime.utcnow().isoformat(),
         }
+        self._session_pnl_baseline: Optional[float] = None  # P37, da start()
+        self._session_loss_alerted = False
+        self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
+            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
+        self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
 
         self._subscribe_bus()
 
@@ -1150,6 +1155,7 @@ class RuntimeController:
                 "alert_count": alert_count,
                 "last_checked_at": now_iso,
             })
+            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
             self._daily_loss_monitor_state = state
             if not already_breached_today:
                 alert_payload = {
@@ -1185,6 +1191,34 @@ class RuntimeController:
                 "is_emergency_stopped": bool(self._emergency_stopped),
                 "status_snapshot_degraded": True,
             }
+
+    # F4/P37 (#461 PR28-b): logica in core/loss_limits.py.
+    def _reset_recovery_cycle_keeping_losses(self) -> None:
+        with self._daily_loss_state_lock:  # il reset non cancella le perdite
+            shift = float(self.risk_desk.realized_pnl)
+            self.risk_desk.reset_recovery_cycle()
+            loss_limits.shift_day_baseline(self._daily_loss_monitor_state, shift)
+            if getattr(self, "_session_pnl_baseline", None) is not None:
+                self._session_pnl_baseline -= shift
+
+    def _session_loss_block_reason(self) -> str:
+        limit = getattr(getattr(self, "config", None), "max_session_loss", None)
+        if limit is None:
+            return ""
+        return loss_limits.session_loss_reason(
+            limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
+
+    def _loss_block_reason(self) -> str:
+        if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
+            return "daily_loss_state_non_persistito"
+        return self._session_loss_block_reason()
+
+    def _publish_session_loss_breach(self) -> None:
+        reason = self._session_loss_block_reason()
+        if reason.startswith("session_loss_breached") and not getattr(self, "_session_loss_alerted", False):
+            self._session_loss_alerted = True
+            logger.critical("SESSION LOSS BREACH: %s", reason)
+            self.bus.publish("SESSION_LOSS_BREACH_TRIGGERED", {"reason": reason})
 
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
         now = datetime.utcnow()
@@ -1271,6 +1305,7 @@ class RuntimeController:
                 state["alert_count"] = int(previous.get("alert_count", 0) or 0)
                 state["last_alert_event"] = str(previous.get("last_alert_event") or "DAILY_LOSS_BREACH_TRIGGERED")
 
+            self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, state, self._daily_loss_persisted)
             self._daily_loss_monitor_state = state
             result = dict(state)
 
@@ -2192,6 +2227,8 @@ class RuntimeController:
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
         self.reload_config(reset_session=True)
+        self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
+        self._session_loss_alerted = False
 
         requested_execution_mode = self._safe_execution_mode(execution_mode)
         if execution_mode is None and simulation_mode is not None:
@@ -2444,6 +2481,9 @@ class RuntimeController:
                 "reason": "daily_loss_breached",
                 "status": self._safe_status_snapshot(),
             }
+        session_block = self._loss_block_reason()
+        if session_block:
+            return {"resumed": False, "reason": session_block, "status": self._safe_status_snapshot()}
 
         self.mode = RuntimeMode.ACTIVE
         status = self.get_status()
@@ -2456,7 +2496,7 @@ class RuntimeController:
     def reset_cycle(self) -> dict:
         self.table_manager.reset_all()
         self.duplication_guard.clear()
-        self.risk_desk.reset_recovery_cycle()
+        self._reset_recovery_cycle_keeping_losses()
 
         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
             try:
@@ -3167,6 +3207,11 @@ class RuntimeController:
                 reason="emergency_stop_active:pre_submit_recheck",
             )
             return
+        session_block = self._loss_block_reason()  # F4/P37
+        if session_block:
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=session_block)
+            return
         self.bus.publish(
             "SIGNAL_APPROVED",
             {
@@ -3717,6 +3762,7 @@ class RuntimeController:
             # _risk_allows_auto_trade e nessun ordine parte dopo il breach.
             daily_loss_state = self._monitor_daily_loss_breach(source="RUNTIME_CLOSE_POSITION", payload=payload)
             self._enforce_daily_loss_hard_stop(daily_loss_state)
+            self._publish_session_loss_breach()
         finally:
             # Disarma il bridge se NON e' subentrato l'emergency_stop definitivo
             # (es. il breach non si e' materializzato): evita un pending-stop
@@ -3756,7 +3802,7 @@ class RuntimeController:
         if current_drawdown >= self.config.auto_reset_drawdown_pct:
             self.table_manager.reset_all()
             self.duplication_guard.clear()
-            self.risk_desk.reset_recovery_cycle()
+            self._reset_recovery_cycle_keeping_losses()
 
             self.bus.publish(
                 "ROSERPINA_AUTO_RESET",
@@ -4627,6 +4673,9 @@ class RuntimeController:
         # (es. dopo riavvio + start() senza reset_emergency()).
         if self._emergency_stopped:
             return False, "emergency_stop_active"
+        session_block = self._loss_block_reason()
+        if session_block:
+            return False, session_block
         if not self._runtime_active():
             return False, "runtime_not_active"
         if self._desk_mode() == DeskMode.LOCKDOWN:

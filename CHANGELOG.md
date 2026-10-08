@@ -104,6 +104,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Durable daily loss and session-loss stop (#461 PR28-b, PKG-P24-B: F4, P37).
+  - **F4:** the day's realized loss is saved (`daily_loss_state` setting) and
+    rebuilt at restart on the same UTC day, before any new risk. Before, a
+    restart zeroed it: EUR 8 lost, restart, another EUR 8 = 16 against
+    `max_daily_loss` 10 with no stop. An unreadable saved state, or an invalid
+    or future saved day, counts as a breach (fail-closed); a past UTC day
+    starts from zero. If a save fails, new risk is refused until a save
+    succeeds and the state goes to a marker file next to the db
+    (`<db>.daily_loss_pending.json`). Every record (db and marker) carries
+    the UTC day and a monotonic sequence number `seq`. At restart both are
+    read: the higher `seq` wins; with an equal or unknown `seq` the larger
+    loss wins, and a breach in either always counts. A leftover marker
+    (failed remove, crash between save and remove) has a lower `seq` and can
+    never lower the loss. Known limitation (declared): if neither the db nor
+    the marker can be written, the block holds for the session only; a
+    restart in that condition cannot rebuild the unsaved loss.
+    Persistence lives in the new `core/daily_loss_store.py` (`db_path` may
+    be a str or an `os.PathLike`).
+  - `reset_cycle()` and the drawdown auto-reset no longer wipe the day's or the
+    session's loss (they zero the desk `realized_pnl`; the baselines now shift
+    with it).
+  - **P37:** new owner limit `max_session_loss` (EUR, realized loss since the
+    last `start()`), in GUI, loader and save. No default: empty = not set.
+    Reached (with float tolerance) => new entries, auto-next and `resume()`
+    are refused and `SESSION_LOSS_BREACH_TRIGGERED` is published once.
+    Unreadable or <= 0 => entries refused. It is a risk limit, not a cashout
+    parameter: exits/cashout keep their own gates (#426 decision 06/10).
 - Owner limits measured on the order's risk (#461 PR28, PKG-P24-B, first slice).
   - **Single formula:** `core/validators.py` `order_exposure` gives BACK = stake
     and LAY = liability `stake * (price - 1)`. `exceeds_cap` holds at the exact

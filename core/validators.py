@@ -208,6 +208,11 @@ def signal_cap_reason(signal, stake, cap_raw, total_exposure) -> str:
     return open_exposure_cap_reason(cap_raw, total_exposure, risk)
 
 
+def reaches_limit(amount, limit) -> bool:
+    """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
+    return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
+
+
 def exceeds_cap(amount, cap) -> bool:
     """True se `amount` supera `cap` oltre la tolleranza float.
 
