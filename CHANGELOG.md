@@ -104,6 +104,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Durable daily loss and session-loss stop (#461 PR28-b, PKG-P24-B: F4, P37).
+  - **F4:** the day's realized loss is saved (`daily_loss_state` setting) and
+    rebuilt at restart on the same UTC day, before any new risk. Before, a
+    restart zeroed it: EUR 8 lost, restart, another EUR 8 = 16 against
+    `max_daily_loss` 10 with no stop. An unreadable saved state counts as a
+    breach (fail-closed); a new UTC day starts from zero.
+  - `reset_cycle()` and the drawdown auto-reset no longer wipe the day's or the
+    session's loss (they zero the desk `realized_pnl`; the baselines now shift
+    with it).
+  - **P37:** new owner limit `max_session_loss` (EUR, realized loss since the
+    last `start()`), in GUI, loader and save. No default: empty = not set.
+    Reached (with float tolerance) => new entries, auto-next and `resume()`
+    are refused and `SESSION_LOSS_BREACH_TRIGGERED` is published once.
+    Unreadable or <= 0 => entries refused. It is a risk limit, not a cashout
+    parameter: exits/cashout keep their own gates (#426 decision 06/10).
 - Owner limits measured on the order's risk (#461 PR28, PKG-P24-B, first slice).
   - **Single formula:** `core/validators.py` `order_exposure` gives BACK = stake
     and LAY = liability `stake * (price - 1)`. `exceeds_cap` holds at the exact

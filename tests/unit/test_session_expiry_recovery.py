@@ -488,6 +488,7 @@ def test_live_signal_rejected_when_session_invalid_in_runtime_controller():
         auto_reset_drawdown_pct = 90
         defense_drawdown_pct = 7.5
         lockdown_drawdown_pct = 95
+        max_session_loss = None  # P37 (#461 PR28): il catch-all darebbe 0 = limite non valido
 
         def __getattr__(self, _n):
             return 0

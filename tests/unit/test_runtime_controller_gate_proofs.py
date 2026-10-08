@@ -51,6 +51,7 @@ class _Config:
     auto_reset_drawdown_pct = 90
     defense_drawdown_pct = 7.5
     lockdown_drawdown_pct = 95
+    max_session_loss = None  # P37 (#461 PR28): il catch-all darebbe 0 = limite non valido
 
     def __getattr__(self, _name):
         return 0

@@ -47,6 +47,9 @@ class _Config:
     # tutto" (getattr(cfg, "max_open_exposure", None) => 0, non None), rifiutando
     # ogni segnale con `max_open_exposure_exceeded:limit=0€` prima del seam.
     max_open_exposure = None
+    # Stesso motivo per lo stop perdita di sessione P37 (#461 PR28): 0 e' un
+    # limite non valido => blocco fail-closed. In produzione e' None.
+    max_session_loss = None
 
     def __getattr__(self, _name):
         return 0
