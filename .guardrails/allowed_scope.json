@@ -2027,6 +2027,21 @@
       "max_files": 14,
       "allow_tests": true,
       "description": "Mandato owner 07/10/2026: una sola PR governance/automation policy/test, baseline main 30fb165 (#494 merged), nessuna PR aperta al preflight. Cap globale FIX_LOOP=5, contatore per-PR persistente cumulativo, sesto ciclo bloccato prima di patch/commit/push, owner override bounded tracciato, triage CURRENT_DEFECT/GUARDRAIL_GAP/THEORETICAL_MUTATION, REVIEW_CHURN e KNOWN_LIMITATION_ACCEPTED_BY_OWNER con prove e gate invariati. Nessun runtime prodotto, DB Pickfair, MCP/Control API o workflow/reviewer riattivato. Merge manuale owner per AGENTS/CLAUDE. Scope include anche il helper clean-scope e i suoi test: il RED-FIRST mostra che il suo push diretto non registrava la completion nel ledger; cablata la stessa authority per impedire un bypass del contatore."
+    },
+    "issue461-pr26a-customer-ref-provenance": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/dutching_batch_manager.py",
+        "core/order_identity.py",
+        "core/risk_middleware.py",
+        "core/runtime_controller.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true,
+      "description": "#461 PR26-a customer_ref/provenance dei produttori esistenti, baseline main 452dde1 (#496), nessuna PR aperta. Runtime segnale (identita' dal contenuto senza received_at/event_key/stake MM), auto-trade post-settlement (legata al settlement), gambe dutching (batch_id+gamba, persistita anche in dutching_batch_legs via DutchingBatchManager.create_batch) e manual_bet (ref di operazione per click) pubblicano CMD_QUICK_BET con customer_ref Betfair-conforme (core/order_identity.py); ref a monte preservato o reso conforme in modo deterministico; RiskMiddleware preserva il ref nell'inoltro REQ->CMD senza inventarlo. Engine invariato (CUSTOMER_REF_REQUIRED resta), fallback compat Telegram REQ_QUICK_BET resta rifiutato. Nessun cambio a MM/rischio/esposizione/cashout/STOP/riconciliazione/schema DB/endpoint Betfair/MCP/Control API."
     }
   }
 }

@@ -9,6 +9,11 @@ import time
 from typing import Any, Dict, List, Optional
 
 import trading_config
+from core.order_identity import (
+    derive_customer_ref,
+    new_operation_customer_ref,
+    normalize_upstream_customer_ref,
+)
 
 try:
     from dutching import calculate_dutching
@@ -882,6 +887,9 @@ class DutchingController:
                         "price": float(o["price"]),
                         "stake": float(o["stake"]),
                         "side": str(o["bet_type"]).upper(),
+                        # PR26-a: l'identita' della gamba arriva anche nel
+                        # registro durevole (chiave piu' forte del reconcile).
+                        "customer_ref": str(o.get("customer_ref") or ""),
                     }
                     for o in orders
                 ],
@@ -1312,8 +1320,32 @@ class DutchingController:
         published_orders = []
         batch_created = False
 
+        # PR26-a: identita' delle gambe dagli INPUT della richiesta, non dagli
+        # stake calcolati (con quote uguali calculate_dutching assegna il
+        # centesimo di arrotondamento in base all'ordine delle selezioni). Il
+        # batch e' mercato + stake totale + elenco ORDINATO delle gambe; una
+        # gamba e' la sua chiave, mai la posizione nella lista del chiamante
+        # (selectionId duplicati sono gia' rifiutati in validazione; due chiavi
+        # identiche darebbero comunque lo stesso ref: doppione bloccato).
+        def _leg_key(item):
+            return (
+                int(item["selectionId"]),
+                str(item.get("side", "BACK")).upper(),
+                float(item["price"]),
+            )
+
+        leg_batch_identity = {
+            "market_id": str(payload.get("market_id") or ""),
+            "event_name": str(payload.get("event_name") or ""),
+            "market_name": str(payload.get("market_name") or ""),
+            "simulation_mode": bool(payload.get("simulation_mode", False)),
+            "total_stake": float(payload.get("total_stake") or 0.0),
+            "legs": sorted(_leg_key(item) for item in results),
+        }
+
         try:
             for idx, item in enumerate(results, start=1):
+                leg_key = _leg_key(item)
                 order = {
                     "market_id": str(payload["market_id"]),
                     "selection_id": int(item["selectionId"]),
@@ -1329,6 +1361,16 @@ class DutchingController:
                     "batch_id": batch_id,
                     "batch_size": len(results),
                     "batch_leg_index": idx,
+                    # PR26-a: una identita' per gamba (vedi leg_batch_identity):
+                    # stesso batch ricalcolato, anche con le selezioni in
+                    # ordine diverso = stessi ref; gambe distinte = ref distinti.
+                    "customer_ref": derive_customer_ref(
+                        "dut",
+                        {
+                            "batch": leg_batch_identity,
+                            "leg": list(leg_key),
+                        },
+                    ),
                     "batch_avg_profit": float(avg_profit),
                     "batch_book_pct": float(book_pct),
                     "batch_exposure": float(batch_exposure),
@@ -1499,6 +1541,13 @@ class DutchingController:
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
                 "table_id": payload.get("table_id"),
                 "event_key": event_key,
+                # PR26-a: ref a monte preservato; altrimenti ogni manual_bet e'
+                # un intento NUOVO (due click identici = due bet): ref di
+                # operazione generato qui una volta, riusato dai retry a valle.
+                "customer_ref": (
+                    normalize_upstream_customer_ref(payload.get("customer_ref"))
+                    or new_operation_customer_ref("man")
+                ),
             }
 
             try:
