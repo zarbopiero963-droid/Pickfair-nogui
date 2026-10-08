@@ -8,6 +8,7 @@ from core.trading_constants import STATUS_FAILED
 from core.trading_engine import TradingEngine
 from order_manager import OrderManager
 from simulation_broker import SimulationBroker
+from tests.helpers.fake_consumed_intents import FakeConsumedIntentsMixin
 
 
 class _LooksLikeBack:
@@ -90,9 +91,12 @@ def test_invalid_batch_leg_does_not_block_independent_valid_leg():
         {"selectionId": 10, "side": " lay ", "price": 2.0, "size": 1.0},
     ])
 
+    # No book is seeded, so the valid LAY rests unmatched: since F8 (#461
+    # PR26) that is a Betfair SUCCESS with orderStatus EXECUTABLE.
     assert [report["status"] for report in response["instructionReports"]] == [
-        "FAILURE", "FAILURE",
-    ]  # No book is seeded, so a valid LAY remains unmatched.
+        "FAILURE", "SUCCESS",
+    ]
+    assert response["instructionReports"][1]["orderStatus"] == "EXECUTABLE"
     assert response["instructionReports"][0]["betId"] == ""
     valid_id = response["instructionReports"][1]["betId"]
     assert valid_id in broker.state.orders
@@ -199,7 +203,7 @@ class _EngineBus:
         return None
 
 
-class _EngineDB:
+class _EngineDB(FakeConsumedIntentsMixin):
     """Just enough persistence for `submit_quick_bet` to reach the client."""
 
     def __init__(self):

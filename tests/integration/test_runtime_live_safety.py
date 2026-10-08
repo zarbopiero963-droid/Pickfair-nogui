@@ -1,6 +1,7 @@
 import pytest
 
 from core.trading_engine import TradingEngine
+from tests.helpers.fake_consumed_intents import FakeConsumedIntentsMixin
 from tests.helpers.fake_exchange import FakeExchange
 
 
@@ -15,7 +16,7 @@ class _Bus:
         return None
 
 
-class _DB:
+class _DB(FakeConsumedIntentsMixin):
     def __init__(self):
         self.orders = {}
         self.seq = 0

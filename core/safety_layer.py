@@ -367,8 +367,16 @@ class SafetyLayer:
         self._validate_schema(payload, self.CASHOUT_REQUEST_SCHEMA, "CASHOUT_REQUEST")
         price = self._safe_float(payload.get("price"), 0.0)
         stake = self._safe_float(payload.get("stake"), 0.0)
+        # F15 (#453, #461 PR26): NaN passa `price <= 1.0` e `stake <= 0`
+        # (ogni confronto con NaN e' falso) e +Inf li supera: senza finitezza un
+        # cashout non numerico risultava valido. Stessi controlli di
+        # `_validate_common_order_rules`.
+        if not math.isfinite(price):
+            raise MarketSanityError("CASHOUT_REQUEST: price non finite")
         if price <= 1.0:
             raise MarketSanityError("CASHOUT_REQUEST: price <= 1")
+        if not math.isfinite(stake):
+            raise RiskInvariantError("CASHOUT_REQUEST: stake non finite")
         if stake <= 0:
             raise RiskInvariantError("CASHOUT_REQUEST: stake <= 0")
         return True

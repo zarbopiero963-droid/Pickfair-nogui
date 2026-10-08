@@ -41,6 +41,7 @@ import pytest
 import betfair_client
 from core.trading_constants import AMBIGUITY_SUBMIT_UNKNOWN, ERROR_AMBIGUOUS
 from core.trading_engine import ExecutionError, TradingEngine, _ExecutionContext
+from tests.helpers.fake_consumed_intents import FakeConsumedIntentsMixin
 
 # Firma autorevole: NON ricopiata: letta dal client reale. Se il client cambia
 # firma e questo doppio non la segue, il test lo dice invece di restare verde.
@@ -93,9 +94,13 @@ class _Nulla:
         return lambda *a, **k: None
 
 
+class _DbNulla(FakeConsumedIntentsMixin, _Nulla):
+    """Inerte, ma con il de-dup durevole che il ramo LIVE richiede dalla PR26."""
+
+
 def _engine(client: Any, *, via_getter: bool = True) -> TradingEngine:
     eng = TradingEngine(
-        bus=_Nulla(), db=_Nulla(),
+        bus=_Nulla(), db=_DbNulla(),
         client_getter=(lambda: client) if via_getter else (lambda: None),
         executor=_Nulla(),
     )
@@ -255,7 +260,7 @@ class _Riconciliazione:
         self.accodati.append(meta)
 
 
-class _DbMinimo:
+class _DbMinimo(FakeConsumedIntentsMixin):
     def insert_order(self, _payload: Dict[str, Any]) -> str:
         return "OID-PR02"
 

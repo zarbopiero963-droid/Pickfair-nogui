@@ -2065,6 +2065,31 @@
       "max_files": 16,
       "allow_tests": true,
       "description": "Mandato owner 08/10/2026: una sola PR di governance che rende stabile il contratto di autonomia end-to-end (spec §0) per Pickfair + Control API + #495 + MCP. Ruoli owner/agente, tassonomia a due assi, DEFERRED_BY_POLICY, THEORETICAL_MUTATION, P0/P1, blocker strutturati, reviewer P41 (Sol+Grok attivi, Codex advisory, Fugu/Fable/Astra sospesi), label safety-critical informativa vs manual-review-required bloccante (MANUAL_AUTHORITY_PATTERNS in Sol/Grok), merge owner per i file di autorita', auto-merge runtime/core a gate completi, controllo full-diff in pr-guard, readiness fail-closed sui thread GraphQL, PR successiva, parallelismo cross-repo, #497 DEFERRED, decisioni chiuse/aperte per riferimento, STOP owner minimi, principio verbatim. scripts/pr_autonomy_policy.py puro + test; can_auto_merge del controller richiede anche merge_decision == READY_FOR_AUTO_MERGE (gate aggiunto, fail-closed). NESSUN cambio di prodotto/runtime/Betfair/MCP/Control API/denaro/SIM-LIVE. PR a merge manuale owner: mai auto-merge."
+    },
+    "issue461-pr26-order-authority": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/safety_layer.py",
+        "core/trading_engine.py",
+        "database.py",
+        "database_schema.py",
+        "guardrails/contracts/core.trading_engine.json",
+        "order_manager.py",
+        "simulation_broker.py",
+        "tests/acceptance/test_issue437_pr02.py",
+        "tests/acceptance/test_issue437_pr26.py",
+        "tests/failure/test_betfair_place_orders_single_shot.py",
+        "tests/helpers/fake_consumed_intents.py",
+        "tests/integration/test_runtime_live_safety.py",
+        "tests/unit/test_betfair_client_quota_non_finita.py",
+        "tests/unit/test_circuit_breaker_wiring.py",
+        "tests/unit/test_simulation_broker_runtime_hardening.py",
+        "tests/unit/test_simulation_broker_side_parity.py"
+      ],
+      "max_files": 18,
+      "allow_tests": true,
+      "description": "#461 PR26 unica autorita' ordini e contratti adapter (PKG-P23), baseline main 456fc94 (#499), nessuna PR aperta. De-dup DUREVOLE degli intenti consumati (gate owner LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE): tabella additiva consumed_order_intents, marcatura committata prima di ogni chiamata al trasporto dell'engine, resta dopo COMPLETED/FAILED post-invio/AMBIGUOUS/restart, rilascio solo della propria riga e solo con prova di non invio; LIVE senza capacita' => nessun invio; DUPLICATE non rilascia la chiave dell'originale. Broker SIM dichiarato senza execute() piazza via place_bet con lo stesso adapter. F8/F10 SimulationBroker, F14 OrderManager (pre-invio PERMANENT, finitezza, lato senza conversione, busta BetfairClient, cancel singolo per firma), F15 SafetyLayer cashout. Doppi DB dei test LIVE con de-dup in memoria. Nessun cambio a MM/rischio/esposizione/cashout semantics/STOP/SIM-LIVE/endpoint Betfair/MCP/Control API/Telegram."
     }
   }
 }

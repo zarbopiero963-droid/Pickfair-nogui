@@ -212,13 +212,13 @@ def test_block_dalla_facciata_del_servizio_nessun_invio(campo, valore, codice):
 @pytest.mark.unit
 @pytest.mark.safety
 def test_block_da_order_manager_nessun_invio():
-    # `OrderManager._validate_payload` controlla solo `price <= 1.0`, e
-    # `safe_float` lascia passare NaN: il controllo del client e' l'ultima
-    # barriera prima del trasporto. Oggi nessun codice di produzione costruisce
-    # un OrderManager. Come classifichi l'errore pre-invio (oggi AMBIGUOUS,
-    # perche' INVALID_PRICE non e' nella sua mappa) e' un altro contratto,
-    # della PR26: qui conta che non parta nulla.
-    from order_manager import OrderManager
+    # Qui conta che non parta nulla. Dalla PR26 (#461, F14)
+    # `OrderManager._validate_payload` controlla anche la finitezza: la quota
+    # NaN si ferma prima della saga e del client con `ValidationError`, e un
+    # `INVALID_PRICE` del client resterebbe comunque un rifiuto certo
+    # (PERMANENT), non AMBIGUOUS. Oggi nessun codice di produzione costruisce
+    # un OrderManager.
+    from order_manager import OrderManager, ValidationError
 
     client, sessione = _client()
 
@@ -245,12 +245,13 @@ def test_block_da_order_manager_nessun_invio():
     om = OrderManager(db=_Db(), bus=_Bus(), client_getter=lambda: client,
                       sleep_fn=lambda _: None)
 
-    esito = om.place_order({"market_id": "1.234", "selection_id": 5678,
-                            "bet_type": "BACK", "price": float("nan"),
-                            "stake": 5.0, "customer_ref": "REF-F11"})
+    with pytest.raises(ValidationError):
+        om.place_order({"market_id": "1.234", "selection_id": 5678,
+                        "bet_type": "BACK", "price": float("nan"),
+                        "stake": 5.0, "customer_ref": "REF-F11"})
 
     assert sessione.grezzi == []
-    assert esito["ok"] is False
+    assert om.db.saghe == {}
 
 
 @pytest.mark.unit
