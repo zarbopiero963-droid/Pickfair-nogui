@@ -2090,6 +2090,22 @@
       "max_files": 18,
       "allow_tests": true,
       "description": "#461 PR26 unica autorita' ordini e contratti adapter (PKG-P23), baseline main 456fc94 (#499), nessuna PR aperta. De-dup DUREVOLE degli intenti consumati (gate owner LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE): tabella additiva consumed_order_intents, marcatura committata prima di ogni chiamata al trasporto dell'engine, resta dopo COMPLETED/FAILED post-invio/AMBIGUOUS/restart, rilascio solo della propria riga e solo con prova di non invio; LIVE senza capacita' => nessun invio; DUPLICATE non rilascia la chiave dell'originale. Broker SIM dichiarato senza execute() piazza via place_bet con lo stesso adapter. F8/F10 SimulationBroker, F14 OrderManager (pre-invio PERMANENT, finitezza, lato senza conversione, busta BetfairClient, cancel singolo per firma), F15 SafetyLayer cashout. Doppi DB dei test LIVE con de-dup in memoria. Nessun cambio a MM/rischio/esposizione/cashout semantics/STOP/SIM-LIVE/endpoint Betfair/MCP/Control API/Telegram."
+    },
+    "issue461-pr27-numeric-validation": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/money_management.py",
+        "core/runtime_controller.py",
+        "core/trading_engine.py",
+        "core/validators.py",
+        "guardrails/contracts/core.trading_engine.json",
+        "order_manager.py",
+        "tests/acceptance/test_issue437_pr27.py"
+      ],
+      "max_files": 9,
+      "allow_tests": true,
+      "description": "#461 PR27 validazione numerica fail-closed per ordini e rischio (PKG-P24-A, T09/T18), baseline main f5cb7e6 (#500), nessuna PR aperta. Fonte unica core/validators.py (order_market_id, order_selection_id, order_price, order_stake, finite_number) con gli stessi codici INVALID_* del client; il fix client #488 NON si duplica. Engine: campo presente bool/NaN/inf/non numerico o selection id non intero => FAILED/INVALID_REQUEST in normalizzazione, nessuna riga orders, nessuna marcatura intento, nessun rilascio della chiave di un originale in volo. Runtime: market/selection/quota validati prima di anti-duplicazione, tavoli e MM; cap A2 max_open_exposure illeggibile => nega. MM: stake fisso del segnale invalido => rifiuto; esposizione non finita (#449) => rifiuto; max_stake_abs illeggibile => 0; cap recovery bool => corrotto (#450). OrderManager: bool e troncamenti rifiutati prima della conversione. Follow-up #449/#450/#451 come test (confini stake esatti, disarmo da impostazioni, consumer runtime dell'esposizione corrotta). Rinvii: A1 drawdown e A2 auto-next a PR28; tavolo ACTIVE dopo FAILED a PR29/F2; SIM settled-market ACCEPTED_FOR_PROCESSING preesistente a PR30/PR31. LIVE resta spento."
     }
   }
 }

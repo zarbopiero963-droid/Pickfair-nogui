@@ -9,6 +9,7 @@ from collections import deque
 from typing import Any, Callable, Deque, Dict, Optional, Set
 
 from circuit_breaker import CircuitBreaker
+from core import validators
 from core.trading_constants import (  # noqa: F401 – re-exported for backward compat
     _ACK_STATES,
     _PASSTHROUGH_KEYS,
@@ -970,10 +971,12 @@ class TradingEngine:
         # Release keys (ONLY on terminal). Un DUPLICATE_BLOCKED non ha mai
         # registrato chiavi sue: la chiave in memoria e' quella dell'ORIGINALE,
         # e rilasciarla qui riapriva l'intento mentre l'originale era ancora in
-        # volo (#461 PR26).
+        # volo (#461 PR26). Lo stesso vale per una richiesta rifiutata in
+        # normalizzazione (INVALID_REQUEST), che si ferma prima del de-dup (PR27).
         try:
             if (outcome in (OUTCOME_SUCCESS, OUTCOME_FAILURE)
-                    and status != STATUS_DUPLICATE_BLOCKED):
+                    and status != STATUS_DUPLICATE_BLOCKED
+                    and reason != "INVALID_REQUEST"):
                 self._release_customer_ref_if_terminal(ctx)
         except Exception:
             logger.exception("Failed to release inflight keys")
@@ -1266,6 +1269,8 @@ class TradingEngine:
             logger.warning("correlation_id auto-generated=%s for customer_ref=%s",
                            correlation_id, customer_ref)
 
+        self._valida_campi_numerici(request)
+
         normalized = dict(request)
         normalized["customer_ref"] = customer_ref
         normalized["correlation_id"] = correlation_id
@@ -1291,6 +1296,30 @@ class TradingEngine:
             normalized["order_origin"] = ORIGIN_NORMAL
 
         return normalized
+
+    @staticmethod
+    def _valida_campi_numerici(request: Dict[str, Any]) -> None:
+        """Fail-closed sui campi d'ordine PRESENTI (#461 PR27, PKG-P24-A).
+
+        Un bool, un NaN/inf, un testo non numerico o un selection id non intero
+        si fermano qui, prima di risk gate, de-dup, persistenza e trasporto: il
+        percorso di normalizzazione fallita chiude con FAILED/INVALID_REQUEST e
+        nessuna riga `orders`, nessuna marcatura dell'intento. Prima arrivavano
+        al client (`selection_id=True` => runner 1, `stake=True` => 1 EUR) o
+        lasciavano una riga FAILED. Un campo ASSENTE resta al client, gia'
+        fail-closed (#488), come documentato in `_kwargs_per_place_bet`.
+        """
+        controlli = (
+            ("market_id", validators.order_market_id),
+            ("selection_id", validators.order_selection_id),
+            ("price", validators.order_price),
+        )
+        for chiave, valida in controlli:
+            if request.get(chiave) is not None:
+                valida(request[chiave])
+        stake = request.get("stake", request.get("size"))
+        if stake is not None:
+            validators.order_stake(stake)
 
     def _repopulate_inflight_from_db(self) -> bool:
         synced = False

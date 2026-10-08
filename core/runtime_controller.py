@@ -9,6 +9,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from core import validators
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
@@ -2933,6 +2934,30 @@ class RuntimeController:
             self._reject_signal(signal, f"campi_mancanti:{','.join(missing)}")
             return
 
+        # PR27 (#461, PKG-P24-A): campi d'ordine fail-closed PRIMA di
+        # anti-duplicazione, tavoli e money management. Prima un selection id
+        # non numerico o NaN sollevava dopo `duplication_guard.acquire` (chiave
+        # evento bloccata, nessun SIGNAL_REJECTED) e `True` arrivava al broker
+        # come runner 1. Stessi controlli dell'engine (core/validators.py).
+        invalid_fields = []
+        for field_name, check in (("market_id", validators.order_market_id),
+                                  ("selection_id", validators.order_selection_id)):
+            try:
+                check(signal.get(field_name))
+            except ValueError:
+                invalid_fields.append(field_name)
+        if invalid_fields:
+            self._reject_signal(signal, f"campi_non_validi:{','.join(invalid_fields)}")
+            return
+        raw_price = signal.get("price")
+        if raw_price in (None, ""):
+            raw_price = signal.get("odds")
+        try:
+            validators.order_price(raw_price)
+        except ValueError:
+            self._reject_signal(signal, "quota_non_valida")
+            return
+
         copy_meta, pattern_meta = self._extract_origin_metadata(signal)
         if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
             self._reject_signal(signal, "copy_pattern_mutually_exclusive")
@@ -2997,8 +3022,15 @@ class RuntimeController:
         if decision.approved:
             max_abs_exposure = getattr(self.config, "max_open_exposure", None)
             if max_abs_exposure is not None:
+                # Hard-stop configurato ma illeggibile (NaN dal loader, inf,
+                # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
+                # disattivava il cap (PR27, #461).
+                cap_value = validators.finite_number(max_abs_exposure)
                 projected_total = total_exposure + decision.recommended_stake
-                if projected_total > float(max_abs_exposure):
+                if cap_value is None:
+                    decision.approved = False
+                    decision.reason = "max_open_exposure_non_valido"
+                elif projected_total > cap_value:
                     decision.approved = False
                     decision.reason = f"max_open_exposure_exceeded:limit={max_abs_exposure}€"
 
