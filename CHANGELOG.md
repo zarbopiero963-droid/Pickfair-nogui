@@ -104,6 +104,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Owner limits measured on the order's risk (#461 PR28, PKG-P24-B, first slice).
+  - **Single formula:** `core/validators.py` `order_exposure` gives BACK = stake
+    and LAY = liability `stake * (price - 1)`. `exceeds_cap` holds at the exact
+    threshold with float tolerance.
+  - **LAY consumers:** money management (single, total and event caps), the A2
+    `max_open_exposure` cap, the table exposure and auto-next all used the stake.
+    A LAY of 1.5 at 21 (liability 30) counted as 1.5, and a LAY of 10 at 21
+    (liability 200) passed the single cap of 180. A LAY over a cap is now
+    rejected, with no resizing. RiskGate uses the same function.
+  - **Exact threshold:** 0.1 + 0.2 against a cap of 0.3, or a LAY of 0.1 at 4
+    against MAX_WIN 0.3, are no longer denied. A one-cent excess still is.
+  - **`reload_config`** (GUI save while the bot is running): it no longer
+    rebuilds the TableManager and the ReconciliationEngine. Before, tables,
+    exposure and recovery memory went back to zero, so the aggregate caps
+    restarted from 0. The table count adapts without dropping busy tables.
+    `start()` keeps its fresh session.
+  - **Auto-next:** it now applies the A2 cap and the real event exposure, and
+    activates the table with the liability.
+  - **Best price DIRECT:** if the price changes after the caps, a LAY whose
+    liability grows is rejected.
 - Fail-closed numeric validation for orders and risk (#461 PR27, PKG-P24-A).
   - A new shared source, `core/validators.py` (`order_market_id`,
     `order_selection_id`, `order_price`, `order_stake`, `finite_number`), uses

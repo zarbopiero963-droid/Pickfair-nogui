@@ -2106,6 +2106,21 @@
       "max_files": 9,
       "allow_tests": true,
       "description": "#461 PR27 validazione numerica fail-closed per ordini e rischio (PKG-P24-A, T09/T18), baseline main f5cb7e6 (#500), nessuna PR aperta. Fonte unica core/validators.py (order_market_id, order_selection_id, order_price, order_stake, finite_number) con gli stessi codici INVALID_* del client; il fix client #488 NON si duplica. Engine: campo presente bool/NaN/inf/non numerico o selection id non intero => FAILED/INVALID_REQUEST in normalizzazione, nessuna riga orders, nessuna marcatura intento, nessun rilascio della chiave di un originale in volo. Runtime: market/selection/quota validati prima di anti-duplicazione, tavoli e MM; cap A2 max_open_exposure illeggibile => nega. MM: stake fisso del segnale invalido => rifiuto; esposizione non finita (#449) => rifiuto; max_stake_abs illeggibile => 0; cap recovery bool => corrotto (#450). OrderManager: bool e troncamenti rifiutati prima della conversione. Follow-up #449/#450/#451 come test (confini stake esatti, disarmo da impostazioni, consumer runtime dell'esposizione corrotta). Rinvii: A1 drawdown e A2 auto-next a PR28; tavolo ACTIVE dopo FAILED a PR29/F2; SIM settled-market ACCEPTED_FOR_PROCESSING preesistente a PR30/PR31. LIVE resta spento."
+    },
+    "issue461-pr28-owner-limits": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/money_management.py",
+        "core/risk_gate.py",
+        "core/runtime_controller.py",
+        "core/table_manager.py",
+        "core/validators.py",
+        "tests/acceptance/test_issue437_pr28.py"
+      ],
+      "max_files": 8,
+      "allow_tests": true,
+      "description": "#461 PR28 (prima parte) limiti owner misurati sul rischio dell'ordine (PKG-P24-B), baseline main feb2302 (#501), nessuna PR aperta. Formula unica core/validators.order_exposure: BACK=stake, LAY=stake*(quota-1), lato ignoto => errore; soglia esatta con tolleranza float (exceeds_cap, 1e-9) con parità tra RiskGate, MM, cap A2 runtime, tavoli e auto-next. MM: cap singolo/totale/evento sul rischio, LAY oltre cap rifiutato senza ridimensionamento, lato ignoto => lato_non_valido. Runtime: A2 e tavolo sulla liability; best price non può aumentare il rischio approvato; auto-next con esposizione evento reale e cap A2. reload_config preserva TableManager, esposizione, memoria recovery e ReconciliationEngine (resize senza toccare tavoli occupati); start() invariato (reset_session=True). A1 drawdown LIVE già fail-closed (test). Residui a PR28-b: P37 stop sessione/esposizione 10€, P38 azioni allo stop, F4 perdita giornaliera al riavvio, nuovi cap assoluti evento/strategia/drawdown, lato assente => BACK, hard-stop True; cap aggregati per produttori non-segnale a PR29; start() che azzera i tavoli a PR29/PR31."
     }
   }
 }

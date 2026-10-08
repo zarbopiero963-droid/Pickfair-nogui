@@ -39,6 +39,7 @@ import threading
 from typing import Any, Dict, Optional, Tuple
 
 import trading_config
+from core import validators
 
 logger = logging.getLogger(__name__)
 
@@ -311,16 +312,19 @@ class RiskGate:
         """
         payout = stake * (price - 1.0)
         win = payout if side == BACK else stake
-        exposure = stake if side == BACK else payout
+        # Formula unica dei cap owner (#461 PR28): stessa funzione di money
+        # management, cap A2, tavoli e auto-next.
+        exposure = validators.order_exposure(side, stake, price)
 
         if not math.isfinite(win) or not math.isfinite(exposure):
             # stake e price sono finiti, ma il prodotto puo' traboccare.
             return self._deny(payload, "RISK_EXPOSURE_NOT_FINITE")
 
         max_win = self._limit("MAX_WIN")
-        if win > max_win:
+        # Soglia esatta con tolleranza float (PR28): 0.1*(4-1) e' 0.3, non oltre.
+        if validators.exceeds_cap(win, max_win):
             return self._deny(payload, "RISK_MAX_WIN_EXCEEDED")
-        if exposure > max_win:
+        if validators.exceeds_cap(exposure, max_win):
             return self._deny(payload, "RISK_MAX_EXPOSURE_EXCEEDED")
         return None
 

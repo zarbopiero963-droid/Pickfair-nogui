@@ -319,6 +319,19 @@ class RoserpinaMoneyManagement:
                 metadata={"price": price},
             )
 
+        # Lato dell'ordine (#461 PR28): i cap misurano il RISCHIO, non lo
+        # stake. Un lato sconosciuto non ha un rischio stimabile: si rifiuta.
+        side = validators.signal_side(signal)
+        if side not in ("BACK", "LAY"):
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=0.0,
+                desk_mode=DeskMode.NORMAL,
+                reason="lato_non_valido",
+                table_id=table_id,
+                metadata={"side": side},
+            )
+
         daily_loss = signal.get("daily_loss_snapshot", 0.0)
         desk_mode = self.determine_desk_mode(
             bankroll_current=bankroll_current,
@@ -406,8 +419,14 @@ class RoserpinaMoneyManagement:
 
         # clamp tecnico
         recommended = self._clamp(recommended, min_stake, max(max_single, min_stake))
+        # Rischio dell'ordine (#461 PR28): BACK = stake, LAY = liability
+        # stake*(quota-1). Prima tutti i cap confrontavano lo stake: una LAY 10
+        # a 21 (liability 200) passava il tetto singolo di 180. La LAY oltre il
+        # tetto si rifiuta (nessun ridimensionamento: la formula di sizing resta
+        # alla PR23); soglia esatta con tolleranza float.
+        exposure = validators.order_exposure(side, recommended, price)
 
-        if recommended > max_single:
+        if validators.exceeds_cap(exposure, max_single):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=max_single,
@@ -416,11 +435,13 @@ class RoserpinaMoneyManagement:
                 table_id=table_id,
                 metadata={
                     "recommended": recommended,
+                    "exposure": exposure,
+                    "side": side,
                     "max_single": max_single,
                 },
             )
 
-        if current_total_exposure + recommended > max_total:
+        if validators.exceeds_cap(current_total_exposure + exposure, max_total):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=0.0,
@@ -430,11 +451,13 @@ class RoserpinaMoneyManagement:
                 metadata={
                     "current_total_exposure": current_total_exposure,
                     "recommended": recommended,
+                    "exposure": exposure,
+                    "side": side,
                     "max_total": max_total,
                 },
             )
 
-        if event_current_exposure + recommended > max_event:
+        if validators.exceeds_cap(event_current_exposure + exposure, max_event):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=0.0,
@@ -444,6 +467,8 @@ class RoserpinaMoneyManagement:
                 metadata={
                     "event_current_exposure": event_current_exposure,
                     "recommended": recommended,
+                    "exposure": exposure,
+                    "side": side,
                     "max_event": max_event,
                 },
             )
@@ -456,6 +481,8 @@ class RoserpinaMoneyManagement:
             table_id=table_id,
             metadata={
                 "price": price,
+                "side": side,
+                "exposure": exposure,
                 "target_profit": self._target_profit_eur(bankroll_current),
                 "table_loss": table_loss,
                 "base_stake": base_stake,

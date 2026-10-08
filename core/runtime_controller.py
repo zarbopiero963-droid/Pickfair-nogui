@@ -1837,11 +1837,16 @@ class RuntimeController:
             return "SIMULATION"
         return "LIVE"
 
-    def reload_config(self) -> None:
-        self.config = self.settings_service.load_roserpina_config()
+    def reload_config(self, *, reset_session: bool = False) -> None:
+        """PR28: a bot acceso conserva tavoli/esposizione/riconciliazione."""
+        config = self.settings_service.load_roserpina_config()
+        if not reset_session:
+            self.table_manager.resize(config.table_count)
+        self.config = config
         self.mm = RoserpinaMoneyManagement(self.config)
-        self.table_manager = TableManager(table_count=self.config.table_count)
-        self.reconciliation_engine = self._build_reconciliation_engine()
+        if reset_session:  # start(): invariato
+            self.table_manager = TableManager(table_count=self.config.table_count)
+            self.reconciliation_engine = self._build_reconciliation_engine()
         self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
 
     def _desk_mode(self) -> DeskMode:
@@ -2186,7 +2191,7 @@ class RuntimeController:
         live_enabled: Optional[bool] = None,
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
-        self.reload_config()
+        self.reload_config(reset_session=True)
 
         requested_execution_mode = self._safe_execution_mode(execution_mode)
         if execution_mode is None and simulation_mode is not None:
@@ -3019,6 +3024,8 @@ class RuntimeController:
         )
 
         # Enforcement A2: Max Open Exposure (Cap Assoluto €) (#320)
+        order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
+            validators.signal_side(signal), decision.recommended_stake, raw_price)
         if decision.approved:
             max_abs_exposure = getattr(self.config, "max_open_exposure", None)
             if max_abs_exposure is not None:
@@ -3026,11 +3033,11 @@ class RuntimeController:
                 # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
                 # disattivava il cap (PR27, #461).
                 cap_value = validators.finite_number(max_abs_exposure)
-                projected_total = total_exposure + decision.recommended_stake
+                projected_total = total_exposure + order_exposure
                 if cap_value is None:
                     decision.approved = False
                     decision.reason = "max_open_exposure_non_valido"
-                elif projected_total > cap_value:
+                elif validators.exceeds_cap(projected_total, cap_value):
                     decision.approved = False
                     decision.reason = f"max_open_exposure_exceeded:limit={max_abs_exposure}€"
 
@@ -3109,7 +3116,7 @@ class RuntimeController:
         self.table_manager.activate(
             table_id=decision.table_id,
             event_key=event_key,
-            exposure=float(decision.recommended_stake),
+            exposure=float(order_exposure),
             market_id=payload["market_id"],
             selection_id=payload["selection_id"],
             meta={
@@ -3128,6 +3135,11 @@ class RuntimeController:
         # (niente approved-without-submit). Con flag OFF e' un no-op totale e
         # ritorna False => i gate sotto restano identici a oggi.
         best_price_attempted = self._apply_direct_best_price(payload)
+        if best_price_attempted and validators.exceeds_cap(validators.order_exposure_or_inf(
+                payload["bet_type"], payload["stake"], payload.get("price")), order_exposure):
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason="esposizione_cresciuta_dopo_best_price")
+            return
 
         # Gate finali pre-submit, RIESEGUITI dopo lo snapshot. Vanno PRIMA di
         # SIGNAL_APPROVED perche' l'audit consuma sia SIGNAL_APPROVED sia
@@ -4201,12 +4213,17 @@ class RuntimeController:
         table = table_ctx if table_ctx is not None else (
             {"table_id": table_id} if table_id is not None else None
         )
+        try:  # PR28: era 0.0
+            next_event_exposure = (self._event_current_exposure(self.duplication_guard.build_event_key(signal))
+                                   if isinstance(signal, dict) else 0.0)
+        except Exception:
+            next_event_exposure = float("inf")
         decision = self.mm.evaluate_next_trade_after_settlement(
             signal=signal,
             bankroll_current=float(self.risk_desk.bankroll_current),
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),
-            event_current_exposure=0.0,
+            event_current_exposure=next_event_exposure,
             table=table,
             cycle_id=str(cycle_id or ""),
             cycle_active=cycle_active,
@@ -4287,6 +4304,10 @@ class RuntimeController:
             return result
 
         risk_allowed, risk_reason = self._risk_allows_auto_trade()
+        if risk_allowed:  # PR28: cap A2 come per il segnale
+            risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
+                self.config, "max_open_exposure", None), self.table_manager.total_exposure()) or risk_reason
+            risk_allowed = risk_reason == "risk_approved"
         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
         if not risk_allowed:
             result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_RISK_REJECTED"
@@ -4366,7 +4387,8 @@ class RuntimeController:
             self.table_manager.activate(
                 table_id=int(table_id),
                 event_key=str(submit_payload.get("event_key") or ""),
-                exposure=float(result["next_stake"]),
+                exposure=validators.order_exposure(
+                    submit_payload["bet_type"], submit_payload["stake"], submit_payload["price"]),
                 market_id=str(submit_payload.get("market_id") or ""),
                 selection_id=submit_payload.get("selection_id"),
                 meta={
