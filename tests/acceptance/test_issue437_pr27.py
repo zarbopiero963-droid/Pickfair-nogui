@@ -282,7 +282,7 @@ def _calcola(mm, *, signal=None, totale=0.0, evento=0.0, loss=0.0):
     )
 
 
-@pytest.mark.parametrize("stake", [True, _NAN, _INF, -_INF, "abc", -5.0])
+@pytest.mark.parametrize("stake", [True, False, _NAN, _INF, -_INF, "abc", -5.0])
 def test_block_stake_fisso_del_segnale_invalido_non_diventa_un_ordine(stake):
     decisione = _calcola(_mm(), signal={"stake": stake})
 
@@ -298,6 +298,19 @@ def test_pass_stake_fisso_valido_e_esatto(stake, atteso):
     18% di 1000 = 180)."""
     decisione = _calcola(_mm(), signal={"stake": stake})
 
+    assert decisione.approved is True
+    assert decisione.recommended_stake == pytest.approx(atteso, abs=1e-12)
+
+
+@pytest.mark.parametrize("stake", [None, 0, 0.0, ""])
+def test_pass_stake_zero_o_assente_resta_al_money_management(stake):
+    """Sentinella documentata dal produttore (telegram_listener: `0 = lascia
+    decidere al MM`): None, 0 e stringa vuota non sono uno stake fisso, vale lo
+    stake MM. Ciclo 1, rilievo Sol: solo `False`, un bool, e' invalido."""
+    atteso = _calcola(_mm()).recommended_stake
+    decisione = _calcola(_mm(), signal={"stake": stake})
+
+    assert atteso > 0.0
     assert decisione.approved is True
     assert decisione.recommended_stake == pytest.approx(atteso, abs=1e-12)
 

@@ -119,8 +119,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - A2 cap: `max_open_exposure` that is configured but unreadable
     (NaN/inf/bool/text) now denies. NaN used to disable the cap.
   - Money management:
-    - an invalid fixed stake from a signal is rejected
-      (`stake_segnale_non_valido`);
+    - an invalid fixed stake from a signal, including `False`, is rejected
+      (`stake_segnale_non_valido`). `0`/`None`/`""` stay the producer's
+      "let MM decide" sentinel;
     - a non-finite exposure (`total_exposure()` = inf on a corrupted state,
       #449) is rejected instead of being counted as 0;
     - an unreadable `max_stake_abs` fails closed;

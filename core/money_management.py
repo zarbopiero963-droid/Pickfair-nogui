@@ -351,7 +351,10 @@ class RoserpinaMoneyManagement:
 
         # Supporto Stake Fisso dal segnale/parser (#CP-04)
         fixed_stake_raw = signal.get("stake")
-        if fixed_stake_raw:
+        # `False` e' un bool presente, non l'assenza: si valida (e si rifiuta)
+        # come `True`. None/0/"" restano la sentinella "decide il MM" dei
+        # produttori (telegram_listener: `0 = lascia decidere al MM`).
+        if fixed_stake_raw or isinstance(fixed_stake_raw, bool):
             # Stake fisso PRESENTE: deve essere un importo finito > 0. Prima
             # True valeva 1 EUR, NaN diventava MIN_STAKE dopo il clamp, inf il
             # cap singolo e un testo veniva sostituito in silenzio dallo stake
