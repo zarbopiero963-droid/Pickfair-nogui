@@ -118,14 +118,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     already active (the strongest barrier, cancel-all + LOCKDOWN) no cashout is
     routed. PAUSE is unchanged (blocks new entries only).
   - The stop is persisted (`risk_stop_state` setting) together with the state
-    change, under the same lock: a restart does not clear it, and an unreadable
-    saved state keeps it active. `reset_risk_stop()` clears it only after a full
-    recheck: no emergency, daily loss not breached, limits valid, session loss
-    below its limit and exposure below the exposure stop (positions actually
-    closed). `start()` reopens on its own only an exposure stop, checked on the
-    exposure held before the tables are rebuilt; a session-loss, unreadable or
-    unknown stop cannot be verified by the new session and needs an explicit
-    `reset_risk_stop()`. While the stop stays on, `start()` re-attempts the
+    change, under the same lock, as a versioned record `{active, reason, seq}`
+    (the PR28-b model). If the db cannot be written, the same version goes to a
+    marker file next to the db (`<db>.risk_stop_pending.json`). At restart the
+    readable copy with the higher `seq` wins; an equal or unknown `seq`, or an
+    unreadable copy, gives the conservative result (stop active). A reset is
+    saved as a NEW version (`active=false`, higher `seq`) BEFORE the runtime
+    reopens, so an old active copy cannot bring the stop back; a reset that
+    cannot be saved anywhere is refused and the runtime stays blocked. Only if
+    neither store can be written does an activation hold for the running
+    process alone (KNOWN_LIMITATION, as in PR28-b).
+  - Neither a restart nor `start()` clears the stop: tables live in memory
+    (exposure reads 0 after a restart) and the session loss restarts, so
+    neither can prove the positions are closed. Only an explicit
+    `reset_risk_stop()` clears it, after a full recheck: no emergency, daily
+    loss not breached, limits valid, session loss below its limit and exposure
+    below the exposure stop. While the stop stays on, `start()` re-attempts the
     `CASHOUT_ALL` (for example after a restart).
   - **Triggers:** session loss reached (`max_session_loss`, PR28-b) and the new
     `max_exposure_stop` (EUR, owner limit with no default, GUI/loader/save). It

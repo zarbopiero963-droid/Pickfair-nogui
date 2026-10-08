@@ -1243,24 +1243,25 @@ class RuntimeController:
         self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
         return result
 
-    def reset_risk_stop(self, held=0.0, at_start=False) -> dict:
+    def reset_risk_stop(self, at_start=False) -> dict:
         """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito."""
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
         with self._risk_stop_lock:
-            blocker = stop_rules.reset_blocker(self, held, at_start)
+            blocker = stop_rules.reset_blocker(self, at_start)
             if blocker:
                 return {"risk_stop_reset": False, "reason": blocker}
             if not self._risk_stop_reason:
                 return {"risk_stop_reset": True, "reason": ""}
+            if not stop_rules.persist_risk_stop(self.db, ""):  # nuova versione PRIMA di riaprire
+                return {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
             self._risk_stop_reason = ""
-            stop_rules.persist_risk_stop(self.db, "")
         self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"risk_stop_reset": True, "reason": ""}
 
-    def _exposure_stop(self, trigger=True, exposure=None) -> str:
-        exposure = self.table_manager.total_exposure() if exposure is None else exposure
-        reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None), exposure)
+    def _exposure_stop(self, trigger=True) -> str:
+        reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None),
+                                                 self.table_manager.total_exposure())
         if trigger and stop_rules.is_stop_trigger(reason):
             self.risk_stop(reason)  # pre-submit
         return reason
@@ -2271,11 +2272,10 @@ class RuntimeController:
         live_enabled: Optional[bool] = None,
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
-        held = self.table_manager.total_exposure()  # P38: prima del reset tavoli
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
         self._session_loss_alerted = False
-        self.reset_risk_stop(held, at_start=True)  # P38: ricontrollo completo
+        self.reset_risk_stop(at_start=True)  # P38: mai riapertura implicita
 
         requested_execution_mode = self._safe_execution_mode(execution_mode)
         if execution_mode is None and simulation_mode is not None:
