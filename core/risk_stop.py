@@ -110,31 +110,82 @@ def _reconcile(a: Any, b: Any) -> str:
     return "risk_stop_state_illeggibile" if _UNREADABLE in (a, b) else ""
 
 
-def persist_risk_stop(db: Any, reason: str) -> bool:
-    """Salva una NUOVA versione {active, reason, seq} ("" = reset). Mai raise.
+def _version_unknown(copies: tuple) -> bool:
+    """True se almeno una copia esiste ma la sua versione non e' confrontabile."""
+    return any(
+        r is _UNREADABLE or (isinstance(r, dict) and r["seq"] is None)
+        for r in copies
+    )
 
-    seq = massima seq leggibile in db/marker + 1. db non scrivibile => stessa
-    versione nel marker accanto al db (schema PR28-b). Una versione piu' vecchia
-    non viene mai cancellata: perde per seq. False = non salvata da nessuna parte.
+
+def persist_risk_stop(db: Any, reason: str) -> bool:
+    """Persiste una transizione RISK_STOP senza permettere regressioni di versione.
+
+    Se durante l'ATTIVAZIONE una copia e' illeggibile/ha seq ignota, la nuova
+    attivazione viene scritta con seq=None: _reconcile la tratta come barriera
+    conservativa e quindi non puo' perdere contro un vecchio reset con seq
+    numerica quando lo store torna leggibile.
+
+    Un RESET usa invece la prossima seq numerica conosciuta, ma viene considerato
+    riuscito soltanto se una rilettura di db+marker riconcilia davvero a stato
+    inattivo. Se un marker attivo a versione ignota impedisce la prova, si tenta
+    di sostituire anche il marker con la stessa versione di reset; se non si
+    riesce, il reset fallisce e il runtime resta bloccato.
     """
     if not hasattr(db, "save_settings"):
         return False
-    seqs = [r["seq"] for r in _copies(db) if isinstance(r, dict) and r["seq"] is not None]
-    payload = json.dumps({"active": bool(reason), "reason": str(reason or ""),
-                          "seq": max(seqs, default=0) + 1, "at": datetime.utcnow().isoformat()})
+
+    before = _copies(db)
+    seqs = [r["seq"] for r in before if isinstance(r, dict) and r["seq"] is not None]
+    active = bool(reason)
+    seq = None if active and _version_unknown(before) else max(seqs, default=0) + 1
+    payload = json.dumps({
+        "active": active,
+        "reason": str(reason or ""),
+        "seq": seq,
+        "at": datetime.utcnow().isoformat(),
+    })
+    marker = _marker_path(db)
+
+    db_written = False
     try:
         db.save_settings({RISK_STOP_STATE_KEY: payload})
-        return True
+        db_written = True
     except Exception:
         logger.critical("risk-stop: stato non salvato su db, uso il marker", exc_info=True)
-    marker = _marker_path(db)
+
+    # Un'attivazione e' fail-closed per costruzione: se almeno una copia e'
+    # stata scritta, una seq ignota resta conservativa al restore.
+    if active and db_written:
+        return True
+
+    # Per un reset non basta che una write abbia risposto OK: occorre provare
+    # che l'insieme db+marker non contenga ancora una copia attiva/ignota che
+    # vincerebbe al restart.
+    if not active and db_written and _reconcile(*_copies(db)) == "":
+        return True
+
+    marker_written = False
     try:
         if marker:
             atomic_write_text(marker, payload)
-            return True
+            marker_written = True
     except Exception:
-        logger.critical("risk-stop: neanche il marker e' scrivibile (KNOWN_LIMITATION)", exc_info=True)
-    return False
+        logger.critical("risk-stop: marker non scrivibile", exc_info=True)
+
+    if active:
+        if marker_written:
+            return True
+        if not db_written:
+            logger.critical("risk-stop: ne' db ne' marker scrivibili (KNOWN_LIMITATION)")
+        return db_written
+
+    if not (db_written or marker_written):
+        return False
+
+    # Reset riuscito soltanto se la rilettura dimostra che nessuna copia
+    # conservativa/attiva puo' riaprire il RISK_STOP al boot.
+    return _reconcile(*_copies(db)) == ""
 
 
 def restore_risk_stop(db: Any) -> str:

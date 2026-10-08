@@ -273,6 +273,72 @@ def _stato(active, reason, seq):
     return json.dumps({"active": active, "reason": reason, "seq": seq})
 
 
+def test_block_stop_con_versione_db_ignota_prevale_su_reset_vecchio(tmp_path):
+    """Fix c3 (Sol): se lettura+scrittura DB falliscono, il nuovo stop nel
+    marker ha versione ignota e non puo' perdere contro un vecchio reset."""
+    c = _catena(tmp_path)
+    _scrivi(c, db=_stato(False, "", 2))
+    get_settings, save_settings = c.rc.db.get_settings, c.rc.db.save_settings
+    c.rc.db.get_settings = lambda: (_ for _ in ()).throw(OSError("read failed"))
+    c.rc.db.save_settings = lambda _v: (_ for _ in ()).throw(OSError("write failed"))
+
+    esito = c.rc.risk_stop("exposure_stop_reached:after-reset")
+
+    c.rc.db.get_settings, c.rc.db.save_settings = get_settings, save_settings
+    with open(_marker(c), encoding="utf-8") as fh:
+        marker = json.load(fh)
+    assert esito["persisted"] is True
+    assert marker["active"] is True and marker["seq"] is None
+
+    riavvio = _catena(tmp_path)
+    assert riavvio.rc._risk_stop_reason == "exposure_stop_reached:after-reset"
+
+
+def test_pass_reset_sostituisce_marker_attivo_a_versione_ignota(tmp_path):
+    """Fix c3 (Grok): un reset esplicito puo' riaprire soltanto dopo aver
+    reso db+marker riconciliabili come inattivi."""
+    seed = _catena(tmp_path)
+    _scrivi(
+        seed,
+        db=_stato(False, "", 2),
+        marker=_stato(True, "exposure_stop_reached:unknown", None),
+    )
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:unknown"
+
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}
+
+    with open(_marker(c), encoding="utf-8") as fh:
+        marker = json.load(fh)
+    assert marker["active"] is False and marker["seq"] >= 3
+    assert _catena(tmp_path).rc._risk_stop_reason == ""
+
+
+def test_block_reset_non_riapre_se_marker_ignoto_non_si_aggiorna(tmp_path, monkeypatch):
+    """Fix c3 (Grok): DB reset scritto non basta se un marker active/seq=None
+    resta autorevole in modo conservativo."""
+    from core import risk_stop as stop_rules
+
+    seed = _catena(tmp_path)
+    _scrivi(
+        seed,
+        db=_stato(False, "", 2),
+        marker=_stato(True, "exposure_stop_reached:unknown", None),
+    )
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    monkeypatch.setattr(
+        stop_rules,
+        "atomic_write_text",
+        lambda *_a, **_k: (_ for _ in ()).throw(OSError("marker write failed")),
+    )
+
+    esito = c.rc.reset_risk_stop()
+
+    assert esito == {"risk_stop_reset": False, "reason": "risk_stop_reset_non_persistito"}
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:unknown"
+    assert _catena(tmp_path).rc._risk_stop_reason == "exposure_stop_reached:unknown"
+
+
 @pytest.mark.parametrize("db, marker, atteso", [
     (_stato(True, "exposure_stop_reached:x", 2), _stato(False, "", 3), ""),          # newer reset wins
     (_stato(False, "", 3), _stato(True, "exposure_stop_reached:x", 2), ""),          # stale copy loses
