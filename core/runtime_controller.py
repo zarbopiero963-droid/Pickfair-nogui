@@ -1208,6 +1208,11 @@ class RuntimeController:
         return loss_limits.session_loss_reason(
             limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
 
+    def _loss_block_reason(self) -> str:
+        if getattr(self, "_daily_loss_persisted", None) is loss_limits.PERSIST_FAILED:
+            return "daily_loss_state_non_persistito"
+        return self._session_loss_block_reason()
+
     def _publish_session_loss_breach(self) -> None:
         reason = self._session_loss_block_reason()
         if reason.startswith("session_loss_breached") and not getattr(self, "_session_loss_alerted", False):
@@ -2476,7 +2481,7 @@ class RuntimeController:
                 "reason": "daily_loss_breached",
                 "status": self._safe_status_snapshot(),
             }
-        session_block = self._session_loss_block_reason()
+        session_block = self._loss_block_reason()
         if session_block:
             return {"resumed": False, "reason": session_block, "status": self._safe_status_snapshot()}
 
@@ -3202,7 +3207,7 @@ class RuntimeController:
                 reason="emergency_stop_active:pre_submit_recheck",
             )
             return
-        session_block = self._session_loss_block_reason()  # P37: stop perdita di sessione
+        session_block = self._loss_block_reason()  # F4/P37
         if session_block:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=session_block)
@@ -4668,7 +4673,7 @@ class RuntimeController:
         # (es. dopo riavvio + start() senza reset_emergency()).
         if self._emergency_stopped:
             return False, "emergency_stop_active"
-        session_block = self._session_loss_block_reason()
+        session_block = self._loss_block_reason()
         if session_block:
             return False, session_block
         if not self._runtime_active():

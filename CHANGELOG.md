@@ -108,8 +108,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - **F4:** the day's realized loss is saved (`daily_loss_state` setting) and
     rebuilt at restart on the same UTC day, before any new risk. Before, a
     restart zeroed it: EUR 8 lost, restart, another EUR 8 = 16 against
-    `max_daily_loss` 10 with no stop. An unreadable saved state counts as a
-    breach (fail-closed); a new UTC day starts from zero.
+    `max_daily_loss` 10 with no stop. An unreadable saved state, or an invalid
+    or future saved day, counts as a breach (fail-closed); a past UTC day
+    starts from zero. If a save fails, new risk is refused until a save
+    succeeds.
   - `reset_cycle()` and the drawdown auto-reset no longer wipe the day's or the
     session's loss (they zero the desk `realized_pnl`; the baselines now shift
     with it).

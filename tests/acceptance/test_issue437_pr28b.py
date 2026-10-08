@@ -110,6 +110,46 @@ def test_block_f4_stato_persistito_illeggibile_fail_closed(tmp_path, grezzo):
     assert riavvio.rc._daily_loss_monitor_state["breached"] is True
 
 
+@pytest.mark.parametrize("giorno", [None, "", "2026-13-45", "ieri", 20261008, "9999-12-31"])
+def test_block_f4_giorno_salvato_non_valido_o_futuro_fail_closed(tmp_path, giorno):
+    """Sol #503: an invalid saved day must not read as 'another day' and drop
+    a saved breach; a future day (clock moved back) cannot be proven either."""
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    c.db.save_settings({"daily_loss_state": json.dumps({
+        "day_utc": giorno, "intraday_realized_pnl": -12.0, "breached": True, "breached_at": "",
+    })})
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["breached"] is True
+
+
+def test_block_f4_salvataggio_fallito_blocca_nuove_entrate(tmp_path):
+    """Sol #503: if the day's loss cannot be saved, a restart would restore a
+    stale value: new risk is refused until a save succeeds."""
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    salva = c.db.save_settings
+
+    def _guasto(_valori):
+        raise OSError("disk full")
+
+    c.db.save_settings = _guasto
+    _perdi(c.rc, 8.0)
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[-1] == "daily_loss_state_non_persistito"
+    assert c.rc._risk_allows_auto_trade() == (False, "daily_loss_state_non_persistito")
+
+    c.db.save_settings = salva
+    _perdi(c.rc, 0.5)                                   # next save succeeds
+    c.rc._on_signal_received(_signal(market_id="1.777"))
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.5)
+
+
 def test_block_f4_reset_ciclo_non_azzera_la_perdita_del_giorno(tmp_path):
     c = _catena(tmp_path, max_daily_loss=10.0)
     _perdi(c.rc, 8.0)

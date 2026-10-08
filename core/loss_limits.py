@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Optional
 
 from core import validators
@@ -22,6 +22,9 @@ from core import validators
 logger = logging.getLogger(__name__)
 
 DAILY_LOSS_STATE_KEY = "daily_loss_state"
+# Ultimo salvataggio fallito: il runtime rifiuta nuovo rischio finche' un
+# salvataggio non riesce (un riavvio ripristinerebbe un valore vecchio).
+PERSIST_FAILED: dict = {"persist_failed": True}
 _FIELDS = ("day_utc", "intraday_realized_pnl", "breached", "breached_at")
 
 
@@ -43,13 +46,16 @@ def restored_daily_loss(raw: Any, *, today_utc: str, realized_pnl: float) -> Opt
         return None
     try:
         record = json.loads(raw)
-        day = str(record["day_utc"])
+        day = date.fromisoformat(record["day_utc"])  # None/testo/numero => errore
         intraday = validators.finite_number(record["intraday_realized_pnl"])
     except Exception as exc:
         raise ValueError("daily_loss_state illeggibile") from exc
     if intraday is None:
         raise ValueError("intraday_realized_pnl non valido")
-    if day != today_utc:
+    today = date.fromisoformat(today_utc)
+    if day > today:
+        raise ValueError("daily_loss_state di un giorno futuro (orologio indietro)")
+    if day < today:
         return None
     breached = record.get("breached") is True
     fields = {
@@ -67,7 +73,8 @@ def restored_daily_loss(raw: Any, *, today_utc: str, realized_pnl: float) -> Opt
 
 
 def persist_daily_loss(db: Any, state: dict, last: Optional[dict]) -> Optional[dict]:
-    """Salva lo stato se cambiato; ritorna l'ultimo record scritto (mai raise)."""
+    """Salva lo stato se cambiato; ritorna l'ultimo record scritto, oppure
+    PERSIST_FAILED se il salvataggio fallisce (mai raise)."""
     record = daily_loss_record(state)
     if record == last or not hasattr(db, "save_settings"):
         return last
@@ -76,7 +83,7 @@ def persist_daily_loss(db: Any, state: dict, last: Optional[dict]) -> Optional[d
         return record
     except Exception:
         logger.exception("daily-loss: persist failed")
-        return last
+        return PERSIST_FAILED
 
 
 def restore_daily_loss(db: Any, *, today_utc: str, realized_pnl: float) -> dict:
