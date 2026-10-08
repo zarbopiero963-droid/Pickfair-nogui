@@ -491,6 +491,25 @@ def test_pass_sim_quota_invalida_nessuna_registrazione_e_retry_ammesso(db_path):
     assert len(sb.state.orders) == 1
 
 
+def test_block_rifiuto_terminale_simulation_broker_resta_consumato(db_path):
+    """Decisione owner 08/10/2026 (BROKER_REJECTED = INTENT_CONSUMED): un
+    rifiuto terminale del SimulationBroker (mercato gia' regolato: l'ordine
+    decade, LAPSED) non libera il customer_ref; il retry dello stesso intento
+    e' DUPLICATE_BLOCKED e il broker non riceve un secondo ordine."""
+    sb = _broker_con_liquidita()
+    sb.state.settlements["1.234"] = {"settlement_status": "SETTLED"}
+    db = Database(db_path)
+    eng, _bus, _rec = _engine(db, sb, modo="SIMULATION", simulation_broker=sb)
+
+    eng.submit_quick_bet(_richiesta())
+    assert [o.status for o in sb.state.orders.values()] == ["LAPSED"]
+    assert db.is_order_intent_consumed("PF26REF0001") is True
+
+    assert eng.submit_quick_bet(_richiesta())["status"] == STATUS_DUPLICATE_BLOCKED
+    assert len(sb.state.orders) == 1
+    assert db.is_order_intent_consumed("PF26REF0001") is True
+
+
 def test_pass_riconsegna_cmd_quick_bet_dopo_restart_un_solo_ordine_sim(db_path):
     """Percorso dei produttori (segnale Telegram/GUI/headless, auto-next,
     gambe dutching, manual_bet): tutti pubblicano CMD_QUICK_BET verso l'engine.
