@@ -1320,8 +1320,31 @@ class DutchingController:
         published_orders = []
         batch_created = False
 
+        # PR26-a: identita' delle gambe indipendente dall'ordine delle
+        # selezioni. Il batch e' l'elenco ORDINATO delle gambe (stessi campi di
+        # _build_batch_id); una gamba e' la sua chiave, mai la posizione nella
+        # lista del chiamante (selectionId duplicati sono gia' rifiutati in
+        # validazione; due chiavi identiche darebbero comunque lo stesso ref,
+        # cioe' doppione bloccato: fail-closed).
+        def _leg_key(item):
+            return (
+                int(item["selectionId"]),
+                str(item.get("side", "BACK")).upper(),
+                float(item["price"]),
+                float(item["stake"]),
+            )
+
+        leg_batch_identity = {
+            "market_id": str(payload.get("market_id") or ""),
+            "event_name": str(payload.get("event_name") or ""),
+            "market_name": str(payload.get("market_name") or ""),
+            "simulation_mode": bool(payload.get("simulation_mode", False)),
+            "legs": sorted(_leg_key(item) for item in results),
+        }
+
         try:
             for idx, item in enumerate(results, start=1):
+                leg_key = _leg_key(item)
                 order = {
                     "market_id": str(payload["market_id"]),
                     "selection_id": int(item["selectionId"]),
@@ -1337,16 +1360,14 @@ class DutchingController:
                     "batch_id": batch_id,
                     "batch_size": len(results),
                     "batch_leg_index": idx,
-                    # PR26-a: una identita' per gamba. batch_id e' gia' lo
-                    # SHA-256 deterministico di mercato + gambe (stake/quote):
-                    # stesso batch ricalcolato = stessi ref, gambe distinte.
+                    # PR26-a: una identita' per gamba (vedi leg_batch_identity):
+                    # stesso batch ricalcolato, anche con le selezioni in
+                    # ordine diverso = stessi ref; gambe distinte = ref distinti.
                     "customer_ref": derive_customer_ref(
                         "dut",
                         {
-                            "batch_id": batch_id,
-                            "leg": idx,
-                            "selection_id": int(item["selectionId"]),
-                            "side": str(item.get("side", "BACK")).upper(),
+                            "batch": leg_batch_identity,
+                            "leg": list(leg_key),
                         },
                     ),
                     "batch_avg_profit": float(avg_profit),

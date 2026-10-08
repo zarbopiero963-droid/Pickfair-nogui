@@ -254,9 +254,14 @@ def _gui_publish(c, listener_signal, *, stake):
             self.simulation_mode = True
 
     gui = _Gui(c.bus)
-    payload, mode = gui._resolve_signal_to_payload(dict(listener_signal), stake=stake)
+    # Come _handle_telegram_signal: normalizza, poi risolve il normalizzato e
+    # gli copia sopra raw_signal = normalizzato (che a sua volta annida il
+    # segnale del listener in raw_signal).
+    normalized = gui._get_signal_processor().normalize_ingestion_signal(dict(listener_signal))
+    signal_data = dict(normalized.get("normalized_signal") or {})
+    payload, mode = gui._resolve_signal_to_payload(signal_data, stake=stake)
     assert mode == "DIRECT" and payload
-    payload["raw_signal"] = sanitize_telegram_payload(dict(listener_signal))
+    payload["raw_signal"] = sanitize_telegram_payload(dict(signal_data))
     payload["resolution_mode"] = mode
     assert gui._publish_order_signal(payload) == "SIGNAL_RECEIVED"
 
@@ -289,6 +294,32 @@ def test_pass_gui_redelivery_with_nested_received_at_is_blocked(tmp_path):
     assert other and other != ref
 
 
+def test_pass_same_message_same_identity_across_headless_and_gui_entrypoints(tmp_path):
+    # Codex P1 (head 7c5a921): headless (TelegramService pubblica il dict del
+    # listener) e mini-GUI (raw_signal annidato) devono dare lo STESSO ref allo
+    # stesso messaggio, anche passando da un entrypoint all'altro con restart.
+    from services.telegram_service import TelegramService
+
+    listener = {
+        "market_id": "1.234", "selection_id": 11, "price": 2.0,
+        "bet_type": "BACK", "chat_id": -100123, "raw_text": "OVER 2.5 @2.0",
+        "event": "Alpha v Beta", "market": "Over/Under 2.5", "selection": "Over 2.5",
+        "simulation_mode": True,
+    }
+    headless = _chain(tmp_path, db_name="entry.db")
+    service = TelegramService(settings_service=None, db=headless.db, bus=headless.bus)
+    service._handle_signal({**listener, "received_at": "2026-10-08T10:00:00.1+00:00"})
+    ref = headless.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref")
+    assert ref and _broker_refs(headless.broker) == [ref]
+
+    gui = _chain(tmp_path, db_name="entry.db")
+    gui.rc.betfair_service.simulation_broker = headless.broker
+    _gui_publish(gui, {**listener, "received_at": "2026-10-08T10:01:00.2+00:00"}, stake=5.0)
+
+    assert gui.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    assert _broker_refs(headless.broker) == [ref], "cambio entrypoint: secondo ordine piazzato"
+
+
 def test_pass_distinct_signals_get_distinct_identities(tmp_path):
     c = _chain(tmp_path)
 
@@ -301,6 +332,17 @@ def test_pass_distinct_signals_get_distinct_identities(tmp_path):
     assert len(refs) == 4 and all(refs)
     assert len(set(refs)) == 4
     assert sorted(_broker_refs(c.broker)) == sorted(refs)
+
+
+def test_pass_sim_and_live_runs_of_same_message_keep_distinct_identities(tmp_path):
+    # Il messaggio e' lo stesso, ma il modo effettivo dell'ordine resta
+    # identita': un ordine SIM non deve mai far scartare quello LIVE.
+    c = _chain(tmp_path)
+    c.rc._on_signal_received(_signal())
+    c.rc._on_signal_received(_signal(simulation_mode=False))
+    published = c.bus.payloads("CMD_QUICK_BET")
+    assert [p["simulation_mode"] for p in published] == [True, False]
+    assert published[0]["customer_ref"] != published[1]["customer_ref"]
 
 
 def test_pass_signal_identity_survives_restart_and_ignores_mm_stake(tmp_path):
@@ -525,6 +567,37 @@ def test_pass_dutching_legs_distinct_stable_and_all_reach_engine(tmp_path, monke
     assert len(c.broker.state.orders) == 3, "il ricalcolo ha piazzato gambe doppie"
 
 
+def test_pass_dutching_leg_identity_ignores_leg_order(tmp_path, monkeypatch):
+    # Codex P1 (head 7c5a921): lo stesso insieme di gambe ricalcolato dopo un
+    # restart con le selezioni in ordine diverso e' lo stesso intento.
+    stakes = {10: 50.0, 20: 33.33, 30: 16.67}
+
+    def fake_calculate_dutching(selections, total_stake):
+        _ = total_stake
+        return (
+            [{**sel, "stake": stakes[sel["selectionId"]]} for sel in selections],
+            1.0,
+            100.0,
+        )
+
+    monkeypatch.setattr(
+        "controllers.dutching_controller.calculate_dutching", fake_calculate_dutching
+    )
+    c = _chain(tmp_path, db_name="dutch_order.db")
+    first = _dutching_payload()
+    DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(first)
+    refs = {leg["selection_id"]: leg["customer_ref"] for leg in c.bus.payloads("CMD_QUICK_BET")}
+    assert len(set(refs.values())) == 3 and all(refs.values())
+
+    permuted = _dutching_payload()
+    permuted["selections"] = [permuted["selections"][i] for i in (2, 0, 1)]
+    DutchingController(bus=c.bus, runtime_controller=_DutchRuntime()).submit_dutching(permuted)
+    replay = {leg["selection_id"]: leg["customer_ref"] for leg in c.bus.payloads("CMD_QUICK_BET")[3:]}
+
+    assert replay == refs
+    assert len(c.broker.state.orders) == 3, "ordine gambe diverso: batch piazzato due volte"
+
+
 # =========================================================================
 # Produttore 4 — DutchingController.manual_bet (oggi senza chiamanti)
 # =========================================================================
@@ -690,6 +763,15 @@ def test_pass_helper_signal_material_ignores_delivery_and_derived_fields():
     # chat_id solo al primo livello (raw_signal senza chat) resta identita'.
     bare = {"raw_signal": {"raw_text": "OVER 2.5"}, "chat_id": -1}
     assert ref(bare) != ref({**bare, "chat_id": -2})
+    # Stesso messaggio del listener nelle due forme reali: headless (dict del
+    # listener + simulation_mode forzato da TelegramService) e mini-GUI
+    # (payload -> normalizzato -> listener, campi derivati al primo livello).
+    listener = {"raw_text": "OVER 2.5", "chat_id": -1, "price": 2.0, "received_at": "t1"}
+    headless_form = {**listener, "simulation_mode": False}
+    gui_form = {"price": 2.3, "stake": 9.0, "simulation_mode": True,
+                "raw_signal": {"boundary_stage": "x", "price": 2.0,
+                               "raw_signal": {**listener, "received_at": "t2"}}}
+    assert signal_identity_material(headless_form) == signal_identity_material(gui_form)
     # Headless (senza raw_signal): il prezzo del messaggio resta identita'.
     headless = {"price": 2.0, "chat_id": -1, "received_at": "t1"}
     assert ref(headless) == ref({**headless, "received_at": "t2"})

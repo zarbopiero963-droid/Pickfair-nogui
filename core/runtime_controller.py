@@ -3035,14 +3035,18 @@ class RuntimeController:
         # (chat_id incluso) SENZA cio' che cambia a ogni consegna: received_at
         # (rigenerato dal listener a una riconsegna dopo reconnect/restart, anche
         # annidato in raw_signal sul percorso mini-GUI), event_key, i campi
-        # derivati dalla GUI (prezzo risolto, stake) e lo stake MM. Stesso
-        # messaggio riconsegnato = stesso ref = doppione bloccato. Due messaggi
-        # dal contenuto identico nella stessa chat sono trattati come lo stesso
-        # intento (fail-closed: mai una puntata doppia).
+        # derivati dalla GUI (prezzo risolto, stake) e lo stake MM; stessa forma
+        # canonica per headless e mini-GUI. Il modo effettivo (SIM/LIVE) resta
+        # identita'. Stesso messaggio riconsegnato = stesso ref = doppione
+        # bloccato. Due messaggi dal contenuto identico nella stessa chat sono
+        # trattati come lo stesso intento (fail-closed: mai una puntata doppia).
         payload["customer_ref"] = resolve_customer_ref(
             signal.get("customer_ref"),
             "sig",
-            signal_identity_material(signal),
+            {
+                **signal_identity_material(signal),
+                "simulation_mode": payload["simulation_mode"],
+            },
         )
         routing_contract = signal.get("telegram_routing_contract")
         if isinstance(routing_contract, str) and routing_contract.strip():

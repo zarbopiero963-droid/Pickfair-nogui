@@ -43,9 +43,12 @@ _DIGEST_HEX_CHARS = 28  # 3 + 1 + 28 = 32, il massimo ammesso da Betfair
 # Stesso vincolo di BetfairClient._normalize_customer_ref (customerRef Betfair).
 _BETFAIR_CUSTOMER_REF_RE = re.compile(r"[A-Za-z0-9\-._+*:;~]{1,32}")
 # Metadati di consegna di un segnale: li aggiunge il trasporto (listener,
-# runtime) e cambiano a ogni (ri)consegna dello STESSO messaggio, a qualunque
-# profondita' compaiano (es. raw_signal.received_at sul percorso mini-GUI).
-_SIGNAL_DELIVERY_METADATA_KEYS = frozenset({"received_at", "event_key"})
+# TelegramService, runtime) e cambiano a ogni (ri)consegna o fra un entrypoint
+# e l'altro per lo STESSO messaggio, a qualunque profondita' compaiano (es.
+# raw_signal.received_at sul percorso mini-GUI). ``simulation_mode`` lo forza
+# TelegramService sul solo percorso headless: il modo effettivo dell'ordine lo
+# aggiunge il runtime al materiale, fuori dal messaggio.
+_SIGNAL_DELIVERY_METADATA_KEYS = frozenset({"received_at", "event_key", "simulation_mode"})
 
 
 def is_betfair_customer_ref(value: Any) -> bool:
@@ -134,18 +137,23 @@ def _strip_signal_delivery_metadata(value: Any) -> Any:
 def signal_identity_material(signal: Mapping[str, Any]) -> dict[str, Any]:
     """Materiale d'identita' di un segnale: il messaggio, non la sua consegna.
 
-    Se il payload porta ``raw_signal`` (percorso mini-GUI ``TelegramModule``),
-    l'identita' e' il messaggio del listener cosi' com'e' arrivato, piu' la
-    chat: i campi di primo livello sono DERIVATI (prezzo risolto dal book in
-    AUTO_RESOLVED, stake impostato nella GUI) e possono cambiare fra due
-    consegne dello stesso messaggio. Senza ``raw_signal`` (percorso headless)
-    l'identita' e' il segnale stesso. In entrambi i casi i metadati di consegna
-    (``received_at``, ``event_key``) sono esclusi a ogni profondita'.
+    Il messaggio e' il dict del listener, in forma canonica per entrambi gli
+    entrypoint: il percorso headless (``TelegramService``) lo pubblica cosi'
+    com'e'; il mini-GUI (``TelegramModule``) lo annida in ``raw_signal`` (anche
+    su piu' livelli: payload -> segnale normalizzato -> listener), mentre i
+    suoi campi di primo livello sono DERIVATI (prezzo risolto dal book in
+    AUTO_RESOLVED, stake impostato nella GUI). Si scende quindi fino al
+    ``raw_signal`` piu' interno. I metadati di consegna sono esclusi a ogni
+    profondita'; la chat resta identita' (dal messaggio o, se assente, dal
+    primo livello).
     """
-    raw_signal = signal.get("raw_signal")
-    if isinstance(raw_signal, Mapping) and raw_signal:
-        return {
-            "raw_signal": _strip_signal_delivery_metadata(raw_signal),
-            "chat_id": signal.get("chat_id"),
-        }
-    return _strip_signal_delivery_metadata(signal)
+    message: Mapping[str, Any] = signal
+    raw_signal = message.get("raw_signal")
+    while isinstance(raw_signal, Mapping) and raw_signal:
+        message = raw_signal
+        raw_signal = message.get("raw_signal")
+    stripped = _strip_signal_delivery_metadata(message)
+    chat_id = stripped.pop("chat_id", None)
+    if chat_id is None:
+        chat_id = signal.get("chat_id")
+    return {"message": stripped, "chat_id": chat_id}

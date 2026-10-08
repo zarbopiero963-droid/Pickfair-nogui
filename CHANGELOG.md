@@ -114,13 +114,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - an upstream ref is preserved; a non-compliant one is mapped
     deterministically instead of being silently dropped by `BetfairClient`;
   - signal: derived from the message and its chat, without `received_at`
-    or `event_key` (at any depth) and without the MM stake. On the mini-GUI
-    path the message is `raw_signal`, so the resolved price and the GUI stake
-    are not part of the identity. A redelivery after reconnect or restart
-    keeps the same ref, and the engine blocks it;
+    or `event_key` (at any depth) and without the MM stake. The message has
+    the same canonical form on the headless and mini-GUI paths (the innermost
+    `raw_signal`), so the resolved price and the GUI stake are not part of the
+    identity, while the effective SIM/LIVE mode is. A redelivery after
+    reconnect or restart, even on the other entrypoint, keeps the same ref,
+    and the engine blocks it;
   - auto-trade: derived from the triggering settlement;
-  - dutching leg: derived from the batch id plus the leg. The ref is also
-    stored in `dutching_batch_legs`;
+  - dutching leg: derived from the sorted leg set plus the leg itself, so
+    the order of the selections does not matter. The ref is also stored in
+    `dutching_batch_legs`;
   - `manual_bet` without an upstream ref: a fresh operation ref per call.
   The `RiskMiddleware` REQ_QUICK_BET forward keeps the caller's ref and never
   invents one. The engine gate is unchanged, and the Telegram REQ_QUICK_BET
