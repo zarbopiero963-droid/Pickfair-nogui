@@ -110,9 +110,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     restart zeroed it: EUR 8 lost, restart, another EUR 8 = 16 against
     `max_daily_loss` 10 with no stop. An unreadable saved state, or an invalid
     or future saved day, counts as a breach (fail-closed); a past UTC day
-    starts from zero. If a save fails, the state goes to a marker file next
-    to the db (`<db>.daily_loss_pending.json`), new risk is refused until a
-    save succeeds, and a restart rebuilds the loss from the marker first.
+    starts from zero. If a save fails, new risk is refused until a save
+    succeeds and the state goes to a marker file next to the db
+    (`<db>.daily_loss_pending.json`). Every record (db and marker) carries
+    the UTC day and a monotonic sequence number `seq`. At restart both are
+    read: the higher `seq` wins; with an equal or unknown `seq` the larger
+    loss wins, and a breach in either always counts. A leftover marker
+    (failed remove, crash between save and remove) has a lower `seq` and can
+    never lower the loss. Known limitation (declared): if neither the db nor
+    the marker can be written, the block holds for the session only; a
+    restart in that condition cannot rebuild the unsaved loss.
+    Persistence lives in the new `core/daily_loss_store.py`.
   - `reset_cycle()` and the drawdown auto-reset no longer wipe the day's or the
     session's loss (they zero the desk `realized_pnl`; the baselines now shift
     with it).

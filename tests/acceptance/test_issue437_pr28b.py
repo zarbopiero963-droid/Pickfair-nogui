@@ -184,6 +184,111 @@ def test_block_f4_salvataggio_ancora_guasto_al_riavvio_blocca(tmp_path, monkeypa
     assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.0)
 
 
+def _rimuovi_tranne_marker(monkeypatch):
+    """Windows-style lock: the pending marker cannot be removed."""
+    import core.daily_loss_store as store
+    vero = store.os.remove
+
+    def _remove(path):
+        if str(path).endswith(".daily_loss_pending.json"):
+            raise PermissionError("locked")
+        vero(path)
+
+    monkeypatch.setattr(store.os, "remove", _remove)
+
+
+def test_block_f4_marker_non_rimosso_non_riduce_la_perdita(tmp_path, monkeypatch):
+    """Sol+Grok #503 cycle 2: a marker left behind after a later successful
+    save must not override the newer db record (marker 5, db 8, cap 10)."""
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    salva = c.db.save_settings
+    c.db.save_settings = _salvataggio_guasto
+    _perdi(c.rc, 5.0)                                   # marker: 5
+    c.db.save_settings = salva
+    _rimuovi_tranne_marker(monkeypatch)
+    _perdi(c.rc, 3.0)                                   # db: 8, marker stays at 5
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.0)
+    _perdi(riavvio.rc, 3.0)
+    assert riavvio.rc.is_emergency_stopped, "11 > 10: the stale marker must not hide 3"
+
+
+def _seq_db(c):
+    return json.loads(c.db.get_settings()["daily_loss_state"])["seq"]
+
+
+def _marker(c, **record):
+    oggi = c.rc._daily_loss_monitor_state["day_utc"]
+    with open(c.db.db_path + ".daily_loss_pending.json", "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(dict({"day_utc": oggi, "breached": False, "breached_at": ""}, **record)))
+
+
+def test_block_f4_crash_tra_salvataggio_e_rimozione_marker(tmp_path):
+    """Crash after the db save, before the marker removal: older seq loses."""
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 8.0)                                   # db: 8
+    _marker(c, intraday_realized_pnl=-5.0, seq=_seq_db(c) - 1)
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.0)
+
+
+@pytest.mark.parametrize("seq_marker", [None, "x", True, -1, "stessa"])
+def test_block_f4_seq_ignota_o_uguale_vince_la_perdita_maggiore(tmp_path, seq_marker):
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 8.0)                                   # db: 8
+    seq = _seq_db(c) if seq_marker == "stessa" else seq_marker
+    _marker(c, intraday_realized_pnl=-9.0, seq=seq)
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(9.0)
+
+
+def test_block_f4_breach_del_giorno_non_si_annulla_con_seq_maggiore(tmp_path):
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 12.0)                                  # db: breach
+    c.rc.reset_emergency()
+    _marker(c, intraday_realized_pnl=-1.0, seq=_seq_db(c) + 5)
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["breached"] is True
+
+
+def test_block_f4_db_e_marker_non_scrivibili_blocco_in_sessione(tmp_path, monkeypatch):
+    """Both stores unwritable: the block holds for the session. A restart in
+    that condition is the declared KNOWN_LIMITATION (nothing durable exists)."""
+    import core.daily_loss_store as store
+
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    c.db.save_settings = _salvataggio_guasto
+
+    def _disco_pieno(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(store, "atomic_write_text", _disco_pieno)
+    _perdi(c.rc, 5.0)
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[-1] == "daily_loss_state_non_persistito"
+
+
+def test_pass_f4_riavvio_normale_non_va_in_breach(tmp_path):
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 3.0)
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+    riavvio.rc._on_signal_received(_signal())
+
+    assert _perdita_giorno(riavvio.rc)["breached"] is False
+    assert len(riavvio.broker.state.orders) == 1, _rifiuti(riavvio)
+
+
 def test_block_f4_reset_ciclo_non_azzera_la_perdita_del_giorno(tmp_path):
     c = _catena(tmp_path, max_daily_loss=10.0)
     _perdi(c.rc, 8.0)

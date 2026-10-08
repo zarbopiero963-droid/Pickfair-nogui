@@ -285,9 +285,9 @@ class RuntimeController:
         }
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
-        restored, self._daily_loss_persisted = loss_limits.restore_daily_loss(  # F4
-            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl))
-        self._daily_loss_monitor_state.update(restored)
+        self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
+            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
+        self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
 
         self._subscribe_bus()
 
@@ -1209,7 +1209,7 @@ class RuntimeController:
             limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
 
     def _loss_block_reason(self) -> str:
-        if getattr(self, "_daily_loss_persisted", None) is loss_limits.PERSIST_FAILED:
+        if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
         return self._session_loss_block_reason()
 
