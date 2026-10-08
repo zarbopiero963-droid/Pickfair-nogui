@@ -329,6 +329,11 @@ class SettingsService:
                 "roserpina.max_session_loss",
                 fallback_key="max_session_loss",
             ),
+            max_exposure_stop=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_exposure_stop",
+                fallback_key="max_exposure_stop",
+            ),
             max_recovery_chase_abs=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_recovery_chase_abs",
@@ -412,6 +417,8 @@ class SettingsService:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
         if config.max_session_loss is not None:
             payload["roserpina.max_session_loss"] = config.max_session_loss
+        if config.max_exposure_stop is not None:
+            payload["roserpina.max_exposure_stop"] = config.max_exposure_stop
         if config.max_recovery_chase_abs is not None:
             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
 

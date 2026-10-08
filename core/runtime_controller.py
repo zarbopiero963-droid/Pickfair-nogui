@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from core import loss_limits, validators
+from core import risk_stop as stop_rules
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
 from core.market_tracker import MarketTracker
@@ -285,6 +286,8 @@ class RuntimeController:
         }
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
+        self._risk_stop_lock = threading.Lock()  # P38
+        self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
         self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
             self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
         self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
@@ -1208,10 +1211,14 @@ class RuntimeController:
         return loss_limits.session_loss_reason(
             limit, getattr(self, "_session_pnl_baseline", None), float(self.risk_desk.realized_pnl))
 
-    def _loss_block_reason(self) -> str:
+    def _limits_block_reason(self) -> str:
         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
             return "daily_loss_state_non_persistito"
         return self._session_loss_block_reason()
+
+    def _loss_block_reason(self) -> str:
+        stopped = getattr(self, "_risk_stop_reason", "")
+        return self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
 
     def _publish_session_loss_breach(self) -> None:
         reason = self._session_loss_block_reason()
@@ -1219,6 +1226,44 @@ class RuntimeController:
             self._session_loss_alerted = True
             logger.critical("SESSION LOSS BREACH: %s", reason)
             self.bus.publish("SESSION_LOSS_BREACH_TRIGGERED", {"reason": reason})
+            self.risk_stop(reason)  # P38
+
+    def risk_stop(self, reason: str) -> dict:
+        """P38: blocca entrate; cancel unmatched + cashout (CASHOUT_ALL)."""
+        with self._risk_stop_lock:
+            if self._risk_stop_reason:
+                return {"risk_stopped": True, "reason": self._risk_stop_reason}
+            self._risk_stop_reason = reason = str(reason or "risk_stop")
+        cashout = not self._daily_loss_entry_blocked()  # EMERGENCY ha cancel-all
+        result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout,
+                  "persisted": stop_rules.persist_risk_stop(self.db, reason)}
+        if cashout:
+            self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
+        logger.critical("RISK STOP: %s", result)
+        self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
+        return result
+
+    def reset_risk_stop(self, held=0.0) -> dict:
+        """RESUME solo se il ricontrollo completo e' pulito."""
+        if not getattr(self, "_risk_stop_reason", ""):
+            return {"risk_stop_reset": True, "reason": ""}
+        blocker = ("emergency_stop_active" if self._daily_loss_entry_blocked() else "daily_loss_breached"
+                   if self._monitor_daily_loss_breach(source="RISK_STOP_RESET").get("breached")
+                   else self._limits_block_reason() or self._exposure_stop(False) or self._exposure_stop(False, held))
+        if blocker:
+            return {"risk_stop_reset": False, "reason": blocker}
+        with self._risk_stop_lock:
+            self._risk_stop_reason = ""
+        stop_rules.persist_risk_stop(self.db, "")
+        self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
+        return {"risk_stop_reset": True, "reason": ""}
+
+    def _exposure_stop(self, trigger=True, exposure=None) -> str:
+        exposure = self.table_manager.total_exposure() if exposure is None else exposure
+        reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None), exposure)
+        if trigger and stop_rules.is_stop_trigger(reason):
+            self.risk_stop(reason)  # pre-submit
+        return reason
 
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
         now = datetime.utcnow()
@@ -2226,9 +2271,11 @@ class RuntimeController:
         live_enabled: Optional[bool] = None,
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
+        held = self.table_manager.total_exposure()  # P38: prima del reset tavoli
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
         self._session_loss_alerted = False
+        self.reset_risk_stop(held)  # P38: ricontrollo completo
 
         requested_execution_mode = self._safe_execution_mode(execution_mode)
         if execution_mode is None and simulation_mode is not None:
@@ -3207,7 +3254,7 @@ class RuntimeController:
                 reason="emergency_stop_active:pre_submit_recheck",
             )
             return
-        session_block = self._loss_block_reason()  # F4/P37
+        session_block = self._loss_block_reason() or self._exposure_stop()  # F4/P37/P38
         if session_block:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=session_block)
@@ -4451,7 +4498,9 @@ class RuntimeController:
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
-        if self._daily_loss_entry_blocked():
+        stop_block = ("emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
+                      else self._loss_block_reason() or self._exposure_stop())  # P38
+        if stop_block:
             # Sblocca il tavolo attivato sopra: nessun CMD_QUICK_BET parte, quindi
             # nessun evento terminale lo libererebbe (tavolo/esposizione fantasma).
             if table_id is not None:
@@ -4463,7 +4512,7 @@ class RuntimeController:
             result["cycle_executor_status"] = "CYCLE_SKIPPED_RISK_REJECTED"
             result["recovery_status"] = "RECOVERY_SKIPPED_RISK_REJECTED" if has_checkpoint else result["recovery_status"]
             result["risk_status"] = "RISK_REJECTED"
-            result["reason"] = "emergency_stop_active:pre_submit_recheck"
+            result["reason"] = stop_block
             # Sovrascrivi il checkpoint ATTEMPTED con uno BLOCCATO/NOT_ATTEMPTED:
             # senza, il reader di recovery leggerebbe ATTEMPTED-senza-SUBMITTED
             # come ambiguo e fail-closerebbe questo settlement dopo un riavvio,

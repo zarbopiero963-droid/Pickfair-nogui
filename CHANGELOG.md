@@ -104,6 +104,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
+  PKG-P24-B: P38 and the P37 exposure stop).
+  - Before, reaching the session-loss limit only blocked new entries: the bot's
+    unmatched orders stayed in the market and its open positions were not
+    closed. There was no total-exposure stop at all.
+  - **RISK_STOP** (`RuntimeController.risk_stop`, rules in `core/risk_stop.py`):
+    blocks new entries (signals, auto-next, resume) but not cashout; cancels the
+    bot's unmatched orders and attempts to close its positions by routing the
+    existing `CASHOUT_ALL` through the CashoutRouter (bot orders only, the
+    cashout's own gates, blocked or uncertain outcomes reported by the router).
+    It publishes `RISK_STOP_TRIGGERED` and is idempotent. If EMERGENCY is
+    already active (the strongest barrier, cancel-all + LOCKDOWN) no cashout is
+    routed. PAUSE is unchanged (blocks new entries only).
+  - The stop is persisted (`risk_stop_state` setting): a restart does not clear
+    it, and an unreadable saved state keeps it active. `reset_risk_stop()`, also
+    run by `start()`, clears it only after a full recheck: no emergency, daily
+    loss not breached, limits valid, session loss below its limit and current
+    exposure below the exposure stop (positions actually closed).
+  - **Triggers:** session loss reached (`max_session_loss`, PR28-b) and the new
+    `max_exposure_stop` (EUR, owner limit with no default, GUI/loader/save). It
+    is checked before submission on the total exposure including the order; a
+    misconfigured value (unreadable or <= 0) blocks entries without closing
+    anything. No fixed amount belongs to STOP/cashout (#426, 06/10).
 - Durable daily loss and session-loss stop (#461 PR28-b, PKG-P24-B: F4, P37).
   - **F4:** the day's realized loss is saved (`daily_loss_state` setting) and
     rebuilt at restart on the same UTC day, before any new risk. Before, a

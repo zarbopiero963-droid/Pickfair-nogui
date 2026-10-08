@@ -1,0 +1,275 @@
+"""#461 PR28-c (PKG-P24-B, DEC-426-P37/P38): RISK_STOP and exposure stop.
+
+Owner sources (Phase 0, no conflict):
+- #426 P37 ([5934306152]): stop at session loss and at total exposure, owner
+  values; #426 P38: on stop, block new orders + cancel pertinent unmatched +
+  attempt cashout, all three together, at the current gates.
+- #426 decision 06/10 ([6026322035]) and docs/mcp_operational_contract.md:
+  no fixed EUR 10/10 belongs to STOP/cashout; STOP/RISK_STOP blocks new
+  orders, cancels pertinent unmatched and attempts cashout via Pickfair
+  authority; PAUSE blocks new orders only; EMERGENCY is the strongest
+  barrier; RESUME only after a new full readiness.
+- #461 [5932610970]: P38 "PR28 coordinamento"; the physical STOP barrier
+  (also on cashout) stays PR37.
+
+RISK_STOP reuses the existing CASHOUT_ALL route (CashoutRouter): only bot
+orders, own gates. Router pertinence (manual orders untouched) is already
+proven by tests/unit/test_cashout_router.py::test_non_bot_orders_are_not_closed.
+"""
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from core.system_state import RuntimeMode
+from database import Database
+from services.setting_service import SettingsService
+from tests.acceptance.test_issue437_pr04 import MERCATO, _aperto, headless  # noqa: F401
+from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti, _tavoli_occupati
+from tests.acceptance.test_issue437_pr28b import _perdi, _sessione
+from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
+
+pytestmark = [pytest.mark.integration, pytest.mark.safety]
+
+
+def _stop_eventi(c):
+    return c.bus.payloads("RISK_STOP_TRIGGERED")
+
+
+def _cashout_all(c):
+    return [p for p in c.bus.payloads("SIGNAL_REJECTED") + c.bus.payloads("REQ_EXECUTE_CASHOUT")
+            if isinstance(p, dict)]
+
+
+# ==========================================================================
+# 1. Exposure stop (owner limit, no default, fail-closed)
+# ==========================================================================
+def test_block_esposizione_raggiunta_rifiuta_e_scatta_risk_stop(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=0.01)
+    tavoli_prima = _tavoli_occupati(c)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+    assert _rifiuti(c)[-1].startswith("exposure_stop_reached")
+    assert _tavoli_occupati(c) == tavoli_prima
+    assert c.rc.duplication_guard._active == {}
+    (evento,) = _stop_eventi(c)
+    assert evento["reason"].startswith("exposure_stop_reached")
+    assert evento["cashout_attempted"] is True
+
+
+def test_block_risk_stop_resta_attivo_anche_alzando_il_limite(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=0.01)
+    c.rc._on_signal_received(_signal())
+    c.rc.config.max_exposure_stop = 1000.0
+
+    c.rc._on_signal_received(_signal(market_id="1.777"))
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[-1].startswith("risk_stop_active:exposure_stop_reached")
+    assert len(_stop_eventi(c)) == 1
+
+
+def test_pass_esposizione_sotto_il_limite(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+
+    c.rc._on_signal_received(_signal())
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)
+    assert _stop_eventi(c) == []
+
+
+def test_pass_esposizione_non_impostata_nessuno_stop(tmp_path):
+    c = _catena(tmp_path)
+    assert c.rc.config.max_exposure_stop is None
+
+    c.rc._on_signal_received(_signal())
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)
+
+
+@pytest.mark.parametrize("valore", [float("nan"), float("inf"), True, "abc", 0.0, -5.0])
+def test_block_limite_esposizione_illeggibile_blocca_senza_chiudere(tmp_path, valore):
+    """A misconfigured limit blocks entries; it is not a breach, so no cashout."""
+    c = _catena(tmp_path, max_exposure_stop=valore)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[-1] == "max_exposure_stop_non_valido"
+    assert _stop_eventi(c) == []
+
+
+def test_block_auto_next_bloccato_dal_risk_stop(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.risk_stop("exposure_stop_reached:test")
+
+    consentito, motivo = c.rc._risk_allows_auto_trade()
+
+    assert consentito is False and motivo == "risk_stop_active:exposure_stop_reached:test"
+
+
+# ==========================================================================
+# 2. P37 session loss -> RISK_STOP; PAUSE / EMERGENCY / RESUME semantics
+# ==========================================================================
+def test_block_perdita_sessione_scatta_risk_stop_con_cashout(tmp_path):
+    c = _sessione(tmp_path, max_session_loss=10.0)
+
+    _perdi(c.rc, 10.0)
+
+    (evento,) = _stop_eventi(c)
+    assert evento["reason"].startswith("session_loss_breached")
+    assert evento["cashout_attempted"] is True
+    assert {"signal_type": "CASHOUT_ALL", "source": "RISK_STOP"}.items() <= next(
+        p["signal"] for p in c.bus.payloads("SIGNAL_REJECTED")
+        if isinstance(p, dict) and p.get("reason") == "cashout_chain_not_wired").items()
+
+
+def test_pass_pause_blocca_solo_senza_cancel_ne_cashout(tmp_path):
+    c = _catena(tmp_path)
+
+    c.rc.pause()
+
+    assert _stop_eventi(c) == []
+    assert c.bus.payloads("REQ_EXECUTE_CASHOUT") == []
+    assert c.rc._risk_stop_reason == ""
+
+
+def test_block_emergency_resta_la_barriera_massima(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.emergency_stop(reason="test")
+
+    esito = c.rc.risk_stop("exposure_stop_reached:test")
+
+    assert esito["cashout_attempted"] is False      # EMERGENCY already cancelled all
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": False, "reason": "emergency_stop_active"}
+
+
+def test_block_resume_rifiutato_durante_risk_stop(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.risk_stop("exposure_stop_reached:test")
+    c.rc.mode = RuntimeMode.PAUSED
+
+    esito = c.rc.resume()
+
+    assert esito["resumed"] is False
+    assert esito["reason"] == "risk_stop_active:exposure_stop_reached:test"
+
+
+def test_block_reset_rifiutato_se_esposizione_ancora_al_limite(tmp_path):
+    """A blocked/uncertain cashout is not a successful close."""
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc._on_signal_received(_signal())             # one open position
+    c.rc.risk_stop("exposure_stop_reached:test")
+    c.rc.config.max_exposure_stop = 0.01
+
+    esito = c.rc.reset_risk_stop()
+
+    assert esito["risk_stop_reset"] is False
+    assert esito["reason"].startswith("exposure_stop_reached")
+
+
+def test_pass_reset_dopo_ricontrollo_pulito_riapre(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:test")
+
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}
+    c.rc._on_signal_received(_signal())
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)
+    assert len(c.bus.payloads("RISK_STOP_RESET")) == 1
+
+
+def test_pass_start_ricontrolla_e_riapre_nuova_sessione(tmp_path):
+    c = _sessione(tmp_path, max_session_loss=10.0)
+    _perdi(c.rc, 10.0)
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+
+    c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
+    c.rc.start(execution_mode="SIMULATION")
+
+    assert c.rc._risk_stop_reason == ""
+
+
+def test_block_start_non_riapre_se_la_posizione_resta_aperta(tmp_path):
+    """start() rebuilds the tables: the recheck uses the exposure held before."""
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc._on_signal_received(_signal())             # one open position
+    c.rc.config.max_exposure_stop = 0.01
+    c.rc.risk_stop("exposure_stop_reached:test")    # cashout chain not wired
+    c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
+    c.rc.settings_service.load_roserpina_config = lambda: c.rc.config
+
+    c.rc.start(execution_mode="SIMULATION")
+
+    assert c.rc._risk_stop_reason == "exposure_stop_reached:test"
+
+
+def test_pass_cashout_consentito_durante_risk_stop(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.risk_stop("exposure_stop_reached:test")
+
+    aperto, motivo = c.rc._cashout_gates_still_open({"signal_type": "CASHOUT"})
+
+    assert aperto is True, motivo
+
+
+# ==========================================================================
+# 3. Durability: a restart does not clear the RISK_STOP
+# ==========================================================================
+def test_block_risk_stop_sopravvive_al_riavvio(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.risk_stop("exposure_stop_reached:test")
+
+    riavvio = _catena(tmp_path)
+    riavvio.rc._on_signal_received(_signal())
+
+    assert riavvio.broker.state.orders == {}
+    assert _rifiuti(riavvio)[-1] == "risk_stop_active:exposure_stop_reached:test"
+
+
+@pytest.mark.parametrize("grezzo", ["{rotto", "null", "[]", json.dumps({"x": 1}), "5"])
+def test_block_stato_risk_stop_illeggibile_resta_attivo(tmp_path, grezzo):
+    c = _catena(tmp_path)
+    c.db.save_settings({"risk_stop_state": grezzo})
+
+    riavvio = _catena(tmp_path)
+
+    assert riavvio.rc._risk_stop_reason == "risk_stop_state_illeggibile"
+
+
+def test_pass_limite_esposizione_salvato_e_ricaricato(tmp_path):
+    svc = SettingsService(Database(str(tmp_path / "settings.db")))
+    cfg = svc.load_roserpina_config()
+    assert cfg.max_exposure_stop is None
+    cfg.max_exposure_stop = 10.0
+    svc.save_roserpina_config(cfg)
+
+    assert svc.load_roserpina_config().max_exposure_stop == 10.0
+
+
+# ==========================================================================
+# 4. End to end on the real headless app + SIM broker: cancel + cashout
+# ==========================================================================
+def test_block_risk_stop_cancella_unmatched_e_chiude_posizione_del_bot(headless):  # noqa: F811
+    headless.avvia()
+    headless.posizione()                          # BACK 10 @ 2.02 matched
+    resting = headless.broker.place_bet(           # pertinent unmatched bot order
+        market_id=MERCATO, selection_id=22, side="BACK", price=5.0, size=2.0,
+        event_name="Alfa v Beta")
+    assert float(resting["instructionReports"][0]["sizeMatched"]) == 0.0
+
+    esito = headless.rt.risk_stop("exposure_stop_reached:e2e")
+    headless.svuota_bus()
+
+    assert esito["cashout_attempted"] is True
+    assert len(headless.hedge()) == 1, "matched bot position not closed"
+    aperti = [o for o in headless.broker.get_current_orders(None)
+              if o.get("selectionId") == 22 and float(o.get("sizeRemaining") or 0) > 0]
+    assert aperti == [], "pertinent unmatched order not cancelled"
+    assert headless.di("RISK_STOP_TRIGGERED")

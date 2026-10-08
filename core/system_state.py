@@ -69,6 +69,10 @@ class RoserpinaConfig:
     # P37 (#461 PR28): stop perdita di sessione (EUR, da start()). None = non
     # impostato; illeggibile => blocco nuove entrate. Nessun default inventato.
     max_session_loss: Optional[float] = None
+    # P37/P38 (#461 PR28-c): stop esposizione complessiva (EUR, ordine in corso
+    # incluso) => RISK_STOP. None = non impostato; illeggibile o <= 0 => blocco
+    # nuove entrate. Nessun default inventato; non e' un parametro del cashout.
+    max_exposure_stop: Optional[float] = None
     # Cap anti-martingala ASSOLUTO in euro sulla componente di recovery-chase
     # del base_stake (#320-D1). OPT-IN, DEFAULT OFF:
     #   None (non configurato) / <= 0 finito (opt-out) => disarmato (chase
