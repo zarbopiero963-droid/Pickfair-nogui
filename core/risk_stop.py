@@ -81,3 +81,23 @@ def restore_risk_stop(db: Any) -> str:
     except Exception:
         logger.exception("risk-stop: stato salvato illeggibile, fail-closed")
         return "risk_stop_state_illeggibile"
+
+
+def reset_blocker(rc: Any, held: float, at_start: bool) -> str:
+    """Ricontrollo completo prima di riaprire ("" = pulito; chiamato sotto il lock).
+
+    A start() (nuova sessione) si riapre da solo SOLO uno stop d'esposizione,
+    verificabile sull'esposizione tenuta prima del reset tavoli (``held``). Uno
+    stop da perdita di sessione / illeggibile / ignoto non e' verificabile dalla
+    nuova sessione: serve un ``reset_risk_stop()`` esplicito (fail-closed).
+    """
+    reason = str(getattr(rc, "_risk_stop_reason", "") or "")
+    if not reason:
+        return ""
+    if at_start and not reason.startswith("exposure_stop_reached"):
+        return "risk_stop_reset_esplicito_richiesto"
+    if rc._daily_loss_entry_blocked():
+        return "emergency_stop_active"
+    if rc._monitor_daily_loss_breach(source="RISK_STOP_RESET").get("breached"):
+        return "daily_loss_breached"
+    return rc._limits_block_reason() or rc._exposure_stop(False) or rc._exposure_stop(False, held)

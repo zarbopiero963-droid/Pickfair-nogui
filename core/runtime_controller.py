@@ -286,7 +286,7 @@ class RuntimeController:
         }
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
-        self._risk_stop_lock = threading.Lock()  # P38
+        self._risk_stop_lock = threading.RLock()  # P38: transizione + persistenza atomiche
         self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
         self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
             self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
@@ -1234,27 +1234,27 @@ class RuntimeController:
             if self._risk_stop_reason:
                 return {"risk_stopped": True, "reason": self._risk_stop_reason}
             self._risk_stop_reason = reason = str(reason or "risk_stop")
+            persisted = stop_rules.persist_risk_stop(self.db, reason)
         cashout = not self._daily_loss_entry_blocked()  # EMERGENCY ha cancel-all
-        result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout,
-                  "persisted": stop_rules.persist_risk_stop(self.db, reason)}
+        result = {"risk_stopped": True, "reason": reason, "cashout_attempted": cashout, "persisted": persisted}
         if cashout:
             self._route_cashout_signal(stop_rules.cashout_all_signal(reason))
         logger.critical("RISK STOP: %s", result)
         self.bus.publish("RISK_STOP_TRIGGERED", dict(result))
         return result
 
-    def reset_risk_stop(self, held=0.0) -> dict:
-        """RESUME solo se il ricontrollo completo e' pulito."""
+    def reset_risk_stop(self, held=0.0, at_start=False) -> dict:
+        """RESUME solo se il ricontrollo completo (stop_rules.reset_blocker) e' pulito."""
         if not getattr(self, "_risk_stop_reason", ""):
             return {"risk_stop_reset": True, "reason": ""}
-        blocker = ("emergency_stop_active" if self._daily_loss_entry_blocked() else "daily_loss_breached"
-                   if self._monitor_daily_loss_breach(source="RISK_STOP_RESET").get("breached")
-                   else self._limits_block_reason() or self._exposure_stop(False) or self._exposure_stop(False, held))
-        if blocker:
-            return {"risk_stop_reset": False, "reason": blocker}
         with self._risk_stop_lock:
+            blocker = stop_rules.reset_blocker(self, held, at_start)
+            if blocker:
+                return {"risk_stop_reset": False, "reason": blocker}
+            if not self._risk_stop_reason:
+                return {"risk_stop_reset": True, "reason": ""}
             self._risk_stop_reason = ""
-        stop_rules.persist_risk_stop(self.db, "")
+            stop_rules.persist_risk_stop(self.db, "")
         self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"risk_stop_reset": True, "reason": ""}
 
@@ -2275,7 +2275,7 @@ class RuntimeController:
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
         self._session_loss_alerted = False
-        self.reset_risk_stop(held)  # P38: ricontrollo completo
+        self.reset_risk_stop(held, at_start=True)  # P38: ricontrollo completo
 
         requested_execution_mode = self._safe_execution_mode(execution_mode)
         if execution_mode is None and simulation_mode is not None:
@@ -2469,6 +2469,8 @@ class RuntimeController:
 
         status = self.get_status()
         self.bus.publish("RUNTIME_STARTED", status)
+        if getattr(self, "_risk_stop_reason", "") and not self._daily_loss_entry_blocked():  # P38: ritenta dopo riavvio
+            self._route_cashout_signal(stop_rules.cashout_all_signal(self._risk_stop_reason))
 
         return {
             "started": True,

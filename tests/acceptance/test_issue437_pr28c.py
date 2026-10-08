@@ -183,16 +183,69 @@ def test_pass_reset_dopo_ricontrollo_pulito_riapre(tmp_path):
     assert len(c.bus.payloads("RISK_STOP_RESET")) == 1
 
 
-def test_pass_start_ricontrolla_e_riapre_nuova_sessione(tmp_path):
+def _avvia(c):
+    c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
+    return c.rc.start(execution_mode="SIMULATION")
+
+
+def test_pass_start_ricontrolla_e_riapre_stop_esposizione_rientrato(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:test")
+    c.rc.settings_service.load_roserpina_config = lambda: c.rc.config
+
+    _avvia(c)
+
+    assert c.rc._risk_stop_reason == ""
+
+
+def test_block_start_non_riapre_stop_da_perdita_di_sessione(tmp_path):
+    """Fix c1 (Sol + Grok): the new session cannot verify the loss that stopped it."""
     c = _sessione(tmp_path, max_session_loss=10.0)
     _perdi(c.rc, 10.0)
     assert c.rc._risk_stop_reason.startswith("session_loss_breached")
 
-    c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
-    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
-    c.rc.start(execution_mode="SIMULATION")
+    _avvia(c)
 
-    assert c.rc._risk_stop_reason == ""
+    assert c.rc._risk_stop_reason.startswith("session_loss_breached")
+    assert c.rc.reset_risk_stop(at_start=True)["reason"] == "risk_stop_reset_esplicito_richiesto"
+    assert c.rc.reset_risk_stop() == {"risk_stop_reset": True, "reason": ""}   # explicit owner reset
+
+
+def test_block_start_ritenta_il_cashout_dello_stop_ripristinato(tmp_path):
+    """Fix c1 (Grok): after a restart the restored stop re-attempts CASHOUT_ALL."""
+    _catena(tmp_path).rc.risk_stop("session_loss_breached:x")
+
+    riavvio = _catena(tmp_path)
+    _avvia(riavvio)
+
+    assert riavvio.rc._risk_stop_reason == "session_loss_breached:x"
+    (rifiuto,) = [p for p in riavvio.bus.payloads("SIGNAL_REJECTED") if isinstance(p, dict)]
+    assert rifiuto["signal"]["source"] == "RISK_STOP"      # no subscriber wired here
+
+
+def test_block_reset_concorrente_non_cancella_lo_stop_su_disco(tmp_path, monkeypatch):
+    """Fix c1 (Sol + Grok): transition and persistence are atomic under the lock."""
+    import threading
+
+    from core import risk_stop as stop_rules
+    c = _catena(tmp_path, max_exposure_stop=1000.0)
+    c.rc.risk_stop("exposure_stop_reached:a")
+    originale, fili = stop_rules.persist_risk_stop, []
+
+    def _persist(db, reason):  # a new trigger lands while the reset is saving ""
+        if reason == "" and not fili:
+            fili.append(threading.Thread(target=c.rc.risk_stop, args=("exposure_stop_reached:b",)))
+            fili[0].start()
+            fili[0].join(0.3)
+        return originale(db, reason)
+
+    monkeypatch.setattr(stop_rules, "persist_risk_stop", _persist)
+    c.rc.reset_risk_stop()
+    fili[0].join(5)
+
+    salvato = json.loads(c.rc.db.get_settings()["risk_stop_state"])["reason"]
+    assert c.rc._risk_stop_reason == salvato == "exposure_stop_reached:b"
 
 
 def test_block_start_non_riapre_se_la_posizione_resta_aperta(tmp_path):

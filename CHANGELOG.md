@@ -117,11 +117,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     It publishes `RISK_STOP_TRIGGERED` and is idempotent. If EMERGENCY is
     already active (the strongest barrier, cancel-all + LOCKDOWN) no cashout is
     routed. PAUSE is unchanged (blocks new entries only).
-  - The stop is persisted (`risk_stop_state` setting): a restart does not clear
-    it, and an unreadable saved state keeps it active. `reset_risk_stop()`, also
-    run by `start()`, clears it only after a full recheck: no emergency, daily
-    loss not breached, limits valid, session loss below its limit and current
-    exposure below the exposure stop (positions actually closed).
+  - The stop is persisted (`risk_stop_state` setting) together with the state
+    change, under the same lock: a restart does not clear it, and an unreadable
+    saved state keeps it active. `reset_risk_stop()` clears it only after a full
+    recheck: no emergency, daily loss not breached, limits valid, session loss
+    below its limit and exposure below the exposure stop (positions actually
+    closed). `start()` reopens on its own only an exposure stop, checked on the
+    exposure held before the tables are rebuilt; a session-loss, unreadable or
+    unknown stop cannot be verified by the new session and needs an explicit
+    `reset_risk_stop()`. While the stop stays on, `start()` re-attempts the
+    `CASHOUT_ALL` (for example after a restart).
   - **Triggers:** session loss reached (`max_session_loss`, PR28-b) and the new
     `max_exposure_stop` (EUR, owner limit with no default, GUI/loader/save). It
     is checked before submission on the total exposure including the order; a
