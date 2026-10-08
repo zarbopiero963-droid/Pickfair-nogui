@@ -150,6 +150,40 @@ def test_block_f4_salvataggio_fallito_blocca_nuove_entrate(tmp_path):
     assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.5)
 
 
+def _salvataggio_guasto(_valori):
+    raise OSError("disk full")
+
+
+def test_block_f4_salvataggio_fallito_poi_riavvio_ricostruisce_la_perdita(tmp_path):
+    """Sol #503 cycle 1: the failed-save block must survive a restart with no
+    successful save in between; the latest loss is recovered at startup."""
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 1.0)                                   # saved: 1
+    c.db.save_settings = _salvataggio_guasto
+    _perdi(c.rc, 7.0)                                   # NOT saved in the db: 8
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.0)
+    _perdi(riavvio.rc, 3.0)
+    assert riavvio.rc.is_emergency_stopped
+
+
+def test_block_f4_salvataggio_ancora_guasto_al_riavvio_blocca(tmp_path, monkeypatch):
+    c = _catena(tmp_path, max_daily_loss=10.0)
+    _perdi(c.rc, 1.0)
+    c.db.save_settings = _salvataggio_guasto
+    _perdi(c.rc, 7.0)
+    monkeypatch.setattr(Database, "save_settings", lambda self, valori: _salvataggio_guasto(valori))
+
+    riavvio = _catena(tmp_path, max_daily_loss=10.0)
+    riavvio.rc._on_signal_received(_signal())
+
+    assert riavvio.broker.state.orders == {}
+    assert _rifiuti(riavvio)[-1] == "daily_loss_state_non_persistito"
+    assert _perdita_giorno(riavvio.rc)["daily_loss_amount"] == pytest.approx(8.0)
+
+
 def test_block_f4_reset_ciclo_non_azzera_la_perdita_del_giorno(tmp_path):
     c = _catena(tmp_path, max_daily_loss=10.0)
     _perdi(c.rc, 8.0)

@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import date, datetime
 from typing import Any, Optional
 
 from core import validators
+from core.atomic_io import atomic_write_text
 
 logger = logging.getLogger(__name__)
 
@@ -72,32 +74,59 @@ def restored_daily_loss(raw: Any, *, today_utc: str, realized_pnl: float) -> Opt
     return fields
 
 
+def _marker_path(db: Any) -> str:
+    """File accanto al db: registra lo stato quando il db non si scrive."""
+    path = str(getattr(db, "db_path", "") or "")
+    return "" if path in ("", ":memory:") else path + ".daily_loss_pending.json"
+
+
 def persist_daily_loss(db: Any, state: dict, last: Optional[dict]) -> Optional[dict]:
     """Salva lo stato se cambiato; ritorna l'ultimo record scritto, oppure
-    PERSIST_FAILED se il salvataggio fallisce (mai raise)."""
+    PERSIST_FAILED se il salvataggio fallisce (mai raise). In quel caso lo
+    stato va nel file marker, letto al riavvio prima del db."""
     record = daily_loss_record(state)
     if record == last or not hasattr(db, "save_settings"):
         return last
+    marker = _marker_path(db)
     try:
         db.save_settings({DAILY_LOSS_STATE_KEY: encode_daily_loss(state)})
-        return record
     except Exception:
         logger.exception("daily-loss: persist failed")
+        try:
+            if marker:
+                atomic_write_text(marker, encode_daily_loss(state))
+        except Exception:
+            logger.critical("daily-loss: neanche il marker e' scrivibile", exc_info=True)
         return PERSIST_FAILED
-
-
-def restore_daily_loss(db: Any, *, today_utc: str, realized_pnl: float) -> dict:
-    """Campi per ricostruire il giorno dal db ({} se niente). Lettura fallita o
-    stato illeggibile => breach fail-closed fino al nuovo giorno."""
     try:
+        if marker and os.path.exists(marker):
+            os.remove(marker)
+    except OSError:
+        logger.exception("daily-loss: marker non rimosso")
+    return record
+
+
+def restore_daily_loss(db: Any, *, today_utc: str, realized_pnl: float) -> tuple:
+    """(campi per ricostruire il giorno, ultimo record salvato).
+
+    Marker di un salvataggio fallito (di oggi) => si riparte da lui e si resta
+    in PERSIST_FAILED finche' un salvataggio non riesce. Lettura fallita o
+    stato illeggibile => breach fail-closed fino al nuovo giorno."""
+    marker = _marker_path(db)
+    try:
+        if marker and os.path.exists(marker):
+            with open(marker, encoding="utf-8") as fh:
+                fields = restored_daily_loss(fh.read(), today_utc=today_utc, realized_pnl=realized_pnl)
+            if fields is not None:
+                return fields, PERSIST_FAILED
         settings = db.get_settings() if hasattr(db, "get_settings") else {}
         fields = restored_daily_loss((settings or {}).get(DAILY_LOSS_STATE_KEY),
                                      today_utc=today_utc, realized_pnl=realized_pnl)
     except Exception:
         logger.exception("daily-loss: stato persistito illeggibile, fail-closed")
         return {"breached": True, "breached_at": datetime.utcnow().isoformat(),
-                "last_status": "DAILY_LOSS_BREACHED", "reason": "daily_loss_state_unreadable"}
-    return fields or {}
+                "last_status": "DAILY_LOSS_BREACHED", "reason": "daily_loss_state_unreadable"}, None
+    return fields or {}, None
 
 
 def shift_day_baseline(state: dict, shift: float) -> None:

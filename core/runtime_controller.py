@@ -283,11 +283,11 @@ class RuntimeController:
             "last_alert_event": "",
             "last_checked_at": datetime.utcnow().isoformat(),
         }
-        self._daily_loss_persisted: Optional[dict] = None
         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
         self._session_loss_alerted = False
-        self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
-            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
+        restored, self._daily_loss_persisted = loss_limits.restore_daily_loss(  # F4
+            self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl))
+        self._daily_loss_monitor_state.update(restored)
 
         self._subscribe_bus()
 
