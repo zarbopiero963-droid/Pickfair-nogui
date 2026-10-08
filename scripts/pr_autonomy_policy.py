@@ -453,8 +453,11 @@ def _bloccanti_section(body: str) -> str | None:
 
 
 def _section(body: str, title: str) -> str | None:
-    m = re.search(rf"^##\s*{title}\s*$(.*?)(?=^##\s|\Z)", body, re.MULTILINE | re.DOTALL)
-    return None if m is None else m.group(1).strip()
+    """Contenuto dell'UNICA sezione `## <title>`. Assente o duplicata → None
+    (rilievo Codex #499: con due «Bloccanti» la prima pulita nascondeva la
+    seconda): il chiamante la tratta come schema inatteso, UNKNOWN."""
+    found = re.findall(rf"^##\s*{title}\s*$(.*?)(?=^##\s|\Z)", body, re.MULTILINE | re.DOTALL)
+    return found[0].strip() if len(found) == 1 else None
 
 
 def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
@@ -493,7 +496,7 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
         return {"status": "STALE_HEAD", "reason": "il range non termina sul current head"}
     section = _bloccanti_section(body)
     if section is None:
-        return {"status": "UNKNOWN", "reason": "sezione Bloccanti assente: schema inatteso"}
+        return {"status": "UNKNOWN", "reason": "sezione Bloccanti assente o duplicata: schema inatteso"}
     # Schema a due sezioni completo (rilievi Codex/Sol #499): «Bloccanti» vuota
     # o «Verdetto finale» assente/vuoto = review incompleta, mai pulita.
     if not section:
@@ -596,33 +599,56 @@ def manual_label_decision(full_diff_paths: Iterable[str], recorded_reasons: Iter
 _IMPORT_RE = re.compile(r"^\+\s*(?:from\s+([A-Za-z_][\w.]*)\s+import\b|import\s+([A-Za-z_][\w.]*(?:\s*,\s*[A-Za-z_][\w.]*)*))")
 
 
-def _top_modules(line: str) -> list[str]:
-    """Moduli di primo livello importati da una riga aggiunta.
+# Intestazione di istruzione composta su una riga (`try:`, `else:`, `if x:`...):
+# se la riga intera non è parsabile da sola, si riprova sul resto dopo i due punti.
+_COMPOUND_HEADER_RE = re.compile(
+    r"^(?:try|else|finally|(?:except|with|for|while|if|elif|async)\b[^:#]*)\s*:\s*")
+# Ultimo fallback, ANCORATO a inizio riga (es. `from x import (` su più righe):
+# la prosa di docstring/commenti che cita «: import y» non diventa dipendenza.
+_LINE_IMPORT_RE = re.compile(
+    r"^(?:from\s+([A-Za-z_][\w.]*)\s+import\b|import\s+([A-Za-z_][\w.]*"
+    r"(?:\s+as\s+\w+)?(?:\s*,\s*[A-Za-z_][\w.]*(?:\s+as\s+\w+)?)*))")
 
-    Parsing strutturale con `ast` (rilievo Codex #499: `import a as b, c` deve
-    dare a e c); fallback regex solo per le righe non parsabili da sole
-    (es. `from x import (` su più righe)."""
-    src = line[1:].strip() if line.startswith("+") else line.strip()
-    if not re.match(r"(?:import|from)\s", src):  # anche tab (rilievo Sol #499)
-        return []
+
+def _ast_imports(src: str) -> list[str] | None:
     try:
         tree = ast.parse(src)
     except SyntaxError:
-        tree = None
-    if tree is not None:
-        mods: list[str] = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                mods.extend(alias.name.split(".")[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                mods.append(node.module.split(".")[0])
+        return None
+    mods: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            mods.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            mods.append(node.module.split(".")[0])
+    return mods
+
+
+def _top_modules(line: str) -> list[str]:
+    """Moduli di primo livello importati da una riga aggiunta.
+
+    Parsing strutturale con `ast` di TUTTI i nodi Import/ImportFrom della riga
+    (rilievi Codex #499: alias multipli, import dopo `:` o `;`); se la riga non è
+    parsabile da sola si toglie l'intestazione composta e si riprova; infine un
+    fallback regex ancorato a inizio riga (blocchi su più righe)."""
+    src = line[1:].strip() if line.startswith("+") else line.strip()
+    if not re.search(r"\bimport\b", src):
+        return []
+    mods = _ast_imports(src)
+    if mods is not None:
         return mods
-    m = _IMPORT_RE.match("+" + src)
-    if not m:
+    header = _COMPOUND_HEADER_RE.match(src)
+    if header:
+        src = src[header.end():]
+        mods = _ast_imports(src)
+        if mods is not None:
+            return mods
+    m = _LINE_IMPORT_RE.match(src)
+    if m is None:
         return []
     if m.group(1):
         return [m.group(1).split(".")[0]]
-    return [part.strip().split(".")[0].split()[0] for part in m.group(2).split(",") if part.strip()]
+    return [part.strip().split()[0].split(".")[0] for part in m.group(2).split(",") if part.strip()]
 
 
 _C_ESCAPES = {"a": 7, "b": 8, "t": 9, "n": 10, "v": 11, "f": 12, "r": 13, '"': 34, "\\": 92}
@@ -740,7 +766,8 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                     declared_files: Any, local_modules: Iterable[str],
                     declared_dependencies: Iterable[str], repo_kind: str = "pickfair",
                     deleted_files: Iterable[str] = (),
-                    declared_production_dependencies: Iterable[str] | None = None) -> dict[str, Any]:
+                    declared_production_dependencies: Iterable[str] | None = None,
+                    local_root_modules: Iterable[str] | None = None) -> dict[str, Any]:
     """§0.10: controllo sull'INTERO diff assemblato della PR (base...head).
 
     Un file segreto CANCELLATO dalla PR (es. #429, `config.json` tolto dal
@@ -770,6 +797,11 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
 
     stdlib = set(getattr(sys, "stdlib_module_names", ())) | STDLIB_EXTRA
     local = set(local_modules)
+    # Il codice di prodotto può importare solo moduli/package alla RADICE del
+    # repository (rilievo Codex #499: `import cleanup_service` non è
+    # importabile solo perché esiste observability/cleanup_service.py).
+    # tests/ e scripts/ girano con la propria cartella in sys.path: tutti.
+    local_roots = local if local_root_modules is None else set(local_root_modules)
     deps = {d.lower().replace("-", "_") for d in declared_dependencies}
     # Il codice di prodotto si confronta SOLO con le dipendenze di produzione
     # (rilievo Codex #499: `import pytest` in core/ non è dichiarato per
@@ -808,8 +840,9 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
             if is_py:
                 tooling = path.startswith(("tests/", "scripts/"))
                 allowed = deps if tooling else prod_deps
+                importable = local if tooling else local_roots
                 for mod in _top_modules(line):
-                    if mod and mod not in stdlib and mod not in local and mod.lower() not in allowed:
+                    if mod and mod not in stdlib and mod not in importable and mod.lower() not in allowed:
                         (test_deps if path.startswith("tests/") else new_deps).add(mod)
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
@@ -965,7 +998,8 @@ def next_pr_decision(state: Mapping[str, Any]) -> dict[str, Any]:
     # lista = non verificabile, mai «nessuno stop / nessuna decisione aperta».
     active = state.get("active_stop_conditions")
     open_decisions = state.get("pertinent_open_owner_decisions")
-    if not isinstance(active, list) or not isinstance(open_decisions, list):
+    if (not isinstance(active, list) or not isinstance(open_decisions, list)
+            or not all(isinstance(x, str) and x for x in active)):
         return {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}
     stops = [s for s in active if s in OWNER_STOP_CONDITIONS]
     unknown_stops = [s for s in active if s not in OWNER_STOP_CONDITIONS]
@@ -1011,8 +1045,10 @@ def parallel_classification(pickfair: Mapping[str, Any], mcp: Mapping[str, Any])
 
 def owner_stop_required(conditions: Iterable[str]) -> dict[str, Any]:
     conditions = list(conditions)
-    unknown = [c for c in conditions if c not in OWNER_STOP_CONDITIONS]
-    active = [c for c in conditions if c in OWNER_STOP_CONDITIONS]
+    # Elementi non stringa (null, liste…) sono ignoti → stop, mai TypeError.
+    unknown = [c if isinstance(c, str) else repr(c) for c in conditions
+               if not isinstance(c, str) or c not in OWNER_STOP_CONDITIONS]
+    active = [c for c in conditions if isinstance(c, str) and c in OWNER_STOP_CONDITIONS]
     return {"stop": bool(active or unknown), "conditions": active, "unknown": unknown}
 
 
@@ -1073,6 +1109,19 @@ def _pyproject_dependencies(path: str, *, include_optional: bool = True) -> set[
 
 
 _SKIP_DIRS = frozenset({".git", "venv", ".venv", "node_modules", "__pycache__", "build", "dist"})
+
+
+def _root_modules(root: str) -> set[str]:
+    """Solo moduli/package importabili dalla radice del repository."""
+    import os
+    mods: set[str] = set()
+    for entry in os.listdir(root):
+        full = os.path.join(root, entry)
+        if os.path.isdir(full) and entry not in _SKIP_DIRS and not entry.startswith("."):
+            mods.add(entry)
+        elif entry.endswith(".py"):
+            mods.add(entry[:-3])
+    return mods
 
 
 def _local_modules(root: str) -> set[str]:
@@ -1144,6 +1193,7 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
     result = full_diff_check(
         base_sha=args.base_sha, head_sha=args.head_sha, files=files, patch_text=patch_text,
         declared_files=declared, local_modules=_local_modules("."), declared_dependencies=deps,
+        local_root_modules=_root_modules("."),
         repo_kind=args.repo_kind,
         deleted_files=[f for f in files or [] if isinstance(f, str) and not os.path.lexists(f)],
         declared_production_dependencies=prod_deps,

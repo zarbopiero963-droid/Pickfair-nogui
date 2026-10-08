@@ -964,7 +964,7 @@ def merge_context(**extra):
         'GITHUB_MUTATION_ENABLED':True,'EXTERNAL_SIDE_EFFECT_ENABLED':True},
         'task_no_commit_push':False,'mergeable':'MERGEABLE','mergeStateStatus':'CLEAN',
         'bad':[],'pending':[],'unresolved_active':0,'current_head_matches':True,
-        'explicit_merge_authorization':True,'autonomy_merge_state':AUTONOMY_READY_STATE, **extra}
+        'explicit_merge_authorization':True,'autonomy_merge_state':AUTONOMY_READY_STATE,'headRefOid':'abc123', **extra}
 
 
 @pytest.mark.parametrize('stage', ['reserved','working','pushing','retry_ready'])

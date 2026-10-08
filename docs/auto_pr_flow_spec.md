@@ -164,8 +164,8 @@ disattivati nella UI, file presenti): non si attendono, non si riattivano.
 
 Una review conta solo se: è sul current head o il suo range finisce sul head;
 porta il proprio marker di completamento; non ha bloccanti irrisolti (la
-sezione «Bloccanti» è pulita solo se è interamente «Nessun bloccante
-[evidente]»); è leggibile (non un errore). Schema/API incompleti → UNKNOWN.
+sezione «Bloccanti» — unica — è pulita solo se è interamente «Nessun
+bloccante [evidente]»; sezioni duplicate → UNKNOWN); è leggibile (non un errore). Schema/API incompleti → UNKNOWN.
 Timeout Grok (solo segnali di timeout veri): un solo rerun; secondo timeout →
 STOP owner («PRONTA PER MERGE — Grok assente per timeout») solo se Sol è
 pulita sul current head; altrimenti BLOCKED/UNKNOWN. Quota/crediti
@@ -239,7 +239,8 @@ hunk; header/hunk non interpretabili o file di testo mostrato come binario →
 UNKNOWN. Il patch si genera con `--text --no-textconv --no-ext-diff`. Il codice
 di prodotto si confronta solo con le dipendenze di produzione
 (`requirements.txt`, `requirements-lock.txt`, `[project].dependencies`);
-`tests/` e `scripts/` con tutte le dichiarate. Confine di fiducia:
+`tests/` e `scripts/` con tutte le dichiarate. Per il codice di prodotto
+sono locali solo i moduli/package alla radice del repository. Confine di fiducia:
 il checker gira dal checkout della PR come `guardrail_check.py`; una PR che
 modifica `scripts/` o i workflow è sempre a merge owner (§0.8), quindi non può
 indebolire il proprio controllo e auto-mergiarsi.

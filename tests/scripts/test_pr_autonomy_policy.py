@@ -689,6 +689,68 @@ def test_gitattributes_meno_diff_non_nasconde_il_file_con_i_flag_di_pr_guard(tmp
     assert diff["new_dependencies"] == ["modulo_nascosto"] and diff["status"] == "BLOCK"
 
 
+@pytest.mark.parametrize("body_fn", [
+    lambda: review_body("sol").replace("## Verdetto finale", "## Bloccanti\n- P1: secondo blocco\n\n## Verdetto finale"),
+    lambda: review_body("sol") + "\n## Verdetto finale\nAltro\n",
+])
+def test_sezioni_duplicate_sono_unknown(body_fn):
+    assert policy.validate_review(review("sol", body=body_fn()), HEAD)["status"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("riga,modulo", [
+    ("if enabled: import mancante_a", "mancante_a"),
+    ("x = 1; import mancante_b", "mancante_b"),
+    ("try: import mancante_c", "mancante_c"),
+    ("x = 1; from mancante_d.sub import y", "mancante_d"),
+])
+def test_import_non_a_inizio_riga_sono_visti(riga, modulo):
+    patch = hunks(f"+++ b/core/x.py\n+{riga}\n")
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["core/x.py"], patch_text=patch,
+                                  declared_files=["core/x.py"], local_modules=["core"], declared_dependencies=[])
+    assert diff["new_dependencies"] == [modulo] and diff["status"] == "BLOCK"
+
+
+@pytest.mark.parametrize("riga", [
+    "    (rilievi: `import a as b`, `if x: import y`, `a = 1; import y`);",
+    "    # vedi: import z",
+    "    Nota; import w non e' codice",
+])
+def test_prosa_che_cita_import_non_e_dipendenza(riga):
+    assert policy._top_modules("+" + riga) == []
+
+
+@pytest.mark.parametrize("riga,attesi", [
+    ("else: x = 1; import b", ["b"]),
+    ("except ImportError: import c as d, e", ["c", "e"]),
+    ("from f.g import (", ["f"]),
+])
+def test_import_in_righe_non_parsabili_da_sole(riga, attesi):
+    assert policy._top_modules("+" + riga) == attesi
+
+
+def test_modulo_annidato_non_e_importabile_dal_codice_di_prodotto():
+    patch = hunks("+++ b/core/x.py\n+import cleanup_service\n+++ b/tests/test_x.py\n+import cleanup_service\n")
+    files = ["core/x.py", "tests/test_x.py"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch, declared_files=files,
+                                  local_modules=["core", "observability", "cleanup_service"],
+                                  local_root_modules=["core", "observability"], declared_dependencies=[])
+    assert diff["new_dependencies"] == ["cleanup_service"]       # dal prodotto: bloccato
+    assert diff["new_test_only_dependencies"] == []              # dai test: locale
+
+
+def test_moduli_radice_del_repository():
+    roots = policy._root_modules(str(ROOT))
+    assert {"core", "scripts", "tests", "observability"} <= roots
+    assert "cleanup_service" not in roots and "pr_autonomy_policy" not in roots
+
+
+def test_condizioni_di_stop_malformate_non_crashano():
+    res = policy.next_pr_decision(next_state(active_stop_conditions=[None]))
+    assert res == {"status": "STOP_OWNER", "reason": "AUTHORIZATION_OR_GATE_NOT_VERIFIABLE"}
+    out = policy.owner_stop_required([None, ["x"], "FIX_LOOP_EXHAUSTED"])
+    assert out["stop"] is True and out["conditions"] == ["FIX_LOOP_EXHAUSTED"] and len(out["unknown"]) == 2
+
+
 def test_full_diff_illeggibile_e_unknown():
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=None, patch_text="",
                                   declared_files=[], local_modules=[], declared_dependencies=[])

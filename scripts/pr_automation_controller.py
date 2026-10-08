@@ -1441,6 +1441,16 @@ def can_auto_merge(context: dict[str, Any] | None = None) -> dict[str, Any]:
     autonomy_state = ctx.get("autonomy_merge_state")
     autonomy = (autonomy_policy.merge_decision(autonomy_state) if isinstance(autonomy_state, dict)
                 else {"status": "NEEDS_MANUAL", "reasons": ["autonomy_merge_state_missing"]})
+    # Le prove valgono solo per l'head LIVE della PR (rilievo Codex #499):
+    # `merge_decision` confronta due campi della stessa prova fra loro; qui si
+    # confrontano con l'head reale del contesto. Head live assente → niente merge.
+    live_head = _first_present(ctx.get("headRefOid"), ctx.get("head_sha"))
+    if autonomy.get("status") == "READY_FOR_AUTO_MERGE":
+        evidence_head = autonomy_state.get("current_head") if isinstance(autonomy_state, dict) else None
+        if not isinstance(live_head, str) or not live_head.strip():
+            autonomy = {"status": "NEEDS_MANUAL", "reasons": ["live_head_unknown"]}
+        elif evidence_head != live_head.strip():
+            autonomy = {"status": "INVALIDATED", "reasons": ["evidence_head_not_live_head"]}
     if autonomy.get("status") != "READY_FOR_AUTO_MERGE":
         detail = ",".join(str(r) for r in autonomy.get("reasons") or [])
         return automation_disabled_result(

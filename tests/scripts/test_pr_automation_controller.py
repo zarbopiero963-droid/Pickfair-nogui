@@ -11736,6 +11736,7 @@ def _automation_ctx(mode: str, **overrides: object) -> dict[str, object]:
         "current_head_matches": True,
         "explicit_merge_authorization": True,
         "autonomy_merge_state": AUTONOMY_READY_STATE,
+        "headRefOid": "abc123",
     }
     ctx.update(overrides)
     return ctx
@@ -12676,6 +12677,22 @@ def test_can_auto_merge_denies_unless_ready_for_auto_merge(tmp_path):
         ASSERTIONS.assertTrue(result["reason"].startswith(expected), result["reason"])
 
 
+def test_can_auto_merge_binds_autonomy_evidence_to_live_head(tmp_path):
+    """#499: prove valide ma per un head vecchio, o head live assente → niente merge."""
+    descriptor = _merge_ledger_descriptor(tmp_path)
+    stale = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, headRefOid="new"))
+    ASSERTIONS.assertFalse(stale["allowed"])
+    ASSERTIONS.assertTrue(stale["reason"].startswith("autonomy_contract_invalidated"), stale["reason"])
+    ctx = _automation_ctx("live", fix_loop=descriptor)
+    ctx.pop("headRefOid")
+    missing = controller.can_auto_merge(ctx)
+    ASSERTIONS.assertFalse(missing["allowed"])
+    ASSERTIONS.assertIn("live_head_unknown", missing["reason"])
+    ok = controller.can_auto_merge(_automation_ctx("live", fix_loop=descriptor, head_sha="abc123",
+                                                   headRefOid=None))
+    ASSERTIONS.assertTrue(ok["allowed"], ok)
+
+
 def test_can_auto_merge_raw_env_live_all_green_allows(tmp_path):
     ledger = controller.fix_policy.FixLoopLedger(tmp_path / "merge.sqlite", "owner/repo", 225)
     ledger.initialize(0, "new PR; clean durable history")
@@ -12683,6 +12700,7 @@ def test_can_auto_merge_raw_env_live_all_green_allows(tmp_path):
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
             "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12709,6 +12727,7 @@ def test_can_auto_merge_raw_env_live_with_codacy_conclusion_success_allows(tmp_p
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
             "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12734,6 +12753,7 @@ def test_can_auto_merge_raw_env_live_with_codacy_status_success_allows(tmp_path)
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
             "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",
@@ -12759,6 +12779,7 @@ def test_can_auto_merge_raw_env_live_with_codacy_check_status_success_allows(tmp
     result = controller.can_auto_merge(
         {"fix_loop": descriptor,
             "autonomy_merge_state": AUTONOMY_READY_STATE,
+            "headRefOid": "abc123",
             "AUTOMATION_MODE": "live",
             "AUTO_MERGE_ENABLED": "true",
             "mergeable": "MERGEABLE",

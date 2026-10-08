@@ -262,6 +262,7 @@ def _clean_merge_context() -> dict:
         "current_head_matches": True,
         "explicit_merge_authorization": True,
         "autonomy_merge_state": AUTONOMY_READY_STATE,
+        "headRefOid": "abc123",
     }
 
 
