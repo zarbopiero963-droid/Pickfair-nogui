@@ -55,8 +55,10 @@
 
 Questa sezione è il contratto operativo stabile per l'intera roadmap Pickfair +
 Control API + #495 + MCP. Prevale sulle sezioni seguenti dove sono meno
-specifiche; dove una regola successiva è più severa su un punto di sicurezza,
-resta valida quella più severa. Enforcement eseguibile:
+specifiche; dove una regola successiva è più severa su un punto di sicurezza
+che questa sezione non decide, resta valida quella più severa (l'auto-merge
+delle PR safety-critical runtime/core sotto §0.9 è deciso qui e sostituisce
+l'override per-issue). Enforcement eseguibile:
 `scripts/pr_autonomy_policy.py` (puro, solo stdlib, fail-closed); test:
 `tests/scripts/test_pr_autonomy_policy.py`.
 
@@ -161,10 +163,13 @@ prova. **SOSPESI** da P41: Fugu Ultra, Claude Fable 5.1, GPT-6 Astra (workflow
 disattivati nella UI, file presenti): non si attendono, non si riattivano.
 
 Una review conta solo se: è sul current head o il suo range finisce sul head;
-porta il proprio marker di completamento; non ha bloccanti irrisolti; è
-leggibile (non un errore). Schema/API incompleti → UNKNOWN. Timeout Grok: un
-solo rerun; secondo timeout → STOP owner («PRONTA PER MERGE — Grok assente per
-timeout»). Quota/crediti → STOP (P41, CREDITI ESAURITI). Prima del merge:
+porta il proprio marker di completamento; non ha bloccanti irrisolti (la
+sezione «Bloccanti» è pulita solo se è interamente «Nessun bloccante
+[evidente]»); è leggibile (non un errore). Schema/API incompleti → UNKNOWN.
+Timeout Grok (solo segnali di timeout veri): un solo rerun; secondo timeout →
+STOP owner («PRONTA PER MERGE — Grok assente per timeout»). Quota/crediti
+(incluso `credit_balance_exhausted`) → STOP (P41, CREDITI ESAURITI). Altro
+errore del provider → PROVIDER_ERROR, review non valida. Prima del merge:
 zero thread irrisolti.
 
 ### 0.8 Label: safety-critical informativo, manuale bloccante
@@ -193,8 +198,11 @@ zero thread irrisolti.
 `scripts/guardrail_check.py` e gli script che definiscono autorizzazione e
 autorità di merge (`scripts/pr_autonomy_policy.py`,
 `scripts/pr_fix_loop_policy.py`, `scripts/pr_flow_automation.py`,
-`scripts/pr_merge_readiness.py`, `scripts/pr_automation_controller.py`);
-inoltre, per fail-closed, ogni altro workflow e i manifest di dipendenze.
+`scripts/pr_merge_readiness.py`, `scripts/pr_automation_controller.py`,
+`scripts/pr_clean_scope_rebuild.py`, `scripts/pr_refresh_self_checks.py` e ogni
+altro `scripts/pr_*.py`), `scripts/ci/check_ci_quarantine.py`; inoltre, per
+fail-closed, ogni altro workflow e i manifest di dipendenze. La label
+`manual-review-required` non blocca: instrada qui.
 Esito: `READY_FOR_OWNER_MANUAL_MERGE`.
 
 **Auto-merge runtime/core** consentito quando TUTTE: head stabile; scope

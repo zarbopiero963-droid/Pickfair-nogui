@@ -227,6 +227,29 @@ def test_review_con_bloccanti_non_e_pulita():
     assert policy.validate_review(review("sol", body=body), HEAD)["status"] == "VALID_WITH_BLOCKERS"
 
 
+def test_prefisso_nessun_bloccante_seguito_da_bloccante_non_e_pulita():
+    body = review_body("sol", bloccanti="Nessun bloccante evidente.\n- P1: il gate passa senza prova")
+    assert policy.validate_review(review("sol", body=body), HEAD)["status"] == "VALID_WITH_BLOCKERS"
+    for pulita in ("Nessun bloccante evidente", "- Nessun bloccante.", "nessun bloccante"):
+        body = review_body("grok", bloccanti=pulita)
+        assert policy.validate_review(review("grok", body=body), HEAD)["status"] == "VALID_CLEAN", pulita
+
+
+@pytest.mark.parametrize("errore,atteso", [
+    ("HTTP Error 401: Unauthorized", "PROVIDER_ERROR"),
+    ("HTTP Error 400: invalid model", "PROVIDER_ERROR"),
+    ("HTTP Error 503: Service Unavailable", "PROVIDER_ERROR"),
+    ("HTTP Error 429: credit_balance_exhausted", "QUOTA"),
+    ("The read operation timed out", "TIMEOUT"),
+])
+def test_errori_provider_non_sono_timeout(errore, atteso):
+    body = f"## Review Grok 4.7 non completata\n\nErrore sintetico:\n\n```text\n{errore}\n```"
+    status = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
+    assert status["status"] == atteso
+    gate = policy.reviewer_gate({"sol": {"status": "VALID_CLEAN"}, "grok": status}, 1)["status"]
+    assert gate == {"PROVIDER_ERROR": "BLOCKED", "QUOTA": "STOP_OWNER", "TIMEOUT": "RERUN_GROK_ONCE"}[atteso]
+
+
 def test_grok_primo_timeout_rerun_secondo_stop():
     timeout = {"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN,
                "body": "Review Grok non completata: The read operation timed out"}
@@ -295,6 +318,15 @@ def test_file_gate_resta_merge_manuale_owner():
     assert policy.manual_label_decision(["AGENTS.md"])["label"] == "REQUIRED"
 
 
+def test_pr_di_autorita_etichettata_arriva_a_ready_for_owner_manual_merge():
+    files = ["AGENTS.md", "scripts/pr_autonomy_policy.py", ".guardrails/allowed_scope.json"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text="",
+                                  declared_files=files, local_modules=[], declared_dependencies=[])
+    assert policy.manual_label_decision(files)["label"] == "REQUIRED"
+    res = policy.merge_decision(merge_state(full_diff=diff, manual_label_present=True))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE"
+
+
 def test_decisione_owner_aperta_pertinente_blocca():
     result = policy.merge_decision(merge_state(pertinent_owner_decision_open=True))
     assert result["status"] == "BLOCKED" and "pertinent_owner_decision_open" in result["reasons"]
@@ -324,8 +356,13 @@ def test_stato_incompleto_e_needs_manual(key):
     assert policy.merge_decision(state)["status"] == "NEEDS_MANUAL"
 
 
-def test_label_manuale_presente_blocca_e_stop_reviewer_e_manuale():
-    assert policy.merge_decision(merge_state(manual_label_present=True))["status"] == "BLOCKED"
+def test_label_manuale_instrada_al_merge_owner_e_stop_reviewer_e_manuale():
+    # La label non blocca: vieta l'auto-merge e porta al merge MANUALE owner.
+    res = policy.merge_decision(merge_state(manual_label_present=True))
+    assert res["status"] == "READY_FOR_OWNER_MANUAL_MERGE" and "manual_review_label" in res["reasons"]
+    # ...ma non scavalca gli altri gate.
+    assert policy.merge_decision(merge_state(manual_label_present=True,
+                                             unresolved_threads=1))["status"] == "BLOCKED"
     assert policy.merge_decision(merge_state(reviewer_gate="STOP_OWNER"))["status"] == "NEEDS_MANUAL"
     assert policy.merge_decision(merge_state(fix_loop_exhausted=True))["status"] == "NEEDS_MANUAL"
 
@@ -383,8 +420,8 @@ _FAKE_KEY = "-----BEGIN " + "RSA PRIVATE KEY-----"
 
 
 @pytest.mark.parametrize("path,line", [
-    ("docs/note.md", f"token: {_FAKE_GH}"),
-    (".github/workflows/x.yml", f"  KEY: {_FAKE_GH}"),
+    ("docs/note.md", f"incollato per errore {_FAKE_GH}"),
+    (".github/workflows/x.yml", f"  - run: echo {_FAKE_GH}"),
     ("core/a.py", f"PEM = '{_FAKE_KEY}'"),
 ])
 def test_full_diff_contenuto_segreto_in_qualunque_file_blocca(path, line):
@@ -409,7 +446,7 @@ def test_full_diff_chiave_sintetica_nei_test_non_blocca_ma_va_a_merge_owner():
 
 
 def test_full_diff_riga_rimossa_con_segreto_non_blocca():
-    patch = f"+++ b/docs/note.md\n-token: {_FAKE_GH}\n+token: <redatto>\n"
+    patch = f"+++ b/docs/note.md\n-incollato {_FAKE_GH}\n+incollato <rimosso>\n"
     diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=["docs/note.md"], patch_text=patch,
                                   declared_files=["docs/note.md"], local_modules=[], declared_dependencies=[])
     assert diff["status"] == "PASS"
@@ -434,6 +471,38 @@ def test_pr_guard_patch_copre_tutti_i_file():
     wf = (ROOT / ".github/workflows/pr-guard.yml").read_text(encoding="utf-8")
     assert "git diff --no-renames -U0 \"${PR_BASE_SHA}\"...HEAD > pr_full_diff.patch" in wf
     assert "-- '*.py' > pr_full_diff.patch" not in wf
+
+
+def test_manifest_toccato_non_copre_import_non_dichiarato():
+    patch = "+++ b/core/x.py\n+import missing_package\n+++ b/requirements.txt\n+# commento\n"
+    files = ["core/x.py", "requirements.txt"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+                                  declared_files=files, local_modules=["core"],
+                                  declared_dependencies=["requests"])
+    assert diff["status"] == "BLOCK" and "undeclared_new_dependency" in diff["problems"]
+    assert diff["owner_manual_merge_required"] is True
+
+
+def test_dipendenze_dichiarate_in_pyproject_contano():
+    deps = policy._pyproject_dependencies(str(ROOT / "pyproject.toml"))
+    assert {"betfairlightweight", "telethon", "dateutil", "pytest_xdist"} <= deps
+
+
+def test_mcp_test_e_commenti_non_sono_violazioni():
+    patch = ("+++ b/tests/test_tools.py\n+assert 'betfair_client' not in src\n"
+             "+++ b/src/tools.py\n+# MCP non chiama mai betfair_client\n")
+    files = ["tests/test_tools.py", "src/tools.py"]
+    diff = policy.full_diff_check(base_sha=BASE, head_sha=HEAD, files=files, patch_text=patch,
+                                  declared_files=files, local_modules=[], declared_dependencies=[],
+                                  repo_kind="mcp")
+    assert diff["mcp_adapter_violations"] == [] and diff["status"] == "PASS"
+
+
+@pytest.mark.parametrize("path", ["scripts/pr_clean_scope_rebuild.py", "scripts/pr_refresh_self_checks.py",
+                                  "scripts/pr_costo_review.py", "scripts/ci/check_ci_quarantine.py"])
+def test_script_di_automazione_pr_sono_a_merge_owner(path):
+    assert policy.is_owner_manual_path(path)
+    assert policy.manual_label_decision([path])["label"] == "REQUIRED"
 
 
 def test_full_diff_illeggibile_e_unknown():
@@ -654,6 +723,27 @@ def test_cli_full_diff_end_to_end(tmp_path):
          "--scope", "scope.json", "--base-sha", BASE, "--head-sha", HEAD],
         cwd=tmp_path, capture_output=True, text=True, check=False)
     assert res.returncode == 1 and "scope_mismatch_full_diff" in res.stdout
+
+
+@pytest.mark.parametrize("meta", [
+    {"title": "senza marker", "body": "TASK: k"},
+    {"title": "senza marker", "branch": "x", "commit_messages": ["[TASK: k] fix"]},
+    {"title": "senza marker", "latest_commit_message": "[TASK: k] fix"},
+])
+def test_cli_full_diff_risolve_il_task_come_il_guard(tmp_path, meta):
+    (tmp_path / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+    (tmp_path / "files.json").write_text(json.dumps(["docs/x.md"]), encoding="utf-8")
+    (tmp_path / "scope.json").write_text(json.dumps({"tasks": {"k": {"files": ["docs/x.md"]}}}),
+                                         encoding="utf-8")
+    (tmp_path / "p.patch").write_text("", encoding="utf-8")
+    res = subprocess.run(
+        [sys.executable, "-I", str(ROOT / "scripts/pr_autonomy_policy.py"), "full-diff",
+         "--meta", "meta.json", "--files", "files.json", "--patch", "p.patch",
+         "--scope", "scope.json", "--base-sha", BASE, "--head-sha", HEAD],
+        cwd=tmp_path, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, res.stdout + res.stderr
+    out = json.loads(res.stdout)
+    assert out["status"] == "PASS" and out["task_key"] == "k"
 
 
 def test_docs_dichiarano_il_contratto_e_il_principio_verbatim():

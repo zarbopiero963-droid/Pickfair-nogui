@@ -90,13 +90,24 @@ MAX_GROK_ATTEMPTS = 2  # un solo rerun dopo il primo timeout
 
 _QUOTA_HINTS = (
     "crediti esauriti", "insufficient credits", "insufficient_quota",
-    "quota exceeded", "usage-quota", "http 402", "payment required",
+    "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
+    "credit_balance_exhausted", "credit balance", "exceeded your current quota",
+    "insufficient_balance", "out of credits",
 )
+# Solo segnali di timeout VERI (rilievo Codex #499): l'intestazione generica
+# «non completata» compare in OGNI errore del provider (auth, modello invalido,
+# 5xx) e non dice nulla sulla causa. Un errore non quota e non timeout è
+# PROVIDER_ERROR: non dà diritto al rerun automatico di Grok.
 _TIMEOUT_HINTS = (
-    "timed out", "timeout", "read operation timed out",
-    "remote end closed", "non completata",
+    "timed out", "timeout", "read operation timed out", "http error 408",
 )
-_NO_BLOCKERS = re.compile(r"^\s*[-*]?\s*nessun(?:o)?\s+bloccante", re.IGNORECASE)
+_INCOMPLETE_HINTS = ("non completata",)
+# La sezione Bloccanti è pulita solo se è INTERAMENTE la risposta «nessun
+# bloccante» (eventualmente «evidente/rilevato»): un prefisso seguito da un
+# bloccante elencato non è una review pulita (rilievo Codex #499).
+_NO_BLOCKERS = re.compile(
+    r"[-*]?\s*nessun(?:o)?\s+bloccante(?:\s+(?:evidente|rilevato|rilevante|trovato|individuato))?\s*[.!]?",
+    re.IGNORECASE)
 
 # ---------------------------------------------------------------------------
 # Path (§0.8–§0.10). La lista è il MINIMO a merge manuale owner (item 19):
@@ -121,6 +132,9 @@ OWNER_MANUAL_MERGE_FILES = frozenset({
     "scripts/pr_flow_automation.py",
     "scripts/pr_merge_readiness.py",
     "scripts/pr_automation_controller.py",
+    "scripts/pr_clean_scope_rebuild.py",
+    "scripts/pr_refresh_self_checks.py",
+    "scripts/ci/check_ci_quarantine.py",
 })
 
 # Gli stessi criteri come regex: Sol e Grok ne tengono una copia identica
@@ -130,7 +144,7 @@ MANUAL_AUTHORITY_PATTERNS = (
     r"(^|/)\.github/workflows/",
     r"^(CLAUDE|AGENTS)\.md$",
     r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
-    r"^scripts/(guardrail_check|pr_autonomy_policy|pr_fix_loop_policy|pr_flow_automation|pr_merge_readiness|pr_automation_controller)\.py$",
+    r"^scripts/(guardrail_check|pr_[a-z0-9_]+|ci/check_ci_quarantine)\.py$",
     r"(^|/)requirements[^/]*\.(txt|in|lock)$",
     r"(^|/)pyproject\.toml$",
     r"(^|/)poetry\.lock$",
@@ -464,6 +478,8 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
             return {"status": "QUOTA", "reason": "crediti/quota esauriti"}
         if any(h in lowered for h in _TIMEOUT_HINTS):
             return {"status": "TIMEOUT", "reason": "review non completata per timeout"}
+        if any(h in lowered for h in _INCOMPLETE_HINTS):
+            return {"status": "PROVIDER_ERROR", "reason": "review non completata: errore del provider, non timeout"}
         return {"status": "MISSING_MARKER", "reason": "job verde ma marker di completamento assente"}
     range_head = done[-1].group(3)
     if not str(head_sha).startswith(range_head) and not range_head.startswith(str(head_sha)):
@@ -471,7 +487,7 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
     section = _bloccanti_section(body)
     if section is None:
         return {"status": "UNKNOWN", "reason": "sezione Bloccanti assente: schema inatteso"}
-    if not section or _NO_BLOCKERS.match(section):
+    if not section or _NO_BLOCKERS.fullmatch(section.strip()):
         return {"status": "VALID_CLEAN", "reason": ""}
     return {"status": "VALID_WITH_BLOCKERS", "reason": "bloccanti da triagiare"}
 
@@ -638,11 +654,12 @@ def full_diff_check(*, base_sha: Any, head_sha: Any, files: Any, patch_text: Any
                 if (MONEY_PATH_CALL_RE.search(line) and not path.startswith("tests/")
                         and not line[1:].lstrip().startswith("#")):
                     callers.append(path)
-            if is_py and repo_kind == "mcp" and MCP_FORBIDDEN_RE.search(line):
+            if (is_py and repo_kind == "mcp" and MCP_FORBIDDEN_RE.search(line)
+                    and not path.startswith("tests/") and not line[1:].lstrip().startswith("#")):
                 mcp_violations.append(path)
     if secret_content:
         problems.append("secret_like_content_in_diff")
-    if new_deps and not classification["dependency_manifest"]:
+    if new_deps:
         problems.append("undeclared_new_dependency")
     if mcp_violations:
         problems.append("mcp_adapter_violation")
@@ -696,7 +713,7 @@ def interpret_readiness(raw: Any) -> str:
 _MERGE_BOOL_TRUE = ("scope_valid", "acceptance_complete", "suite_pass", "hard_verify_pass",
                     "codex_triaged", "fix_loop_valid", "dependencies_satisfied")
 _MERGE_BOOL_FALSE = ("pertinent_owner_decision_open", "manual_stop",
-                     "manual_label_present", "preexisting_activated_or_aggravated")
+                     "preexisting_activated_or_aggravated")
 
 
 def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -722,6 +739,12 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
             stops.append(f"{key}_unknown")
         elif value:
             reasons.append(key)
+    # `manual-review-required` non è un blocco: instrada al merge MANUALE
+    # dell'owner (§0.8/§0.9). Una PR di autorità correttamente etichettata deve
+    # poter arrivare a READY_FOR_OWNER_MANUAL_MERGE (rilievo Codex #499).
+    manual_label = state.get("manual_label_present")
+    if not isinstance(manual_label, bool):
+        stops.append("manual_label_present_unknown")
     unresolved = state.get("unresolved_threads")
     if not isinstance(unresolved, int) or isinstance(unresolved, bool):
         stops.append("unresolved_threads_unknown")
@@ -751,9 +774,10 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         return {"status": "NEEDS_MANUAL", "reasons": sorted(set(stops + reasons))}
     if reasons:
         return {"status": "BLOCKED", "reasons": sorted(set(reasons))}
-    if full.get("owner_manual_merge_required") is not False:
+    if manual_label or full.get("owner_manual_merge_required") is not False:
+        why = (["owner_manual_merge_files"] if full.get("owner_manual_merge_required") is not False else [])
         return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
-                "reasons": ["owner_manual_merge_files"]}
+                "reasons": why + (["manual_review_label"] if manual_label else [])}
     return {"status": "READY_FOR_AUTO_MERGE", "reasons": []}
 
 
@@ -842,6 +866,31 @@ def _declared_dependencies(paths: Iterable[str]) -> set[str]:
     return names
 
 
+def _pyproject_dependencies(path: str) -> set[str]:
+    """[project] dependencies e optional-dependencies (tomllib, stdlib 3.11+)."""
+    try:
+        import tomllib
+        with open(path, "rb") as fh:
+            data = tomllib.load(fh)
+    except (ImportError, OSError, ValueError):
+        return set()
+    project = data.get("project") if isinstance(data, dict) else None
+    if not isinstance(project, dict):
+        return set()
+    specs = list(project.get("dependencies") or [])
+    for group in (project.get("optional-dependencies") or {}).values():
+        specs.extend(group or [])
+    names = set()
+    for spec in specs:
+        m = _REQ_NAME_RE.match(str(spec))
+        if m:
+            names.add(m.group(1).lower().replace("-", "_"))
+    for imp, pkg in IMPORT_ALIASES.items():
+        if pkg in names:
+            names.add(imp.lower())
+    return names
+
+
 _SKIP_DIRS = frozenset({".git", "venv", ".venv", "node_modules", "__pycache__", "build", "dist"})
 
 
@@ -856,9 +905,32 @@ def _local_modules(root: str) -> set[str]:
     return mods
 
 
-def _task_key(title: str) -> str | None:
-    m = re.search(r"\[TASK:\s*([^\]\s]+)\s*\]", title or "")
-    return m.group(1) if m else None
+def _resolve_task_key(meta: Any, files: Any, scope: Any) -> str | None:
+    """Stessa risoluzione di `guardrail_check.resolve_task` (titolo, body, branch,
+    ultimo commit, storico commit), caricato per path: con `python -I` la
+    cartella scripts/ non è in sys.path. Errore di caricamento → None, quindi
+    `declared_scope_unknown` (fail-closed)."""
+    import importlib.util
+    import os
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        spec = importlib.util.spec_from_file_location(
+            "_pr_autonomy_guardrail_check", os.path.join(here, "guardrail_check.py"))
+        if spec is None or spec.loader is None:
+            return None
+        guard = importlib.util.module_from_spec(spec)
+        previous, sys.dont_write_bytecode = sys.dont_write_bytecode, True
+        try:  # nessun __pycache__ scritto nel checkout della PR
+            spec.loader.exec_module(guard)
+        finally:
+            sys.dont_write_bytecode = previous
+        tasks = (scope or {}).get("tasks") if isinstance(scope, dict) else None
+        allowed = {str(k) for k in tasks} if isinstance(tasks, dict) else set()
+        changed = [f for f in files if isinstance(f, str)] if isinstance(files, list) else []
+        task = guard.resolve_task(meta if isinstance(meta, dict) else {}, changed, allowed)[0]
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+    return task if isinstance(task, str) and task else None
 
 
 def _load_json(path: str) -> Any:
@@ -879,11 +951,12 @@ def _cmd_full_diff(args: argparse.Namespace) -> int:
         print(json.dumps({"status": "UNKNOWN", "problems": [f"input_unreadable:{type(exc).__name__}"]}))
         return 1
     files = raw_files if isinstance(raw_files, list) else (raw_files or {}).get("files")
-    key = _task_key(str((meta or {}).get("title") or ""))
+    key = _resolve_task_key(meta, files, scope)
     task = ((scope or {}).get("tasks") or {}).get(key) if key else None
     declared = task.get("files") if isinstance(task, dict) else None
-    req_files = sorted(glob.glob("requirements*.txt")) + sorted(glob.glob("requirements*.in"))
-    deps = _declared_dependencies(req_files)
+    req_files = (sorted(glob.glob("requirements*.txt")) + sorted(glob.glob("requirements*.in"))
+                 + sorted(glob.glob("requirements*.lock")))
+    deps = _declared_dependencies(req_files) | _pyproject_dependencies("pyproject.toml")
     result = full_diff_check(
         base_sha=args.base_sha, head_sha=args.head_sha, files=files, patch_text=patch_text,
         declared_files=declared, local_modules=_local_modules("."), declared_dependencies=deps,

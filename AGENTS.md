@@ -65,8 +65,10 @@ Astra suspended), safety-critical informational vs `manual-review-required`
 blocking, runtime/core auto-merge when every §0.9 gate holds, owner manual
 merge for authority files, full-diff check, fail-closed readiness, automatic
 next-PR Phase 0, owner STOP only for the ten §0.13 conditions. Where this
-section and older text below differ, this section and the spec prevail; on a
-safety point the stricter rule still wins.
+section and older text below differ, this section and the spec prevail. On a
+safety point the contract does NOT decide, the stricter rule still wins; where
+it decides explicitly (safety-critical runtime/core PRs auto-merge when every
+§0.9 gate holds, no per-issue override), it supersedes the older text.
 
 ## GLOBAL EXECUTION POLICY
 
@@ -135,8 +137,9 @@ wins, and the conflict must be reported.
 - Never create a second PR while another PR is open in this repository.
 - Merge is gated: auto-merge is allowed ONLY under the conditions of the
   "Auto-merge (owner-authorized, gated)" section; outside them merge is
-  manual and owner-only. Safety-critical PRs are never auto-merged without
-  the explicit per-issue owner override.
+  manual and owner-only. Safety-critical runtime/core PRs auto-merge only
+  when every gate of spec §0.9 holds (the former per-issue owner override is
+  withdrawn); LIVE, money limits and credentials stay owner STOP (§0.13).
 - Never mark work complete while checks are pending, checks are failing, or
   blocking review comments remain unresolved.
 - Never expand scope beyond the current task, current PR, or provided handoff.
@@ -1334,6 +1337,10 @@ The workflows that ARE the gates the auto-merge decision rests on:
 - `scripts/pr_flow_automation.py`
 - `scripts/pr_merge_readiness.py`
 - `scripts/pr_automation_controller.py`
+- `scripts/pr_clean_scope_rebuild.py`
+- `scripts/pr_refresh_self_checks.py`
+- `scripts/ci/check_ci_quarantine.py`
+- (and, fail-closed, every other `scripts/pr_*.py`: the label pattern covers them)
 
 `scripts/guardrail_check.py` is on the list for the same reason as the
 workflows, and GPT-5.6 Sol is who put it there: "a gate that is independent and

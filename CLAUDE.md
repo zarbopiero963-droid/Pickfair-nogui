@@ -59,8 +59,10 @@ ed è il responsabile tecnico operativo:
 > L’agente deve chiedere l’owner solo quando la risposta cambierebbe il prodotto, il rischio accettato, il denaro, l’infrastruttura, le credenziali o una decisione owner esistente.
 
 Dove questa sezione e il testo più vecchio qui sotto divergono, prevalgono
-questa sezione e la spec; su un punto di sicurezza vale comunque la regola più
-severa.
+questa sezione e la spec. Su un punto di sicurezza che il contratto NON decide
+vale la regola più severa; dove decide esplicitamente (PR safety-critical
+runtime/core in auto-merge con tutti i gate di §0.9, senza override per-issue)
+sostituisce il testo più vecchio.
 
 ## REGOLA PRINCIPALE
 
@@ -430,6 +432,10 @@ I workflow che SONO i gate su cui poggia la decisione di auto-merge:
 - `scripts/pr_flow_automation.py`
 - `scripts/pr_merge_readiness.py`
 - `scripts/pr_automation_controller.py`
+- `scripts/pr_clean_scope_rebuild.py`
+- `scripts/pr_refresh_self_checks.py`
+- `scripts/ci/check_ci_quarantine.py`
+- (e, per fail-closed, ogni altro `scripts/pr_*.py`: il pattern della label li copre)
 
 `scripts/guardrail_check.py` e' in lista per la stessa ragione dei workflow, e
 ce l'ha messo GPT-5.6 Sol: «un gate indipendente e **non modificabile nello
