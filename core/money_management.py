@@ -5,6 +5,7 @@ import math
 from typing import Any, Dict, Optional
 
 import trading_config
+from core import validators
 from core.system_state import DeskMode, RiskProfile, RoserpinaConfig
 from core.type_helpers import safe_float
 
@@ -71,7 +72,13 @@ class RoserpinaMoneyManagement:
     def _max_single_stake_abs(self, bankroll_current: float) -> float:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         pct_cap = bankroll_current * (self._safe_float(self.config.max_single_bet_pct, 0.0) / 100.0)
-        abs_cap = self._safe_float(self.config.max_stake_abs, 0.0)
+        raw_abs_cap = getattr(self.config, "max_stake_abs", None)
+        if raw_abs_cap is not None and validators.finite_number(raw_abs_cap) is None:
+            # Tetto assoluto configurato ma illeggibile (NaN/inf/bool/testo):
+            # fail-closed a 0, nessuno stake ammesso. Prima NaN valeva 0 =
+            # "tetto disattivato" e restava il solo cap percentuale (PR27).
+            return 0.0
+        abs_cap = self._safe_float(raw_abs_cap, 0.0)
         if abs_cap > 0:
             return max(0.0, min(pct_cap, abs_cap))
         return max(0.0, pct_cap)
@@ -235,7 +242,9 @@ class RoserpinaMoneyManagement:
         cap = getattr(self.config, "max_recovery_chase_abs", None)
         if cap is not None:
             try:
-                cap = float(cap)
+                # Un bool non e' un importo (True varrebbe 1 EUR): config
+                # corrotta come NaN/inf (PR27, #461).
+                cap = float("nan") if isinstance(cap, bool) else float(cap)
             except (TypeError, ValueError):
                 cap = float("nan")
             if not math.isfinite(cap):
@@ -263,10 +272,25 @@ class RoserpinaMoneyManagement:
     ) -> MoneyManagementDecision:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         equity_peak = self._safe_float(equity_peak, bankroll_current)
+        table_id = self._extract_table_id(table)
+        # Esposizione corrotta (NaN/inf/bool): `_safe_float` la portava a 0,
+        # cioe' a capacita' piena; `TableManager.total_exposure()` restituisce
+        # apposta inf su uno stato corrotto (#449). Fail-closed (PR27, #461).
+        # Assente (None) resta 0 come prima.
+        for raw_exposure in (current_total_exposure, event_current_exposure):
+            if raw_exposure is not None and validators.finite_number(raw_exposure) is None:
+                return MoneyManagementDecision(
+                    approved=False,
+                    recommended_stake=0.0,
+                    desk_mode=DeskMode.NORMAL,
+                    reason="esposizione_non_valida",
+                    table_id=table_id,
+                    metadata={"current_total_exposure": repr(current_total_exposure),
+                              "event_current_exposure": repr(event_current_exposure)},
+                )
         current_total_exposure = self._safe_float(current_total_exposure, 0.0)
         event_current_exposure = self._safe_float(event_current_exposure, 0.0)
 
-        table_id = self._extract_table_id(table)
         table_loss = self._extract_table_loss(table)
         in_recovery = self._extract_table_recovery_state(table)
 
@@ -328,20 +352,24 @@ class RoserpinaMoneyManagement:
         # Supporto Stake Fisso dal segnale/parser (#CP-04)
         fixed_stake_raw = signal.get("stake")
         if fixed_stake_raw:
-            try:
-                recommended = float(fixed_stake_raw)
-                base_stake = recommended # Per i metadati
-                risk_mult = 1.0
-                desk_mult = 1.0
-            except (ValueError, TypeError):
-                base_stake = self._calculate_base_stake(
-                    price=price,
-                    bankroll_current=bankroll_current,
-                    table_loss=table_loss,
+            # Stake fisso PRESENTE: deve essere un importo finito > 0. Prima
+            # True valeva 1 EUR, NaN diventava MIN_STAKE dopo il clamp, inf il
+            # cap singolo e un testo veniva sostituito in silenzio dallo stake
+            # MM. Fail-closed: il segnale si rifiuta (PR27, #461).
+            fixed_stake = validators.finite_number(fixed_stake_raw)
+            if fixed_stake is None or fixed_stake <= 0.0:
+                return MoneyManagementDecision(
+                    approved=False,
+                    recommended_stake=0.0,
+                    desk_mode=desk_mode,
+                    reason="stake_segnale_non_valido",
+                    table_id=table_id,
+                    metadata={"stake": repr(fixed_stake_raw)},
                 )
-                risk_mult = self._risk_profile_multiplier()
-                desk_mult = self._desk_mode_multiplier(desk_mode)
-                recommended = base_stake * risk_mult * desk_mult
+            recommended = fixed_stake
+            base_stake = recommended # Per i metadati
+            risk_mult = 1.0
+            desk_mult = 1.0
         else:
             base_stake = self._calculate_base_stake(
                 price=price,

@@ -104,6 +104,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Fail-closed numeric validation for orders and risk (#461 PR27, PKG-P24-A).
+  - A new shared source, `core/validators.py` (`order_market_id`,
+    `order_selection_id`, `order_price`, `order_stake`, `finite_number`), uses
+    the same `INVALID_*` codes as the client. The #488 client check is unchanged.
+  - Engine: a present bool, NaN/inf, non-numeric value or non-integer selection
+    id is now rejected at normalization (FAILED/INVALID_REQUEST). There is no
+    `orders` row, no intent mark, no transport, and the key of an in-flight
+    original is not released. Before, `selection_id=True` was placed on
+    runner 1, `stake=True` was placed as 1 EUR, and 5678.9 was truncated.
+  - Runtime signal: market/selection/price are checked before anti-duplication,
+    tables and money management. A non-numeric selection used to raise with the
+    event key still locked.
+  - A2 cap: `max_open_exposure` that is configured but unreadable
+    (NaN/inf/bool/text) now denies. NaN used to disable the cap.
+  - Money management:
+    - an invalid fixed stake from a signal is rejected
+      (`stake_segnale_non_valido`);
+    - a non-finite exposure (`total_exposure()` = inf on a corrupted state,
+      #449) is rejected instead of being counted as 0;
+    - an unreadable `max_stake_abs` fails closed;
+    - a bool recovery cap counts as a corrupted config (chase 0, #450).
+  - OrderManager: bool and truncated ids or amounts are rejected before
+    conversion.
 - Single order authority and durable intent de-dup (#461 PR26, gate
   `LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE`): the engine marks a
   `customer_ref` as consumed in the new additive SQLite table

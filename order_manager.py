@@ -8,6 +8,7 @@ import uuid
 from enum import Enum, unique
 from typing import Any, Dict, FrozenSet, Optional, Set, Tuple
 
+from core import validators
 from core.type_helpers import safe_float, safe_int, safe_side
 
 logger = logging.getLogger("OrderManager")
@@ -485,6 +486,32 @@ class OrderManager:
             return ""
         return lati.pop()
 
+    @staticmethod
+    def _validate_raw_numbers(payload: Any) -> None:
+        """Valori grezzi PRESENTI, prima della conversione (#461 PR27).
+
+        `_normalize_payload` converte con `int()`/`float()`: `True` diventava
+        selection 1 o stake 1.0, `5678.9` diventava 5678. Stessi controlli
+        dell'engine (core/validators.py); un campo assente resta a
+        `_validate_payload`.
+        """
+        if not isinstance(payload, dict):
+            return
+        controlli = (
+            (("market_id", "marketId"), validators.order_market_id),
+            (("selection_id", "selectionId"), validators.order_selection_id),
+            (("price", "odds"), validators.order_price),
+            (("stake", "size"), validators.order_stake),
+        )
+        for alias, valida in controlli:
+            raw = next((payload[k] for k in alias if payload.get(k) is not None), None)
+            if raw is None:
+                continue
+            try:
+                valida(raw)
+            except ValueError as exc:
+                raise ValidationError(f"{alias[0]} non valido: {exc}") from None
+
     def _validate_payload(self, payload: Dict[str, Any]) -> None:
         if not payload["market_id"]:
             raise ValidationError("market_id mancante")
@@ -699,6 +726,7 @@ class OrderManager:
     # MAIN API: PLACE ORDER
     # ---------------------------------------------------------
     def place_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        self._validate_raw_numbers(payload)
         payload = self._normalize_payload(payload)
         self._validate_payload(payload)
 

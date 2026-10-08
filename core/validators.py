@@ -70,6 +70,74 @@ def require_finite_now(now) -> float:
     return f
 
 
+# ---------------------------------------------------------------------------
+# Campi d'ordine (#461 PR27, PKG-P24-A): fonte unica fail-closed per gli
+# ingressi che convergono all'autorita' ordini (engine, runtime, OrderManager).
+# Il client Betfair (#488) resta la difesa finale e NON si duplica: qui
+# l'invalido si ferma prima di persistenza, anti-duplicazione, tavoli e
+# trasporto. Gli errori portano gli stessi codici del client.
+# ---------------------------------------------------------------------------
+def finite_number(value):
+    """`value` come float finito, altrimenti `None`.
+
+    `bool` non e' un numero (True/False da JSON diventerebbero 1/0), e nemmeno
+    NaN/inf o un testo non numerico. Testi numerici ("2.0") restano ammessi."""
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return f if math.isfinite(f) else None
+
+
+def order_market_id(value) -> str:
+    """Market id non vuoto; un bool o un numero non finito non lo sono."""
+    if isinstance(value, bool):
+        raise ValueError("INVALID_MARKET_ID")
+    if isinstance(value, float) and not math.isfinite(value):
+        raise ValueError("INVALID_MARKET_ID")
+    text = str(value if value is not None else "").strip()
+    if not text:
+        raise ValueError("INVALID_MARKET_ID")
+    return text
+
+
+def order_selection_id(value) -> int:
+    """Selection id intero > 0, senza troncamenti: 5678.9 non diventa 5678."""
+    if isinstance(value, bool):
+        raise ValueError("INVALID_SELECTION_ID")
+    if isinstance(value, int):
+        n = value
+    elif isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError("INVALID_SELECTION_ID")
+        n = int(value)
+    elif isinstance(value, str) and value.strip().isdigit():
+        n = int(value.strip())
+    else:
+        raise ValueError("INVALID_SELECTION_ID")
+    if n <= 0:
+        raise ValueError("INVALID_SELECTION_ID")
+    return n
+
+
+def order_price(value) -> float:
+    """Quota finita > 1.0, la stessa soglia del client."""
+    f = finite_number(value)
+    if f is None or f <= 1.0:
+        raise ValueError("INVALID_PRICE")
+    return f
+
+
+def order_stake(value) -> float:
+    """Stake finito > 0."""
+    f = finite_number(value)
+    if f is None or f <= 0.0:
+        raise ValueError("INVALID_SIZE")
+    return f
+
+
 def safe_filename_core(name: str) -> str:
     """Nucleo condiviso della sanitizzazione di un nome file (Windows).
 

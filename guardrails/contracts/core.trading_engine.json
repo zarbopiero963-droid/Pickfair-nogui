@@ -71,5 +71,11 @@
     "prima_del_trasporto": "STOP/emergency, safe mode, rischio, LIVE gate, sessione, breaker: nessuna marcatura.",
     "capacita_assente": "LIVE dichiarato e DB senza consume_order_intent (o esito non booleano): `DURABLE_DEDUPE_UNAVAILABLE`, nessun invio. Fuori dal LIVE: log e invio senza marcatura (doppi dei test).",
     "riconciliazione": "Non rilascia mai la marcatura: un nuovo tentativo richiede un nuovo intento (nuovo customer_ref)."
+  },
+  "numeric_validation_contract": {
+    "verificato_su": "#461 PR27 (PKG-P24-A), main f5cb7e6",
+    "fonte_unica": "core/validators.py: order_market_id, order_selection_id, order_price, order_stake, finite_number; stessi codici INVALID_* del client (#488 non duplicato)",
+    "ingresso_engine": "`_valida_campi_numerici` in `_normalize_request`: un campo PRESENTE bool, NaN/inf, non numerico o un selection id non intero => FAILED/INVALID_REQUEST prima di risk gate, de-dup, persistenza e trasporto; nessuna riga orders, nessuna marcatura dell'intento, nessun rilascio della chiave di un originale in volo",
+    "campi_assenti": "Restano al client, gia' fail-closed (#488): nessun trasporto"
   }
 }
