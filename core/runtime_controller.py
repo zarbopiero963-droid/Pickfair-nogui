@@ -2579,25 +2579,40 @@ class RuntimeController:
         )
 
     @staticmethod
-    def _event_identity(signal: dict) -> str:
+    def _event_identity_parts(signal: dict) -> tuple[str, str]:
         event_name = signal.get("event_name") or signal.get("event")
-        if isinstance(event_name, str) and event_name.strip():
-            return "name:" + " ".join(event_name.casefold().split())
+        name = " ".join(event_name.casefold().split()) if isinstance(event_name, str) else ""
         event_id = signal.get("event_id") or signal.get("eventId")
         if event_id not in (None, "") and not isinstance(event_id, bool):
-            return f"id:{str(event_id).strip()}"
-        return ""
+            return str(event_id).strip(), name
+        return "", name
 
-    def _event_current_exposure(self, event_identity: str) -> float:
-        if not event_identity:
+    @classmethod
+    def _event_identity(cls, signal: dict) -> str:
+        event_id, event_name = cls._event_identity_parts(signal)
+        return f"id:{event_id}" if event_id else (f"name:{event_name}" if event_name else "")
+
+    def _event_current_exposure(self, signal: dict) -> float:
+        event_id, event_name = self._event_identity_parts(signal)
+        if not event_id and not event_name:
             return 0.0
         total = 0.0
         for table in self.table_manager.active_tables():
             meta = table.meta if isinstance(table.meta, dict) else {}
-            stored = str(meta.get("event_identity") or "")
-            if not stored:
-                stored = self._event_identity(meta)
-            if stored == event_identity:
+            stored_id, stored_name = self._event_identity_parts(meta)
+            legacy = str(meta.get("event_identity") or "")
+            if not stored_id and legacy.startswith("id:"):
+                stored_id = legacy[3:]
+            if not stored_name and legacy.startswith("name:"):
+                stored_name = legacy[5:]
+            # Betfair event_id e' primario quando presente su entrambi. Se uno
+            # dei due record legacy ne e' privo, il nome normalizzato permette
+            # la riconciliazione; due ID differenti non vengono mai fusi.
+            same_event = (bool(event_id and stored_id) and event_id == stored_id) or (
+                not (event_id and stored_id) and bool(event_name and stored_name)
+                and event_name == stored_name
+            )
+            if same_event:
                 value = validators.finite_number(table.current_exposure)
                 if value is None or value < 0:
                     return float("inf")
@@ -3146,7 +3161,7 @@ class RuntimeController:
 
         total_exposure = self.table_manager.total_exposure()
         event_identity = self._event_identity(signal)
-        event_exposure = self._event_current_exposure(event_identity)
+        event_exposure = self._event_current_exposure(signal)
 
         # Enforcement A1: Drawdown Hard Stop (#320)
         if str(self.execution_mode).upper() == "LIVE":
@@ -3298,6 +3313,7 @@ class RuntimeController:
             selection_id=payload["selection_id"],
             meta={
                 "event_name": payload["event_name"],
+                "event_id": signal.get("event_id", signal.get("eventId")),
                 "event_identity": event_identity,
                 "market_name": payload["market_name"],
                 "runner_name": payload["runner_name"],
@@ -4398,7 +4414,7 @@ class RuntimeController:
             {"table_id": table_id} if table_id is not None else None
         )
         try:  # PR28: era 0.0
-            next_event_exposure = (self._event_current_exposure(self._event_identity(signal))
+            next_event_exposure = (self._event_current_exposure(signal)
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
@@ -4498,7 +4514,7 @@ class RuntimeController:
                     ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
                     ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
                     ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
-                     self._event_current_exposure(event_identity) if event_identity else float("inf")),
+                     self._event_current_exposure(signal) if event_identity else float("inf")),
                     ("max_open_exposure", getattr(self.config, "max_open_exposure", None), self.table_manager.total_exposure()),
                 )
                 for cap_name, cap_raw, current in checks:
@@ -4607,6 +4623,7 @@ class RuntimeController:
                 selection_id=submit_payload.get("selection_id"),
                 meta={
                     "event_name": submit_payload.get("event_name") or "",
+                    "event_id": submit_payload.get("event_id", submit_payload.get("eventId")),
                     "event_identity": self._event_identity(submit_payload),
                     "market_name": submit_payload.get("market_name") or "",
                     "runner_name": submit_payload.get("runner_name") or "",
@@ -4865,15 +4882,11 @@ class RuntimeController:
         payload = {
             "market_id": str(signal.get("market_id")),
             "selection_id": int(signal.get("selection_id")),
-            "bet_type": str(
-                signal.get("bet_type")
-                or signal.get("side")
-                or signal.get("action")
-                or "BACK"
-            ).upper(),
+            "bet_type": validators.signal_side(signal),
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision_stake),
             "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
+            "event_id": signal.get("event_id", signal.get("eventId")),
             "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
             "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
             "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),

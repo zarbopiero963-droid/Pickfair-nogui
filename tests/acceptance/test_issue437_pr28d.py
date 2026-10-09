@@ -119,6 +119,23 @@ def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
     assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
 
 
+def test_event_cap_same_id_aggregates_even_when_names_differ(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 100.0
+    c.rc.config.max_event_exposure_abs = 2.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "old:key"
+    table.market_id = "1.old"
+    table.current_exposure = 1.5
+    table.meta = {"event_id": "E42", "event_name": "Roma v Milan", "event_identity": "id:E42"}
+    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig.update({"event_id": "E42", "event_name": "Roma - Milan"})
+    c.rc._on_signal_received(sig)
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+
+
 @pytest.mark.parametrize("raw", [{}, {"action": "BOTH"}, {"action": "BACK", "side": "LAY"}])
 def test_telegram_ingestion_rejects_missing_invalid_or_conflicting_side(raw):
     payload = {"market_id": "1.2", "selection_id": 3, "price": 2.0, **raw}
