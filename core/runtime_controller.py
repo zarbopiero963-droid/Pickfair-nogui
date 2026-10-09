@@ -106,6 +106,12 @@ class RuntimeController:
         # PR28-d: snapshot dei cap + contabilizzazione/publish sono serializzati
         # nel processo. La prenotazione durevole cross-process resta PR29.
         self._risk_admission_lock = threading.RLock()
+        # Fencing tra admissioni d'ingresso e cashout: le operazioni di rete
+        # non tengono il lock, ma un cashout invalida gli ordini in-flight nel
+        # proprio scope prima di iniziare il routing.
+        self._admission_epochs: dict[tuple, int] = {}
+        self._cashout_barriers: dict[int, frozenset[tuple]] = {}
+        self._cashout_barrier_seq = 0
 
         self.batch_manager = DutchingBatchManager(db, bus=bus)
         self.reconciliation_engine = self._build_reconciliation_engine()
@@ -2689,6 +2695,33 @@ class RuntimeController:
         return False
 
     def _route_cashout_signal(self, signal: dict) -> None:
+        # Il cashout può partire anche da risk_stop/start, non solo da un
+        # SIGNAL_RECEIVED. La barriera vive quindi sul choke point comune.
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            barrier_id, _scope = RuntimeController._begin_cashout_barrier(self, signal)
+        deferred = False
+        is_owned = getattr(lock, "_is_owned", None)
+        release_save = getattr(lock, "_release_save", None)
+        acquire_restore = getattr(lock, "_acquire_restore", None)
+        lock_state = (
+            release_save()
+            if callable(is_owned) and is_owned()
+            and callable(release_save) and callable(acquire_restore)
+            else None
+        )
+        try:
+            deferred = RuntimeController._route_cashout_signal_under_barrier(
+                self, signal, barrier_id
+            )
+        finally:
+            if lock_state is not None:
+                acquire_restore(lock_state)
+            if not deferred:
+                with lock:
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
+
+    def _route_cashout_signal_under_barrier(self, signal: dict, barrier_id: int) -> bool:
         """Instrada un segnale CASHOUT/CASHOUT_ALL al ``CashoutRouter`` (Fase 2.1-B2.4b-2).
 
         Il runtime pubblica **solo** ``REQ_EXECUTE_CASHOUT`` (via il router), **mai**
@@ -2707,7 +2740,7 @@ class RuntimeController:
         # (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
         if not self._cashout_chain_wired():
             self._reject_signal(signal, "cashout_chain_not_wired")
-            return
+            return False
 
         # Grace auto-green OPT-IN (G5): se armato, DIFFERISCI l'intera route su un
         # threading.Timer (non blocca il worker del bus) => book + green-up sono
@@ -2728,7 +2761,7 @@ class RuntimeController:
         if signal_type == "CASHOUT_ALL":
             self._cancel_pending_auto_green()
             self._execute_cashout_route(signal)
-            return
+            return False
         # Solo il CASHOUT singolo con target VALORIZZATO (market E selection) puo'
         # essere graziato: senza target valido la chiave collasserebbe e accorpare
         # richieste diverse; in quel caso route inline (nessun grace, nessun dedup).
@@ -2736,7 +2769,7 @@ class RuntimeController:
         selection_id = str(signal.get("selection_id") or "")
         if delay <= 0.0 or signal_type != "CASHOUT" or not (market_id and selection_id):
             self._execute_cashout_route(signal)
-            return
+            return False
 
         # Copia PROFONDA: isola il payload differito da qualunque mutazione del
         # chiamante durante la grace (anche strutture annidate: prezzi, legs).
@@ -2760,7 +2793,11 @@ class RuntimeController:
         # instrada INLINE (fallback fail-closed, il cashout parte comunque, solo
         # senza grace). Fugu/Greptile P1.
         try:
-            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode, gen))
+            timer = threading.Timer(
+                delay, self._deferred_cashout_route,
+                args=(signal, key, enqueue_mode, gen, barrier_id),
+            )
+            timer._cashout_admission_barrier_id = barrier_id
             timer.daemon = True
             # Arma il Timer SOLO se la prenotazione e' ancora valida (chiave
             # presente E generazione invariata): un CASHOUT_ALL arrivato nella
@@ -2769,8 +2806,9 @@ class RuntimeController:
             # al solo re-check del callback (GPT/Fugu/Fable).
             if not self._auto_green_arm_timer(key, timer, gen):
                 logger.info("[RuntimeController] grace %s invalidato da CASHOUT_ALL concorrente: skip", key)
-                return
+                return False
             timer.start()
+            return True
         except Exception:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
             logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
             # Tieni la pending-guard DURANTE la route inline e rilasciala nel
@@ -2782,9 +2820,10 @@ class RuntimeController:
                 self._execute_cashout_route(signal)
             finally:
                 self._auto_green_release(key, gen)
+            return False
 
     def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str,
-                                gen: int) -> None:
+                                gen: int, barrier_id: int | None = None) -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
 
         Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
@@ -2814,6 +2853,9 @@ class RuntimeController:
             self._publish_cashout_failed(signal, f"grace_route_error:{exc}", "ERROR")
         finally:
             self._auto_green_release(key, gen)
+            if barrier_id is not None:
+                with getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock):
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
 
     def _publish_cashout_failed(self, signal: dict, reason: str, status: str) -> None:
         """Pubblica un ``CASHOUT_FAILED`` strutturato in modo EXCEPTION-SAFE.
@@ -2955,6 +2997,11 @@ class RuntimeController:
                 t.cancel()
             except Exception:  # noqa: BLE001 - best-effort, mai crashare sul cancel
                 logger.exception("[RuntimeController] cancel timer grace fallito")
+            barrier_id = getattr(t, "_cashout_admission_barrier_id", None)
+            if barrier_id is not None:
+                lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+                with lock:
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
 
     def _cashout_gates_still_open(self, signal: dict, enqueue_mode: str = "") -> tuple:
         """Ri-verifica fail-closed dei gate live dopo il grace: (ok, reason).
@@ -3035,17 +3082,84 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
-        # Le uscite protettive conservano gli stessi gate della funzione
-        # seriale, ma non attendono il lock degli ingressi: un lookup prezzo
-        # lento/non rispondente non deve ritardare CASHOUT/CASHOUT_ALL.
         signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
         if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
-            self._on_signal_received_serial(signal)
+            with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+                barrier_id, scope = self._begin_cashout_barrier(signal)
+            try:
+                self._on_signal_received_serial(signal)
+            finally:
+                with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+                    self._end_cashout_barrier(barrier_id)
             return
         with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
-            self._on_signal_received_serial(signal)
+            fence = self._capture_admission_fence(signal)
+            if not self._admission_fence_valid(fence):
+                self._reject_signal(dict(signal or {}), "cashout_invalidation_active")
+                return
+            self._on_signal_received_serial(signal, admission_fence=fence)
 
-    def _on_signal_received_serial(self, signal: dict) -> None:
+    def _entry_admission_keys(self, signal: dict) -> tuple[tuple, ...]:
+        keys: list[tuple] = [("global",)]
+        try:
+            market_id = validators.order_market_id((signal or {}).get("market_id"))
+            keys.append(("market", market_id))
+            try:
+                selection_id = validators.order_selection_id((signal or {}).get("selection_id"))
+                keys.append(("selection", market_id, selection_id))
+            except ValueError:
+                pass
+        except ValueError:
+            pass
+        return tuple(keys)
+
+    def _capture_admission_fence(self, signal: dict) -> tuple[tuple, ...]:
+        keys = self._entry_admission_keys(signal)
+        epochs = getattr(self, "_admission_epochs", {})
+        return tuple((key, epochs.get(key, 0)) for key in keys)
+
+    def _begin_cashout_barrier(self, signal: dict) -> tuple[int, frozenset[tuple]]:
+        signal = dict(signal or {})
+        kind = str(signal.get("signal_type") or "").strip().upper()
+        if kind == "CASHOUT_ALL":
+            scope = frozenset({("global",)})
+        else:
+            scope_keys: set[tuple] = set()
+            try:
+                market_id = validators.order_market_id(signal.get("market_id"))
+                try:
+                    selection_id = validators.order_selection_id(signal.get("selection_id"))
+                    scope_keys.add(("selection", market_id, selection_id))
+                except ValueError:
+                    scope_keys.add(("market", market_id))
+            except ValueError:
+                # Un indirizzo CASHOUT non interpretabile non è globale: il
+                # router manterrà il suo rifiuto fail-closed senza bloccare
+                # ingressi indipendenti.
+                pass
+            scope = frozenset(scope_keys)
+        self._cashout_barrier_seq = getattr(self, "_cashout_barrier_seq", 0) + 1
+        barrier_id = self._cashout_barrier_seq
+        epochs = getattr(self, "_admission_epochs", {})
+        self._admission_epochs = epochs
+        for key in scope:
+            epochs[key] = epochs.get(key, 0) + 1
+        barriers = getattr(self, "_cashout_barriers", {})
+        barriers[barrier_id] = scope
+        self._cashout_barriers = barriers
+        return barrier_id, scope
+
+    def _end_cashout_barrier(self, barrier_id: int) -> None:
+        getattr(self, "_cashout_barriers", {}).pop(barrier_id, None)
+
+    def _admission_fence_valid(self, fence: tuple[tuple, ...]) -> bool:
+        keys = {key for key, _epoch in fence}
+        if any(keys.intersection(scope) for scope in getattr(self, "_cashout_barriers", {}).values()):
+            return False
+        epochs = getattr(self, "_admission_epochs", {})
+        return all(epochs.get(key, 0) == epoch for key, epoch in fence)
+
+    def _on_signal_received_serial(self, signal: dict, *, admission_fence=None) -> None:
         """
         Runtime signal gate for Telegram/UI-driven order intents.
 
@@ -3056,6 +3170,8 @@ class RuntimeController:
           as passthrough context (no strategy rewrite here)
         """
         signal = dict(signal or {})
+        if admission_fence is None:
+            admission_fence = self._capture_admission_fence(signal)
         self.last_signal_at = datetime.utcnow().isoformat()
 
         # Emergency stop hard gate — refuses ALL live order entry. Include anche
@@ -3356,7 +3472,20 @@ class RuntimeController:
         # daily-loss/emergency qui sotto coprano anche la finestra dello snapshot
         # (niente approved-without-submit). Con flag OFF e' un no-op totale e
         # ritorna False => i gate sotto restano identici a oggi.
-        best_price_attempted = self._apply_direct_best_price(payload)
+        admission_lock = getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock)
+        # La rete/prezzo non deve trattenere il lock di ammissione: il cashout
+        # può partire subito e incrementare l'epoch scoped.
+        admission_lock.release()
+        try:
+            best_price_attempted = self._apply_direct_best_price(payload)
+        finally:
+            admission_lock.acquire()
+        if not self._admission_fence_valid(admission_fence):
+            self._release_acquired_and_reject(
+                signal, event_key=event_key, table_id=decision.table_id,
+                reason="cashout_invalidation_stale",
+            )
+            return
         if best_price_attempted and validators.exceeds_cap(validators.order_exposure_or_inf(
                 payload["bet_type"], payload["stake"], payload.get("price")), order_exposure):
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
@@ -4296,6 +4425,19 @@ class RuntimeController:
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
         """Serializza l'ammissione auto-next con ogni altro ingresso d'ordine."""
         with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            mm_context = (payload or {}).get("mm_context")
+            next_signal = mm_context.get("next_signal") if isinstance(mm_context, dict) else None
+            if isinstance(next_signal, dict):
+                fence = self._capture_admission_fence(next_signal)
+                if not self._admission_fence_valid(fence):
+                    return {
+                        "submitted": False,
+                        "auto_trade_status": "AUTO_TRADE_SKIPPED_RISK_REJECTED",
+                        "cycle_executor_status": "CYCLE_SKIPPED_RISK_REJECTED",
+                        "money_management_status": "MM_STOP_CASHOUT_BARRIER",
+                        "risk_status": "RISK_REJECTED",
+                        "reason": "cashout_invalidation_active",
+                    }
             return self._evaluate_and_maybe_submit_auto_next_trade_serial(
                 payload=payload,
                 sync_result=sync_result,

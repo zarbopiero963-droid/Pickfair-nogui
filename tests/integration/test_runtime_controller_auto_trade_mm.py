@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+import threading
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
@@ -144,6 +145,46 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
     assert payload["bankroll_sync_status"] == "SYNC_SUCCESS"
     assert payload["money_management_status"] == "MM_CONTINUE_ALLOWED"
     assert payload["auto_trade_status"] == "AUTO_TRADE_SUBMITTED"
+
+
+def test_auto_trade_entry_is_rejected_during_pertinent_cashout_barrier():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    next_signal = {
+        "market_id": "1.234", "selection_id": 8, "price": 2.0,
+        "side": "BACK", "event_name": "Roma v Milan",
+    }
+    routed = threading.Event()
+    finish_cashout = threading.Event()
+
+    def blocked_cashout(_signal):
+        routed.set()
+        assert finish_cashout.wait(timeout=2)
+
+    rc._route_cashout_signal = blocked_cashout
+    cashout_thread = threading.Thread(target=rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT", "market_id": "1.234", "selection_id": 8},))
+    cashout_thread.start()
+    assert routed.wait(timeout=1)
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-cashout-fence",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": next_signal,
+            },
+        )
+    )
+    finish_cashout.set()
+    cashout_thread.join(timeout=2)
+
+    assert not cashout_thread.is_alive()
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "cashout_invalidation_active"
 
 
 def test_auto_trade_applies_absolute_order_cap_before_publish():

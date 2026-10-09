@@ -306,22 +306,183 @@ def test_reload_config_waits_for_risk_admission_lock(tmp_path):
     assert completed.is_set()
 
 
-def test_cashout_routes_without_waiting_for_order_admission_lock(tmp_path):
+def test_inflight_best_price_is_fenced_by_cashout_and_leaves_no_reservation(tmp_path):
     c = _catena(tmp_path)
     c.rc.mode = RuntimeMode.ACTIVE
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
     routed = threading.Event()
+    original_best_price = c.rc._apply_direct_best_price
+
+    def blocked_lookup(payload):
+        lookup_started.set()
+        assert release_lookup.wait(timeout=2)
+        return original_best_price(payload)
+
+    c.rc._apply_direct_best_price = blocked_lookup
     c.rc._route_cashout_signal = lambda _signal: routed.set()
+    sig = _signal(stake=0.5)
+    order_thread = threading.Thread(target=c.rc._on_signal_received, args=(sig,))
+    order_thread.start()
+    assert lookup_started.wait(timeout=2)
 
-    with c.rc._risk_admission_lock:
-        thread = threading.Thread(
-            target=c.rc._on_signal_received,
-            args=({"signal_type": "CASHOUT_ALL"},),
-        )
-        thread.start()
-        assert routed.wait(timeout=0.1)
-    thread.join(timeout=2)
+    cashout_thread = threading.Thread(
+        target=c.rc._on_signal_received,
+        args=({"signal_type": "CASHOUT", "market_id": sig["market_id"],
+               "selection_id": sig["selection_id"]},),
+    )
+    cashout_thread.start()
+    assert routed.wait(timeout=1), "cashout deve iniziare mentre il best-price è sospeso"
+    cashout_thread.join(timeout=2)
+    assert not cashout_thread.is_alive()
+    release_lookup.set()
+    order_thread.join(timeout=2)
 
-    assert not thread.is_alive()
+    assert not order_thread.is_alive()
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+    event_key = c.rc.duplication_guard.build_event_key(sig)
+    assert not c.rc.duplication_guard.is_duplicate(event_key)
+    assert all(t.status == "FREE" for t in c.rc.table_manager._tables.values())
+
+
+def test_entry_started_during_scoped_cashout_is_rejected_but_later_entry_works(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.mode = RuntimeMode.ACTIVE
+    cashout_started = threading.Event()
+    finish_cashout = threading.Event()
+
+    def blocked_route(_signal):
+        cashout_started.set()
+        assert finish_cashout.wait(timeout=2)
+
+    c.rc._route_cashout_signal = blocked_route
+    target = _signal(stake=0.5)
+    cashout = threading.Thread(target=c.rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT", "market_id": target["market_id"],
+         "selection_id": target["selection_id"]},))
+    cashout.start()
+    assert cashout_started.wait(timeout=2)
+
+    c.rc._on_signal_received(target)
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+
+    finish_cashout.set()
+    cashout.join(timeout=2)
+    assert not cashout.is_alive()
+    c.rc._on_signal_received(target)
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
+
+
+@pytest.mark.parametrize("other_market,other_selection", [("1.999", 999), ("1.234", 999)])
+def test_nonpertinent_market_or_selection_cashout_does_not_invalidate_entry(
+    tmp_path, other_market, other_selection
+):
+    c = _catena(tmp_path)
+    c.rc.mode = RuntimeMode.ACTIVE
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+    routed = threading.Event()
+    original_best_price = c.rc._apply_direct_best_price
+
+    def blocked_lookup(payload):
+        lookup_started.set()
+        assert release_lookup.wait(timeout=2)
+        return original_best_price(payload)
+
+    c.rc._apply_direct_best_price = blocked_lookup
+    c.rc._route_cashout_signal = lambda _signal: routed.set()
+    sig = _signal(stake=0.5)
+    order = threading.Thread(target=c.rc._on_signal_received, args=(sig,))
+    order.start()
+    assert lookup_started.wait(timeout=2)
+    other = _signal(market_id=other_market, selection_id=other_selection)
+    cashout = threading.Thread(target=c.rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT", "market_id": other["market_id"],
+         "selection_id": other["selection_id"]},))
+    cashout.start()
+    assert routed.wait(timeout=1)
+    cashout.join(timeout=2)
+    release_lookup.set()
+    order.join(timeout=2)
+
+    assert not order.is_alive() and not cashout.is_alive()
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
+
+
+def test_risk_stop_during_unrelated_cashout_keeps_entry_blocked(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.mode = RuntimeMode.ACTIVE
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+    routed = threading.Event()
+    finish_cashout = threading.Event()
+    original_best_price = c.rc._apply_direct_best_price
+
+    def blocked_lookup(payload):
+        lookup_started.set()
+        assert release_lookup.wait(timeout=2)
+        return original_best_price(payload)
+
+    c.rc._apply_direct_best_price = blocked_lookup
+    def blocked_cashout(_signal):
+        routed.set()
+        assert finish_cashout.wait(timeout=2)
+
+    c.rc._route_cashout_signal = blocked_cashout
+    sig = _signal(stake=0.5)
+    order = threading.Thread(target=c.rc._on_signal_received, args=(sig,))
+    order.start()
+    assert lookup_started.wait(timeout=2)
+    cashout = threading.Thread(target=c.rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT", "market_id": "1.999", "selection_id": 999},))
+    cashout.start()
+    assert routed.wait(timeout=1)
+    c.rc._risk_stop_reason = "test-risk-stop"
+    finish_cashout.set()
+    cashout.join(timeout=2)
+    release_lookup.set()
+    order.join(timeout=2)
+    assert not order.is_alive() and not cashout.is_alive()
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+    assert _rifiuti(c)[-1].startswith("risk_stop_active:")
+
+
+def test_cashout_barrier_and_price_lookup_do_not_hold_admission_lock(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.mode = RuntimeMode.ACTIVE
+    lookup_started = threading.Event()
+    release_lookup = threading.Event()
+    routed = threading.Event()
+    original_best_price = c.rc._apply_direct_best_price
+
+    def blocked_lookup(payload):
+        lookup_started.set()
+        acquired = threading.Event()
+
+        def probe_lock():
+            with c.rc._risk_admission_lock:
+                acquired.set()
+
+        probe = threading.Thread(target=probe_lock)
+        probe.start()
+        probe.join(timeout=1)
+        assert acquired.is_set(), "il lock deve essere libero durante il lookup"
+        assert release_lookup.wait(timeout=2)
+        return original_best_price(payload)
+
+    c.rc._apply_direct_best_price = blocked_lookup
+    c.rc._route_cashout_signal = lambda _signal: routed.set()
+    order = threading.Thread(target=c.rc._on_signal_received, args=(_signal(stake=0.5),))
+    order.start()
+    assert lookup_started.wait(timeout=2)
+    cashout = threading.Thread(target=c.rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT_ALL"},))
+    cashout.start()
+    assert routed.wait(timeout=1)
+    release_lookup.set()
+    cashout.join(timeout=2)
+    order.join(timeout=2)
+    assert not cashout.is_alive() and not order.is_alive()
 
 
 def test_cashout_ingestion_does_not_require_order_side():
