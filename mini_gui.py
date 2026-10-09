@@ -702,6 +702,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_max_daily_loss_var = self._make_string_var("")
         self.rs_max_open_exposure_var = self._make_string_var("")
         self.rs_max_session_loss_var = self._make_string_var("")  # P37 (#461 PR28)
+        self.rs_max_exposure_stop_var = self._make_string_var("")  # P37/P38 (#461 PR28-c)
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
         # Book % (over-round): soglie avviso/blocco, applicate al submit dutching.
         # Default allineati alle costanti di sistema (no valori hardcoded a parte).
@@ -1123,6 +1124,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
         self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
+        self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
         self._labeled_entry(outer, "Book Warning % (avviso over-round)", self.rs_book_warning_var)
         self._labeled_entry(outer, "Book Block % (blocca submit se book >= soglia)", self.rs_book_block_var)
@@ -1603,6 +1605,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
                 self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+                self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
                 self.rs_book_warning_var.set(str(getattr(rs, "book_warning", trading_config.BOOK_WARNING)))
                 self.rs_book_block_var.set(str(getattr(rs, "book_block", trading_config.BOOK_BLOCK)))
@@ -2004,6 +2007,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
                 max_session_loss=self._parse_hard_stop(self.rs_max_session_loss_var.get(), "Perdita sessione max"),
+                max_exposure_stop=self._parse_hard_stop(self.rs_max_exposure_stop_var.get(), "Stop esposizione complessiva"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
                 book_warning=book_warning,
                 book_block=book_block,
@@ -2076,6 +2080,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
             self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
             self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+            self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
             self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
         except Exception:
             return

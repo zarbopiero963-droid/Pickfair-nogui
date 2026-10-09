@@ -50,6 +50,7 @@ class _Config:
     # Stesso motivo per lo stop perdita di sessione P37 (#461 PR28): 0 e' un
     # limite non valido => blocco fail-closed. In produzione e' None.
     max_session_loss = None
+    max_exposure_stop = None
 
     def __getattr__(self, _name):
         return 0

@@ -104,6 +104,45 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
+  PKG-P24-B: P38 and the P37 exposure stop).
+  - Before, reaching the session-loss limit only blocked new entries: the bot's
+    unmatched orders stayed in the market and its open positions were not
+    closed. There was no total-exposure stop at all.
+  - **RISK_STOP** (`RuntimeController.risk_stop`, rules in `core/risk_stop.py`):
+    blocks new entries (signals, auto-next, resume) but not cashout; cancels the
+    bot's unmatched orders and attempts to close its positions by routing the
+    existing `CASHOUT_ALL` through the CashoutRouter (bot orders only, the
+    cashout's own gates, blocked or uncertain outcomes reported by the router).
+    It publishes `RISK_STOP_TRIGGERED` and is idempotent. If EMERGENCY is
+    already active (the strongest barrier, cancel-all + LOCKDOWN) no cashout is
+    routed. PAUSE is unchanged (blocks new entries only).
+  - The stop is persisted (`risk_stop_state` setting) together with the state
+    change, under the same lock, as a versioned record `{active, reason, seq}`
+    (the PR28-b model). If the db cannot be written, the same version goes to a
+    marker file next to the db (`<db>.risk_stop_pending.json`). At restart the
+    readable copy with the higher `seq` wins; an equal or unknown `seq`, or an
+    unreadable copy, gives the conservative result (stop active).
+  - Reset is a fail-closed two-phase commit. An independent
+    `risk_stop_reset_guard` plus `<db>.risk_stop_reset_guard.json` is armed
+    BEFORE any `active=false` write and remains active through persistence and
+    readback. Only after the inactive state is verified is the DB guard cleared
+    and the guard marker removed last. Any failure before that commit leaves a
+    durable guard, so a rejected/incomplete reset cannot reopen after restart.
+    Only if neither normal stop store can be written during activation does the
+    stop hold for the running process alone (KNOWN_LIMITATION, as in PR28-b).
+  - Neither a restart nor `start()` clears the stop: tables live in memory
+    (exposure reads 0 after a restart) and the session loss restarts, so
+    neither can prove the positions are closed. Only an explicit
+    `reset_risk_stop()` clears it, after a full recheck: no emergency, daily
+    loss not breached, limits valid, session loss below its limit and exposure
+    below the exposure stop. While the stop stays on, `start()` re-attempts the
+    `CASHOUT_ALL` (for example after a restart).
+  - **Triggers:** session loss reached (`max_session_loss`, PR28-b) and the new
+    `max_exposure_stop` (EUR, owner limit with no default, GUI/loader/save). It
+    is checked before submission on the total exposure including the order; a
+    misconfigured value (unreadable or <= 0) blocks entries without closing
+    anything. No fixed amount belongs to STOP/cashout (#426, 06/10).
 - Durable daily loss and session-loss stop (#461 PR28-b, PKG-P24-B: F4, P37).
   - **F4:** the day's realized loss is saved (`daily_loss_state` setting) and
     rebuilt at restart on the same UTC day, before any new risk. Before, a
