@@ -2180,11 +2180,14 @@
         "tests/integration/test_runtime_controller_auto_trade_mm.py",
         "tests/integration/test_runtime_controller_cycle_executor.py",
         "tests/integration/test_runtime_controller_live_sim_parity.py",
+        "tests/parsers/test_parser_personalizzati.py",
+        "tests/services/test_telegram_signal_processor.py",
+        "tests/unit/test_telegram_listener_copy_pattern_action.py",
         "tests/unit/test_ui_freeze_boundaries.py"
       ],
-      "max_files": 19,
+      "max_files": 22,
       "allow_tests": true,
-      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
+      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. Scope esteso nel fix cycle 4 ai tre test legacy Telegram che codificavano ancora il default BACK: vengono riallineati al rifiuto fail-closed e coprono custom-pattern/cashout senza riattivare Telegram. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
     }
   }
 }

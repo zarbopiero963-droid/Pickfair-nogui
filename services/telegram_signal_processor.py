@@ -372,8 +372,10 @@ class TelegramSignalProcessor:
         market_id = self.parse_market_id(raw)
         action = self.normalize_action(raw)
         price = self.parse_price(raw)
+        signal_type = str(raw.get("signal_type") or raw.get("signal_name") or "").strip().upper()
+        is_cashout = signal_type in {"CASHOUT", "CASHOUT_ALL"}
 
-        if action is None:
+        if action is None and not is_cashout:
             return {
                 "ok": False,
                 "error_code": "INVALID_OR_MISSING_SIDE",
@@ -385,21 +387,22 @@ class TelegramSignalProcessor:
             "boundary_stage": "telegram_ingestion_normalized_v1",
             "market_id": market_id,
             "selection_id": selection_id,
-            "bet_type": action,
-            "action": action,
             "price": price,
             "event_name": self.parse_event_name(raw),
             "event_id": raw.get("event_id", raw.get("eventId")),
             "market_name": self.parse_market_name(raw),
             "market_type": self.parse_market_type(raw),
             "selection": self.parse_selection_name(raw, selection_id),
-            "signal_type": str(raw.get("signal_type") or raw.get("signal_name") or ""),
+            "signal_type": signal_type,
             "minute": self.parse_minute(raw),
             "home_score": self.parse_home_score(raw),
             "away_score": self.parse_away_score(raw),
             "raw_text": raw.get("raw_text") or raw.get("message") or raw.get("text") or "",
             "raw_signal": raw,
         }
+        if not is_cashout:
+            normalized["bet_type"] = action
+            normalized["action"] = action
 
         if isinstance(copy_meta, dict):
             normalized["copy_meta"] = dict(copy_meta)

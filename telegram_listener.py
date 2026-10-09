@@ -1030,7 +1030,15 @@ class TelegramListener:
                     continue
 
                 market_type = str(cp.get("market_type") or "MATCH_ODDS").strip()
-                bet_side = str(cp.get("bet_side") or "BACK").strip().upper()
+                raw_bet_side = cp.get("bet_side")
+                if not isinstance(raw_bet_side, str) or raw_bet_side.strip().upper() not in {"BACK", "LAY"}:
+                    logger.warning(
+                        "[TelegramListener] copy-pattern QUICK_BET ignorato "
+                        "(pattern_id=%s): bet_side assente o invalido",
+                        cp.get("id"),
+                    )
+                    continue
+                bet_side = raw_bet_side.strip().upper()
 
                 if not selection:
                     selection = str(cp.get("label") or cp.get("name") or "Custom Pattern")

@@ -18,7 +18,8 @@ def _listener(patterns):
 
 
 def _pat(**over):
-    p = {"id": 1, "label": "L", "pattern": "GOAL", "enabled": True, "action": "QUICK_BET"}
+    p = {"id": 1, "label": "L", "pattern": "GOAL", "enabled": True,
+         "action": "QUICK_BET", "bet_side": "BACK"}
     p.update(over)
     return p
 
@@ -67,3 +68,9 @@ def test_absent_action_defaults_to_bet_descriptor():
     out = lst._parse_custom_patterns("GOAL Team A")
     assert out is not None
     assert "signal_type" not in out
+
+
+def test_quick_bet_without_side_is_rejected_fail_closed():
+    p = _pat(pattern="GOAL")
+    p.pop("bet_side")
+    assert _listener([p])._parse_custom_patterns("GOAL Team A") is None

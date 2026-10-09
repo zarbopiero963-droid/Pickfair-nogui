@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import pytest
 import threading
+import time
 
 from core import validators
+from core.runtime_controller import RuntimeController
+from services.setting_service import SettingsService
 from services.telegram_signal_processor import TelegramSignalProcessor
 from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
 from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
@@ -134,6 +137,99 @@ def test_event_cap_same_id_aggregates_even_when_names_differ(tmp_path):
     c.rc._on_signal_received(sig)
     assert c.broker.state.orders == {}
     assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+
+
+def test_event_cap_honours_legacy_identity_alias_over_stale_display_name(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 100.0
+    c.rc.config.max_event_exposure_abs = 2.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "legacy:event:key"
+    table.market_id = "1.old"
+    table.current_exposure = 1.5
+    table.meta = {
+        "event_name": "Roma - Milan",
+        "event_identity": "name:roma v milan",
+    }
+    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig.update({"event_name": "Roma v Milan", "event_id": None})
+
+    c.rc._on_signal_received(sig)
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+
+
+def test_auto_trade_payload_falls_back_to_event_id_alias_when_primary_is_blank(tmp_path):
+    c = _catena(tmp_path)
+    sig = _signal(stake=0.5, bet_type="BACK")
+    sig.update({"event_id": None, "eventId": "E42"})
+
+    payload = c.rc._build_auto_trade_payload(signal=sig, decision_stake=0.5)
+
+    assert payload["event_id"] == "E42"
+
+
+@pytest.mark.parametrize("field", [
+    "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
+    "max_drawdown_abs",
+])
+def test_blank_persisted_absolute_cap_stays_configured_and_fails_closed(field):
+    key = f"roserpina.{field}"
+
+    class _Db:
+        def get_settings(self):
+            return {key: ""}
+
+        def get_all_settings(self):
+            return self.get_settings()
+
+    value = getattr(SettingsService(_Db()).load_roserpina_config(), field)
+    assert validators.finite_number(value) is None
+    assert value is not None
+
+
+def test_auto_trade_admission_uses_same_serial_lock_as_signal_orders():
+    rc = object.__new__(RuntimeController)
+    rc._risk_admission_lock = threading.RLock()
+    active = 0
+    max_active = 0
+    state_lock = threading.Lock()
+
+    def serial(*, payload, sync_result):
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        time.sleep(0.03)
+        with state_lock:
+            active -= 1
+        return {"payload": payload, "sync_result": sync_result}
+
+    rc._evaluate_and_maybe_submit_auto_next_trade_serial = serial
+    threads = [threading.Thread(
+        target=rc._evaluate_and_maybe_submit_auto_next_trade,
+        kwargs={"payload": {"n": n}, "sync_result": {"n": n}},
+    ) for n in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=2)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert max_active == 1
+
+
+def test_cashout_ingestion_does_not_require_order_side():
+    result = TelegramSignalProcessor().normalize_ingestion_signal({
+        "signal_type": "CASHOUT_ALL",
+        "event_name": "Roma v Milan",
+        "raw_text": "CASHOUT ALL",
+    })
+    assert result["ok"] is True
+    assert result["normalized_signal"]["signal_type"] == "CASHOUT_ALL"
+    assert "bet_type" not in result["normalized_signal"]
 
 
 @pytest.mark.parametrize("raw", [{}, {"action": "BOTH"}, {"action": "BACK", "side": "LAY"}])

@@ -214,7 +214,8 @@ def test_senza_parser_il_segnale_resta_intatto(monkeypatch, tmp_path):
     assert p.ricarica_parser() == 0
     segnale = {"raw_text": MESSAGGIO}
     esito = p.normalize_ingestion_signal(segnale)
-    assert esito["ok"] is True
+    assert esito["ok"] is False
+    assert esito["error_code"] == "INVALID_OR_MISSING_SIDE"
     assert "event_name" not in segnale
 
 

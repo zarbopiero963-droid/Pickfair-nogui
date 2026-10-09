@@ -2596,6 +2596,11 @@ class RuntimeController:
         event_id, event_name = self._event_identity_parts(signal)
         if not event_id and not event_name:
             return 0.0
+        signal_names = {event_name} if event_name else set()
+        signal_legacy = str(signal.get("event_identity") or "")
+        if signal_legacy.startswith("name:") and signal_legacy[5:]:
+            signal_names.add(" ".join(signal_legacy[5:].casefold().split()))
+        signal_event_key = self.duplication_guard.build_event_key(signal)
         total = 0.0
         for table in self.table_manager.active_tables():
             meta = table.meta if isinstance(table.meta, dict) else {}
@@ -2603,14 +2608,19 @@ class RuntimeController:
             legacy = str(meta.get("event_identity") or "")
             if not stored_id and legacy.startswith("id:"):
                 stored_id = legacy[3:]
-            if not stored_name and legacy.startswith("name:"):
-                stored_name = legacy[5:]
+            stored_names = {stored_name} if stored_name else set()
+            if legacy.startswith("name:") and legacy[5:]:
+                stored_names.add(" ".join(legacy[5:].casefold().split()))
             # Betfair event_id e' primario quando presente su entrambi. Se uno
-            # dei due record legacy ne e' privo, il nome normalizzato permette
-            # la riconciliazione; due ID differenti non vengono mai fusi.
+            # dei due record legacy ne e' privo, qualunque alias nome persistito
+            # permette la riconciliazione; due ID differenti non vengono mai
+            # fusi. I tavoli pre-PR28 privi di meta restano riconoscibili quando
+            # conservano la stessa chiave ordine/evento storica.
             same_event = (bool(event_id and stored_id) and event_id == stored_id) or (
-                not (event_id and stored_id) and bool(event_name and stored_name)
-                and event_name == stored_name
+                not (event_id and stored_id) and bool(signal_names & stored_names)
+            ) or (
+                not stored_id and not stored_names
+                and str(getattr(table, "current_event_key", "") or "") == signal_event_key
             )
             if same_event:
                 value = validators.finite_number(table.current_exposure)
@@ -3313,7 +3323,7 @@ class RuntimeController:
             selection_id=payload["selection_id"],
             meta={
                 "event_name": payload["event_name"],
-                "event_id": signal.get("event_id", signal.get("eventId")),
+                "event_id": signal.get("event_id") or signal.get("eventId"),
                 "event_identity": event_identity,
                 "market_name": payload["market_name"],
                 "runner_name": payload["runner_name"],
@@ -4262,6 +4272,16 @@ class RuntimeController:
         return "|".join(parts)
 
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
+        """Serializza l'ammissione auto-next con ogni altro ingresso d'ordine."""
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            return self._evaluate_and_maybe_submit_auto_next_trade_serial(
+                payload=payload,
+                sync_result=sync_result,
+            )
+
+    def _evaluate_and_maybe_submit_auto_next_trade_serial(
+        self, *, payload: dict, sync_result: dict
+    ) -> dict:
         settlement_key = self._build_bankroll_sync_key(payload)
         source_corr_id = str(sync_result.get("correlation_id") or "")
         recovery_enabled = bool(payload.get("recovery_enabled", self.config.allow_recovery))
@@ -4886,7 +4906,7 @@ class RuntimeController:
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision_stake),
             "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
-            "event_id": signal.get("event_id", signal.get("eventId")),
+            "event_id": signal.get("event_id") or signal.get("eventId"),
             "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
             "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
             "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
