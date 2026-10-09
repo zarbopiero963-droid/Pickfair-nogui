@@ -324,6 +324,10 @@ class SettingsService:
                 "roserpina.max_open_exposure",
                 fallback_key="max_open_exposure",
             ),
+            max_order_exposure=self._required_absolute_cap_value(data, "roserpina.max_order_exposure", 1.0),
+            max_market_exposure=self._required_absolute_cap_value(data, "roserpina.max_market_exposure", 2.0),
+            max_event_exposure_abs=self._required_absolute_cap_value(data, "roserpina.max_event_exposure_abs", 2.0),
+            max_drawdown_abs=self._required_absolute_cap_value(data, "roserpina.max_drawdown_abs", 10.0),
             max_session_loss=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_session_loss",
@@ -415,6 +419,10 @@ class SettingsService:
             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
         if config.max_open_exposure is not None:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+        for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
+            value = getattr(config, field, None)
+            if value is not None:
+                payload[f"roserpina.{field}"] = value
         if config.max_session_loss is not None:
             payload["roserpina.max_session_loss"] = config.max_session_loss
         if config.max_exposure_stop is not None:
@@ -444,6 +452,23 @@ class SettingsService:
         if isinstance(value, str) and value.strip() == "":
             return None
 
+        try:
+            return float(value)
+        except Exception:
+            return float("nan")
+
+    @staticmethod
+    def _required_absolute_cap_value(
+        data: Dict[str, Any], key: str, default: float
+    ) -> float:
+        """Carica un cap owner obbligatorio senza trasformare il vuoto in opt-out."""
+        if key not in data:
+            return float(default)
+        value = data.get(key)
+        if isinstance(value, bool) or value is None:
+            return float("nan")
+        if isinstance(value, str) and value.strip() == "":
+            return float("nan")
         try:
             return float(value)
         except Exception:

@@ -208,7 +208,7 @@ def test_runtime_controller_routing_parity(simulation_mode):
     rc.duplication_guard = type("DG", (), {"build_event_key": staticmethod(lambda s: "1.2:11:BACK:default"), "is_duplicate": staticmethod(lambda _k: False), "register": staticmethod(lambda _k: None)})()
     rc.mm.calculate = lambda **_kw: type("D", (), {"approved": True, "recommended_stake": 4.0, "table_id": 1, "reason": "ok", "desk_mode": DeskMode.NORMAL, "metadata": {}})()
 
-    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}}
+    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "side": "BACK", "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}}
     rc._on_signal_received(signal)
 
     routed = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
@@ -265,6 +265,7 @@ def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, me
         "market_id": "1.2",
         "selection_id": 11,
         "price": 2.0,
+            "side": "BACK",
         "simulation_mode": True,
         "order_origin": "telegram",
         meta_field: meta_value,
@@ -319,6 +320,7 @@ def test_runtime_controller_accepts_telegram_boundary_marker_without_contract_dr
             "market_id": "1.2",
             "selection_id": 11,
             "price": 2.2,
+                "side": "BACK",
             "order_origin": "telegram",
             "copy_meta": {"master_id": "M1"},
             "simulation_mode": True,
@@ -391,6 +393,7 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
             "market_id": "1.2",
             "selection_id": 11,
             "price": 2.2,
+                "side": "BACK",
             "order_origin": "telegram",
             "copy_meta": {"master_id": "M1"},
             "telegram_routing_contract": "telegram_authoritative_routing_v1",
@@ -422,6 +425,7 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
             "market_id": "1.2",
             "selection_id": 11,
             "price": 2.2,
+                "side": "BACK",
             "copy_meta": {"master_id": "M1"},
             "pattern_meta": {"pattern_id": "P1"},
         }
@@ -448,6 +452,7 @@ def test_runtime_controller_rejects_signal_when_copy_and_pattern_meta_are_both_p
         "market_id": "1.2",
         "selection_id": 11,
         "price": 2.0,
+        "side": "BACK",
         "copy_meta": {"channel": "telegram"},
         "pattern_meta": {"pattern_id": 9},
     }
@@ -484,7 +489,7 @@ def test_duplication_lock_released_on_table_allocation_failure():
     # Force allocate to always return None regardless of table_count
     rc.table_manager.allocate = lambda **_kw: None
 
-    signal = {"market_id": "1.9", "selection_id": 99, "price": 3.0}
+    signal = {"market_id": "1.9", "selection_id": 99, "price": 3.0, "side": "BACK"}
 
     # First send: lock acquired → table fails → lock must be released
     rc._on_signal_received(signal)

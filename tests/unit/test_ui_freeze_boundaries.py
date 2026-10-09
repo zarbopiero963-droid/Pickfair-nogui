@@ -128,7 +128,7 @@ def test_telegram_signal_resolution_is_submitted_to_executor():
     h = _TelegramHarness()
     h.bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
 
-    h._handle_telegram_signal({"event_name": "A v B", "price": 2.1})
+    h._handle_telegram_signal({"event_name": "A v B", "price": 2.1, "side": "BACK"})
 
     assert "telegram_signal_resolution" in h.executor.calls
     assert h.resolution_calls == 1

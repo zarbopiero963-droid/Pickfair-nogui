@@ -29,17 +29,21 @@ class TelegramSignalProcessor:
     # =========================================================
     # NORMALIZZAZIONE BASE
     # =========================================================
-    def normalize_action(self, signal: Dict[str, Any]) -> str:
-        action = (
-            signal.get("action")
-            or signal.get("side")
-            or signal.get("bet_type")
-            or "BACK"
-        )
-        action = str(action).upper().strip()
-        if action not in ("BACK", "LAY"):
-            action = "BACK"
-        return action
+    def normalize_action(self, signal: Dict[str, Any]) -> Optional[str]:
+        values = []
+        for key in ("action", "side", "bet_type"):
+            raw = signal.get(key)
+            if raw in (None, ""):
+                continue
+            if not isinstance(raw, str):
+                return None
+            value = raw.upper().strip()
+            if value not in ("BACK", "LAY"):
+                return None
+            values.append(value)
+        if not values or len(set(values)) != 1:
+            return None
+        return values[0]
 
     def parse_price(self, signal: Dict[str, Any]) -> Optional[float]:
         raw = (
@@ -368,25 +372,37 @@ class TelegramSignalProcessor:
         market_id = self.parse_market_id(raw)
         action = self.normalize_action(raw)
         price = self.parse_price(raw)
+        signal_type = str(raw.get("signal_type") or raw.get("signal_name") or "").strip().upper()
+        is_cashout = signal_type in {"CASHOUT", "CASHOUT_ALL"}
+
+        if action is None and not is_cashout:
+            return {
+                "ok": False,
+                "error_code": "INVALID_OR_MISSING_SIDE",
+                "error_reason": "telegram side must be one unambiguous BACK or LAY value",
+                "normalized_signal": {},
+            }
 
         normalized: Dict[str, Any] = {
             "boundary_stage": "telegram_ingestion_normalized_v1",
             "market_id": market_id,
             "selection_id": selection_id,
-            "bet_type": action,
-            "action": action,
             "price": price,
             "event_name": self.parse_event_name(raw),
+            "event_id": raw.get("event_id") or raw.get("eventId"),
             "market_name": self.parse_market_name(raw),
             "market_type": self.parse_market_type(raw),
             "selection": self.parse_selection_name(raw, selection_id),
-            "signal_type": str(raw.get("signal_type") or raw.get("signal_name") or ""),
+            "signal_type": signal_type,
             "minute": self.parse_minute(raw),
             "home_score": self.parse_home_score(raw),
             "away_score": self.parse_away_score(raw),
             "raw_text": raw.get("raw_text") or raw.get("message") or raw.get("text") or "",
             "raw_signal": raw,
         }
+        if not is_cashout:
+            normalized["bet_type"] = action
+            normalized["action"] = action
 
         if isinstance(copy_meta, dict):
             normalized["copy_meta"] = dict(copy_meta)
@@ -423,7 +439,7 @@ class TelegramSignalProcessor:
         market_id = self.parse_market_id(signal)
         original_price = self.parse_price(signal)
 
-        if selection_id is None or not market_id or original_price is None:
+        if action is None or selection_id is None or not market_id or original_price is None:
             return None
 
         selection_name = self.parse_selection_name(signal, selection_id)
@@ -435,6 +451,7 @@ class TelegramSignalProcessor:
             "market_id": market_id,
             "market_type": market_type,
             "event_name": event_name,
+            "event_id": signal.get("event_id", signal.get("eventId")),
             "event": event_name,
             "market_name": market_name,
             "market": market_name,

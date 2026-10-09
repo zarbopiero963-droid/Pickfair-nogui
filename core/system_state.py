@@ -66,6 +66,12 @@ class RoserpinaConfig:
     max_daily_loss: Optional[float] = None
     max_drawdown_hard_stop_pct: Optional[float] = None
     max_open_exposure: Optional[float] = None
+    # Limiti assoluti owner PR28-d (EUR). Valori deliberati in #426/#461;
+    # restano configurabili e sono applicati insieme ai limiti percentuali.
+    max_order_exposure: Optional[float] = None
+    max_market_exposure: Optional[float] = None
+    max_event_exposure_abs: Optional[float] = None
+    max_drawdown_abs: Optional[float] = None
     # P37 (#461 PR28): stop perdita di sessione (EUR, da start()). None = non
     # impostato; illeggibile => blocco nuove entrate. Nessun default inventato.
     max_session_loss: Optional[float] = None

@@ -121,7 +121,7 @@ def test_cycle_executor_result_event_contains_contract_fields():
                 "cycle_active": True,
                 "cycle_id": "cycle-integration-1",
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
+                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
             },
         )
     )
@@ -169,7 +169,7 @@ def test_cycle_executor_max_steps_with_valid_cycle_id_allows_below_limit():
                 "cycle_id": "cycle-integration-max-ok",
                 "max_steps": 2,
                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
+                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
             },
         )
     )

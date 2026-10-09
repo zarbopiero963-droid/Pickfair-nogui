@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import pytest
+import threading
+
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
 
@@ -129,6 +132,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
                     "market_id": "1.234",
                     "selection_id": 8,
                     "price": 2.0,
+                        "side": "BACK",
                 },
             },
         )
@@ -141,6 +145,146 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
     assert payload["bankroll_sync_status"] == "SYNC_SUCCESS"
     assert payload["money_management_status"] == "MM_CONTINUE_ALLOWED"
     assert payload["auto_trade_status"] == "AUTO_TRADE_SUBMITTED"
+
+
+def test_auto_trade_entry_is_rejected_during_pertinent_cashout_barrier():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    next_signal = {
+        "market_id": "1.234", "selection_id": 8, "price": 2.0,
+        "side": "BACK", "event_name": "Roma v Milan",
+    }
+    routed = threading.Event()
+    finish_cashout = threading.Event()
+
+    def blocked_cashout(_signal):
+        routed.set()
+        assert finish_cashout.wait(timeout=2)
+
+    rc._route_cashout_signal = blocked_cashout
+    cashout_thread = threading.Thread(target=rc._on_signal_received, args=(
+        {"signal_type": "CASHOUT", "market_id": "1.234", "selection_id": 8},))
+    cashout_thread.start()
+    assert routed.wait(timeout=1)
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-cashout-fence",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": next_signal,
+            },
+        )
+    )
+    finish_cashout.set()
+    cashout_thread.join(timeout=2)
+
+    assert not cashout_thread.is_alive()
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "cashout_invalidation_active"
+
+
+def test_auto_trade_applies_absolute_order_cap_before_publish():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_order_exposure = 0.25
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-absolute-order-cap",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"].startswith("max_order_exposure_exceeded")
+
+
+def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_drawdown_abs = True
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-absolute-drawdown-cap",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_non_valido"
+
+
+def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
+    rc, bus = _make_controller(responses=[{"available": 90.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_drawdown_abs = 10.0
+
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-drawdown-lockdown",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_active"
+    assert rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.parametrize("side", [None, "BOTH"])
+def test_missing_or_invalid_auto_trade_side_fails_closed_without_escaping_settlement(side):
+    rc, bus = _make_controller(responses=[{"available": 100.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+
+    next_signal = {
+        "market_id": "1.234", "selection_id": 8, "price": 2.0,
+        "event_name": "Roma v Milan",
+    }
+    if side is not None:
+        next_signal["side"] = side
+
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-invalid-side",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": next_signal,
+            },
+        )
+    )
+
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["money_management_status"] == "MM_STOP_INVALID_SIDE"
+    assert rc._last_auto_trade_result["reason"] == "lato_non_valido"
 
 
 def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility():
@@ -222,6 +366,7 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
                     "selection_id": 11,
                     "table_id": 1,
                     "price": 2.0,
+                        "side": "BACK",
                 },
             },
         )

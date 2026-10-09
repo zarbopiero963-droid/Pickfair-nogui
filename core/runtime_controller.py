@@ -75,6 +75,8 @@ class RuntimeController:
     - la chiusura resta manuale/comando
     """
 
+    _fallback_risk_admission_lock = threading.RLock()
+
     def __init__(
         self,
         *,
@@ -101,6 +103,15 @@ class RuntimeController:
         self.duplication_guard = DuplicationGuard()
         self.risk_desk = RiskDesk()
         self.mm = RoserpinaMoneyManagement(self.config)
+        # PR28-d: snapshot dei cap + contabilizzazione/publish sono serializzati
+        # nel processo. La prenotazione durevole cross-process resta PR29.
+        self._risk_admission_lock = threading.RLock()
+        # Fencing tra admissioni d'ingresso e cashout: le operazioni di rete
+        # non tengono il lock, ma un cashout invalida gli ordini in-flight nel
+        # proprio scope prima di iniziare il routing.
+        self._admission_epochs: dict[tuple, int] = {}
+        self._cashout_barriers: dict[int, frozenset[tuple]] = {}
+        self._cashout_barrier_seq = 0
 
         self.batch_manager = DutchingBatchManager(db, bus=bus)
         self.reconciliation_engine = self._build_reconciliation_engine()
@@ -1920,15 +1931,16 @@ class RuntimeController:
 
     def reload_config(self, *, reset_session: bool = False) -> None:
         """PR28: a bot acceso conserva tavoli/esposizione/riconciliazione."""
-        config = self.settings_service.load_roserpina_config()
-        if not reset_session:
-            self.table_manager.resize(config.table_count)
-        self.config = config
-        self.mm = RoserpinaMoneyManagement(self.config)
-        if reset_session:  # start(): invariato
-            self.table_manager = TableManager(table_count=self.config.table_count)
-            self.reconciliation_engine = self._build_reconciliation_engine()
-        self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            config = self.settings_service.load_roserpina_config()
+            if not reset_session:
+                self.table_manager.resize(config.table_count)
+            self.config = config
+            self.mm = RoserpinaMoneyManagement(self.config)
+            if reset_session:  # start(): invariato
+                self.table_manager = TableManager(table_count=self.config.table_count)
+                self.reconciliation_engine = self._build_reconciliation_engine()
+            self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
 
     def _desk_mode(self) -> DeskMode:
         return self.mm.determine_desk_mode(
@@ -2573,11 +2585,87 @@ class RuntimeController:
             },
         )
 
-    def _event_current_exposure(self, event_key: str) -> float:
-        table = self.table_manager.find_by_event_key(event_key)
-        if not table:
+    @staticmethod
+    def _event_identity_parts(signal: dict) -> tuple[str, str]:
+        event_name = signal.get("event_name") or signal.get("event")
+        name = " ".join(event_name.casefold().split()) if isinstance(event_name, str) else ""
+        event_id = signal.get("event_id") or signal.get("eventId")
+        if event_id not in (None, "") and not isinstance(event_id, bool):
+            return str(event_id).strip(), name
+        return "", name
+
+    @classmethod
+    def _event_identity(cls, signal: dict) -> str:
+        event_id, event_name = cls._event_identity_parts(signal)
+        return f"id:{event_id}" if event_id else (f"name:{event_name}" if event_name else "")
+
+    def _event_current_exposure(self, signal: dict) -> float:
+        event_id, event_name = self._event_identity_parts(signal)
+        if not event_id and not event_name:
             return 0.0
-        return float(table.current_exposure or 0.0)
+        signal_names = {event_name} if event_name else set()
+        signal_legacy = str(signal.get("event_identity") or "")
+        if signal_legacy.startswith("name:") and signal_legacy[5:]:
+            signal_names.add(" ".join(signal_legacy[5:].casefold().split()))
+        signal_event_key = self.duplication_guard.build_event_key(signal)
+        total = 0.0
+        for table in self.table_manager.active_tables():
+            meta = table.meta if isinstance(table.meta, dict) else {}
+            stored_id, stored_name = self._event_identity_parts(meta)
+            legacy = str(meta.get("event_identity") or "")
+            if not stored_id and legacy.startswith("id:"):
+                stored_id = legacy[3:]
+            stored_names = {stored_name} if stored_name else set()
+            if legacy.startswith("name:") and legacy[5:]:
+                stored_names.add(" ".join(legacy[5:].casefold().split()))
+            # Betfair event_id e' primario quando presente su entrambi. Se uno
+            # dei due record legacy ne e' privo, qualunque alias nome persistito
+            # permette la riconciliazione; due ID differenti non vengono mai
+            # fusi. I tavoli pre-PR28 privi di meta restano riconoscibili quando
+            # conservano la stessa chiave ordine/evento storica.
+            same_event = (bool(event_id and stored_id) and event_id == stored_id) or (
+                not (event_id and stored_id) and bool(signal_names & stored_names)
+            ) or (
+                not stored_id and not stored_names
+                and str(getattr(table, "current_event_key", "") or "") == signal_event_key
+            )
+            if same_event:
+                value = validators.finite_number(table.current_exposure)
+                if value is None or value < 0:
+                    return float("inf")
+                total += value
+        return total
+
+    def _market_current_exposure(self, market_id: str) -> float:
+        try:
+            canonical_market_id = validators.order_market_id(market_id)
+        except ValueError:
+            return float("inf")
+        total = 0.0
+        for table in self.table_manager.active_tables():
+            try:
+                stored_market_id = validators.order_market_id(table.market_id)
+            except ValueError:
+                return float("inf")
+            if stored_market_id == canonical_market_id:
+                value = validators.finite_number(table.current_exposure)
+                if value is None or value < 0:
+                    return float("inf")
+                total += value
+        return total
+
+    @staticmethod
+    def _configured_optional(config: object, name: str):
+        """Legge solo campi realmente dichiarati, ignorando catch-all dei test.
+
+        In produzione RoserpinaConfig dichiara i campi nella dataclass. Un
+        ``__getattr__`` generico che restituisce 0 non deve inventare un cap.
+        """
+        if name in getattr(config, "__dict__", {}):
+            return getattr(config, name)
+        if any(name in getattr(cls, "__dict__", {}) for cls in type(config).__mro__):
+            return getattr(config, name)
+        return None
 
     def _cashout_chain_wired(self) -> bool:
         """True se esiste almeno un subscriber per ``REQ_EXECUTE_CASHOUT``.
@@ -2607,6 +2695,33 @@ class RuntimeController:
         return False
 
     def _route_cashout_signal(self, signal: dict) -> None:
+        # Il cashout può partire anche da risk_stop/start, non solo da un
+        # SIGNAL_RECEIVED. La barriera vive quindi sul choke point comune.
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            barrier_id, _scope = RuntimeController._begin_cashout_barrier(self, signal)
+        deferred = False
+        is_owned = getattr(lock, "_is_owned", None)
+        release_save = getattr(lock, "_release_save", None)
+        acquire_restore = getattr(lock, "_acquire_restore", None)
+        lock_state = (
+            release_save()
+            if callable(is_owned) and is_owned()
+            and callable(release_save) and callable(acquire_restore)
+            else None
+        )
+        try:
+            deferred = RuntimeController._route_cashout_signal_under_barrier(
+                self, signal, barrier_id
+            )
+        finally:
+            if lock_state is not None:
+                acquire_restore(lock_state)
+            if not deferred:
+                with lock:
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
+
+    def _route_cashout_signal_under_barrier(self, signal: dict, barrier_id: int) -> bool:
         """Instrada un segnale CASHOUT/CASHOUT_ALL al ``CashoutRouter`` (Fase 2.1-B2.4b-2).
 
         Il runtime pubblica **solo** ``REQ_EXECUTE_CASHOUT`` (via il router), **mai**
@@ -2625,7 +2740,7 @@ class RuntimeController:
         # (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
         if not self._cashout_chain_wired():
             self._reject_signal(signal, "cashout_chain_not_wired")
-            return
+            return False
 
         # Grace auto-green OPT-IN (G5): se armato, DIFFERISCI l'intera route su un
         # threading.Timer (non blocca il worker del bus) => book + green-up sono
@@ -2646,7 +2761,7 @@ class RuntimeController:
         if signal_type == "CASHOUT_ALL":
             self._cancel_pending_auto_green()
             self._execute_cashout_route(signal)
-            return
+            return False
         # Solo il CASHOUT singolo con target VALORIZZATO (market E selection) puo'
         # essere graziato: senza target valido la chiave collasserebbe e accorpare
         # richieste diverse; in quel caso route inline (nessun grace, nessun dedup).
@@ -2654,7 +2769,7 @@ class RuntimeController:
         selection_id = str(signal.get("selection_id") or "")
         if delay <= 0.0 or signal_type != "CASHOUT" or not (market_id and selection_id):
             self._execute_cashout_route(signal)
-            return
+            return False
 
         # Copia PROFONDA: isola il payload differito da qualunque mutazione del
         # chiamante durante la grace (anche strutture annidate: prezzi, legs).
@@ -2678,7 +2793,11 @@ class RuntimeController:
         # instrada INLINE (fallback fail-closed, il cashout parte comunque, solo
         # senza grace). Fugu/Greptile P1.
         try:
-            timer = threading.Timer(delay, self._deferred_cashout_route, args=(signal, key, enqueue_mode, gen))
+            timer = threading.Timer(
+                delay, self._deferred_cashout_route,
+                args=(signal, key, enqueue_mode, gen, barrier_id),
+            )
+            timer._cashout_admission_barrier_id = barrier_id
             timer.daemon = True
             # Arma il Timer SOLO se la prenotazione e' ancora valida (chiave
             # presente E generazione invariata): un CASHOUT_ALL arrivato nella
@@ -2687,8 +2806,9 @@ class RuntimeController:
             # al solo re-check del callback (GPT/Fugu/Fable).
             if not self._auto_green_arm_timer(key, timer, gen):
                 logger.info("[RuntimeController] grace %s invalidato da CASHOUT_ALL concorrente: skip", key)
-                return
+                return False
             timer.start()
+            return True
         except Exception:  # noqa: BLE001 - scheduling fallito: fallback inline, mai perdere il cashout
             logger.exception("[RuntimeController] scheduling grace fallito %s: route inline", key)
             # Tieni la pending-guard DURANTE la route inline e rilasciala nel
@@ -2700,9 +2820,10 @@ class RuntimeController:
                 self._execute_cashout_route(signal)
             finally:
                 self._auto_green_release(key, gen)
+            return False
 
     def _deferred_cashout_route(self, signal: dict, key: tuple, enqueue_mode: str,
-                                gen: int) -> None:
+                                gen: int, barrier_id: int | None = None) -> None:
         """Esegue la route del cashout DOPO il grace, sul thread del ``Timer``.
 
         Fail-closed: ri-verifica i gate live (emergency-stop incl. daily-loss
@@ -2732,6 +2853,9 @@ class RuntimeController:
             self._publish_cashout_failed(signal, f"grace_route_error:{exc}", "ERROR")
         finally:
             self._auto_green_release(key, gen)
+            if barrier_id is not None:
+                with getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock):
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
 
     def _publish_cashout_failed(self, signal: dict, reason: str, status: str) -> None:
         """Pubblica un ``CASHOUT_FAILED`` strutturato in modo EXCEPTION-SAFE.
@@ -2873,6 +2997,11 @@ class RuntimeController:
                 t.cancel()
             except Exception:  # noqa: BLE001 - best-effort, mai crashare sul cancel
                 logger.exception("[RuntimeController] cancel timer grace fallito")
+            barrier_id = getattr(t, "_cashout_admission_barrier_id", None)
+            if barrier_id is not None:
+                lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+                with lock:
+                    RuntimeController._end_cashout_barrier(self, barrier_id)
 
     def _cashout_gates_still_open(self, signal: dict, enqueue_mode: str = "") -> tuple:
         """Ri-verifica fail-closed dei gate live dopo il grace: (ok, reason).
@@ -2953,6 +3082,84 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
+        signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
+        if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
+            with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+                barrier_id, scope = self._begin_cashout_barrier(signal)
+            try:
+                self._on_signal_received_serial(signal)
+            finally:
+                with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+                    self._end_cashout_barrier(barrier_id)
+            return
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            fence = self._capture_admission_fence(signal)
+            if not self._admission_fence_valid(fence):
+                self._reject_signal(dict(signal or {}), "cashout_invalidation_active")
+                return
+            self._on_signal_received_serial(signal, admission_fence=fence)
+
+    def _entry_admission_keys(self, signal: dict) -> tuple[tuple, ...]:
+        keys: list[tuple] = [("global",)]
+        try:
+            market_id = validators.order_market_id((signal or {}).get("market_id"))
+            keys.append(("market", market_id))
+            try:
+                selection_id = validators.order_selection_id((signal or {}).get("selection_id"))
+                keys.append(("selection", market_id, selection_id))
+            except ValueError:
+                pass
+        except ValueError:
+            pass
+        return tuple(keys)
+
+    def _capture_admission_fence(self, signal: dict) -> tuple[tuple, ...]:
+        keys = self._entry_admission_keys(signal)
+        epochs = getattr(self, "_admission_epochs", {})
+        return tuple((key, epochs.get(key, 0)) for key in keys)
+
+    def _begin_cashout_barrier(self, signal: dict) -> tuple[int, frozenset[tuple]]:
+        signal = dict(signal or {})
+        kind = str(signal.get("signal_type") or "").strip().upper()
+        if kind == "CASHOUT_ALL":
+            scope = frozenset({("global",)})
+        else:
+            scope_keys: set[tuple] = set()
+            try:
+                market_id = validators.order_market_id(signal.get("market_id"))
+                try:
+                    selection_id = validators.order_selection_id(signal.get("selection_id"))
+                    scope_keys.add(("selection", market_id, selection_id))
+                except ValueError:
+                    scope_keys.add(("market", market_id))
+            except ValueError:
+                # Un indirizzo CASHOUT non interpretabile non è globale: il
+                # router manterrà il suo rifiuto fail-closed senza bloccare
+                # ingressi indipendenti.
+                pass
+            scope = frozenset(scope_keys)
+        self._cashout_barrier_seq = getattr(self, "_cashout_barrier_seq", 0) + 1
+        barrier_id = self._cashout_barrier_seq
+        epochs = getattr(self, "_admission_epochs", {})
+        self._admission_epochs = epochs
+        for key in scope:
+            epochs[key] = epochs.get(key, 0) + 1
+        barriers = getattr(self, "_cashout_barriers", {})
+        barriers[barrier_id] = scope
+        self._cashout_barriers = barriers
+        return barrier_id, scope
+
+    def _end_cashout_barrier(self, barrier_id: int) -> None:
+        getattr(self, "_cashout_barriers", {}).pop(barrier_id, None)
+
+    def _admission_fence_valid(self, fence: tuple[tuple, ...]) -> bool:
+        keys = {key for key, _epoch in fence}
+        if any(keys.intersection(scope) for scope in getattr(self, "_cashout_barriers", {}).values()):
+            return False
+        epochs = getattr(self, "_admission_epochs", {})
+        return all(epochs.get(key, 0) == epoch for key, epoch in fence)
+
+    def _on_signal_received_serial(self, signal: dict, *, admission_fence=None) -> None:
         """
         Runtime signal gate for Telegram/UI-driven order intents.
 
@@ -2963,6 +3170,8 @@ class RuntimeController:
           as passthrough context (no strategy rewrite here)
         """
         signal = dict(signal or {})
+        if admission_fence is None:
+            admission_fence = self._capture_admission_fence(signal)
         self.last_signal_at = datetime.utcnow().isoformat()
 
         # Emergency stop hard gate — refuses ALL live order entry. Include anche
@@ -3034,15 +3243,17 @@ class RuntimeController:
         # evento bloccata, nessun SIGNAL_REJECTED) e `True` arrivava al broker
         # come runner 1. Stessi controlli dell'engine (core/validators.py).
         invalid_fields = []
+        normalized_fields = {}
         for field_name, check in (("market_id", validators.order_market_id),
                                   ("selection_id", validators.order_selection_id)):
             try:
-                check(signal.get(field_name))
+                normalized_fields[field_name] = check(signal.get(field_name))
             except ValueError:
                 invalid_fields.append(field_name)
         if invalid_fields:
             self._reject_signal(signal, f"campi_non_validi:{','.join(invalid_fields)}")
             return
+        signal.update(normalized_fields)
         raw_price = signal.get("price")
         if raw_price in (None, ""):
             raw_price = signal.get("odds")
@@ -3050,6 +3261,11 @@ class RuntimeController:
             validators.order_price(raw_price)
         except ValueError:
             self._reject_signal(signal, "quota_non_valida")
+            return
+        try:
+            validators.signal_side(signal)
+        except ValueError:
+            self._reject_signal(signal, "lato_non_valido")
             return
 
         copy_meta, pattern_meta = self._extract_origin_metadata(signal)
@@ -3088,7 +3304,8 @@ class RuntimeController:
             return
 
         total_exposure = self.table_manager.total_exposure()
-        event_exposure = self._event_current_exposure(event_key)
+        event_identity = self._event_identity(signal)
+        event_exposure = self._event_current_exposure(signal)
 
         # Enforcement A1: Drawdown Hard Stop (#320)
         if str(self.execution_mode).upper() == "LIVE":
@@ -3103,6 +3320,26 @@ class RuntimeController:
                         self._reject_signal(signal, "drawdown_hard_stop_active")
                         return
 
+        # PR28-d: drawdown assoluto owner, stessa semantica SIM/LIVE. Un limite
+        # configurato ma illeggibile o uno stato equity non verificabile nega.
+        drawdown_abs_raw = self._configured_optional(self.config, "max_drawdown_abs")
+        if drawdown_abs_raw is not None:
+            cap = validators.finite_number(drawdown_abs_raw)
+            bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+            peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+            if cap is None or cap <= 0 or bankroll is None or peak is None:
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)
+                self._reject_signal(signal, "max_drawdown_abs_non_valido")
+                return
+            drawdown_abs = max(0.0, peak - bankroll)
+            if validators.reaches_limit(drawdown_abs, cap):
+                self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)
+                self._reject_signal(signal, "max_drawdown_abs_active")
+                return
+
         decision = self.mm.calculate(
             signal=signal,
             bankroll_current=self.risk_desk.bankroll_current,
@@ -3116,8 +3353,21 @@ class RuntimeController:
         order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
             validators.signal_side(signal), decision.recommended_stake, raw_price)
         if decision.approved:
+            absolute_checks = (
+                ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
+                ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
+                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
+                 event_exposure if event_identity else float("inf")),
+                ("max_open_exposure", getattr(self.config, "max_open_exposure", None), total_exposure),
+            )
+            for cap_name, cap_raw, current in absolute_checks:
+                reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
+                if reason:
+                    decision.approved = False
+                    decision.reason = reason
+                    break
             max_abs_exposure = getattr(self.config, "max_open_exposure", None)
-            if max_abs_exposure is not None:
+            if decision.approved and max_abs_exposure is not None:
                 # Hard-stop configurato ma illeggibile (NaN dal loader, inf,
                 # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
                 # disattivava il cap (PR27, #461).
@@ -3142,10 +3392,7 @@ class RuntimeController:
             "market_id": str(signal.get("market_id")),
             "selection_id": int(signal.get("selection_id")),
             "bet_type": str(
-                signal.get("bet_type")
-                or signal.get("side")
-                or signal.get("action")
-                or "BACK"
+                validators.signal_side(signal)
             ).upper(),
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision.recommended_stake),
@@ -3210,6 +3457,8 @@ class RuntimeController:
             selection_id=payload["selection_id"],
             meta={
                 "event_name": payload["event_name"],
+                "event_id": signal.get("event_id") or signal.get("eventId"),
+                "event_identity": event_identity,
                 "market_name": payload["market_name"],
                 "runner_name": payload["runner_name"],
                 "bet_type": payload["bet_type"],
@@ -3223,7 +3472,20 @@ class RuntimeController:
         # daily-loss/emergency qui sotto coprano anche la finestra dello snapshot
         # (niente approved-without-submit). Con flag OFF e' un no-op totale e
         # ritorna False => i gate sotto restano identici a oggi.
-        best_price_attempted = self._apply_direct_best_price(payload)
+        admission_lock = getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock)
+        # La rete/prezzo non deve trattenere il lock di ammissione: il cashout
+        # può partire subito e incrementare l'epoch scoped.
+        admission_lock.release()
+        try:
+            best_price_attempted = self._apply_direct_best_price(payload)
+        finally:
+            admission_lock.acquire()
+        if not self._admission_fence_valid(admission_fence):
+            self._release_acquired_and_reject(
+                signal, event_key=event_key, table_id=decision.table_id,
+                reason="cashout_invalidation_stale",
+            )
+            return
         if best_price_attempted and validators.exceeds_cap(validators.order_exposure_or_inf(
                 payload["bet_type"], payload["stake"], payload.get("price")), order_exposure):
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
@@ -3371,7 +3633,11 @@ class RuntimeController:
         if event_key:
             self.duplication_guard.release(event_key)
 
-        if table_id is not None:
+        # FILLED chiude l'ordine, non la posizione: l'esposizione resta nel
+        # tavolo fino a RUNTIME_CLOSE_POSITION/settlement. Liberarla qui
+        # azzererebbe artificialmente i cap mercato/evento mentre la posizione
+        # abbinata e' ancora aperta.
+        if table_id is not None and event_name != "QUICK_BET_FILLED":
             try:
                 self.table_manager.force_unlock(int(table_id))
             except Exception:
@@ -4157,6 +4423,29 @@ class RuntimeController:
         return "|".join(parts)
 
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
+        """Serializza l'ammissione auto-next con ogni altro ingresso d'ordine."""
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            mm_context = (payload or {}).get("mm_context")
+            next_signal = mm_context.get("next_signal") if isinstance(mm_context, dict) else None
+            if isinstance(next_signal, dict):
+                fence = self._capture_admission_fence(next_signal)
+                if not self._admission_fence_valid(fence):
+                    return {
+                        "submitted": False,
+                        "auto_trade_status": "AUTO_TRADE_SKIPPED_RISK_REJECTED",
+                        "cycle_executor_status": "CYCLE_SKIPPED_RISK_REJECTED",
+                        "money_management_status": "MM_STOP_CASHOUT_BARRIER",
+                        "risk_status": "RISK_REJECTED",
+                        "reason": "cashout_invalidation_active",
+                    }
+            return self._evaluate_and_maybe_submit_auto_next_trade_serial(
+                payload=payload,
+                sync_result=sync_result,
+            )
+
+    def _evaluate_and_maybe_submit_auto_next_trade_serial(
+        self, *, payload: dict, sync_result: dict
+    ) -> dict:
         settlement_key = self._build_bankroll_sync_key(payload)
         source_corr_id = str(sync_result.get("correlation_id") or "")
         recovery_enabled = bool(payload.get("recovery_enabled", self.config.allow_recovery))
@@ -4309,7 +4598,7 @@ class RuntimeController:
             {"table_id": table_id} if table_id is not None else None
         )
         try:  # PR28: era 0.0
-            next_event_exposure = (self._event_current_exposure(self.duplication_guard.build_event_key(signal))
+            next_event_exposure = (self._event_current_exposure(signal)
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
@@ -4399,9 +4688,44 @@ class RuntimeController:
             return result
 
         risk_allowed, risk_reason = self._risk_allows_auto_trade()
-        if risk_allowed:  # PR28: cap A2 come per il segnale
-            risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
-                self.config, "max_open_exposure", None), self.table_manager.total_exposure()) or risk_reason
+        if risk_allowed:
+            try:
+                side = validators.signal_side(signal)
+                price = validators.order_price(signal.get("price", signal.get("odds")))
+                order_exposure = validators.order_exposure_or_inf(side, result["next_stake"], price)
+                event_identity = self._event_identity(signal)
+                checks = (
+                    ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
+                    ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
+                    ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
+                     self._event_current_exposure(signal) if event_identity else float("inf")),
+                    ("max_open_exposure", getattr(self.config, "max_open_exposure", None), self.table_manager.total_exposure()),
+                )
+                for cap_name, cap_raw, current in checks:
+                    risk_reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
+                    if risk_reason:
+                        break
+                else:
+                    drawdown_raw = self._configured_optional(self.config, "max_drawdown_abs")
+                    if drawdown_raw is None:
+                        risk_reason = "risk_approved"
+                    else:
+                        cap = validators.finite_number(drawdown_raw)
+                        bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+                        peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+                        if cap is None or cap <= 0 or bankroll is None or peak is None:
+                            risk_reason = "max_drawdown_abs_non_valido"
+                        else:
+                            drawdown_abs = max(0.0, peak - bankroll)
+                            if validators.reaches_limit(drawdown_abs, cap):
+                                self.force_lockdown(
+                                    f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€"
+                                )
+                                risk_reason = "max_drawdown_abs_active"
+                            else:
+                                risk_reason = "risk_approved"
+            except (TypeError, ValueError):
+                risk_reason = "ordine_auto_trade_non_verificabile"
             risk_allowed = risk_reason == "risk_approved"
         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
         if not risk_allowed:
@@ -4488,6 +4812,8 @@ class RuntimeController:
                 selection_id=submit_payload.get("selection_id"),
                 meta={
                     "event_name": submit_payload.get("event_name") or "",
+                    "event_id": submit_payload.get("event_id", submit_payload.get("eventId")),
+                    "event_identity": self._event_identity(submit_payload),
                     "market_name": submit_payload.get("market_name") or "",
                     "runner_name": submit_payload.get("runner_name") or "",
                     "bet_type": submit_payload.get("bet_type") or "",
@@ -4742,26 +5068,29 @@ class RuntimeController:
         return bool(table.current_event_key)
 
     def _build_auto_trade_payload(self, *, signal: dict, decision_stake: float) -> dict:
+        normalized_signal = dict(signal or {})
+        normalized_signal["market_id"] = validators.order_market_id(
+            normalized_signal.get("market_id")
+        )
+        normalized_signal["selection_id"] = validators.order_selection_id(
+            normalized_signal.get("selection_id")
+        )
         payload = {
-            "market_id": str(signal.get("market_id")),
-            "selection_id": int(signal.get("selection_id")),
-            "bet_type": str(
-                signal.get("bet_type")
-                or signal.get("side")
-                or signal.get("action")
-                or "BACK"
-            ).upper(),
-            "price": float(signal.get("price") or signal.get("odds")),
+            "market_id": normalized_signal["market_id"],
+            "selection_id": normalized_signal["selection_id"],
+            "bet_type": validators.signal_side(normalized_signal),
+            "price": float(normalized_signal.get("price") or normalized_signal.get("odds")),
             "stake": float(decision_stake),
-            "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
-            "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
-            "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
-            "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
-            "event_key": self.duplication_guard.build_event_key(signal),
-            "batch_id": str(signal.get("batch_id") or ""),
+            "event_name": normalized_signal.get("event") or normalized_signal.get("match") or normalized_signal.get("event_name") or "",
+            "event_id": normalized_signal.get("event_id") or normalized_signal.get("eventId"),
+            "market_name": normalized_signal.get("market") or normalized_signal.get("market_name") or normalized_signal.get("market_type") or "",
+            "runner_name": normalized_signal.get("selection") or normalized_signal.get("runner_name") or normalized_signal.get("runnerName") or "",
+            "simulation_mode": bool(normalized_signal.get("simulation_mode", self.simulation_mode)),
+            "event_key": self.duplication_guard.build_event_key(normalized_signal),
+            "batch_id": str(normalized_signal.get("batch_id") or ""),
             "auto_trade_source": "settlement_mm_gate",
         }
-        table_id = signal.get("table_id")
+        table_id = normalized_signal.get("table_id")
         if table_id is not None:
             payload["table_id"] = int(table_id)
         return payload

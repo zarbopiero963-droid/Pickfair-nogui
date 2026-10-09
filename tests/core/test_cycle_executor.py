@@ -280,7 +280,7 @@ def test_cycle_executor_skips_inflight_conflict():
                 "cycle_id": "cycle-1",
                 "table_id": 2,
                 "table": {"table_id": 2, "loss_amount": 0.0, "in_recovery": False},
-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "table_id": 2},
+                    "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "table_id": 2, "side": "BACK"},
             }
         )
     )
