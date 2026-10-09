@@ -359,3 +359,10 @@ Incidents, Incident Timeline, Audit, Safe Mode, Diagnostics`; badge
 Safe Mode` senza conferma yes/no; ExportPanel `Export Diagnostics ZIP`).
 Se verranno integrati nella Mini GUI, l'integrazione è una modifica design
 e va riportata qui.
+
+# PR28-d — controlli assoluti Roserpina
+
+La sezione Roserpina espone quattro campi monetari aggiuntivi: esposizione massima
+per ordine, mercato, evento e drawdown assoluto. I valori iniziali provengono
+dalla configurazione autorevole (1 €, 2 €, 2 €, 10 €); input vuoti o invalidi
+non rappresentano un opt-out e vengono rifiutati fail-closed dal runtime.

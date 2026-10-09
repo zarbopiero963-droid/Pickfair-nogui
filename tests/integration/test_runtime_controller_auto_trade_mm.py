@@ -144,6 +144,50 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
     assert payload["auto_trade_status"] == "AUTO_TRADE_SUBMITTED"
 
 
+def test_auto_trade_applies_absolute_order_cap_before_publish():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_order_exposure = 0.25
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-absolute-order-cap",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"].startswith("max_order_exposure_exceeded")
+
+
+def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_drawdown_abs = True
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-absolute-drawdown-cap",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_non_valido"
+
+
 def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility():
     rc, bus = _make_controller(responses=[{"available": 140.0}])
     rc.mode = RuntimeMode.ACTIVE

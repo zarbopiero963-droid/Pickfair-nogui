@@ -5,6 +5,7 @@ import pytest
 import threading
 
 from core import validators
+from services.telegram_signal_processor import TelegramSignalProcessor
 from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
 from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
 
@@ -87,6 +88,42 @@ def test_absolute_drawdown_reaches_threshold_and_blocks(tmp_path):
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert c.broker.state.orders == {}
     assert _rifiuti(c)[-1] == "max_drawdown_abs_active"
+
+
+def test_drawdown_rejection_releases_dedupe_for_retry(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_drawdown_abs = True
+    sig = _signal(stake=0.5, bet_type="BACK")
+    c.rc._on_signal_received(sig)
+    c.rc.config.max_drawdown_abs = 10.0
+    c.rc.risk_desk.equity_peak = c.rc.risk_desk.bankroll_current
+    c.rc._on_signal_received(sig)
+    assert len(c.broker.state.orders) == 1
+
+
+def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 100.0
+    c.rc.config.max_event_exposure_abs = 2.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "other-market:key"
+    table.market_id = "1.other"
+    table.current_exposure = 1.5
+    table.meta = {"event_name": "Roma v Milan", "event_identity": "name:roma v milan"}
+    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig["event_name"] = " ROMA   v MILAN "
+    c.rc._on_signal_received(sig)
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+
+
+@pytest.mark.parametrize("raw", [{}, {"action": "BOTH"}, {"action": "BACK", "side": "LAY"}])
+def test_telegram_ingestion_rejects_missing_invalid_or_conflicting_side(raw):
+    payload = {"market_id": "1.2", "selection_id": 3, "price": 2.0, **raw}
+    result = TelegramSignalProcessor().normalize_ingestion_signal(payload)
+    assert result["ok"] is False
+    assert result["error_code"] == "INVALID_OR_MISSING_SIDE"
 
 
 def test_most_restrictive_cap_wins(tmp_path):

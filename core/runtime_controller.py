@@ -2578,11 +2578,31 @@ class RuntimeController:
             },
         )
 
-    def _event_current_exposure(self, event_key: str) -> float:
-        table = self.table_manager.find_by_event_key(event_key)
-        if not table:
+    @staticmethod
+    def _event_identity(signal: dict) -> str:
+        event_id = signal.get("event_id") or signal.get("eventId")
+        if event_id not in (None, "") and not isinstance(event_id, bool):
+            return f"id:{str(event_id).strip()}"
+        event_name = signal.get("event_name") or signal.get("event")
+        if isinstance(event_name, str) and event_name.strip():
+            return "name:" + " ".join(event_name.casefold().split())
+        return ""
+
+    def _event_current_exposure(self, event_identity: str) -> float:
+        if not event_identity:
             return 0.0
-        return float(table.current_exposure or 0.0)
+        total = 0.0
+        for table in self.table_manager.active_tables():
+            meta = table.meta if isinstance(table.meta, dict) else {}
+            stored = str(meta.get("event_identity") or "")
+            if not stored:
+                stored = self._event_identity(meta)
+            if stored == event_identity:
+                value = validators.finite_number(table.current_exposure)
+                if value is None or value < 0:
+                    return float("inf")
+                total += value
+        return total
 
     def _market_current_exposure(self, market_id: str) -> float:
         total = 0.0
@@ -3125,7 +3145,8 @@ class RuntimeController:
             return
 
         total_exposure = self.table_manager.total_exposure()
-        event_exposure = self._event_current_exposure(event_key)
+        event_identity = self._event_identity(signal)
+        event_exposure = self._event_current_exposure(event_identity)
 
         # Enforcement A1: Drawdown Hard Stop (#320)
         if str(self.execution_mode).upper() == "LIVE":
@@ -3148,11 +3169,15 @@ class RuntimeController:
             bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
             peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
             if cap is None or cap <= 0 or bankroll is None or peak is None:
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)
                 self._reject_signal(signal, "max_drawdown_abs_non_valido")
                 return
             drawdown_abs = max(0.0, peak - bankroll)
             if validators.reaches_limit(drawdown_abs, cap):
                 self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
+                if self.config.anti_duplication_enabled:
+                    self.duplication_guard.release(event_key)
                 self._reject_signal(signal, "max_drawdown_abs_active")
                 return
 
@@ -3172,7 +3197,8 @@ class RuntimeController:
             absolute_checks = (
                 ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
                 ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
-                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"), event_exposure),
+                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
+                 event_exposure if event_identity else float("inf")),
                 ("max_open_exposure", getattr(self.config, "max_open_exposure", None), total_exposure),
             )
             for cap_name, cap_raw, current in absolute_checks:
@@ -3272,6 +3298,7 @@ class RuntimeController:
             selection_id=payload["selection_id"],
             meta={
                 "event_name": payload["event_name"],
+                "event_identity": event_identity,
                 "market_name": payload["market_name"],
                 "runner_name": payload["runner_name"],
                 "bet_type": payload["bet_type"],
@@ -4371,7 +4398,7 @@ class RuntimeController:
             {"table_id": table_id} if table_id is not None else None
         )
         try:  # PR28: era 0.0
-            next_event_exposure = (self._event_current_exposure(self.duplication_guard.build_event_key(signal))
+            next_event_exposure = (self._event_current_exposure(self._event_identity(signal))
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
@@ -4461,9 +4488,39 @@ class RuntimeController:
             return result
 
         risk_allowed, risk_reason = self._risk_allows_auto_trade()
-        if risk_allowed:  # PR28: cap A2 come per il segnale
-            risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
-                self.config, "max_open_exposure", None), self.table_manager.total_exposure()) or risk_reason
+        if risk_allowed:
+            try:
+                side = validators.signal_side(signal)
+                price = validators.order_price(signal.get("price", signal.get("odds")))
+                order_exposure = validators.order_exposure_or_inf(side, result["next_stake"], price)
+                event_identity = self._event_identity(signal)
+                checks = (
+                    ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
+                    ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
+                    ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
+                     self._event_current_exposure(event_identity) if event_identity else float("inf")),
+                    ("max_open_exposure", getattr(self.config, "max_open_exposure", None), self.table_manager.total_exposure()),
+                )
+                for cap_name, cap_raw, current in checks:
+                    risk_reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
+                    if risk_reason:
+                        break
+                else:
+                    drawdown_raw = self._configured_optional(self.config, "max_drawdown_abs")
+                    if drawdown_raw is None:
+                        risk_reason = "risk_approved"
+                    else:
+                        cap = validators.finite_number(drawdown_raw)
+                        bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+                        peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+                        if cap is None or cap <= 0 or bankroll is None or peak is None:
+                            risk_reason = "max_drawdown_abs_non_valido"
+                        elif validators.reaches_limit(max(0.0, peak - bankroll), cap):
+                            risk_reason = "max_drawdown_abs_active"
+                        else:
+                            risk_reason = "risk_approved"
+            except (TypeError, ValueError):
+                risk_reason = "ordine_auto_trade_non_verificabile"
             risk_allowed = risk_reason == "risk_approved"
         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
         if not risk_allowed:
@@ -4550,6 +4607,7 @@ class RuntimeController:
                 selection_id=submit_payload.get("selection_id"),
                 meta={
                     "event_name": submit_payload.get("event_name") or "",
+                    "event_identity": self._event_identity(submit_payload),
                     "market_name": submit_payload.get("market_name") or "",
                     "runner_name": submit_payload.get("runner_name") or "",
                     "bet_type": submit_payload.get("bet_type") or "",

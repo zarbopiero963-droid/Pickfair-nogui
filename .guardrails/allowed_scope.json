@@ -2132,7 +2132,10 @@
         "core/system_state.py",
         "core/validators.py",
         "mini_gui.py",
+        "telegram_listener.py",
         "services/setting_service.py",
+        "services/telegram_signal_processor.py",
+        "docs/design/design_handoff.md",
         "tests/acceptance/test_issue437_pr28b.py",
         "tests/unit/test_runtime_controller_best_price_direct.py",
         "tests/unit/test_runtime_controller_gate_proofs.py",
@@ -2176,9 +2179,10 @@
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
         "tests/integration/test_runtime_controller_auto_trade_mm.py",
         "tests/integration/test_runtime_controller_cycle_executor.py",
-        "tests/integration/test_runtime_controller_live_sim_parity.py"
+        "tests/integration/test_runtime_controller_live_sim_parity.py",
+        "tests/unit/test_ui_freeze_boundaries.py"
       ],
-      "max_files": 15,
+      "max_files": 19,
       "allow_tests": true,
       "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
     }

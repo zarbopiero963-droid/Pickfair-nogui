@@ -1131,13 +1131,13 @@ class TelegramListener:
 
         market_id = self._extract_master_field("market_id", text)
         selection_id = self._extract_master_field("selection_id", text)
-        action = self._extract_master_field("action", text) or "BACK"
+        action = self._extract_master_field("action", text)
         master_price = self._extract_master_field("master_price", text) or "2.0"
         event_name = self._extract_master_field("event_name", text)
         market_name = self._extract_master_field("market_name", text)
         selection = self._extract_master_field("selection", text)
 
-        if not market_id or not selection_id:
+        if not market_id or not selection_id or str(action).upper() not in {"BACK", "LAY"}:
             return None
 
         return {
