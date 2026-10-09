@@ -701,6 +701,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # (vedi _parse_hard_stop / _save_roserpina_settings).
         self.rs_max_daily_loss_var = self._make_string_var("")
         self.rs_max_open_exposure_var = self._make_string_var("")
+        self.rs_max_order_exposure_var = self._make_string_var("1.0")
+        self.rs_max_market_exposure_var = self._make_string_var("2.0")
+        self.rs_max_event_exposure_abs_var = self._make_string_var("2.0")
+        self.rs_max_drawdown_abs_var = self._make_string_var("10.0")
         self.rs_max_session_loss_var = self._make_string_var("")  # P37 (#461 PR28)
         self.rs_max_exposure_stop_var = self._make_string_var("")  # P37/P38 (#461 PR28-c)
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
@@ -1123,6 +1127,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Max Stake Assoluto", self.rs_max_abs_var)
         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo ordine €", self.rs_max_order_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo mercato €", self.rs_max_market_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo evento €", self.rs_max_event_exposure_abs_var)
+        self._labeled_entry(outer, "Hard-stop: Drawdown assoluto €", self.rs_max_drawdown_abs_var)
         self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
         self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
@@ -1604,6 +1612,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_max_abs_var.set(str(getattr(rs, "max_stake_abs", self.rs_max_abs_var.get())))
                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+                self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
+                self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
+                self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
+                self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
                 self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
                 self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
@@ -2006,6 +2018,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 max_stake_abs=float(self.rs_max_abs_var.get()),
                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
+                max_order_exposure=self._parse_hard_stop(self.rs_max_order_exposure_var.get(), "Cap singolo ordine"),
+                max_market_exposure=self._parse_hard_stop(self.rs_max_market_exposure_var.get(), "Cap singolo mercato"),
+                max_event_exposure_abs=self._parse_hard_stop(self.rs_max_event_exposure_abs_var.get(), "Cap singolo evento"),
+                max_drawdown_abs=self._parse_hard_stop(self.rs_max_drawdown_abs_var.get(), "Drawdown assoluto"),
                 max_session_loss=self._parse_hard_stop(self.rs_max_session_loss_var.get(), "Perdita sessione max"),
                 max_exposure_stop=self._parse_hard_stop(self.rs_max_exposure_stop_var.get(), "Stop esposizione complessiva"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
@@ -2079,6 +2095,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             rs = self.settings_service.load_roserpina_config()
             self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
             self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+            self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
+            self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
+            self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
+            self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
             self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
             self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
             self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))

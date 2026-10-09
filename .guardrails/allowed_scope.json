@@ -2159,6 +2159,28 @@
       "max_files": 11,
       "allow_tests": true,
       "description": "#461 PR28-c (PKG-P24-B: P38 + stop esposizione P37), baseline main f7c103c (#503), nessuna PR aperta. Fonti: #426 P37/P38 (stop perdita sessione ed esposizione complessiva, valori owner; allo stop blocco nuovi ordini + cancel unmatched pertinenti + tentativo cashout, tutte e tre), #426 decisione 06/10 e docs/mcp_operational_contract.md (nessun importo fisso 10€/10€ per STOP/cashout; PAUSE solo blocco; EMERGENCY barriera massima; RESUME solo dopo readiness completa), #461 5932610970 (P38: PR28 coordinamento; barriera STOP fisica resta PR37). RISK_STOP distinto da EMERGENCY in core/risk_stop.py + RuntimeController.risk_stop/reset_risk_stop: blocca entrate (segnali, auto-next, resume), non il cashout; cancel + cashout riusando CASHOUT_ALL del CashoutRouter (solo ordini del bot, gate propri); persistito (setting risk_stop_state, illeggibile => attivo); reset solo dopo ricontrollo completo (emergency, perdita giornaliera, limiti, esposizione sotto lo stop), anche da start(). Trigger: perdita di sessione raggiunta (P37, PR28-b) e max_exposure_stop (nuovo limite owner senza default, GUI/loader/salvataggio, illeggibile o <=0 => blocco senza chiusura) valutato pre-submit con il tavolo dell'ordine attivato. Fake di test con catch-all __getattr__=0 riallineati (max_exposure_stop=None). Fix c1: ritenta CASHOUT_ALL a start(), persistenza sotto lock. Fix c2 (review owner, boot reale fail-open): start()/riavvio non riaprono MAI lo stop (tavoli in memoria => esposizione 0); solo reset_risk_stop() esplicito; persistenza versionata {active,reason,seq} in db + marker accanto al db (modello PR28-b: vince la seq maggiore leggibile, pari/ignota/illeggibile => stop; reset = nuova versione salvata prima di riaprire, altrimenti rifiutato). PR28-d: cap assoluti ordine/mercato-evento/drawdown + lato mancante e True come 1.0. P06 per strategia: DIFFERITO/non implementato (decisione owner 08/10 22:06: Roserpina unica autorita' monetaria, nessuna strategia o bucket default)."
+    },
+    "issue461-pr28d-absolute-caps": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/money_management.py",
+        "core/runtime_controller.py",
+        "core/system_state.py",
+        "core/validators.py",
+        "mini_gui.py",
+        "services/setting_service.py",
+        "tests/acceptance/test_issue437_pr28d.py",
+        "tests/core/test_auto_trade_mm_gate.py",
+        "tests/core/test_cycle_executor.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/integration/test_runtime_controller_auto_trade_mm.py",
+        "tests/integration/test_runtime_controller_cycle_executor.py",
+        "tests/integration/test_runtime_controller_live_sim_parity.py"
+      ],
+      "max_files": 15,
+      "allow_tests": true,
+      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
     }
   }
 }

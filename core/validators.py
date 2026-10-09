@@ -164,15 +164,30 @@ def order_exposure(side, stake, price) -> float:
     return importo * (order_price(price) - 1.0)
 
 
-def signal_side(signal) -> str:
+def signal_side(signal, *, default=None) -> str:
     """Lato di un segnale runtime, risolto come il payload `CMD_QUICK_BET`
-    (`bet_type` / `side` / `action`, maiuscolo). L'assenza ricade su BACK come
-    il payload storico: il finding "lato assente => BACK" resta tracciato a
-    parte e qui NON si cambia, si misura solo lo stesso lato che parte."""
+    (`bet_type` / `side` / `action`, maiuscolo). Assenza, ambiguita' o valore
+    invalido sono rifiutati: un ordine non diventa mai BACK per default."""
     raw = None
     if isinstance(signal, dict):
         raw = signal.get("bet_type") or signal.get("side") or signal.get("action")
-    return str(raw or "BACK").upper()
+    if raw in (None, "") and default is not None:
+        raw = default
+    if not isinstance(raw, str):
+        raise ValueError("INVALID_SIDE")
+    side = raw.strip().upper()
+    if side not in ("BACK", "LAY"):
+        raise ValueError("INVALID_SIDE")
+    aliases = []
+    for key in ("bet_type", "side", "action"):
+        value = signal.get(key)
+        if value not in (None, ""):
+            if not isinstance(value, str) or value.strip().upper() not in ("BACK", "LAY"):
+                raise ValueError("INVALID_SIDE")
+            aliases.append(value.strip().upper())
+    if len(set(aliases)) > 1:
+        raise ValueError("INVALID_SIDE")
+    return side
 
 
 def order_exposure_or_inf(side, stake, price) -> float:
@@ -202,10 +217,30 @@ def open_exposure_cap_reason(cap_raw, total_exposure, order_risk) -> str:
 def signal_cap_reason(signal, stake, cap_raw, total_exposure) -> str:
     """Cap A2 sul rischio di un segnale (lato e quota come nel payload)."""
     sig = signal if isinstance(signal, dict) else {}
-    risk = order_exposure_or_inf(signal_side(sig), stake, sig.get("price") or sig.get("odds"))
+    try:
+        side = signal_side(sig)
+    except ValueError:
+        return "lato_o_quota_non_validi"
+    risk = order_exposure_or_inf(side, stake, sig.get("price") or sig.get("odds"))
     if not math.isfinite(risk):
         return "lato_o_quota_non_validi"
     return open_exposure_cap_reason(cap_raw, total_exposure, risk)
+
+
+def absolute_cap_reason(name, cap_raw, current, order_risk) -> str:
+    """Valida e applica un cap assoluto Roserpina, senza coercizione bool."""
+    if cap_raw is None:
+        return ""
+    cap = finite_number(cap_raw)
+    base = finite_number(current)
+    risk = finite_number(order_risk)
+    if cap is None or cap <= 0:
+        return f"{name}_non_valido"
+    if base is None or base < 0 or risk is None or risk < 0:
+        return f"{name}_non_verificabile"
+    if exceeds_cap(base + risk, cap):
+        return f"{name}_exceeded:limit={cap_raw}€"
+    return ""
 
 
 def reaches_limit(amount, limit) -> bool:

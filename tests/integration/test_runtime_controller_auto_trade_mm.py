@@ -129,6 +129,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
                     "market_id": "1.234",
                     "selection_id": 8,
                     "price": 2.0,
+                        "side": "BACK",
                 },
             },
         )
@@ -222,6 +223,7 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
                     "selection_id": 11,
                     "table_id": 1,
                     "price": 2.0,
+                        "side": "BACK",
                 },
             },
         )

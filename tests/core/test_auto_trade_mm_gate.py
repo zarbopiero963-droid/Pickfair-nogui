@@ -197,7 +197,7 @@ def test_auto_trade_skips_when_mm_blocks_progression():
             "cycle_active": False,
             "cycle_id": "cycle-stop",
             "table": {"table_id": 1},
-            "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
+                    "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
         },
     )
     rc._on_close_position(payload)
@@ -257,7 +257,7 @@ def test_auto_trade_skips_on_existing_inflight_conflict():
                 "cycle_active": True,
                 "table_id": 2,
                 "table": {"table_id": 2, "loss_amount": 0.0, "in_recovery": False},
-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
+                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
             },
         )
     )
@@ -276,7 +276,7 @@ def test_auto_trade_submit_failure_returns_structured_status():
         mm_context={
             "cycle_active": True,
             "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
-            "next_signal": {"market_id": "1.2", "selection_id": "bad", "price": 2.0},
+            "next_signal": {"market_id": "1.2", "selection_id": "bad", "price": 2.0, "side": "BACK"},
         },
     )
     rc._on_close_position(payload)

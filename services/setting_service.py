@@ -324,6 +324,10 @@ class SettingsService:
                 "roserpina.max_open_exposure",
                 fallback_key="max_open_exposure",
             ),
+            max_order_exposure=self._optional_hard_stop_value(data, "roserpina.max_order_exposure") if "roserpina.max_order_exposure" in data else 1.0,
+            max_market_exposure=self._optional_hard_stop_value(data, "roserpina.max_market_exposure") if "roserpina.max_market_exposure" in data else 2.0,
+            max_event_exposure_abs=self._optional_hard_stop_value(data, "roserpina.max_event_exposure_abs") if "roserpina.max_event_exposure_abs" in data else 2.0,
+            max_drawdown_abs=self._optional_hard_stop_value(data, "roserpina.max_drawdown_abs") if "roserpina.max_drawdown_abs" in data else 10.0,
             max_session_loss=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_session_loss",
@@ -415,6 +419,10 @@ class SettingsService:
             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
         if config.max_open_exposure is not None:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+        for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
+            value = getattr(config, field, None)
+            if value is not None:
+                payload[f"roserpina.{field}"] = value
         if config.max_session_loss is not None:
             payload["roserpina.max_session_loss"] = config.max_session_loss
         if config.max_exposure_stop is not None:

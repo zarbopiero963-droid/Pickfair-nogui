@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### PR28-d — cap assoluti Roserpina
+- Aggiunti i cap owner configurabili per singolo ordine (1 €), mercato ed
+  evento (2 €) e drawdown assoluto (10 €), applicati sul rischio BACK/LAY e
+  insieme ai limiti percentuali/totali esistenti; configurazioni non finite,
+  booleane o non positive negano nuovi ordini.
+- Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
+  ambiguo o invalido viene rifiutato senza default BACK e senza invio.
+- P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
+  questa slice non introduce strategie, bucket o un secondo money manager.
+
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).

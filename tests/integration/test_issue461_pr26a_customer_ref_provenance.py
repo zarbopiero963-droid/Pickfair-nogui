@@ -437,6 +437,7 @@ def _close_payload(batch_id, **overrides):
                 "market_id": "1.555",
                 "selection_id": 8,
                 "price": 2.0,
+                "side": "BACK",
                 "simulation_mode": True,
                 # Un template riusato fra step del ciclo NON deve dare l'identita'.
                 "customer_ref": "template-ref",

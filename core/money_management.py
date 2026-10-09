@@ -321,7 +321,9 @@ class RoserpinaMoneyManagement:
 
         # Lato dell'ordine (#461 PR28): i cap misurano il RISCHIO, non lo
         # stake. Un lato sconosciuto non ha un rischio stimabile: si rifiuta.
-        side = validators.signal_side(signal)
+        # Il calcolatore puro mantiene BACK come default storico per calcoli
+        # interni; ogni ingresso ordine reale viene validato strict dal runtime.
+        side = validators.signal_side(signal, default="BACK")
         if side not in ("BACK", "LAY"):
             return MoneyManagementDecision(
                 approved=False,

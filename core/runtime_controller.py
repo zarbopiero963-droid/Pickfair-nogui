@@ -75,6 +75,8 @@ class RuntimeController:
     - la chiusura resta manuale/comando
     """
 
+    _fallback_risk_admission_lock = threading.RLock()
+
     def __init__(
         self,
         *,
@@ -101,6 +103,9 @@ class RuntimeController:
         self.duplication_guard = DuplicationGuard()
         self.risk_desk = RiskDesk()
         self.mm = RoserpinaMoneyManagement(self.config)
+        # PR28-d: snapshot dei cap + contabilizzazione/publish sono serializzati
+        # nel processo. La prenotazione durevole cross-process resta PR29.
+        self._risk_admission_lock = threading.RLock()
 
         self.batch_manager = DutchingBatchManager(db, bus=bus)
         self.reconciliation_engine = self._build_reconciliation_engine()
@@ -2579,6 +2584,29 @@ class RuntimeController:
             return 0.0
         return float(table.current_exposure or 0.0)
 
+    def _market_current_exposure(self, market_id: str) -> float:
+        total = 0.0
+        for table in self.table_manager.active_tables():
+            if str(table.market_id or "") == str(market_id):
+                value = validators.finite_number(table.current_exposure)
+                if value is None or value < 0:
+                    return float("inf")
+                total += value
+        return total
+
+    @staticmethod
+    def _configured_optional(config: object, name: str):
+        """Legge solo campi realmente dichiarati, ignorando catch-all dei test.
+
+        In produzione RoserpinaConfig dichiara i campi nella dataclass. Un
+        ``__getattr__`` generico che restituisce 0 non deve inventare un cap.
+        """
+        if name in getattr(config, "__dict__", {}):
+            return getattr(config, name)
+        if any(name in getattr(cls, "__dict__", {}) for cls in type(config).__mro__):
+            return getattr(config, name)
+        return None
+
     def _cashout_chain_wired(self) -> bool:
         """True se esiste almeno un subscriber per ``REQ_EXECUTE_CASHOUT``.
 
@@ -2953,6 +2981,10 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            self._on_signal_received_serial(signal)
+
+    def _on_signal_received_serial(self, signal: dict) -> None:
         """
         Runtime signal gate for Telegram/UI-driven order intents.
 
@@ -3051,6 +3083,11 @@ class RuntimeController:
         except ValueError:
             self._reject_signal(signal, "quota_non_valida")
             return
+        try:
+            validators.signal_side(signal)
+        except ValueError:
+            self._reject_signal(signal, "lato_non_valido")
+            return
 
         copy_meta, pattern_meta = self._extract_origin_metadata(signal)
         if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
@@ -3103,6 +3140,22 @@ class RuntimeController:
                         self._reject_signal(signal, "drawdown_hard_stop_active")
                         return
 
+        # PR28-d: drawdown assoluto owner, stessa semantica SIM/LIVE. Un limite
+        # configurato ma illeggibile o uno stato equity non verificabile nega.
+        drawdown_abs_raw = self._configured_optional(self.config, "max_drawdown_abs")
+        if drawdown_abs_raw is not None:
+            cap = validators.finite_number(drawdown_abs_raw)
+            bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+            peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+            if cap is None or cap <= 0 or bankroll is None or peak is None:
+                self._reject_signal(signal, "max_drawdown_abs_non_valido")
+                return
+            drawdown_abs = max(0.0, peak - bankroll)
+            if validators.reaches_limit(drawdown_abs, cap):
+                self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
+                self._reject_signal(signal, "max_drawdown_abs_active")
+                return
+
         decision = self.mm.calculate(
             signal=signal,
             bankroll_current=self.risk_desk.bankroll_current,
@@ -3116,8 +3169,20 @@ class RuntimeController:
         order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
             validators.signal_side(signal), decision.recommended_stake, raw_price)
         if decision.approved:
+            absolute_checks = (
+                ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
+                ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
+                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"), event_exposure),
+                ("max_open_exposure", getattr(self.config, "max_open_exposure", None), total_exposure),
+            )
+            for cap_name, cap_raw, current in absolute_checks:
+                reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
+                if reason:
+                    decision.approved = False
+                    decision.reason = reason
+                    break
             max_abs_exposure = getattr(self.config, "max_open_exposure", None)
-            if max_abs_exposure is not None:
+            if decision.approved and max_abs_exposure is not None:
                 # Hard-stop configurato ma illeggibile (NaN dal loader, inf,
                 # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
                 # disattivava il cap (PR27, #461).
@@ -3142,10 +3207,7 @@ class RuntimeController:
             "market_id": str(signal.get("market_id")),
             "selection_id": int(signal.get("selection_id")),
             "bet_type": str(
-                signal.get("bet_type")
-                or signal.get("side")
-                or signal.get("action")
-                or "BACK"
+                validators.signal_side(signal)
             ).upper(),
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision.recommended_stake),
