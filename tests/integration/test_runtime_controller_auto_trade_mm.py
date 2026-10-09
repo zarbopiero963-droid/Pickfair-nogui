@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode
 
@@ -186,6 +188,62 @@ def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
     )
     assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
     assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_non_valido"
+
+
+def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
+    rc, bus = _make_controller(responses=[{"available": 90.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    rc.config.max_drawdown_abs = 10.0
+
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-drawdown-lockdown",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
+                                "side": "BACK", "event_name": "Roma v Milan"},
+            },
+        )
+    )
+
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_active"
+    assert rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.parametrize("side", [None, "BOTH"])
+def test_missing_or_invalid_auto_trade_side_fails_closed_without_escaping_settlement(side):
+    rc, bus = _make_controller(responses=[{"available": 100.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+
+    next_signal = {
+        "market_id": "1.234", "selection_id": 8, "price": 2.0,
+        "event_name": "Roma v Milan",
+    }
+    if side is not None:
+        next_signal["side"] = side
+
+    rc._on_close_position(
+        _canonical_close_payload(
+            auto_trade_enabled=True,
+            cycle_executor_enabled=True,
+            mm_context={
+                "cycle_active": True,
+                "cycle_id": "cycle-invalid-side",
+                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+                "next_signal": next_signal,
+            },
+        )
+    )
+
+    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
+    assert rc._last_auto_trade_result["money_management_status"] == "MM_STOP_INVALID_SIDE"
+    assert rc._last_auto_trade_result["reason"] == "lato_non_valido"
 
 
 def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility():

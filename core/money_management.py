@@ -574,6 +574,23 @@ class RoserpinaMoneyManagement:
                 metadata={},
             )
 
+        try:
+            validators.signal_side(signal)
+        except ValueError:
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=False,
+                stop_reason="lato_non_valido",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_INVALID_SIDE",
+                desk_mode=DeskMode.NORMAL,
+                metadata={},
+            )
+
         decision = self.calculate(
             signal=dict(signal),
             bankroll_current=bankroll_current,

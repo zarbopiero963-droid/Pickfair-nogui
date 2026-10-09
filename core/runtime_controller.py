@@ -1925,15 +1925,16 @@ class RuntimeController:
 
     def reload_config(self, *, reset_session: bool = False) -> None:
         """PR28: a bot acceso conserva tavoli/esposizione/riconciliazione."""
-        config = self.settings_service.load_roserpina_config()
-        if not reset_session:
-            self.table_manager.resize(config.table_count)
-        self.config = config
-        self.mm = RoserpinaMoneyManagement(self.config)
-        if reset_session:  # start(): invariato
-            self.table_manager = TableManager(table_count=self.config.table_count)
-            self.reconciliation_engine = self._build_reconciliation_engine()
-        self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
+        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
+            config = self.settings_service.load_roserpina_config()
+            if not reset_session:
+                self.table_manager.resize(config.table_count)
+            self.config = config
+            self.mm = RoserpinaMoneyManagement(self.config)
+            if reset_session:  # start(): invariato
+                self.table_manager = TableManager(table_count=self.config.table_count)
+                self.reconciliation_engine = self._build_reconciliation_engine()
+            self._daily_loss_monitor_state["threshold"] = self._safe_daily_loss_threshold()
 
     def _desk_mode(self) -> DeskMode:
         return self.mm.determine_desk_mode(
@@ -2630,9 +2631,17 @@ class RuntimeController:
         return total
 
     def _market_current_exposure(self, market_id: str) -> float:
+        try:
+            canonical_market_id = validators.order_market_id(market_id)
+        except ValueError:
+            return float("inf")
         total = 0.0
         for table in self.table_manager.active_tables():
-            if str(table.market_id or "") == str(market_id):
+            try:
+                stored_market_id = validators.order_market_id(table.market_id)
+            except ValueError:
+                return float("inf")
+            if stored_market_id == canonical_market_id:
                 value = validators.finite_number(table.current_exposure)
                 if value is None or value < 0:
                     return float("inf")
@@ -3026,6 +3035,13 @@ class RuntimeController:
             })
 
     def _on_signal_received(self, signal: dict) -> None:
+        # Le uscite protettive conservano gli stessi gate della funzione
+        # seriale, ma non attendono il lock degli ingressi: un lookup prezzo
+        # lento/non rispondente non deve ritardare CASHOUT/CASHOUT_ALL.
+        signal_type = str((signal or {}).get("signal_type") or "").strip().upper()
+        if signal_type in {"CASHOUT", "CASHOUT_ALL"}:
+            self._on_signal_received_serial(signal)
+            return
         with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
             self._on_signal_received_serial(signal)
 
@@ -3111,15 +3127,17 @@ class RuntimeController:
         # evento bloccata, nessun SIGNAL_REJECTED) e `True` arrivava al broker
         # come runner 1. Stessi controlli dell'engine (core/validators.py).
         invalid_fields = []
+        normalized_fields = {}
         for field_name, check in (("market_id", validators.order_market_id),
                                   ("selection_id", validators.order_selection_id)):
             try:
-                check(signal.get(field_name))
+                normalized_fields[field_name] = check(signal.get(field_name))
             except ValueError:
                 invalid_fields.append(field_name)
         if invalid_fields:
             self._reject_signal(signal, f"campi_non_validi:{','.join(invalid_fields)}")
             return
+        signal.update(normalized_fields)
         raw_price = signal.get("price")
         if raw_price in (None, ""):
             raw_price = signal.get("odds")
@@ -3486,7 +3504,11 @@ class RuntimeController:
         if event_key:
             self.duplication_guard.release(event_key)
 
-        if table_id is not None:
+        # FILLED chiude l'ordine, non la posizione: l'esposizione resta nel
+        # tavolo fino a RUNTIME_CLOSE_POSITION/settlement. Liberarla qui
+        # azzererebbe artificialmente i cap mercato/evento mentre la posizione
+        # abbinata e' ancora aperta.
+        if table_id is not None and event_name != "QUICK_BET_FILLED":
             try:
                 self.table_manager.force_unlock(int(table_id))
             except Exception:
@@ -4551,10 +4573,15 @@ class RuntimeController:
                         peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
                         if cap is None or cap <= 0 or bankroll is None or peak is None:
                             risk_reason = "max_drawdown_abs_non_valido"
-                        elif validators.reaches_limit(max(0.0, peak - bankroll), cap):
-                            risk_reason = "max_drawdown_abs_active"
                         else:
-                            risk_reason = "risk_approved"
+                            drawdown_abs = max(0.0, peak - bankroll)
+                            if validators.reaches_limit(drawdown_abs, cap):
+                                self.force_lockdown(
+                                    f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€"
+                                )
+                                risk_reason = "max_drawdown_abs_active"
+                            else:
+                                risk_reason = "risk_approved"
             except (TypeError, ValueError):
                 risk_reason = "ordine_auto_trade_non_verificabile"
             risk_allowed = risk_reason == "risk_approved"
@@ -4899,22 +4926,29 @@ class RuntimeController:
         return bool(table.current_event_key)
 
     def _build_auto_trade_payload(self, *, signal: dict, decision_stake: float) -> dict:
+        normalized_signal = dict(signal or {})
+        normalized_signal["market_id"] = validators.order_market_id(
+            normalized_signal.get("market_id")
+        )
+        normalized_signal["selection_id"] = validators.order_selection_id(
+            normalized_signal.get("selection_id")
+        )
         payload = {
-            "market_id": str(signal.get("market_id")),
-            "selection_id": int(signal.get("selection_id")),
-            "bet_type": validators.signal_side(signal),
-            "price": float(signal.get("price") or signal.get("odds")),
+            "market_id": normalized_signal["market_id"],
+            "selection_id": normalized_signal["selection_id"],
+            "bet_type": validators.signal_side(normalized_signal),
+            "price": float(normalized_signal.get("price") or normalized_signal.get("odds")),
             "stake": float(decision_stake),
-            "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
-            "event_id": signal.get("event_id") or signal.get("eventId"),
-            "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
-            "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
-            "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
-            "event_key": self.duplication_guard.build_event_key(signal),
-            "batch_id": str(signal.get("batch_id") or ""),
+            "event_name": normalized_signal.get("event") or normalized_signal.get("match") or normalized_signal.get("event_name") or "",
+            "event_id": normalized_signal.get("event_id") or normalized_signal.get("eventId"),
+            "market_name": normalized_signal.get("market") or normalized_signal.get("market_name") or normalized_signal.get("market_type") or "",
+            "runner_name": normalized_signal.get("selection") or normalized_signal.get("runner_name") or normalized_signal.get("runnerName") or "",
+            "simulation_mode": bool(normalized_signal.get("simulation_mode", self.simulation_mode)),
+            "event_key": self.duplication_guard.build_event_key(normalized_signal),
+            "batch_id": str(normalized_signal.get("batch_id") or ""),
             "auto_trade_source": "settlement_mm_gate",
         }
-        table_id = signal.get("table_id")
+        table_id = normalized_signal.get("table_id")
         if table_id is not None:
             payload["table_id"] = int(table_id)
         return payload

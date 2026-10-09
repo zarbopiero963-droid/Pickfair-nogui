@@ -7,6 +7,7 @@ import time
 
 from core import validators
 from core.runtime_controller import RuntimeController
+from core.system_state import RuntimeMode
 from services.setting_service import SettingsService
 from services.telegram_signal_processor import TelegramSignalProcessor
 from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
@@ -68,6 +69,45 @@ def test_market_and_event_caps_use_existing_exposure(tmp_path):
     c.rc._on_signal_received(sig)
     assert c.broker.state.orders == {}
     assert _rifiuti(c)[0].startswith(("max_market_exposure_exceeded", "max_event_exposure_abs_exceeded"))
+
+
+def test_filled_position_stays_in_market_and_event_cap_until_settlement(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 2.0
+    c.rc.config.max_event_exposure_abs = 2.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "filled:event:key"
+    table.market_id = "1.234"
+    table.current_exposure = 1.5
+    table.meta = {"event_id": "E42", "event_name": "Roma v Milan"}
+
+    c.rc._on_quick_bet_filled({"table_id": 2, "event_key": "filled:event:key"})
+    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.234")
+    sig.update({"event_id": "E42", "event_name": "Roma v Milan"})
+    c.rc._on_signal_received(sig)
+
+    assert c.rc.table_manager.get_table(2).current_exposure == pytest.approx(1.5)
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_market_exposure_exceeded")
+
+
+def test_market_cap_canonicalizes_whitespace_before_aggregation(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 2.0
+    c.rc.config.max_event_exposure_abs = 100.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "existing:key"
+    table.market_id = "1.234"
+    table.current_exposure = 1.5
+
+    c.rc._on_signal_received(
+        _signal(stake=0.6, bet_type="BACK", market_id=" 1.234 ")
+    )
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_market_exposure_exceeded")
 
 
 @pytest.mark.parametrize("field", [
@@ -163,12 +203,14 @@ def test_event_cap_honours_legacy_identity_alias_over_stale_display_name(tmp_pat
 
 def test_auto_trade_payload_falls_back_to_event_id_alias_when_primary_is_blank(tmp_path):
     c = _catena(tmp_path)
-    sig = _signal(stake=0.5, bet_type="BACK")
+    sig = _signal(stake=0.5, bet_type="BACK", market_id=" 1.234 ")
     sig.update({"event_id": None, "eventId": "E42"})
 
     payload = c.rc._build_auto_trade_payload(signal=sig, decision_stake=0.5)
 
     assert payload["event_id"] == "E42"
+    assert payload["market_id"] == "1.234"
+    assert payload["event_key"].startswith("1.234:")
 
 
 def test_telegram_event_id_alias_reaches_runtime_event_cap(tmp_path):
@@ -241,6 +283,45 @@ def test_auto_trade_admission_uses_same_serial_lock_as_signal_orders():
 
     assert all(not thread.is_alive() for thread in threads)
     assert max_active == 1
+
+
+def test_reload_config_waits_for_risk_admission_lock(tmp_path):
+    c = _catena(tmp_path)
+    started = threading.Event()
+    completed = threading.Event()
+
+    def reload():
+        started.set()
+        c.rc.reload_config()
+        completed.set()
+
+    with c.rc._risk_admission_lock:
+        thread = threading.Thread(target=reload)
+        thread.start()
+        assert started.wait(timeout=1)
+        assert completed.wait(timeout=0.1) is False
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
+    assert completed.is_set()
+
+
+def test_cashout_routes_without_waiting_for_order_admission_lock(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.mode = RuntimeMode.ACTIVE
+    routed = threading.Event()
+    c.rc._route_cashout_signal = lambda _signal: routed.set()
+
+    with c.rc._risk_admission_lock:
+        thread = threading.Thread(
+            target=c.rc._on_signal_received,
+            args=({"signal_type": "CASHOUT_ALL"},),
+        )
+        thread.start()
+        assert routed.wait(timeout=0.1)
+    thread.join(timeout=2)
+
+    assert not thread.is_alive()
 
 
 def test_cashout_ingestion_does_not_require_order_side():
