@@ -389,7 +389,7 @@ class TelegramSignalProcessor:
             "selection_id": selection_id,
             "price": price,
             "event_name": self.parse_event_name(raw),
-            "event_id": raw.get("event_id", raw.get("eventId")),
+            "event_id": raw.get("event_id") or raw.get("eventId"),
             "market_name": self.parse_market_name(raw),
             "market_type": self.parse_market_type(raw),
             "selection": self.parse_selection_name(raw, selection_id),

@@ -171,6 +171,28 @@ def test_auto_trade_payload_falls_back_to_event_id_alias_when_primary_is_blank(t
     assert payload["event_id"] == "E42"
 
 
+def test_telegram_event_id_alias_reaches_runtime_event_cap(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.config.max_market_exposure = 100.0
+    c.rc.config.max_event_exposure_abs = 2.0
+    table = c.rc.table_manager._tables[2]
+    table.status = "ACTIVE"
+    table.current_event_key = "legacy:event:key"
+    table.market_id = "1.old"
+    table.current_exposure = 1.5
+    table.meta = {"event_id": "E42", "event_name": "Roma v Milan"}
+    raw = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    raw.update({"event_id": None, "eventId": "E42", "event_name": "Roma - Milan"})
+
+    ingested = TelegramSignalProcessor().normalize_ingestion_signal(raw)
+
+    assert ingested["ok"] is True
+    assert ingested["normalized_signal"]["event_id"] == "E42"
+    c.rc._on_signal_received(ingested["normalized_signal"])
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+
+
 @pytest.mark.parametrize("field", [
     "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
     "max_drawdown_abs",
