@@ -2580,12 +2580,12 @@ class RuntimeController:
 
     @staticmethod
     def _event_identity(signal: dict) -> str:
-        event_id = signal.get("event_id") or signal.get("eventId")
-        if event_id not in (None, "") and not isinstance(event_id, bool):
-            return f"id:{str(event_id).strip()}"
         event_name = signal.get("event_name") or signal.get("event")
         if isinstance(event_name, str) and event_name.strip():
             return "name:" + " ".join(event_name.casefold().split())
+        event_id = signal.get("event_id") or signal.get("eventId")
+        if event_id not in (None, "") and not isinstance(event_id, bool):
+            return f"id:{str(event_id).strip()}"
         return ""
 
     def _event_current_exposure(self, event_identity: str) -> float:

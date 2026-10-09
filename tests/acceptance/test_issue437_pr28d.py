@@ -113,6 +113,7 @@ def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
     table.meta = {"event_name": "Roma v Milan", "event_identity": "name:roma v milan"}
     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
     sig["event_name"] = " ROMA   v MILAN "
+    sig["event_id"] = "betfair-event-42"
     c.rc._on_signal_received(sig)
     assert c.broker.state.orders == {}
     assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
