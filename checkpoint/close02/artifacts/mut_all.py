@@ -119,7 +119,7 @@ M = [
 ("M79_pagine_non_contigue_ammesse", PR, '            reasons.append(f"pagina_{i}_fromRecord_non_contiguo")', '            pass'),
 ("M80_owner_non_obbligatorio", PR, '    if not str(owner or "").strip() or not str(owner_ref or "").strip():', '    if False:'),
 ]
-T = ['tests/close02', 'tests/core', 'tests/integration', 'tests/services', 'tests/unit']
+T = ['tests'] if os.environ.get('FULL') else ['tests/close02', 'tests/core', 'tests/integration', 'tests/services', 'tests/unit']
 only = set(sys.argv[1:])
 for name, f, a, b in M:
     if only and name.split('_')[0] not in only:

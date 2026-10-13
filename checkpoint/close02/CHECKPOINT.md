@@ -29,7 +29,7 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 | Controllo | v13 | v14 (WIP) |
 |---|---|---|
 | `tests/close02` | 248 passed, 1 xfailed | 271 passed, 1 xfailed |
-| Suite completa | 7502 passed, 15 skipped, 2 xfailed, 0 failed | **non eseguita** |
+| Suite completa | 7502 passed, 15 skipped, 2 xfailed, 0 failed | 7525 passed, 15 skipped, 2 xfailed, 0 failed |
 | preflight L7b (record base) | 21 / 21 PASS | = |
 | preflight L9 (record base) | 38 / 38 OK | = |
 | indip L7b (patched) | 21 / 21 completi, t80u 7 / 7 | = |
@@ -38,7 +38,15 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 | L7b eval (con v13) | 315 CONFORMI / 0 NON / 11 N.A. | non rieseguito |
 | L9 RESTART (con v13) | 357 / 357 CONFORMI | non rieseguito |
 | RED→GREEN | v12: 16 RED → 17 GREEN; v13: 24 RED → 25 GREEN | v14: 23 RED → 23 GREEN |
-| Mutazione | v12 9/10 (M51 equivalente), v13 13/13 | M1–M80: parziale, interrotta a M29 (M8 e M27 sopravvissuti nel sottoinsieme) |
+| Mutazione | v12 9/10 (M51 equivalente), v13 13/13 | M1–M80 completa: 77/80 uccisi. Sopravvissuti anche sulla suite completa: M8, M27, M51 (vedi nota) |
+
+**Nota sui mutanti sopravvissuti (v14, suite completa).**
+- **M8:** toglie solo il gate di recovery a livello di segnale. A valle restano i gate di modo PAUSED e di pre-submit, quindi è ridondante. Il mutante originale v9 ("gate rimosso **e** modo attivo") era stato ucciso.
+- **M27:** il pattern ricostruito è equivalente, perché `realized` porta sempre STIMATO.
+- **M51:** equivalente (giustificato in v18).
+- Nessuno dei tre è "chiuso con prova": restano da formalizzare.
+
+**Stato v14:** suite completa verde e mutazione completa eseguita. **NON VERIFICATO in modo indipendente** e non ratificato dall'owner.
 
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |
@@ -51,7 +59,7 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 | artifacts/record_specific_L9.json | d192c8b3cf45ea1624007452816a3dc7a00ebbcfaa240d26b0349a64a70205a5 |
 | artifacts/record_specific_L9_patched.json | 731c0933c79da95d13b4142b2dd8d828ef65475b0d97a6081e555011a2ef338c |
 | artifacts/findings_register.json | 2ef0c09fc32e30d2c8a0ff13ccd854bf473fff6aa7e269915de7e1bce28bed21 |
-| artifacts/mut_all.py | f82a1b7916ff07e84e7e3532b3c991c9330c93cfe556ffff7b655291aca6e7cd |
+| artifacts/mut_all.py | 1c7637235993f5318c4c39236d6cb8feb05e2887096760061f4e811ed093a3eb |
 | reproduce.sh | 6aba84823816656aa2c0a0fdcd2e33e64b8d9712b7d171cf86abd7055af17ee2 |
 
 ## Contenuto
@@ -100,6 +108,6 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 - Ricostruzione del picco, opzione A: https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6146717266
 
 ## Prossime attività / come riprendere
-1. v14: suite completa e mutazione M1–M80 completa (M8 e M27 sulla suite completa), poi aggiornamento di questo file e di #506.
+1. v14: test mirati per M8 (solo gate di segnale) e per il mutante originale M27, sonde L7b/L9 su v14, report su #506.
 2. Lotti Gate A L4, L6 e CASH (sonde dinamiche) con le stesse regole.
 3. Revisione indipendente L1/L2 solo con autorizzazione owner.

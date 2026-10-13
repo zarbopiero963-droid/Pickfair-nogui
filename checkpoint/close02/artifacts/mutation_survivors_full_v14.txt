@@ -1,0 +1,4 @@
+== M8_gate_segnale_rimosso
+7525 passed, 15 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 196.93s (0:03:16)
+== M27_etichetta_non_propagata
+7525 passed, 15 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 200.76s (0:03:20)
