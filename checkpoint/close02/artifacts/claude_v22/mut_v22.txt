@@ -1,0 +1,12 @@
+UCCISO           U01 rifiuto non registrato
+UCCISO           U02 ammissione non registrata
+UCCISO           U03 niente persistenza
+UCCISO           U04 limiti non registrati
+UCCISO           U05 versione non registrata
+UCCISO           U06 segnale intero nel record
+UCCISO           U07 get_status senza decisioni
+UCCISO           U08 fallimenti non contati
+UCCISO           U09 corsia GUI non registrata
+UCCISO           U10 origine sbagliata
+UCCISO           U11 ultimo rifiuto non aggiornato
+uccisi 11 / 11

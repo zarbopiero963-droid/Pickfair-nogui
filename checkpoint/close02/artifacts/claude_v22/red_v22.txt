@@ -1,0 +1,13 @@
+E       AssertionError: []
+E       assert 0 == 1
+E       KeyError: 'risk_decisions'
+E       AssertionError: []
+E       assert [] == ['APPROVED']
+E       assert ([])
+E       KeyError: 'risk_decisions'
+FAILED tests/close02/test_close02_v22_risk_decision_audit.py::test_rifiuto_persistito_con_valore_decisione_origine_versione_ref
+FAILED tests/close02/test_close02_v22_risk_decision_audit.py::test_rifiuto_osservabile_in_get_status
+FAILED tests/close02/test_close02_v22_risk_decision_audit.py::test_ammissione_persistita
+FAILED tests/close02/test_close02_v22_risk_decision_audit.py::test_blocco_corsia_gui_persistito
+FAILED tests/close02/test_close02_v22_risk_decision_audit.py::test_scrittura_audit_fallita_non_ammette_e_resta_osservabile
+5 failed, 1 passed in 0.33s

@@ -1,0 +1,53 @@
+{
+ "rifiuto_pubblicato_sul_bus": [
+  "max_open_exposure_exceeded:limit=1.0€"
+ ],
+ "rifiuto_persistito_nel_db": {
+  "audit_events": 1
+ },
+ "rifiuto_visibile_in_get_status": true,
+ "chiavi_get_status": [
+  "account_funds",
+  "active_tables",
+  "auto_trade_mm",
+  "bankroll_current",
+  "bankroll_start",
+  "bankroll_sync",
+  "betfair_connected",
+  "broker_status",
+  "cycle_executor",
+  "daily_loss_monitor",
+  "deploy_gate",
+  "desk_mode",
+  "drawdown_pct",
+  "duplication_guard",
+  "emergency_reason",
+  "emergency_stopped_at",
+  "equity_peak",
+  "execution_gate_reason",
+  "execution_mode",
+  "is_emergency_stopped",
+  "kill_switch_active",
+  "last_error",
+  "last_signal_at",
+  "live_enabled",
+  "live_readiness_ok",
+  "mode",
+  "realized_pnl",
+  "recovery_tables",
+  "risk_decisions",
+  "runtime_io",
+  "runtime_mode",
+  "simulation_mode",
+  "simulation_snapshot",
+  "streaming_feed",
+  "tables",
+  "telegram_connected",
+  "total_exposure",
+  "unrealized_pnl",
+  "updated_at"
+ ],
+ "config_version_in_get_status": false,
+ "AUDIT-REJECT": "CONFORME",
+ "OBS-REJECT": "CONFORME"
+}

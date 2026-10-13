@@ -12,7 +12,8 @@
 6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch`. Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
 7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch`. Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
 8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch`. Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
-9. `artifacts/patches/close02_v20_to_v21_delta.patch`: v21 (Claude, CLOSE03), correzione CL21-RACE-ADMIT-001 + test. Cumulativo: `close02_findings_proposal_v21.patch` (**ultimo**). Verificato: v20 + delta = v21 (sha256 a3c0ed140bb7…).
+9. `artifacts/patches/close02_v20_to_v21_delta.patch`: v21 (Claude, CLOSE03), correzione CL21-RACE-ADMIT-001 + test. Cumulativo: `close02_findings_proposal_v21.patch`. Verificato: v20 + delta = v21 (sha256 a3c0ed140bb7…).
+10. `artifacts/patches/close02_v21_to_v22_delta.patch`: v22 (Claude, CLOSE03), correzione CL22-AUDIT-DECISION-001 + test. Cumulativo: `close02_findings_proposal_v22.patch` (**ultimo**). Verificato: v21 + delta = v22 (sha256 387146c272ab…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -521,3 +522,27 @@ Ordine dei lock verificato: sempre ammissione → `_daily_loss_stop_lock`. L'aut
 - **Sonda `probe_l6_race.py` su v21:** CONFORME (1 ordine con cap 1,00; 2 ordini ed esposizione 1,20 con cap 1,20).
 
 **Residuo dichiarato.** v21 serializza ma non porta il fencing per epoca della #505. Un ingresso già accodato prima di un cashout ed eseguito dopo resta ammesso: CASH-25-R2 NON_CONFORME su v21, CONFORME su #505.
+
+### 5. L6 AUDIT / OBSERVABLE e CL22-AUDIT-DECISION-001 (P1), corretto in v22
+**Fonti.**
+- AUDIT (verbatim #461/6085510337): «Ricostruire valore, decisione, origine, versione, correlation_id, esito e recovery senza esporre segreti».
+- OBSERVABLE: la fonte ha solo la clausola derivata «modifica/rifiuto devono essere osservabili»; il mandato owner CLOSE03 §3 aggiunge «rilevabili senza affidarsi esclusivamente ai log testuali».
+
+**Difetto (main, #505, v21).** `_reject_signal` pubblicava solo `SIGNAL_REJECTED` sul bus, e `headless_main` lo scriveva solo nel log testuale. Nessuna riga nel DB, niente in `get_status()`. La versione della config (`roserpina.config_version`) non era associata ad alcuna decisione. Su #505 e main la sonda non gira (manca l'harness `tests/close02`); `_reject_signal` è verificato staticamente identico, senza scritture su DB.
+
+**Correzione.**
+- `_record_risk_decision()` scrive in `audit_events` un record `RISK_DECISION` per ogni rifiuto e per ogni ammissione effettiva (dopo `CMD_QUICK_BET`), sulle corsie segnale, GUI manuale e dutching.
+- Contenuto: decisione, motivo, origine, limiti in vigore, `config_version` (oppure `None` se la config non è mai stata salvata dal percorso versionato: nessuna versione inventata), `customer_ref`, mercato/selezione/lato/stake/prezzo.
+- Whitelist di campi: niente testo libero, niente token.
+- `get_status()["risk_decisions"]` riporta `rejected_total`, `approved_total`, `last_rejection` e `persist_failures`. Una scrittura fallita non cambia la decisione ma resta contata.
+
+**Prove.**
+- **RED su v21:** 5/6 falliti (`red_v22.txt`).
+- **GREEN:** 7/7.
+- **Mutazione mirata:** 11/11 uccisi.
+- **Suite completa py3.11:** **7600 passed, 0 failed**.
+- **Sonda su v22:** AUDIT-REJECT e OBS-REJECT CONFORME.
+
+**Limiti dichiarati.**
+- Il record APPROVED è la decisione di rischio, non l'esito dell'ordine. L'esito resta nel ledger `orders` (stato, betId).
+- La «recovery» della decisione dopo un riavvio è la riga persistita; l'esito dell'ordine si ricostruisce da `orders`/`startup_orders`.

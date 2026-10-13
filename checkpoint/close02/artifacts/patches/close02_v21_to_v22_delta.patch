@@ -1,0 +1,240 @@
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index 90ce4cf..04960a6 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -671,6 +671,16 @@ class DutchingController:
+     def _batch_manager(self):
+         return getattr(self.runtime, "dutching_batch_manager", None)
+ 
++    def _record_block(self, reason: str, payload: Dict[str, Any], origin: str) -> None:
++        """PROPOSTA close02 v22 (CL22): il blocco della corsia GUI entra nel record durevole
++        delle decisioni di rischio del runtime (stessa whitelist di campi)."""
++        rec = getattr(self.runtime, "_record_risk_decision", None)
++        if callable(rec):
++            try:
++                rec("REJECTED", reason, dict(payload or {}), origin=origin)
++            except Exception:
++                logger.exception("Decisione GUI non registrata")
++
+     def _runtime_block_reason(self) -> str:
+         """PROPOSTA close02 v20 (CL20-PAR-MANUAL-001): blocchi di nuovo rischio del runtime
+         (drawdown, config corrotta, risk stop, picco, recovery, daily loss) anche sulle
+@@ -1055,6 +1065,7 @@ class DutchingController:
+ 
+         blocco = self._runtime_block_reason()  # PROPOSTA close02 v20 (CL20)
+         if blocco:
++            self._record_block(blocco, payload, "gui_dutching")
+             return self._fail(f"Nuovo rischio bloccato ({blocco})")
+ 
+         try:
+@@ -1188,6 +1199,7 @@ class DutchingController:
+             cap_reason = validators.open_exposure_cap_reason(
+                 getattr(config, "max_open_exposure", None), current_total_exposure, batch_exposure)
+             if cap_reason:
++                self._record_block(cap_reason, payload, "gui_dutching")
+                 return self._fail(f"Esposizione oltre il cap configurato ({cap_reason})",
+                                   batch_exposure=round(batch_exposure, 2),
+                                   current_total_exposure=round(current_total_exposure, 2))
+@@ -1526,6 +1538,7 @@ class DutchingController:
+ 
+             blocco = self._runtime_block_reason()  # PROPOSTA close02 v20 (CL20)
+             if blocco:
++                self._record_block(blocco, payload, "gui_manual")
+                 return self._fail(f"Nuovo rischio bloccato ({blocco})")
+ 
+             if not self._bus_available():
+@@ -1595,6 +1608,7 @@ class DutchingController:
+                 exposure,
+             )
+             if cap_reason:
++                self._record_block(cap_reason, payload, "gui_manual")
+                 return self._fail(f"Esposizione oltre il cap configurato ({cap_reason})")
+ 
+             bankroll = self._bankroll_current()
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 1a6b94a..a6233cd 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2746,7 +2746,56 @@ class RuntimeController:
+     # =========================================================
+     # SIGNAL FLOW
+     # =========================================================
++    # PROPOSTA close02 v22 (CL22-AUDIT-DECISION-001): campi del segnale ammessi nel record di
++    # decisione. Whitelist: nessun testo libero del messaggio, nessun token o credenziale.
++    _RISK_DECISION_FIELDS = ("market_id", "selection_id", "price", "customer_ref", "chat_id")
++    _RISK_DECISION_LIMITS = ("max_open_exposure", "max_order_exposure", "max_market_exposure",
++                             "max_event_exposure_abs", "max_drawdown_abs", "max_stake_abs",
++                             "max_single_bet_pct", "max_total_exposure_pct", "max_daily_loss")
++
++    def _config_version(self):
++        try:
++            raw = self.db.get_settings().get("roserpina.config_version")
++            return int(raw) if raw not in (None, "") else None
++        except Exception:
++            return None
++
++    def _record_risk_decision(self, decision: str, reason: str, signal: Optional[dict] = None,
++                              *, origin: str = "", stake: Any = None) -> None:
++        """Record DUREVOLE e osservabile di una decisione di rischio (PROPOSTA close02 v22).
++
++        Ricostruisce valore dei limiti, decisione, origine, versione della config, customer_ref
++        ed esito (L6 AUDIT); il conteggio e l'ultimo rifiuto stanno in ``get_status()`` (L6
++        OBSERVABLE). Una scrittura fallita non cambia la decisione (gia' presa) ma resta
++        contata in ``persist_failures``."""
++        signal = dict(signal or {})
++        state = self.__dict__.setdefault("_risk_decisions", {
++            "rejected_total": 0, "approved_total": 0, "last_rejection": None, "persist_failures": 0})
++        side = str(signal.get("bet_type") or signal.get("signal_type") or signal.get("side") or "").upper()
++        if not origin:
++            origin = "copy" if signal.get("copy_meta") else ("pattern" if signal.get("pattern_meta") else "signal")
++        record = {
++            "event": "RISK_DECISION", "decision": str(decision), "reason": str(reason or ""),
++            "origin": origin, "side": side, "stake": stake if stake is not None else signal.get("stake"),
++            "config_version": self._config_version(),
++            "limits": {k: getattr(getattr(self, "config", None), k, None) for k in self._RISK_DECISION_LIMITS},
++            "ts": datetime.utcnow().isoformat(),
++        }
++        for k in self._RISK_DECISION_FIELDS:
++            record[k] = signal.get(k)
++        if decision == "REJECTED":
++            state["rejected_total"] += 1
++            state["last_rejection"] = {"reason": record["reason"], "origin": origin, "ts": record["ts"]}
++        else:
++            state["approved_total"] += 1
++        try:
++            self.db.insert_audit_event(record)
++        except Exception:
++            state["persist_failures"] += 1
++            logger.exception("Decisione di rischio non persistita (%s, %s)", decision, record["reason"])
++
+     def _reject_signal(self, signal: dict, reason: str) -> None:
++        self._record_risk_decision("REJECTED", reason, signal)
+         self.bus.publish(
+             "SIGNAL_REJECTED",
+             {
+@@ -3593,6 +3642,8 @@ class RuntimeController:
+                                               reason="startup_recovery_blocked")
+             return
+         self.bus.publish("CMD_QUICK_BET", payload)
++        self._record_risk_decision("APPROVED", decision.reason or "approved", signal,
++                                   stake=decision.recommended_stake)  # PROPOSTA close02 v22
+ 
+     def _release_acquired_and_reject(self, signal: dict, *, event_key: str,
+                                      table_id: Any, reason: str) -> None:
+@@ -5196,4 +5247,6 @@ class RuntimeController:
+                 logger.exception("Errore simulation_snapshot")
+                 data["simulation_snapshot"] = {}
+ 
++        data["risk_decisions"] = dict(self.__dict__.get("_risk_decisions") or {
++            "rejected_total": 0, "approved_total": 0, "last_rejection": None, "persist_failures": 0})
+         return data
+diff --git a/tests/close02/test_close02_v22_risk_decision_audit.py b/tests/close02/test_close02_v22_risk_decision_audit.py
+new file mode 100644
+index 0000000..3ce2860
+--- /dev/null
++++ b/tests/close02/test_close02_v22_risk_decision_audit.py
+@@ -0,0 +1,104 @@
++"""close02 v22 — CL22-AUDIT-DECISION-001: decisioni di rischio ricostruibili e osservabili fuori dai log.
++
++Fonti: L6 AUDIT (#461/6085510337, verbatim) «Ricostruire valore, decisione, origine, versione, correlation_id,
++esito e recovery senza esporre segreti»; mandato owner CLOSE03 §3 L6-OBSERVABLE «anomalie, blocchi, …
++rilevabili senza affidarsi esclusivamente ai log testuali». RED su v21: il rifiuto del cap era solo un evento
++del bus e una riga di log (headless_main._on_signal_rejected); nessuna riga nel DB, nulla in get_status()."""
++import json
++import sqlite3
++from unittest.mock import MagicMock
++
++from controllers.dutching_controller import DutchingController
++from tests.close02.test_close02_restart_t81u import OWNER_VALID, _ctl
++
++OWNER = dict(OWNER_VALID, **{"roserpina.max_open_exposure": "1"})
++SEGRETO = "tok-SEGRETISSIMO-123"
++
++
++def _avvia(tmp_path, monkeypatch):
++    path = str(tmp_path / "a.sqlite")
++    rc = _ctl(path, monkeypatch, owner=OWNER)
++    rc.start(execution_mode="SIMULATION")
++    monkeypatch.setattr(rc.mm, "calculate", MagicMock(
++        side_effect=lambda **kw: MagicMock(approved=True, recommended_stake=5.0, table_id=1, reason="")))
++    return rc, path
++
++
++def _decisioni(path):
++    con = sqlite3.connect(path)
++    rows = [json.loads(r[0]) for r in con.execute("select event_json from audit_events order by id")]
++    return [r for r in rows if r.get("event") == "RISK_DECISION"]
++
++
++SEGNALE = {"market_id": "1.123", "selection_id": "456", "price": 2.0, "signal_type": "BACK",
++           "customer_ref": "sig-audit-1", "raw_text": f"messaggio con {SEGRETO}", "chat_id": -1001}
++
++
++def test_rifiuto_persistito_con_valore_decisione_origine_versione_ref(tmp_path, monkeypatch):
++    rc, path = _avvia(tmp_path, monkeypatch)
++    rc._on_signal_received(dict(SEGNALE))
++    rec = _decisioni(path)
++    assert len(rec) == 1, rec
++    r = rec[0]
++    assert r["decision"] == "REJECTED" and r["reason"].startswith("max_open_exposure_exceeded")
++    assert r["limits"]["max_open_exposure"] == 1.0
++    assert r["origin"] == "signal" and r["customer_ref"] == "sig-audit-1"
++    assert r["config_version"] is None  # config mai salvata dal percorso versionato: nessuna versione inventata
++    assert r["market_id"] == "1.123" and r["side"] == "BACK"
++
++
++def test_record_senza_segreti_ne_testo_libero(tmp_path, monkeypatch):
++    rc, path = _avvia(tmp_path, monkeypatch)
++    rc._on_signal_received(dict(SEGNALE))
++    con = sqlite3.connect(path)
++    dump = json.dumps([r[0] for r in con.execute("select event_json from audit_events")])
++    assert SEGRETO not in dump and "raw_text" not in dump
++
++
++def test_rifiuto_osservabile_in_get_status(tmp_path, monkeypatch):
++    rc, _ = _avvia(tmp_path, monkeypatch)
++    rc._on_signal_received(dict(SEGNALE))
++    st = rc.get_status()["risk_decisions"]
++    assert st["rejected_total"] == 1 and st["last_rejection"]["reason"].startswith("max_open_exposure_exceeded")
++
++
++def test_ammissione_persistita(tmp_path, monkeypatch):
++    rc, path = _avvia(tmp_path, monkeypatch)
++    monkeypatch.setattr(rc.mm, "calculate", MagicMock(
++        side_effect=lambda **kw: MagicMock(approved=True, recommended_stake=0.5, table_id=1, reason="")))
++    rc._on_signal_received(dict(SEGNALE, customer_ref="sig-audit-ok"))
++    rec = _decisioni(path)
++    assert [r["decision"] for r in rec] == ["APPROVED"], rec
++    assert rec[0]["customer_ref"] == "sig-audit-ok" and rec[0]["stake"] == 0.5
++    assert rc.get_status()["risk_decisions"]["approved_total"] == 1
++
++
++def test_blocco_corsia_gui_persistito(tmp_path, monkeypatch):
++    rc, path = _avvia(tmp_path, monkeypatch)
++    rc._risk_stop_reason = "risk_stop_manuale"
++    r = DutchingController(rc.bus, rc).manual_bet({"market_id": "1.9", "selection_id": 1, "price": 2.0,
++                                                    "stake": 0.5, "bet_type": "BACK", "event_key": "m1"})
++    assert not r.get("ok", r.get("success", False))
++    rec = _decisioni(path)
++    assert rec and rec[-1]["decision"] == "REJECTED" and rec[-1]["origin"] == "gui_manual"
++    assert "risk_stop_active" in rec[-1]["reason"]
++
++
++def test_scrittura_audit_fallita_non_ammette_e_resta_osservabile(tmp_path, monkeypatch):
++    rc, _ = _avvia(tmp_path, monkeypatch)
++
++    def boom(_e):
++        raise sqlite3.OperationalError("disk I/O error")
++    monkeypatch.setattr(rc.db, "insert_audit_event", boom)
++    rc._on_signal_received(dict(SEGNALE))
++    st = rc.get_status()["risk_decisions"]
++    assert st["rejected_total"] == 1 and st["persist_failures"] == 1
++
++
++def test_versione_della_config_salvata_dal_percorso_versionato(tmp_path, monkeypatch):
++    rc, path = _avvia(tmp_path, monkeypatch)
++    cfg = rc.settings_service.load_roserpina_config()
++    rc.settings_service.save_roserpina_config(cfg)  # salvataggio reale: config_version incrementata
++    versione = int(rc.db.get_settings()["roserpina.config_version"])
++    rc._on_signal_received(dict(SEGNALE))
++    assert _decisioni(path)[-1]["config_version"] == versione >= 1
