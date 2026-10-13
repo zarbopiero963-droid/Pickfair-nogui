@@ -11,7 +11,8 @@
 5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch`.
 6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch`. Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
 7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch`. Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
-8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch` (**ultimo**). Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
+8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch`. Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
+9. `artifacts/patches/close02_v20_to_v21_delta.patch`: v21 (Claude, CLOSE03), correzione CL21-RACE-ADMIT-001 + test. Cumulativo: `close02_findings_proposal_v21.patch` (**ultimo**). Verificato: v20 + delta = v21 (sha256 a3c0ed140bb7…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -502,3 +503,21 @@ Due effetti:
 2. entrambi i segnali prendono lo stesso tavolo FREE e il secondo `activate` sovrascrive il primo: esposizione registrata 0,60 invece di 1,20, quindi una prenotazione persa.
 
 Con cap 1,20 (uguale) #505 registra correttamente 1,20.
+
+### 4. CL21-RACE-ADMIT-001 (P0) corretto in v21, RED → GREEN
+**Correzione.** `RuntimeController._risk_admission_lock` (`RLock`, con fallback di classe come in #505) rende atomici lettura dell'esposizione e prenotazione del tavolo su tutte le corsie che creano nuovo rischio:
+- `_on_signal_received`;
+- `_evaluate_and_maybe_submit_auto_next_trade`;
+- `reload_config`;
+- `DutchingController.manual_bet` ed `execute`.
+
+Ordine dei lock verificato: sempre ammissione → `_daily_loss_stop_lock`. L'auto-trade viene chiamato fuori dal lock daily-loss (`runtime_controller.py`, `_on_close_position`), quindi nessuna inversione e nessun deadlock.
+
+**Prove.**
+- **RED su v20:** 5/5 falliti (`red_v21.txt`): 2 segnali oltre il cap; tavolo condiviso (0,60 registrati invece di 1,20); 4 segnali → 4 ordini con cap 1,80; manuale + segnale → 2 ordini con cap 1,00.
+- **GREEN:** 8/8 (con i test di attesa del lock per reload, auto-trade ed execute).
+- **Mutazione mirata:** 7/7 uccisi.
+- **Suite completa py3.11:** **7593 passed, 0 failed**.
+- **Sonda `probe_l6_race.py` su v21:** CONFORME (1 ordine con cap 1,00; 2 ordini ed esposizione 1,20 con cap 1,20).
+
+**Residuo dichiarato.** v21 serializza ma non porta il fencing per epoca della #505. Un ingresso già accodato prima di un cashout ed eseguito dopo resta ammesso: CASH-25-R2 NON_CONFORME su v21, CONFORME su #505.

@@ -1,0 +1,8 @@
+UCCISO           A01 segnale senza lock
+UCCISO           A02 reload senza lock
+UCCISO           A03 auto-trade senza lock
+UCCISO           A04 manuale senza lock
+UCCISO           A05 execute dutching senza lock
+UCCISO           A06 lock dutching sempre nullo
+UCCISO           A07 lock non rientrante condiviso per istanza
+uccisi 7 / 7

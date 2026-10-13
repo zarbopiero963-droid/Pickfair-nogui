@@ -1,0 +1,259 @@
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index 81915d9..90ce4cf 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import hashlib
+ import json
++import contextlib
+ import logging
+ import math
+ import threading
+@@ -1302,6 +1303,10 @@ class DutchingController:
+     # EXECUTE
+     # =========================================================
+     def _execute_impl(self, payload: Dict[str, Any]) -> Dict[str, Any]:
++        with self._admission_lock():  # PROPOSTA close02 v21 (CL21)
++            return self._execute_impl_serial(payload)
++
++    def _execute_impl_serial(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+         pre = self.precheck(payload)
+         if not pre["ok"]:
+             self._publish_audit(
+@@ -1499,7 +1504,17 @@ class DutchingController:
+     # =========================================================
+     # MANUAL BET
+     # =========================================================
++    def _admission_lock(self):
++        """PROPOSTA close02 v21 (CL21-RACE-ADMIT-001): stesso lock di ammissione della
++        corsia segnale, cosi' controllo dell'esposizione e invio sono atomici."""
++        lock = getattr(self.runtime, "_risk_admission_lock", None)
++        return lock if lock is not None and hasattr(lock, "__enter__") else contextlib.nullcontext()
++
+     def manual_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
++        with self._admission_lock():
++            return self._manual_bet_serial(payload)
++
++    def _manual_bet_serial(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+         try:
+             required = ["market_id", "selection_id", "price", "stake"]
+             for key in required:
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 11b577d..1a6b94a 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -85,6 +85,7 @@ class RuntimeController:
+     - NON chiude automaticamente le posizioni
+     - la chiusura resta manuale/comando
+     """
++    _fallback_risk_admission_lock = threading.RLock()  # PROPOSTA close02 v21 (CL21)
+ 
+     def __init__(
+         self,
+@@ -106,6 +107,11 @@ class RuntimeController:
+         self.trading_engine = trading_engine
+         self.executor = executor
+         self.safe_mode = safe_mode
++        # PROPOSTA close02 v21 (CL21-RACE-ADMIT-001): il bus consegna con piu' worker;
++        # lettura dell'esposizione e prenotazione del tavolo devono essere atomiche fra
++        # TUTTE le corsie che creano nuovo rischio (segnale, auto-trade, GUI) e il reload
++        # della config. RLock: le corsie si richiamano sullo stesso thread.
++        self._risk_admission_lock = threading.RLock()
+         self._startup_recovery_blocked = ""
+         self._equity_peak_blocked = ""
+         self._equity_peak_restored = False  # v9: niente scritture del picco prima del ripristino
+@@ -2023,6 +2029,10 @@ class RuntimeController:
+ 
+     def reload_config(self, *, reset_session: bool = False) -> None:
+         """PR28: a bot acceso conserva tavoli/esposizione/riconciliazione."""
++        with self._admission_lock():  # PROPOSTA close02 v21 (CL21)
++            self._reload_config_serial(reset_session=reset_session)
++
++    def _reload_config_serial(self, *, reset_session: bool = False) -> None:
+         config = self.settings_service.load_roserpina_config()
+         if not reset_session:
+             self.table_manager.resize(config.table_count)
+@@ -3195,7 +3205,17 @@ class RuntimeController:
+                 "selection_id": None,
+             })
+ 
++    def _admission_lock(self):
++        """Lock di ammissione (PROPOSTA close02 v21); fallback di classe per istanze
++        costruite senza ``__init__`` (stesso schema della #505)."""
++        return getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
++
+     def _on_signal_received(self, signal: dict) -> None:
++        """Ingresso dei segnali, serializzato (PROPOSTA close02 v21, CL21-RACE-ADMIT-001)."""
++        with self._admission_lock():
++            self._on_signal_received_serial(signal)
++
++    def _on_signal_received_serial(self, signal: dict) -> None:
+         """
+         Runtime signal gate for Telegram/UI-driven order intents.
+ 
+@@ -4471,6 +4491,10 @@ class RuntimeController:
+         return "|".join(parts)
+ 
+     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
++        with self._admission_lock():  # PROPOSTA close02 v21 (CL21)
++            return self._evaluate_and_maybe_submit_auto_next_trade_serial(payload=payload, sync_result=sync_result)
++
++    def _evaluate_and_maybe_submit_auto_next_trade_serial(self, *, payload: dict, sync_result: dict) -> dict:
+         settlement_key = self._build_bankroll_sync_key(payload)
+         source_corr_id = str(sync_result.get("correlation_id") or "")
+         recovery_enabled = bool(payload.get("recovery_enabled", self.config.allow_recovery))
+diff --git a/tests/close02/test_close02_v21_admission_race.py b/tests/close02/test_close02_v21_admission_race.py
+new file mode 100644
+index 0000000..da97aef
+--- /dev/null
++++ b/tests/close02/test_close02_v21_admission_race.py
+@@ -0,0 +1,148 @@
++"""close02 v21 — CL21-RACE-ADMIT-001: ammissioni concorrenti serializzate.
++
++Fonte: L6 RACE (#461/6085510337) «più segnali/tavoli non possono perdere limiti, prenotazioni o identità della
++configurazione»; owner Q3 (#426/6141450045). Il bus reale consegna con 4 worker (core/event_bus.py), quindi due
++SIGNAL_RECEIVED possono essere elaborati insieme. RED su v20: con cap 1,00 due segnali da 0,60 passavano entrambi
++e prendevano lo stesso tavolo (esposizione registrata 0,60 invece di 1,20). Interleaving forzato con una barriera
++nel sizing: con la serializzazione il secondo segnale non arriva alla barriera finche' il primo non ha prenotato."""
++import threading
++from pathlib import Path
++
++from controllers.dutching_controller import DutchingController
++from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
++from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
++
++
++def _chain(tmp_path, cap):
++    c = _catena(Path(tmp_path))
++    for k, v in {"max_open_exposure": cap, "max_order_exposure": 10.0, "max_market_exposure": 10.0,
++                 "max_event_exposure_abs": 10.0, "max_drawdown_abs": 10.0}.items():
++        setattr(c.rc.config, k, v)
++    return c
++
++
++def _barriera_nel_sizing(c, n):
++    barrier = threading.Barrier(n, timeout=0.5)
++    orig = c.rc.mm.calculate
++
++    def calc(**kw):
++        d = orig(**kw)
++        try:
++            barrier.wait()
++        except threading.BrokenBarrierError:
++            pass
++        return d
++    c.rc.mm.calculate = calc
++
++
++def _segnali_concorrenti(c, n, stake=0.6):
++    sigs = [_signal(stake=stake, bet_type="BACK", market_id=f"1.80000000{i}", selection_id=10 + i,
++                    event=f"Evento {i}") for i in range(n)]
++    ts = [threading.Thread(target=c.rc._on_signal_received, args=(s,)) for s in sigs]
++    [t.start() for t in ts]
++    [t.join(10) for t in ts]
++
++
++def test_due_segnali_concorrenti_non_superano_il_cap(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    _barriera_nel_sizing(c, 2)
++    _segnali_concorrenti(c, 2)
++    assert len(c.broker.state.orders) == 1
++    assert any(r.startswith("max_open_exposure_exceeded") for r in _rifiuti(c)), _rifiuti(c)
++
++
++def test_due_segnali_concorrenti_uguale_al_cap_prenotazioni_distinte(tmp_path):
++    c = _chain(tmp_path, 1.2)
++    _barriera_nel_sizing(c, 2)
++    _segnali_concorrenti(c, 2)
++    assert len(c.broker.state.orders) == 2
++    occupati = [t for t in c.rc.table_manager._tables.values() if t.status != "FREE"]
++    assert len(occupati) == 2 and abs(c.rc.table_manager.total_exposure() - 1.2) < 1e-9
++
++
++def test_quattro_segnali_concorrenti_esposizione_mai_oltre_il_cap(tmp_path):
++    c = _chain(tmp_path, 1.8)
++    _barriera_nel_sizing(c, 4)
++    _segnali_concorrenti(c, 4)
++    assert len(c.broker.state.orders) == 3
++    assert c.rc.table_manager.total_exposure() <= 1.8 + 1e-9
++
++
++def test_reload_config_e_ammissione_usano_lo_stesso_lock(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    lock = c.rc._risk_admission_lock
++    preso = threading.Event()
++    rilascia = threading.Event()
++
++    def tieni():
++        with lock:
++            preso.set()
++            rilascia.wait(5)
++    t = threading.Thread(target=tieni)
++    t.start()
++    preso.wait(5)
++    esito = {}
++    s = threading.Thread(target=lambda: esito.setdefault("r", c.rc._on_signal_received(_signal(stake=0.5))))
++    s.start()
++    s.join(0.3)
++    assert s.is_alive(), "l'ammissione deve attendere il lock tenuto da un altro thread"
++    rilascia.set()
++    t.join(5)
++    s.join(5)
++    assert len(c.broker.state.orders) == 1
++
++
++def test_manuale_gui_concorrente_al_segnale_rispetta_il_cap(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    _barriera_nel_sizing(c, 2)
++    man = DutchingController(c.bus, c.rc)
++    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.800000001", selection_id=10)
++    t1 = threading.Thread(target=c.rc._on_signal_received, args=(sig,))
++    t2 = threading.Thread(target=man.manual_bet, args=({"market_id": "1.900000001", "selection_id": 20,
++                                                        "price": 2.0, "stake": 0.6, "bet_type": "BACK",
++                                                        "event_key": "man-race"},))
++    t1.start(); t2.start(); t1.join(10); t2.join(10)
++    assert len(c.broker.state.orders) <= 1, len(c.broker.state.orders)
++
++
++def _attende_il_lock(c, chiamata):
++    lock = c.rc._risk_admission_lock
++    preso, rilascia = threading.Event(), threading.Event()
++
++    def tieni():
++        with lock:
++            preso.set()
++            rilascia.wait(5)
++    t = threading.Thread(target=tieni)
++    t.start()
++    preso.wait(5)
++
++    def esegui():
++        try:
++            chiamata()
++        except Exception:
++            pass  # interessa solo che la chiamata attenda il lock
++    s = threading.Thread(target=esegui)
++    s.start()
++    s.join(0.3)
++    in_attesa = s.is_alive()
++    rilascia.set()
++    t.join(5)
++    s.join(5)
++    return in_attesa
++
++
++def test_reload_config_attende_il_lock_di_ammissione(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    assert _attende_il_lock(c, lambda: c.rc.reload_config())
++
++
++def test_auto_trade_attende_il_lock_di_ammissione(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    assert _attende_il_lock(c, lambda: c.rc._evaluate_and_maybe_submit_auto_next_trade(payload={}, sync_result={}))
++
++
++def test_execute_dutching_attende_il_lock_di_ammissione(tmp_path):
++    c = _chain(tmp_path, 1.0)
++    d = DutchingController(c.bus, c.rc)
++    assert _attende_il_lock(c, lambda: d._execute_impl({"market_id": "1.234", "selections": []}))

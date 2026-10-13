@@ -1,0 +1,12 @@
+E       AssertionError: assert 2 == 1
+E       AssertionError: assert (1 == 2)
+E       AssertionError: assert 4 == 3
+E       AttributeError: 'RuntimeController' object has no attribute '_risk_admission_lock'
+E       AssertionError: 2
+E       assert 2 <= 1
+FAILED tests/close02/test_close02_v21_admission_race.py::test_due_segnali_concorrenti_non_superano_il_cap
+FAILED tests/close02/test_close02_v21_admission_race.py::test_due_segnali_concorrenti_uguale_al_cap_prenotazioni_distinte
+FAILED tests/close02/test_close02_v21_admission_race.py::test_quattro_segnali_concorrenti_esposizione_mai_oltre_il_cap
+FAILED tests/close02/test_close02_v21_admission_race.py::test_reload_config_e_ammissione_usano_lo_stesso_lock
+FAILED tests/close02/test_close02_v21_admission_race.py::test_manuale_gui_concorrente_al_segnale_rispetta_il_cap
+5 failed in 0.85s
