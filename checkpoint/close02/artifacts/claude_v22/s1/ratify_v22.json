@@ -1,0 +1,26 @@
+{
+ "chiavi_prima": [],
+ "assenti_prima": [
+  "roserpina.allow_recovery",
+  "roserpina.commission_pct",
+  "roserpina.max_event_exposure_pct",
+  "roserpina.max_recovery_tables",
+  "roserpina.max_single_bet_pct",
+  "roserpina.max_stake_abs",
+  "roserpina.max_total_exposure_pct"
+ ],
+ "scritte_dal_salvataggio": {},
+ "assenti_dopo": [
+  "roserpina.allow_recovery",
+  "roserpina.commission_pct",
+  "roserpina.max_event_exposure_pct",
+  "roserpina.max_recovery_tables",
+  "roserpina.max_single_bet_pct",
+  "roserpina.max_stake_abs",
+  "roserpina.max_total_exposure_pct"
+ ],
+ "t80u_prima": "owner_t80u_nuovo_rischio_bloccato:roserpina.commission_pct,roserpina.max_event_exposure_pct,roserpina.max_single_bet_pct,roserpina.max_stake_abs,roserpina.max_total_exposure_pct",
+ "t80u_dopo": "owner_t80u_nuovo_rischio_bloccato:roserpina.commission_pct,roserpina.max_event_exposure_pct,roserpina.max_single_bet_pct,roserpina.max_stake_abs,roserpina.max_total_exposure_pct",
+ "default_ratificati_senza_modifica": [],
+ "verdetto": "CONFORME"
+}

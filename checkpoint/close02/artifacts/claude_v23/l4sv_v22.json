@@ -1,0 +1,1069 @@
+{
+ "SAVE-OK": {
+  "valore": "7.5",
+  "versione_prima": null,
+  "versione_dopo": "1",
+  "verdetto": "CONFORME"
+ },
+ "SAVE-ATOMIC": {
+  "errore": "OSError",
+  "invariato": true,
+  "verdetto": "CONFORME"
+ },
+ "VALID-target_profit_cycle_pct-nan": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-target_profit_cycle_pct-inf": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-target_profit_cycle_pct--1.0": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-target_profit_cycle_pct-abc": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_single_bet_pct-nan": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "nan",
+  "prima": "5.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_single_bet_pct-inf": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "inf",
+  "prima": "5.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_single_bet_pct--1.0": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "-1.0",
+  "prima": "5.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_single_bet_pct-abc": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "abc",
+  "prima": "5.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_total_exposure_pct-nan": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "nan",
+  "prima": "20.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_total_exposure_pct-inf": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "inf",
+  "prima": "20.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_total_exposure_pct--1.0": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "-1.0",
+  "prima": "20.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_total_exposure_pct-abc": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "abc",
+  "prima": "20.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_pct-nan": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "nan",
+  "prima": "10.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_pct-inf": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "inf",
+  "prima": "10.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_pct--1.0": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "-1.0",
+  "prima": "10.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_pct-abc": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "abc",
+  "prima": "10.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_reset_drawdown_pct-nan": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_reset_drawdown_pct-inf": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_reset_drawdown_pct--1.0": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_reset_drawdown_pct-abc": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_drawdown_pct-nan": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_drawdown_pct-inf": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_drawdown_pct--1.0": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_drawdown_pct-abc": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-lockdown_drawdown_pct-nan": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-lockdown_drawdown_pct-inf": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-lockdown_drawdown_pct--1.0": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-lockdown_drawdown_pct-abc": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_profit_pct-nan": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_profit_pct-inf": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_profit_pct--1.0": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_profit_pct-abc": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_multiplier-nan": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_multiplier-inf": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_multiplier--1.0": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-expansion_multiplier-abc": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_multiplier-nan": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_multiplier-inf": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_multiplier--1.0": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-defense_multiplier-abc": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-table_count-nan": {
+  "chiave": "roserpina.table_count",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-table_count-inf": {
+  "chiave": "roserpina.table_count",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-table_count--1.0": {
+  "chiave": "roserpina.table_count",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-table_count-abc": {
+  "chiave": "roserpina.table_count",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_recovery_tables-nan": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "nan",
+  "prima": "1",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_recovery_tables-inf": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "inf",
+  "prima": "1",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_recovery_tables--1.0": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "-1.0",
+  "prima": "1",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_recovery_tables-abc": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "abc",
+  "prima": "1",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-commission_pct-nan": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "nan",
+  "prima": "4.5",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-commission_pct-inf": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "inf",
+  "prima": "4.5",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-commission_pct--1.0": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "-1.0",
+  "prima": "4.5",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-commission_pct-abc": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "abc",
+  "prima": "4.5",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_stake-nan": {
+  "chiave": "roserpina.min_stake",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_stake-inf": {
+  "chiave": "roserpina.min_stake",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_stake--1.0": {
+  "chiave": "roserpina.min_stake",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_stake-abc": {
+  "chiave": "roserpina.min_stake",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_abs-nan": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "nan",
+  "prima": "50.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_abs-inf": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "inf",
+  "prima": "50.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_abs--1.0": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "-1.0",
+  "prima": "50.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_abs-abc": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "abc",
+  "prima": "50.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_daily_loss-nan": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "nan",
+  "prima": "20.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_daily_loss-inf": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "inf",
+  "prima": "20.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_daily_loss--1.0": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "-1.0",
+  "prima": "20.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_daily_loss-abc": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "abc",
+  "prima": "20.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_open_exposure-nan": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "nan",
+  "prima": "10.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_open_exposure-inf": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "inf",
+  "prima": "10.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_open_exposure--1.0": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "-1.0",
+  "prima": "10.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_open_exposure-abc": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "abc",
+  "prima": "10.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_session_loss-nan": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_session_loss-inf": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_session_loss--1.0": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_session_loss-abc": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_exposure_stop-nan": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_exposure_stop-inf": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_exposure_stop--1.0": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_exposure_stop-abc": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_hard_stop_pct-nan": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_hard_stop_pct-inf": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_hard_stop_pct--1.0": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_hard_stop_pct-abc": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_warning-nan": {
+  "chiave": "roserpina.book_warning",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_warning-inf": {
+  "chiave": "roserpina.book_warning",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_warning--1.0": {
+  "chiave": "roserpina.book_warning",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_warning-abc": {
+  "chiave": "roserpina.book_warning",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_block-nan": {
+  "chiave": "roserpina.book_block",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_block-inf": {
+  "chiave": "roserpina.book_block",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_block--1.0": {
+  "chiave": "roserpina.book_block",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-book_block-abc": {
+  "chiave": "roserpina.book_block",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-liquidity_multiplier-nan": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-liquidity_multiplier-inf": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-liquidity_multiplier--1.0": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-liquidity_multiplier-abc": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_liquidity_absolute-nan": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_liquidity_absolute-inf": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_liquidity_absolute--1.0": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_liquidity_absolute-abc": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_price-nan": {
+  "chiave": "roserpina.min_price",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_price-inf": {
+  "chiave": "roserpina.min_price",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_price--1.0": {
+  "chiave": "roserpina.min_price",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-min_price-abc": {
+  "chiave": "roserpina.min_price",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_win-nan": {
+  "chiave": "roserpina.max_win",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_win-inf": {
+  "chiave": "roserpina.max_win",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_win--1.0": {
+  "chiave": "roserpina.max_win",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_win-abc": {
+  "chiave": "roserpina.max_win",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_pct-nan": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_pct-inf": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_pct--1.0": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_stake_pct-abc": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-profit_epsilon-nan": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-profit_epsilon-inf": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-profit_epsilon--1.0": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-profit_epsilon-abc": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_green_delay_sec-nan": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "nan",
+  "prima": null,
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_green_delay_sec-inf": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "inf",
+  "prima": null,
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_green_delay_sec--1.0": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "-1.0",
+  "prima": null,
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-auto_green_delay_sec-abc": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "abc",
+  "prima": null,
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_order_exposure-nan": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "nan",
+  "prima": "1.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_order_exposure-inf": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "inf",
+  "prima": "1.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_order_exposure--1.0": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "-1.0",
+  "prima": "1.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_order_exposure-abc": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "abc",
+  "prima": "1.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_market_exposure-nan": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "nan",
+  "prima": "2.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_market_exposure-inf": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "inf",
+  "prima": "2.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_market_exposure--1.0": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "-1.0",
+  "prima": "2.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_market_exposure-abc": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "abc",
+  "prima": "2.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_abs-nan": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "nan",
+  "prima": "2.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_abs-inf": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "inf",
+  "prima": "2.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_abs--1.0": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "-1.0",
+  "prima": "2.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_event_exposure_abs-abc": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "abc",
+  "prima": "2.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_abs-nan": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "nan",
+  "prima": "10.0",
+  "dopo": "nan",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_abs-inf": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "inf",
+  "prima": "10.0",
+  "dopo": "inf",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_abs--1.0": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "-1.0",
+  "prima": "10.0",
+  "dopo": "-1.0",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ },
+ "VALID-max_drawdown_abs-abc": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "abc",
+  "prima": "10.0",
+  "dopo": "abc",
+  "errore": null,
+  "verdetto": "NON_CONFORME"
+ }
+}

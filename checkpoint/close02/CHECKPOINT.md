@@ -13,7 +13,8 @@
 7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch`. Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
 8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch`. Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
 9. `artifacts/patches/close02_v20_to_v21_delta.patch`: v21 (Claude, CLOSE03), correzione CL21-RACE-ADMIT-001 + test. Cumulativo: `close02_findings_proposal_v21.patch`. Verificato: v20 + delta = v21 (sha256 a3c0ed140bb7…).
-10. `artifacts/patches/close02_v21_to_v22_delta.patch`: v22 (Claude, CLOSE03), correzione CL22-AUDIT-DECISION-001 + test. Cumulativo: `close02_findings_proposal_v22.patch` (**ultimo**). Verificato: v21 + delta = v22 (sha256 387146c272ab…).
+10. `artifacts/patches/close02_v21_to_v22_delta.patch`: v22 (Claude, CLOSE03), correzione CL22-AUDIT-DECISION-001 + test. Cumulativo: `close02_findings_proposal_v22.patch`. Verificato: v21 + delta = v22 (sha256 387146c272ab…).
+11. `artifacts/patches/close02_v22_to_v23_delta.patch`: v23 (Claude, CLOSE03), correzioni CL25-CFG-VALID-001 e CL24-CFG-CONFLICT-NORM-001 + test + design handoff. Cumulativo: `close02_findings_proposal_v23.patch` (**ultimo**). Verificato su worktree pulito: v22 cumulativa + delta = v23 (sha256 483fd79b3fc4…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -546,3 +547,48 @@ Ordine dei lock verificato: sempre ammissione → `_daily_loss_stop_lock`. L'aut
 **Limiti dichiarati.**
 - Il record APPROVED è la decisione di rischio, non l'esito dell'ordine. L'esito resta nel ledger `orders` (stato, betId).
 - La «recovery» della decisione dopo un riavvio è la riga persistita; l'esito dell'ordine si ricostruisce da `orders`/`startup_orders`.
+
+### 6. L6 S1 dal vivo (Linux, Xvfb) e CL23-S1-GUI-STATE-001 (P1, aperto)
+**Ambiente.** `python3-tk` installato nel container effimero (apt, gratuito). È stato avviato `mini_gui.MiniPickfairGUI(force_simulation=True)` reale su `:99`, con HOME temporanea e nessuna rete.
+- Screenshot della tab Roserpina: `claude_v22/s1/roserpina_v22.png` e `roserpina_pr505.png`.
+- Etichette e campi letti dai widget: `gui_v22.json` (79 etichette, 59 campi) e `gui_pr505.json` (87, 67).
+- **Windows: NOT VERIFIED** (ambiente non disponibile).
+
+**Fonte.** Solo la clausola derivata «Mostrare nome, unità, stato e valore effettivo su Windows e Linux»; la fonte non ha una riga verbatim.
+
+**Esiti.**
+1. **Positivo (v22):** salvataggio Roserpina senza modifiche su DB vuoto ⇒ nessun default del codice ratificato; le 7 chiavi assenti restano assenti e t80u continua a bloccare (`ratify_v22.json`). Su #505 e `main` il test è N/A: non hanno `absent_keys`.
+2. **CL23-S1-GUI-STATE-001 (P1, aperto, proposta).**
+   - La GUI mostra come valori in vigore i default del codice per chiavi che il runtime considera ASSENTI e che bloccano il nuovo rischio (DB vuoto: «Max Single Bet % 18.0», «Max Total Exposure % 35.0»…), senza alcuno «stato».
+   - Su v22 e `main` mancano i campi RSR-38/39/40/41, compreso il drawdown assoluto di 10 € (D1); in #505 sono presenti.
+   - «Min Stake» e «Max Stake Assoluto» non indicano l'unità €.
+   - **Correzione proposta:** indicatore di stato (assente / corrotta / in vigore) accanto a ogni campo e campi RSR-41 (e 38–40 con #505). È una modifica di UI con aggiornamento del design handoff, rinviata dopo L4 perché la clausola è derivata, non verbatim.
+
+### 7. L4 — SAVE/VALID RSR (`probe_l4_save_valid.py`) e correzione v23
+**Fonti** (verbatim, #461/6085510337):
+- SAVE: «Salvare atomicamente il valore e la versione di configurazione tramite la chiave persistente prevista»;
+- VALID: «Validare dominio del campo prima di qualunque salvataggio/uso; rifiutare input malformati senza mutare l'ultimo stato valido».
+
+I domini non sono definiti in fonte (`range` nullo), quindi la sonda usa solo valori malformati per ogni chiave numerica: NaN, inf, −1, testo.
+
+| | main | #505 | v22 | v23 |
+|---|---|---|---|---|
+| SAVE valore + versione | NC (versione assente) | NC | C | C |
+| SAVE atomico (scrittura fallita) | C | C | C | C |
+| VALID (132 casi) | 116 NC | 132 NC | 132 NC | **0 NC** |
+
+**CL25-CFG-VALID-001 (P1) corretto in v23.** Su v22 il loader accettava come VALIDI i valori negativi su disco: `commission_pct=-1` (gonfia il netto del P/L), `liquidity_multiplier=-1` (spegne la guardia), `min_stake`, `max_daily_loss`, `max_stake_abs`, `min_price`, `max_win`, `table_count`. NaN, inf e negativi venivano inoltre salvati sopra l'ultimo stato valido.
+
+Correzione:
+- il salvataggio rifiuta (`CONFIG_INVALID:<chiave>`, nessuna scrittura) ogni valore numerico non numerico, non finito o negativo;
+- il loader marca come corrotto un negativo su disco (⇒ `config_corrotta`, blocco del nuovo rischio);
+- lo zero resta ammesso.
+
+**CL24-CFG-CONFLICT-NORM-001 (P2) corretto in v23.** Il rilevatore di conflitti confrontava come testo: un valore su disco `"5"` contro lo snapshot `5.0` dava `CONFIG_CONFLICT` a ogni salvataggio. Ora confronta come numero quando entrambi i valori sono numerici; un conflitto reale resta rilevato (test dedicato).
+
+**Prove.**
+- **RED su v22:** 56/59 falliti.
+- **GREEN:** 59/59.
+- **Mutazione mirata:** 11/11 uccisi.
+- **Suite completa py3.11:** **7659 passed, 0 failed**.
+- **Design handoff** (§7 tab Roserpina) aggiornato con la regola di salvataggio e il messaggio `CONFIG_INVALID:<chiave>`.

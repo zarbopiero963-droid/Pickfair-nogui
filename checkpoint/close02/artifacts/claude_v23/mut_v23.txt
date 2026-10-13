@@ -1,0 +1,12 @@
+UCCISO           V01 validazione salvataggio assente
+UCCISO           V02 negativi ammessi al salvataggio
+UCCISO           V03 non finiti ammessi al salvataggio
+UCCISO           V04 testo ammesso al salvataggio
+UCCISO           V05 negativo float caricato valido
+UCCISO           V06 negativo int caricato valido
+UCCISO           V07 hard-stop negativo valido
+UCCISO           V08 zero rifiutato
+UCCISO           V09 confronto conflitti testuale
+UCCISO           V10 conflitto mai rilevato
+UCCISO           V11 negativo hard-stop non marcato
+uccisi 11 / 11

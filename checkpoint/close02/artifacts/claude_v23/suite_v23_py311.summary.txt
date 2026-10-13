@@ -1,0 +1,2 @@
+7659 passed, 16 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 227.79s (0:03:47)
+comando: python3.11 -m pytest -q -p no:cacheprovider -n 8 (028cee9 + v23; il file estraneo pickfair.db.risk_ledger.json presente durante la suite e' stato rimosso prima delle patch: non tracciato, nessun effetto sui test del patch)

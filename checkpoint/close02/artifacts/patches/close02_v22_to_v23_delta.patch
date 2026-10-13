@@ -1,0 +1,223 @@
+diff --git a/docs/design/design_handoff.md b/docs/design/design_handoff.md
+index b200aa1..5b14da4 100644
+--- a/docs/design/design_handoff.md
++++ b/docs/design/design_handoff.md
+@@ -180,6 +180,12 @@ Bottone `Salva Roserpina`. I campi hard-stop sono fail-closed: vuoto = non
+ impostato (il gate resta bloccante); valore non numerico o ≤0 (o % >100)
+ annulla il salvataggio.
+ 
++Per ogni campo numerico della configurazione Roserpina vale anche la verifica lato servizio (proposta close02 v23).
++- Un valore non numerico, non finito o negativo annulla l'intero salvataggio, senza toccare l'ultimo stato valido.
++- Il dialogo `Errore salvataggio Roserpina` riporta `CONFIG_INVALID:<chiave>`.
++- Un valore negativo già presente su disco viene trattato come corrotto e blocca il nuovo rischio, con motivo `config_corrotta:<chiave>`.
++- Lo zero resta ammesso dove è già ammesso, per esempio `Max Recovery Tables`.
++
+ ## 8. Tab Simulazione
+ 
+ Testo descrittivo: parametri attivi solo in SIMULAZIONE; «La commissione
+diff --git a/services/setting_service.py b/services/setting_service.py
+index 6c8bb05..7fff5f8 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -74,6 +74,12 @@ class SettingsService:
+         if not math.isfinite(value):
+             self._mark_corrupt(key)
+             return float(default)
++        if value < 0 and key.startswith("roserpina."):
++            # PROPOSTA close02 v23 (CL25-CFG-VALID-001): un negativo non e' nel dominio di
++            # nessuna chiave Roserpina (percentuali, importi, quote, conteggi, ritardi):
++            # corrotto come testo/NaN, mai accettato come valore valido.
++            self._mark_corrupt(key)
++            return float(default)
+         return value
+ 
+     def _i(self, data: Dict[str, Any], key: str, default: int) -> int:
+@@ -87,6 +93,9 @@ class SettingsService:
+         except Exception:
+             self._mark_corrupt(key)
+             return int(default)
++        if value < 0 and key.startswith("roserpina."):  # PROPOSTA close02 v23 (CL25)
++            self._mark_corrupt(key)
++            return int(default)
+         return value
+ 
+     def _b(self, data: Dict[str, Any], key: str, default: bool) -> bool:
+@@ -585,8 +594,46 @@ class SettingsService:
+ 
+         return payload
+ 
++    # Chiavi Roserpina non numeriche (enum): fuori dalla validazione numerica del salvataggio.
++    _ROSERPINA_NON_NUMERIC_KEYS = frozenset({"roserpina.risk_profile"})
++
++    @classmethod
++    def _validate_roserpina_payload(cls, payload: Dict[str, Any]) -> None:
++        """PROPOSTA close02 v23 (CL25-CFG-VALID-001): L4 VALID «validare dominio del campo prima
++        di qualunque salvataggio; rifiutare input malformati senza mutare l'ultimo stato valido».
++        Malformato per ogni chiave numerica: non numerico, non finito, negativo. Nessun
++        intervallo inventato. Errore => nessuna scrittura (si solleva prima della transazione)."""
++        bad = []
++        for key, value in payload.items():
++            if key in cls._ROSERPINA_NON_NUMERIC_KEYS or value is None:
++                continue
++            if isinstance(value, bool):
++                continue
++            try:
++                number = float(value)
++            except (TypeError, ValueError):
++                bad.append(key)
++                continue
++            if not math.isfinite(number) or number < 0:
++                bad.append(key)
++        if bad:
++            raise ValueError("CONFIG_INVALID:" + ",".join(sorted(bad)))
++
++    @staticmethod
++    def _same_setting(a: Any, b: Any) -> bool:
++        """PROPOSTA close02 v23 (CL24): due valori persistiti sono lo stesso valore se coincidono
++        come numeri ("5" == "5.0"), altrimenti come testo."""
++        if str(a) == str(b):
++            return True
++        try:
++            fa, fb = float(str(a).strip()), float(str(b).strip())
++        except (TypeError, ValueError):
++            return False
++        return math.isfinite(fa) and math.isfinite(fb) and fa == fb
++
+     def save_roserpina_config(self, config: RoserpinaConfig) -> None:
+         payload = self._roserpina_payload(config)
++        self._validate_roserpina_payload(payload)
+         # PROPOSTA close02 CL02-RSR-RACE-001: se la config viene da un load,
+         # si scrivono SOLO i campi cambiati rispetto a quel load, e un campo
+         # cambiato anche da un altro salvataggio nel frattempo e' un conflitto
+@@ -624,11 +671,12 @@ class SettingsService:
+                 previous = int(text)
+             if snapshot is not None:
+                 current = self.db.get_settings()
+-                changed = {k: v for k, v in payload.items() if str(snapshot.get(k)) != str(v)}
++                same = self._same_setting  # PROPOSTA close02 v23 (CL24)
++                changed = {k: v for k, v in payload.items() if not same(snapshot.get(k), v)}
+                 conflicts = sorted(
+                     k for k in changed
+-                    if k in current and str(current.get(k)) != str(snapshot.get(k))
+-                    and str(current.get(k)) != str(changed[k])
++                    if k in current and not same(current.get(k), snapshot.get(k))
++                    and not same(current.get(k), changed[k])
+                 )
+                 if conflicts:
+                     raise RuntimeError("CONFIG_CONFLICT:" + ",".join(conflicts))
+@@ -657,9 +705,15 @@ class SettingsService:
+             return None
+ 
+         try:
+-            return float(value)
++            parsed = float(value)
+         except Exception:
+             return float("nan")
++        if parsed < 0:
++            # PROPOSTA close02 v23 (CL25): hard-stop negativo = configurato ma illeggibile
++            # (NaN => i cap negano) e marcato corrotto, quindi osservabile.
++            self._mark_corrupt(key if key in data else (fallback_key or key))
++            return float("nan")
++        return parsed
+ 
+     # =========================================================
+     # SIMULATION CONFIG
+diff --git a/tests/close02/test_close02_v23_config_valid.py b/tests/close02/test_close02_v23_config_valid.py
+new file mode 100644
+index 0000000..18d5dfb
+--- /dev/null
++++ b/tests/close02/test_close02_v23_config_valid.py
+@@ -0,0 +1,93 @@
++"""close02 v23 — CL25-CFG-VALID-001 e CL24-CFG-CONFLICT-NORM-001 (configurazione Roserpina).
++
++CL25. Fonte L4 VALID (#461/6085510337, verbatim): «Validare dominio del campo prima di qualunque salvataggio/uso;
++rifiutare input malformati senza mutare l'ultimo stato valido». RED su v22: NaN, inf, negativi e testo venivano
++salvati sopra l'ultimo valore valido, e il loader accettava i NEGATIVI come validi (es. commission_pct=-1 gonfia il
++netto del P/L; liquidity_multiplier=-1 spegne la guardia). Dominio usato: solo cio' che e' malformato per ogni
++chiave numerica (non numerico, non finito, negativo); nessun intervallo inventato.
++
++CL24. Il rilevatore di conflitti (CL02-RSR-RACE-001) confrontava i valori come testo: un valore persistito come
++"5" e ricaricato come 5.0 era scambiato per una modifica concorrente e ogni salvataggio falliva."""
++import os
++
++import pytest
++
++from core import validators
++from database import Database
++from services.setting_service import SettingsService
++
++BASE = {"roserpina.max_single_bet_pct": "5.0", "roserpina.max_total_exposure_pct": "20.0",
++        "roserpina.max_event_exposure_pct": "10.0", "roserpina.max_stake_abs": "50.0",
++        "roserpina.commission_pct": "4.5", "roserpina.max_recovery_tables": "1", "roserpina.allow_recovery": "0",
++        "roserpina.max_open_exposure": "10.0", "roserpina.max_drawdown_abs": "10.0"}
++
++
++def _svc(tmp_path, extra=None):
++    db = Database(str(tmp_path / "c.sqlite"))
++    db.save_settings(dict(BASE, **(extra or {})))
++    return db, SettingsService(db)
++
++
++@pytest.mark.parametrize("attr", ["max_single_bet_pct", "commission_pct", "min_stake", "max_stake_abs",
++                                  "max_open_exposure", "max_drawdown_abs", "liquidity_multiplier", "table_count",
++                                  "max_daily_loss", "min_price", "max_win"])
++@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -1.0, "abc"])
++def test_salvataggio_malformato_rifiutato_ultimo_stato_intatto(tmp_path, attr, bad):
++    db, ss = _svc(tmp_path, {"roserpina.max_daily_loss": "20.0"})
++    before = dict(db.get_settings())
++    cfg = ss.load_roserpina_config()
++    setattr(cfg, attr, bad)
++    with pytest.raises(ValueError, match="CONFIG_INVALID"):
++        ss.save_roserpina_config(cfg)
++    assert dict(db.get_settings()) == before  # ne' valore ne' versione cambiati
++
++
++@pytest.mark.parametrize("key", ["roserpina.commission_pct", "roserpina.min_stake", "roserpina.max_stake_abs",
++                                 "roserpina.liquidity_multiplier", "roserpina.table_count",
++                                 "roserpina.max_single_bet_pct", "roserpina.max_daily_loss",
++                                 "roserpina.max_open_exposure", "roserpina.max_drawdown_abs"])
++def test_negativo_su_disco_e_corrotto_e_blocca(tmp_path, key):
++    _db, ss = _svc(tmp_path, {key: "-1"})
++    cfg = ss.load_roserpina_config()
++    corrotto = key in (cfg.corrupt_keys or ())
++    nan_opz = isinstance(getattr(cfg, key.split(".", 1)[1]), float) and getattr(cfg, key.split(".", 1)[1]) != \
++        getattr(cfg, key.split(".", 1)[1])
++    assert corrotto or nan_opz, (key, cfg.corrupt_keys, getattr(cfg, key.split(".", 1)[1]))
++    assert corrotto  # osservabile come corruzione: la corsia d'ingresso blocca con config_corrotta
++
++
++def test_zero_resta_valido(tmp_path):
++    db, ss = _svc(tmp_path)
++    cfg = ss.load_roserpina_config()
++    cfg.max_recovery_tables = 0
++    ss.save_roserpina_config(cfg)
++    assert db.get_settings()["roserpina.max_recovery_tables"] == "0"
++    assert "roserpina.max_recovery_tables" not in (ss.load_roserpina_config().corrupt_keys or ())
++
++
++def test_salvataggio_valido_versione_incrementata(tmp_path):
++    db, ss = _svc(tmp_path)
++    cfg = ss.load_roserpina_config()
++    cfg.max_single_bet_pct = 7.5
++    ss.save_roserpina_config(cfg)
++    s = db.get_settings()
++    assert s["roserpina.max_single_bet_pct"] == "7.5" and s["roserpina.config_version"] == "1"
++
++
++@pytest.mark.parametrize("stored", ["5", "5.00", " 5.0 "])
++def test_valore_non_canonico_non_e_un_conflitto(tmp_path, stored):
++    db, ss = _svc(tmp_path, {"roserpina.max_single_bet_pct": stored})
++    cfg = ss.load_roserpina_config()
++    cfg.max_single_bet_pct = 7.5
++    ss.save_roserpina_config(cfg)
++    assert db.get_settings()["roserpina.max_single_bet_pct"] == "7.5"
++
++
++def test_conflitto_reale_ancora_rilevato(tmp_path):
++    db, ss = _svc(tmp_path)
++    cfg = ss.load_roserpina_config()
++    db.save_settings({"roserpina.max_single_bet_pct": "6.0"})  # altra scrittura nel frattempo
++    cfg.max_single_bet_pct = 7.5
++    with pytest.raises(RuntimeError, match="CONFIG_CONFLICT"):
++        ss.save_roserpina_config(cfg)
++    assert db.get_settings()["roserpina.max_single_bet_pct"] == "6.0"
