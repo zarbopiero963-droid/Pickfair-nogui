@@ -1,0 +1,1382 @@
+{
+ "CTRL": {
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-01-FS-abc": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-01-FS-nan": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-01-FS-inf": {
+  "chiave": "roserpina.target_profit_cycle_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-02-FS-abc": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-02-FS-nan": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-02-FS-inf": {
+  "chiave": "roserpina.max_single_bet_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-03-FS-abc": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-03-FS-nan": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-03-FS-inf": {
+  "chiave": "roserpina.max_total_exposure_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-04-FS-abc": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-04-FS-nan": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-04-FS-inf": {
+  "chiave": "roserpina.max_event_exposure_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-05-FS-abc": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-05-FS-nan": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-05-FS-inf": {
+  "chiave": "roserpina.auto_reset_drawdown_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-06-FS-abc": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-06-FS-nan": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-06-FS-inf": {
+  "chiave": "roserpina.defense_drawdown_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-07-FS-abc": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-07-FS-nan": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-07-FS-inf": {
+  "chiave": "roserpina.lockdown_drawdown_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-08-FS-abc": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-08-FS-nan": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-08-FS-inf": {
+  "chiave": "roserpina.expansion_profit_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-09-FS-abc": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-09-FS-nan": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-09-FS-inf": {
+  "chiave": "roserpina.expansion_multiplier",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-10-FS-abc": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-10-FS-nan": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-10-FS-inf": {
+  "chiave": "roserpina.defense_multiplier",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-11-FS-abc": {
+  "chiave": "roserpina.table_count",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-11-FS-nan": {
+  "chiave": "roserpina.table_count",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-11-FS-inf": {
+  "chiave": "roserpina.table_count",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-12-FS-abc": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-12-FS-nan": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-12-FS-inf": {
+  "chiave": "roserpina.max_recovery_tables",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-13-FS-abc": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-13-FS-nan": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-13-FS-inf": {
+  "chiave": "roserpina.commission_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-14-FS-abc": {
+  "chiave": "roserpina.min_stake",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-14-FS-nan": {
+  "chiave": "roserpina.min_stake",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-14-FS-inf": {
+  "chiave": "roserpina.min_stake",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-15-FS-abc": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-15-FS-nan": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-15-FS-inf": {
+  "chiave": "roserpina.max_stake_abs",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-16-FS-abc": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-16-FS-nan": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-16-FS-inf": {
+  "chiave": "roserpina.max_daily_loss",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-17-FS-abc": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "abc",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_open_exposure_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-17-FS-nan": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "nan",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_open_exposure_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-17-FS-inf": {
+  "chiave": "roserpina.max_open_exposure",
+  "valore": "inf",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_open_exposure_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-18-FS-abc": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "abc",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_session_loss_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-18-FS-nan": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "nan",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_session_loss_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-18-FS-inf": {
+  "chiave": "roserpina.max_session_loss",
+  "valore": "inf",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_session_loss_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-19-FS-abc": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "abc",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_exposure_stop_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-19-FS-nan": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "nan",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_exposure_stop_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-19-FS-inf": {
+  "chiave": "roserpina.max_exposure_stop",
+  "valore": "inf",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_exposure_stop_non_valido"
+   ],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-20-FS-abc": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-20-FS-nan": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-20-FS-inf": {
+  "chiave": "roserpina.max_drawdown_hard_stop_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-21-FS-abc": {
+  "chiave": "roserpina.book_warning",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-21-FS-nan": {
+  "chiave": "roserpina.book_warning",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-21-FS-inf": {
+  "chiave": "roserpina.book_warning",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-22-FS-abc": {
+  "chiave": "roserpina.book_block",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-22-FS-nan": {
+  "chiave": "roserpina.book_block",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-22-FS-inf": {
+  "chiave": "roserpina.book_block",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-23-FS-abc": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-23-FS-nan": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-23-FS-inf": {
+  "chiave": "roserpina.liquidity_multiplier",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-24-FS-abc": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-24-FS-nan": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-24-FS-inf": {
+  "chiave": "roserpina.min_liquidity_absolute",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-25-FS-abc": {
+  "chiave": "roserpina.min_price",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-25-FS-nan": {
+  "chiave": "roserpina.min_price",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-25-FS-inf": {
+  "chiave": "roserpina.min_price",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-26-FS-abc": {
+  "chiave": "roserpina.max_win",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-26-FS-nan": {
+  "chiave": "roserpina.max_win",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-26-FS-inf": {
+  "chiave": "roserpina.max_win",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-27-FS-abc": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-27-FS-nan": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-27-FS-inf": {
+  "chiave": "roserpina.max_stake_pct",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-28-FS-abc": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-28-FS-nan": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-28-FS-inf": {
+  "chiave": "roserpina.profit_epsilon",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-29-FS-abc": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-29-FS-nan": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-29-FS-inf": {
+  "chiave": "roserpina.auto_green_delay_sec",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-30-FS-abc": {
+  "chiave": "roserpina.risk_profile",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-30-FS-nan": {
+  "chiave": "roserpina.risk_profile",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-30-FS-inf": {
+  "chiave": "roserpina.risk_profile",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-31-FS-abc": {
+  "chiave": "roserpina.allow_recovery",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-31-FS-nan": {
+  "chiave": "roserpina.allow_recovery",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-31-FS-inf": {
+  "chiave": "roserpina.allow_recovery",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-32-FS-abc": {
+  "chiave": "roserpina.anti_duplication_enabled",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-32-FS-nan": {
+  "chiave": "roserpina.anti_duplication_enabled",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-32-FS-inf": {
+  "chiave": "roserpina.anti_duplication_enabled",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-33-FS-abc": {
+  "chiave": "roserpina.liquidity_guard_enabled",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-33-FS-nan": {
+  "chiave": "roserpina.liquidity_guard_enabled",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-33-FS-inf": {
+  "chiave": "roserpina.liquidity_guard_enabled",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-34-FS-abc": {
+  "chiave": "roserpina.liquidity_warning_only",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-34-FS-nan": {
+  "chiave": "roserpina.liquidity_warning_only",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-34-FS-inf": {
+  "chiave": "roserpina.liquidity_warning_only",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-35-FS-abc": {
+  "chiave": "roserpina.max_win_warning_only",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-35-FS-nan": {
+  "chiave": "roserpina.max_win_warning_only",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-35-FS-inf": {
+  "chiave": "roserpina.max_win_warning_only",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-36-FS-abc": {
+  "chiave": "roserpina.auto_green_delay_enabled",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-36-FS-nan": {
+  "chiave": "roserpina.auto_green_delay_enabled",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-36-FS-inf": {
+  "chiave": "roserpina.auto_green_delay_enabled",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-37-FS-abc": {
+  "chiave": "roserpina.profit_epsilon_enabled",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-37-FS-nan": {
+  "chiave": "roserpina.profit_epsilon_enabled",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-37-FS-inf": {
+  "chiave": "roserpina.profit_epsilon_enabled",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-FS-abc": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-FS-nan": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-FS-inf": {
+  "chiave": "roserpina.max_order_exposure",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-FS-abc": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-FS-nan": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-FS-inf": {
+  "chiave": "roserpina.max_market_exposure",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-FS-abc": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-FS-nan": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-FS-inf": {
+  "chiave": "roserpina.max_event_exposure_abs",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-41-FS-abc": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "abc",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-41-FS-nan": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "nan",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-41-FS-inf": {
+  "chiave": "roserpina.max_drawdown_abs",
+  "valore": "inf",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "corrupt_keys": []
+  },
+  "verdetto": "NON_CONFORME"
+ }
+}

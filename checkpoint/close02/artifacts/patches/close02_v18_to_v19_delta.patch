@@ -1,0 +1,316 @@
+diff --git a/cashout_executor.py b/cashout_executor.py
+index b9801fc..31b17e3 100644
+--- a/cashout_executor.py
++++ b/cashout_executor.py
+@@ -41,8 +41,12 @@ from __future__ import annotations
+ 
+ import logging
+ import math
++import time
++import uuid
+ from typing import Any, Dict, Optional
+ 
++from core.order_identity import derive_customer_ref
++
+ from core.trading_constants import (
+     CASHOUT_FAILED,
+     CASHOUT_SUCCESS,
+@@ -57,10 +61,15 @@ class CashoutExecutor:
+ 
+     _VALID_SIDES = {"BACK", "LAY"}
+ 
+-    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None) -> None:
++    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
++                 ledger: Optional[Any] = None) -> None:
+         self.bus = bus
+         self.order_router = order_router
+         self.safety_layer = safety_layer
++        # PROPOSTA close02 v19 (CL18-CASH-LEDGER-001): ledger ordini del bot (``Database``).
++        # L'hedge vi si registra PRIMA dell'invio e poi con l'esito e il betId: senza questa
++        # riga il poller LIVE dei settlement scarta il suo P/L realizzato.
++        self.ledger = ledger
+ 
+     def wire(self) -> None:
+         """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus."""
+@@ -98,13 +107,60 @@ class CashoutExecutor:
+         # Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (la
+         # finestra della chiamata di rete) → flag sim errato (Codex P2).
+         sim = self._is_simulation()
++        # PROPOSTA close02 v19 (CL18): scrittura del ledger PRIMA dell'invio. Scrittura
++        # fallita => nessun ordine reale senza traccia locale (fail-closed).
++        ledger_id = None
++        if self.ledger is not None:
++            try:
++                ledger_id = self.ledger.insert_order({
++                    "customer_ref": place_payload["customer_ref"],
++                    "correlation_id": f"cashout-{uuid.uuid4().hex}",
++                    "status": "INFLIGHT",
++                    "created_at": time.time(),
++                    "payload": {**place_payload, "kind": "CASHOUT_HEDGE"},
++                })
++            except Exception as exc:  # noqa: BLE001 - fail-closed intenzionale
++                self._fail(f"ledger_write_failed:{exc}", status="REJECTED", payload=payload)
++                return
+         try:
+             result = self.order_router.place(place_payload)
+         except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
++            self._record_outcome(ledger_id, "AMBIGUOUS", None, reason=f"place_exception:{exc}")
+             self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
+             return
+ 
+-        self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
++        result = result if isinstance(result, dict) else {}
++        self._record_outcome(ledger_id, self._ledger_status(result), result)
++        self._handle_result(result, payload, sim)
++
++    @staticmethod
++    def _ledger_status(result: Dict[str, Any]) -> str:
++        """Stato del ledger dall'esito normalizzato dell'OrderRouter (mai INFLIGHT dopo l'invio)."""
++        if result.get("order_unknown"):
++            return "AMBIGUOUS"
++        if not result.get("placed"):
++            return "FAILED"
++        try:
++            matched = float(result.get("matched") or 0.0)
++        except (TypeError, ValueError):
++            return "AMBIGUOUS"
++        return "MATCHED" if matched > 0.0 else "PLACED"
++
++    def _record_outcome(self, ledger_id: Any, status: str, result: Optional[Dict[str, Any]],
++                        reason: str = "") -> None:
++        if self.ledger is None or ledger_id is None:
++            return
++        try:
++            self.ledger.update_order(ledger_id, {
++                "status": status,
++                "response": dict(result) if isinstance(result, dict) else None,
++                "reason": reason or None,
++                "ambiguity_reason": (reason or None) if status == "AMBIGUOUS" else None,
++                "updated_at": time.time(),
++            })
++        except Exception:  # noqa: BLE001 - l'ordine puo' esistere: allarme, mai silenzio
++            logger.critical("[CashoutExecutor] ledger non aggiornato per l'hedge (riga %s, stato %s): "
++                            "betId non registrato, riconciliazione richiesta", ledger_id, status)
+ 
+     @classmethod
+     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
+@@ -148,7 +204,14 @@ class CashoutExecutor:
+             "price": payload["price"],
+             "stake": payload["stake"],
+             "event_key": str(payload.get("event_key", "")),
+-            "customer_ref": str(payload.get("source", "") or ""),
++            # PROPOSTA close02 v19 (CL19-CASH-REF-001): ref per INTENTO, non il `source`
++            # ("TELEGRAM"/"UI" era lo stesso customerRef per ogni cashout => de-dup Betfair
++            # di 60 s sugli hedge successivi). Stesso intento => stesso ref.
++            "customer_ref": derive_customer_ref("co", {
++                "market_id": str(payload["market_id"]), "selection_id": str(payload["selection_id"]),
++                "side": str(payload["side"]).upper(), "price": str(payload["price"]),
++                "stake": str(payload["stake"]), "event_key": str(payload.get("event_key", "")),
++            }),
+             "event_name": str(payload.get("event_name", "")),
+             "market_name": str(payload.get("market_name", "")),
+             "runner_name": str(payload.get("runner_name", "")),
+diff --git a/cashout_wiring.py b/cashout_wiring.py
+index 102101a..aef3e6f 100644
+--- a/cashout_wiring.py
++++ b/cashout_wiring.py
+@@ -51,6 +51,7 @@ def cabla_catena_cashout(
+     betfair_service: Any,
+     persist: Callable[[Dict[str, Any]], None],
+     notify: Callable[..., None],
++    ledger: Any = None,
+ ) -> CatenaCashout:
+     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
+ 
+@@ -76,7 +77,9 @@ def cabla_catena_cashout(
+         raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
+ 
+     order_router = OrderRouter(betfair_service)
+-    cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer())
++    # PROPOSTA close02 v19 (CL18): ``ledger`` = DB del bot; l'hedge entra nell'identita' del
++    # bot e il suo settlement LIVE viene realizzato dal poller.
++    cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(), ledger=ledger)
+     cashout_executor.wire()
+ 
+     cashout_request_bridge = CashoutRequestBridge(bus)
+diff --git a/headless_main.py b/headless_main.py
+index 7a27b39..bfdb5cc 100644
+--- a/headless_main.py
++++ b/headless_main.py
+@@ -517,6 +517,7 @@ class HeadlessApp:
+             # _safe_persist nel handler assorbe eventuali errori di scrittura.
+             persist=lambda record: self.db.insert_audit_event(record),
+             notify=self._notify_cashout_residual,
++            ledger=self.db,  # PROPOSTA close02 v19 (CL18-CASH-LEDGER-001)
+         )
+         self.order_router = catena.order_router
+         self.cashout_executor = catena.cashout_executor
+diff --git a/mini_gui.py b/mini_gui.py
+index 2c6f550..715399e 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -519,6 +519,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             # Lazy: il record e' scritto solo a CASHOUT_FAILED-time, mai qui.
+             persist=lambda record: self.db.insert_audit_event(record),
+             notify=self._notify_cashout_residual,
++            ledger=self.db,  # PROPOSTA close02 v19 (CL18-CASH-LEDGER-001)
+         )
+         self.order_router = catena_cashout.order_router
+         self.cashout_executor = catena_cashout.cashout_executor
+diff --git a/tests/close02/test_close02_v19_cashout_ledger.py b/tests/close02/test_close02_v19_cashout_ledger.py
+new file mode 100644
+index 0000000..13ab967
+--- /dev/null
++++ b/tests/close02/test_close02_v19_cashout_ledger.py
+@@ -0,0 +1,151 @@
++"""close02 v19 — CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 (hedge del cashout).
++
++CL18: l'hedge piazzato da CashoutExecutor -> OrderRouter non entrava nel ledger ordini del bot, quindi il
++poller LIVE dei settlement scartava la sua riga cleared: P/L realizzato +10 invece di -50/7 (fonte
++#461/6085516609 V1 'fill completo->riconciliare payoff netto', PF-CASH-21; #506/6124429007 P&L realizzato
++solo da listClearedOrders). Correzione: scrittura del ledger PRIMA dell'invio (INFLIGHT), aggiornata con
++l'esito e il betId; scrittura fallita => nessun ordine (fail-closed).
++
++CL19: il customerRef dell'hedge era il campo `source` ("TELEGRAM"/"UI"): stesso ref per ogni cashout, de-dup
++Betfair di 60 s (#506 BF2-D001) => un CASHOUT_ALL su piu' mercati poteva perdere gli hedge successivi.
++Correzione: ref deterministico per intento (mercato, selezione, lato, prezzo, stake, evento), conforme."""
++import inspect
++from pathlib import Path
++
++import pytest
++
++import cashout_wiring
++from cashout_executor import CashoutExecutor
++from core.order_identity import is_betfair_customer_ref
++from database import Database
++from tests.core.test_settlement_poller import _closes, _controller
++
++M = "1.230000777"
++CMD = {"market_id": M, "selection_id": 1222347, "side": "LAY", "price": 7.0, "stake": 2.86,
++       "green_up": -7.15, "source": "TELEGRAM", "event_name": "Squadra A v Squadra B", "event_key": "ek-1"}
++ROOT = Path(__file__).resolve().parents[2]
++
++
++class _Bus:
++    def __init__(self):
++        self.events = []
++
++    def subscribe(self, *_a):
++        pass
++
++    def publish(self, name, payload=None):
++        self.events.append((name, payload))
++
++
++class _Router:
++    def __init__(self, result=None, exc=None):
++        self.calls, self.result, self.exc = [], result, exc
++
++    def place(self, payload):
++        self.calls.append(dict(payload))
++        if self.exc:
++            raise self.exc
++        return dict(self.result)
++
++
++MATCHED = {"ok": True, "placed": True, "order_unknown": False, "status": "SUCCESS", "matched": 2.86,
++           "bet_id": "900000000123", "error": None, "raw": {}}
++
++
++def _rows(db):
++    return db._execute("SELECT customer_ref, status, payload_json, response_json FROM orders",
++                       fetch=True, commit=False) or []
++
++
++def _exec(db, router):
++    bus = _Bus()
++    ex = CashoutExecutor(bus, router, ledger=db)
++    ex.on_cmd_execute_cashout(dict(CMD))
++    return bus
++
++
++def test_hedge_registrato_nel_ledger_bot_con_bet_id(tmp_path):
++    db = Database(str(tmp_path / "l.sqlite"))
++    _exec(db, _Router(MATCHED))
++    bot = db.get_bot_active_orders()
++    assert {"bet_id": "900000000123", "market_id": M} == {k: bot[0][k] for k in ("bet_id", "market_id")}
++
++
++def test_poller_live_realizza_anche_l_hedge_payoff_netto(tmp_path):
++    db = Database(str(tmp_path / "l.sqlite"))
++    _exec(db, _Router(MATCHED))
++    ledger = db.get_bot_active_orders() + [{"bet_id": "101", "market_id": M, "event_name": "A v B"}]
++    rows = [{"betId": "101", "marketId": M, "profit": 10.0, "commission": 0.0, "settledDate": "2026-10-13T10:00:00Z"},
++            {"betId": "900000000123", "marketId": M, "profit": -17.16, "commission": 0.0,
++             "settledDate": "2026-10-13T10:00:00Z"}]
++    rc = _controller(results=[rows], bot_orders=ledger)
++    rc._poll_cleared_settlements()
++    gross = round(sum(float(p["gross_pnl"]) for p in _closes(rc)), 2)
++    assert gross == -7.16  # +10 - 6*2.86 (hedge arrotondato al tick 2.86)
++
++
++def test_scrittura_ledger_fallita_nessun_ordine(tmp_path):
++    class _Rotto:
++        def insert_order(self, _p):
++            raise OSError("disk I/O error")
++
++    router, bus = _Router(MATCHED), _Bus()
++    CashoutExecutor(bus, router, ledger=_Rotto()).on_cmd_execute_cashout(dict(CMD))
++    assert router.calls == []
++    fails = [p for n, p in bus.events if n == "CASHOUT_FAILED"]
++    assert fails and fails[0]["status"] == "REJECTED" and "ledger" in fails[0]["reason"]
++
++
++@pytest.mark.parametrize("router,stato", [
++    (_Router(MATCHED), "MATCHED"),
++    (_Router({**MATCHED, "ok": False, "placed": False, "order_unknown": True, "bet_id": None, "matched": 0.0}),
++     "AMBIGUOUS"),
++    (_Router(exc=TimeoutError("read timeout")), "AMBIGUOUS"),
++    (_Router({**MATCHED, "ok": False, "matched": 0.0}), "PLACED"),
++    (_Router({**MATCHED, "ok": False, "placed": False, "bet_id": None, "matched": 0.0, "error": "INSUFFICIENT"}),
++     "FAILED"),
++])
++def test_esito_registrato_mai_lasciato_inflight(tmp_path, router, stato):
++    db = Database(str(tmp_path / "l.sqlite"))
++    _exec(db, router)
++    rows = _rows(db)
++    assert len(rows) == 1 and rows[0]["status"] == stato
++
++
++def test_customer_ref_per_intento_conforme_e_non_source(tmp_path):
++    db = Database(str(tmp_path / "l.sqlite"))
++    router = _Router(MATCHED)
++    ex = CashoutExecutor(_Bus(), router, ledger=db)
++    ex.on_cmd_execute_cashout(dict(CMD))
++    ex.on_cmd_execute_cashout(dict(CMD, market_id="1.230000888"))  # CASHOUT_ALL: altro mercato
++    ex.on_cmd_execute_cashout(dict(CMD))  # stesso intento ripetuto
++    refs = [c["customer_ref"] for c in router.calls]
++    assert all(is_betfair_customer_ref(r) and r not in ("TELEGRAM", "UI") for r in refs), refs
++    assert refs[0] != refs[1] and refs[0] == refs[2]
++    assert [r["customer_ref"] for r in _rows(db)] == refs  # wire e ledger allineati
++
++
++def test_wiring_passa_il_ledger_agli_entrypoint():
++    bus = _Bus()
++
++    class _Svc:
++        pass
++
++    led = object()
++    catena = cashout_wiring.cabla_catena_cashout(bus=bus, betfair_service=_Svc(), persist=lambda r: None,
++                                                 notify=lambda *a, **k: None, ledger=led)
++    assert catena.cashout_executor.ledger is led
++    for f in ("headless_main.py", "mini_gui.py"):
++        src = (ROOT / f).read_text(encoding="utf-8")
++        i = src.index("cabla_catena_cashout(")
++        assert "ledger=self.db" in src[i:i + 600], f
++
++
++def test_red_api_esistente_customer_ref_non_e_il_source():
++    # RED su v18 senza nuova API: oggi il ref sul wire e' 'TELEGRAM' per ogni cashout.
++    router = _Router(MATCHED)
++    ex = CashoutExecutor(_Bus(), router)
++    ex.on_cmd_execute_cashout(dict(CMD))
++    ex.on_cmd_execute_cashout(dict(CMD, market_id="1.230000888"))
++    refs = [c["customer_ref"] for c in router.calls]
++    assert refs[0] != refs[1] and "TELEGRAM" not in refs, refs

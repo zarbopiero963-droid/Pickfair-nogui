@@ -1,0 +1,12 @@
+UCCISO           V01 ledger mai scritto
+UCCISO           V02 scrittura fallita ignorata
+UCCISO           V03 esito non registrato
+UCCISO           V04 ambiguo come fallito
+UCCISO           V05 eccezione non registrata
+UCCISO           V06 abbinato come PLACED
+UCCISO           V07 ref = source
+UCCISO           V08 ref senza mercato
+UCCISO           V09 wiring senza ledger
+UCCISO           V10 risposta non salvata
+UCCISO           V11 headless senza ledger
+uccisi 11 / 11

@@ -9,7 +9,8 @@
 
 4. `artifacts/patches/close02_v15_to_v16_delta.patch`: v16 (Claude), solo test (`tests/close02/test_close02_v16.py`), uccide M51. Cumulativo: `close02_findings_proposal_v16.patch`.
 5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch`.
-6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch` (**ultimo**). Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
+6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch`. Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
+7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch` (**ultimo**). Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -316,6 +317,47 @@ Note sui file:
 1. v19: CL18-CASH-LEDGER-001 (RED→GREEN, una sola modifica attiva).
 2. L6 resto: FAILSAFE con chiave corrotta via loader reale per le 41 chiavi su main/#505/v18; poi PARITY, RACE, AUDIT, OBSERVABLE, S1.
 3. L4.
+
+## v19 — Claude, PF-AUTO-MASTER-01 (13/10/2026)
+Nessuna modifica a #505 o a `main`. **Gate A: NON PASS.** Le prove stanno in `artifacts/claude_v19/`.
+
+**Ordine di applicazione, passo 7:** `artifacts/patches/close02_v18_to_v19_delta.patch`. Cumulativo `close02_findings_proposal_v19.patch` (**ultimo**). Verificato: v18 cumulativa + delta = v19 cumulativa (sha256 8f9004ea0234…).
+
+### 1. CL18-CASH-LEDGER-001 (P0 LIVE) e CL19-CASH-REF-001 (P0) corretti nel patch isolato
+**CL18 — l'hedge mancava dal ledger del bot.**
+- `CashoutExecutor` riceve il ledger del bot (`Database`).
+- Scrive la riga `INFLIGHT` PRIMA dell'invio; se la scrittura fallisce, nessun ordine (`CASHOUT_FAILED` REJECTED `ledger_write_failed`).
+- Dopo l'invio aggiorna la riga con l'esito normalizzato dell'OrderRouter e il `betId`. Stati: `MATCHED`, `PLACED` (a riposo), `FAILED`, `AMBIGUOUS` (`order_unknown` o eccezione del place). Mai `INFLIGHT` dopo l'invio.
+- Un aggiornamento fallito dopo un ordine possibile è registrato come allarme critico: l'ordine può esistere e richiede riconciliazione.
+- L'hedge entra così in `get_bot_active_orders()`, e il poller LIVE dei settlement realizza anche il suo P/L.
+- Cablaggio: `cabla_catena_cashout(..., ledger=...)`; headless e GUI passano `self.db`. Nessun cambiamento visivo, quindi design handoff N/A.
+
+**CL19 — riferimento `customerRef` condiviso fra tutti i cashout.**
+- **Difetto:** il `customerRef` dell'hedge era il campo `source` (`"TELEGRAM"`/`"UI"`), valido per Betfair e quindi inviato sul wire (`betfair_client.py` `_normalize_customer_ref`). Ogni cashout aveva lo stesso ref: con la de-dup Betfair di 60 s (#506 BF2-D001), un CASHOUT_ALL su più mercati poteva perdere gli hedge successivi al primo.
+- **Correzione:** il ref è derivato per intento (`derive_customer_ref("co", mercato, selezione, lato, prezzo, stake, event_key)`), conforme a Betfair. Lo stesso intento ripetuto dà lo stesso ref; mercati diversi danno ref diversi.
+
+**Prove.**
+- **RED su v18 pulito:** 11/11 falliscono (`red_v19_clean_v18.txt`). Il RED comportamentale con l'API esistente mostra `'TELEGRAM' == 'TELEGRAM'` su due mercati diversi. Il RED di CL18 è anche la sonda `claude_v18/probe_cash_ledger.py` (+10,00 invece di −7,14).
+- **GREEN:** `test_close02_v19_cashout_ledger.py` 11/11; il test end-to-end ledger → poller dà un P/L lordo di −7,16 (hedge 2,86).
+- **Suite completa py3.11 sull'albero finale:** 7566 passed, 0 failed (`suite_v19_py311.summary.txt`).
+- **Mutazione mirata:** 11/11 uccisi (`mut_v19.txt`).
+
+### 2. L6 FAILSAFE: 41 chiavi × 3 valori corrotti via loader reale
+- **Sonda:** `l6/probe_l6_failsafe.py`. Per ogni chiave: valore `abc`, `nan` o `inf` salvato su DB temporaneo, caricato da `SettingsService` reale, poi segnale valido sulla catena reale. Nessuna rete.
+- **Oracolo uniforme dalla fonte** (phase_row_verbatim L6 FAILSAFE, #461/6085510337): «Dati corrotti … non devono consentire nuovi effetti monetari non autorizzati». Controllo con config valida ⇒ ammesso.
+
+| Albero | Casi | Non conformi | Note |
+|---|---|---|---|
+| main 028cee9 | 123 | 114 | Conformi solo RSR-17/18/19 (cap già validati singolarmente) |
+| #505 618884e | 123 | 102 | In più RSR-38/39/40 |
+| v18 | 123 | **0** | `config_corrotta` 108, gate t80u 15; ogni chiave marcata corrotta dal loader |
+
+- **Conseguenza per #505 (fase 3):** serve il gate `config_corrotta` del patch close02 (FAILSAFE in 34 controlli).
+
+### Prossime attività
+1. L6 resto: PARITY (BACK/LAY, GUI/headless), RACE, AUDIT, OBSERVABLE, S1, con sonde discriminanti.
+2. L4.
+3. Pacchetto di revisione indipendente (senza spesa).
 
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |
