@@ -1,0 +1,41 @@
+PASS originali 17 tutti FAIL
+PASS ricostruiti 17 tutti PASS
+PASS mutazione 'rimozione caso che copre la prima clausola primaria' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione del 50% dei casi' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione di tutti i casi boundary' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione di tutti i casi positivi' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione del mapping clausola→casi' → FAIL su tutti i record applicabili
+PASS mutazione 'mapping svuotato (case_ids vuoti)' → FAIL su tutti i record applicabili
+PASS mutazione 'mapping ridiretto a casi che non coprono la clausola' → FAIL su tutti i record applicabili
+PASS mutazione 'case_id duplicato' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione dei casi di un tipo per una clausola' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione numeri (amounts vuoti)' → FAIL su tutti i record applicabili
+PASS mutazione 'fonte importo ignota' → FAIL su tutti i record applicabili
+PASS mutazione 'limite senza fonte' → FAIL su tutti i record applicabili
+PASS mutazione 'precondizioni rimosse (pre vuoto)' → FAIL su tutti i record applicabili
+PASS mutazione 'stati di rischio rimossi' → FAIL su tutti i record applicabili
+PASS mutazione 'norm_vs_impl rimosso' → FAIL su tutti i record applicabili
+PASS mutazione 'inserimento dominio 150% non comprovato' → FAIL su tutti i record applicabili
+PASS mutazione 'tolleranza 0,50 € inserita' → FAIL su tutti i record applicabili
+PASS mutazione 'drawdown in %' → FAIL su tutti i record applicabili
+PASS mutazione 'rimozione casi negativi' → FAIL su tutti i record applicabili
+PASS controllo incrociato: ogni clausola del generatore taggata da ≥1 caso
+INFO limite noto: 4/17 record passano anche con casi ancorati ridotti a citazione della clausola (C10 non misura il merito)
+PASS originali 570 tutti FAIL (570/570)
+PASS Q5 36 record drawdown ricostruiti PASS (36/36)
+PASS Q5 mutazione 'rimozione caso SIM (DD3)' → FAIL 36/36
+PASS Q5 mutazione 'limite drawdown sostituito da % ' → FAIL 36/36
+PASS Q5 mutazione 'rimozione regola owner Q5 dal mapping' → FAIL 36/36
+PASS Q5 mutazione 'rimozione caso al confine 10.00 (DD6)' → FAIL 36/36
+PASS Q5 mutazione 'caso 10.01 cambiato in 9.99' → FAIL 36/36
+PASS Q5 mutazione 'DD6 riportato a PENDING' → FAIL 36/36
+PASS Q3 mutazione 'uguaglianza al cap rifiutata' → FAIL 37/37
+PASS C14 record-specific L1–L5 senza errori C14 (907/907); preflight completo PASS 879/907
+PASS C14 mutazione 'provenienza OBSERVED_ONLY' su record PASS → FAIL 879/879
+PASS C14 mutazione 'oracolo che riporta l'osservato' su record PASS → FAIL 879/879
+PASS C14 mutazione 'clausola citata non verbatim' su record PASS → FAIL 879/879
+PASS C14 mutazione 'osservato fuori da impl_attuale' su record PASS → FAIL 879/879
+PASS C14 mutazione 'OWNER_DECISION senza regola registrata' su record PASS → FAIL 879/879
+PASS C15 mutazione 'Q3 su record senza soggetto cap' → FAIL 479/479
+PASS C15 mutazione 'fixture € su record non monetario' → FAIL 136/136
+PASS C15 controllo: Q3 su record con soggetto cap resta PASS (FAIL 0/400)

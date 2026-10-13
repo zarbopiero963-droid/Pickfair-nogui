@@ -1,0 +1,52 @@
+== BASELINE_GREEN
+75 passed in 2.03s
+== M1_start_attivo_anche_se_recovery_ko
+7 failed, 68 passed in 2.12s
+== M2_schema_startup_orders_rimosso
+2 failed, 73 passed in 2.11s
+== M3_errore_lettura_ordini_ignorato
+2 failed, 73 passed in 2.34s
+== M4_picco_non_ripristinato
+8 failed, 67 passed in 2.08s
+== M5_riga_corrotta_ignorata
+4 failed, 71 passed in 2.22s
+== M6_mancante_come_primo_avvio
+1 failed, 74 passed in 2.18s
+== M7_risk_stop_mancante_riapre
+1 failed, 74 passed in 2.32s
+== M9_resume_scavalca
+1 failed, 74 passed in 2.11s
+== M10_daily_loss_mancante_ignorato
+1 failed, 74 passed in 2.01s
+== M11_gate_t80u_segnale_rimosso
+5 failed, 70 passed in 1.97s
+== M12_t80u_fuori_da_loss_block
+20 failed, 55 passed in 2.01s
+== M13_assenza_non_segnalata
+6 failed, 69 passed in 1.99s
+== M14_recovery_assente_resta_true
+6 failed, 69 passed in 2.01s
+== M15_rsr38_non_caricata
+1 failed, 74 passed in 1.95s
+== M16_hook_nuovo_massimo_rimosso
+2 failed, 73 passed in 1.95s
+== M17_registro_sparito_ignorato (pre-correzione saghe)
+1 failed, 74 passed in 2.11s
+== M18_blocco_registro_non_durevole
+1 failed, 74 passed in 1.98s
+== M19_emergenza_mancante_ignorata
+1 failed, 74 passed in 2.08s
+== M20_picco_scritto_prima_del_ripristino
+14 failed, 61 passed in 2.17s
+== M21_blocco_daily_loss_non_durevole
+1 failed, 74 passed in 2.22s
+== M22_gate_daily_loss_mancante_rimosso
+1 failed, 74 passed in 2.05s
+== M23_commissione_inventata
+3 failed, 72 passed in 2.10s
+== M24_massimo_recovery_azzerato_per_altra_chiave
+3 failed, 72 passed in 2.22s
+== M17_registro_sparito_ignorato_rerun
+1 failed, 74 passed in 2.40s
+== M18_rerun
+1 failed, 74 passed in 2.17s

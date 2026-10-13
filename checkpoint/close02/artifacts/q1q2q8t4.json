@@ -1,0 +1,764 @@
+{
+ "Q1": [
+  {
+   "id": "RSR-01",
+   "key": "roserpina.target_profit_cycle_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "non definito: target 0 = ciclo sempre raggiunto",
+   "cls": "PENDING_OWNER (influenza il sizing: money risk)",
+   "proposal": "(0,100]",
+   "consequence": "senza limite, valori negativi/NaN alterano il target e il sizing",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-02",
+   "key": "roserpina.max_single_bet_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52); uso in dutching_controller.py:1522-1527",
+   "range": null,
+   "zero": "0 ⇒ ogni stake rifiutato (fail-closed)",
+   "cls": "PENDING_OWNER (money risk); il limite vincolante resta 10 € (Q3/Q4)",
+   "proposal": "(0,100]",
+   "consequence": ">100 renderebbe il cap irraggiungibile; il limite € continua a prevalere",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-03",
+   "key": "roserpina.max_total_exposure_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52); dutching_controller.py:1519-1530",
+   "range": null,
+   "zero": "0 ⇒ nessuna esposizione ammessa",
+   "cls": "PENDING_OWNER (money risk); vincolante 10 € (#426/6131980558 §1)",
+   "proposal": "(0,100]",
+   "consequence": "come RSR-02",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-04",
+   "key": "roserpina.max_event_exposure_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "0 ⇒ nessuna esposizione per evento",
+   "cls": "PENDING_OWNER (money risk)",
+   "proposal": "(0,100]",
+   "consequence": "come RSR-02",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-05",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "non definito",
+   "cls": "PENDING_OWNER; per Q5 non può indebolire il drawdown di 10 €",
+   "proposal": "(0,100]",
+   "consequence": "basse: la soglia % è solo di stato",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-06",
+   "key": "roserpina.defense_drawdown_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "non definito",
+   "cls": "PENDING_OWNER; vincolo Q5",
+   "proposal": "(0,100]",
+   "consequence": "come RSR-05",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-07",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "non definito",
+   "cls": "PENDING_OWNER; vincolo Q5",
+   "proposal": "(0,100]",
+   "consequence": "come RSR-05",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-08",
+   "key": "roserpina.expansion_profit_pct",
+   "source": "#461 (nessun intervallo)",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52)",
+   "range": null,
+   "zero": "0 ⇒ espansione subito (aumenta il rischio)",
+   "cls": "PENDING_OWNER (attiva l'aumento dello stake)",
+   "proposal": "(0,100]",
+   "consequence": "soglia bassa/negativa anticipa l'espansione",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-13",
+   "key": "roserpina.commission_pct",
+   "source": "Betfair: commissione sul netto di mercato (COMMISSION_RULE); valore dipendente dall'account",
+   "code": "GUI: float() senza controlli (mini_gui.py@028cee9:1989-2006: accetta NaN, Inf, negativi, 0); load: _f() sostituisce silenziosamente il default se il valore non è convertibile (services/setting_service.py@028cee9:48-52); pnl_engine.py:90 rifiuta 0 fuori dall'anteprima",
+   "range": "dominio tecnico [0,100); valore reale = dato dell'account",
+   "zero": "0 rifiutato a runtime fuori dall'anteprima",
+   "cls": "TECNICA_DELEGATA (validazione); valore = evidenza dell'account in sola lettura, non verificata",
+   "proposal": "finito, 0<x<100",
+   "consequence": "un valore errato altera il P/L netto",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-20",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "source": "#461 nome del campo '(0-100, vuoto=non impostato)'",
+   "code": "mini_gui.py@028cee9:1846-1849 finito >0 e <=100, vuoto=None; config_registry.py:458-462; runtime_controller.py:1502",
+   "range": "(0,100] applicato; fonte 0-100",
+   "zero": "la fonte include 0, il codice lo rifiuta; decisione minima: 0 = stop immediato (più restrittivo) oppure rifiuto",
+   "cls": "FONTE (intervallo) + PENDING_OWNER solo per lo 0; Q5: non indebolisce i 10 €",
+   "proposal": "mantenere il rifiuto dello 0 (nessun significato operativo)",
+   "consequence": "nessuna sul limite in € (Q5)",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-21",
+   "key": "roserpina.book_warning",
+   "source": "#461 (avviso over-round, nessun intervallo)",
+   "code": "mini_gui.py@028cee9:1853-1870 >0; 1961 warning<=block",
+   "range": "(0,∞) applicato",
+   "zero": "rifiutato",
+   "cls": "TECNICA_DELEGATA (solo avviso)",
+   "proposal": "finito >0 e <= book_block",
+   "consequence": "solo visualizzazione",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-22",
+   "key": "roserpina.book_block",
+   "source": "#461 '(blocca submit se book >= soglia)'",
+   "code": "mini_gui.py@028cee9:1853-1870 >0; dutching_controller.py:1064 '>='",
+   "range": "(0,∞) applicato, senza limite superiore",
+   "zero": "rifiutato",
+   "cls": "PENDING_OWNER per il limite superiore (una soglia molto alta disattiva il blocco: protezione)",
+   "proposal": "nessun valore inventato: limite superiore da decidere",
+   "consequence": "book_block 1000 equivale a guardia disattivata",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  },
+  {
+   "id": "RSR-27",
+   "key": "roserpina.max_stake_pct",
+   "source": "#461 '(avviso se esposizione operazione > %)'",
+   "code": "mini_gui.py@028cee9:1969-1975 >0 e <=100",
+   "range": "(0,100] applicato dal codice",
+   "zero": "rifiutato",
+   "cls": "TECNICA_DELEGATA (solo avviso)",
+   "proposal": "= codice",
+   "consequence": "solo avviso",
+   "tests": [
+    "rifiuto NaN",
+    "rifiuto +Inf/-Inf",
+    "rifiuto bool",
+    "rifiuto testo",
+    "negativo",
+    "zero",
+    "limite superiore",
+    "valore assente/vuoto/corrotto al load (stato esplicito, nessun default silenzioso)"
+   ]
+  }
+ ],
+ "Q2": [
+  {
+   "id": "RSR-09",
+   "key": "roserpina.expansion_multiplier",
+   "meaning": "moltiplica lo stake in espansione",
+   "code": "GUI float()/int() senza controlli; load _f/_i con default silenzioso",
+   "cls": "PENDING_OWNER (aumenta il rischio monetario)",
+   "proposal": ">=1, limite superiore da decidere",
+   "edge": "negativo/0 ⇒ stake nullo o negativo; molto alto ⇒ stake elevato (il cap di 10 € prevale)",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-10",
+   "key": "roserpina.defense_multiplier",
+   "meaning": "riduce lo stake in difesa",
+   "code": "GUI float()/int() senza controlli; load _f/_i con default silenzioso",
+   "cls": "TECNICA_DELEGATA con vincolo di sicurezza (0,1]: >1 trasformerebbe la difesa in un aumento",
+   "proposal": "(0,1]",
+   "edge": ">1 indebolisce la difesa ⇒ va rifiutato",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-11",
+   "key": "roserpina.table_count",
+   "meaning": "numero di tavoli",
+   "code": "GUI int(); table_manager.py:48,88 max(1,…) con clamp silenzioso di 0 e negativi",
+   "cls": "TECNICA_DELEGATA (intero >=1; rifiuto esplicito invece del clamp)",
+   "proposal": "intero >=1",
+   "edge": "0/negativo portati silenziosamente a 1",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-12",
+   "key": "roserpina.max_recovery_tables",
+   "meaning": "tavoli di recupero",
+   "code": "GUI float()/int() senza controlli; load _f/_i con default silenzioso",
+   "cls": "PENDING_OWNER (il recupero insegue le perdite: money risk)",
+   "proposal": "0..table_count",
+   "edge": "valore alto ⇒ più recupero in parallelo",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-14",
+   "key": "roserpina.min_stake",
+   "meaning": "stake minimo",
+   "code": "GUI float()/int() senza controlli; load _f/_i con default silenzioso",
+   "cls": "PENDING_OWNER legato a T4 (regola Italia: minimo 2,00 € BACK, fonte pubblica v39; applicabilità all'account non verificata)",
+   "proposal": "nessun valore definitivo senza T4",
+   "edge": "sotto il minimo dell'exchange ⇒ ordine rifiutato dall'exchange",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-15",
+   "key": "roserpina.max_stake_abs",
+   "meaning": "stake massimo assoluto €",
+   "code": "GUI float()/int() senza controlli; load _f/_i con default silenzioso",
+   "cls": "PENDING_OWNER (money); il cap di esposizione 10 € prevale",
+   "proposal": ">0",
+   "edge": "0/negativo non controllati",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-16",
+   "key": "roserpina.max_daily_loss",
+   "meaning": "hard-stop perdita giornaliera €",
+   "code": "mini_gui.py@028cee9:1839-1850 vuoto=None, finito >0; services/setting_service.py@028cee9:449-450 corrotto⇒NaN (fail-closed); obbligatorio per LIVE (config_registry.py:446-465)",
+   "cls": "FONTE ('€, vuoto=non impostato') + validazione di sicurezza nel codice; nessun valore owner",
+   "proposal": "= codice",
+   "edge": "vuoto ⇒ LIVE bloccato",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-17",
+   "key": "roserpina.max_open_exposure",
+   "meaning": "hard-stop esposizione aperta €",
+   "code": "come RSR-16; runtime_controller.py:3115-3131",
+   "cls": "FONTE + sicurezza; vale il min con i 10 € (Q3)",
+   "proposal": "valore effettivo = min(configurato, 10,00 €)",
+   "edge": "configurato sopra 10 € non indebolisce",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-18",
+   "key": "roserpina.max_session_loss",
+   "meaning": "stop perdita di sessione €",
+   "code": "come RSR-16 (non obbligatorio per LIVE)",
+   "cls": "FONTE + sicurezza",
+   "proposal": "= codice",
+   "edge": "vuoto = nessuno stop di sessione",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-19",
+   "key": "roserpina.max_exposure_stop",
+   "meaning": "stop esposizione complessiva €",
+   "code": "come RSR-16",
+   "cls": "FONTE + sicurezza; min con 10 € (Q3)",
+   "proposal": "min(configurato, 10,00 €)",
+   "edge": "come RSR-17",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-23",
+   "key": "roserpina.liquidity_multiplier",
+   "meaning": "liquidità richiesta = stake × moltiplicatore",
+   "code": "mini_gui.py@028cee9:1963 >0",
+   "cls": "TECNICA_DELEGATA",
+   "proposal": ">0",
+   "edge": "<1 ⇒ guardia più debole",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-24",
+   "key": "roserpina.min_liquidity_absolute",
+   "meaning": "floor di liquidità €",
+   "code": "mini_gui.py@028cee9:1873-1886 >=0, 0 = nessun floor",
+   "cls": "FONTE ('0 = nessun floor')",
+   "proposal": "= codice",
+   "edge": "0 ammesso",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-26",
+   "key": "roserpina.max_win",
+   "meaning": "cap di vincita/payout per gamba",
+   "code": "mini_gui.py@028cee9:1907-1922 >0",
+   "cls": "FONTE: regola Italia 'vincita potenziale ≤ 10.000 € incluso lo stake' (Betfair docs v39, art.12 c.4 DM 111/2006); validazione >0 nel codice",
+   "proposal": "(0, 10.000] per conti Italia",
+   "edge": "oltre 10.000 l'exchange rifiuta",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-28",
+   "key": "roserpina.profit_epsilon",
+   "meaning": "varianza di profitto oltre cui si mostra un avviso €",
+   "code": "mini_gui.py@028cee9:1968 >0; default 0.5",
+   "cls": "TECNICA_DELEGATA solo se resta un avviso; non può essere una tolleranza nelle decisioni di rischio (Q7)",
+   "proposal": ">0, solo visualizzazione",
+   "edge": "verificare che non condizioni mai gli ordini",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-30",
+   "key": "roserpina.risk_profile",
+   "meaning": "profilo di rischio",
+   "code": "mini_gui.py@028cee9:1999 RiskProfile(...) solleva su valore ignoto",
+   "cls": "FONTE (enum nel codice); i parametri dei profili sono codice",
+   "proposal": "enum",
+   "edge": "valore ignoto ⇒ errore",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-31",
+   "key": "roserpina.allow_recovery",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano)",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "False=più sicuro",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-32",
+   "key": "roserpina.anti_duplication_enabled",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano); FINDING DI SICUREZZA",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "FAIL-OPEN: un valore corrotto diventa False e disattiva l'anti-duplicazione",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-33",
+   "key": "roserpina.liquidity_guard_enabled",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano); FINDING DI SICUREZZA",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "FAIL-OPEN: un valore corrotto disattiva la guardia",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-34",
+   "key": "roserpina.liquidity_warning_only",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano)",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "corrotto ⇒ False ⇒ blocca (fail-closed)",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-35",
+   "key": "roserpina.max_win_warning_only",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano)",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "corrotto ⇒ False ⇒ blocca (fail-closed)",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-36",
+   "key": "roserpina.auto_green_delay_enabled",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano)",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "corrotto ⇒ False (grace disattivo)",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-37",
+   "key": "roserpina.profit_epsilon_enabled",
+   "meaning": "booleano",
+   "code": "services/setting_service.py@028cee9:60-64 _b(): tutto ciò che non è 1/true/yes/on diventa False, senza stato CORROTTO",
+   "cls": "FONTE (booleano)",
+   "proposal": "stato CORROTTO esplicito e fail-closed",
+   "edge": "solo visualizzazione",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-38",
+   "key": "roserpina.max_order_exposure",
+   "meaning": "cap assoluto €",
+   "code": "ASSENTE in main@028cee9 (git grep: 0 occorrenze non di test, salvo un riferimento per max_event_exposure_abs): campo descritto da #461 su #505 618884e",
+   "cls": "BLOCKED: analisi del codice possibile solo su #505, che non va toccata",
+   "proposal": "per RSR-41: effettivo = min(configurato, 10,00 €) (Q5)",
+   "edge": "n/d",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-39",
+   "key": "roserpina.max_market_exposure",
+   "meaning": "cap assoluto €",
+   "code": "ASSENTE in main@028cee9 (git grep: 0 occorrenze non di test, salvo un riferimento per max_event_exposure_abs): campo descritto da #461 su #505 618884e",
+   "cls": "BLOCKED: analisi del codice possibile solo su #505, che non va toccata",
+   "proposal": "per RSR-41: effettivo = min(configurato, 10,00 €) (Q5)",
+   "edge": "n/d",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-40",
+   "key": "roserpina.max_event_exposure_abs",
+   "meaning": "cap assoluto €",
+   "code": "ASSENTE in main@028cee9 (git grep: 0 occorrenze non di test, salvo un riferimento per max_event_exposure_abs): campo descritto da #461 su #505 618884e",
+   "cls": "BLOCKED: analisi del codice possibile solo su #505, che non va toccata",
+   "proposal": "per RSR-41: effettivo = min(configurato, 10,00 €) (Q5)",
+   "edge": "n/d",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  },
+  {
+   "id": "RSR-41",
+   "key": "roserpina.max_drawdown_abs",
+   "meaning": "cap assoluto €",
+   "code": "ASSENTE in main@028cee9 (git grep: 0 occorrenze non di test, salvo un riferimento per max_event_exposure_abs): campo descritto da #461 su #505 618884e",
+   "cls": "BLOCKED: analisi del codice possibile solo su #505, che non va toccata",
+   "proposal": "per RSR-41: effettivo = min(configurato, 10,00 €) (Q5)",
+   "edge": "n/d",
+   "tests": [
+    "negativo",
+    "zero",
+    "null/vuoto",
+    "default",
+    "estremi",
+    "overflow/Inf/NaN",
+    "bool/testo"
+   ]
+  }
+ ],
+ "Q8": {
+  "record": "DIFF-PF-C24-03",
+  "source": "#461/6085512485:46 'Prova BACK/LAY, € e quota, book vuoto/stale e crossing soglia…' con contesto PF-C24-01/02 (monitor SL/TP) e #461/6085516609 ('SL/TP specificano unità e base'; 'stop_loss … confrontato come importo assoluto…; nessuna base percentuale verificata')",
+  "result": "DETERMINATA: la 'soglia' è la soglia SL/TP configurata dall'utente per la posizione, espressa in € oppure in quota; non serve alcun valore owner. Fixture di test con qualunque soglia utente; le basi in % non sono supportate (nessuna base verificata) e vanno rifiutate o segnalate.",
+  "pending": null
+ },
+ "T4": {
+  "source": "Betfair Developer Docs 'Betting On Italian Exchange' pagina 2687808, versione 39 del 2026-07-31T09:37Z, letta pubblicamente in sola lettura (sha del JSON 8312fcd7…c857)",
+  "rules": [
+   "BACK: minimo 200 centesimi di euro, incrementi multipli di 50 centesimi",
+   "LAY: lo stake BACK corrispondente deve essere almeno 50 centesimi",
+   "massimo 50 istruzioni per placeOrders",
+   "vincita potenziale ≤ 10.000 € incluso lo stake",
+   "non si possono mescolare BACK e LAY nello stesso placeOrders"
+  ],
+  "account": "NON verificato: l'applicabilità all'account (conto Italia) richiede una lettura autenticata dell'account, non eseguita (nessuna credenziale usata). Nessuno step definitivo; T6 resta in attesa di T4."
+ }
+}

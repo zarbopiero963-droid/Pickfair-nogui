@@ -1,0 +1,3 @@
+XFAIL tests/close02/test_close02_gaps.py::test_bf007_sim_place_on_unknown_market_fails - CL02-BF-007 richiede decisione: anagrafica mercati SIM
+XFAIL tests/unit/test_session_recorder.py::TestCablaggioInPickfair::test_un_entrypoint_di_pickfair_costruisce_un_session_recorder - Recorder A2: il cablaggio in Pickfair non esiste ancora
+7329 passed, 15 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 425.35s (0:07:05)

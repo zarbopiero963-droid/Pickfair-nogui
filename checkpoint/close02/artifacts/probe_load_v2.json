@@ -1,0 +1,863 @@
+{
+ "RSR-04": {
+  "in_config": true,
+  "key": "roserpina.max_event_exposure_pct",
+  "default": "18.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "19.25",
+   "valore": "19.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "19.25"
+  },
+  "raw_vuoto": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-12": {
+  "in_config": true,
+  "key": "roserpina.max_recovery_tables",
+  "default": "2",
+  "type_default": "int",
+  "assente": {
+   "valore": "2",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "3",
+   "valore": "3",
+   "tipo": "int",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "3"
+  },
+  "raw_vuoto": {
+   "valore": "2",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "2",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "2",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "2",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-13": {
+  "in_config": true,
+  "key": "roserpina.commission_pct",
+  "default": "4.5",
+  "type_default": "float",
+  "assente": {
+   "valore": "4.5",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "5.75",
+   "valore": "5.75",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "5.75"
+  },
+  "raw_vuoto": {
+   "valore": "4.5",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "4.5",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-14": {
+  "in_config": true,
+  "key": "roserpina.min_stake",
+  "default": "0.1",
+  "type_default": "float",
+  "assente": {
+   "valore": "0.1",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "1.35",
+   "valore": "1.35",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "1.35"
+  },
+  "raw_vuoto": {
+   "valore": "0.1",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "0.1",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-15": {
+  "in_config": true,
+  "key": "roserpina.max_stake_abs",
+  "default": "10000.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "10000.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "10001.25",
+   "valore": "10001.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "10001.25"
+  },
+  "raw_vuoto": {
+   "valore": "10000.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "10000.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-16": {
+  "in_config": true,
+  "key": "roserpina.max_daily_loss",
+  "default": "None",
+  "type_default": "NoneType",
+  "assente": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "7.5",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "7.5"
+  },
+  "raw_vuoto": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-17": {
+  "in_config": true,
+  "key": "roserpina.max_open_exposure",
+  "default": "None",
+  "type_default": "NoneType",
+  "assente": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "7.5",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "7.5"
+  },
+  "raw_vuoto": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-18": {
+  "in_config": true,
+  "key": "roserpina.max_session_loss",
+  "default": "None",
+  "type_default": "NoneType",
+  "assente": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "7.5",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "7.5"
+  },
+  "raw_vuoto": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-19": {
+  "in_config": true,
+  "key": "roserpina.max_exposure_stop",
+  "default": "None",
+  "type_default": "NoneType",
+  "assente": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "7.5",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "7.5"
+  },
+  "raw_vuoto": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-20": {
+  "in_config": true,
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "default": "None",
+  "type_default": "NoneType",
+  "assente": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "7.5",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "7.5"
+  },
+  "raw_vuoto": {
+   "valore": "None",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-23": {
+  "in_config": true,
+  "key": "roserpina.liquidity_multiplier",
+  "default": "3.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "3.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "4.25",
+   "valore": "4.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "4.25"
+  },
+  "raw_vuoto": {
+   "valore": "3.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "3.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-27": {
+  "in_config": true,
+  "key": "roserpina.max_stake_pct",
+  "default": "30.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "30.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "31.25",
+   "valore": "31.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "31.25"
+  },
+  "raw_vuoto": {
+   "valore": "30.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "30.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-29": {
+  "in_config": true,
+  "key": "roserpina.auto_green_delay_sec",
+  "default": "2.5",
+  "type_default": "float",
+  "assente": {
+   "valore": "2.5",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "3.75",
+   "valore": "3.75",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "3.75"
+  },
+  "raw_vuoto": {
+   "valore": "2.5",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "2.5",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-31": {
+  "in_config": true,
+  "key": "roserpina.allow_recovery",
+  "default": "True",
+  "type_default": "bool",
+  "assente": {
+   "valore": "True",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "False",
+   "valore": "False",
+   "tipo": "bool",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "False"
+  },
+  "raw_vuoto": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-36": {
+  "in_config": true,
+  "key": "roserpina.auto_green_delay_enabled",
+  "default": "False",
+  "type_default": "bool",
+  "assente": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "True",
+   "valore": "True",
+   "tipo": "bool",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "True"
+  },
+  "raw_vuoto": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "False",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-38": {
+  "in_config": false,
+  "key": "roserpina.max_order_exposure",
+  "default": "<attributo assente in RoserpinaConfig>",
+  "type_default": "n/a",
+  "assente": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "tipo": "n/a",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "<attributo assente in RoserpinaConfig>"
+  },
+  "raw_vuoto": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-39": {
+  "in_config": false,
+  "key": "roserpina.max_market_exposure",
+  "default": "<attributo assente in RoserpinaConfig>",
+  "type_default": "n/a",
+  "assente": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "tipo": "n/a",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "<attributo assente in RoserpinaConfig>"
+  },
+  "raw_vuoto": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-40": {
+  "in_config": false,
+  "key": "roserpina.max_event_exposure_abs",
+  "default": "<attributo assente in RoserpinaConfig>",
+  "type_default": "n/a",
+  "assente": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "tipo": "n/a",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "<attributo assente in RoserpinaConfig>"
+  },
+  "raw_vuoto": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-41": {
+  "in_config": false,
+  "key": "roserpina.max_drawdown_abs",
+  "default": "<attributo assente in RoserpinaConfig>",
+  "type_default": "n/a",
+  "assente": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "7.5",
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "tipo": "n/a",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "<attributo assente in RoserpinaConfig>"
+  },
+  "raw_vuoto": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "<attributo assente in RoserpinaConfig>",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-02": {
+  "in_config": true,
+  "key": "roserpina.max_single_bet_pct",
+  "default": "18.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "19.25",
+   "valore": "19.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "19.25"
+  },
+  "raw_vuoto": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "18.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ },
+ "RSR-03": {
+  "in_config": true,
+  "key": "roserpina.max_total_exposure_pct",
+  "default": "35.0",
+  "type_default": "float",
+  "assente": {
+   "valore": "35.0",
+   "log_warn": [],
+   "flags": {},
+   "raw_db": null
+  },
+  "override": {
+   "raw": "36.25",
+   "valore": "36.25",
+   "tipo": "float",
+   "log_warn": []
+  },
+  "riavvio": {
+   "valore": "36.25"
+  },
+  "raw_vuoto": {
+   "valore": "35.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_abc": {
+   "valore": "35.0",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_nan": {
+   "valore": "nan",
+   "log_warn": [],
+   "flags": {}
+  },
+  "raw_inf": {
+   "valore": "inf",
+   "log_warn": [],
+   "flags": {}
+  }
+ }
+}

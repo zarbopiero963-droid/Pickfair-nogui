@@ -1,0 +1,409 @@
+FFFF.F.FFF.FFFFFFFFFFFFFFFFFFFF                                          [100%]
+=================================== FAILURES ===================================
+_ test_bf001_market_api_unexpected_result_is_error_not_empty[list_event_types-args0] _
+
+name = 'list_event_types', args = ()
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-243/test_bf001_market_api_unexpect0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f25191d2290>
+
+    @pytest.mark.parametrize("name,args", [
+        ("list_event_types", ()), ("list_competitions", (["1"],)), ("list_events", (["1"],)), ("list_market_catalogue", (["1"],)),
+    ])
+    def test_bf001_market_api_unexpected_result_is_error_not_empty(name, args, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)  # il modulo apre un FileHandler nella cwd all'import
+        import betfair_market_api as bm
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+/workspace/pickfair/bf2/close02/wt_base/tests/close02/test_close02_gaps.py:38: Failed
+_ test_bf001_market_api_unexpected_result_is_error_not_empty[list_competitions-args1] _
+
+name = 'list_competitions', args = (['1'],)
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-243/test_bf001_market_api_unexpect1')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f25191d2210>
+
+    @pytest.mark.parametrize("name,args", [
+        ("list_event_types", ()), ("list_competitions", (["1"],)), ("list_events", (["1"],)), ("list_market_catalogue", (["1"],)),
+    ])
+    def test_bf001_market_api_unexpected_result_is_error_not_empty(name, args, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)  # il modulo apre un FileHandler nella cwd all'import
+        import betfair_market_api as bm
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+/workspace/pickfair/bf2/close02/wt_base/tests/close02/test_close02_gaps.py:38: Failed
+_ test_bf001_market_api_unexpected_result_is_error_not_empty[list_events-args2] _
+
+name = 'list_events', args = (['1'],)
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-243/test_bf001_market_api_unexpect2')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f25191f25d0>
+
+    @pytest.mark.parametrize("name,args", [
+        ("list_event_types", ()), ("list_competitions", (["1"],)), ("list_events", (["1"],)), ("list_market_catalogue", (["1"],)),
+    ])
+    def test_bf001_market_api_unexpected_result_is_error_not_empty(name, args, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)  # il modulo apre un FileHandler nella cwd all'import
+        import betfair_market_api as bm
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+/workspace/pickfair/bf2/close02/wt_base/tests/close02/test_close02_gaps.py:38: Failed
+_ test_bf001_market_api_unexpected_result_is_error_not_empty[list_market_catalogue-args3] _
+
+name = 'list_market_catalogue', args = (['1'],)
+tmp_path = PosixPath('/tmp/pytest-of-box/pytest-243/test_bf001_market_api_unexpect3')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7f25192132d0>
+
+    @pytest.mark.parametrize("name,args", [
+        ("list_event_types", ()), ("list_competitions", (["1"],)), ("list_events", (["1"],)), ("list_market_catalogue", (["1"],)),
+    ])
+    def test_bf001_market_api_unexpected_result_is_error_not_empty(name, args, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)  # il modulo apre un FileHandler nella cwd all'import
+        import betfair_market_api as bm
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+/workspace/pickfair/bf2/close02/wt_base/tests/close02/test_close02_gaps.py:38: Failed
+______________ test_bf005_market_book_unexpected_result_is_error _______________
+
+    def test_bf005_market_book_unexpected_result_is_error():
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+tests/close02/test_close02_gaps.py:50: Failed
+________________ test_bf006_current_orders_missing_key_is_error ________________
+
+    def test_bf006_current_orders_missing_key_is_error():
+>       with pytest.raises(RuntimeError, match="UNEXPECTED_RESULT"):
+E       Failed: DID NOT RAISE RuntimeError
+
+tests/close02/test_close02_gaps.py:60: Failed
+__________________ test_bf008_cancel_unexpected_result_not_ok __________________
+
+    def test_bf008_cancel_unexpected_result_not_ok():
+        res = _client(ERR_PAYLOAD).cancel_orders(market_id="1.230000001", bet_ids=["3001"])
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_gaps.py:67: AssertionError
+______________ test_bf010_account_funds_missing_balance_is_error _______________
+
+    def test_bf010_account_funds_missing_balance_is_error():
+>       with pytest.raises(RuntimeError, match="INVALID_ACCOUNT_FUNDS"):
+E       Failed: DID NOT RAISE RuntimeError
+
+tests/close02/test_close02_gaps.py:73: Failed
+_________________ test_bf007_sim_place_on_unknown_market_fails _________________
+
+    def test_bf007_sim_place_on_unknown_market_fails():
+        broker = sb.SimulationBroker(starting_balance=100.0, commission_pct=4.5)
+        rep = broker.place_bet(market_id="1.999", selection_id=1, side="BACK", price=2.0, size=2.0)
+>       assert rep["instructionReports"][0]["status"] == "FAILURE"
+E       AssertionError: assert 'SUCCESS' == 'FAILURE'
+E         
+E         - FAILURE
+E         + SUCCESS
+
+tests/close02/test_close02_gaps.py:86: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.max_total_exposure_pct] _
+
+key = 'roserpina.max_total_exposure_pct', bad = 'abc'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.max_total_exposure_pct', 'abc')
+E       assert 'roserpina.max_total_exposure_pct' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+___ test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.table_count] ___
+
+key = 'roserpina.table_count', bad = 'abc'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.table_count', 'abc')
+E       assert 'roserpina.table_count' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+__ test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.risk_profile] ___
+
+key = 'roserpina.risk_profile', bad = 'abc'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.risk_profile', 'abc')
+E       assert 'roserpina.risk_profile' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.anti_duplication_enabled] _
+
+key = 'roserpina.anti_duplication_enabled', bad = 'abc'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.anti_duplication_enabled', 'abc')
+E       assert 'roserpina.anti_duplication_enabled' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.max_total_exposure_pct] _
+
+key = 'roserpina.max_total_exposure_pct', bad = 'nan'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.max_total_exposure_pct', 'nan')
+E       assert 'roserpina.max_total_exposure_pct' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=nan, max_event_exposure_p...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+___ test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.table_count] ___
+
+key = 'roserpina.table_count', bad = 'nan'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.table_count', 'nan')
+E       assert 'roserpina.table_count' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+__ test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.risk_profile] ___
+
+key = 'roserpina.risk_profile', bad = 'nan'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.risk_profile', 'nan')
+E       assert 'roserpina.risk_profile' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.anti_duplication_enabled] _
+
+key = 'roserpina.anti_duplication_enabled', bad = 'nan'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.anti_duplication_enabled', 'nan')
+E       assert 'roserpina.anti_duplication_enabled' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.max_total_exposure_pct] _
+
+key = 'roserpina.max_total_exposure_pct', bad = 'inf'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.max_total_exposure_pct', 'inf')
+E       assert 'roserpina.max_total_exposure_pct' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=inf, max_event_exposure_p...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+___ test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.table_count] ___
+
+key = 'roserpina.table_count', bad = 'inf'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.table_count', 'inf')
+E       assert 'roserpina.table_count' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+__ test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.risk_profile] ___
+
+key = 'roserpina.risk_profile', bad = 'inf'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.risk_profile', 'inf')
+E       assert 'roserpina.risk_profile' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.anti_duplication_enabled] _
+
+key = 'roserpina.anti_duplication_enabled', bad = 'inf'
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.anti_duplication_enabled', 'inf')
+E       assert 'roserpina.anti_duplication_enabled' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.max_total_exposure_pct] _
+
+key = 'roserpina.max_total_exposure_pct', bad = ''
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.max_total_exposure_pct', '')
+E       assert 'roserpina.max_total_exposure_pct' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+____ test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.table_count] _____
+
+key = 'roserpina.table_count', bad = ''
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.table_count', '')
+E       assert 'roserpina.table_count' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+____ test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.risk_profile] ____
+
+key = 'roserpina.risk_profile', bad = ''
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.risk_profile', '')
+E       assert 'roserpina.risk_profile' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+_ test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.anti_duplication_enabled] _
+
+key = 'roserpina.anti_duplication_enabled', bad = ''
+
+    @pytest.mark.parametrize("key", ["roserpina.max_total_exposure_pct", "roserpina.table_count",
+                                     "roserpina.risk_profile", "roserpina.anti_duplication_enabled"])
+    @pytest.mark.parametrize("bad", ["abc", "nan", "inf", ""])
+    def test_rsr_corrupt_value_is_reported_and_blocks(key, bad):
+        cfg = _svc_with({key: bad}).load_roserpina_config()
+>       assert key in getattr(cfg, "corrupt_keys", ()), (key, bad)
+E       AssertionError: ('roserpina.anti_duplication_enabled', '')
+E       assert 'roserpina.anti_duplication_enabled' in ()
+E        +  where () = getattr(RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5), 'corrupt_keys', ())
+
+tests/close02/test_close02_gaps.py:106: AssertionError
+________________________ test_rsr_absent_is_not_corrupt ________________________
+
+    def test_rsr_absent_is_not_corrupt():
+        cfg = _svc_with({}).load_roserpina_config()
+>       assert tuple(getattr(cfg, "corrupt_keys", ("<campo assente>",))) == ()
+E       AssertionError: assert ('<campo assente>',) == ()
+E         
+E         Left contains one more item: '<campo assente>'
+E         Use -v to get more diff
+
+tests/close02/test_close02_gaps.py:111: AssertionError
+______________ test_rsr_corrupt_boolean_safety_guard_not_disabled ______________
+
+    def test_rsr_corrupt_boolean_safety_guard_not_disabled():
+        # S-F (Q2): `_b()` trasformava un valore corrotto in False (fail-open su 32/33)
+        cfg = _svc_with({"roserpina.anti_duplication_enabled": "maybe"}).load_roserpina_config()
+>       assert cfg.anti_duplication_enabled is True
+E       assert False is True
+E        +  where False = RoserpinaConfig(target_profit_cycle_pct=3.0, max_single_bet_pct=18.0, max_total_exposure_pct=35.0, max_event_exposure_...ke_pct=30.0, profit_epsilon=0.5, profit_epsilon_enabled=True, auto_green_delay_enabled=False, auto_green_delay_sec=2.5).anti_duplication_enabled
+
+tests/close02/test_close02_gaps.py:117: AssertionError
+____________ test_rsr_runtime_rejects_new_risk_with_corrupt_config _____________
+
+    def test_rsr_runtime_rejects_new_risk_with_corrupt_config():
+        from tests.close02.test_close02_findings import _runtime, _rejected, _sig
+        rc, bus = _runtime("SIMULATION", 99.0, 100.0, 100.0, corrupt_keys=("roserpina.table_count",))
+        rc._on_signal_received(_sig())
+>       assert _rejected(bus, "config_corrotta")
+E       AssertionError: assert []
+E        +  where [] = <function _rejected at 0x7f2519134900>(<tests.close02.test_close02_findings._RBus object at 0x7f2519043e90>, 'config_corrotta')
+
+tests/close02/test_close02_gaps.py:124: AssertionError
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_gaps.py::test_bf001_market_api_unexpected_result_is_error_not_empty[list_event_types-args0]
+FAILED tests/close02/test_close02_gaps.py::test_bf001_market_api_unexpected_result_is_error_not_empty[list_competitions-args1]
+FAILED tests/close02/test_close02_gaps.py::test_bf001_market_api_unexpected_result_is_error_not_empty[list_events-args2]
+FAILED tests/close02/test_close02_gaps.py::test_bf001_market_api_unexpected_result_is_error_not_empty[list_market_catalogue-args3]
+FAILED tests/close02/test_close02_gaps.py::test_bf005_market_book_unexpected_result_is_error
+FAILED tests/close02/test_close02_gaps.py::test_bf006_current_orders_missing_key_is_error
+FAILED tests/close02/test_close02_gaps.py::test_bf008_cancel_unexpected_result_not_ok
+FAILED tests/close02/test_close02_gaps.py::test_bf010_account_funds_missing_balance_is_error
+FAILED tests/close02/test_close02_gaps.py::test_bf007_sim_place_on_unknown_market_fails
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.max_total_exposure_pct]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.table_count]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.risk_profile]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[abc-roserpina.anti_duplication_enabled]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.max_total_exposure_pct]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.table_count]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.risk_profile]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[nan-roserpina.anti_duplication_enabled]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.max_total_exposure_pct]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.table_count]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.risk_profile]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[inf-roserpina.anti_duplication_enabled]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.max_total_exposure_pct]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.table_count]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.risk_profile]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_value_is_reported_and_blocks[-roserpina.anti_duplication_enabled]
+FAILED tests/close02/test_close02_gaps.py::test_rsr_absent_is_not_corrupt - A...
+FAILED tests/close02/test_close02_gaps.py::test_rsr_corrupt_boolean_safety_guard_not_disabled
+FAILED tests/close02/test_close02_gaps.py::test_rsr_runtime_rejects_new_risk_with_corrupt_config
+28 failed, 3 passed in 0.47s

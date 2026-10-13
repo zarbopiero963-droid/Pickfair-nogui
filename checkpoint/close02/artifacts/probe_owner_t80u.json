@@ -1,0 +1,380 @@
+{
+ "RSR-02|assente": {
+  "key": "roserpina.max_single_bet_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "18.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-02|non_valida": {
+  "key": "roserpina.max_single_bet_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "18.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-02|controllo_tutte_valide": {
+  "key": "roserpina.max_single_bet_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "5.0",
+  "valore_effettivo": "5.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-03|assente": {
+  "key": "roserpina.max_total_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "35.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-03|non_valida": {
+  "key": "roserpina.max_total_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "35.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-03|controllo_tutte_valide": {
+  "key": "roserpina.max_total_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "20.0",
+  "valore_effettivo": "20.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-04|assente": {
+  "key": "roserpina.max_event_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "18.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-04|non_valida": {
+  "key": "roserpina.max_event_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "18.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-04|controllo_tutte_valide": {
+  "key": "roserpina.max_event_exposure_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "10.0",
+  "valore_effettivo": "10.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-15|assente": {
+  "key": "roserpina.max_stake_abs",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "10000.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-15|non_valida": {
+  "key": "roserpina.max_stake_abs",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "10000.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-15|controllo_tutte_valide": {
+  "key": "roserpina.max_stake_abs",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "50.0",
+  "valore_effettivo": "50.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-12|assente": {
+  "key": "roserpina.max_recovery_tables",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "2",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-12|non_valida": {
+  "key": "roserpina.max_recovery_tables",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "2",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-12|controllo_tutte_valide": {
+  "key": "roserpina.max_recovery_tables",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "1",
+  "valore_effettivo": "1",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-31|assente": {
+  "key": "roserpina.allow_recovery",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "True",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-31|non_valida": {
+  "key": "roserpina.allow_recovery",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "False",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-31|controllo_tutte_valide": {
+  "key": "roserpina.allow_recovery",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "0",
+  "valore_effettivo": "False",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-13|assente": {
+  "key": "roserpina.commission_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": null,
+  "valore_effettivo": "4.5",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-13|non_valida": {
+  "key": "roserpina.commission_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "abc",
+  "valore_effettivo": "4.5",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ },
+ "RSR-13|controllo_tutte_valide": {
+  "key": "roserpina.commission_pct",
+  "altre_chiavi_valide": {
+   "roserpina.max_single_bet_pct": "5.0",
+   "roserpina.max_total_exposure_pct": "20.0",
+   "roserpina.max_event_exposure_pct": "10.0",
+   "roserpina.max_stake_abs": "50.0",
+   "roserpina.max_recovery_tables": "1",
+   "roserpina.allow_recovery": "0",
+   "roserpina.commission_pct": "5.0"
+  },
+  "raw_db": "5.0",
+  "valore_effettivo": "5.0",
+  "segnali_config": [],
+  "modo": "RuntimeMode.ACTIVE",
+  "rifiuti": [],
+  "nuovo_rischio_arrivato_al_sizing": true
+ }
+}

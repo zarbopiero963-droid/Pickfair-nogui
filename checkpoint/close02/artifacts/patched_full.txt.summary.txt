@@ -1,0 +1,3 @@
+FAILED tests/integration/test_mini_gui_hard_stop_fields.py::test_empty_field_does_not_overwrite_persisted_hard_stop_real_service
+FAILED tests/unit/test_auto_green_delay_trigger.py::test_config_round_trip - ...
+20 failed, 7248 passed, 14 skipped, 1 xfailed, 25 warnings, 8 subtests passed in 382.99s (0:06:22)

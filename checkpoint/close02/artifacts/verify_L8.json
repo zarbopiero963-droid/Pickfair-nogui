@@ -1,0 +1,114 @@
+{
+ "riproducibilita": {
+  "probe_gui_save.json": true,
+  "probe_dd_apply.json": true,
+  "probe_load_v2.json": true
+ },
+ "record": [
+  {
+   "id": "DIFF-PF-RSR-03-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-04-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-12-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-13-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-14-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-15-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-16-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-17-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-18-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-19-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-20-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-23-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-27-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-29-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-31-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-36-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-38-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-39-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-40-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-41-SAVE",
+   "errori": [],
+   "verificato_indipendente": true
+  },
+  {
+   "id": "DIFF-PF-RSR-20-LOAD",
+   "errori": [],
+   "verificato_indipendente": true
+  }
+ ]
+}

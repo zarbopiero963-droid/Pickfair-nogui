@@ -1,0 +1,573 @@
+diff --git a/core/pre_v9_migration.py b/core/pre_v9_migration.py
+new file mode 100644
+index 0000000..7d019f9
+--- /dev/null
++++ b/core/pre_v9_migration.py
+@@ -0,0 +1,210 @@
++"""close02 v13 — migrazione una tantum delle installazioni pre-v9 (owner #426,
++opzione A, ratificata il 13/10/2026). PROPOSTA isolata, nessun dato inventato.
++
++Situazione: un DB con storia di rischio (daily-loss/risk-stop/emergenza/picco)
++ma senza registro protezioni (`risk.persist_ledger`) e' marcato REINIT_REQUIRED
++al primo avvio v9 e, fino alla migrazione, NON ammette nuovo rischio.
++
++Contratto (testo owner):
++- `inspect(db)` mostra all'operatore i valori persistiti, la loro provenienza
++  (DB/file), lo stato del risk-stop, l'emergenza e gli ordini incerti, piu' i
++  motivi di blocco; `digest` identifica esattamente lo stato mostrato.
++- `ratify(db, operatore=..., digest=...)` sblocca SOLO se lo stato e' completo,
++  coerente e verificabile e il digest coincide con quello mostrato. Non scrive
++  mai valori monetari: copia byte per byte le righe esistenti nelle copie
++  mancanti e aggiorna il solo registro. Non tocca risk-stop, emergenza, daily-loss.
++- Dati indispensabili mancanti/illeggibili/incoerenti o ordini incerti ⇒ resta
++  bloccato: serve una riconciliazione documentata (fuori da questo modulo).
++- Atomicita' e kill -9: il registro e' l'unione delle copie DB+file; il commit
++  scrive DB poi file. Finche' una delle due copie contiene ancora
++  REINIT_REQUIRED l'unione lo contiene ⇒ ancora bloccato. Ripetere `ratify`
++  completa la migrazione (idempotente). Audit append-only + riga DB.
++Mai raise verso il chiamante: gli errori diventano esiti bloccati.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import math
++import os
++from datetime import datetime, timezone
++from typing import Any
++
++from core import daily_loss_store, risk_persistence as rp, risk_stop as stop_rules
++from core.atomic_io import atomic_write_text
++
++MIGRATION_DONE = "pre_v9_migrated"
++AUDIT_KEY = "risk.pre_v9_migration"
++EMERGENCY_KEYS = ("emergency_stopped", "emergency_stopped_at", "emergency_reason")
++
++
++def _audit_file(db: Any) -> str:
++    b = rp._base(db)
++    return b + ".pre_v9_migration.audit.jsonl" if b else ""
++
++
++def _raw_file(path: str):
++    r = rp._read_file(path)
++    return "<illeggibile>" if r is rp._UNREADABLE else r
++
++
++def _peak_status(raw):
++    v = rp._parse_peak(raw)
++    return "assente" if v is None else ("illeggibile" if v is rp._UNREADABLE else "ok"), v
++
++
++def _daily_status(raw):
++    if raw in (None, ""):
++        return "assente", None
++    if raw == "<illeggibile>":
++        return "illeggibile", None
++    try:
++        rec = json.loads(raw)
++        intraday = float(rec["intraday_realized_pnl"])
++        str(rec["day_utc"])
++        if not math.isfinite(intraday):
++            raise ValueError
++        return "ok", {"day_utc": rec["day_utc"], "intraday_realized_pnl": intraday,
++                      "breached": rec.get("breached") is True}
++    except Exception:
++        return "illeggibile", None
++
++
++def inspect(db: Any) -> dict:
++    s = rp._settings(db)
++    led = rp.ledger(db)
++    rep: dict = {"settings_leggibili": s is not rp._UNREADABLE,
++                 "registro": "illeggibile" if led is rp._UNREADABLE else sorted(led),
++                 "migrazione_richiesta": led is not rp._UNREADABLE and rp.REINIT_REQUIRED in led,
++                 "gia_migrata": led is not rp._UNREADABLE and MIGRATION_DONE in led}
++    s = s if isinstance(s, dict) else {}
++    peak_db, peak_file = s.get(rp.EQUITY_PEAK_KEY), _raw_file(rp._peak_file(db))
++    dl_db, dl_file = s.get(daily_loss_store.DAILY_LOSS_STATE_KEY), _raw_file(daily_loss_store._marker_path(db))
++    vals = {}
++    for name, src, raw, status in (
++            ("equity_peak", "db:" + rp.EQUITY_PEAK_KEY, peak_db, _peak_status(peak_db)),
++            ("equity_peak", "file:.equity_peak.json", peak_file, _peak_status(peak_file)),
++            ("daily_loss", "db:daily_loss_state", dl_db, _daily_status(dl_db)),
++            ("daily_loss", "file:.daily_loss_pending.json", dl_file, _daily_status(dl_file))):
++        vals.setdefault(name, []).append({"provenienza": src, "grezzo": raw, "stato": status[0],
++                                          "valore": status[1] if status[0] == "ok" else None})
++    rep["valori"] = vals
++    copies = stop_rules._copies(db)
++    rep["risk_stop"] = {"motivo_attivo": stop_rules.restore_risk_stop(db),
++                        "copie": ["illeggibile" if c is rp._UNREADABLE else ("assente" if c is None else "ok")
++                                  for c in copies]}
++    rep["emergenza"] = {k: s.get(k) for k in EMERGENCY_KEYS}
++    try:
++        pend = db.get_pending_sagas() if hasattr(db, "get_pending_sagas") else []
++        rep["ordini_incerti"] = [{"customer_ref": p.get("customer_ref"), "stato": p.get("status"),
++                                  "market_id": p.get("market_id")} for p in pend or []]
++        rep["ordini_leggibili"] = True
++    except Exception:
++        rep["ordini_incerti"], rep["ordini_leggibili"] = [], False
++    rep["bloccanti"] = _blockers(rep)
++    rep["digest"] = hashlib.sha256(json.dumps(
++        {k: v for k, v in rep.items() if k != "digest"}, sort_keys=True, default=str).encode()).hexdigest()
++    return rep
++
++
++def _blockers(rep: dict) -> list:
++    out = []
++    if not rep["settings_leggibili"]:
++        out.append("settings_illeggibili")
++    if rep["registro"] == "illeggibile":
++        out.append("registro_illeggibile")
++    elif rep["gia_migrata"] and not rep["migrazione_richiesta"]:
++        out.append("migrazione_gia_eseguita")
++    elif not rep["migrazione_richiesta"]:
++        out.append("migrazione_non_richiesta")
++    for name in ("equity_peak", "daily_loss"):
++        cs = rep["valori"][name]
++        if any(c["stato"] == "illeggibile" for c in cs):
++            out.append(f"{name}_illeggibile")
++        ok = [c for c in cs if c["stato"] == "ok"]
++        if not ok:
++            out.append(f"{name}_mancante")  # dato indispensabile: mai inventato
++        elif len(ok) == 2 and ok[0]["valore"] != ok[1]["valore"]:
++            out.append(f"{name}_copie_incoerenti")
++    if "illeggibile" in rep["risk_stop"]["copie"] or rep["risk_stop"]["motivo_attivo"].startswith("risk_stop_reset_guard"):
++        out.append("risk_stop_illeggibile")
++    if not rep["ordini_leggibili"]:
++        out.append("ordini_illeggibili")
++    elif rep["ordini_incerti"]:
++        out.append("ordini_incerti_riconciliazione_richiesta")
++    return out
++
++
++def _audit(db: Any, record: dict) -> bool:
++    line = json.dumps(record, sort_keys=True, default=str)
++    ok = True
++    f = _audit_file(db)
++    try:
++        if f:
++            with open(f, "a", encoding="utf-8") as fh:
++                fh.write(line + "\n"); fh.flush(); os.fsync(fh.fileno())
++    except Exception:
++        ok = False
++    try:
++        db.save_settings({AUDIT_KEY: line})
++    except Exception:
++        ok = False
++    return ok
++
++
++def _last_audit(db: Any) -> str:
++    try:
++        rec = json.loads((db.get_settings() or {}).get(AUDIT_KEY) or "{}")
++        return str(rec.get("esito") or "")
++    except Exception:
++        return ""
++
++
++def ratify(db: Any, *, operatore: str, digest: str) -> dict:
++    """Ratifica manuale una tantum. Ritorna {"ok": bool, "motivo": str, "report": dict}."""
++    try:
++        rep = inspect(db)
++    except Exception as exc:  # pragma: no cover - fail-closed
++        return {"ok": False, "motivo": f"ispezione_fallita:{type(exc).__name__}", "report": {}}
++    now = datetime.now(timezone.utc).isoformat()
++    base = {"at": now, "operatore": str(operatore or ""), "digest_mostrato": digest, "digest": rep["digest"]}
++    if not str(operatore or "").strip():
++        motivo = "operatore_mancante"
++    elif digest != rep["digest"]:
++        motivo = "digest_non_corrispondente"  # l'operatore non ha visto questo stato
++    elif rep["bloccanti"]:
++        motivo = "bloccato:" + ",".join(rep["bloccanti"])
++    else:
++        motivo = ""
++    if rep["bloccanti"] == ["migrazione_gia_eseguita"] and _last_audit(db) not in ("COMPLETATA", "COMPLETATA_RECUPERATA"):
++        # kill -9 tra il commit del registro e l'audit finale: chiude la traccia
++        _audit(db, dict(base, esito="COMPLETATA_RECUPERATA"))
++    if motivo:
++        _audit(db, dict(base, esito="RIFIUTATA", motivo=motivo))
++        return {"ok": False, "motivo": motivo, "report": rep}
++    if not _audit(db, dict(base, esito="INTENTO", report=rep)):
++        return {"ok": False, "motivo": "audit_non_scrivibile", "report": rep}
++    try:
++        # copie mancanti: byte per byte dalla copia esistente (nessun valore nuovo)
++        peak = {c["provenienza"]: c for c in rep["valori"]["equity_peak"]}
++        if peak["file:.equity_peak.json"]["stato"] == "assente" and rp._peak_file(db):
++            atomic_write_text(rp._peak_file(db), peak["db:" + rp.EQUITY_PEAK_KEY]["grezzo"])
++        elif peak["db:" + rp.EQUITY_PEAK_KEY]["stato"] == "assente":
++            db.save_settings({rp.EQUITY_PEAK_KEY: peak["file:.equity_peak.json"]["grezzo"]})
++        led = set(rep["registro"]) - {rp.REINIT_REQUIRED}
++        led |= {"equity_peak", "daily_loss", MIGRATION_DONE}
++        if "ok" in rep["risk_stop"]["copie"]:
++            led.add("risk_stop")
++        new = json.dumps(sorted(led))
++        db.save_settings({rp.LEDGER_KEY: new})          # commit 1/2
++        if rp._ledger_file(db):
++            atomic_write_text(rp._ledger_file(db), new)  # commit 2/2
++    except Exception as exc:
++        _audit(db, dict(base, esito="FALLITA", motivo=type(exc).__name__))
++        return {"ok": False, "motivo": f"scrittura_fallita:{type(exc).__name__}", "report": rep}
++    after = rp.ledger(db)
++    if after is rp._UNREADABLE or rp.REINIT_REQUIRED in after:
++        _audit(db, dict(base, esito="FALLITA", motivo="registro_non_aggiornato"))
++        return {"ok": False, "motivo": "registro_non_aggiornato", "report": rep}
++    _audit(db, dict(base, esito="COMPLETATA"))
++    return {"ok": True, "motivo": "", "report": rep}
+diff --git a/core/risk_persistence.py b/core/risk_persistence.py
+index f60b23e..f30719f 100644
+--- a/core/risk_persistence.py
++++ b/core/risk_persistence.py
+@@ -134,6 +134,10 @@ def was_written(db: Any, name: str) -> bool:
+ def restore_equity_peak(db: Any) -> Tuple[Optional[float], str]:
+     """(picco, motivo_blocco). motivo vuoto = verificabile; picco None + motivo
+     vuoto = prima esecuzione autentica (registro senza equity_peak)."""
++    if reinit_required(db):
++        # v13 (owner #426 opzione A): storia pre-v9 senza registro ⇒ nessun nuovo
++        # rischio finche' la migrazione ratificata non e' completata.
++        return None, "migrazione_pre_v9_richiesta"
+     s = _settings(db)
+     a = _UNREADABLE if s is _UNREADABLE else _parse_peak(s.get(EQUITY_PEAK_KEY))
+     b = _parse_peak(_read_file(_peak_file(db)))
+@@ -144,8 +148,6 @@ def restore_equity_peak(db: Any) -> Tuple[Optional[float], str]:
+         return max(vals), ""
+     if was_written(db, "equity_peak"):
+         return None, "equity_peak_mancante"
+-    if reinit_required(db):
+-        return None, "risk_ledger_mancante"
+     return None, ""
+ 
+ 
+diff --git a/scripts/pre_v9_migration.py b/scripts/pre_v9_migration.py
+new file mode 100644
+index 0000000..2a942c4
+--- /dev/null
++++ b/scripts/pre_v9_migration.py
+@@ -0,0 +1,38 @@
++"""close02 v13 — CLI operatore per la migrazione pre-v9 (owner #426, opzione A).
++
++Uso:  python scripts/pre_v9_migration.py <percorso_db>            (solo mostra)
++      python scripts/pre_v9_migration.py <percorso_db> --ratifica  (chiede conferma)
++
++Mostra valori persistiti, provenienza, risk-stop, emergenza, ordini incerti e
++bloccanti. La ratifica richiede nome operatore e il digest digitato a mano:
++vale solo per lo stato mostrato. Nessuna chiamata di rete, nessun ordine."""
++import json
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++
++from core import pre_v9_migration as mig  # noqa: E402
++from database import Database  # noqa: E402
++
++
++def main(argv, inp=input, out=print) -> int:
++    if not argv:
++        out(__doc__)
++        return 2
++    db = Database(argv[0])
++    rep = mig.inspect(db)
++    out(json.dumps(rep, indent=2, sort_keys=True, ensure_ascii=False, default=str))
++    if rep["bloccanti"]:
++        out("BLOCCATO: " + ", ".join(rep["bloccanti"]) + " — serve riconciliazione documentata.")
++    if "--ratifica" not in argv[1:]:
++        return 0 if not rep["bloccanti"] else 1
++    operatore = inp("Nome operatore: ").strip()
++    digest = inp("Digita il digest mostrato sopra per confermare: ").strip()
++    res = mig.ratify(db, operatore=operatore, digest=digest)
++    out("ESITO: " + ("MIGRAZIONE COMPLETATA" if res["ok"] else "RIFIUTATA " + res["motivo"]))
++    return 0 if res["ok"] else 1
++
++
++if __name__ == "__main__":
++    sys.exit(main(sys.argv[1:]))
+diff --git a/tests/close02/test_close02_v13.py b/tests/close02/test_close02_v13.py
+new file mode 100644
+index 0000000..870209c
+--- /dev/null
++++ b/tests/close02/test_close02_v13.py
+@@ -0,0 +1,283 @@
++"""close02 v13 — migrazione pre-v9 ratificata dall'owner (#426, opzione A).
++Un test per condizione del testo owner. RED sul patch v12, GREEN col patch v13."""
++import json, os, signal, subprocess, sys, textwrap
++import pytest
++from database import Database
++from tests.close02.test_close02_restart_t81u import ROOT, _run_and_kill, _restart, _blocked, _set_raw, _order_calls
++
++LEDGER_KEY, PEAK_KEY = "risk.persist_ledger", "risk.equity_peak_eur"
++
++
++def _mig():
++    from core import pre_v9_migration
++    return pre_v9_migration
++
++
++def _settings(p):
++    return Database(p).get_settings()
++
++
++def _pre_v9(tmp_path, name="m.sqlite", action="none", keep_peak=True):
++    """Stato tipo pre-v9: storia di rischio, registro protezioni assente."""
++    p = str(tmp_path / name)
++    _run_and_kill(p, action=action)
++    _set_raw(p, LEDGER_KEY, None)
++    for f in os.listdir(tmp_path):
++        if f.endswith(".risk_ledger.json") or (not keep_peak and f.endswith(".equity_peak.json")):
++            os.remove(tmp_path / f)
++    if not keep_peak:
++        _set_raw(p, PEAK_KEY, None)
++    return p
++
++
++def _first_boot(p, monkeypatch):
++    """Primo avvio v9+: marca REINIT_REQUIRED (stato visto dall'operatore)."""
++    return _restart(p, monkeypatch, 1000.0)
++
++
++def _ratify(p, operatore="operatore-test"):
++    m = _mig()
++    db = Database(p)
++    rep = m.inspect(db)
++    return m.ratify(db, operatore=operatore, digest=rep["digest"]), rep
++
++
++# C1 prima della migrazione: non operativo per ogni nuovo rischio (anche col picco presente)
++def test_c1_prima_della_migrazione_nuovo_rischio_bloccato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path)
++    rc, rej = _first_boot(p, monkeypatch)
++    assert _blocked(rc) and any("migrazione_pre_v9_richiesta" in r for r in rej), rej
++    rc2, rej2 = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc2), rej2
++
++
++# C2 l'operatore vede valori persistiti, provenienza, risk-stop, emergenza, ordini incerti
++def test_c2_report_mostra_valori_provenienza_riskstop_ordini(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    rep = _mig().inspect(Database(p))
++    peak = {c["provenienza"]: c for c in rep["valori"]["equity_peak"]}
++    assert peak["db:" + PEAK_KEY]["grezzo"] == _settings(p)[PEAK_KEY] and peak["db:" + PEAK_KEY]["valore"] == 1000.0
++    assert {c["provenienza"] for c in rep["valori"]["daily_loss"]} == {"db:daily_loss_state", "file:.daily_loss_pending.json"}
++    assert set(rep["risk_stop"]) == {"motivo_attivo", "copie"} and "emergenza" in rep
++    assert rep["ordini_incerti"] == [] and rep["ordini_leggibili"] is True
++    assert rep["migrazione_richiesta"] is True and rep["bloccanti"] == [] and len(rep["digest"]) == 64
++
++
++# C3 dato indispensabile mancante: nessun valore inventato, resta bloccato
++def test_c3_picco_mancante_resta_bloccato_e_nulla_e_inventato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path, keep_peak=False); _first_boot(p, monkeypatch)
++    res, _ = _ratify(p)
++    assert not res["ok"] and "equity_peak_mancante" in res["motivo"]
++    assert PEAK_KEY not in _settings(p) and not any(f.endswith(".equity_peak.json") for f in os.listdir(tmp_path))
++    assert "ledger_reinit_required" in json.loads(_settings(p)[LEDGER_KEY])
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc), rej
++
++
++def test_c4_daily_loss_mancante_resta_bloccato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    _set_raw(p, "daily_loss_state", None)
++    for f in os.listdir(tmp_path):
++        if f.endswith(".daily_loss_pending.json"):
++            os.remove(tmp_path / f)
++    res, _ = _ratify(p)
++    assert not res["ok"] and "daily_loss_mancante" in res["motivo"]
++
++
++# C5 verificabile: copie illeggibili => bloccato
++def test_c5_copia_illeggibile_resta_bloccato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    _set_raw(p, PEAK_KEY, "{rotto")
++    res, _ = _ratify(p)
++    assert not res["ok"] and "equity_peak_illeggibile" in res["motivo"]
++
++
++# C6 coerente: copie DB/file divergenti => bloccato (nessuna scelta arbitraria)
++def test_c6_copie_incoerenti_resta_bloccato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    f = [x for x in os.listdir(tmp_path) if x.endswith(".equity_peak.json")][0]
++    (tmp_path / f).write_text(json.dumps({"peak": 1200.0}))
++    res, _ = _ratify(p)
++    assert not res["ok"] and "equity_peak_copie_incoerenti" in res["motivo"]
++
++
++# C7 ordini incerti => riconciliazione documentata richiesta
++def test_c7_ordini_incerti_richiedono_riconciliazione(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    Database(p).create_order_saga(customer_ref="CR-1", batch_id="B1", event_key="E1", table_id=1,
++                                  market_id="1.5", selection_id=1, bet_type="BACK", price=2.0, stake=2.0,
++                                  payload={}, status="SUBMITTED")
++    rep = _mig().inspect(Database(p))
++    assert rep["ordini_incerti"] and rep["ordini_incerti"][0]["customer_ref"] == "CR-1"
++    res, _ = _ratify(p)
++    assert not res["ok"] and "ordini_incerti_riconciliazione_richiesta" in res["motivo"]
++
++
++# C8 manuale: la conferma vale solo per lo stato effettivamente mostrato
++def test_c8_digest_diverso_rifiutato_e_operatore_obbligatorio(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    m = _mig(); db = Database(p)
++    assert m.ratify(db, operatore="op", digest="0" * 64)["motivo"] == "digest_non_corrispondente"
++    assert m.ratify(db, operatore=" ", digest=m.inspect(db)["digest"])["motivo"] == "operatore_mancante"
++    assert "ledger_reinit_required" in json.loads(_settings(p)[LEDGER_KEY])
++
++
++# C9 sblocco solo se completo/coerente/verificabile; valori monetari invariati; audit
++def test_c9_sblocco_valori_invariati_e_audit(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    before = {k: _settings(p).get(k) for k in (PEAK_KEY, "daily_loss_state", "risk_stop_state")}
++    res, rep = _ratify(p)
++    assert res["ok"], res["motivo"]
++    after = {k: _settings(p).get(k) for k in before}
++    assert after == before
++    led = json.loads(_settings(p)[LEDGER_KEY])
++    assert "ledger_reinit_required" not in led and "pre_v9_migrated" in led
++    audit = [json.loads(x) for x in open(p + ".pre_v9_migration.audit.jsonl", encoding="utf-8")]
++    assert [a["esito"] for a in audit] == ["INTENTO", "COMPLETATA"] and audit[0]["operatore"] == "operatore-test"
++    assert json.loads(_settings(p)["risk.pre_v9_migration"])["esito"] == "COMPLETATA"
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert not _blocked(rc), rej
++
++
++# C10 la conferma non disarma un risk-stop attivo ne' un'emergenza
++@pytest.mark.parametrize("action", ["risk_stop", "emergenza"])
++def test_c10_riskstop_ed_emergenza_restano_attivi(tmp_path, monkeypatch, action):
++    p = _pre_v9(tmp_path, action=action); _first_boot(p, monkeypatch)
++    res, rep = _ratify(p)
++    assert res["ok"], res["motivo"]
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert not any(h.startswith("bus.CMD_") for h in _order_calls(rc)), rej
++    if action == "risk_stop":
++        assert rc._risk_stop_reason == "session_loss_breached:test"
++    else:
++        assert _blocked(rc), rej
++
++
++# C11 la conferma non cancella perdite pregresse; il picco non e' azzerato
++def test_c11_perdita_del_giorno_preservata(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path, action="daily_loss_parziale"); _first_boot(p, monkeypatch)
++    res, _ = _ratify(p)
++    assert res["ok"], res["motivo"]
++    rc, _ = _restart(p, monkeypatch, 1000.0)
++    assert rc._daily_loss_monitor_state.get("intraday_realized_pnl") == pytest.approx(-8.0)
++
++
++def test_c11b_drawdown_dal_picco_persistito_non_azzerato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    assert _ratify(p)[0]["ok"]
++    rc, rej = _restart(p, monkeypatch, 989.0)   # picco 1000 persistito => 11 EUR di drawdown
++    assert _blocked(rc), rej
++
++
++# C12 una tantum
++def test_c12_una_tantum(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    assert _ratify(p)[0]["ok"]
++    res, _ = _ratify(p)
++    assert not res["ok"] and "migrazione_gia_eseguita" in res["motivo"]
++
++
++# C13 atomica, persistente, resistente a kill -9 ripetuti
++_KILL = textwrap.dedent("""
++    import os, sys, signal
++    sys.path.insert(0, %r)
++    from database import Database
++    from core import pre_v9_migration as m, atomic_io
++    p, at = sys.argv[1], int(sys.argv[2])
++    n = [0]
++    def tick():
++        n[0] += 1
++        if n[0] == at:
++            os.kill(os.getpid(), signal.SIGKILL)
++    db = Database(p)
++    orig_save = db.save_settings
++    def save(d): tick(); return orig_save(d)
++    db.save_settings = save
++    orig_w = m.atomic_write_text
++    def w(path, data): tick(); return orig_w(path, data)
++    m.atomic_write_text = w
++    orig_a = m._audit
++    def a(db_, rec): tick(); return orig_a(db_, rec)
++    m._audit = a
++    r = m.ratify(db, operatore="op-kill", digest=m.inspect(db)["digest"])
++    print("ESITO", r["ok"], r["motivo"])
++""") % ROOT
++
++
++def _money(p):
++    s = _settings(p)
++    dl = json.loads(s["daily_loss_state"])
++    return s.get(PEAK_KEY), dl["intraday_realized_pnl"], dl["breached"]
++
++
++def _ledger_union(p, tmp_path):
++    led = set(json.loads(_settings(p).get(LEDGER_KEY) or "[]"))
++    for f in os.listdir(tmp_path):
++        if f.endswith(".risk_ledger.json"):
++            led |= set(json.loads((tmp_path / f).read_text()))
++    return led
++
++
++@pytest.mark.parametrize("at", [1, 2, 3, 4, 5, 6, 7])
++def test_c13_kill9_a_ogni_passo_mai_stato_intermedio_sbloccato(tmp_path, monkeypatch, at):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    before = _money(p)
++    r = subprocess.run([sys.executable, "-c", _KILL, p, str(at)], capture_output=True, text=True, timeout=120)
++    killed = r.returncode == -signal.SIGKILL
++    led = _ledger_union(p, tmp_path)
++    done = "ledger_reinit_required" not in led
++    if killed:
++        # passi: 1 audit INTENTO (file), 2 audit INTENTO (DB), 3 registro DB, 4 registro file,
++        # 5 audit COMPLETATA (file), 6 audit COMPLETATA (DB)
++        assert done is (at >= 5), (at, led)   # nessuno sblocco senza commit di ENTRAMBE le copie
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc) is (not done), (at, rej)
++    assert _money(p) == before
++    res, _ = _ratify(p)                 # nuova ratifica sullo stato mostrato: completa
++    assert res["ok"] or "migrazione_gia_eseguita" in res["motivo"], res["motivo"]
++    esiti = [json.loads(x)["esito"] for x in open(p + ".pre_v9_migration.audit.jsonl", encoding="utf-8")]
++    assert any(e.startswith("COMPLETATA") for e in esiti[esiti.index("INTENTO"):]), esiti   # audit sempre chiuso
++    rc2, rej2 = _restart(p, monkeypatch, 1000.0)
++    assert not _blocked(rc2), rej2
++
++
++def test_c13b_kill9_ripetuti_in_sequenza(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    for at in (1, 3, 4, 2, 5, 1):
++        r = subprocess.run([sys.executable, "-c", _KILL, p, str(at)], capture_output=True, text=True, timeout=120)
++        assert r.returncode in (-signal.SIGKILL, 0), r.stderr[-500:]
++        rc, rej = _restart(p, monkeypatch, 1000.0)
++        assert _blocked(rc) is ("ledger_reinit_required" in _ledger_union(p, tmp_path)), rej
++    res, _ = _ratify(p)
++    assert res["ok"] or "migrazione_gia_eseguita" in res["motivo"]
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert not _blocked(rc), rej
++
++
++# Controllo: primo avvio autentico (nessuna storia) non richiede migrazione
++def test_c0_primo_avvio_autentico_non_richiede_migrazione(tmp_path, monkeypatch):
++    p = str(tmp_path / "nuovo.sqlite")
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert not _blocked(rc), rej
++
++
++# C2b CLI: mostra lo stato; senza conferma digitata non migra
++def test_c2b_cli_mostra_e_richiede_conferma_digitata(tmp_path, monkeypatch):
++    import importlib.util
++    spec = importlib.util.spec_from_file_location("cli_mig", os.path.join(ROOT, "scripts", "pre_v9_migration.py"))
++    cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    out = []
++    assert cli.main([p], out=out.append) == 0 and '"migrazione_richiesta": true' in out[0]
++    assert cli.main([p, "--ratifica"], inp=lambda _q, it=iter(["op", "sbagliato"]): next(it), out=out.append) == 1
++    assert "ledger_reinit_required" in json.loads(_settings(p)[LEDGER_KEY])
++    dig = _mig().inspect(Database(p))["digest"]
++    assert cli.main([p, "--ratifica"], inp=lambda _q, it=iter(["op", dig]): next(it), out=out.append) == 0
++    assert "ledger_reinit_required" not in json.loads(_settings(p)[LEDGER_KEY])
++
++
++def test_c5b_registro_illeggibile_resta_bloccato(tmp_path, monkeypatch):
++    p = _pre_v9(tmp_path); _first_boot(p, monkeypatch)
++    _set_raw(p, LEDGER_KEY, "{rotto")
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc) and any("migrazione_pre_v9_richiesta" in r for r in rej), rej

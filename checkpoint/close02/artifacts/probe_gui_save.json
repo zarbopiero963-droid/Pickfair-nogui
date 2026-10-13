@@ -1,0 +1,1602 @@
+{
+ "RSR-03": {
+  "key": "roserpina.max_total_exposure_pct",
+  "fixture": 36.25,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "36.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "36.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_total_exposure_pct",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_total_exposure_pct",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "36.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "36.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-04": {
+  "key": "roserpina.max_event_exposure_pct",
+  "fixture": 19.25,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "19.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "19.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_event_exposure_pct",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_event_exposure_pct",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "19.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "19.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-12": {
+  "key": "roserpina.max_recovery_tables",
+  "fixture": 3,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "3",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "3",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_recovery_tables",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_recovery_tables",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "3",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "3",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-13": {
+  "key": "roserpina.commission_pct",
+  "fixture": 5.75,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "5.75",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "5.75",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.commission_pct",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.commission_pct",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "5.75",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "5.75",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-14": {
+  "key": "roserpina.min_stake",
+  "fixture": 1.35,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "1.35",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "1.35",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.min_stake",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.min_stake",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "1.35",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "1.35",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-15": {
+  "key": "roserpina.max_stake_abs",
+  "fixture": 10001.25,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "10001.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "10001.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_stake_abs",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_stake_abs",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "10001.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "10001.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-16": {
+  "key": "roserpina.max_daily_loss",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_daily_loss",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_daily_loss",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-17": {
+  "key": "roserpina.max_open_exposure",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_open_exposure",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_open_exposure",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-18": {
+  "key": "roserpina.max_session_loss",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_session_loss",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_session_loss",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-19": {
+  "key": "roserpina.max_exposure_stop",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_exposure_stop",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_exposure_stop",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-20": {
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_drawdown_hard_stop_pct",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_drawdown_hard_stop_pct",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "7.5",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "7.5",
+   "righe_prima": 0,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-23": {
+  "key": "roserpina.liquidity_multiplier",
+  "fixture": 4.25,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "4.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "4.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.liquidity_multiplier",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.liquidity_multiplier",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "4.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "4.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-27": {
+  "key": "roserpina.max_stake_pct",
+  "fixture": 31.25,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "31.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "31.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_stake_pct",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.max_stake_pct",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "31.25",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "31.25",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-29": {
+  "key": "roserpina.auto_green_delay_sec",
+  "fixture": 3.75,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "3.75",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "3.75",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.auto_green_delay_sec",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.auto_green_delay_sec",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "3.75",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "3.75",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-31": {
+  "key": "roserpina.allow_recovery",
+  "fixture": false,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "0",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "0",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.allow_recovery",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.allow_recovery",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "0",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "0",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-36": {
+  "key": "roserpina.auto_green_delay_enabled",
+  "fixture": true,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "1",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "1",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.auto_green_delay_enabled",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 0,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "ERROR",
+     "Errore salvataggio Roserpina",
+     "commit fallito iniettato su roserpina.auto_green_delay_enabled",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 1,
+   "versione_finale": null,
+   "var_gui_presente": true
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "1",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "1",
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": true
+  }
+ },
+ "RSR-38": {
+  "key": "roserpina.max_order_exposure",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  }
+ },
+ "RSR-39": {
+  "key": "roserpina.max_market_exposure",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  }
+ },
+ "RSR-40": {
+  "key": "roserpina.max_event_exposure_abs",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  }
+ },
+ "RSR-41": {
+  "key": "roserpina.max_drawdown_abs",
+  "fixture": 7.5,
+  "ok": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "commit_fallito_con_precedente": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": "PRECEDENTE",
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": "PRECEDENTE",
+   "righe_prima": 1,
+   "righe_dopo": 33,
+   "versione_finale": null,
+   "var_gui_presente": false
+  },
+  "versione_fallita": {
+   "eventi": [
+    [
+     "INFO",
+     "OK",
+     "Configurazione Roserpina salvata.",
+     {
+      "valore_db_al_messaggio": null,
+      "versione_db": null
+     }
+    ]
+   ],
+   "eccezione": null,
+   "db_finale": null,
+   "righe_prima": 0,
+   "righe_dopo": 32,
+   "versione_finale": null,
+   "var_gui_presente": false
+  }
+ }
+}

@@ -1,0 +1,88 @@
+{
+ "SIM|pct=None|perdita=10.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:10.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "LIVE|pct=None|perdita=10.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:10.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "SIM|pct=None|perdita=11.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:11.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "LIVE|pct=None|perdita=11.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:11.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "LIVE|pct=50.0|perdita=11.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:11.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "SIM|pct=50.0|perdita=11.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:11.00EUR"
+  ],
+  "mm_chiamato": false
+ },
+ "LIVE|pct=None|perdita=9.99": {
+  "rifiuti": [
+   "max_open_exposure_assente"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "SIM|pct=None|perdita=9.99": {
+  "rifiuti": [
+   "max_open_exposure_assente"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=0.5|perdita=6.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:0.60%"
+  ],
+  "mm_chiamato": false
+ }
+}

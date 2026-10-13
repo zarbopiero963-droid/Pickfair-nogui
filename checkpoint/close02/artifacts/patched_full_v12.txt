@@ -1,0 +1,987 @@
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+..........s............................................................. [  6%]
+........................................................................ [  7%]
+..........x............................................................. [  8%]
+........................................................................ [  9%]
+FF...................................................................... [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+......................................................sss............... [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+............................................sss.s....................... [ 20%]
+........................................................................ [ 21%]
+.............F.................................................. [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+................................F....................................... [ 28%]
+........................................................................ [ 29%]
+......................F................................................. [ 30%]
+.......F...............F..............................................F. [ 31%]
+.....................F......................F.F......................... [ 32%]
+........................................................................ [ 33%]
+........FF..................................................F........... [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+....................................................................ssss [ 37%]
+sss..................................................................... [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+....................F................................................... [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+.....................x.................................................. [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+............                                                             [100%]
+=================================== FAILURES ===================================
+__________________ test_persist_recovery_cap_value_round_trip __________________
+
+    @pytest.mark.core
+    @pytest.mark.safety
+    def test_persist_recovery_cap_value_round_trip():
+        from services.setting_service import SettingsService
+    
+        db = _InMemoryDB({"roserpina.max_recovery_chase_abs": 20.0})
+        cfg = SettingsService(db).load_roserpina_config()
+        assert cfg.max_recovery_chase_abs == pytest.approx(20.0)
+    
+        # Save di un nuovo valore lo scrive nel DB e ricarica identico.
+        cfg.max_recovery_chase_abs = 15.0
+>       SettingsService(db).save_roserpina_config(cfg)
+
+tests/core/test_money_management_recovery_cap.py:219: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8b20505090>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+_______________ test_persist_recovery_cap_none_preserves_stored ________________
+
+    @pytest.mark.core
+    @pytest.mark.safety
+    def test_persist_recovery_cap_none_preserves_stored():
+        """Semantica preserve (come gli altri hard-stop opzionali): un save con
+        campo None NON azzera un cap gia' persistito."""
+        from services.setting_service import SettingsService
+    
+        db = _InMemoryDB({"roserpina.max_recovery_chase_abs": 42.0})
+        cfg = SettingsService(db).load_roserpina_config()
+        assert cfg.max_recovery_chase_abs == pytest.approx(42.0)
+    
+        cfg.max_recovery_chase_abs = None  # campo "vuoto" dalla GUI/console
+>       SettingsService(db).save_roserpina_config(cfg)
+
+tests/core/test_money_management_recovery_cap.py:236: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8b20788190>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+____________________ test_public_api_snapshot_matches_repo _____________________
+
+    @pytest.mark.guardrail
+    def test_public_api_snapshot_matches_repo():
+        snapshot = _load_snapshot()
+    
+        for module_name, module_spec in snapshot.items():
+            module = _import_module(module_name)
+    
+            for class_name, class_spec in module_spec.get("classes", {}).items():
+                assert hasattr(module, class_name), f"{module_name}.{class_name} mancante"
+                cls = getattr(module, class_name)
+    
+                for method_name, expected_params in class_spec.get("methods", {}).items():
+                    assert hasattr(cls, method_name), f"{module_name}.{class_name}.{method_name} mancante"
+                    actual_params = _method_param_names(getattr(cls, method_name))
+>                   assert actual_params == expected_params, (
+                        f"Signature cambiata per {module_name}.{class_name}.{method_name}: "
+                        f"expected={expected_params} actual={actual_params}"
+                    )
+E                   AssertionError: Signature cambiata per database.Database.transaction: expected=[] actual=['immediate', 'busy_timeout_ms']
+E                   assert ['immediate',...y_timeout_ms'] == []
+E                     
+E                     Left contains 2 more items, first extra item: 'immediate'
+E                     Use -v to get more diff
+
+tests/guardrails/test_contract_snapshot_repo.py:50: AssertionError
+___________ test_block_nessuna_nuova_mutazione_diretta_di_un_modulo ____________
+
+    def test_block_nessuna_nuova_mutazione_diretta_di_un_modulo() -> None:
+        moduli_test = sorted(RADICE_TEST.rglob("test_*.py"))
+        # Anti-vacuo: se la scansione non trova la suite, il verde non prova nulla.
+        ASSERTIONS.assertGreater(
+            len(moduli_test), 100,
+            f"solo {len(moduli_test)} file di test trovati sotto {RADICE_TEST}: "
+            "la scansione e' rotta, non la suite",
+        )
+    
+        conteggio = _conteggio_reale()
+        eccedenze: list[str] = []
+        for (relativo, bersaglio), quante in sorted(conteggio.items()):
+            derogate = PREESISTENTI.get((relativo, bersaglio), 0)
+            if quante > derogate:
+                eccedenze.append(
+                    f"tests/{relativo}  {bersaglio}: {quante} mutazioni, "
+                    f"{derogate} derogate"
+                )
+    
+>       ASSERTIONS.assertEqual(
+            eccedenze, [],
+            "mutazione diretta di un attributo di modulo in un test:\n  "
+            + "\n  ".join(eccedenze)
+            + "\nUsa `monkeypatch.setattr(modulo, \"attributo\", ...)` — o "
+            "`monkeypatch.context()` se la patch deve sparire prima della fine del "
+            "test. Il ripristino a mano non regge l'interleaving e puo' rendere lo "
+            "stub permanente.",
+        )
+
+tests/guardrails/test_patch_moduli_nei_test.py:331: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/unittest/case.py:873: in assertEqual
+    assertion_func(first, second, msg=msg)
+/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/unittest/case.py:1079: in assertListEqual
+    self.assertSequenceEqual(list1, list2, msg, seq_type=list)
+/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/unittest/case.py:1061: in assertSequenceEqual
+    self.fail(msg)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <unittest.case.TestCase testMethod=runTest>
+msg = "Lists differ: ['tests/close02/test_close02_gaps.py  sb.C[48 chars]ate'] != []\n\nFirst list contains 1 additional ele...ve sparire prima della fine del test. Il ripristino a mano non regge l'interleaving e puo' rendere lo stub permanente."
+
+    def fail(self, msg=None):
+        """Fail immediately, with the given message."""
+>       raise self.failureException(msg)
+E       AssertionError: Lists differ: ['tests/close02/test_close02_gaps.py  sb.C[48 chars]ate'] != []
+E       
+E       First list contains 1 additional elements.
+E       First extra element 0:
+E       'tests/close02/test_close02_gaps.py  sb.CONFIG_SAVE_BUSY_TIMEOUT_MS: 1 mutazioni, 0 derogate'
+E       
+E       + []
+E       - ['tests/close02/test_close02_gaps.py  sb.CONFIG_SAVE_BUSY_TIMEOUT_MS: 1 '
+E       -  'mutazioni, 0 derogate'] : mutazione diretta di un attributo di modulo in un test:
+E         tests/close02/test_close02_gaps.py  sb.CONFIG_SAVE_BUSY_TIMEOUT_MS: 1 mutazioni, 0 derogate
+E       Usa `monkeypatch.setattr(modulo, "attributo", ...)` — o `monkeypatch.context()` se la patch deve sparire prima della fine del test. Il ripristino a mano non regge l'interleaving e puo' rendere lo stub permanente.
+
+/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/unittest/case.py:703: AssertionError
+___________________ test_book_thresholds_persist_round_trip ____________________
+
+    def test_book_thresholds_persist_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(
+            RoserpinaConfig(table_count=3, book_warning=103.0, book_block=108.0)
+        )
+
+tests/integration/test_dutching_book_guard.py:189: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8adc267d50>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+_______________________ test_liquidity_config_round_trip _______________________
+
+    def test_liquidity_config_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(
+            RoserpinaConfig(
+                table_count=3,
+                liquidity_guard_enabled=False,
+                liquidity_multiplier=4.5,
+                min_liquidity_absolute=0.0,
+                liquidity_warning_only=False,
+            )
+        )
+
+tests/integration/test_dutching_liquidity_guard.py:358: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8adc2bcc90>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+________________________ test_max_stake_pct_round_trip _________________________
+
+    def test_max_stake_pct_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, max_stake_pct=22.0))
+
+tests/integration/test_dutching_max_stake_pct_guard.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8afc3fa890>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+___________________________ test_max_win_round_trip ____________________________
+
+    def test_max_win_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(
+            RoserpinaConfig(table_count=3, max_win=7500.0, max_win_warning_only=False)
+        )
+
+tests/integration/test_dutching_max_win_guard.py:393: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8adc24f690>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+__________________________ test_min_price_round_trip ___________________________
+
+    def test_min_price_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, min_price=1.35))
+
+tests/integration/test_dutching_min_price_guard.py:123: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8adc2b9a50>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+________________________ test_profit_epsilon_round_trip ________________________
+
+    def test_profit_epsilon_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, profit_epsilon=0.75))
+
+tests/integration/test_dutching_profit_epsilon_guard.py:306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8adc220190>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+____________________ test_profit_epsilon_enabled_round_trip ____________________
+
+    def test_profit_epsilon_enabled_round_trip():
+        db = _InMemoryDB()
+>       SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, profit_epsilon_enabled=False))
+
+tests/integration/test_dutching_profit_epsilon_guard.py:317: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8adc7d3010>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+_ test_save_roserpina_config_preserves_persisted_hard_stop_values_when_omitted _
+
+    @pytest.mark.integration
+    def test_save_roserpina_config_preserves_persisted_hard_stop_values_when_omitted():
+        db = InMemoryDB(
+            {
+                "roserpina.max_daily_loss": 125.0,
+                "roserpina.max_drawdown_hard_stop_pct": 20.0,
+                "roserpina.max_open_exposure": 300.0,
+            }
+        )
+        svc = SettingsService(db)
+    
+        # Omitted hard-stop fields remain dataclass defaults (None).
+>       svc.save_roserpina_config(RoserpinaConfig(table_count=3))
+
+tests/integration/test_live_control_plane_settings.py:98: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8afc312690>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+______ test_save_roserpina_config_updates_hard_stop_values_when_explicit _______
+
+    @pytest.mark.integration
+    def test_save_roserpina_config_updates_hard_stop_values_when_explicit():
+        db = InMemoryDB(
+            {
+                "roserpina.max_daily_loss": 125.0,
+                "roserpina.max_drawdown_hard_stop_pct": 20.0,
+                "roserpina.max_open_exposure": 300.0,
+            }
+        )
+        svc = SettingsService(db)
+    
+>       svc.save_roserpina_config(
+            RoserpinaConfig(
+                table_count=3,
+                max_daily_loss=150.0,
+                max_drawdown_hard_stop_pct=25.0,
+                max_open_exposure=350.0,
+            )
+        )
+
+tests/integration/test_live_control_plane_settings.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8adc28cf10>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+_____ test_empty_field_does_not_overwrite_persisted_hard_stop_real_service _____
+
+    def test_empty_field_does_not_overwrite_persisted_hard_stop_real_service():
+        # Percorso REALE (SettingsService vero, niente fake): l'output della GUI per
+        # un campo vuoto e' None (_parse_hard_stop("") is None) e il save reale deve
+        # PRESERVARE gli hard-stop gia' persistiti, non azzerarli.
+        assert _P("", "Esposizione aperta max") is None  # cio' che la GUI produce
+    
+        db = _InMemoryDB(
+            {
+                "roserpina.max_daily_loss": 125.0,
+                "roserpina.max_open_exposure": 300.0,
+                "roserpina.max_drawdown_hard_stop_pct": 20.0,
+            }
+        )
+        svc = SettingsService(db)
+    
+        # Save "GUI-like": solo max_daily_loss modificato (campo pieno); gli altri due
+        # lasciati vuoti => None (come li produce _parse_hard_stop per il campo vuoto).
+>       svc.save_roserpina_config(
+            RoserpinaConfig(
+                table_count=3,
+                max_daily_loss=_P("150", "x"),                        # campo pieno
+                max_open_exposure=_P("", "x"),                        # vuoto => None
+                max_drawdown_hard_stop_pct=_P("", "x", is_pct=True),  # vuoto => None
+            )
+        )
+
+tests/integration/test_mini_gui_hard_stop_fields.py:116: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.settings_service.SettingsService object at 0x7f8adc7c5790>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: _InMemoryDB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+____________________________ test_config_round_trip ____________________________
+
+    def test_config_round_trip():
+        from core.system_state import RoserpinaConfig
+        from services.setting_service import SettingsService
+    
+        class _DB:
+            def __init__(self):
+                self._s = {}
+    
+            def get_settings(self):
+                return dict(self._s)
+    
+            def transaction(self):  # close02 F6: doppio del Database.transaction
+                import contextlib
+    
+                return contextlib.nullcontext()
+    
+            def save_settings(self, payload):
+                self._s.update(dict(payload or {}))
+    
+        db = _DB()
+>       SettingsService(db).save_roserpina_config(
+            RoserpinaConfig(table_count=3, auto_green_delay_enabled=True, auto_green_delay_sec=4.0)
+        )
+
+tests/unit/test_auto_green_delay_trigger.py:457: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+services/setting_service.py:496: in save_roserpina_config
+    self._save_roserpina_tx(payload, snapshot)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <services.setting_service.SettingsService object at 0x7f8a9c24a250>
+payload = {'roserpina.target_profit_cycle_pct': 3.0, 'roserpina.max_single_bet_pct': 18.0, 'roserpina.max_total_exposure_pct': 35.0, 'roserpina.max_event_exposure_pct': 18.0, ...}
+snapshot = None
+
+    def _save_roserpina_tx(self, payload, snapshot) -> None:
+>       with self.db.transaction(immediate=True, busy_timeout_ms=self.CONFIG_SAVE_BUSY_TIMEOUT_MS):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: test_config_round_trip.<locals>._DB.transaction() got an unexpected keyword argument 'immediate'
+
+services/setting_service.py:509: TypeError
+=============================== warnings summary ===============================
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-468 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-467 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[prod]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-469 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[123]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-470 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[123]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-471 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/guardrails/test_no_live_without_gate.py::test_live_requires_mode_plus_gate_approval
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-480 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_deploy_gate.py::test_live_requested_and_ready_is_go
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-481 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_deploy_gate.py::test_simulation_mode_always_allowed
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-482 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_default_startup_is_not_accidentally_live_ready
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-501 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_valid_live_ready_state_allows_live
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-502 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[None]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-503 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-504 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[paper]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-505 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[unknown]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-506 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_default_startup_is_safe_not_live
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-615 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_simulation_mode_stays_simulation[False]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-616 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_simulation_mode_stays_simulation[True]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-617 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_live_enabled_and_readiness_ok_allowed
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-618 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[None]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-619 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[paper]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-620 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[paper]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-621 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[danger]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-622 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/services/test_telegram_sender.py::test_worker_loop_closes_event_loop_on_send_exception
+  /workspace/pickfair/bf2/close02/wt/telegram_sender.py:496: RuntimeWarning: coroutine 'test_worker_loop_closes_event_loop_on_send_exception.<locals>._FakeLoop.shutdown_asyncgens' was never awaited
+    loop.run_until_complete(loop.shutdown_asyncgens())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_telegram_sender.py::test_worker_loop_closes_event_loop_on_send_exception
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'TelegramSender.send_message' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_telegram_sender.py::test_send_message_sync_closes_event_loop_on_exception
+  /workspace/pickfair/bf2/close02/wt/tests/services/test_telegram_sender.py:295: RuntimeWarning: coroutine 'TelegramSender.send_message' was never awaited
+    with pytest.raises(RuntimeError, match="sync boom"):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/core/test_money_management_recovery_cap.py::test_persist_recovery_cap_value_round_trip
+FAILED tests/core/test_money_management_recovery_cap.py::test_persist_recovery_cap_none_preserves_stored
+FAILED tests/guardrails/test_contract_snapshot_repo.py::test_public_api_snapshot_matches_repo
+FAILED tests/guardrails/test_patch_moduli_nei_test.py::test_block_nessuna_nuova_mutazione_diretta_di_un_modulo
+FAILED tests/integration/test_dutching_book_guard.py::test_book_thresholds_persist_round_trip
+FAILED tests/integration/test_dutching_liquidity_guard.py::test_liquidity_config_round_trip
+FAILED tests/integration/test_dutching_max_stake_pct_guard.py::test_max_stake_pct_round_trip
+FAILED tests/integration/test_dutching_max_win_guard.py::test_max_win_round_trip
+FAILED tests/integration/test_dutching_min_price_guard.py::test_min_price_round_trip
+FAILED tests/integration/test_dutching_profit_epsilon_guard.py::test_profit_epsilon_round_trip
+FAILED tests/integration/test_dutching_profit_epsilon_guard.py::test_profit_epsilon_enabled_round_trip
+FAILED tests/integration/test_live_control_plane_settings.py::test_save_roserpina_config_preserves_persisted_hard_stop_values_when_omitted
+FAILED tests/integration/test_live_control_plane_settings.py::test_save_roserpina_config_updates_hard_stop_values_when_explicit
+FAILED tests/integration/test_mini_gui_hard_stop_fields.py::test_empty_field_does_not_overwrite_persisted_hard_stop_real_service
+FAILED tests/unit/test_auto_green_delay_trigger.py::test_config_round_trip - ...
+15 failed, 7316 passed, 15 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 406.67s (0:06:46)

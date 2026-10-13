@@ -1,0 +1,546 @@
+diff --git a/betfair_client.py b/betfair_client.py
+index 89790fe..4fc0a31 100644
+--- a/betfair_client.py
++++ b/betfair_client.py
+@@ -1368,6 +1368,16 @@ class BetfairClient:
+             "points_balance": self._safe_float(result.get("pointsBalance"), 0.0),
+         }
+ 
++    def get_account_statement(self, params: Dict[str, Any]) -> Dict[str, Any]:
++        """close02 v14: SOLA LETTURA (owner #426 ricostruzione picco). Unico metodo
++        getAccountStatement, includeItem forzato ad ALL (itemDateRange vale solo con ALL)."""
++        body = dict(params or {})
++        body["includeItem"] = "ALL"
++        result = self._post_jsonrpc(self.ACCOUNT_URL, "AccountAPING/v1.0/getAccountStatement", body)
++        if not isinstance(result, dict):
++            raise RuntimeError("INVALID_ACCOUNT_STATEMENT")
++        return result
++
+     def keep_alive(self) -> Dict[str, Any]:
+         """Estende la sessione betting via l'endpoint Betfair keepAlive.
+ 
+diff --git a/core/peak_reconstruction.py b/core/peak_reconstruction.py
+new file mode 100644
+index 0000000..c8a5bbb
+--- /dev/null
++++ b/core/peak_reconstruction.py
+@@ -0,0 +1,229 @@
++"""close02 v14 — ricostruzione del picco equity dallo storico Betfair (owner #426,
++15:31 del 13/10/2026, opzione A). PROPOSTA isolata: sola lettura, nessun ordine.
++
++Fonte dati: `AccountAPING/v1.0/getAccountStatement` (documentata):
++  richiesta  {fromRecord, recordCount, itemDateRange{from,to}, includeItem}
++  risposta   {accountStatement: [StatementItem], moreAvailable}
++  StatementItem {refId, itemDate, amount, balance, itemClass, itemClassData, legacyData}
++  `itemDateRange` e' applicato SOLO con includeItem=ALL ⇒ si usa sempre ALL.
++
++Equity: si usa `balance` dell'estratto (saldo del conto dopo ogni movimento, che
++include depositi/prelievi, esiti, commissioni). NON e' il saldo disponibile
++(availableToBetBalance = saldo − esposizione). Scelta conservativa: il picco del
++saldo e' >= del picco del disponibile ⇒ drawdown mai sottostimato.
++
++Esito: `reconstruct(...)` ritorna una PROPOSTA con evidenze, intervallo, fonti,
++calcoli e SHA. Non scrive MAI il picco e non sblocca nulla. Solo `ratify_peak`
++con la ratifica esplicita dell'owner (riferimento + SHA della proposta digitato)
++scrive il picco, mai al ribasso, e lascia comunque la migrazione v13 al suo flusso.
++Storico incompleto/non verificabile/incoerente ⇒ BLOCCATA, nessun valore.
++"""
++from __future__ import annotations
++
++import hashlib
++import json
++import math
++import os
++from datetime import datetime, timezone
++from typing import Any, Callable, Iterable
++
++from core import risk_persistence as rp
++from core.atomic_io import atomic_write_text
++
++SOURCE = "AccountAPING/v1.0/getAccountStatement (includeItem=ALL)"
++TOLERANCE = 0.005
++PAGE_SIZE = 100
++MAX_PAGES = 10000
++
++
++def _sha(obj: Any) -> str:
++    return hashlib.sha256(json.dumps(obj, sort_keys=True, default=str).encode()).hexdigest()
++
++
++def _num(v: Any):
++    if isinstance(v, bool) or not isinstance(v, (int, float)):
++        return None
++    v = float(v)
++    return v if math.isfinite(v) else None
++
++
++def _dt(v: Any):
++    try:
++        d = datetime.fromisoformat(str(v).replace("Z", "+00:00"))
++        return d if d.tzinfo else None
++    except Exception:
++        return None
++
++
++def fetch_pages(call: Callable[[dict], Any], *, date_from: str, date_to: str) -> list:
++    """Sola lettura: pagina getAccountStatement. `call(params)` e' l'unica via di rete
++    (iniettata). Mai altri metodi. Le pagine grezze sono l'evidenza."""
++    pages, start = [], 0
++    for _ in range(MAX_PAGES):
++        params = {"fromRecord": start, "recordCount": PAGE_SIZE, "includeItem": "ALL",
++                  "itemDateRange": {"from": date_from, "to": date_to}}
++        resp = call(dict(params))
++        pages.append({"request": params, "response": resp})
++        items = (resp or {}).get("accountStatement") if isinstance(resp, dict) else None
++        if not isinstance(resp, dict) or not resp.get("moreAvailable") or not items:
++            break
++        start += len(items)
++    return pages
++
++
++def reconstruct(pages: list, *, relevant_from: str, as_of: str, current_balance: Any) -> dict:
++    """Proposta di picco. `relevant_from`: inizio del periodo rilevante (prima attivita'
++    di rischio nota). `current_balance`: saldo del conto (non il disponibile) verificato
++    alla data `as_of`, per il controllo di chiusura della catena."""
++    reasons: list = []
++    items: list = []
++    seen: set = set()
++    expected_start = 0
++    window = None
++    for i, pg in enumerate(pages or []):
++        req, resp = (pg or {}).get("request") or {}, (pg or {}).get("response")
++        if req.get("includeItem") != "ALL":
++            reasons.append(f"pagina_{i}_includeItem_non_ALL")
++        if req.get("fromRecord") != expected_start:
++            reasons.append(f"pagina_{i}_fromRecord_non_contiguo")
++        w = req.get("itemDateRange") or {}
++        window = window or w
++        if w != window:
++            reasons.append(f"pagina_{i}_intervallo_diverso")
++        if not isinstance(resp, dict) or not isinstance(resp.get("accountStatement"), list):
++            reasons.append(f"pagina_{i}_risposta_illeggibile")
++            break
++        batch = resp["accountStatement"]
++        expected_start += len(batch)
++        items.extend(batch)
++        if i == len(pages) - 1 and resp.get("moreAvailable") is not False:
++            reasons.append("storico_troncato_moreAvailable")
++    if not pages:
++        reasons.append("nessuna_pagina")
++    window = window or {}
++    w_from, w_to = _dt(window.get("from")), _dt(window.get("to"))
++    rel, asof = _dt(relevant_from), _dt(as_of)
++    if None in (w_from, w_to, rel, asof):
++        reasons.append("intervallo_non_verificabile")
++    else:
++        if w_from > rel:
++            reasons.append("intervallo_non_copre_periodo_rilevante")  # massimo parziale
++        if w_to < asof:
++            reasons.append("intervallo_non_arriva_alla_data_di_verifica")
++    rows = []
++    for it in items:
++        if not isinstance(it, dict):
++            reasons.append("voce_illeggibile"); continue
++        ref, d, amt, bal = it.get("refId"), _dt(it.get("itemDate")), _num(it.get("amount")), _num(it.get("balance"))
++        if d is None or amt is None or bal is None or not ref:
++            reasons.append(f"voce_incompleta:{ref}"); continue
++        key = (str(ref), it.get("itemDate"), amt, bal)
++        if key in seen:
++            reasons.append(f"voce_duplicata:{ref}"); continue
++        seen.add(key)
++        rows.append({"refId": str(ref), "itemDate": d.isoformat(), "amount": amt, "balance": bal,
++                     "itemClass": it.get("itemClass")})
++    rows.sort(key=lambda r: r["itemDate"])
++    calc = []
++    peak = None
++    if rows:
++        opening = round(rows[0]["balance"] - rows[0]["amount"], 2)
++        peak, prev = opening, opening
++        calc.append({"passo": "saldo_iniziale", "balance": opening})
++        for r in rows:
++            if abs(prev + r["amount"] - r["balance"]) > TOLERANCE:
++                reasons.append(f"catena_incoerente:{r['refId']}")
++            prev = r["balance"]
++            peak = max(peak, r["balance"])
++            calc.append({"refId": r["refId"], "itemDate": r["itemDate"], "amount": r["amount"],
++                         "balance": r["balance"], "picco_corrente": peak})
++        cur = _num(current_balance)
++        if cur is None:
++            reasons.append("saldo_attuale_non_verificabile")
++        elif abs(prev - cur) > TOLERANCE:
++            reasons.append("saldo_finale_diverso_dal_saldo_attuale")
++        elif cur > peak:
++            peak = cur
++    else:
++        reasons.append("storico_vuoto")
++    reasons = sorted(set(reasons))
++    prop = {"metodo": "ricostruzione_estratto_conto", "fonte": SOURCE,
++            "intervallo": {"da": window.get("from"), "a": window.get("to"),
++                           "periodo_rilevante_da": relevant_from, "verifica_al": as_of},
++            "evidenze_sha256": [_sha(p) for p in pages or []],
++            "evidenze_sha256_totale": _sha(pages or []),
++            "voci": len(rows), "calcoli": calc, "saldo_attuale_dichiarato": current_balance,
++            "stato": "BLOCCATA" if reasons else "VERIFICATA_DA_RATIFICARE",
++            "motivi": reasons,
++            "picco_proposto": None if reasons else round(peak, 2),
++            "richiede_ratifica_owner": True}
++    prop["sha256"] = _sha(prop)
++    return prop
++
++
++def _base(db: Any) -> str:
++    return rp._base(db)
++
++
++def save_proposal(db: Any, prop: dict, pages: list) -> str:
++    """Conserva evidenze + proposta (atomico) e audit append-only. Non tocca il rischio."""
++    b = _base(db)
++    if not b:
++        return ""
++    path = f"{b}.peak_reconstruction.{prop['sha256'][:16]}.json"
++    atomic_write_text(path, json.dumps({"proposta": prop, "pagine_grezze": pages}, sort_keys=True, default=str))
++    _audit(db, {"esito": "PROPOSTA_" + prop["stato"], "sha256": prop["sha256"], "file": os.path.basename(path)})
++    return path
++
++
++def _audit(db: Any, rec: dict) -> None:
++    b = _base(db)
++    rec = dict(rec, at=datetime.now(timezone.utc).isoformat())
++    if b:
++        with open(b + ".peak_reconstruction.audit.jsonl", "a", encoding="utf-8") as fh:
++            fh.write(json.dumps(rec, sort_keys=True, default=str) + "\n"); fh.flush(); os.fsync(fh.fileno())
++
++
++def load_proposal(path: str) -> dict:
++    with open(path, encoding="utf-8") as fh:
++        data = json.load(fh)
++    prop = dict(data["proposta"])
++    sha = prop.pop("sha256")
++    if _sha(prop) != sha or _sha(data["pagine_grezze"]) != prop["evidenze_sha256_totale"]:
++        raise ValueError("proposta_o_evidenze_alterate")
++    prop["sha256"] = sha
++    return prop
++
++
++def ratify_peak(db: Any, path: str, *, owner: str, owner_ref: str, sha_digitato: str) -> dict:
++    """Ratifica ESPLICITA dell'owner di una proposta VERIFICATA. Scrive il picco nelle
++    copie mancanti (mai al ribasso). Non tocca registro, risk-stop, daily-loss:
++    lo sblocco resta al flusso di migrazione v13 (operatore + digest)."""
++    try:
++        prop = load_proposal(path)
++    except Exception as exc:
++        return {"ok": False, "motivo": f"proposta_non_verificabile:{type(exc).__name__}"}
++    if not str(owner or "").strip() or not str(owner_ref or "").strip():
++        motivo = "ratifica_owner_mancante"
++    elif sha_digitato != prop["sha256"]:
++        motivo = "sha_non_corrispondente"
++    elif prop["stato"] != "VERIFICATA_DA_RATIFICARE" or prop["picco_proposto"] is None:
++        motivo = "proposta_bloccata:" + ",".join(prop["motivi"])
++    else:
++        motivo = ""
++    if motivo:
++        _audit(db, {"esito": "RATIFICA_RIFIUTATA", "motivo": motivo, "sha256": prop.get("sha256")})
++        return {"ok": False, "motivo": motivo}
++    stored, err = rp.restore_equity_peak_raw(db)
++    if err:
++        _audit(db, {"esito": "RATIFICA_RIFIUTATA", "motivo": err, "sha256": prop["sha256"]})
++        return {"ok": False, "motivo": err}  # copia illeggibile: nessuna sovrascrittura
++    new = max(v for v in (prop["picco_proposto"], stored) if v is not None)
++    _audit(db, {"esito": "RATIFICA_INTENTO", "owner": owner, "owner_ref": owner_ref,
++                "sha256": prop["sha256"], "picco": new, "picco_esistente": stored})
++    payload = json.dumps({"peak": new, "fonte": "ricostruzione_ratificata", "sha256": prop["sha256"]})
++    if rp._peak_file(db):
++        atomic_write_text(rp._peak_file(db), payload)
++    db.save_settings({rp.EQUITY_PEAK_KEY: payload})
++    _audit(db, {"esito": "RATIFICA_COMPLETATA", "sha256": prop["sha256"], "picco": new})
++    return {"ok": True, "motivo": "", "picco": new}
+diff --git a/core/risk_persistence.py b/core/risk_persistence.py
+index f30719f..b610a1a 100644
+--- a/core/risk_persistence.py
++++ b/core/risk_persistence.py
+@@ -177,6 +177,18 @@ def persist_equity_peak(db: Any, peak: float) -> bool:
+     return ok
+ 
+ 
++def restore_equity_peak_raw(db: Any):
++    """v14: massimo delle copie leggibili del picco, senza logica di registro.
++    (None, "") se nessuna copia; (None, motivo) se una copia e' illeggibile."""
++    s = _settings(db)
++    a = _UNREADABLE if s is _UNREADABLE else _parse_peak(s.get(EQUITY_PEAK_KEY))
++    b = _parse_peak(_read_file(_peak_file(db)))
++    if _UNREADABLE in (a, b):
++        return None, "equity_peak_illeggibile"
++    vals = [v for v in (a, b) if v is not None]
++    return (max(vals) if vals else None), ""
++
++
+ REINIT_REQUIRED = "ledger_reinit_required"
+ HISTORY_KEYS = ("daily_loss_state", "risk_stop_state", "emergency_stopped", EQUITY_PEAK_KEY)
+ 
+diff --git a/tests/close02/test_close02_v14.py b/tests/close02/test_close02_v14.py
+new file mode 100644
+index 0000000..b152a2d
+--- /dev/null
++++ b/tests/close02/test_close02_v14.py
+@@ -0,0 +1,261 @@
++"""close02 v14 — ricostruzione del picco equity da getAccountStatement (owner #426,
++15:31). Solo fixture con i campi documentati (refId, itemDate, amount, balance,
++itemClass; moreAvailable). Nessuna chiamata reale. RED su v13, GREEN con v14."""
++import json, os, signal, subprocess, sys, textwrap
++from unittest.mock import MagicMock
++import pytest
++from database import Database
++from tests.close02.test_close02_restart_t81u import ROOT, _restart, _blocked, _set_raw, _order_calls
++from tests.close02.test_close02_v13 import _pre_v9, _first_boot, _ratify, _settings, PEAK_KEY, LEDGER_KEY
++
++REL, ASOF = "2026-09-01T00:00:00Z", "2026-10-13T12:00:00Z"
++WIN = {"from": "2026-08-01T00:00:00Z", "to": "2026-10-13T12:00:00Z"}
++
++
++def _pr():
++    from core import peak_reconstruction
++    return peak_reconstruction
++
++
++def _items(moves, start=0.0):
++    """moves: [(amount, classe)] in ordine cronologico; ritorna voci newest-first."""
++    out, bal = [], start
++    for i, (amt, cls) in enumerate(moves):
++        bal = round(bal + amt, 2)
++        out.append({"refId": f"R{i}", "itemDate": f"2026-09-{i + 2:02d}T10:00:00.000Z", "amount": amt,
++                    "balance": bal, "itemClass": cls, "itemClassData": {}, "legacyData": {}})
++    return list(reversed(out)), bal
++
++
++MOVES = [(1000.0, "DEPOSIT"), (250.0, "EXCHANGE_BET"), (-11.25, "EXCHANGE_COMMISSION"),
++         (-300.0, "EXCHANGE_BET"), (-100.0, "WITHDRAWAL"), (40.0, "EXCHANGE_BET")]
++# saldo: 1000, 1250, 1238.75 (picco), 938.75, 838.75, 878.75
++
++
++def _pages(items, size=4, window=WIN, more_last=False):
++    pages = []
++    for k in range(0, len(items), size):
++        chunk = items[k:k + size]
++        last = k + size >= len(items)
++        pages.append({"request": {"fromRecord": k, "recordCount": size, "includeItem": "ALL", "itemDateRange": dict(window)},
++                      "response": {"accountStatement": chunk, "moreAvailable": (more_last if last else True)}})
++    return pages
++
++
++def _ok(**kw):
++    items, bal = _items(MOVES)
++    args = dict(pages=_pages(items), relevant_from=REL, as_of=ASOF, current_balance=bal)
++    args.update(kw)
++    return _pr().reconstruct(args.pop("pages"), **args)
++
++
++# (1) sola lettura: unico metodo getAccountStatement, includeItem=ALL, paginazione
++def test_p1_sola_lettura_un_solo_metodo_e_paginazione():
++    items, _ = _items(MOVES)
++    pages = _pages(items, size=4)
++    calls = []
++    def call(params):
++        calls.append(params)
++        return pages[len(calls) - 1]["response"]
++    got = _pr().fetch_pages(call, date_from=WIN["from"], date_to=WIN["to"])
++    assert [c["fromRecord"] for c in calls] == [0, 4] and all(c["includeItem"] == "ALL" for c in calls)
++    from betfair_client import BetfairClient
++    bc = BetfairClient.__new__(BetfairClient)
++    bc._post_jsonrpc = MagicMock(return_value={"accountStatement": [], "moreAvailable": False})
++    bc.get_account_statement({"includeItem": "EXCHANGE"})
++    (url, method, params), _ = bc._post_jsonrpc.call_args
++    assert method == "AccountAPING/v1.0/getAccountStatement" and params["includeItem"] == "ALL"
++    assert len(got) == 2
++
++
++# (2) saldo (balance) dell'estratto, non il disponibile; commissioni e movimenti nella catena
++def test_p2_picco_dal_saldo_con_commissioni_e_movimenti():
++    prop = _ok()
++    assert prop["stato"] == "VERIFICATA_DA_RATIFICARE" and prop["picco_proposto"] == 1250.0
++    assert prop["calcoli"][0] == {"passo": "saldo_iniziale", "balance": 0.0}
++
++
++def test_p2b_massimo_parziale_non_usato_come_completo():
++    prop = _ok(pages=_pages(_items(MOVES)[0], window={"from": "2026-09-15T00:00:00Z", "to": WIN["to"]}))
++    assert prop["stato"] == "BLOCCATA" and "intervallo_non_copre_periodo_rilevante" in prop["motivi"]
++    assert prop["picco_proposto"] is None
++
++
++def test_p2c_storico_troncato_moreavailable():
++    prop = _ok(pages=_pages(_items(MOVES)[0], more_last=True))
++    assert prop["stato"] == "BLOCCATA" and "storico_troncato_moreAvailable" in prop["motivi"]
++
++
++def test_p2d_intervallo_non_arriva_a_oggi():
++    prop = _ok(pages=_pages(_items(MOVES)[0], window={"from": WIN["from"], "to": "2026-10-01T00:00:00Z"}))
++    assert "intervallo_non_arriva_alla_data_di_verifica" in prop["motivi"]
++
++
++def test_p2e_pagine_non_contigue_o_includeitem_diverso():
++    pages = _pages(_items(MOVES)[0])
++    pages[1]["request"]["fromRecord"] = 5
++    assert "pagina_1_fromRecord_non_contiguo" in _ok(pages=pages)["motivi"]
++    pages = _pages(_items(MOVES)[0]); pages[0]["request"]["includeItem"] = "EXCHANGE"
++    assert "pagina_0_includeItem_non_ALL" in _ok(pages=pages)["motivi"]
++
++
++# (3) evidenze, intervallo, fonti, calcoli, SHA, audit; manomissione rilevata
++def test_p3_evidenze_sha_audit_e_manomissione(tmp_path):
++    db = Database(str(tmp_path / "e.sqlite"))
++    items, bal = _items(MOVES); pages = _pages(items)
++    prop = _pr().reconstruct(pages, relevant_from=REL, as_of=ASOF, current_balance=bal)
++    assert prop["fonte"].startswith("AccountAPING/v1.0/getAccountStatement") and prop["intervallo"]["da"] == WIN["from"]
++    assert len(prop["evidenze_sha256"]) == 2 and len(prop["sha256"]) == 64 and len(prop["calcoli"]) == 7
++    path = _pr().save_proposal(db, prop, pages)
++    assert _pr().load_proposal(path)["sha256"] == prop["sha256"]
++    audit = [json.loads(x) for x in open(str(tmp_path / "e.sqlite") + ".peak_reconstruction.audit.jsonl")]
++    assert audit[-1]["esito"] == "PROPOSTA_VERIFICATA_DA_RATIFICARE"
++    data = json.load(open(path)); data["pagine_grezze"][0]["response"]["accountStatement"][0]["balance"] = 9999.0
++    open(path, "w").write(json.dumps(data))
++    with pytest.raises(ValueError):
++        _pr().load_proposal(path)
++
++
++# (4) niente valori inventati; saldo attuale non assunto come picco
++def test_p4_saldo_attuale_non_e_il_picco_e_catena_incoerente_blocca():
++    prop = _ok()
++    assert prop["picco_proposto"] == 1250.0 != 878.75
++    items, bal = _items(MOVES); items[2]["balance"] += 5.0
++    prop = _ok(pages=_pages(items))
++    assert prop["stato"] == "BLOCCATA" and any(m.startswith("catena_incoerente") for m in prop["motivi"])
++    assert prop["picco_proposto"] is None
++
++
++def test_p4b_saldo_attuale_diverso_o_illeggibile_blocca():
++    assert "saldo_finale_diverso_dal_saldo_attuale" in _ok(current_balance=900.0)["motivi"]
++    assert "saldo_attuale_non_verificabile" in _ok(current_balance=float("nan"))["motivi"]
++
++
++def test_p4c_voci_incomplete_o_duplicate_bloccano():
++    items, _ = _items(MOVES); del items[1]["balance"]
++    assert any(m.startswith("voce_incompleta") for m in _ok(pages=_pages(items))["motivi"])
++    items, _ = _items(MOVES); items.insert(0, dict(items[0]))
++    assert any(m.startswith("voce_duplicata") for m in _ok(pages=_pages(items))["motivi"])
++    assert "storico_vuoto" in _ok(pages=_pages([]) or [{"request": {"fromRecord": 0, "includeItem": "ALL", "itemDateRange": WIN},
++                                                        "response": {"accountStatement": [], "moreAvailable": False}}])["motivi"]
++
++
++# Flusso completo su installazione base (picco mai persistito)
++def _base_install(tmp_path, monkeypatch, action="none"):
++    p = _pre_v9(tmp_path, action=action, keep_peak=False); _first_boot(p, monkeypatch)
++    return p
++
++
++def _save(p, prop_kw=None):
++    items, bal = _items(MOVES); pages = _pages(items)
++    kw = dict(relevant_from=REL, as_of=ASOF, current_balance=bal); kw.update(prop_kw or {})
++    prop = _pr().reconstruct(pages, **kw)
++    return _pr().save_proposal(Database(p), prop, pages), prop
++
++
++# (6)(7) nessuno sblocco automatico: proposta salvata ≠ sblocco
++def test_p6_proposta_non_sblocca_e_non_scrive_il_picco(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch)
++    _save(p)
++    assert PEAK_KEY not in _settings(p)
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    assert _blocked(rc), rej
++
++
++def test_p7_ratifica_owner_esplicita_obbligatoria(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch); path, prop = _save(p)
++    m = _pr(); db = Database(p)
++    assert m.ratify_peak(db, path, owner="", owner_ref="#426", sha_digitato=prop["sha256"])["motivo"] == "ratifica_owner_mancante"
++    assert m.ratify_peak(db, path, owner="owner", owner_ref="#426", sha_digitato="x")["motivo"] == "sha_non_corrispondente"
++    assert PEAK_KEY not in _settings(p)
++
++
++def test_p6b_proposta_bloccata_non_ratificabile(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch)
++    path, prop = _save(p, {"current_balance": 1.0})
++    r = _pr().ratify_peak(Database(p), path, owner="owner", owner_ref="#426", sha_digitato=prop["sha256"])
++    assert not r["ok"] and r["motivo"].startswith("proposta_bloccata") and PEAK_KEY not in _settings(p)
++
++
++def test_p7b_dopo_ratifica_picco_resta_bloccato_fino_alla_migrazione(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch); path, prop = _save(p)
++    r = _pr().ratify_peak(Database(p), path, owner="owner", owner_ref="#426/x", sha_digitato=prop["sha256"])
++    assert r["ok"] and r["picco"] == 1250.0
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    assert _blocked(rc), rej                      # nessuno sblocco automatico
++    res, _ = _ratify(p)                           # flusso v13: operatore + digest
++    assert res["ok"], res["motivo"]
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    assert not _blocked(rc), rej
++    rc, rej = _restart(p, monkeypatch, 1239.0)    # 11 EUR sotto il picco ricostruito
++    assert _blocked(rc), rej
++
++
++# (4)(5) mai al ribasso; risk-stop e perdite invariati
++def test_p5_mai_al_ribasso_su_picco_esistente(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch); path, prop = _save(p)
++    Database(p).save_settings({PEAK_KEY: json.dumps({"peak": 1300.0})})
++    r = _pr().ratify_peak(Database(p), path, owner="owner", owner_ref="#426", sha_digitato=prop["sha256"])
++    assert r["ok"] and r["picco"] == 1300.0
++
++
++def test_p5b_copia_picco_illeggibile_non_sovrascritta(tmp_path, monkeypatch):
++    p = _base_install(tmp_path, monkeypatch); path, prop = _save(p)
++    Database(p).save_settings({PEAK_KEY: "{rotto"})
++    r = _pr().ratify_peak(Database(p), path, owner="owner", owner_ref="#426", sha_digitato=prop["sha256"])
++    assert not r["ok"] and _settings(p)[PEAK_KEY] == "{rotto"
++
++
++@pytest.mark.parametrize("action", ["risk_stop", "daily_loss_parziale"])
++def test_p5c_riskstop_e_perdite_invariati(tmp_path, monkeypatch, action):
++    p = _base_install(tmp_path, monkeypatch, action=action); path, prop = _save(p)
++    keys = ("risk_stop_state", "daily_loss_state")
++    before = {k: _settings(p).get(k) for k in keys}
++    assert _pr().ratify_peak(Database(p), path, owner="o", owner_ref="#426", sha_digitato=prop["sha256"])["ok"]
++    assert {k: _settings(p).get(k) for k in keys} == before
++    assert _ratify(p)[0]["ok"]
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    if action == "risk_stop":
++        assert rc._risk_stop_reason and not any(h.startswith("bus.CMD_") for h in _order_calls(rc))
++    else:
++        assert rc._daily_loss_monitor_state.get("intraday_realized_pnl") == pytest.approx(-8.0)
++
++
++# (8) kill -9 durante la ratifica del picco: nessun reset, blocco mantenuto
++_KILL = textwrap.dedent("""
++    import os, sys, signal
++    sys.path.insert(0, %r)
++    from database import Database
++    from core import peak_reconstruction as m
++    p, path, sha, at = sys.argv[1], sys.argv[2], sys.argv[3], int(sys.argv[4])
++    n = [0]
++    def tick():
++        n[0] += 1
++        if n[0] == at:
++            os.kill(os.getpid(), signal.SIGKILL)
++    db = Database(p)
++    o_s = db.save_settings
++    db.save_settings = lambda d: (tick(), o_s(d))[1]
++    o_w = m.atomic_write_text
++    m.atomic_write_text = lambda a, b: (tick(), o_w(a, b))[1]
++    o_a = m._audit
++    m._audit = lambda d, r: (tick(), o_a(d, r))[1]
++    print(m.ratify_peak(db, path, owner="owner", owner_ref="#426", sha_digitato=sha))
++""") % ROOT
++
++
++@pytest.mark.parametrize("at", [1, 2, 3, 4, 5])
++def test_p8_kill9_ratifica_picco(tmp_path, monkeypatch, at):
++    p = _base_install(tmp_path, monkeypatch); path, prop = _save(p)
++    r = subprocess.run([sys.executable, "-c", _KILL, p, path, prop["sha256"], str(at)], capture_output=True, text=True, timeout=120)
++    assert r.returncode in (-signal.SIGKILL, 0), r.stderr[-500:]
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    assert _blocked(rc), rej                    # mai sblocco, qualunque passo
++    raw = _settings(p).get(PEAK_KEY)
++    assert raw is None or json.loads(raw)["peak"] == 1250.0
++    assert _pr().ratify_peak(Database(p), path, owner="owner", owner_ref="#426", sha_digitato=prop["sha256"])["ok"]
++    assert _ratify(p)[0]["ok"]
++    rc, rej = _restart(p, monkeypatch, 1250.0)
++    assert not _blocked(rc), rej
++    rc, rej = _restart(p, monkeypatch, 1239.0)
++    assert _blocked(rc), rej

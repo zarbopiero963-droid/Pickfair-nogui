@@ -1,0 +1,22 @@
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_market_coincidente_verifica_il_pl
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override0-importo diverso]
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override1-altre bet nel mercato (non attribuibile)]
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override2-profit del rollup diverso]
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override3-commissione non finita]
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override4-commissione assente]
+PASSED tests/close02/test_close02_v11.py::test_a_rollup_non_disponibile_settlement_emesso_e_stimato
+PASSED tests/close02/test_close02_v11.py::test_a_commissione_a_livello_bet_non_documentata_ignorata
+PASSED tests/close02/test_close02_v11.py::test_a_perdita_con_commissione_zero_verificata
+PASSED tests/close02/test_close02_v11.py::test_a_due_bet_stesso_mercato_verifica_solo_sull_ultima
+PASSED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[STIMATO]
+PASSED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[None]
+PASSED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[verificato?]
+PASSED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[]
+PASSED tests/close02/test_close02_v11.py::test_b_controllo_verificato_invia
+PASSED tests/close02/test_close02_v11.py::test_b_perdita_senza_commissione_non_dipende_da_stima
+PASSED tests/close02/test_close02_v11.py::test_b_commissione_illeggibile_fail_closed
+PASSED tests/close02/test_close02_v11.py::test_b_target_raggiunto_con_pl_stimato_lo_stop_vale
+PASSED tests/close02/test_close02_v11.py::test_c_gui_storico_mostra_etichetta
+PASSED tests/close02/test_close02_v11.py::test_c_gui_refresh_storico_usa_etichetta
+PASSED tests/close02/test_close02_v11.py::test_c_telegram_alert_mostra_etichetta
+21 passed in 0.39s

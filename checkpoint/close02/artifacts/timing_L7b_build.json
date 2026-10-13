@@ -1,0 +1,107 @@
+[
+ {
+  "id": "DIFF-PF-RSR-04-LOAD",
+  "inizio": "12:28:07.950",
+  "sec": 0.0008
+ },
+ {
+  "id": "DIFF-PF-RSR-12-LOAD",
+  "inizio": "12:28:07.951",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-13-LOAD",
+  "inizio": "12:28:07.952",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-14-LOAD",
+  "inizio": "12:28:07.952",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-15-LOAD",
+  "inizio": "12:28:07.952",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-16-LOAD",
+  "inizio": "12:28:07.953",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-17-LOAD",
+  "inizio": "12:28:07.953",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-18-LOAD",
+  "inizio": "12:28:07.953",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-19-LOAD",
+  "inizio": "12:28:07.954",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-23-LOAD",
+  "inizio": "12:28:07.954",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-27-LOAD",
+  "inizio": "12:28:07.954",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-29-LOAD",
+  "inizio": "12:28:07.955",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-31-LOAD",
+  "inizio": "12:28:07.955",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-36-LOAD",
+  "inizio": "12:28:07.955",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-38-LOAD",
+  "inizio": "12:28:07.956",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-39-LOAD",
+  "inizio": "12:28:07.956",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-40-LOAD",
+  "inizio": "12:28:07.956",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-41-LOAD",
+  "inizio": "12:28:07.957",
+  "sec": 0.0004
+ },
+ {
+  "id": "DIFF-PF-RSR-02-LOAD",
+  "inizio": "12:28:07.957",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-03-LOAD",
+  "inizio": "12:28:07.958",
+  "sec": 0.0003
+ },
+ {
+  "id": "DIFF-PF-RSR-20-LOAD",
+  "inizio": "12:28:07.958",
+  "sec": 0.0003
+ }
+]

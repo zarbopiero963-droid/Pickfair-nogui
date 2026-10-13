@@ -1,0 +1,1236 @@
+[
+ {
+  "difference_id": "DIFF-PF-CASH-04",
+  "requirement_id": "PF-CASH-04",
+  "phase": "04",
+  "control": null,
+  "R1": {
+   "source": "#461/6085516609",
+   "sha256": null,
+   "phase_row_verbatim": null,
+   "control_section_verbatim": null,
+   "source_quote": "Ordini correnti e residui",
+   "primary_clauses": [
+    {
+     "cid": "P1",
+     "text": "Ordini correnti e residui"
+    }
+   ],
+   "derived_clauses": [
+    {
+     "cid": "D1",
+     "text": "Ordini correnti e residui",
+     "origin": "D02 R3 (derivato, non verbatim in fonte)"
+    },
+    {
+     "cid": "V1",
+     "text": "fill completo→riconciliare payoff netto",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V2",
+     "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V3",
+     "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V4",
+     "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V5",
+     "text": "Il tempo residuo non crea eccezioni ai limiti",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    }
+   ]
+  },
+  "owner": [
+   "#426/5656005416",
+   "#426/5934306152",
+   "#426/5934562905",
+   "#426/6131667643",
+   "#426/6131708446",
+   "#426/6131980558"
+  ],
+  "findings": null,
+  "pending_owner": [],
+  "hand_built": false,
+  "suboracle_pending": [],
+  "q5_drawdown": false,
+  "cases": [
+   {
+    "case_id": "CASH-04-R1",
+    "kind": "positive",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "posizione BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347); residuo BACK 2.00@2.10 unmatched sullo stesso mercato",
+    "input": "richiesta cashout sullo scope del tavolo",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «Ordini correnti e residui»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: la richiesta considera sia l'ordine matched 10.00 sia il residuo unmatched 2.00: il residuo non è trattato come posizione chiusa; il residuo unmatched mantiene il tavolo aperto e il rischio non viene azzerato",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609",
+     "impl_attuale": "sonda statica: core/runtime_controller.py:2609 _route_cashout_signal; :2582 _cashout_chain_wired",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "la richiesta considera sia l'ordine matched 10.00 sia il residuo unmatched 2.00: il residuo non è trattato come posizione chiusa",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «Ordini correnti e residui»"
+     },
+     {
+      "text": "il residuo unmatched mantiene il tavolo aperto e il rischio non viene azzerato",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-04-R2",
+    "kind": "negative",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "posizione BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347); listCurrentOrders non disponibile (errore)",
+    "input": "richiesta cashout",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «Ordini correnti e residui»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: senza l'elenco aggiornato degli ordini correnti e dei residui il cashout non viene pubblicato; tavolo non chiuso, rischio non azzerato",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609",
+     "impl_attuale": "sonda statica: core/runtime_controller.py:2609 _route_cashout_signal; :2582 _cashout_chain_wired",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "senza l'elenco aggiornato degli ordini correnti e dei residui il cashout non viene pubblicato",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «Ordini correnti e residui»"
+     },
+     {
+      "text": "tavolo non chiuso, rischio non azzerato",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-04-R3",
+    "kind": "boundary",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "posizione BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347); ordine ambiguo BACK 1.00@2.20 (timeout dopo invio)",
+    "input": "richiesta cashout",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «Ordini correnti e residui»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: l'ordine ambiguo è conteggiato tra gli ordini correnti dello scope; ambiguous: tavolo non chiuso né rischio azzerato",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609",
+     "impl_attuale": "sonda statica: core/runtime_controller.py:2609 _route_cashout_signal; :2582 _cashout_chain_wired",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "l'ordine ambiguo è conteggiato tra gli ordini correnti dello scope",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «Ordini correnti e residui»"
+     },
+     {
+      "text": "ambiguous: tavolo non chiuso né rischio azzerato",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   }
+  ],
+  "clause_map": [
+   {
+    "cid": "P1",
+    "text": "Ordini correnti e residui",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-04-R1",
+     "CASH-04-R2",
+     "CASH-04-R3"
+    ]
+   },
+   {
+    "cid": "V3",
+    "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-04-R1",
+     "CASH-04-R2",
+     "CASH-04-R3"
+    ]
+   }
+  ],
+  "status": {
+   "level": "PREPARED",
+   "prepared": true,
+   "semantic_preflight": null,
+   "independently_reviewed": false,
+   "accepted": false,
+   "tested": false,
+   "fixed_in_code": false,
+   "certified": false
+  },
+  "child_verbatim": "Ordini correnti e residui",
+  "parent": "DIFF-PF-CASH-04",
+  "q6_state": "ATOMIC_PARENT",
+  "control_context": null,
+  "note": "contratto originale = solo titolo di postcondizione; gli oracle numerici dei figli proposti sono DRAFT D02 (DRAFT_NOT_OPERATIONAL), non fonte",
+  "preflight": [],
+  "record_specific": {
+   "batch": "close02-CASH",
+   "priority": "P0",
+   "level": "RECORD_SPECIFIC_HAND_BUILT",
+   "provenance_rule": "Opzione B + C15",
+   "sources": {
+    "R1_source": "#461/6085516609",
+    "source_quote_verbatim": "Ordini correnti e residui | fill completo→riconciliare payoff netto; parziale→contabilizzare solo eseguito e mantenere residuo; unmatched/ambiguous→non chiudere tavolo né azzerare rischio; settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart. Il tempo residuo non crea eccezioni ai limiti"
+   }
+  }
+ },
+ {
+  "difference_id": "DIFF-PF-CASH-19",
+  "requirement_id": "PF-CASH-19",
+  "phase": "19",
+  "control": null,
+  "R1": {
+   "source": "#461/6085516609 PF-CASH-19 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+   "sha256": null,
+   "phase_row_verbatim": null,
+   "control_section_verbatim": null,
+   "source_quote": "| PF-CASH-19 | Riconciliazione current+cleared | PR45 |",
+   "primary_clauses": [
+    {
+     "cid": "P1",
+     "text": "PF-CASH-19 | Riconciliazione current+cleared | PR45"
+    }
+   ],
+   "derived_clauses": [
+    {
+     "cid": "D1",
+     "text": "Riconciliazione current+cleared",
+     "origin": "D02 R3 (derivato, non verbatim in fonte)"
+    },
+    {
+     "cid": "V1",
+     "text": "fill completo→riconciliare payoff netto",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V2",
+     "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V3",
+     "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V4",
+     "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V5",
+     "text": "Il tempo residuo non crea eccezioni ai limiti",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    }
+   ]
+  },
+  "owner": [
+   "#426/5656005416",
+   "#426/5934306152",
+   "#426/5934562905",
+   "#426/6131667643",
+   "#426/6131708446",
+   "#426/6131980558"
+  ],
+  "findings": "-",
+  "pending_owner": [],
+  "hand_built": false,
+  "suboracle_pending": [],
+  "q5_drawdown": false,
+  "cases": [
+   {
+    "case_id": "CASH-19-R1",
+    "kind": "positive",
+    "covers": [
+     "P1",
+     "V1"
+    ],
+    "pre": "posizione BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347); hedge LAY 20/7 ≈ 2.857142 (prima di tick/arrotondamento)@7.00 interamente abbinato; current orders vuoti, cleared con entrambi i bet",
+    "input": "riconciliazione dopo cashout",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-19 | Riconciliazione current+cleared | PR45»; requisito «fill completo→riconciliare payoff netto» — ORACOLO: la chiusura è dichiarata solo se current e cleared concordano sui due bet; fill completo: riconciliato il payoff netto −50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V1 verbatim #461/6085516609 PF-CASH-19 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:1565 reconcile_batch",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "la chiusura è dichiarata solo se current e cleared concordano sui due bet",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-19 | Riconciliazione current+cleared | PR45»"
+     },
+     {
+      "text": "fill completo: riconciliato il payoff netto −50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione",
+      "provenance": "REQUIREMENT",
+      "source": "V1 «fill completo→riconciliare payoff netto»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-19-R2",
+    "kind": "negative",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "hedge risultante matched nei cleared ma ancora presente come EXECUTABLE nei current",
+    "input": "riconciliazione",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-19 | Riconciliazione current+cleared | PR45»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: current e cleared discordanti: nessuna chiusura dichiarata, stato da riconciliare; rischio non azzerato finché la discordanza resta",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609 PF-CASH-19 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:1565 reconcile_batch",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "current e cleared discordanti: nessuna chiusura dichiarata, stato da riconciliare",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-19 | Riconciliazione current+cleared | PR45»"
+     },
+     {
+      "text": "rischio non azzerato finché la discordanza resta",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-19-R3",
+    "kind": "boundary",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "cleared orders con moreAvailable=true (pagina incompleta)",
+    "input": "riconciliazione",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-19 | Riconciliazione current+cleared | PR45»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: una lettura incompleta di current o cleared non basta a riconciliare; tavolo non chiuso",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609 PF-CASH-19 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:1565 reconcile_batch",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "una lettura incompleta di current o cleared non basta a riconciliare",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-19 | Riconciliazione current+cleared | PR45»"
+     },
+     {
+      "text": "tavolo non chiuso",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   }
+  ],
+  "clause_map": [
+   {
+    "cid": "P1",
+    "text": "PF-CASH-19 | Riconciliazione current+cleared | PR45",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-19-R1",
+     "CASH-19-R2",
+     "CASH-19-R3"
+    ]
+   },
+   {
+    "cid": "V1",
+    "text": "fill completo→riconciliare payoff netto",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-19-R1"
+    ]
+   },
+   {
+    "cid": "V3",
+    "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-19-R2",
+     "CASH-19-R3"
+    ]
+   }
+  ],
+  "status": {
+   "level": "PREPARED",
+   "prepared": true,
+   "semantic_preflight": null,
+   "independently_reviewed": false,
+   "accepted": false,
+   "tested": false,
+   "fixed_in_code": false,
+   "certified": false
+  },
+  "record_specific": {
+   "batch": "close02-CASH",
+   "priority": "P0",
+   "level": "RECORD_SPECIFIC_HAND_BUILT",
+   "provenance_rule": "Opzione B + C15",
+   "sources": {
+    "R1_source": "#461/6085516609 PF-CASH-19 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+    "source_quote_verbatim": "| PF-CASH-19 | Riconciliazione current+cleared | PR45 | | fill completo→riconciliare payoff netto; parziale→contabilizzare solo eseguito e mantenere residuo; unmatched/ambiguous→non chiudere tavolo né azzerare rischio; settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart. Il tempo residuo non crea eccezioni ai limiti"
+   }
+  }
+ },
+ {
+  "difference_id": "DIFF-PF-CASH-21",
+  "requirement_id": "PF-CASH-21",
+  "phase": "21",
+  "control": null,
+  "R1": {
+   "source": "#461/6085516609 PF-CASH-21 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+   "sha256": null,
+   "phase_row_verbatim": null,
+   "control_section_verbatim": null,
+   "source_quote": "| PF-CASH-21 | P/L realizzato da fills/settlement | PR43 |",
+   "primary_clauses": [
+    {
+     "cid": "P1",
+     "text": "PF-CASH-21 | P/L realizzato da fills/settlement | PR43"
+    }
+   ],
+   "derived_clauses": [
+    {
+     "cid": "D1",
+     "text": "P/L realizzato da fills/settlement",
+     "origin": "D02 R3 (derivato, non verbatim in fonte)"
+    },
+    {
+     "cid": "V1",
+     "text": "fill completo→riconciliare payoff netto",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V2",
+     "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V3",
+     "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V4",
+     "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V5",
+     "text": "Il tempo residuo non crea eccezioni ai limiti",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    }
+   ]
+  },
+  "owner": [
+   "#426/5656005416",
+   "#426/5934306152",
+   "#426/5934562905",
+   "#426/6131667643",
+   "#426/6131708446",
+   "#426/6131980558"
+  ],
+  "findings": "-",
+  "pending_owner": [],
+  "hand_built": false,
+  "suboracle_pending": [],
+  "q5_drawdown": false,
+  "cases": [
+   {
+    "case_id": "CASH-21-R1",
+    "kind": "positive",
+    "covers": [
+     "P1",
+     "V1"
+    ],
+    "pre": "posizione BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347); hedge 20/7 ≈ 2.857142 (prima di tick/arrotondamento)@7.00 abbinato per intero; settlement del mercato",
+    "input": "calcolo P/L realizzato",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»; requisito «fill completo→riconciliare payoff netto» — ORACOLO: il P/L realizzato è calcolato dai fill effettivi e dal settlement, non dall'importo richiesto; payoff netto riconciliato = −50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione corretto per tick e commissione effettivi",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V1 verbatim #461/6085516609 PF-CASH-21 (sha256 56fc7",
+     "impl_attuale": "sonda statica: nessuna funzione P/L realizzato specifica individuata",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "il P/L realizzato è calcolato dai fill effettivi e dal settlement, non dall'importo richiesto",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»"
+     },
+     {
+      "text": "payoff netto riconciliato = −50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione corretto per tick e commissione effettivi",
+      "provenance": "REQUIREMENT",
+      "source": "V1 «fill completo→riconciliare payoff netto»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-21-R2",
+    "kind": "negative",
+    "covers": [
+     "P1",
+     "V2"
+    ],
+    "pre": "hedge abbinato per 1.50 su 20/7 ≈ 2.857142 (prima di tick/arrotondamento) richiesti",
+    "input": "calcolo P/L realizzato",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»; requisito «parziale→contabilizzare solo eseguito e mantenere residuo» — ORACOLO: il P/L usa solo 1.50 eseguito; si contabilizza solo l'eseguito e il residuo resta esposto",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V2 verbatim #461/6085516609 PF-CASH-21 (sha256 56fc7",
+     "impl_attuale": "sonda statica: nessuna funzione P/L realizzato specifica individuata",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "il P/L usa solo 1.50 eseguito",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»"
+     },
+     {
+      "text": "si contabilizza solo l'eseguito e il residuo resta esposto",
+      "provenance": "REQUIREMENT",
+      "source": "V2 «parziale→contabilizzare solo eseguito e mantenere residuo»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-21-R3",
+    "kind": "boundary",
+    "covers": [
+     "P1",
+     "V4"
+    ],
+    "pre": "settlement ricevuto due volte (retry) per lo stesso mercato",
+    "input": "aggiornamento P/L",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»; requisito «settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart» — ORACOLO: il P/L realizzato è registrato una sola volta; un solo aggiornamento Roserpina anche dopo retry",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V4 verbatim #461/6085516609 PF-CASH-21 (sha256 56fc7",
+     "impl_attuale": "sonda statica: nessuna funzione P/L realizzato specifica individuata",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "il P/L realizzato è registrato una sola volta",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-21 | P/L realizzato da fills/settlement | PR43»"
+     },
+     {
+      "text": "un solo aggiornamento Roserpina anche dopo retry",
+      "provenance": "REQUIREMENT",
+      "source": "V4 «settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart»"
+     }
+    ]
+   }
+  ],
+  "clause_map": [
+   {
+    "cid": "P1",
+    "text": "PF-CASH-21 | P/L realizzato da fills/settlement | PR43",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-21-R1",
+     "CASH-21-R2",
+     "CASH-21-R3"
+    ]
+   },
+   {
+    "cid": "V1",
+    "text": "fill completo→riconciliare payoff netto",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-21-R1"
+    ]
+   },
+   {
+    "cid": "V2",
+    "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-21-R2"
+    ]
+   },
+   {
+    "cid": "V4",
+    "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-21-R3"
+    ]
+   }
+  ],
+  "status": {
+   "level": "PREPARED",
+   "prepared": true,
+   "semantic_preflight": null,
+   "independently_reviewed": false,
+   "accepted": false,
+   "tested": false,
+   "fixed_in_code": false,
+   "certified": false
+  },
+  "record_specific": {
+   "batch": "close02-CASH",
+   "priority": "P0",
+   "level": "RECORD_SPECIFIC_HAND_BUILT",
+   "provenance_rule": "Opzione B + C15",
+   "sources": {
+    "R1_source": "#461/6085516609 PF-CASH-21 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+    "source_quote_verbatim": "| PF-CASH-21 | P/L realizzato da fills/settlement | PR43 | | fill completo→riconciliare payoff netto; parziale→contabilizzare solo eseguito e mantenere residuo; unmatched/ambiguous→non chiudere tavolo né azzerare rischio; settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart. Il tempo residuo non crea eccezioni ai limiti"
+   }
+  }
+ },
+ {
+  "difference_id": "DIFF-PF-CASH-23",
+  "requirement_id": "PF-CASH-23",
+  "phase": "23",
+  "control": null,
+  "R1": {
+   "source": "#461/6085516609 PF-CASH-23 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+   "sha256": null,
+   "phase_row_verbatim": null,
+   "control_section_verbatim": null,
+   "source_quote": "| PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45 |",
+   "primary_clauses": [
+    {
+     "cid": "P1",
+     "text": "PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45"
+    }
+   ],
+   "derived_clauses": [
+    {
+     "cid": "D1",
+     "text": "Restart/recovery prima di nuovi ingressi",
+     "origin": "D02 R3 (derivato, non verbatim in fonte)"
+    },
+    {
+     "cid": "V1",
+     "text": "fill completo→riconciliare payoff netto",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V2",
+     "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V3",
+     "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V4",
+     "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V5",
+     "text": "Il tempo residuo non crea eccezioni ai limiti",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    }
+   ]
+  },
+  "owner": [
+   "#426/5656005416",
+   "#426/5934306152",
+   "#426/5934562905",
+   "#426/6131667643",
+   "#426/6131708446",
+   "#426/6131980558"
+  ],
+  "findings": "-",
+  "pending_owner": [],
+  "hand_built": false,
+  "suboracle_pending": [],
+  "q5_drawdown": false,
+  "cases": [
+   {
+    "case_id": "CASH-23-R1",
+    "kind": "positive",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "cashout pubblicato, hedge ancora unmatched; il processo riparte",
+    "input": "nuovo segnale di ingresso dopo il riavvio",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: restart e recovery del cashout si completano prima di accettare nuovi ingressi; l'hedge unmatched mantiene il tavolo aperto dopo il riavvio",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609 PF-CASH-23 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/state_recovery.py:74 _reconcile_startup_ghost_orders",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "restart e recovery del cashout si completano prima di accettare nuovi ingressi",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»"
+     },
+     {
+      "text": "l'hedge unmatched mantiene il tavolo aperto dopo il riavvio",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-23-R2",
+    "kind": "negative",
+    "covers": [
+     "P1",
+     "V3"
+    ],
+    "pre": "cashout con esito ambiguo prima del crash",
+    "input": "nuovo ingresso subito dopo il riavvio",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»; requisito «unmatched/ambiguous→non chiudere tavolo né azzerare rischio» — ORACOLO: nessun nuovo ingresso finché la recovery non ha risolto l'esito ambiguo; rischio non azzerato",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V3 verbatim #461/6085516609 PF-CASH-23 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/state_recovery.py:74 _reconcile_startup_ghost_orders",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "nessun nuovo ingresso finché la recovery non ha risolto l'esito ambiguo",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»"
+     },
+     {
+      "text": "rischio non azzerato",
+      "provenance": "REQUIREMENT",
+      "source": "V3 «unmatched/ambiguous→non chiudere tavolo né azzerare rischio»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-23-R3",
+    "kind": "boundary",
+    "covers": [
+     "P1",
+     "V4"
+    ],
+    "pre": "settlement identificato prima del crash; Roserpina già aggiornata",
+    "input": "riavvio",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»; requisito «settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart» — ORACOLO: la recovery non ripete l'aggiornamento; un solo aggiornamento Roserpina anche dopo restart",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V4 verbatim #461/6085516609 PF-CASH-23 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/state_recovery.py:74 _reconcile_startup_ghost_orders",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "la recovery non ripete l'aggiornamento",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45»"
+     },
+     {
+      "text": "un solo aggiornamento Roserpina anche dopo restart",
+      "provenance": "REQUIREMENT",
+      "source": "V4 «settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart»"
+     }
+    ]
+   }
+  ],
+  "clause_map": [
+   {
+    "cid": "P1",
+    "text": "PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-23-R1",
+     "CASH-23-R2",
+     "CASH-23-R3"
+    ]
+   },
+   {
+    "cid": "V3",
+    "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-23-R1",
+     "CASH-23-R2"
+    ]
+   },
+   {
+    "cid": "V4",
+    "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-23-R3"
+    ]
+   }
+  ],
+  "status": {
+   "level": "PREPARED",
+   "prepared": true,
+   "semantic_preflight": null,
+   "independently_reviewed": false,
+   "accepted": false,
+   "tested": false,
+   "fixed_in_code": false,
+   "certified": false
+  },
+  "record_specific": {
+   "batch": "close02-CASH",
+   "priority": "P0",
+   "level": "RECORD_SPECIFIC_HAND_BUILT",
+   "provenance_rule": "Opzione B + C15",
+   "sources": {
+    "R1_source": "#461/6085516609 PF-CASH-23 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+    "source_quote_verbatim": "| PF-CASH-23 | Restart/recovery prima di nuovi ingressi | PR45 | | fill completo→riconciliare payoff netto; parziale→contabilizzare solo eseguito e mantenere residuo; unmatched/ambiguous→non chiudere tavolo né azzerare rischio; settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart. Il tempo residuo non crea eccezioni ai limiti"
+   }
+  }
+ },
+ {
+  "difference_id": "DIFF-PF-CASH-25",
+  "requirement_id": "PF-CASH-25",
+  "phase": "25",
+  "control": null,
+  "R1": {
+   "source": "#461/6085516609 PF-CASH-25 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+   "sha256": null,
+   "phase_row_verbatim": null,
+   "control_section_verbatim": null,
+   "source_quote": "| PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32 |",
+   "primary_clauses": [
+    {
+     "cid": "P1",
+     "text": "PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32"
+    }
+   ],
+   "derived_clauses": [
+    {
+     "cid": "D1",
+     "text": "Fencing contro ingressi in volo per tutto lo scope cashout",
+     "origin": "D02 R3 (derivato, non verbatim in fonte)"
+    },
+    {
+     "cid": "V1",
+     "text": "fill completo→riconciliare payoff netto",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V2",
+     "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V3",
+     "text": "unmatched/ambiguous→non chiudere tavolo né azzerare rischio",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V4",
+     "text": "settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    },
+    {
+     "cid": "V5",
+     "text": "Il tempo residuo non crea eccezioni ai limiti",
+     "origin": "verbatim #461/6085516609 (paragrafo \"Dopo richiesta cashout\")"
+    }
+   ]
+  },
+  "owner": [
+   "#426/5656005416",
+   "#426/5934306152",
+   "#426/5934562905",
+   "#426/6131667643",
+   "#426/6131708446",
+   "#426/6131980558"
+  ],
+  "findings": "-",
+  "pending_owner": [],
+  "hand_built": false,
+  "suboracle_pending": [],
+  "q5_drawdown": false,
+  "cases": [
+   {
+    "case_id": "CASH-25-R1",
+    "kind": "positive",
+    "covers": [
+     "P1"
+    ],
+    "pre": "cashout in corso sul tavolo T1 (scope: mercato 1.230000777)",
+    "input": "nuovo ingresso sullo stesso mercato arrivato durante il cashout",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32» — ORACOLO: l'ingresso in volo è bloccato per tutto lo scope del cashout",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1 verbatim #461/6085516609 PF-CASH-25 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:358-404 fencing token (batch), core/runtime_controller.py:2877 _cashout_gates_still_open",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "l'ingresso in volo è bloccato per tutto lo scope del cashout",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-25-R2",
+    "kind": "negative",
+    "covers": [
+     "P1"
+    ],
+    "pre": "cashout in corso sullo scope; ingresso già accodato prima della richiesta",
+    "input": "esecuzione dell'ingresso accodato",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32» — ORACOLO: un ingresso accodato prima del cashout non viene inviato dentro lo scope",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1 verbatim #461/6085516609 PF-CASH-25 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:358-404 fencing token (batch), core/runtime_controller.py:2877 _cashout_gates_still_open",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "un ingresso accodato prima del cashout non viene inviato dentro lo scope",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32»"
+     }
+    ]
+   },
+   {
+    "case_id": "CASH-25-R3",
+    "kind": "boundary",
+    "covers": [
+     "P1",
+     "V2",
+     "V5"
+    ],
+    "pre": "cashout concluso con hedge parziale (residuo aperto)",
+    "input": "nuovo ingresso nello scope",
+    "action": "esecuzione cashout su GUI/headless (SIM)",
+    "expected": "requisito «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32»; requisito «parziale→contabilizzare solo eseguito e mantenere residuo»; requisito «Il tempo residuo non crea eccezioni ai limiti» — ORACOLO: il fencing resta finché lo scope ha residuo aperto; si mantiene il residuo; il tempo residuo non crea eccezioni ai limiti",
+    "post": "stato coerente, audit registrato",
+    "fixtures": {
+     "amounts": [],
+     "precision": "importi € a 2 decimali; confronto esatto in Decimal",
+     "commission": "commissione market-net (PF-CASH-09) fuori da questo caso",
+     "calc": "n/a",
+     "limit": "n/a",
+     "scenario": {
+      "posizione": "BACK 10.00@2.00 matched su Under 1.5 HT (mercato 1.230000777, selezione 1222347)",
+      "uscita": "LAY eseguibile@7.00 (book fresco, profondità 50.00 €)",
+      "hedge": "20/7 ≈ 2.857142 (prima di tick/arrotondamento)",
+      "payoff_atteso": "−50/7 ≈ −7.142857 su entrambi gli esiti, prima di tick/arrotondamenti e commissione"
+     }
+    },
+    "norm_vs_impl": {
+     "normativo": "P1,V2,V5 verbatim #461/6085516609 PF-CASH-25 (sha256 56fc7",
+     "impl_attuale": "sonda statica: core/reconciliation_engine.py:358-404 fencing token (batch), core/runtime_controller.py:2877 _cashout_gates_still_open",
+     "tecnica_delegata": "meccanismo di fencing/recovery: delegato"
+    },
+    "oracle": [
+     {
+      "text": "il fencing resta finché lo scope ha residuo aperto",
+      "provenance": "REQUIREMENT",
+      "source": "P1 «PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32»"
+     },
+     {
+      "text": "si mantiene il residuo",
+      "provenance": "REQUIREMENT",
+      "source": "V2 «parziale→contabilizzare solo eseguito e mantenere residuo»"
+     },
+     {
+      "text": "il tempo residuo non crea eccezioni ai limiti",
+      "provenance": "REQUIREMENT",
+      "source": "V5 «Il tempo residuo non crea eccezioni ai limiti»"
+     }
+    ]
+   }
+  ],
+  "clause_map": [
+   {
+    "cid": "P1",
+    "text": "PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-25-R1",
+     "CASH-25-R2",
+     "CASH-25-R3"
+    ]
+   },
+   {
+    "cid": "V2",
+    "text": "parziale→contabilizzare solo eseguito e mantenere residuo",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-25-R3"
+    ]
+   },
+   {
+    "cid": "V5",
+    "text": "Il tempo residuo non crea eccezioni ai limiti",
+    "origin": "verbatim",
+    "clean": true,
+    "case_ids": [
+     "CASH-25-R3"
+    ]
+   }
+  ],
+  "status": {
+   "level": "PREPARED",
+   "prepared": true,
+   "semantic_preflight": null,
+   "independently_reviewed": false,
+   "accepted": false,
+   "tested": false,
+   "fixed_in_code": false,
+   "certified": false
+  },
+  "record_specific": {
+   "batch": "close02-CASH",
+   "priority": "P0",
+   "level": "RECORD_SPECIFIC_HAND_BUILT",
+   "provenance_rule": "Opzione B + C15",
+   "sources": {
+    "R1_source": "#461/6085516609 PF-CASH-25 (sha256 56fc78363b017409515480414bb7d042a7a35b9b7ff9fa1ad30bb9378f21a800)",
+    "source_quote_verbatim": "| PF-CASH-25 | Fencing contro ingressi in volo per tutto lo scope cashout | PR32 | | fill completo→riconciliare payoff netto; parziale→contabilizzare solo eseguito e mantenere residuo; unmatched/ambiguous→non chiudere tavolo né azzerare rischio; settlement identificato→un solo aggiornamento Roserpina, anche dopo retry/restart. Il tempo residuo non crea eccezioni ai limiti"
+   }
+  }
+ }
+]

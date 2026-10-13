@@ -1,0 +1,98 @@
+{
+ "EXPO_EUR_LIMIT": {
+  "value": "10.00",
+  "unit": "EUR",
+  "kind": "IN_FORCE",
+  "source": "#426/5656005416; #426/6131980558 §1 (esposizione in € come capitale a rischio); #426/6141902809 D2: valore di campagna da configurare, NON default di prodotto; cap obbligatorio assente/non valido/non verificabile ⇒ blocco nuovo rischio"
+ },
+ "DRAWDOWN_EUR_LIMIT": {
+  "value": "10.00",
+  "unit": "EUR",
+  "kind": "IN_FORCE",
+  "source": "#426/5934306152 (P37); #426/6131980558 §2; #426/6141136157 Q5 (vincolante in SIM e LIVE; soglie % non sostituiscono né indeboliscono); #426/6141902809 D1: tetto campagna #351, soglia configurabile ≤ 10.00 (inferiore solo se validata), distinta dal cap di esposizione"
+ },
+ "OBS_DEFAULT_RSR01": {
+  "value": "3.0",
+  "unit": "%",
+  "kind": "OBSERVED_DEFAULT_FIXTURE_ONLY",
+  "source": "#461/6085510337 RSR-01 'default loader osservato 3.0' (non autorizzato: solo fixture)"
+ },
+ "OBS_DEFAULT_RSR02": {
+  "value": "18.0",
+  "unit": "%",
+  "kind": "OBSERVED_DEFAULT_FIXTURE_ONLY",
+  "source": "#461/6085510337 RSR-02 'default loader osservato 18.0'"
+ },
+ "OBS_DEFAULT_RSR03": {
+  "value": "35.0",
+  "unit": "%",
+  "kind": "OBSERVED_DEFAULT_FIXTURE_ONLY",
+  "source": "#461/6085510337 RSR-03 'default loader osservato 35.0'"
+ },
+ "EXPO_FORMULA": {
+  "value": "BACK=stake; LAY=stake*(quota-1)",
+  "unit": "EUR",
+  "kind": "SOURCE_RULE",
+  "source": "#461/6085510337 'BACK esposizione=stake; LAY esposizione=stake×(quota−1)'"
+ },
+ "EXPO_EXAMPLES": {
+  "value": "BACK10@2→10; LAY10@2→10; LAY10@21→200",
+  "unit": "EUR",
+  "kind": "SOURCE_EXAMPLE",
+  "source": "#461/6085510337"
+ },
+ "COMMISSION_RULE": {
+  "value": "sul netto di mercato secondo PR19; non per gamba",
+  "unit": "-",
+  "kind": "SOURCE_RULE",
+  "source": "#461/6085510337"
+ },
+ "NO_TOLERANCE": {
+  "value": "0",
+  "unit": "EUR",
+  "kind": "OWNER_RULE",
+  "source": "#426/6131980558 §3 (nessuna tolleranza universale; epsilon mai per derogare ai limiti)"
+ },
+ "FIXTURE_BANKROLL": {
+  "value": "100.00",
+  "unit": "EUR",
+  "kind": "FIXTURE_TEST",
+  "source": "dato di test, non normativo"
+ },
+ "PCT_RANGE": {
+  "value": null,
+  "unit": "%",
+  "kind": "PENDING_OWNER",
+  "source": "#461/6085510337 'range completo autorizzato NOT VERIFIED'"
+ },
+ "CAP_OPERATOR": {
+  "value": "exposure<=cap ammesso; >cap bloccato; drawdown: stop se perdita>=10.00",
+  "unit": "-",
+  "kind": "OWNER_RULE",
+  "source": "#426/6141450045 Q3 (OWNER_RATIFIED)"
+ },
+ "LAY_CAP_BASE": {
+  "value": "liability = stake×(quota−1)",
+  "unit": "-",
+  "kind": "OWNER_RULE",
+  "source": "#426/6141450045 Q4 (OWNER_RATIFIED)"
+ },
+ "FIXTURE_TEST": {
+  "value": null,
+  "unit": "EUR",
+  "kind": "FIXTURE_TEST",
+  "source": "importo di test (stato iniziale/input), non normativo e non limite"
+ },
+ "OWNER_D1_DRAWDOWN_CEILING": {
+  "value": "soglia effettiva = min(configurata validata, 10.00) durante #351; stop a perdita >= soglia; SIM e LIVE",
+  "unit": "EUR",
+  "kind": "OWNER_RULE",
+  "source": "#426/6141902809 Decisione 1 (OWNER_RATIFIED)"
+ },
+ "OWNER_D2_MISSING_CAP": {
+  "value": "cap esposizione/ordine obbligatorio assente, non valido o non verificabile ⇒ blocco di ogni nuovo ordine che aumenta il rischio; solo operazioni di riduzione del rischio verificate; nessun cap implicito illimitato né default 10 EUR",
+  "unit": "-",
+  "kind": "OWNER_RULE",
+  "source": "#426/6141902809 Decisione 2 (OWNER_RATIFIED)"
+ }
+}

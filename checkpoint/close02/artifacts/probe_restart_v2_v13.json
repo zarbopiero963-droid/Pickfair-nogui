@@ -1,0 +1,6031 @@
+{
+ "RSR-04": {
+  "key": "roserpina.max_event_exposure_pct",
+  "fixture": "19.25",
+  "fixture_non_committata": "21.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215058,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215066,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215073,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215080,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-05": {
+  "key": "roserpina.auto_reset_drawdown_pct",
+  "fixture": "16.25",
+  "fixture_non_committata": "18.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215094,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215101,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215108,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215114,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215126,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 1000.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215139,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 1000.0,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215153,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 1000.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-06": {
+  "key": "roserpina.defense_drawdown_pct",
+  "fixture": "8.75",
+  "fixture_non_committata": "10.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215160,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215167,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215172,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215176,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215183,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 1000.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215193,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 1000.0,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215197,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 1000.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-07": {
+  "key": "roserpina.lockdown_drawdown_pct",
+  "fixture": "21.25",
+  "fixture_non_committata": "23.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215200,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215247,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215250,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215252,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215262,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 1000.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215271,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 1000.0,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215275,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 1000.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-08": {
+  "key": "roserpina.expansion_profit_pct",
+  "fixture": "6.25",
+  "fixture_non_committata": "8.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215278,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215281,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215284,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215286,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-09": {
+  "key": "roserpina.expansion_multiplier",
+  "fixture": "2.35",
+  "fixture_non_committata": "4.35",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215341,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215388,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215391,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215393,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-10": {
+  "key": "roserpina.defense_multiplier",
+  "fixture": "2.05",
+  "fixture_non_committata": "4.05",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215396,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215399,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215402,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215404,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-11": {
+  "key": "roserpina.table_count",
+  "fixture": "6",
+  "fixture_non_committata": "8.0",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215413,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215416,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215419,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215421,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-12": {
+  "key": "roserpina.max_recovery_tables",
+  "fixture": "3",
+  "fixture_non_committata": "5.0",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215424,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215432,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215435,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215437,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-13": {
+  "key": "roserpina.commission_pct",
+  "fixture": "5.75",
+  "fixture_non_committata": "7.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215446,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215449,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215452,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215454,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-14": {
+  "key": "roserpina.min_stake",
+  "fixture": "1.35",
+  "fixture_non_committata": "3.35",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215457,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215460,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215463,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215471,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-15": {
+  "key": "roserpina.max_stake_abs",
+  "fixture": "10001.25",
+  "fixture_non_committata": "10003.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215474,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215477,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215480,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215482,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-16": {
+  "key": "roserpina.max_daily_loss",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215485,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215488,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215497,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215499,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-17": {
+  "key": "roserpina.max_open_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215506,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215510,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215513,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215535,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-18": {
+  "key": "roserpina.max_session_loss",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215538,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215541,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215550,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215552,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-19": {
+  "key": "roserpina.max_exposure_stop",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215564,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215567,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215570,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215572,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-20": {
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215575,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215578,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215587,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215589,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215593,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215597,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215605,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-21": {
+  "key": "roserpina.book_warning",
+  "fixture": "106.25",
+  "fixture_non_committata": "108.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215608,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215612,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215621,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215623,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-22": {
+  "key": "roserpina.book_block",
+  "fixture": "111.25",
+  "fixture_non_committata": "113.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215626,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215629,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215632,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215634,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-23": {
+  "key": "roserpina.liquidity_multiplier",
+  "fixture": "4.25",
+  "fixture_non_committata": "6.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215637,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215646,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215649,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215651,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-24": {
+  "key": "roserpina.min_liquidity_absolute",
+  "fixture": "51.25",
+  "fixture_non_committata": "53.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215654,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215657,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215660,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215662,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-25": {
+  "key": "roserpina.min_price",
+  "fixture": "2.27",
+  "fixture_non_committata": "4.27",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215665,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215674,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215681,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215683,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-26": {
+  "key": "roserpina.max_win",
+  "fixture": "10001.25",
+  "fixture_non_committata": "10003.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215687,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215690,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215693,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215695,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-27": {
+  "key": "roserpina.max_stake_pct",
+  "fixture": "31.25",
+  "fixture_non_committata": "33.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215704,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215707,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215710,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215712,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-28": {
+  "key": "roserpina.profit_epsilon",
+  "fixture": "1.75",
+  "fixture_non_committata": "3.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215715,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215718,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215721,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215723,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-29": {
+  "key": "roserpina.auto_green_delay_sec",
+  "fixture": "3.75",
+  "fixture_non_committata": "5.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215732,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215735,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215738,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215740,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-30": {
+  "key": "roserpina.risk_profile",
+  "fixture": "AGGRESSIVE",
+  "fixture_non_committata": "CONSERVATIVE",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215743,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215750,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215753,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215755,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-31": {
+  "key": "roserpina.allow_recovery",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215765,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": null,
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215768,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": null,
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215771,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": null,
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215773,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": null,
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-32": {
+  "key": "roserpina.anti_duplication_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215776,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215779,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215782,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215784,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-33": {
+  "key": "roserpina.liquidity_guard_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215793,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215796,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215799,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215801,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-34": {
+  "key": "roserpina.liquidity_warning_only",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215804,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215807,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215810,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215812,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-35": {
+  "key": "roserpina.max_win_warning_only",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215821,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215828,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215831,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215833,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-36": {
+  "key": "roserpina.auto_green_delay_enabled",
+  "fixture": "True",
+  "fixture_non_committata": "False",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215836,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215840,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215843,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215851,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-37": {
+  "key": "roserpina.profit_epsilon_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215854,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215857,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215860,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215862,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-38": {
+  "key": "roserpina.max_order_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215865,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215868,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215871,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215879,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-39": {
+  "key": "roserpina.max_market_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215883,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215886,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215890,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215896,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-40": {
+  "key": "roserpina.max_event_exposure_abs",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215899,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215902,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215911,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215914,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-41": {
+  "key": "roserpina.max_drawdown_abs",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215917,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215920,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215923,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.PAUSED",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215925,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 1,
+     "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "max_open_exposure_assente"
+     ],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215929,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215939,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": "FIG: chiave assente roserpina.auto_green_delay_enabled: usato il default del codice (non ratificato)\nCONFIG: chiave assente roserpina.auto_green_delay_sec: usato il default del codice (non ratificato)"
+   },
+   "fase_B": {
+    "pid": 215943,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 1000.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [
+      "drawdown_hard_stop_active"
+     ],
+     "arrivato_al_sizing": false
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ }
+}

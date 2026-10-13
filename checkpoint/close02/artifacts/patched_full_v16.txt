@@ -1,0 +1,502 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+...................sss..s............................................... [ 11%]
+........................................................................ [ 12%]
+.................................................................sss.... [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+.................u.uu.uu.uuu............................................ [ 17%]
+...............................................s........................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+..............................................................sssssss... [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+...............................................x........................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+...........x............................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+...........................                                              [100%]
+=============================== warnings summary ===============================
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[prod]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-38 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[prod]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-37 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[prod]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-39 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[LiVe!]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-40 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/failure/test_live_switch_fail_closed.py::test_malformed_execution_mode_fails_closed[123]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-41 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_kill_switch_active_forces_not_ready_for_live
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-300 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_valid_live_ready_state_allows_live
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-301 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[None]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-302 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-303 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[paper]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-304 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_live_readiness_gate.py::test_invalid_or_missing_execution_mode_context_is_not_approved[unknown]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-305 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_default_startup_is_safe_not_live
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-414 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_simulation_mode_stays_simulation[False]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-415 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_simulation_mode_stays_simulation[True]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-416 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_live_enabled_and_readiness_ok_allowed
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-417 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[None]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-418 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-419 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[paper]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-420 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_sim_live_switch.py::test_invalid_or_missing_mode_fails_closed_never_live[danger]
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-421 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/services/test_telegram_sender.py::test_worker_loop_closes_event_loop_on_send_exception
+  /workspace/pickfair/bf2/close02/wt/telegram_sender.py:496: RuntimeWarning: coroutine 'test_worker_loop_closes_event_loop_on_send_exception.<locals>._FakeLoop.shutdown_asyncgens' was never awaited
+    loop.run_until_complete(loop.shutdown_asyncgens())
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_telegram_sender.py::test_worker_loop_closes_event_loop_on_send_exception
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/stash.py:108: RuntimeWarning: coroutine 'TelegramSender.send_message' was never awaited
+    del self._storage[key]
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/services/test_telegram_sender.py::test_send_message_sync_closes_event_loop_on_exception
+  /workspace/pickfair/bf2/close02/wt/tests/services/test_telegram_sender.py:295: RuntimeWarning: coroutine 'TelegramSender.send_message' was never awaited
+    with pytest.raises(RuntimeError, match="sync boom"):
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/integration/test_deploy_gate.py::test_live_requested_with_blockers_is_no_go
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-9 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/integration/test_deploy_gate.py::test_simulation_mode_always_allowed
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-10 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+tests/guardrails/test_no_live_without_gate.py::test_live_requires_mode_plus_gate_approval
+  /workspace/pickfair/venv311/lib/python3.11/site-packages/_pytest/threadexception.py:58: PytestUnhandledThreadExceptionWarning: Exception in thread Thread-42 (run_sync)
+  
+  Traceback (most recent call last):
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+      self.run()
+    File "/home/box/.local/share/uv/python/cpython-3.11.17-linux-x86_64-gnu/lib/python3.11/threading.py", line 982, in run
+      self._target(*self._args, **self._kwargs)
+    File "/workspace/pickfair/bf2/close02/wt/services/catalog_sync_service.py", line 23, in run_sync
+      meta = self.db.get_sync_meta()
+             ^^^^^^^^^^^^^^^^^^^^^
+  AttributeError: '_Db' object has no attribute 'get_sync_meta'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnhandledThreadExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+7418 passed, 15 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 213.71s (0:03:33)

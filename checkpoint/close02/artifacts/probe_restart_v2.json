@@ -1,0 +1,5703 @@
+{
+ "RSR-04": {
+  "key": "roserpina.max_event_exposure_pct",
+  "fixture": "19.25",
+  "fixture_non_committata": "21.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124613,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124616,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124623,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124626,
+    "cfg_valore": "19.25",
+    "cfg_tipo": "float",
+    "raw_db": "19.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "19.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-05": {
+  "key": "roserpina.auto_reset_drawdown_pct",
+  "fixture": "16.25",
+  "fixture_non_committata": "18.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124635,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124638,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124641,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124644,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124649,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124653,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 990.01,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124687,
+    "cfg_valore": "16.25",
+    "cfg_tipo": "float",
+    "raw_db": "16.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "16.25",
+    "equity_peak": 990.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-06": {
+  "key": "roserpina.defense_drawdown_pct",
+  "fixture": "8.75",
+  "fixture_non_committata": "10.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124698,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124702,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124705,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124708,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124712,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124716,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 990.01,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124720,
+    "cfg_valore": "8.75",
+    "cfg_tipo": "float",
+    "raw_db": "8.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "8.75",
+    "equity_peak": 990.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-07": {
+  "key": "roserpina.lockdown_drawdown_pct",
+  "fixture": "21.25",
+  "fixture_non_committata": "23.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124729,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124736,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124739,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124742,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124746,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124750,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 990.01,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124760,
+    "cfg_valore": "21.25",
+    "cfg_tipo": "float",
+    "raw_db": "21.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "21.25",
+    "equity_peak": 990.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-08": {
+  "key": "roserpina.expansion_profit_pct",
+  "fixture": "6.25",
+  "fixture_non_committata": "8.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124764,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124767,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124770,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124782,
+    "cfg_valore": "6.25",
+    "cfg_tipo": "float",
+    "raw_db": "6.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-09": {
+  "key": "roserpina.expansion_multiplier",
+  "fixture": "2.35",
+  "fixture_non_committata": "4.35",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124785,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124788,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124791,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124800,
+    "cfg_valore": "2.35",
+    "cfg_tipo": "float",
+    "raw_db": "2.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-10": {
+  "key": "roserpina.defense_multiplier",
+  "fixture": "2.05",
+  "fixture_non_committata": "4.05",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124803,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124806,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124809,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124812,
+    "cfg_valore": "2.05",
+    "cfg_tipo": "float",
+    "raw_db": "2.05",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.05",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-11": {
+  "key": "roserpina.table_count",
+  "fixture": "6",
+  "fixture_non_committata": "8.0",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124815,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124822,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124825,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124834,
+    "cfg_valore": "6",
+    "cfg_tipo": "int",
+    "raw_db": "6",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "6",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-12": {
+  "key": "roserpina.max_recovery_tables",
+  "fixture": "3",
+  "fixture_non_committata": "5.0",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124837,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124840,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124843,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124846,
+    "cfg_valore": "3",
+    "cfg_tipo": "int",
+    "raw_db": "3",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-13": {
+  "key": "roserpina.commission_pct",
+  "fixture": "5.75",
+  "fixture_non_committata": "7.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124849,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124853,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124856,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124865,
+    "cfg_valore": "5.75",
+    "cfg_tipo": "float",
+    "raw_db": "5.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "5.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-14": {
+  "key": "roserpina.min_stake",
+  "fixture": "1.35",
+  "fixture_non_committata": "3.35",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124868,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124871,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124874,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124877,
+    "cfg_valore": "1.35",
+    "cfg_tipo": "float",
+    "raw_db": "1.35",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.35",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-15": {
+  "key": "roserpina.max_stake_abs",
+  "fixture": "10001.25",
+  "fixture_non_committata": "10003.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124880,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124883,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124886,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124895,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-16": {
+  "key": "roserpina.max_daily_loss",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124902,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124905,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124908,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124911,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-17": {
+  "key": "roserpina.max_open_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124914,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124917,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124920,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124929,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-18": {
+  "key": "roserpina.max_session_loss",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124932,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124936,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124939,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124942,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-19": {
+  "key": "roserpina.max_exposure_stop",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124945,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124948,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124951,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124960,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-20": {
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124963,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124966,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124969,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124972,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124976,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124984,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 990.01,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124994,
+    "cfg_valore": "7.5",
+    "cfg_tipo": "float",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "7.5",
+    "equity_peak": 990.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-21": {
+  "key": "roserpina.book_warning",
+  "fixture": "106.25",
+  "fixture_non_committata": "108.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 124997,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125000,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125003,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125006,
+    "cfg_valore": "106.25",
+    "cfg_tipo": "float",
+    "raw_db": "106.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "106.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-22": {
+  "key": "roserpina.book_block",
+  "fixture": "111.25",
+  "fixture_non_committata": "113.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125009,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125012,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125015,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125019,
+    "cfg_valore": "111.25",
+    "cfg_tipo": "float",
+    "raw_db": "111.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "111.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-23": {
+  "key": "roserpina.liquidity_multiplier",
+  "fixture": "4.25",
+  "fixture_non_committata": "6.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125028,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125031,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125034,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125037,
+    "cfg_valore": "4.25",
+    "cfg_tipo": "float",
+    "raw_db": "4.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "4.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-24": {
+  "key": "roserpina.min_liquidity_absolute",
+  "fixture": "51.25",
+  "fixture_non_committata": "53.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125040,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125043,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125046,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125049,
+    "cfg_valore": "51.25",
+    "cfg_tipo": "float",
+    "raw_db": "51.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "51.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-25": {
+  "key": "roserpina.min_price",
+  "fixture": "2.27",
+  "fixture_non_committata": "4.27",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125058,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125061,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125068,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125071,
+    "cfg_valore": "2.27",
+    "cfg_tipo": "float",
+    "raw_db": "2.27",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "2.27",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-26": {
+  "key": "roserpina.max_win",
+  "fixture": "10001.25",
+  "fixture_non_committata": "10003.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125074,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125077,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125080,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125083,
+    "cfg_valore": "10001.25",
+    "cfg_tipo": "float",
+    "raw_db": "10001.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "10001.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-27": {
+  "key": "roserpina.max_stake_pct",
+  "fixture": "31.25",
+  "fixture_non_committata": "33.25",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125086,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125095,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125098,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125101,
+    "cfg_valore": "31.25",
+    "cfg_tipo": "float",
+    "raw_db": "31.25",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "31.25",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-28": {
+  "key": "roserpina.profit_epsilon",
+  "fixture": "1.75",
+  "fixture_non_committata": "3.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125105,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125108,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125111,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125114,
+    "cfg_valore": "1.75",
+    "cfg_tipo": "float",
+    "raw_db": "1.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "1.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-29": {
+  "key": "roserpina.auto_green_delay_sec",
+  "fixture": "3.75",
+  "fixture_non_committata": "5.75",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125123,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125126,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125129,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125132,
+    "cfg_valore": "3.75",
+    "cfg_tipo": "float",
+    "raw_db": "3.75",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "3.75",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-30": {
+  "key": "roserpina.risk_profile",
+  "fixture": "AGGRESSIVE",
+  "fixture_non_committata": "CONSERVATIVE",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125135,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125138,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125145,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125148,
+    "cfg_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "cfg_tipo": "RiskProfile",
+    "raw_db": "AGGRESSIVE",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<RiskProfile.AGGRESSIVE: 'AGGRESSIVE'>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-31": {
+  "key": "roserpina.allow_recovery",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125151,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125160,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125163,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125166,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-32": {
+  "key": "roserpina.anti_duplication_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125169,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125172,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125175,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125178,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-33": {
+  "key": "roserpina.liquidity_guard_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125181,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125191,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125194,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125197,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-34": {
+  "key": "roserpina.liquidity_warning_only",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125200,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125203,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125206,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125209,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-35": {
+  "key": "roserpina.max_win_warning_only",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125212,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125221,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125228,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125231,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-36": {
+  "key": "roserpina.auto_green_delay_enabled",
+  "fixture": "True",
+  "fixture_non_committata": "False",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125234,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125237,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125240,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125243,
+    "cfg_valore": "True",
+    "cfg_tipo": "bool",
+    "raw_db": "1",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "True",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-37": {
+  "key": "roserpina.profit_epsilon_enabled",
+  "fixture": "False",
+  "fixture_non_committata": "True",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125246,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125255,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125258,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125261,
+    "cfg_valore": "False",
+    "cfg_tipo": "bool",
+    "raw_db": "0",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "False",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-38": {
+  "key": "roserpina.max_order_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125264,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125276,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125280,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125283,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-39": {
+  "key": "roserpina.max_market_exposure",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125286,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125289,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125298,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125301,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-40": {
+  "key": "roserpina.max_event_exposure_abs",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125304,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125307,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125310,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125317,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ },
+ "RSR-41": {
+  "key": "roserpina.max_drawdown_abs",
+  "fixture": "7.5",
+  "fixture_non_committata": "9.5",
+  "commit_poi_kill": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125320,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "kill_in_transazione": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "IN_TX",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125323,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_esito_incerto": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125332,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": false,
+     "reason": "STARTUP_RECONCILIATION_REQUIRED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "BLOCKED"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "riavvio_ordine_fantasma": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "COMMITTED",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125335,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_989": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125339,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 989.0,
+    "bankroll": 989.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.01": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125343,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 990.01,
+    "bankroll": 990.01,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  },
+  "memoria_drawdown_1000_poi_990.00": {
+   "fase_A": {
+    "returncode": -9,
+    "ucciso_da_SIGKILL": true,
+    "stdout": "PEAK_A 1000.0",
+    "stderr": ""
+   },
+   "fase_B": {
+    "pid": 125347,
+    "cfg_valore": "<assente>",
+    "cfg_tipo": "n/a",
+    "raw_db": "7.5",
+    "saghe_pendenti": 1,
+    "start": "ok",
+    "recovery": {
+     "ok": true,
+     "reason": "RECOVERED",
+     "pending_sagas": 1,
+     "ghost_orders_recovered": 0,
+     "startup_mode": "LIVE_FLAT"
+    },
+    "modo_dopo_start": "RuntimeMode.ACTIVE",
+    "recover_order_pubblicato": 1,
+    "config_runtime_valore": "<assente>",
+    "equity_peak": 990.0,
+    "bankroll": 990.0,
+    "segnale_dopo_start": {
+     "rifiuti": [],
+     "arrivato_al_sizing": true
+    }
+   },
+   "db_file": "stesso file, processo nuovo"
+  }
+ }
+}

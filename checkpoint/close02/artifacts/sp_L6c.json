@@ -1,0 +1,342 @@
+{
+ "DIFF-PF-RSR-02-APPLY": [],
+ "DIFF-PF-RSR-03-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-04-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-04-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-04-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-04-PARITY": [],
+ "DIFF-PF-RSR-04-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-05-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-05-PARITY": [],
+ "DIFF-PF-RSR-06-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-06-PARITY": [],
+ "DIFF-PF-RSR-07-FAILSAFE": [],
+ "DIFF-PF-RSR-07-PARITY": [],
+ "DIFF-PF-RSR-08-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-08-PARITY": [],
+ "DIFF-PF-RSR-09-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-09-PARITY": [],
+ "DIFF-PF-RSR-10-FAILSAFE": [],
+ "DIFF-PF-RSR-10-PARITY": [],
+ "DIFF-PF-RSR-11-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-11-PARITY": [],
+ "DIFF-PF-RSR-12-APPLY": [],
+ "DIFF-PF-RSR-12-AUDIT": [],
+ "DIFF-PF-RSR-12-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-12-PARITY": [],
+ "DIFF-PF-RSR-12-RACE": [],
+ "DIFF-PF-RSR-13-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-13-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-13-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-13-PARITY": [],
+ "DIFF-PF-RSR-13-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-14-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-14-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-14-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-14-PARITY": [],
+ "DIFF-PF-RSR-14-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-15-APPLY": [],
+ "DIFF-PF-RSR-15-AUDIT": [],
+ "DIFF-PF-RSR-15-FAILSAFE": [],
+ "DIFF-PF-RSR-15-PARITY": [],
+ "DIFF-PF-RSR-15-RACE": [],
+ "DIFF-PF-RSR-16-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-16-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-16-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-16-PARITY": [],
+ "DIFF-PF-RSR-16-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-17-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-17-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-17-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-17-PARITY": [],
+ "DIFF-PF-RSR-17-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-18-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-18-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-18-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-18-PARITY": [],
+ "DIFF-PF-RSR-18-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-19-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-19-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-19-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-19-PARITY": [],
+ "DIFF-PF-RSR-19-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-20-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-20-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-20-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-20-PARITY": [],
+ "DIFF-PF-RSR-20-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-21-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-21-PARITY": [],
+ "DIFF-PF-RSR-22-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-22-PARITY": [],
+ "DIFF-PF-RSR-23-APPLY": [],
+ "DIFF-PF-RSR-23-AUDIT": [],
+ "DIFF-PF-RSR-23-FAILSAFE": [],
+ "DIFF-PF-RSR-23-PARITY": [],
+ "DIFF-PF-RSR-23-RACE": [],
+ "DIFF-PF-RSR-24-FAILSAFE": [],
+ "DIFF-PF-RSR-24-PARITY": [],
+ "DIFF-PF-RSR-25-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-25-PARITY": [],
+ "DIFF-PF-RSR-26-FAILSAFE": [],
+ "DIFF-PF-RSR-26-PARITY": [],
+ "DIFF-PF-RSR-27-APPLY": [],
+ "DIFF-PF-RSR-27-AUDIT": [],
+ "DIFF-PF-RSR-27-FAILSAFE": [],
+ "DIFF-PF-RSR-27-PARITY": [],
+ "DIFF-PF-RSR-27-RACE": [],
+ "DIFF-PF-RSR-28-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-28-PARITY": [],
+ "DIFF-PF-RSR-29-APPLY": [],
+ "DIFF-PF-RSR-29-AUDIT": [],
+ "DIFF-PF-RSR-29-FAILSAFE": [],
+ "DIFF-PF-RSR-29-PARITY": [],
+ "DIFF-PF-RSR-29-RACE": [],
+ "DIFF-PF-RSR-30-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-30-PARITY": [],
+ "DIFF-PF-RSR-31-APPLY": [],
+ "DIFF-PF-RSR-31-AUDIT": [],
+ "DIFF-PF-RSR-31-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-31-PARITY": [],
+ "DIFF-PF-RSR-31-RACE": [],
+ "DIFF-PF-RSR-32-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-32-PARITY": [],
+ "DIFF-PF-RSR-33-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-33-PARITY": [],
+ "DIFF-PF-RSR-34-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-34-PARITY": [],
+ "DIFF-PF-RSR-35-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-35-PARITY": [],
+ "DIFF-PF-RSR-36-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-36-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-36-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-36-PARITY": [],
+ "DIFF-PF-RSR-36-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-37-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-37-PARITY": [],
+ "DIFF-PF-RSR-38-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-38-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-38-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-38-PARITY": [],
+ "DIFF-PF-RSR-38-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-39-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-39-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-39-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-39-PARITY": [],
+ "DIFF-PF-RSR-39-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-40-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-40-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-40-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-40-PARITY": [],
+ "DIFF-PF-RSR-40-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-41-APPLY": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-41-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-41-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-41-PARITY": [],
+ "DIFF-PF-RSR-41-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-01-FAILSAFE": [],
+ "DIFF-PF-RSR-01-PARITY": [],
+ "DIFF-PF-RSR-01-RESTART": [],
+ "DIFF-PF-RSR-02-AUDIT": [],
+ "DIFF-PF-RSR-02-FAILSAFE": [],
+ "DIFF-PF-RSR-02-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-02-GUI-S1": [],
+ "DIFF-PF-RSR-02-LOAD": [],
+ "DIFF-PF-RSR-02-PARITY": [],
+ "DIFF-PF-RSR-02-RACE": [],
+ "DIFF-PF-RSR-02-RESTART": [],
+ "DIFF-PF-RSR-03-AUDIT": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-03-FAILSAFE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-03-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-03-GUI-S1": [],
+ "DIFF-PF-RSR-03-LOAD": [],
+ "DIFF-PF-RSR-03-PARITY": [],
+ "DIFF-PF-RSR-03-RACE": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-03-RESTART": [
+  "C2 nessun importo numerico con unità"
+ ],
+ "DIFF-PF-RSR-04-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-04-GUI-S1": [],
+ "DIFF-PF-RSR-12-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-12-GUI-S1": [],
+ "DIFF-PF-RSR-13-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-13-GUI-S1": [],
+ "DIFF-PF-RSR-14-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-14-GUI-S1": [],
+ "DIFF-PF-RSR-15-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-15-GUI-S1": [],
+ "DIFF-PF-RSR-16-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-16-GUI-S1": [],
+ "DIFF-PF-RSR-17-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-17-GUI-S1": [],
+ "DIFF-PF-RSR-18-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-18-GUI-S1": [],
+ "DIFF-PF-RSR-19-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-19-GUI-S1": [],
+ "DIFF-PF-RSR-20-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-20-GUI-S1": [],
+ "DIFF-PF-RSR-23-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-23-GUI-S1": [],
+ "DIFF-PF-RSR-27-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-27-GUI-S1": [],
+ "DIFF-PF-RSR-29-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-29-GUI-S1": [],
+ "DIFF-PF-RSR-31-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-31-GUI-S1": [],
+ "DIFF-PF-RSR-36-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-36-GUI-S1": [],
+ "DIFF-PF-RSR-38-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-38-GUI-S1": [],
+ "DIFF-PF-RSR-39-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-39-GUI-S1": [],
+ "DIFF-PF-RSR-40-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-40-GUI-S1": [],
+ "DIFF-PF-RSR-41-GUI-OBSERVABLE": [],
+ "DIFF-PF-RSR-41-GUI-S1": []
+}

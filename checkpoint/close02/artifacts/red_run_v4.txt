@@ -1,0 +1,185 @@
+F.FF.FFFF.FFF..FFFFFF.                                                   [100%]
+=================================== FAILURES ===================================
+_________ test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows __________
+
+    def test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows():
+        # 9.00 € già a rischio + BACK 2.00 = 11.00 € > 10.00 € ; la % (35% di 100 = 35 €) lo consentirebbe
+        res, bus = _bet(_RT(exposure=9.0), "BACK", 2.0, 2.0)
+>       assert res["ok"] is False, "11.00 € di capitale a rischio deve essere bloccato (limite owner 10 €)"
+E       AssertionError: 11.00 € di capitale a rischio deve essere bloccato (limite owner 10 €)
+E       assert True is False
+
+tests/close02/test_close02_findings.py:88: AssertionError
+________________ test_f1_unverifiable_exposure_blocks_new_risk _________________
+
+    def test_f1_unverifiable_exposure_blocks_new_risk():
+        # Q4: nessun nuovo ordine che aumenta il rischio se l'esposizione non è verificabile
+        res, _ = _bet(_RT(raises=True), "BACK", 1.0, 2.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:100: AssertionError
+___________ test_f2_red_lay_measured_as_liability_against_single_cap ___________
+
+    def test_f2_red_lay_measured_as_liability_against_single_cap():
+        # cap singolo 5% di 100 = 5.00 € ; LAY 1.00@10 => liability 9.00 > 5.00 (lo stake 1.00 passerebbe)
+        res, _ = _bet(_RT(max_single_bet_pct=5.0), "LAY", 1.0, 10.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:107: AssertionError
+____________________ test_f5_float_sum_at_cap_uses_decimal _____________________
+
+    def test_f5_float_sum_at_cap_uses_decimal():
+>       assert validators.exceeds_cap(validators.money_sum(0.1, 0.2), 0.3) is False
+                                      ^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: module 'core.validators' has no attribute 'money_sum'
+
+tests/close02/test_close02_findings.py:117: AttributeError
+__________________ test_f2_lay_liability_counts_toward_10_eur __________________
+
+    def test_f2_lay_liability_counts_toward_10_eur():
+        # 2.00 € a rischio + LAY 1.00@10 (liability 9.00) = 11.00 € > 10.00 €
+        res, _ = _bet(_RT(exposure=2.0, max_single_bet_pct=100.0, max_total_exposure_pct=100.0), "LAY", 1.0, 10.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:124: AssertionError
+______ test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached[LIVE] ______
+
+mode = 'LIVE'
+
+    @pytest.mark.parametrize("mode", ["LIVE"])
+    def test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached(mode):
+        rc, bus = _runtime(mode, 20.0, 100.0, 89.99)  # perdita 10.01 € = 10.01% < 20%
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus), "drawdown 10.01 € deve fermare (Q5)"
+E       AssertionError: drawdown 10.01 € deve fermare (Q5)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7ff729afc490>)
+
+tests/close02/test_close02_findings.py:228: AssertionError
+________________ test_f3_boundary_drawdown_exactly_10_eur_stops ________________
+
+    def test_f3_boundary_drawdown_exactly_10_eur_stops():
+        rc, bus = _runtime("LIVE", 20.0, 100.0, 90.0)  # Q3: stop se perdita >= 10.00
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7ff729c33190>)
+
+tests/close02/test_close02_findings.py:234: AssertionError
+__________________ test_f4_red_drawdown_applies_in_simulation __________________
+
+    def test_f4_red_drawdown_applies_in_simulation():
+        rc, bus = _runtime("SIMULATION", 20.0, 100.0, 89.99)
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus), "Q5: il limite vale in SIM e LIVE"
+E       AssertionError: Q5: il limite vale in SIM e LIVE
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7ff729ae3e50>)
+
+tests/close02/test_close02_findings.py:249: AssertionError
+___________________ test_f4_unverifiable_equity_fails_closed ___________________
+
+    def test_f4_unverifiable_equity_fails_closed():
+        rc, bus = _runtime("SIMULATION", 20.0, float("nan"), 95.0)
+        rc._on_signal_received(_sig())
+>       assert not [e for e in bus.events if e[0] == "CMD_QUICK_BET"], "equity non verificabile => nessun nuovo rischio"
+E       AssertionError: equity non verificabile => nessun nuovo rischio
+E       assert not [('CMD_QUICK_BET', {'market_id': '1.2', 'selection_id': 11, 'bet_type': 'BACK', 'price': 2.0, ...})]
+
+tests/close02/test_close02_findings.py:255: AssertionError
+____________ test_f5_red_amount_above_cap_by_less_than_1e9_exceeds _____________
+
+    def test_f5_red_amount_above_cap_by_less_than_1e9_exceeds():
+>       assert validators.exceeds_cap(10.000000001, 10.0) is True
+E       assert False is True
+E        +  where False = <function exceeds_cap at 0x7ff72a4c3f60>(10.000000001, 10.0)
+E        +    where <function exceeds_cap at 0x7ff72a4c3f60> = validators.exceeds_cap
+
+tests/close02/test_close02_findings.py:260: AssertionError
+_____________ test_f6_red_config_version_persisted_and_incremented _____________
+
+    def test_f6_red_config_version_persisted_and_incremented():
+        from database import Database
+        from services.setting_service import SettingsService
+    
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "cfg.sqlite"))
+            svc = SettingsService(db)
+            svc.save_roserpina_config(RoserpinaConfig())
+            v1 = db.get_settings().get("roserpina.config_version")
+            svc.save_roserpina_config(RoserpinaConfig(max_single_bet_pct=17.5))
+            v2 = db.get_settings().get("roserpina.config_version")
+>           assert v1 is not None and v2 is not None, "nessuna versione salvata"
+E           AssertionError: nessuna versione salvata
+E           assert (None is not None)
+
+tests/close02/test_close02_findings.py:285: AssertionError
+_____________ test_d1_configured_lower_drawdown_threshold_applies ______________
+
+    def test_d1_configured_lower_drawdown_threshold_applies():
+        rc, bus = _runtime("SIMULATION", 99.0, 100.0, 95.0, max_drawdown_abs=5.0)
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7ff729c231d0>)
+
+tests/close02/test_close02_findings.py:300: AssertionError
+_____ test_d1_configured_threshold_above_campaign_ceiling_is_capped_at_10 ______
+
+    def test_d1_configured_threshold_above_campaign_ceiling_is_capped_at_10():
+        rc, bus = _runtime("SIMULATION", 99.0, 100.0, 90.0, max_drawdown_abs=20.0)
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7ff729ae9190>)
+
+tests/close02/test_close02_findings.py:306: AssertionError
+_____________ test_d1_invalid_configured_threshold_blocks_new_risk _____________
+
+    def test_d1_invalid_configured_threshold_blocks_new_risk():
+        rc, bus = _runtime("SIMULATION", 99.0, 100.0, 99.0, max_drawdown_abs=float("nan"))
+        rc._on_signal_received(_sig())
+>       assert _rejected(bus, "drawdown_threshold_non_valido")
+E       AssertionError: assert []
+E        +  where [] = _rejected(<test_close02_findings._RBus object at 0x7ff729b16c90>, 'drawdown_threshold_non_valido')
+
+tests/close02/test_close02_findings.py:312: AssertionError
+_________________ test_d2_runtime_missing_exposure_cap_blocks __________________
+
+    def test_d2_runtime_missing_exposure_cap_blocks():
+        rc, bus = _runtime("SIMULATION", 99.0, 100.0, 100.0, max_open_exposure=None)
+        rc._on_signal_received(_sig())
+>       assert _rejected(bus, "max_open_exposure_assente")
+E       AssertionError: assert []
+E        +  where [] = _rejected(<test_close02_findings._RBus object at 0x7ff729b249d0>, 'max_open_exposure_assente')
+
+tests/close02/test_close02_findings.py:319: AssertionError
+________________ test_d2_manual_bet_missing_exposure_cap_blocks ________________
+
+    def test_d2_manual_bet_missing_exposure_cap_blocks():
+        res, _ = _bet(_RT(max_open_exposure=None), "BACK", 1.0, 2.0)
+>       assert res["ok"] is False and "assente" in res.get("error", "")
+E       assert (True is False)
+
+tests/close02/test_close02_findings.py:324: AssertionError
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_findings.py::test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows
+FAILED tests/close02/test_close02_findings.py::test_f1_unverifiable_exposure_blocks_new_risk
+FAILED tests/close02/test_close02_findings.py::test_f2_red_lay_measured_as_liability_against_single_cap
+FAILED tests/close02/test_close02_findings.py::test_f5_float_sum_at_cap_uses_decimal
+FAILED tests/close02/test_close02_findings.py::test_f2_lay_liability_counts_toward_10_eur
+FAILED tests/close02/test_close02_findings.py::test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached[LIVE]
+FAILED tests/close02/test_close02_findings.py::test_f3_boundary_drawdown_exactly_10_eur_stops
+FAILED tests/close02/test_close02_findings.py::test_f4_red_drawdown_applies_in_simulation
+FAILED tests/close02/test_close02_findings.py::test_f4_unverifiable_equity_fails_closed
+FAILED tests/close02/test_close02_findings.py::test_f5_red_amount_above_cap_by_less_than_1e9_exceeds
+FAILED tests/close02/test_close02_findings.py::test_f6_red_config_version_persisted_and_incremented
+FAILED tests/close02/test_close02_findings.py::test_d1_configured_lower_drawdown_threshold_applies
+FAILED tests/close02/test_close02_findings.py::test_d1_configured_threshold_above_campaign_ceiling_is_capped_at_10
+FAILED tests/close02/test_close02_findings.py::test_d1_invalid_configured_threshold_blocks_new_risk
+FAILED tests/close02/test_close02_findings.py::test_d2_runtime_missing_exposure_cap_blocks
+FAILED tests/close02/test_close02_findings.py::test_d2_manual_bet_missing_exposure_cap_blocks
+16 failed, 6 passed in 0.20s

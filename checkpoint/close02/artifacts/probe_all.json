@@ -1,0 +1,355 @@
+{
+ "betfair_market_api.list_event_types": {
+  "valid": {
+   "ret": "[{'eventType': {'id': '1', 'name': 'Soccer'}, 'marketCount': 120}]",
+   "calls": [
+    "SportsAPING/v1.0/listEventTypes"
+   ]
+  },
+  "error_payload": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listEventTypes"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listEventTypes"
+   ]
+  },
+  "empty": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listEventTypes"
+   ]
+  }
+ },
+ "betfair_market_api.list_competitions": {
+  "valid": {
+   "ret": "[{'competition': {'id': '81', 'name': 'Serie A'}, 'marketCount': 40}]",
+   "calls": [
+    "SportsAPING/v1.0/listCompetitions"
+   ]
+  },
+  "error_payload": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listCompetitions"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listCompetitions"
+   ]
+  },
+  "empty": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listCompetitions"
+   ]
+  }
+ },
+ "betfair_market_api.list_events": {
+  "valid": {
+   "ret": "[{'event': {'id': '34000001', 'name': 'Inter v Milan'}, 'marketCount': 60}]",
+   "calls": [
+    "SportsAPING/v1.0/listEvents"
+   ]
+  },
+  "error_payload": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listEvents"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listEvents"
+   ]
+  },
+  "empty": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listEvents"
+   ]
+  }
+ },
+ "betfair_market_api.list_market_catalogue": {
+  "valid": {
+   "ret": "[{'marketId': '1.230000001', 'marketName': 'Match Odds', 'runners': [{'selectionId': 47999, 'runnerName': 'Inter'}]}]",
+   "calls": [
+    "SportsAPING/v1.0/listMarketCatalogue"
+   ]
+  },
+  "error_payload": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listMarketCatalogue"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listMarketCatalogue"
+   ]
+  },
+  "empty": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listMarketCatalogue"
+   ]
+  }
+ },
+ "betfair_market_api.get_market_book": {
+  "valid": {
+   "ret": "{'marketId': '1.230000001', 'status': 'OPEN', 'runners': [{'selectionId': 47999, 'status': 'ACTIVE', 'availableToBack': [], 'availableToLay': []}]}",
+   "calls": [
+    "SportsAPING/v1.0/listMarketBook"
+   ]
+  },
+  "error_payload": {
+   "ret": "None",
+   "calls": [
+    "SportsAPING/v1.0/listMarketBook"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listMarketBook"
+   ]
+  },
+  "empty": {
+   "ret": "None",
+   "calls": [
+    "SportsAPING/v1.0/listMarketBook"
+   ]
+  }
+ },
+ "betfair_market_api.get_current_orders": {
+  "valid": {
+   "ret": "[{'betId': '3001', 'marketId': '1.230000001', 'selectionId': 47999, 'side': 'BACK', 'priceSize': {'price': 2.0, 'size': 1.0}, 'status': 'EXECUTABLE'}]",
+   "calls": [
+    "SportsAPING/v1.0/listCurrentOrders"
+   ]
+  },
+  "error_payload": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listCurrentOrders"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listCurrentOrders"
+   ]
+  },
+  "empty": {
+   "ret": "[]",
+   "calls": [
+    "SportsAPING/v1.0/listCurrentOrders"
+   ]
+  }
+ },
+ "betfair_market_api.list_cleared_orders": {
+  "valid": {
+   "ret": "[{'betId': '3001', 'profit': 1.0, 'betOutcome': 'WON'}]",
+   "calls": [
+    "SportsAPING/v1.0/listClearedOrders"
+   ]
+  },
+  "error_payload": {
+   "raise": "RuntimeError: CLEARED_ORDERS_MALFORMED_RESPONSE: clearedOrders/moreAvailable missing or wrong type",
+   "calls": [
+    "SportsAPING/v1.0/listClearedOrders"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/listClearedOrders"
+   ]
+  },
+  "empty": {
+   "raise": "RuntimeError: CLEARED_ORDERS_MALFORMED_RESPONSE: clearedOrders/moreAvailable missing or wrong type",
+   "calls": [
+    "SportsAPING/v1.0/listClearedOrders"
+   ]
+  }
+ },
+ "betfair_market_api.get_account_funds": {
+  "valid": {
+   "ret": "{'available': 100.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit': 0.0, 'discount_rate': 0.0, 'points_balance': 0.0}",
+   "calls": [
+    "AccountAPING/v1.0/getAccountFunds"
+   ]
+  },
+  "error_payload": {
+   "ret": "{'available': 0.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit': 0.0, 'discount_rate': 0.0, 'points_balance': 0.0}",
+   "calls": [
+    "AccountAPING/v1.0/getAccountFunds"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "AccountAPING/v1.0/getAccountFunds"
+   ]
+  },
+  "empty": {
+   "ret": "{'available': 0.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit': 0.0, 'discount_rate': 0.0, 'points_balance': 0.0}",
+   "calls": [
+    "AccountAPING/v1.0/getAccountFunds"
+   ]
+  }
+ },
+ "betfair_client.place_bet": {
+  "valid": {
+   "ret": "{'ok': True, 'result': {'status': 'SUCCESS', 'instructionReports': [{'status': 'SUCCESS', 'betId': '3001', 'sizeMatched': 2.0, 'averagePriceMatched': 2.0}]}}",
+   "calls": [
+    "SportsAPING/v1.0/placeOrders"
+   ]
+  },
+  "error_payload": {
+   "ret": "{'ok': False, 'error': 'BET_FAILED:', 'classification': 'UNKNOWN', 'order_unknown': False}",
+   "calls": [
+    "SportsAPING/v1.0/placeOrders"
+   ]
+  },
+  "exception": {
+   "ret": "{'ok': False, 'error': 'INVALID_SESSION_INFORMATION', 'classification': 'UNKNOWN', 'order_unknown': False}",
+   "calls": [
+    "SportsAPING/v1.0/placeOrders"
+   ]
+  },
+  "failure_report": {
+   "ret": "{'ok': False, 'error': 'BET_FAILED: FAILURE INSUFFICIENT_FUNDS', 'classification': 'UNKNOWN', 'order_unknown': False}",
+   "calls": [
+    "SportsAPING/v1.0/placeOrders"
+   ]
+  },
+  "nan_price": {
+   "raise": "RuntimeError: INVALID_PRICE",
+   "calls": []
+  },
+  "size_zero": {
+   "raise": "RuntimeError: INVALID_SIZE",
+   "calls": []
+  },
+  "bad_side": {
+   "raise": "RuntimeError: INVALID_SIDE",
+   "calls": []
+  }
+ },
+ "betfair_client.cancel_orders": {
+  "valid": {
+   "ret": "{'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 1, 'result': {'status': 'SUCCESS', 'instructionReports': [{'status': 'SUCCESS', 'sizeCancelled': 2.0, 'instruction': {'",
+   "calls": [
+    "SportsAPING/v1.0/cancelOrders"
+   ]
+  },
+  "error_payload": {
+   "ret": "{'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 0, 'result': {'faultcode': 'Client', 'detail': {'APINGException': {'errorCode': 'INVALID_SESSION_INFORMATION'}}}}",
+   "calls": [
+    "SportsAPING/v1.0/cancelOrders"
+   ]
+  },
+  "exception": {
+   "ret": "{'ok': False, 'market_id': '1.230000001', 'error': 'INVALID_SESSION_INFORMATION', 'classification': 'UNKNOWN'}",
+   "calls": [
+    "SportsAPING/v1.0/cancelOrders"
+   ]
+  },
+  "failure_report": {
+   "ret": "{'ok': False, 'market_id': '1.230000001', 'error': 'CANCEL_FAILED: INSUFFICIENT_FUNDS', 'classification': 'UNKNOWN'}",
+   "calls": [
+    "SportsAPING/v1.0/cancelOrders"
+   ]
+  }
+ },
+ "betfair_client.replace_orders": {
+  "valid": {
+   "ret": "{'status': 'SUCCESS', 'instructionReports': [{'status': 'SUCCESS', 'placeInstructionReport': {'status': 'SUCCESS', 'betId': '3002'}, 'cancelInstructionReport': {'status': 'SUCCESS'}, 'betId': '3002'}]",
+   "calls": [
+    "SportsAPING/v1.0/replaceOrders"
+   ]
+  },
+  "error_payload": {
+   "ret": "{'faultcode': 'Client', 'detail': {'APINGException': {'errorCode': 'INVALID_SESSION_INFORMATION'}}}",
+   "calls": [
+    "SportsAPING/v1.0/replaceOrders"
+   ]
+  },
+  "exception": {
+   "raise": "RuntimeError: INVALID_SESSION_INFORMATION",
+   "calls": [
+    "SportsAPING/v1.0/replaceOrders"
+   ]
+  },
+  "failure_report": {
+   "ret": "{'status': 'FAILURE', 'errorCode': 'INSUFFICIENT_FUNDS', 'instructionReports': [{'status': 'FAILURE', 'errorCode': 'INSUFFICIENT_FUNDS'}]}",
+   "calls": [
+    "SportsAPING/v1.0/replaceOrders"
+   ]
+  }
+ },
+ "simulation_broker.get_account_funds": {
+  "fresh": {
+   "ret": "{'available': 100.0, 'exposure': 0.0, 'total': 100.0, 'simulated': True}"
+  }
+ },
+ "simulation_broker.list_events": {
+  "valid": {
+   "ret": "[]"
+  },
+  "empty_ids": {
+   "ret": "[]"
+  }
+ },
+ "simulation_broker.list_market_catalogue": {
+  "valid": {
+   "ret": "[]"
+  },
+  "empty_ids": {
+   "ret": "[]"
+  }
+ },
+ "simulation_broker.get_market_book": {
+  "unknown": {
+   "ret": "None"
+  }
+ },
+ "simulation_broker.get_current_orders": {
+  "fresh": {
+   "ret": "[]"
+  }
+ },
+ "simulation_broker.place_bet": {
+  "unknown_market": {
+   "ret": "{'status': 'SUCCESS', 'marketId': '1.999', 'instructionReports': [{'status': 'SUCCESS', 'orderStatus': 'EXECUTABLE', 'betId': 'SIMBET-edc59edea5af4e', 'sizeMatched': 0.0, 'averagePriceMatched': 0.0}],"
+  },
+  "nan_price": {
+   "raise": "RuntimeError: INVALID_PRICE"
+  }
+ },
+ "simulation_broker.cancel_orders": {
+  "unknown_bet": {
+   "ret": "{'status': 'SUCCESS', 'instructionReports': [{'status': 'FAILURE', 'sizeCancelled': 0.0}], 'simulated': True}"
+  },
+  "none": {
+   "ret": "{'status': 'SUCCESS', 'instructionReports': [], 'simulated': True}"
+  }
+ },
+ "simulation_broker.replace_orders": {
+  "unknown_bet": {
+   "ret": "{'status': 'SUCCESS', 'marketId': '1.999', 'instructionReports': [{'status': 'FAILURE', 'betId': 'nope'}], 'simulated': True}"
+  },
+  "none": {
+   "ret": "{'status': 'SUCCESS', 'marketId': '', 'instructionReports': [{'status': 'FAILURE', 'betId': ''}], 'simulated': True}"
+  }
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "L1_v2": {
+  "records": 22,
+  "positive": "UNSOURCED ('una sola chiamata', 'senza perdita di campi': nessuna clausola)",
+  "negative": "OBSERVED_ONLY (elenco [] / None / saldo 0.00 / ok=True ricavato dagli output delle sonde)",
+  "boundary": "OBSERVED_ONLY ('vuoto legittimo distinguibile dall'errore' formulato dall'osservato)",
+  "records_with_OBSERVED_ONLY": 22
+ },
+ "L2": {
+  "records": 97,
+  "SAVE/LOAD/RESTART/VALID-neg": "REQUIREMENT (clausole P1/P2 del record)",
+  "VALID-positive": "UNSOURCED (accettazione nel dominio con fixture default+delta; dominio PENDING per Q1)",
+  "records_with_UNSOURCED": 20,
+  "records_with_OBSERVED_ONLY": 0,
+  "struttura": "campo observed_028cee9 fuori da impl_attuale in 97/97 (strutturale)"
+ }
+}

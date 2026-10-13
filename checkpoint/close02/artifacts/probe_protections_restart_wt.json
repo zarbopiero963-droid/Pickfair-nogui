@@ -1,0 +1,38 @@
+{
+ "daily_loss": {
+  "A": {
+   "rc": -9,
+   "stdout": "A {\"breached\": true, \"modo\": \"RuntimeMode.LOCKDOWN\"}",
+   "err": ""
+  },
+  "B": {
+   "pid": 121523,
+   "start": "True",
+   "modo": "RuntimeMode.ACTIVE",
+   "risk_stop_reason": "",
+   "daily_loss_bloccato": true,
+   "ammesso_al_sizing": false,
+   "rifiuti": [
+    "emergency_stop_active:triggered_at=2026-10-13T11:43:36.350743"
+   ]
+  }
+ },
+ "risk_stop": {
+  "A": {
+   "rc": -9,
+   "stdout": "A {\"risk_stop\": \"session_loss_breached:probe\", \"persisted\": true}",
+   "err": ""
+  },
+  "B": {
+   "pid": 121527,
+   "start": "True",
+   "modo": "RuntimeMode.ACTIVE",
+   "risk_stop_reason": "session_loss_breached:probe",
+   "daily_loss_bloccato": false,
+   "ammesso_al_sizing": false,
+   "rifiuti": [
+    "owner_t80u_nuovo_rischio_bloccato:roserpina.commission_pct,roserpina.max_event_exposure_pct,roserpina.max_single_bet_pct,roserpina.max_stake_abs,roserpina.max_total_exposure_pct"
+   ]
+  }
+ }
+}

@@ -1,0 +1,421 @@
+[
+ {
+  "id": "RSR-01",
+  "name": "Target Profit Cycle %",
+  "key": "roserpina.target_profit_cycle_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "3.0",
+  "src": "6085510337",
+  "sem": "Target percentuale sul bankroll corrente; non prova il profitto raggiunto o liquidabile."
+ },
+ {
+  "id": "RSR-02",
+  "name": "Max Single Bet %",
+  "key": "roserpina.max_single_bet_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "18.0",
+  "src": "6085510337",
+  "sem": "Cap di sizing; distinguere stake da responsabilità LAY."
+ },
+ {
+  "id": "RSR-03",
+  "name": "Max Total Exposure %",
+  "key": "roserpina.max_total_exposure_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "35.0",
+  "src": "6085510337",
+  "sem": "Aggregazione dei tavoli: AMBIGUOUS/SUCCESS possono perdere esposizione (F02)."
+ },
+ {
+  "id": "RSR-04",
+  "name": "Max Event Exposure %",
+  "key": "roserpina.max_event_exposure_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "18.0",
+  "src": "6085510337",
+  "sem": "Aggregazione per identità evento: stesso rischio di rilascio F02; test cross-market necessario."
+ },
+ {
+  "id": "RSR-05",
+  "name": "Auto Reset Drawdown %",
+  "key": "roserpina.auto_reset_drawdown_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "15.0",
+  "src": "6085510337",
+  "sem": "Reset dopo settlement: non equivale a chiusura posizioni."
+ },
+ {
+  "id": "RSR-06",
+  "name": "Defense Drawdown %",
+  "key": "roserpina.defense_drawdown_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "7.5",
+  "src": "6085510337",
+  "sem": "Desk DEFENSE su drawdown; prove componenti presenti, equity/restart da completare."
+ },
+ {
+  "id": "RSR-07",
+  "name": "Lockdown Drawdown %",
+  "key": "roserpina.lockdown_drawdown_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "20.0",
+  "src": "6085510337",
+  "sem": "Desk LOCKDOWN: barriera ordini, cancel e cashout non certificati end-to-end."
+ },
+ {
+  "id": "RSR-08",
+  "name": "Expansion Profit %",
+  "key": "roserpina.expansion_profit_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "5.0",
+  "src": "6085510337",
+  "sem": "FAIL EXPANSION-BASE: 1000→1100 aggiorna il peak a1100, crescita calcolata0, modeNORMAL."
+ },
+ {
+  "id": "RSR-09",
+  "name": "Expansion Multiplier",
+  "key": "roserpina.expansion_multiplier",
+  "unit": "moltiplicatore",
+  "range": null,
+  "obs": "1.1",
+  "src": "6085510337",
+  "sem": "Moltiplicatore consumato, ma attivazione EXPANSION difettosa F03."
+ },
+ {
+  "id": "RSR-10",
+  "name": "Defense Multiplier",
+  "key": "roserpina.defense_multiplier",
+  "unit": "moltiplicatore",
+  "range": null,
+  "obs": "0.8",
+  "src": "6085510337",
+  "sem": "Moltiplicatore DEFENSE, verificare liability e rounding nel flusso finale."
+ },
+ {
+  "id": "RSR-11",
+  "name": "Table Count",
+  "key": "roserpina.table_count",
+  "unit": "conteggio",
+  "range": null,
+  "obs": "5",
+  "src": "6085510337",
+  "sem": "Resize conserva i tavoli attivi; ricostruzione dopo processo nuovo non certificata."
+ },
+ {
+  "id": "RSR-12",
+  "name": "Max Recovery Tables",
+  "key": "roserpina.max_recovery_tables",
+  "unit": "conteggio",
+  "range": null,
+  "obs": "2",
+  "src": "6085510337",
+  "sem": "Conteggio recovery runtime; gate multilivello/race e perdite consecutive non certificati."
+ },
+ {
+  "id": "RSR-13",
+  "name": "Commission %",
+  "key": "roserpina.commission_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "4.5",
+  "src": "6085510337",
+  "sem": "Commissione configurabile e policy Betfair Italia fissa convivono: non assumere che il valore GUI prevalga su settlement. Scheda PR19."
+ },
+ {
+  "id": "RSR-14",
+  "name": "Min Stake",
+  "key": "roserpina.min_stake",
+  "unit": "EUR",
+  "range": null,
+  "obs": "0.1",
+  "src": "6085510337",
+  "sem": "Fonte trading_config.MIN_STAKE; minimo exchange reale non provato."
+ },
+ {
+  "id": "RSR-15",
+  "name": "Max Stake Assoluto",
+  "key": "roserpina.max_stake_abs",
+  "unit": "EUR",
+  "range": null,
+  "obs": "10000.0",
+  "src": "6085510337",
+  "sem": "Cap stake assoluto distinto da liability e dai quattro nuovi limiti."
+ },
+ {
+  "id": "RSR-16",
+  "name": "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)",
+  "key": "roserpina.max_daily_loss",
+  "unit": "EUR",
+  "range": null,
+  "obs": "None",
+  "src": "6085510337",
+  "sem": "Daily loss: reset calendario, settlement tardivo/doppio e restart non certificati."
+ },
+ {
+  "id": "RSR-17",
+  "name": "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)",
+  "key": "roserpina.max_open_exposure",
+  "unit": "EUR",
+  "range": null,
+  "obs": "None",
+  "src": "6085510337",
+  "sem": "Esposizione aperta: rischio F02; non certificata riserva durevole."
+ },
+ {
+  "id": "RSR-18",
+  "name": "Stop: Perdita Sessione Max (€, vuoto=non impostato)",
+  "key": "roserpina.max_session_loss",
+  "unit": "EUR",
+  "range": null,
+  "obs": "None",
+  "src": "6085510337",
+  "sem": "Perdita sessione: origine/reset sessione e resume dopo crash da provare."
+ },
+ {
+  "id": "RSR-19",
+  "name": "Stop: Esposizione Complessiva (€, vuoto=non impostato)",
+  "key": "roserpina.max_exposure_stop",
+  "unit": "EUR",
+  "range": null,
+  "obs": "None",
+  "src": "6085510337",
+  "sem": "RISK_STOP su esposizione complessiva; comando protettivo riuscito non equivale a flat."
+ },
+ {
+  "id": "RSR-20",
+  "name": "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)",
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "unit": "%",
+  "range": [
+   "0",
+   "100"
+  ],
+  "obs": "None",
+  "src": "6085510337",
+  "sem": "Nel gate runtime percentuale controllo solo LIVE e peak−bankroll; parità SIM e unrealized non dimostrate."
+ },
+ {
+  "id": "RSR-21",
+  "name": "Book Warning % (avviso over-round)",
+  "key": "roserpina.book_warning",
+  "unit": "%",
+  "range": null,
+  "obs": "105.0",
+  "src": "6085510337",
+  "sem": "Solo avviso over-round, non blocco."
+ },
+ {
+  "id": "RSR-22",
+  "name": "Book Block % (blocca submit se book >= soglia)",
+  "key": "roserpina.book_block",
+  "unit": "%",
+  "range": null,
+  "obs": "110.0",
+  "src": "6085510893",
+  "sem": "Book block: soglia >=; assenza/staleness book va provata per ogni ingresso."
+ },
+ {
+  "id": "RSR-23",
+  "name": "Liquidity avviso: Moltiplicatore (richiesta = stake x N)",
+  "key": "roserpina.liquidity_multiplier",
+  "unit": "moltiplicatore",
+  "range": null,
+  "obs": "3.0",
+  "src": "6085510893",
+  "sem": "Liquidità richiesta stake×N; non responsabilità LAY."
+ },
+ {
+  "id": "RSR-24",
+  "name": "Liquidity avviso: Floor assoluto € (0 = nessun floor)",
+  "key": "roserpina.min_liquidity_absolute",
+  "unit": "EUR",
+  "range": null,
+  "obs": "50.0",
+  "src": "6085510893",
+  "sem": "Floor in euro sulla liquidità; non cap esposizione."
+ },
+ {
+  "id": "RSR-25",
+  "name": "Quota minima / Min Price (>= 1.02)",
+  "key": "roserpina.min_price",
+  "unit": "quota",
+  "range": [
+   ">= 1.02",
+   ""
+  ],
+  "obs": "1.02",
+  "src": "6085510893",
+  "sem": "GUI rifiuta valori <1.02; tick ladder Betfair distinto."
+ },
+ {
+  "id": "RSR-26",
+  "name": "Max Win € (cap vincita/payout per gamba)",
+  "key": "roserpina.max_win",
+  "unit": "EUR",
+  "range": null,
+  "obs": "10000.0",
+  "src": "6085510893",
+  "sem": "BACK payout stake×quota; LAY liability stake×(quota−1), non profitto netto."
+ },
+ {
+  "id": "RSR-27",
+  "name": "Max Stake % (avviso se esposizione operazione > % balance)",
+  "key": "roserpina.max_stake_pct",
+  "unit": "%",
+  "range": null,
+  "obs": "30.0",
+  "src": "6085510893",
+  "sem": "Avviso percentuale operazione dutching, non cap cumulativo."
+ },
+ {
+  "id": "RSR-28",
+  "name": "Profit epsilon € (avviso se varianza profitto tra esiti > tolleranza)",
+  "key": "roserpina.profit_epsilon",
+  "unit": "EUR",
+  "range": null,
+  "obs": "0.5",
+  "src": "6085510893",
+  "sem": "Tolleranza differenza profitti netti fra esiti, non criterio di settlement."
+ },
+ {
+  "id": "RSR-29",
+  "name": "Auto-green delay (s) — grace prima del cashout (0.1-30)",
+  "key": "roserpina.auto_green_delay_sec",
+  "unit": "secondi",
+  "range": [
+   "0.1",
+   "30"
+  ],
+  "obs": "2.5",
+  "src": "6085510893",
+  "sem": "Etichetta dice0.1–30 ma parser accetta qualsiasi finito >0 fino30; validazione stretta soltanto se grace armata."
+ },
+ {
+  "id": "RSR-30",
+  "name": "Risk Profile",
+  "key": "roserpina.risk_profile",
+  "unit": "profilo",
+  "range": null,
+  "obs": "BALANCED",
+  "src": "6085510893",
+  "sem": "CONSERVATIVE0.8/BALANCED1/AGGRESSIVE1.2; loader enum invalido ritornaBALANCED."
+ },
+ {
+  "id": "RSR-31",
+  "name": "Allow Recovery",
+  "key": "roserpina.allow_recovery",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "Autorizza riuso recovery; non autorizza chase senza limiti."
+ },
+ {
+  "id": "RSR-32",
+  "name": "Anti Duplication Enabled",
+  "key": "roserpina.anti_duplication_enabled",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "Dedup evento: release su eventi terminali includeAMBIGUOUS; persistenza cross-process da provare."
+ },
+ {
+  "id": "RSR-33",
+  "name": "Liquidity Guard attivo",
+  "key": "roserpina.liquidity_guard_enabled",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "False disabilita guard; dato invalido e warning-only differiscono nei percorsi."
+ },
+ {
+  "id": "RSR-34",
+  "name": "Liquidity: solo avviso (⚠ togliere = BLOCCA il submit)",
+  "key": "roserpina.liquidity_warning_only",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "Solo avviso sul precheck; RiskGate può negare dati illeggibili anche warning-only."
+ },
+ {
+  "id": "RSR-35",
+  "name": "Max Win: solo avviso (⚠ togliere = BLOCCA il submit)",
+  "key": "roserpina.max_win_warning_only",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "Flag governa dutching; RiskGate mantiene max_win hard: uniformità semantica non certificata."
+ },
+ {
+  "id": "RSR-36",
+  "name": "Auto-green: attiva grace prima del cashout (ritardo)",
+  "key": "roserpina.auto_green_delay_enabled",
+  "unit": "boolean",
+  "range": null,
+  "obs": "False",
+  "src": "6085510893",
+  "sem": "Ritardo opt-in; stop/restart/timer obsoleto devono essere provati."
+ },
+ {
+  "id": "RSR-37",
+  "name": "Profit epsilon: mostra avviso varianza profitto",
+  "key": "roserpina.profit_epsilon_enabled",
+  "unit": "boolean",
+  "range": null,
+  "obs": "True",
+  "src": "6085510893",
+  "sem": "Accende/spegne avviso, non blocca."
+ },
+ {
+  "id": "RSR-38",
+  "name": "Cap assoluto: Singolo ordine €",
+  "key": "roserpina.max_order_exposure",
+  "unit": "EUR",
+  "range": null,
+  "obs": "1.0",
+  "src": "6085510893",
+  "sem": "PR ONLY, loader1€. Pass locale liability non certifica tutti gli ingressi."
+ },
+ {
+  "id": "RSR-39",
+  "name": "Cap assoluto: Singolo mercato €",
+  "key": "roserpina.max_market_exposure",
+  "unit": "EUR",
+  "range": null,
+  "obs": "2.0",
+  "src": "6085510893",
+  "sem": "FAIL: riserva tavolo sparisce suAMBIGUOUS/SUCCESS (F02), aggregato mercato sottostimabile."
+ },
+ {
+  "id": "RSR-40",
+  "name": "Cap assoluto: Singolo evento €",
+  "key": "roserpina.max_event_exposure_abs",
+  "unit": "EUR",
+  "range": null,
+  "obs": "2.0",
+  "src": "6085510893",
+  "sem": "FAIL: stessa perdita riserva nel totale evento (F02)."
+ },
+ {
+  "id": "RSR-41",
+  "name": "Hard-stop: Drawdown assoluto €",
+  "key": "roserpina.max_drawdown_abs",
+  "unit": "EUR",
+  "range": null,
+  "obs": "10.0",
+  "src": "6085510893",
+  "sem": "FAIL DD-UNREALIZED: peak100/bankroll100/unrealized−10 → drawdown_abs0 invece10 (F04)."
+ }
+]

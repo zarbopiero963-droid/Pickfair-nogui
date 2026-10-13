@@ -1,0 +1,88 @@
+== BASELINE_GREEN
+205 passed, 1 xfailed in 3.05s
+== M1_start_attivo_anche_se_recovery_ko
+7 failed, 198 passed, 1 xfailed in 3.00s
+== M2_schema_startup_orders_rimosso
+2 failed, 203 passed, 1 xfailed in 3.25s
+== M3_errore_lettura_ordini_ignorato
+2 failed, 203 passed, 1 xfailed in 3.10s
+== M4_picco_non_ripristinato
+8 failed, 197 passed, 1 xfailed in 2.78s
+== M5_riga_corrotta_ignorata
+4 failed, 201 passed, 1 xfailed in 2.99s
+== M6_mancante_come_primo_avvio
+1 failed, 204 passed, 1 xfailed in 3.11s
+== M7_risk_stop_mancante_riapre
+1 failed, 204 passed, 1 xfailed in 3.28s
+== M9_resume_scavalca
+1 failed, 204 passed, 1 xfailed in 3.08s
+== M10_daily_loss_mancante_ignorato
+1 failed, 204 passed, 1 xfailed in 2.88s
+== M11_gate_t80u_segnale_rimosso
+5 failed, 200 passed, 1 xfailed in 3.03s
+== M12_t80u_fuori_da_loss_block
+20 failed, 185 passed, 1 xfailed in 3.05s
+== M13_assenza_non_segnalata
+6 failed, 199 passed, 1 xfailed in 2.82s
+== M14_recovery_assente_resta_true
+6 failed, 199 passed, 1 xfailed in 3.00s
+== M15_rsr38_non_caricata
+1 failed, 204 passed, 1 xfailed in 3.34s
+== M16_hook_nuovo_massimo_rimosso
+2 failed, 203 passed, 1 xfailed in 3.03s
+== M17_registro_sparito_ignorato
+1 failed, 204 passed, 1 xfailed in 3.22s
+== M18_blocco_registro_non_durevole
+1 failed, 204 passed, 1 xfailed in 3.13s
+== M19_emergenza_mancante_ignorata
+1 failed, 204 passed, 1 xfailed in 3.14s
+== M20_picco_scritto_prima_del_ripristino
+15 failed, 190 passed, 1 xfailed in 3.17s
+== M21_blocco_daily_loss_non_durevole
+1 failed, 204 passed, 1 xfailed in 2.94s
+== M22_gate_daily_loss_mancante_rimosso
+1 failed, 204 passed, 1 xfailed in 3.14s
+== M23_commissione_inventata
+3 failed, 202 passed, 1 xfailed in 2.96s
+== M24_massimo_recovery_azzerato_per_altra_chiave
+3 failed, 202 passed, 1 xfailed in 3.02s
+== M25_verificata_sempre
+14 failed, 191 passed, 1 xfailed in 2.84s
+== M26_verifica_senza_confronto
+4 failed, 201 passed, 1 xfailed in 2.86s
+== M27_etichetta_non_propagata
+1 failed, 204 passed, 1 xfailed in 3.12s
+== M28_vuoto_non_segnalato
+10 failed, 195 passed, 1 xfailed in 3.04s
+== M29_corrotto_opzionale_non_segnalato
+11 failed, 194 passed, 1 xfailed in 3.28s
+== M30_assente_opzionale_non_segnalato
+10 failed, 195 passed, 1 xfailed in 3.32s
+== M31_default_non_segnalato
+2 failed, 203 passed, 1 xfailed in 3.02s
+== M32_corrotto_non_blocca
+11 failed, 194 passed, 1 xfailed in 3.05s
+== M33_gate_pl_stimato_rimosso
+4 failed, 201 passed, 1 xfailed in 3.08s
+== M34_stimato_ammesso
+6 failed, 199 passed, 1 xfailed in 2.89s
+== M35_commissione_illeggibile_ammessa
+1 failed, 204 passed, 1 xfailed in 2.89s
+== M36_rollup_non_chiesto
+3 failed, 202 passed, 1 xfailed in 3.06s
+== M37_betcount_ignorato
+1 failed, 204 passed, 1 xfailed in 3.15s
+== M38_profit_rollup_ignorato
+1 failed, 204 passed, 1 xfailed in 2.87s
+== M39_commissione_su_ogni_riga
+205 passed, 1 xfailed in 2.89s
+== M40_commissione_bet_level_usata
+1 failed, 204 passed, 1 xfailed in 3.07s
+== M41_sim_etichetta_stimata
+1 failed, 204 passed, 1 xfailed in 2.91s
+== M42_gui_senza_etichetta
+3 failed, 202 passed, 1 xfailed in 3.09s
+== M43_telegram_senza_pl
+1 failed, 204 passed, 1 xfailed in 2.89s
+== M44_gui_ignora_payload_json
+1 failed, 204 passed, 1 xfailed in 3.04s

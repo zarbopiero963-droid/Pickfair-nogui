@@ -1,0 +1,3 @@
+FAILED tests/unit/test_runtime_controller_best_price_direct.py::test_seam_daily_loss_armed_during_snapshot_blocks_submit
+FAILED tests/unit/test_runtime_controller_best_price_direct.py::test_seam_session_invalidated_during_snapshot_blocks_submit_live
+68 failed, 7208 passed, 14 skipped, 1 xfailed, 25 warnings, 8 subtests passed in 383.60s (0:06:23)

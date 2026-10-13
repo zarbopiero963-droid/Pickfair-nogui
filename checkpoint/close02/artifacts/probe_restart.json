@@ -1,0 +1,310 @@
+{
+ "RSR-01": {
+  "restart_valore": "4.0",
+  "scritto": "4.0",
+  "restart_corrotto_abc": "3.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-02": {
+  "restart_valore": "19.0",
+  "scritto": "19.0",
+  "restart_corrotto_abc": "18.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-03": {
+  "restart_valore": "36.0",
+  "scritto": "36.0",
+  "restart_corrotto_abc": "35.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-04": {
+  "restart_valore": "19.0",
+  "scritto": "19.0",
+  "restart_corrotto_abc": "18.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-05": {
+  "restart_valore": "16.0",
+  "scritto": "16.0",
+  "restart_corrotto_abc": "15.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-06": {
+  "restart_valore": "8.5",
+  "scritto": "8.5",
+  "restart_corrotto_abc": "7.5",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-07": {
+  "restart_valore": "21.0",
+  "scritto": "21.0",
+  "restart_corrotto_abc": "20.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-08": {
+  "restart_valore": "6.0",
+  "scritto": "6.0",
+  "restart_corrotto_abc": "5.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-09": {
+  "restart_valore": "2.1",
+  "scritto": "2.1",
+  "restart_corrotto_abc": "1.1",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-10": {
+  "restart_valore": "1.8",
+  "scritto": "1.8",
+  "restart_corrotto_abc": "0.8",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-11": {
+  "restart_valore": "6",
+  "scritto": "6",
+  "restart_corrotto_abc": "5",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-12": {
+  "restart_valore": "3",
+  "scritto": "3",
+  "restart_corrotto_abc": "2",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-13": {
+  "restart_valore": "5.5",
+  "scritto": "5.5",
+  "restart_corrotto_abc": "4.5",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-14": {
+  "restart_valore": "1.1",
+  "scritto": "1.1",
+  "restart_corrotto_abc": "0.1",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-15": {
+  "restart_valore": "10001.0",
+  "scritto": "10001.0",
+  "restart_corrotto_abc": "10000.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-16": {
+  "restart_valore": "50.0",
+  "scritto": "50.0",
+  "restart_corrotto_abc": "nan",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-17": {
+  "restart_valore": "50.0",
+  "scritto": "50.0",
+  "restart_corrotto_abc": "nan",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-18": {
+  "restart_valore": "50.0",
+  "scritto": "50.0",
+  "restart_corrotto_abc": "nan",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-19": {
+  "restart_valore": "50.0",
+  "scritto": "50.0",
+  "restart_corrotto_abc": "nan",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-20": {
+  "restart_valore": "50.0",
+  "scritto": "50.0",
+  "restart_corrotto_abc": "nan",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-21": {
+  "restart_valore": "106.0",
+  "scritto": "106.0",
+  "restart_corrotto_abc": "105.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-22": {
+  "restart_valore": "111.0",
+  "scritto": "111.0",
+  "restart_corrotto_abc": "110.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-23": {
+  "restart_valore": "4.0",
+  "scritto": "4.0",
+  "restart_corrotto_abc": "3.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-24": {
+  "restart_valore": "51.0",
+  "scritto": "51.0",
+  "restart_corrotto_abc": "50.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-25": {
+  "restart_valore": "2.02",
+  "scritto": "2.02",
+  "restart_corrotto_abc": "1.02",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-26": {
+  "restart_valore": "10001.0",
+  "scritto": "10001.0",
+  "restart_corrotto_abc": "10000.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-27": {
+  "restart_valore": "31.0",
+  "scritto": "31.0",
+  "restart_corrotto_abc": "30.0",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-28": {
+  "restart_valore": "1.5",
+  "scritto": "1.5",
+  "restart_corrotto_abc": "0.5",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-29": {
+  "restart_valore": "3.5",
+  "scritto": "3.5",
+  "restart_corrotto_abc": "2.5",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-30": {
+  "restart_valore": "RiskProfile.CONSERVATIVE",
+  "scritto": "RiskProfile.CONSERVATIVE",
+  "restart_corrotto_abc": "RiskProfile.BALANCED",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-31": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-32": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-33": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-34": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-35": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-36": {
+  "restart_valore": "True",
+  "scritto": "True",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-37": {
+  "restart_valore": "False",
+  "scritto": "False",
+  "restart_corrotto_abc": "False",
+  "crash": true,
+  "chiavi_cambiate_dopo_crash": [],
+  "stato_misto": false
+ },
+ "RSR-38": {
+  "n/a": "assente in config"
+ },
+ "RSR-39": {
+  "n/a": "assente in config"
+ },
+ "RSR-40": {
+  "n/a": "assente in config"
+ },
+ "RSR-41": {
+  "n/a": "assente in config"
+ }
+}

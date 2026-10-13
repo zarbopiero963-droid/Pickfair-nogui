@@ -1,0 +1,51 @@
+{
+ "riga": "6085510337",
+ "clausole": [
+  "Dopo terminazione e nuovo processo conservare configurazione e protezioni applicabili",
+  "prova su DB temporaneo reale"
+ ],
+ "attesi": 38,
+ "extra": [],
+ "esiti": {
+  "DIFF-PF-RSR-04-RESTART": [],
+  "DIFF-PF-RSR-05-RESTART": [],
+  "DIFF-PF-RSR-06-RESTART": [],
+  "DIFF-PF-RSR-07-RESTART": [],
+  "DIFF-PF-RSR-08-RESTART": [],
+  "DIFF-PF-RSR-09-RESTART": [],
+  "DIFF-PF-RSR-10-RESTART": [],
+  "DIFF-PF-RSR-11-RESTART": [],
+  "DIFF-PF-RSR-12-RESTART": [],
+  "DIFF-PF-RSR-13-RESTART": [],
+  "DIFF-PF-RSR-14-RESTART": [],
+  "DIFF-PF-RSR-15-RESTART": [],
+  "DIFF-PF-RSR-16-RESTART": [],
+  "DIFF-PF-RSR-17-RESTART": [],
+  "DIFF-PF-RSR-18-RESTART": [],
+  "DIFF-PF-RSR-19-RESTART": [],
+  "DIFF-PF-RSR-20-RESTART": [
+   "scenario esito_incerto"
+  ],
+  "DIFF-PF-RSR-21-RESTART": [],
+  "DIFF-PF-RSR-22-RESTART": [],
+  "DIFF-PF-RSR-23-RESTART": [],
+  "DIFF-PF-RSR-24-RESTART": [],
+  "DIFF-PF-RSR-25-RESTART": [],
+  "DIFF-PF-RSR-26-RESTART": [],
+  "DIFF-PF-RSR-27-RESTART": [],
+  "DIFF-PF-RSR-28-RESTART": [],
+  "DIFF-PF-RSR-29-RESTART": [],
+  "DIFF-PF-RSR-30-RESTART": [],
+  "DIFF-PF-RSR-31-RESTART": [],
+  "DIFF-PF-RSR-32-RESTART": [],
+  "DIFF-PF-RSR-33-RESTART": [],
+  "DIFF-PF-RSR-34-RESTART": [],
+  "DIFF-PF-RSR-35-RESTART": [],
+  "DIFF-PF-RSR-36-RESTART": [],
+  "DIFF-PF-RSR-37-RESTART": [],
+  "DIFF-PF-RSR-38-RESTART": [],
+  "DIFF-PF-RSR-39-RESTART": [],
+  "DIFF-PF-RSR-40-RESTART": [],
+  "DIFF-PF-RSR-41-RESTART": []
+ }
+}

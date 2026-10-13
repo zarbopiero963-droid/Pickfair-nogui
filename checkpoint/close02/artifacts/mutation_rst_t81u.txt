@@ -1,0 +1,28 @@
+== M1_start_attivo_anche_se_recovery_ko
+7 failed, 24 passed in 4.70s
+== M2_schema_startup_orders_rimosso
+2 failed, 29 passed in 4.56s
+== M3_errore_lettura_ordini_ignorato
+2 failed, 29 passed in 5.00s
+== M4_picco_non_ripristinato
+6 failed, 25 passed in 4.31s
+== M5_riga_corrotta_ignorata
+4 failed, 27 passed in 4.74s
+== M6_mancante_come_primo_avvio
+1 failed, 30 passed in 4.41s
+== M7_risk_stop_mancante_riapre
+1 failed, 30 passed in 5.11s
+== M8_gate_segnale_rimosso_e_mode_attivo
+7 failed, 24 passed in 4.67s
+== M9_resume_scavalca
+1 failed, 30 passed in 4.39s
+== M10_daily_loss_mancante_ignorato
+31 passed in 4.38s
+== BASELINE_GREEN
+31 passed in 4.91s
+== M4_picco_non_ripristinato
+6 failed, 25 passed in 4.52s
+== M5_riga_corrotta_ignorata
+4 failed, 27 passed in 5.19s
+== M6_mancante_come_primo_avvio
+1 failed, 30 passed in 4.51s

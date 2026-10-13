@@ -1,0 +1,15 @@
+E           AssertionError: []
+E           assert (True is False)
+
+tests/close02/test_close02_restart.py:134: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  core.runtime_controller:runtime_controller.py:1703 [DEPLOY GATE] NO-GO: reason=DEPLOY_BLOCKED_NOT_READY
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_restart.py::test_rst001_recovery_incerta_non_attiva_il_runtime
+FAILED tests/close02/test_close02_restart.py::test_rst001_resume_non_scavalca_recovery_incompleta
+FAILED tests/close02/test_close02_restart.py::test_rst002_schema_startup_orders_esiste
+FAILED tests/close02/test_close02_restart.py::test_rst002_ordine_fantasma_registrato
+FAILED tests/close02/test_close02_restart.py::test_rst002_errore_lettura_ordini_fail_closed
+FAILED tests/close02/test_close02_restart.py::test_rst003_memoria_drawdown_dopo_kill9[989.0-True]
+FAILED tests/close02/test_close02_restart.py::test_rst003_memoria_drawdown_dopo_kill9[990.0-True]
+7 failed, 2 passed in 0.81s

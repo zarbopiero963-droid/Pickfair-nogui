@@ -1,0 +1,604 @@
+diff --git a/core/pnl_engine.py b/core/pnl_engine.py
+index 55b6751..a1c7699 100644
+--- a/core/pnl_engine.py
++++ b/core/pnl_engine.py
+@@ -569,8 +569,10 @@ class PnLEngine:
+                 payload["betfair_reported_commission"] = reported_commission_f
+                 # v10 regola (3): la commissione e' VERIFICATA solo se l'importo
+                 # riportato da Betfair coincide (al centesimo) con quello applicato.
++                # v11: ``commission`` di listClearedOrders esiste solo a livello
++                # MARKET (cumulativa sul mercato): si confronta col totale di mercato.
+                 if math.isfinite(reported_commission_f) and abs(
+-                        reported_commission_f - float(payload["commission_amount"])) < 0.005:
++                        reported_commission_f - float(payload["market_commission_amount_total"])) < 0.005:
+                     payload.update(commission_labels(True))
+                 else:
+                     payload["commission_mismatch"] = True
+@@ -679,6 +681,8 @@ class PnLEngine:
+                     gross=gross,
+                     settled_date=settled_date,
+                 )
++                payload["commission_status"] = "SIMULATA"  # v11: P/L del broker simulato
++                payload["pnl_status"] = "SIMULATO"
+                 self._pending_simulated_settlements[event_key] = payload
+             self._inflight_simulated_settlements.add(event_key)
+ 
+diff --git a/core/pnl_label.py b/core/pnl_label.py
+new file mode 100644
+index 0000000..0e19a28
+--- /dev/null
++++ b/core/pnl_label.py
+@@ -0,0 +1,55 @@
++"""PROPOSTA close02 v11 — owner t80u regola (3) (#426/6143637861): etichetta del P/L.
++
++Unica fonte per GUI, Telegram e gate: un P/L e' VERIFICATO solo con commissione
++confermata da Betfair; SIMULATO nel broker simulato; tutto il resto (compreso
++uno stato assente o sconosciuto) e' STIMATO, cioe' non verificato."""
++from __future__ import annotations
++
++import math
++from typing import Any, Mapping
++
++VERIFIED = "VERIFICATO"
++SIMULATED = "SIMULATO"
++ESTIMATED = "STIMATO"
++
++
++def pnl_label(data: Mapping[str, Any] | None) -> str:
++    status = str((data or {}).get("pnl_status") or "").strip().upper()
++    return status if status in (VERIFIED, SIMULATED) else ESTIMATED
++
++
++def format_pnl(value: Any, data: Mapping[str, Any] | None) -> str:
++    try:
++        v = float(value)
++    except (TypeError, ValueError):
++        return f"n/d ({ESTIMATED})"
++    if not math.isfinite(v):
++        return f"n/d ({ESTIMATED})"
++    return f"{v:.2f} ({pnl_label(data)})"
++
++
++def _num(data: Mapping[str, Any], key: str) -> float | None:
++    raw = data.get(key)
++    if raw is None:
++        return 0.0
++    if isinstance(raw, bool):
++        return None
++    try:
++        v = float(raw)
++    except (TypeError, ValueError):
++        return None
++    return v if math.isfinite(v) else None
++
++
++def allows_risk_increase(data: Mapping[str, Any] | None) -> bool:
++    """Una decisione che AUMENTA il rischio (progressione/auto-next, target di
++    ciclo) puo' basarsi su questo P/L solo se non dipende da una commissione
++    stimata: VERIFICATO/SIMULATO, oppure nessuna commissione applicata (importo
++    e totale di mercato = 0, il P/L e' il lordo riportato). Valori illeggibili
++    => no (fail-closed)."""
++    data = data or {}
++    if pnl_label(data) in (VERIFIED, SIMULATED):
++        return True
++    amount = _num(data, "commission_amount")
++    total = _num(data, "market_commission_amount_total")
++    return amount is not None and total is not None and amount == 0.0 and total == 0.0
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 0179e35..ef32ee3 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -16,6 +16,7 @@ from core.dutching_batch_manager import DutchingBatchManager
+ from core.market_tracker import MarketTracker
+ from core.money_management import RoserpinaMoneyManagement
+ from core.pnl_engine import PnLEngine
++from core import pnl_label
+ from core.reconciliation_engine import ReconciliationEngine
+ from core.state_recovery import StateRecovery
+ from core.risk_desk import RiskDesk
+@@ -577,6 +578,62 @@ class RuntimeController:
+                 logger.exception("Errore poll cleared settlements (round abortito)")
+             stop_event.wait(interval)
+ 
++    def _market_commission_for_verification(self, rows, bet_to_market, settled_after) -> dict:
++        """v11 (owner t80u regola 3): commissione per mercato da listClearedOrders
++        groupBy=MARKET (campo ``commission`` documentato solo da MARKET in su),
++        filtrata sulle sole bet del bot di questo giro. Attribuibile solo se il
++        rollup conta ESATTAMENTE le bet del giro (``betCount``) e il ``profit``
++        sommato coincide al centesimo; altrimenti il P/L resta STIMATO.
++        Nessun errore qui blocca il settlement: senza verifica = STIMATO."""
++        per_market: dict = {}
++        for row in rows:
++            m = str(row.get("marketId") or "").strip()
++            b = str(row.get("betId") or row.get("bet_id") or "").strip()
++            p = row.get("profit")
++            if not m or not b or bet_to_market.get(b) != m:
++                continue
++            if isinstance(p, bool) or not isinstance(p, (int, float)) or not math.isfinite(float(p)):
++                per_market[m] = None  # riga non valida nel mercato => non attribuibile
++                continue
++            if f"cleared:{m}:{b}" in self._settlement_emitted_keys:
++                per_market[m] = None  # parte del mercato gia' realizzata in un giro precedente
++                continue
++            if m in per_market and per_market[m] is None:
++                continue
++            entry = per_market.setdefault(m, {"bets": [], "profit": 0.0})
++            entry["bets"].append(b)
++            entry["profit"] += float(p)
++        bet_ids = [b for e in per_market.values() if e for b in e["bets"]]
++        if not bet_ids:
++            return {}
++        try:
++            rollup: list = []
++            for i in range(0, len(bet_ids), 1000):
++                rollup.extend(self.betfair_service.list_cleared_orders(
++                    bet_status="SETTLED", settled_after=settled_after,
++                    bet_ids=bet_ids[i:i + 1000], group_by="MARKET") or [])
++        except Exception as exc:
++            logger.warning("Settlement poll: rollup MARKET non disponibile, P/L resta STIMATO: %s", exc)
++            return {}
++        out: dict = {}
++        for r in rollup:
++            if not isinstance(r, dict):
++                continue
++            m = str(r.get("marketId") or "").strip()
++            e = per_market.get(m)
++            c, n, p = r.get("commission"), r.get("betCount"), r.get("profit")
++            if not e or isinstance(c, bool) or not isinstance(c, (int, float)) or not math.isfinite(float(c)):
++                continue
++            if isinstance(n, bool) or not isinstance(n, int) or n != len(e["bets"]):
++                continue
++            if isinstance(p, bool) or not isinstance(p, (int, float)) or abs(float(p) - e["profit"]) >= 0.005:
++                continue
++            ordered = [str(x.get("betId") or x.get("bet_id") or "") for x in rows
++                       if str(x.get("marketId") or "").strip() == m]
++            last = [b for b in ordered if b in e["bets"]][-1]
++            out[m] = {"commission": float(c), "last_bet": last}
++        return out
++
+     def _poll_cleared_settlements(self, generation: Optional[int] = None) -> None:
+         """Un giro di poll dei settlement reali. Fail-closed su ogni ramo:
+ 
+@@ -831,6 +888,9 @@ class RuntimeController:
+         # invarianti nel docstring di _ordina_righe_cleared.
+         valid_rows = self._ordina_righe_cleared(valid_rows)
+ 
++        market_commission = self._market_commission_for_verification(
++            valid_rows, bet_to_market, settled_after)
++
+         emission_failures = 0
+         for row in valid_rows:
+             market_id = str(row.get("marketId") or "").strip()
+@@ -881,16 +941,13 @@ class RuntimeController:
+                 # precedente. Non ri-applicare il PnL.
+                 self._settlement_emitted_keys.add(settlement_key)
+                 continue
+-            commission_raw = row.get("commission")
+-            reported_commission = (
+-                float(commission_raw)
+-                if (
+-                    not isinstance(commission_raw, bool)
+-                    and isinstance(commission_raw, (int, float))
+-                    and math.isfinite(float(commission_raw))
+-                )
+-                else None
+-            )
++            # v11: la commissione Betfair e' documentata SOLO a livello MARKET
++            # (listClearedOrders groupBy=MARKET); a livello BET non esiste. Si
++            # passa solo sull'ULTIMA riga del mercato e solo se attribuibile.
++            reported_commission = None
++            mc = market_commission.get(market_id)
++            if mc is not None and mc["last_bet"] == bet_id:
++                reported_commission = mc["commission"]
+             try:
+                 self.pnl_engine.apply_cleared_market_settlement(
+                     market_id=market_id,
+@@ -3867,6 +3924,8 @@ class RuntimeController:
+                 "side": settlement.get("side") or payload.get("side"),
+                 "stake": payload.get("stake"),
+                 "net_pnl": pnl,
++                "pnl_status": pnl_label.pnl_label(payload),
++                "commission_status": str(payload.get("commission_status") or "STIMATA"),
+                 "outcome": "WIN" if pnl > 0 else "LOSS" if pnl < 0 else "VOID",
+                 "table_id": table_id,
+                 "closed_at": datetime.utcnow().isoformat()
+@@ -4556,6 +4615,18 @@ class RuntimeController:
+                 self._processed_auto_trade_keys.add(settlement_key)
+             return result
+ 
++        # v11 owner t80u regola (3): l'invio del prossimo trade (progressione =
++        # aumento di rischio) non puo' basarsi su P/L con commissione stimata.
++        # Le decisioni MM che FERMANO (target raggiunto, ciclo chiuso, stake
++        # non valido) sono gia' state applicate sopra e restano ammesse.
++        if not pnl_label.allows_risk_increase(payload if isinstance(payload, dict) else None):
++            result["auto_trade_status"] = "AUTO_TRADE_SKIPPED_PNL_STIMATO"
++            result["cycle_executor_status"] = "CYCLE_SKIPPED_PNL_STIMATO"
++            result["reason"] = "pnl_stimato_nessun_aumento_rischio"
++            if settlement_key:
++                self._processed_auto_trade_keys.add(settlement_key)
++            return result
++
+         risk_allowed, risk_reason = self._risk_allows_auto_trade()
+         if risk_allowed:  # PR28: cap A2 come per il segnale
+             risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
+diff --git a/mini_gui.py b/mini_gui.py
+index ad38b60..2c6f550 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -267,6 +267,21 @@ from core.risk_middleware import RiskMiddleware
+ from controllers.dutching_controller import DutchingController
+ from cashout_wiring import cabla_catena_cashout, notifica_residuo_cashout
+ from observability import RuntimeProbe
++from core.pnl_label import format_pnl as _format_pnl
++
++
++def _format_pnl_entry(entry):
++    """v11 (owner t80u regola 3): P/L con etichetta STIMATO/VERIFICATO/SIMULATO;
++    lo stato e' letto dalla riga o dal payload salvato; assente => STIMATO."""
++    data = dict(entry or {})
++    if not data.get("pnl_status"):
++        try:
++            import json as _json
++            data.update({k: v for k, v in (_json.loads(entry.get("payload_json") or "{}") or {}).items()
++                         if k in ("pnl_status", "commission_status")})
++        except Exception:
++            pass
++    return _format_pnl(data.get("net_pnl", 0.0), data)
+ from safe_mode import get_safe_mode_manager
+ 
+ from controllers.telegram_controller import TelegramController
+@@ -2393,7 +2408,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+                             entry.get("id", "-"),
+                             entry.get("closed_at", entry.get("created_at", "-")),
+                             entry.get("outcome", "-"),
+-                            f"{entry.get('net_pnl', 0.0):.2f}",
++                            _format_pnl_entry(entry),
+                             f"{entry.get('stake', 0.0):.2f}",
+                             entry.get("event_key", "-"),
+                             entry.get("market_id", "-"),
+diff --git a/services/telegram_alerts_service.py b/services/telegram_alerts_service.py
+index b5cc458..6416b6b 100644
+--- a/services/telegram_alerts_service.py
++++ b/services/telegram_alerts_service.py
+@@ -308,6 +308,13 @@ class TelegramAlertsService:
+             else:
+                 lines.append(f"• Details: {safe_details}")
+ 
++        # v11 (owner t80u regola 3): ogni P/L mostrato porta l'etichetta.
++        if isinstance(details, dict):
++            from core.pnl_label import format_pnl as _fmt
++            for _k in ("net_pnl", "pnl", "realized_pnl"):
++                if _k in details:
++                    lines.append(f"• P/L: {_fmt(details.get(_k), details)}")
++                    break
+         incident_class = details.get("incident_class") if isinstance(details, dict) else None
+         normalized = details.get("normalized_severity") if isinstance(details, dict) else None
+         why_it_matters = details.get("why_it_matters") if isinstance(details, dict) else None
+diff --git a/tests/close02/test_close02_v10.py b/tests/close02/test_close02_v10.py
+index 9e5abee..d72cf2f 100644
+--- a/tests/close02/test_close02_v10.py
++++ b/tests/close02/test_close02_v10.py
+@@ -82,7 +82,7 @@ def test_pl_con_commissione_broker_diversa_resta_stimato(rep):
+ def test_pl_simulato_e_aggregatore_stimati():
+     from core.pnl_engine import MarketNetRealizedSettlementAggregator
+     pay = _engine().apply_simulated_market_settlement(market_id="1.4", gross_pnl=50.0, settlement_ref="r1")
+-    assert pay.get("pnl_status") == "STIMATO"
++    assert pay.get("pnl_status") == "SIMULATO"  # v11: broker simulato, nessun denaro reale
+     agg = MarketNetRealizedSettlementAggregator(commission_pct=4.5, context="t").apply(market_id="1.5", gross_pnl=10.0)
+     assert agg.get("commission_status") == "STIMATA"
+ 
+diff --git a/tests/close02/test_close02_v11.py b/tests/close02/test_close02_v11.py
+new file mode 100644
+index 0000000..c61ba14
+--- /dev/null
++++ b/tests/close02/test_close02_v11.py
+@@ -0,0 +1,181 @@
++"""close02 v11 — owner t80u regola (3) (#426/6143637861), seconda parte.
++(a) commissione da listClearedOrders: il campo ``commission`` e' documentato SOLO
++    con groupBy=MARKET (tabella "listClearedOrders - Roll-up Fields Available":
++    Commission N a BET/SIDE, Y a MARKET). Fixture con i soli campi documentati
++    (betId, marketId, profit, settledDate a livello BET; marketId, profit, commission,
++    betCount, settledDate a livello MARKET). Nessuna chiamata reale.
++(b) nessuna decisione che aumenta il rischio su P/L stimato; gli stop restano.
++(c) etichetta in GUI e Telegram. RED a 028cee9, GREEN col patch."""
++import math
++import pytest
++from tests.core.test_settlement_poller import _controller, _closes
++
++BET = {"betId": "101", "marketId": "1.100", "profit": 10.0, "settledDate": "2026-08-24T09:00:00Z"}
++
++
++class _BF:
++    """Fake documentato: righe BET senza commissione; rollup MARKET con commission/betCount."""
++    def __init__(self, bet_rows, market_rows=None, market_exc=None):
++        self.bet_rows, self.market_rows, self.market_exc, self.calls = bet_rows, market_rows or [], market_exc, []
++
++    def list_cleared_orders(self, **kw):
++        self.calls.append(dict(kw))
++        if kw.get("group_by") == "MARKET":
++            if self.market_exc:
++                raise self.market_exc
++            return [dict(r) for r in self.market_rows]
++        return [dict(r) for r in self.bet_rows]
++
++    def __getattr__(self, n):
++        return lambda *a, **k: {"available": 100.0} if n == "get_account_funds" else None
++
++
++def _poll(bet_rows, market_rows=None, market_exc=None, bot_orders=None):
++    rc = _controller(results=[], bot_orders=bot_orders)
++    rc.betfair_service = _BF(bet_rows, market_rows, market_exc)
++    rc._poll_cleared_settlements()
++    return rc, _closes(rc)
++
++
++def _mkt(**kw):
++    d = {"marketId": "1.100", "profit": 10.0, "commission": 0.45, "betCount": 1,
++         "settledDate": "2026-08-24T09:00:00Z"}
++    d.update(kw)
++    return d
++
++
++# ---------------- (a) estrazione commissione ----------------
++def test_a_rollup_market_coincidente_verifica_il_pl():
++    rc, closes = _poll([BET], [_mkt()])
++    assert closes and closes[-1]["commission_status"] == "VERIFICATA" and closes[-1]["pnl_status"] == "VERIFICATO"
++    mk = [c for c in rc.betfair_service.calls if c.get("group_by") == "MARKET"]
++    assert mk and mk[0]["bet_ids"] == ["101"] and mk[0]["bet_status"] == "SETTLED"
++
++
++@pytest.mark.parametrize("override,motivo", [
++    ({"commission": 0.40}, "importo diverso"),
++    ({"betCount": 2}, "altre bet nel mercato (non attribuibile)"),
++    ({"profit": 12.0}, "profit del rollup diverso"),
++    ({"commission": float("nan")}, "commissione non finita"),
++    ({"commission": None}, "commissione assente"),
++])
++def test_a_rollup_non_attribuibile_o_diverso_resta_stimato(override, motivo):
++    _, closes = _poll([BET], [_mkt(**override)])
++    assert closes and closes[-1]["pnl_status"] == "STIMATO", motivo
++
++
++def test_a_rollup_non_disponibile_settlement_emesso_e_stimato():
++    _, closes = _poll([BET], market_exc=RuntimeError("TIMEOUT"))
++    assert len(closes) == 1 and closes[0]["pnl_status"] == "STIMATO"
++
++
++def test_a_commissione_a_livello_bet_non_documentata_ignorata():
++    _, closes = _poll([dict(BET, commission=0.45)], [])
++    assert closes and closes[-1]["pnl_status"] == "STIMATO"
++
++
++def test_a_perdita_con_commissione_zero_verificata():
++    _, closes = _poll([dict(BET, profit=-5.0)], [_mkt(profit=-5.0, commission=0.0)])
++    assert closes[-1]["pnl_status"] == "VERIFICATO"
++
++
++def test_a_due_bet_stesso_mercato_verifica_solo_sull_ultima():
++    bots = [{"bet_id": "101", "market_id": "1.100", "event_name": "E1"},
++            {"bet_id": "102", "market_id": "1.100", "event_name": "E1"}]
++    rows = [BET, dict(BET, betId="102", profit=6.0)]
++    _, closes = _poll(rows, [_mkt(profit=16.0, betCount=2, commission=round(16.0 * 0.045, 2))], bot_orders=bots)
++    assert len(closes) == 2
++    assert [c["pnl_status"] for c in closes] == ["STIMATO", "VERIFICATO"]
++
++
++# ---------------- (b) gate aumento rischio ----------------
++from tests.integration.test_runtime_controller_auto_trade_mm import _make_controller, _canonical_close_payload
++from core.system_state import RuntimeMode
++
++
++def _auto(**over):
++    rc, bus = _make_controller(responses=[{"available": 150.0}])
++    rc.mode = RuntimeMode.ACTIVE
++    rc.risk_desk.sync_bankroll(100.0)
++    p = _canonical_close_payload(auto_trade_enabled=True, cycle_executor_enabled=True, mm_context={
++        "cycle_active": True, "cycle_id": "c1",
++        "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
++        "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0}})
++    p.update(over)
++    for k, v in list(p.items()):
++        if v is None:
++            p.pop(k)
++    rc._on_close_position(p)
++    res = [e[1] for e in bus.events if e[0] == "AUTO_TRADE_MM_RESULT"][-1]
++    orders = [e for e in bus.events if e[0].startswith("CMD_")]
++    return res, orders
++
++
++@pytest.mark.parametrize("status", ["STIMATO", None, "verificato?", ""])
++def test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine(status):
++    res, orders = _auto(pnl_status=status)
++    assert orders == [] and res["auto_trade_status"] == "AUTO_TRADE_SKIPPED_PNL_STIMATO"
++    assert res["submitted"] is False
++
++
++def test_b_controllo_verificato_invia():
++    res, orders = _auto()
++    assert res["submitted"] is True and orders
++
++
++def test_b_perdita_senza_commissione_non_dipende_da_stima():
++    res, _ = _auto(pnl_status="STIMATO", gross_pnl=-10.0, commission_amount=0.0, net_pnl=-10.0, pnl=-10.0,
++                   market_commission_amount_total=0.0)
++    assert res["auto_trade_status"] != "AUTO_TRADE_SKIPPED_PNL_STIMATO"
++
++
++def test_b_commissione_illeggibile_fail_closed():
++    from core.pnl_label import allows_risk_increase
++    assert not allows_risk_increase({"pnl_status": "STIMATO", "commission_amount": float("nan")})
++    assert not allows_risk_increase({"commission_amount": "x"})
++    assert allows_risk_increase({"pnl_status": "SIMULATO", "commission_amount": 1.0})
++
++
++def test_b_target_raggiunto_con_pl_stimato_lo_stop_vale():
++    res, orders = _auto(pnl_status="STIMATO", mm_context={"cycle_active": True, "cycle_id": "c1",
++                        "target_reached": True, "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
++                        "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0}})
++    assert orders == [] and res["cycle_executor_status"] == "CYCLE_STOPPED_TARGET_REACHED"
++
++
++# ---------------- (c) GUI e Telegram ----------------
++def test_c_gui_storico_mostra_etichetta():
++    import mini_gui
++    assert mini_gui._format_pnl_entry({"net_pnl": 9.55, "pnl_status": "VERIFICATO"}) == "9.55 (VERIFICATO)"
++    assert mini_gui._format_pnl_entry({"net_pnl": -4.0, "payload_json": '{"pnl_status": "SIMULATO"}'}) == "-4.00 (SIMULATO)"
++    assert mini_gui._format_pnl_entry({"net_pnl": 3.0}) == "3.00 (STIMATO)"
++
++
++def test_c_gui_refresh_storico_usa_etichetta():
++    import mini_gui
++    rows = []
++
++    class Tree:
++        def get_children(self): return []
++        def delete(self, *_): pass
++        def insert(self, *_a, values=()): rows.append(values)
++
++    g = object.__new__(mini_gui.MiniPickfairGUI) if hasattr(mini_gui, "MiniPickfairGUI") else None
++    if g is None:
++        pytest.skip("classe GUI non trovata")
++    g.risk_desk_history_tree = Tree()
++    g.uiq = type("Q", (), {"post": staticmethod(lambda f, *a: f(*a))})()
++    g._log = lambda *a: None
++    g.db = type("D", (), {"get_risk_position_history": staticmethod(lambda limit=100: [
++        {"id": 1, "net_pnl": 9.55, "pnl_status": "STIMATO", "stake": 5.0}])})()
++    g._refresh_risk_desk_history_data()
++    assert rows and rows[0][3] == "9.55 (STIMATO)"
++
++
++def test_c_telegram_alert_mostra_etichetta():
++    from services.telegram_alerts_service import TelegramAlertsService
++    svc = object.__new__(TelegramAlertsService)
++    txt = svc._format_alert_text({"severity": "WARNING", "code": "PNL", "details": {"net_pnl": 9.55}}, {})
++    assert "P/L: 9.55 (STIMATO)" in txt
++    txt = svc._format_alert_text({"code": "PNL", "details": {"net_pnl": 9.55, "pnl_status": "VERIFICATO"}}, {})
++    assert "P/L: 9.55 (VERIFICATO)" in txt
+diff --git a/tests/core/test_auto_trade_mm_gate.py b/tests/core/test_auto_trade_mm_gate.py
+index aaefb84..9f79765 100644
+--- a/tests/core/test_auto_trade_mm_gate.py
++++ b/tests/core/test_auto_trade_mm_gate.py
+@@ -96,6 +96,7 @@ def _close_payload(**overrides):
+         "correlation_id": "corr-1",
+         "gross_pnl": 5.235602094240838,
+         "commission_amount": 0.23560209424083772,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 5.0,
+         "commission_pct": 4.5,
+         "settlement_source": "core_pnl_engine",
+diff --git a/tests/core/test_cycle_executor.py b/tests/core/test_cycle_executor.py
+index 475ee65..f537ae4 100644
+--- a/tests/core/test_cycle_executor.py
++++ b/tests/core/test_cycle_executor.py
+@@ -96,6 +96,7 @@ def _close_payload(**overrides):
+         "correlation_id": "corr-1",
+         "gross_pnl": 5.0,
+         "commission_amount": 0.225,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 4.775,
+         "commission_pct": 4.5,
+         "settlement_source": "test_cycle_executor",
+diff --git a/tests/core/test_cycle_recovery.py b/tests/core/test_cycle_recovery.py
+index 59e5d83..84132f4 100644
+--- a/tests/core/test_cycle_recovery.py
++++ b/tests/core/test_cycle_recovery.py
+@@ -153,6 +153,7 @@ def _close_payload(**overrides):
+         "correlation_id": "corr-cyc-1",
+         "gross_pnl": 5.0,
+         "commission_amount": 0.225,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 4.775,
+         "commission_pct": 4.5,
+         "settlement_source": "test_cycle_recovery",
+diff --git a/tests/core/test_settlement_poller.py b/tests/core/test_settlement_poller.py
+index cbd9d9e..fbc1243 100644
+--- a/tests/core/test_settlement_poller.py
++++ b/tests/core/test_settlement_poller.py
+@@ -115,6 +115,8 @@ class _BetfairService:
+ 
+     def list_cleared_orders(self, **kwargs):
+         self.calls.append(dict(kwargs))
++        if kwargs.get("group_by") == "MARKET":
++            return []  # v11: rollup commissione (MARKET) non scriptato => P/L STIMATO
+         if not self._results:
+             return []
+         item = self._results.pop(0)
+@@ -158,6 +160,11 @@ class _Telegram:
+ _POLL_CFG = {"enabled": True, "poll_sec": 60.0, "lookback_hours": 24.0}
+ 
+ 
++def _bet_calls(rc):
++    """Solo le chiamate per-bet (esclusi i rollup MARKET della verifica commissione v11)."""
++    return [c for c in rc.betfair_service.calls if c.get("group_by") != "MARKET"]
++
++
+ def _controller(*, results=None, recovery=None, settings=None, db=None,
+                 bot_orders=None, first_sweep_done=True):
+     rc = RuntimeController(
+@@ -265,15 +272,15 @@ def test_sweep_non_si_arma_se_una_emissione_fallisce():
+ 
+     rc._poll_cleared_settlements()
+     assert _closes(rc) == []
+-    assert rc.betfair_service.calls[0]["settled_after"] is None
++    assert _bet_calls(rc)[0]["settled_after"] is None
+ 
+     db.fail_reads = False
+     rc._poll_cleared_settlements()  # ancora sweep completo, ora emette
+     assert len(_closes(rc)) == 1
+-    assert rc.betfair_service.calls[1]["settled_after"] is None
++    assert _bet_calls(rc)[1]["settled_after"] is None
+ 
+     rc._poll_cleared_settlements()  # solo ora finestra mobile
+-    assert rc.betfair_service.calls[2]["settled_after"] is not None
++    assert _bet_calls(rc)[2]["settled_after"] is not None
+ 
+ 
+ @pytest.mark.integration
+diff --git a/tests/integration/test_issue461_pr26a_customer_ref_provenance.py b/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
+index 4a87aa2..337d723 100644
+--- a/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
++++ b/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
+@@ -420,6 +420,7 @@ def _close_payload(batch_id, **overrides):
+         "correlation_id": "corr-pr26a",
+         "gross_pnl": 10.0,
+         "commission_amount": 0.45,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 9.55,
+         "commission_pct": 4.5,
+         "settlement_source": "test_issue461_pr26a",
+diff --git a/tests/integration/test_runtime_controller_auto_trade_mm.py b/tests/integration/test_runtime_controller_auto_trade_mm.py
+index f31565d..1b2859c 100644
+--- a/tests/integration/test_runtime_controller_auto_trade_mm.py
++++ b/tests/integration/test_runtime_controller_auto_trade_mm.py
+@@ -99,6 +99,7 @@ def _canonical_close_payload(**overrides):
+         "correlation_id": "corr-integration-default",
+         "gross_pnl": 10.0,
+         "commission_amount": 0.45,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 9.55,
+         "commission_pct": 4.5,
+         "settlement_source": "test_runtime_controller_auto_trade_mm",
+diff --git a/tests/integration/test_runtime_controller_cycle_executor.py b/tests/integration/test_runtime_controller_cycle_executor.py
+index cd6c1c9..edc1238 100644
+--- a/tests/integration/test_runtime_controller_cycle_executor.py
++++ b/tests/integration/test_runtime_controller_cycle_executor.py
+@@ -96,6 +96,7 @@ def _canonical_close_payload(**overrides):
+         "correlation_id": "corr-integration-cycle-default",
+         "gross_pnl": 5.0,
+         "commission_amount": 0.225,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 4.775,
+         "commission_pct": 4.5,
+         "settlement_source": "test_runtime_controller_cycle_executor",
+diff --git a/tests/integration/test_runtime_controller_cycle_recovery.py b/tests/integration/test_runtime_controller_cycle_recovery.py
+index adbc0c2..fe35490 100644
+--- a/tests/integration/test_runtime_controller_cycle_recovery.py
++++ b/tests/integration/test_runtime_controller_cycle_recovery.py
+@@ -77,6 +77,7 @@ def _close_payload(**overrides):
+         "correlation_id": "corr-it-cyc-1",
+         "gross_pnl": 5.0,
+         "commission_amount": 0.225,
++        "pnl_status": "VERIFICATO",  # fixture v11: commissione confermata da Betfair (owner t80u regola 3)
+         "net_pnl": 4.775,
+         "commission_pct": 4.5,
+         "settlement_source": "test_runtime_controller_cycle_recovery",

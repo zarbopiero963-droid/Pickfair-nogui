@@ -1,0 +1,26 @@
+== M54_nessun_blocco_pre_migrazione
+9 failed, 239 passed, 1 xfailed in 4.15s
+== M55_picco_mancante_ammesso
+2 failed, 246 passed, 1 xfailed in 4.27s
+== M56_copie_incoerenti_ammesse
+1 failed, 247 passed, 1 xfailed in 4.28s
+== M57_ordini_incerti_ignorati
+1 failed, 247 passed, 1 xfailed in 4.13s
+== M58_digest_ignorato
+2 failed, 246 passed, 1 xfailed in 4.67s
+== M59_migrazione_disarma_risk_stop
+2 failed, 246 passed, 1 xfailed in 4.25s
+== M60_illeggibile_ammesso
+1 failed, 247 passed, 1 xfailed in 4.19s
+== M61_una_tantum_rimossa
+1 failed, 247 passed, 1 xfailed in 4.35s
+== M62_audit_recupero_rimosso
+1 failed, 247 passed, 1 xfailed in 4.23s
+== M63_operatore_non_obbligatorio
+1 failed, 247 passed, 1 xfailed in 4.38s
+== M64_azzera_perdita_giorno
+10 failed, 238 passed, 1 xfailed in 4.64s
+== M65_commit_solo_db
+15 failed, 233 passed, 1 xfailed in 4.34s
+== M66_audit_intento_non_scritto
+8 failed, 240 passed, 1 xfailed in 4.36s

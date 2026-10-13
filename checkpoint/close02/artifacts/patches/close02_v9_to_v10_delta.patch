@@ -1,0 +1,302 @@
+diff --git a/core/pnl_engine.py b/core/pnl_engine.py
+index 516cc7b..55b6751 100644
+--- a/core/pnl_engine.py
++++ b/core/pnl_engine.py
+@@ -10,6 +10,21 @@ from core.position_ledger import PositionLedger
+ 
+ logger = logging.getLogger(__name__)
+ 
++# PROPOSTA close02 v10 — owner t80u regola (3) (#426/6143637861): il P/L dichiara
++# se la commissione e' VERIFICATA (tasso/importo riportato dal broker per
++# l'account) o STIMATA (costante di policy 4,5 %, non verificata). Oggi nessun
++# percorso riceve una commissione verificata: tutto il P/L netto e' STIMATO.
++COMMISSION_ESTIMATED = "STIMATA"
++COMMISSION_VERIFIED = "VERIFICATA"
++
++
++def commission_labels(commission_verified: bool = False) -> dict:
++    verified = commission_verified is True
++    return {
++        "commission_status": COMMISSION_VERIFIED if verified else COMMISSION_ESTIMATED,
++        "pnl_status": "VERIFICATO" if verified else "STIMATO",
++    }
++
+ 
+ class MarketNetRealizedSettlementAggregator:
+     def __init__(self, *, commission_pct: float, context: str):
+@@ -54,6 +69,7 @@ class MarketNetRealizedSettlementAggregator:
+             "commission_amount": float(commission_delta),
+             "net_pnl": float(net_pnl),
+             "commission_pct": float(commission_pct),
++            **commission_labels(False),
+             "market_net_gross": float(market_gross_after),
+             "market_commission_amount_total": float(desired_market_commission),
+             "settlement_basis": "market_net_realized",
+@@ -297,6 +313,7 @@ class PnLEngine:
+                     "commission_amount": 0.0,
+                     "net_pnl": 0.0,
+                     "commission_pct": float(self.commission * 100.0),
++                    **commission_labels(False),
+                     "settlement_source": "core_pnl_engine",
+                     "settlement_kind": "mark_to_market_estimate",
+                 }
+@@ -328,6 +345,7 @@ class PnLEngine:
+                 "commission_amount": float(commission_amount),
+                 "net_pnl": float(pnl_net),
+                 "commission_pct": float(self.commission * 100.0),
++                **commission_labels(False),
+                 "settlement_source": "core_pnl_engine",
+                 "settlement_kind": "mark_to_market_estimate",
+                 "close_price": close_price,
+@@ -338,6 +356,7 @@ class PnLEngine:
+             "commission_amount": 0.0,
+             "net_pnl": 0.0,
+             "commission_pct": float(self.commission * 100.0),
++            **commission_labels(False),
+             "settlement_source": "core_pnl_engine",
+             "settlement_kind": "mark_to_market_estimate",
+         }
+@@ -397,6 +416,8 @@ class PnLEngine:
+             "commission_amount": commission_amount,
+             "net_pnl": net_pnl,
+             "commission_pct": commission_pct,
++            "commission_status": str(realized.get("commission_status", COMMISSION_ESTIMATED)),
++            "pnl_status": str(realized.get("pnl_status", "STIMATO")),
+             "market_net_gross": float(realized["market_net_gross"]),
+             "market_commission_amount_total": float(realized["market_commission_amount_total"]),
+             "settlement_basis": str(realized["settlement_basis"]),
+@@ -531,6 +552,8 @@ class PnLEngine:
+                 "commission_amount": float(realized["commission_amount"]),
+                 "net_pnl": net_pnl,
+                 "commission_pct": float(realized["commission_pct"]),
++                "commission_status": str(realized.get("commission_status", COMMISSION_ESTIMATED)),
++                "pnl_status": str(realized.get("pnl_status", "STIMATO")),
+                 "market_net_gross": float(realized["market_net_gross"]),
+                 "market_commission_amount_total": float(
+                     realized["market_commission_amount_total"]
+@@ -544,6 +567,13 @@ class PnLEngine:
+             }
+             if reported_commission_f is not None:
+                 payload["betfair_reported_commission"] = reported_commission_f
++                # v10 regola (3): la commissione e' VERIFICATA solo se l'importo
++                # riportato da Betfair coincide (al centesimo) con quello applicato.
++                if math.isfinite(reported_commission_f) and abs(
++                        reported_commission_f - float(payload["commission_amount"])) < 0.005:
++                    payload.update(commission_labels(True))
++                else:
++                    payload["commission_mismatch"] = True
+ 
+             logger.info(
+                 "[PnL] Cleared settlement %s ref=%s gross=%.2f net=%.2f positions=%d",
+@@ -707,6 +737,8 @@ class PnLEngine:
+             "commission_amount": float(realized["commission_amount"]),
+             "net_pnl": net_pnl,
+             "commission_pct": float(realized["commission_pct"]),
++            "commission_status": str(realized.get("commission_status", COMMISSION_ESTIMATED)),
++            "pnl_status": str(realized.get("pnl_status", "STIMATO")),
+             "market_net_gross": float(realized["market_net_gross"]),
+             "market_commission_amount_total": float(
+                 realized["market_commission_amount_total"]
+diff --git a/core/system_state.py b/core/system_state.py
+index c0ca45f..ee660a3 100644
+--- a/core/system_state.py
++++ b/core/system_state.py
+@@ -72,6 +72,10 @@ class RoserpinaConfig:
+     corrupt_keys: tuple = ()
+     # PROPOSTA close02 v9 (owner t80u #426/6143637861): chiavi obbligatorie assenti.
+     absent_keys: tuple = field(default=(), compare=False)
++    # PROPOSTA close02 v10: segnali LOAD distinti (vuoto / cap opzionale assente / default del codice).
++    empty_keys: tuple = field(default=(), compare=False)
++    absent_optional_keys: tuple = field(default=(), compare=False)
++    defaulted_keys: tuple = field(default=(), compare=False)
+     # PROPOSTA close02 v9 (RSR-38..40): cap assoluti EUR caricati nel runtime (vuoto = non impostato).
+     max_order_exposure: Optional[float] = None
+     max_market_exposure: Optional[float] = None
+diff --git a/services/setting_service.py b/services/setting_service.py
+index f6a8729..6c8bb05 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -343,6 +343,7 @@ class SettingsService:
+             cfg = self._load_roserpina_config_values()
+             cfg.corrupt_keys = tuple(self._corrupt_sink)
+             self._apply_owner_t80u(cfg)
++            self._signal_optional_and_defaults(cfg)
+             cfg.loaded_values = dict(self._roserpina_payload(cfg))
+         finally:
+             self._corrupt_sink = None
+@@ -364,6 +365,61 @@ class SettingsService:
+     )
+     OWNER_T80U_RECOVERY_KEYS = ("roserpina.max_recovery_tables", "roserpina.allow_recovery")
+ 
++    # PROPOSTA close02 v10 (LOAD D2 "distinguere assente/vuoto/corrotto"):
++    # cap opzionali (vuoto = non impostato) e chiavi con default del codice.
++    OPTIONAL_CAPS = {
++        "roserpina.max_daily_loss": "max_daily_loss",
++        "roserpina.max_drawdown_hard_stop_pct": "max_drawdown_hard_stop_pct",
++        "roserpina.max_drawdown_abs": "max_drawdown_abs",
++        "roserpina.max_open_exposure": "max_open_exposure",
++        "roserpina.max_session_loss": "max_session_loss",
++        "roserpina.max_exposure_stop": "max_exposure_stop",
++        "roserpina.max_recovery_chase_abs": "max_recovery_chase_abs",
++        "roserpina.max_order_exposure": None,
++        "roserpina.max_market_exposure": None,
++        "roserpina.max_event_exposure_abs": None,
++    }
++
++    def _signal_optional_and_defaults(self, cfg: RoserpinaConfig) -> None:
++        try:
++            data = self.get_all_settings() or {}
++        except Exception:
++            return  # la lettura illeggibile e' gia' gestita come non verificabile (t80u)
++        if not isinstance(data, dict):
++            return
++        def raw(k, fb):
++            if k in data:
++                return True, data.get(k)
++            if fb and fb in data:
++                return True, data.get(fb)
++            return False, None
++        empty, absent_opt, corrupt = [], [], list(cfg.corrupt_keys or ())
++        for k, fb in self.OPTIONAL_CAPS.items():
++            present, v = raw(k, fb)
++            if not present or v is None:
++                absent_opt.append(k)
++                logger.warning("CONFIG: cap opzionale assente %s (non impostato)", k)
++            elif isinstance(v, str) and v.strip() == "":
++                empty.append(k)
++                logger.warning("CONFIG: cap opzionale VUOTO %s (trattato come non impostato)", k)
++            else:
++                try:
++                    ok = math.isfinite(float(v)) and not isinstance(v, bool)
++                except Exception:
++                    ok = False
++                if not ok and k not in corrupt:
++                    corrupt.append(k)
++                    logger.error("CONFIG: cap opzionale CORROTTO %s: nuovo rischio bloccato", k)
++        defaulted = []
++        for k in self._roserpina_payload(cfg):
++            if k not in data and k not in self.OPTIONAL_CAPS:
++                defaulted.append(k)
++                logger.warning("CONFIG: chiave assente %s: usato il default del codice (non ratificato)", k)
++        cfg.corrupt_keys = tuple(corrupt)
++        cfg.empty_keys = tuple(empty)
++        cfg.absent_optional_keys = tuple(absent_opt)
++        cfg.defaulted_keys = tuple(defaulted)
++
+     def _apply_owner_t80u(self, cfg: RoserpinaConfig) -> None:
+         try:
+             data = self.get_all_settings() or {}
+diff --git a/tests/close02/test_close02_gaps.py b/tests/close02/test_close02_gaps.py
+index d6a2d27..0149b4a 100644
+--- a/tests/close02/test_close02_gaps.py
++++ b/tests/close02/test_close02_gaps.py
+@@ -312,7 +312,7 @@ def test_race001_roundtrip_types_preserved():
+     a.max_single_bet_pct = 12.5; a.table_count = 3; a.allow_recovery = not a.allow_recovery; a.max_recovery_tables = 2
+     s.save_roserpina_config(a); b = s.load_roserpina_config()
+     for f in dataclasses.fields(RoserpinaConfig):
+-        if f.name in ("loaded_values", "corrupt_keys", "absent_keys"):
++        if f.name in ("loaded_values", "corrupt_keys", "absent_keys", "empty_keys", "absent_optional_keys", "defaulted_keys"):
+             continue
+         va, vb = getattr(a, f.name), getattr(b, f.name)
+         assert va == vb and type(va) is type(vb), f.name
+diff --git a/tests/close02/test_close02_v10.py b/tests/close02/test_close02_v10.py
+new file mode 100644
+index 0000000..9e5abee
+--- /dev/null
++++ b/tests/close02/test_close02_v10.py
+@@ -0,0 +1,95 @@
++"""close02 v10: (a) P/L con commissione etichettata STIMATA/VERIFICATA (owner t80u
++regola 3, #426/6143637861); (b) segnali LOAD distinti assente/vuoto/corrotto sui
++cap opzionali e assente vs esplicito-uguale-al-default. RED a 028cee9, GREEN col patch."""
++import pytest
++from database import Database
++from services.setting_service import SettingsService
++from tests.close02.test_close02_restart_t81u import OWNER_VALID, SIGNALS, _ctl, _arm_spies, _order_calls
++
++OPTIONAL = ["max_daily_loss", "max_drawdown_hard_stop_pct", "max_drawdown_abs", "max_open_exposure",
++            "max_session_loss", "max_exposure_stop", "max_recovery_chase_abs",
++            "max_order_exposure", "max_market_exposure", "max_event_exposure_abs"]
++
++
++def _load(tmp_path, extra):
++    db = Database(str(tmp_path / "c.sqlite"))
++    db.save_settings(dict(OWNER_VALID, **extra))
++    return SettingsService(db).load_roserpina_config()
++
++
++def _sig(cfg):
++    return tuple(tuple(getattr(cfg, n, ("<n/a>",)) or ()) for n in
++                 ("corrupt_keys", "empty_keys", "absent_optional_keys", "defaulted_keys"))
++
++
++@pytest.mark.parametrize("name", OPTIONAL)
++def test_cap_opzionale_assente_vuoto_corrotto_override_distinti(tmp_path, name):
++    k = "roserpina." + name
++    stati = {}
++    for scen, extra in (("assente", {}), ("vuoto", {k: ""}), ("corrotto", {k: "abc"}), ("override", {k: "7.5"})):
++        d = tmp_path / scen; d.mkdir()
++        stati[scen] = _load(d, extra)
++    assert k in getattr(stati["assente"], "absent_optional_keys", ())
++    assert k in getattr(stati["vuoto"], "empty_keys", ())
++    assert k in getattr(stati["corrotto"], "corrupt_keys", ())
++    o = stati["override"]
++    assert k not in getattr(o, "absent_optional_keys", ()) and k not in getattr(o, "empty_keys", ()) \
++        and k not in getattr(o, "corrupt_keys", ())
++    assert len({_sig(c) for c in stati.values()}) == 4
++
++
++@pytest.mark.parametrize("name,default", [("table_count", "9"), ("target_profit_cycle_pct", "3.0")])
++def test_assente_distinto_da_esplicito_uguale_al_default(tmp_path, name, default):
++    k = "roserpina." + name
++    (tmp_path / "a").mkdir(); (tmp_path / "b").mkdir()
++    a = _load(tmp_path / "a", {}); b = _load(tmp_path / "b", {k: default})
++    assert k in getattr(a, "defaulted_keys", ())
++    assert k not in getattr(b, "defaulted_keys", ("<n/a>",))
++
++
++def test_cap_opzionale_corrotto_nessun_percorso_ordini(tmp_path, monkeypatch):
++    p = str(tmp_path / "o.sqlite")
++    rc = _ctl(p, monkeypatch, owner=dict(OWNER_VALID, **{"roserpina.max_session_loss": "abc"}))
++    rc.start(execution_mode="SIMULATION")
++    _arm_spies(rc, monkeypatch)
++    rc._on_signal_received(dict(SIGNALS[0]))
++    assert "sizing" not in _order_calls(rc) and _order_calls(rc) == []
++
++
++# ---------------- P/L: commissione stimata vs verificata ----------------
++def _engine():
++    from core.pnl_engine import PnLEngine
++    from unittest.mock import MagicMock
++    return PnLEngine(bus=MagicMock(), commission_pct=4.5)
++
++
++def test_pl_senza_conferma_broker_e_stimato():
++    pay = _engine().apply_cleared_market_settlement(market_id="1.1", gross_pnl=100.0)
++    assert pay.get("commission_status") == "STIMATA" and pay.get("pnl_status") == "STIMATO"
++
++
++def test_pl_con_commissione_broker_coincidente_e_verificato():
++    pay = _engine().apply_cleared_market_settlement(market_id="1.2", gross_pnl=100.0, reported_commission=4.5)
++    assert pay.get("commission_status") == "VERIFICATA" and pay.get("pnl_status") == "VERIFICATO"
++
++
++@pytest.mark.parametrize("rep", [4.0, float("nan"), 4.51])
++def test_pl_con_commissione_broker_diversa_resta_stimato(rep):
++    pay = _engine().apply_cleared_market_settlement(market_id="1.3", gross_pnl=100.0, reported_commission=rep)
++    assert pay.get("commission_status") == "STIMATA" and pay.get("commission_mismatch") is True
++
++
++def test_pl_simulato_e_aggregatore_stimati():
++    from core.pnl_engine import MarketNetRealizedSettlementAggregator
++    pay = _engine().apply_simulated_market_settlement(market_id="1.4", gross_pnl=50.0, settlement_ref="r1")
++    assert pay.get("pnl_status") == "STIMATO"
++    agg = MarketNetRealizedSettlementAggregator(commission_pct=4.5, context="t").apply(market_id="1.5", gross_pnl=10.0)
++    assert agg.get("commission_status") == "STIMATA"
++
++
++def test_pl_chiusura_posizione_pubblicata_e_stimata():
++    eng = _engine()
++    eng._close({"event_key": "E1", "market_id": "1.6", "table_id": 1, "batch_id": "B"}, {"gross_pnl": 20.0})
++    (name, payload), _ = eng.bus.publish.call_args
++    assert name == "RUNTIME_CLOSE_POSITION"
++    assert payload.get("commission_status") == "STIMATA" and payload.get("pnl_status") == "STIMATO"

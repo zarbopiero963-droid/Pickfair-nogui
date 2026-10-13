@@ -1,0 +1,60 @@
+{
+ "SIM|pct=None|perdita=10.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=None|perdita=10.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "SIM|pct=None|perdita=11.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=None|perdita=11.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=50.0|perdita=11.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "SIM|pct=50.0|perdita=11.0": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=None|perdita=9.99": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "SIM|pct=None|perdita=9.99": {
+  "rifiuti": [],
+  "bf_place_chiamato": false,
+  "lockdown": [],
+  "mm_chiamato": true
+ },
+ "LIVE|pct=0.5|perdita=6.0": {
+  "rifiuti": [
+   "drawdown_hard_stop_active"
+  ],
+  "bf_place_chiamato": false,
+  "lockdown": [
+   "drawdown_hard_stop_triggered:0.60%"
+  ],
+  "mm_chiamato": false
+ }
+}

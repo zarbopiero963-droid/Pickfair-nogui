@@ -1,0 +1,12 @@
+
+tests/close02/test_close02_gaps.py:304: AttributeError
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_gaps.py::test_race001_interleaved_saves_keep_both_changes
+FAILED tests/close02/test_close02_gaps.py::test_race001_same_key_concurrent_change_is_conflict_not_silent
+FAILED tests/close02/test_close02_gaps.py::test_race001_restart_between_load_and_save_keeps_other_change
+FAILED tests/close02/test_close02_gaps.py::test_race001_threads_different_keys_no_loss
+FAILED tests/close02/test_close02_gaps.py::test_race001_two_connections_same_key_never_silent
+FAILED tests/close02/test_close02_gaps.py::test_race001_conflict_is_all_or_nothing_no_partial_write
+FAILED tests/close02/test_close02_gaps.py::test_race001_config_version_increments_once_per_successful_save
+FAILED tests/close02/test_close02_gaps.py::test_race001_corrupt_key_not_silently_overwritten_by_unrelated_save
+8 failed, 3 passed, 65 deselected in 0.27s

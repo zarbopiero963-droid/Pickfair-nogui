@@ -1,0 +1,38 @@
+{
+ "daily_loss": {
+  "A": {
+   "rc": -9,
+   "stdout": "A {\"breached\": true, \"modo\": \"RuntimeMode.LOCKDOWN\"}",
+   "err": ""
+  },
+  "B": {
+   "pid": 75786,
+   "start": "True",
+   "modo": "RuntimeMode.ACTIVE",
+   "risk_stop_reason": "",
+   "daily_loss_bloccato": true,
+   "ammesso_al_sizing": false,
+   "rifiuti": [
+    "emergency_stop_active:triggered_at=2026-10-13T10:53:19.225971"
+   ]
+  }
+ },
+ "risk_stop": {
+  "A": {
+   "rc": -9,
+   "stdout": "A {\"risk_stop\": \"session_loss_breached:probe\", \"persisted\": true}",
+   "err": ""
+  },
+  "B": {
+   "pid": 75790,
+   "start": "True",
+   "modo": "RuntimeMode.ACTIVE",
+   "risk_stop_reason": "session_loss_breached:probe",
+   "daily_loss_bloccato": false,
+   "ammesso_al_sizing": true,
+   "rifiuti": [
+    "risk_stop_active:session_loss_breached:probe"
+   ]
+  }
+ }
+}

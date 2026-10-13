@@ -1,0 +1,24 @@
+FAILED tests/close02/test_close02_v14.py::test_p2b_massimo_parziale_non_usato_come_completo
+FAILED tests/close02/test_close02_v14.py::test_p1_sola_lettura_un_solo_metodo_e_paginazione
+FAILED tests/close02/test_close02_v14.py::test_p2c_storico_troncato_moreavailable
+FAILED tests/close02/test_close02_v14.py::test_p2d_intervallo_non_arriva_a_oggi
+FAILED tests/close02/test_close02_v14.py::test_p2_picco_dal_saldo_con_commissioni_e_movimenti
+FAILED tests/close02/test_close02_v14.py::test_p4b_saldo_attuale_diverso_o_illeggibile_blocca
+FAILED tests/close02/test_close02_v14.py::test_p2e_pagine_non_contigue_o_includeitem_diverso
+FAILED tests/close02/test_close02_v14.py::test_p3_evidenze_sha_audit_e_manomissione
+FAILED tests/close02/test_close02_v14.py::test_p4c_voci_incomplete_o_duplicate_bloccano
+FAILED tests/close02/test_close02_v14.py::test_p4_saldo_attuale_non_e_il_picco_e_catena_incoerente_blocca
+FAILED tests/close02/test_close02_v14.py::test_p7_ratifica_owner_esplicita_obbligatoria
+FAILED tests/close02/test_close02_v14.py::test_p6_proposta_non_sblocca_e_non_scrive_il_picco
+FAILED tests/close02/test_close02_v14.py::test_p6b_proposta_bloccata_non_ratificabile
+FAILED tests/close02/test_close02_v14.py::test_p5b_copia_picco_illeggibile_non_sovrascritta
+FAILED tests/close02/test_close02_v14.py::test_p5c_riskstop_e_perdite_invariati[daily_loss_parziale]
+FAILED tests/close02/test_close02_v14.py::test_p7b_dopo_ratifica_picco_resta_bloccato_fino_alla_migrazione
+FAILED tests/close02/test_close02_v14.py::test_p5_mai_al_ribasso_su_picco_esistente
+FAILED tests/close02/test_close02_v14.py::test_p5c_riskstop_e_perdite_invariati[risk_stop]
+FAILED tests/close02/test_close02_v14.py::test_p8_kill9_ratifica_picco[4]
+FAILED tests/close02/test_close02_v14.py::test_p8_kill9_ratifica_picco[1]
+FAILED tests/close02/test_close02_v14.py::test_p8_kill9_ratifica_picco[2]
+FAILED tests/close02/test_close02_v14.py::test_p8_kill9_ratifica_picco[3]
+FAILED tests/close02/test_close02_v14.py::test_p8_kill9_ratifica_picco[5]
+23 failed in 1.89s

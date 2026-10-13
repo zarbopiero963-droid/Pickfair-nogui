@@ -1,0 +1,7 @@
+## Ratifica owner — migrazione installazioni pre-v9 (opzione A)
+
+Testo dell'owner, riportato alla lettera (ratificato il 13/10/2026, 14:36 CEST):
+
+> Autorizzo la progettazione e la verifica isolata di una ratifica manuale una tantum per migrare lo stato delle installazioni precedenti a v9. La ratifica non può inventare, azzerare o sostituire dati monetari non verificabili. Prima della migrazione il sistema resta non operativo per ogni nuovo rischio. L'operatore deve vedere i valori persistiti, la loro provenienza, lo stato del risk-stop e le eventuali incertezze sugli ordini. Lo sblocco è consentito soltanto quando lo stato è completo, coerente e verificabile. Se mancano dati indispensabili, il sistema resta bloccato e richiede riconciliazione documentata. La conferma dell'operatore non può disarmare un risk-stop già attivo né cancellare perdite pregresse. La migrazione deve essere atomica, persistente, auditabile e resistente a kill -9 ripetuti. Aggiungi test RED→GREEN per ciascuna condizione. Prosegui con M39, commissioni, drawdown e perdita giornaliera. Non considerare chiuso M39 senza prova. Nessuna modifica alla PR #505, nessun merge, deploy, LIVE o spesa AI aggiuntiva.
+
+Stato: la migrazione pre-v9 passa da PENDING_OWNER a **RATIFICATA (opzione A)**. L'implementazione sarà una patch **isolata e solo proposta**, con test RED→GREEN per ciascuna condizione e probe kill -9. Il Gate A resta NON PASS. Nessuna modifica alla PR #505, nessun merge, deploy o LIVE. Evidenze tracciate su #506.

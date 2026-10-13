@@ -1,0 +1,131 @@
+F.FFFFF.FFF..F                                                           [100%]
+=================================== FAILURES ===================================
+_________ test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows __________
+
+    def test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows():
+        # 9.00 € già a rischio + BACK 2.00 = 11.00 € > 10.00 € ; la % (35% di 100 = 35 €) lo consentirebbe
+        res, bus = _bet(_RT(exposure=9.0), "BACK", 2.0, 2.0)
+>       assert res["ok"] is False, "11.00 € di capitale a rischio deve essere bloccato (limite owner 10 €)"
+E       AssertionError: 11.00 € di capitale a rischio deve essere bloccato (limite owner 10 €)
+E       assert True is False
+
+tests/close02/test_close02_findings.py:85: AssertionError
+________________ test_f1_unverifiable_exposure_blocks_new_risk _________________
+
+    def test_f1_unverifiable_exposure_blocks_new_risk():
+        # Q4: nessun nuovo ordine che aumenta il rischio se l'esposizione non è verificabile
+        res, _ = _bet(_RT(raises=True), "BACK", 1.0, 2.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:97: AssertionError
+___________ test_f2_red_lay_measured_as_liability_against_single_cap ___________
+
+    def test_f2_red_lay_measured_as_liability_against_single_cap():
+        # cap singolo 5% di 100 = 5.00 € ; LAY 1.00@10 => liability 9.00 > 5.00 (lo stake 1.00 passerebbe)
+        res, _ = _bet(_RT(max_single_bet_pct=5.0), "LAY", 1.0, 10.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:104: AssertionError
+__________________ test_f2_lay_liability_counts_toward_10_eur __________________
+
+    def test_f2_lay_liability_counts_toward_10_eur():
+        # 2.00 € a rischio + LAY 1.00@10 (liability 9.00) = 11.00 € > 10.00 €
+        res, _ = _bet(_RT(exposure=2.0, max_single_bet_pct=100.0, max_total_exposure_pct=100.0), "LAY", 1.0, 10.0)
+>       assert res["ok"] is False
+E       assert True is False
+
+tests/close02/test_close02_findings.py:110: AssertionError
+______ test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached[LIVE] ______
+
+mode = 'LIVE'
+
+    @pytest.mark.parametrize("mode", ["LIVE"])
+    def test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached(mode):
+        rc, bus = _runtime(mode, 20.0, 100.0, 89.99)  # perdita 10.01 € = 10.01% < 20%
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus), "drawdown 10.01 € deve fermare (Q5)"
+E       AssertionError: drawdown 10.01 € deve fermare (Q5)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7f2cead57110>)
+
+tests/close02/test_close02_findings.py:207: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  core.runtime_controller:runtime_controller.py:1793 LIVE_APP_KEY_UNAVAILABLE (AttributeError)
+WARNING  core.runtime_controller:runtime_controller.py:1851 CONTRADICTORY_STATE: mode=LIVE, sim=False, enabled=False
+WARNING  core.runtime_controller:runtime_controller.py:1703 [DEPLOY GATE] NO-GO: reason=DEPLOY_BLOCKED_BLOCKERS_PRESENT,DEPLOY_BLOCKED_NOT_READY
+________________ test_f3_boundary_drawdown_exactly_10_eur_stops ________________
+
+    def test_f3_boundary_drawdown_exactly_10_eur_stops():
+        rc, bus = _runtime("LIVE", 20.0, 100.0, 90.0)  # Q3: stop se perdita >= 10.00
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus)
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7f2ceadd42d0>)
+
+tests/close02/test_close02_findings.py:213: AssertionError
+------------------------------ Captured log call -------------------------------
+WARNING  core.runtime_controller:runtime_controller.py:1793 LIVE_APP_KEY_UNAVAILABLE (AttributeError)
+WARNING  core.runtime_controller:runtime_controller.py:1851 CONTRADICTORY_STATE: mode=LIVE, sim=False, enabled=False
+WARNING  core.runtime_controller:runtime_controller.py:1703 [DEPLOY GATE] NO-GO: reason=DEPLOY_BLOCKED_BLOCKERS_PRESENT,DEPLOY_BLOCKED_NOT_READY
+__________________ test_f4_red_drawdown_applies_in_simulation __________________
+
+    def test_f4_red_drawdown_applies_in_simulation():
+        rc, bus = _runtime("SIMULATION", 20.0, 100.0, 89.99)
+        rc._on_signal_received(_sig())
+>       assert _drawdown_rejected(bus), "Q5: il limite vale in SIM e LIVE"
+E       AssertionError: Q5: il limite vale in SIM e LIVE
+E       assert []
+E        +  where [] = _drawdown_rejected(<test_close02_findings._RBus object at 0x7f2cead8a3d0>)
+
+tests/close02/test_close02_findings.py:226: AssertionError
+___________________ test_f4_unverifiable_equity_fails_closed ___________________
+
+    def test_f4_unverifiable_equity_fails_closed():
+        rc, bus = _runtime("SIMULATION", 20.0, float("nan"), 95.0)
+        rc._on_signal_received(_sig())
+>       assert not [e for e in bus.events if e[0] == "CMD_QUICK_BET"], "equity non verificabile => nessun nuovo rischio"
+E       AssertionError: equity non verificabile => nessun nuovo rischio
+E       assert not [('CMD_QUICK_BET', {'market_id': '1.2', 'selection_id': 11, 'bet_type': 'BACK', 'price': 2.0, ...})]
+
+tests/close02/test_close02_findings.py:232: AssertionError
+____________ test_f5_red_amount_above_cap_by_less_than_1e9_exceeds _____________
+
+    def test_f5_red_amount_above_cap_by_less_than_1e9_exceeds():
+>       assert validators.exceeds_cap(10.000000001, 10.0) is True
+E       assert False is True
+E        +  where False = <function exceeds_cap at 0x7f2ceb7dfc40>(10.000000001, 10.0)
+E        +    where <function exceeds_cap at 0x7f2ceb7dfc40> = validators.exceeds_cap
+
+tests/close02/test_close02_findings.py:237: AssertionError
+_____________ test_f6_red_config_version_persisted_and_incremented _____________
+
+    def test_f6_red_config_version_persisted_and_incremented():
+        from database import Database
+        from services.setting_service import SettingsService
+    
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "cfg.sqlite"))
+            svc = SettingsService(db)
+            svc.save_roserpina_config(RoserpinaConfig())
+            v1 = db.get_settings().get("roserpina.config_version")
+            svc.save_roserpina_config(RoserpinaConfig(max_single_bet_pct=17.5))
+            v2 = db.get_settings().get("roserpina.config_version")
+>           assert v1 is not None and v2 is not None, "nessuna versione salvata"
+E           AssertionError: nessuna versione salvata
+E           assert (None is not None)
+
+tests/close02/test_close02_findings.py:262: AssertionError
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_findings.py::test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows
+FAILED tests/close02/test_close02_findings.py::test_f1_unverifiable_exposure_blocks_new_risk
+FAILED tests/close02/test_close02_findings.py::test_f2_red_lay_measured_as_liability_against_single_cap
+FAILED tests/close02/test_close02_findings.py::test_f2_lay_liability_counts_toward_10_eur
+FAILED tests/close02/test_close02_findings.py::test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached[LIVE]
+FAILED tests/close02/test_close02_findings.py::test_f3_boundary_drawdown_exactly_10_eur_stops
+FAILED tests/close02/test_close02_findings.py::test_f4_red_drawdown_applies_in_simulation
+FAILED tests/close02/test_close02_findings.py::test_f4_unverifiable_equity_fails_closed
+FAILED tests/close02/test_close02_findings.py::test_f5_red_amount_above_cap_by_less_than_1e9_exceeds
+FAILED tests/close02/test_close02_findings.py::test_f6_red_config_version_persisted_and_incremented
+10 failed, 4 passed in 0.17s

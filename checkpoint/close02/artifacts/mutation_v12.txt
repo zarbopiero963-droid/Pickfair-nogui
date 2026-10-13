@@ -1,0 +1,20 @@
+== M39_commissione_su_ogni_riga
+1 failed, 150 passed, 1 xfailed in 3.65s
+== M45_proiezione_netto_stimato
+1 failed, 177 passed, 1 xfailed in 3.92s
+== M46_apply_netto_stimato
+1 failed, 172 passed, 1 xfailed in 3.77s
+== M47_senza_margine_arrotondamento
+1 failed, 162 passed, 1 xfailed in 3.53s
+== M48_senza_commissione_massima
+1 failed, 162 passed, 1 xfailed in 3.75s
+== M49_fallback_netto_invece_di_zero
+1 failed, 167 passed, 1 xfailed in 3.84s
+== M50_picco_non_ripristinato
+1 failed, 175 passed, 1 xfailed in 3.82s
+== M51_hook_picco_attivo
+336 passed, 1 xfailed in 3.72s
+== M52_rollup_attivo_di_default
+1 failed, 176 passed, 1 xfailed in 3.79s
+== M53_stimato_non_conservativo
+1 failed, 162 passed, 1 xfailed in 3.67s

@@ -1,0 +1,351 @@
+{
+ "RSR-01": {
+  "apply": "consumatori (statico): core/money_management.py:69",
+  "race": {
+   "scritto_da_A": "4.0",
+   "finale_dopo_B": "3.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-02": {
+  "apply": "consumatori (statico): core/money_management.py:74",
+  "race": {
+   "scritto_da_A": "19.0",
+   "finale_dopo_B": "18.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-03": {
+  "apply": "consumatori (statico): core/money_management.py:90",
+  "race": {
+   "scritto_da_A": "36.0",
+   "finale_dopo_B": "35.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-04": {
+  "apply": "consumatori (statico): core/money_management.py:97",
+  "race": {
+   "scritto_da_A": "19.0",
+   "finale_dopo_B": "18.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-05": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:31, core/runtime_controller.py:3851",
+  "race": {
+   "scritto_da_A": "16.0",
+   "finale_dopo_B": "15.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-06": {
+  "apply": "consumatori (statico): core/money_management.py:128",
+  "race": {
+   "scritto_da_A": "8.5",
+   "finale_dopo_B": "7.5",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-07": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:32, core/money_management.py:125, core/runtime_controller.py:3864",
+  "race": {
+   "scritto_da_A": "21.0",
+   "finale_dopo_B": "20.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-08": {
+  "apply": "consumatori (statico): core/money_management.py:136",
+  "race": {
+   "scritto_da_A": "6.0",
+   "finale_dopo_B": "5.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-09": {
+  "apply": "consumatori (statico): core/money_management.py:151",
+  "race": {
+   "scritto_da_A": "2.1",
+   "finale_dopo_B": "1.1",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-10": {
+  "apply": "consumatori (statico): core/money_management.py:153",
+  "race": {
+   "scritto_da_A": "1.8",
+   "finale_dopo_B": "0.8",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-11": {
+  "apply": "consumatori (statico): test_zero_touch_sync.py:19, hard_verify_issue_320.py:23, core/table_manager.py:48, core/table_manager.py:51, core/table_manager.py:76, core/table_manager.py:93, core/table_manager.py:105, core/runtime_controller.py:100",
+  "race": {
+   "scritto_da_A": "6",
+   "finale_dopo_B": "5",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-12": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:28, hard_verify_issue_320.py:118",
+  "race": {
+   "scritto_da_A": "3",
+   "finale_dopo_B": "2",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-13": {
+  "apply": "consumatori (statico): simulation_broker.py:93, simulation_broker.py:113, simulation_broker.py:139, simulation_broker.py:243, simulation_broker.py:1405, simulation_broker.py:1425, simulation_broker.py:1428, cashout_router.py:165",
+  "race": {
+   "scritto_da_A": "5.5",
+   "finale_dopo_B": "4.5",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-14": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:24, core/money_management.py:401",
+  "race": {
+   "scritto_da_A": "1.1",
+   "finale_dopo_B": "0.1",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-15": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "10001.0",
+   "finale_dopo_B": "10000.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-16": {
+  "apply": "consumatori (statico): test_zero_touch_sync.py:20, hard_verify_issue_320.py:25, core/money_management.py:115",
+  "race": {
+   "scritto_da_A": "50.0",
+   "finale_dopo_B": "50.0",
+   "perso": false,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-17": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:27, hard_verify_issue_320.py:94, test_zero_touch_sync.py:22",
+  "race": {
+   "scritto_da_A": "50.0",
+   "finale_dopo_B": "50.0",
+   "perso": false,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-18": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "50.0",
+   "finale_dopo_B": "50.0",
+   "perso": false,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-19": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "50.0",
+   "finale_dopo_B": "50.0",
+   "perso": false,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-20": {
+  "apply": "consumatori (statico): test_zero_touch_sync.py:21, hard_verify_issue_320.py:26, hard_verify_issue_320.py:65",
+  "race": {
+   "scritto_da_A": "50.0",
+   "finale_dopo_B": "50.0",
+   "perso": false,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-21": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "106.0",
+   "finale_dopo_B": "105.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-22": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "111.0",
+   "finale_dopo_B": "110.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-23": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "4.0",
+   "finale_dopo_B": "3.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-24": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "51.0",
+   "finale_dopo_B": "50.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-25": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "2.02",
+   "finale_dopo_B": "1.02",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-26": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "10001.0",
+   "finale_dopo_B": "10000.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-27": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "31.0",
+   "finale_dopo_B": "30.0",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-28": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "1.5",
+   "finale_dopo_B": "0.5",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-29": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "3.5",
+   "finale_dopo_B": "2.5",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-30": {
+  "apply": "consumatori (statico): core/money_management.py:142",
+  "race": {
+   "scritto_da_A": "RiskProfile.CONSERVATIVE",
+   "finale_dopo_B": "RiskProfile.BALANCED",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-31": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:29, core/money_management.py:355, core/runtime_controller.py:4162",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-32": {
+  "apply": "consumatori (statico): hard_verify_issue_320.py:30, core/runtime_controller.py:3063, core/runtime_controller.py:3085, core/runtime_controller.py:3134, core/runtime_controller.py:3287",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-33": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-34": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-35": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-36": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "True",
+   "finale_dopo_B": "False",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-37": {
+  "apply": "consumatori (statico): nessuno fuori da settings/system_state",
+  "race": {
+   "scritto_da_A": "False",
+   "finale_dopo_B": "True",
+   "perso": true,
+   "config_version_persistita": false
+  }
+ },
+ "RSR-38": {
+  "apply": "chiave assente in RoserpinaConfig a 028cee9",
+  "race": "n/a"
+ },
+ "RSR-39": {
+  "apply": "chiave assente in RoserpinaConfig a 028cee9",
+  "race": "n/a"
+ },
+ "RSR-40": {
+  "apply": "chiave assente in RoserpinaConfig a 028cee9",
+  "race": "n/a"
+ },
+ "RSR-41": {
+  "apply": "chiave assente in RoserpinaConfig a 028cee9",
+  "race": "n/a"
+ }
+}

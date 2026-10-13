@@ -1,0 +1,358 @@
+diff --git a/core/pnl_label.py b/core/pnl_label.py
+index 0e19a28..e9507e2 100644
+--- a/core/pnl_label.py
++++ b/core/pnl_label.py
+@@ -53,3 +53,35 @@ def allows_risk_increase(data: Mapping[str, Any] | None) -> bool:
+     amount = _num(data, "commission_amount")
+     total = _num(data, "market_commission_amount_total")
+     return amount is not None and total is not None and amount == 0.0 and total == 0.0
++
++
++# v12 — protezioni (daily-loss) con netto CONSERVATIVO se la commissione e' stimata.
++# Fonte documentata (Betfair Italia, support.betfair.it a_id 3754): "Il tasso base
++# di mercato (Market Base Rate, MBR) e' la commissione massima applicata su un
++# particolare mercato, che in Italia e' pari al 4,5%" ... "L'importo della
++# commissione da pagare e' arrotondato alle due cifre decimali piu' vicine. Per
++# importi che terminano in 0,005 e' prevista un'approssimazione per eccesso."
++# => limite superiore: 4,5% della vincita lorda + 0,01 EUR di margine di arrotondamento.
++BETFAIR_ITALY_MAX_COMMISSION_PCT = 4.5
++ROUNDING_MARGIN_EUR = 0.01
++
++
++def conservative_pnl(data: Mapping[str, Any] | None, net_pnl: Any) -> float:
++    """Netto da usare per le PROTEZIONI. Verificato/simulato/nessuna commissione
++    => il netto cosi' com'e'. Commissione stimata su una vincita => vincita meno
++    la commissione massima documentata (+ margine). Dati illeggibili => la
++    vincita e' considerata interamente a rischio (0), la perdita resta intera."""
++    try:
++        net = float(net_pnl)
++    except (TypeError, ValueError):
++        return 0.0
++    if not math.isfinite(net):
++        return 0.0
++    if net <= 0.0 or allows_risk_increase(data):
++        return net
++    data = data or {}
++    gross = _num(data, "gross_pnl")
++    if gross is None or "gross_pnl" not in data or gross <= 0.0:
++        return 0.0  # TECNICA_DELEGATA: non si puo' limitare la commissione => vincita a rischio
++    worst = gross * BETFAIR_ITALY_MAX_COMMISSION_PCT / 100.0 + ROUNDING_MARGIN_EUR
++    return max(0.0, min(net, gross - worst))
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index ef32ee3..f755f94 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -17,6 +17,14 @@ from core.market_tracker import MarketTracker
+ from core.money_management import RoserpinaMoneyManagement
+ from core.pnl_engine import PnLEngine
+ from core import pnl_label
++
++# v12 (owner t80u regola 3): la documentazione pubblica Betfair (listClearedOrders)
++# dice solo che betIds "Optionally restricts the results to the specified bet IDs"
++# e che il rollup MARKET "will always return the overall position from the market
++# including all settlements" (nota su settledDateRange). Non e' confermato che il
++# filtro betIds si applichi PRIMA del rollup => nessuna verifica dal rollup:
++# il P/L resta STIMATO finche' l'owner non fornisce una fonte che lo confermi.
++CLEARED_MARKET_ROLLUP_VERIFIES = False
+ from core.reconciliation_engine import ReconciliationEngine
+ from core.state_recovery import StateRecovery
+ from core.risk_desk import RiskDesk
+@@ -585,6 +593,8 @@ class RuntimeController:
+         rollup conta ESATTAMENTE le bet del giro (``betCount``) e il ``profit``
+         sommato coincide al centesimo; altrimenti il P/L resta STIMATO.
+         Nessun errore qui blocca il settlement: senza verifica = STIMATO."""
++        if not CLEARED_MARKET_ROLLUP_VERIFIES:
++            return {}  # semantica betIds+groupBy=MARKET non confermata: P/L resta STIMATO
+         per_market: dict = {}
+         for row in rows:
+             m = str(row.get("marketId") or "").strip()
+@@ -3945,7 +3955,8 @@ class RuntimeController:
+             # sfonderebbe comunque il limite giornaliero si hard-stoppa lo stesso
+             # (proiezione read-only). Un eventuale falso positivo da duplicato e'
+             # piu' sicuro di un kill-switch mancato.
+-            projected_recovery = self._projected_daily_loss_breach(pnl)
++            projected_recovery = self._projected_daily_loss_breach(
++                pnl_label.conservative_pnl(payload, pnl))
+             stopped = self._enforce_daily_loss_hard_stop(projected_recovery)
+             if projected_recovery.get("breached"):
+                 # Persisti il breach nello stato del monitor (in-memory) cosi' un
+@@ -3991,7 +4002,10 @@ class RuntimeController:
+         # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
+         # chiudendo la finestra tra apply-PnL e emergency_stop in cui altrimenti
+         # vedrebbe _emergency_stopped ancora False e piazzerebbe un ordine.
+-        projected_close = self._projected_daily_loss_breach(pnl)
++        # v12 (owner t80u regola 3): protezioni sul netto CONSERVATIVO se la
++        # commissione e' stimata (limite massimo documentato Betfair Italia).
++        pnl_protection = pnl_label.conservative_pnl(payload, pnl)
++        projected_close = self._projected_daily_loss_breach(pnl_protection)
+         arm_pending = bool(projected_close.get("breached")) and self.mode in (
+             RuntimeMode.ACTIVE,
+             RuntimeMode.PAUSED,
+@@ -4008,7 +4022,7 @@ class RuntimeController:
+             self._persist_db_emergency_marker(active=True, reason=f"DAILY_LOSS_BREACH_PENDING:{float(projected_close.get('daily_loss_amount', 0.0) or 0.0)}")
+         try:
+             if settlement_key and settlement_key not in self._processed_realized_pnl_keys:
+-                self._apply_realized_pnl_without_mutating_bankroll(pnl)
++                self._apply_realized_pnl_without_mutating_bankroll(pnl_protection)
+                 self._processed_realized_pnl_keys.add(settlement_key)
+             # Bankroll sync PRIMA dell'enforce: emergency_stop flippa il service a
+             # SIMULATION e get_account_funds sceglie il client dal mode, quindi
+@@ -4079,9 +4093,19 @@ class RuntimeController:
+ 
+     def _apply_realized_pnl_without_mutating_bankroll(self, pnl: float) -> None:
+         bankroll_before = float(self.risk_desk.bankroll_current)
+-        self.risk_desk.apply_closed_pnl(pnl)
+-        if float(self.risk_desk.bankroll_current) != bankroll_before:
+-            self.risk_desk.sync_bankroll(bankroll_before)
++        # v12: il picco del drawdown nasce SOLO dal saldo verificato (sync da
++        # get_account_funds), mai dal rimbalzo transitorio di un P/L (stimato o
++        # no): niente picco gonfiato ne' persistito da un valore non verificato.
++        peak_before = float(self.risk_desk.equity_peak)
++        hook = getattr(self.risk_desk, "on_new_peak", None)
++        self.risk_desk.on_new_peak = None
++        try:
++            self.risk_desk.apply_closed_pnl(pnl)
++            if float(self.risk_desk.bankroll_current) != bankroll_before:
++                self.risk_desk.sync_bankroll(bankroll_before)
++            self.risk_desk.equity_peak = peak_before
++        finally:
++            self.risk_desk.on_new_peak = hook
+ 
+     @staticmethod
+     def _extract_settlement_contract(payload: dict) -> dict[str, float | str]:
+diff --git a/tests/close02/test_close02_v11.py b/tests/close02/test_close02_v11.py
+index c61ba14..c7bc8b9 100644
+--- a/tests/close02/test_close02_v11.py
++++ b/tests/close02/test_close02_v11.py
+@@ -30,6 +30,16 @@ class _BF:
+         return lambda *a, **k: {"available": 100.0} if n == "get_account_funds" else None
+ 
+ 
++@pytest.fixture(autouse=True)
++def _rollup_abilitato(monkeypatch):
++    """v12: la verifica da rollup e' DISABILITATA di default (semantica betIds +
++    groupBy=MARKET non confermata). Qui si prova il meccanismo come se fosse
++    confermata; il default e' provato in test_close02_v12.py."""
++    import core.runtime_controller as m
++    if hasattr(m, "CLEARED_MARKET_ROLLUP_VERIFIES"):
++        monkeypatch.setattr(m, "CLEARED_MARKET_ROLLUP_VERIFIES", True)
++
++
+ def _poll(bet_rows, market_rows=None, market_exc=None, bot_orders=None):
+     rc = _controller(results=[], bot_orders=bot_orders)
+     rc.betfair_service = _BF(bet_rows, market_rows, market_exc)
+@@ -88,6 +98,17 @@ def test_a_due_bet_stesso_mercato_verifica_solo_sull_ultima():
+     assert [c["pnl_status"] for c in closes] == ["STIMATO", "VERIFICATO"]
+ 
+ 
++def test_a_verifica_solo_a_mercato_completo_seconda_bet_a_profitto_zero():
++    """Uccide M39: con la seconda bet a profitto 0 il cumulativo dopo la prima
++    coincide gia' con la commissione finale; la policy verifica solo sull'ULTIMA
++    riga del mercato (mercato completo), quindi la prima resta STIMATO."""
++    bots = [{"bet_id": "101", "market_id": "1.100", "event_name": "E1"},
++            {"bet_id": "102", "market_id": "1.100", "event_name": "E1"}]
++    rows = [BET, dict(BET, betId="102", profit=0.0)]
++    _, closes = _poll(rows, [_mkt(profit=10.0, betCount=2, commission=0.45)], bot_orders=bots)
++    assert [c["pnl_status"] for c in closes] == ["STIMATO", "VERIFICATO"]
++
++
+ # ---------------- (b) gate aumento rischio ----------------
+ from tests.integration.test_runtime_controller_auto_trade_mm import _make_controller, _canonical_close_payload
+ from core.system_state import RuntimeMode
+diff --git a/tests/close02/test_close02_v12.py b/tests/close02/test_close02_v12.py
+new file mode 100644
+index 0000000..0f9a2e9
+--- /dev/null
++++ b/tests/close02/test_close02_v12.py
+@@ -0,0 +1,124 @@
++"""close02 v12 — owner t80u regola (3): (a) protezioni sul netto conservativo con
++commissione stimata (limite massimo documentato Betfair Italia 4,5% + arrotondamento);
++(b) verifica da rollup MARKET disabilitata finche' la semantica betIds+groupBy non e'
++confermata da fonte pubblica. RED a 028cee9, GREEN col patch."""
++import pytest
++from tests.integration.test_runtime_controller_auto_trade_mm import _make_controller, _canonical_close_payload
++from core.system_state import RuntimeMode
++
++
++def _cp():
++    from core import pnl_label
++    return pnl_label.conservative_pnl
++
++
++@pytest.mark.parametrize("data,net,atteso", [
++    ({"pnl_status": "STIMATO", "gross_pnl": 100.0, "commission_amount": 4.5}, 95.5, 95.49),   # 100-4.5-0.01
++    ({"pnl_status": "STIMATO", "gross_pnl": 100.0, "commission_amount": 2.0}, 98.0, 95.49),   # stima bassa => limite documentato
++    ({"pnl_status": "VERIFICATO", "gross_pnl": 100.0, "commission_amount": 4.5}, 95.5, 95.5),
++    ({"pnl_status": "SIMULATO", "gross_pnl": 100.0, "commission_amount": 4.5}, 95.5, 95.5),
++    ({"pnl_status": "STIMATO", "gross_pnl": -10.0, "commission_amount": 0.0,
++      "market_commission_amount_total": 0.0}, -10.0, -10.0),
++    ({"pnl_status": "STIMATO", "commission_amount": 4.5}, 95.5, 0.0),                          # lordo assente => vincita a rischio
++    ({"pnl_status": "STIMATO", "gross_pnl": "x", "commission_amount": 4.5}, 95.5, 0.0),
++    ({"pnl_status": "STIMATO", "gross_pnl": 100.0, "commission_amount": 4.5}, float("nan"), 0.0),
++    ({"pnl_status": "STIMATO", "gross_pnl": 0.005, "commission_amount": 0.0001}, 0.0049, 0.0),     # margine > vincita => 0, mai negativo
++    ({"pnl_status": "STIMATO", "gross_pnl": 0.2, "commission_amount": 0.01}, 0.19, 0.181),    # 0.2-0.009-0.01
++])
++def test_a_netto_conservativo(data, net, atteso):
++    assert _cp()(data, net) == pytest.approx(atteso, abs=1e-9)
++
++
++def _close(rc, **over):
++    p = _canonical_close_payload(event_key="e-" + str(len(over)), correlation_id="c-" + str(id(over)))
++    p.update(over)
++    rc._on_close_position(p)
++
++
++def test_a_daily_loss_non_compensato_da_vincita_stimata():
++    """Perdita 10 poi vincita stimata lorda 10 (netto stimato 9.55): il daily-loss
++    conta la vincita al netto conservativo 9.54, non 9.55."""
++    rc, _ = _make_controller(responses=[{"available": 150.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    _close(rc, gross_pnl=-10.0, commission_amount=0.0, net_pnl=-10.0, pnl=-10.0, pnl_status="VERIFICATO",
++           event_key="e1", correlation_id="c1", batch_id="b1")
++    _close(rc, gross_pnl=10.0, commission_amount=0.45, net_pnl=9.55, pnl=9.55, pnl_status="STIMATO",
++           event_key="e2", correlation_id="c2", batch_id="b2")
++    assert rc.risk_desk.realized_pnl == pytest.approx(-10.0 + 9.54)
++
++
++def test_a_daily_loss_vincita_verificata_conta_intera():
++    rc, _ = _make_controller(responses=[{"available": 150.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    _close(rc, gross_pnl=10.0, commission_amount=0.45, net_pnl=9.55, pnl=9.55, pnl_status="VERIFICATO",
++           event_key="e3", correlation_id="c3", batch_id="b3")
++    assert rc.risk_desk.realized_pnl == pytest.approx(9.55)
++
++
++def test_a_breach_daily_loss_scatta_col_netto_conservativo():
++    """Limite 10: vincita stimata lorda 0.44 (commissione di policy 0.0198 => netto
++    0.4202), poi perdita 10.415. Col netto stimato la perdita e' 9.9948 (< 10, nessuno
++    stop); col conservativo 0.44-0.0198-0.01=0.4102 => 10.0048 >= 10 => stop."""
++    rc, _ = _make_controller(responses=[{"available": 150.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    rc.config.max_daily_loss = 10.0
++    _close(rc, gross_pnl=0.44, commission_amount=0.0198, net_pnl=0.4202, pnl=0.4202, pnl_status="STIMATO",
++           event_key="e4", correlation_id="c4", batch_id="b4")
++    _close(rc, gross_pnl=-10.415, commission_amount=0.0, net_pnl=-10.415, pnl=-10.415, pnl_status="VERIFICATO",
++           event_key="e5", correlation_id="c5", batch_id="b5")
++    state = dict(rc._daily_loss_monitor_state or {})
++    assert state.get("daily_loss_amount", 0.0) >= 10.0 and bool(state.get("breached"))
++
++
++def test_a_drawdown_usa_il_saldo_verificato_non_il_pl_stimato():
++    """Il drawdown usa picco e bankroll dal saldo Betfair (get_account_funds): una
++    vincita con commissione stimata non sposta ne' il bankroll ne' il picco."""
++    rc, _ = _make_controller(responses=[{"available": 100.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    rc.risk_desk.equity_peak = 0.0
++    rc.risk_desk.sync_bankroll(100.0)
++    peak = rc.risk_desk.equity_peak
++    rc._apply_realized_pnl_without_mutating_bankroll(50.0)
++    assert rc.risk_desk.bankroll_current == 100.0 and rc.risk_desk.equity_peak == peak == 100.0
++
++
++# ---------------- (b) rollup MARKET non confermato => STIMATO ----------------
++def test_b_default_rollup_non_usato_e_pl_stimato():
++    from tests.close02.test_close02_v11 import _BF, BET, _mkt
++    from tests.core.test_settlement_poller import _controller, _closes
++    rc = _controller(results=[])
++    rc.betfair_service = _BF([BET], [_mkt()])
++    rc._poll_cleared_settlements()
++    closes = _closes(rc)
++    assert closes and closes[-1]["pnl_status"] == "STIMATO"
++    assert not [c for c in rc.betfair_service.calls if c.get("group_by") == "MARKET"]
++    import core.runtime_controller as m
++    assert getattr(m, "CLEARED_MARKET_ROLLUP_VERIFIES", None) is False
++
++
++def test_a_pending_stop_armato_prima_dell_apply_col_netto_conservativo():
++    """Il pending-stop durevole (DAILY_LOSS_BREACH_PENDING) va armato PRIMA dell'I/O
++    del sync, valutando la proiezione sul netto conservativo (non sul netto stimato)."""
++    rc2, _ = _make_controller(responses=[{"available": 150.0}] * 4)
++    rc2.mode = RuntimeMode.ACTIVE
++    rc2.config.max_daily_loss = 10.0
++    rc2.risk_desk.realized_pnl = -10.415
++    seen = []
++    o2 = rc2._persist_db_emergency_marker
++    rc2._persist_db_emergency_marker = lambda **kw: (seen.append(str(kw.get("reason", ""))), o2(**kw))[1]
++    _close(rc2, gross_pnl=0.44, commission_amount=0.0198, net_pnl=0.4202, pnl=0.4202, pnl_status="STIMATO",
++           event_key="e7", correlation_id="c7", batch_id="b7")
++    assert any(r.startswith("DAILY_LOSS_BREACH_PENDING") for r in seen), seen
++
++
++def test_a_hook_picco_non_chiamato_dal_pl_transitorio():
++    """Il rimbalzo transitorio di apply_closed_pnl non deve persistere un nuovo picco."""
++    rc, _ = _make_controller(responses=[{"available": 100.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    rc.risk_desk.equity_peak = 0.0
++    rc.risk_desk.sync_bankroll(100.0)
++    peaks = []
++    rc.risk_desk.on_new_peak = lambda *a, **k: peaks.append(a or k)
++    _close(rc, gross_pnl=10.0, commission_amount=0.45, net_pnl=9.55, pnl=9.55, pnl_status="STIMATO",
++           event_key="e8", correlation_id="c8", batch_id="b8")
++    assert peaks == [] and rc.risk_desk.equity_peak == pytest.approx(100.0), peaks
+diff --git a/tests/core/test_bankroll_sync.py b/tests/core/test_bankroll_sync.py
+index 1b190a7..7a88307 100644
+--- a/tests/core/test_bankroll_sync.py
++++ b/tests/core/test_bankroll_sync.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ 
++import pytest
++
+ from core.runtime_controller import RuntimeController
+ from core.system_state import RoserpinaConfig
+ 
+@@ -228,5 +230,5 @@ def test_realized_pnl_is_preserved_on_close_while_bankroll_sync_runs():
+         }
+     )
+ 
+-    assert float(rc.risk_desk.realized_pnl) == realized_before + 12.5
++    assert float(rc.risk_desk.realized_pnl) == pytest.approx(realized_before + 12.49)  # v12: netto conservativo (commissione stimata: 4,5% doc. + 0,01 arrotondamento)
+     assert float(rc.risk_desk.bankroll_current) == 140.0
+diff --git a/tests/core/test_settlement_poller.py b/tests/core/test_settlement_poller.py
+index fbc1243..7cdd04b 100644
+--- a/tests/core/test_settlement_poller.py
++++ b/tests/core/test_settlement_poller.py
+@@ -507,7 +507,7 @@ def test_gambe_dutching_winners_first_niente_kill_switch_transitorio():
+         rc._on_close_position(payload)
+         assert rc._emergency_stopped is False
+ 
+-    assert rc.risk_desk.realized_pnl == pytest.approx(19.10)
++    assert rc.risk_desk.realized_pnl == pytest.approx(19.09)  # v12: netto conservativo (commissione stimata: 4,5% doc. + 0,01 arrotondamento)
+     stato = dict(rc._daily_loss_monitor_state)
+     assert bool(stato["breached"]) is False
+ 
+diff --git a/tests/integration/test_runtime_controller_bankroll_sync.py b/tests/integration/test_runtime_controller_bankroll_sync.py
+index fba1262..6c7f0c0 100644
+--- a/tests/integration/test_runtime_controller_bankroll_sync.py
++++ b/tests/integration/test_runtime_controller_bankroll_sync.py
+@@ -159,7 +159,7 @@ def test_runtime_controller_close_payload_preserves_settlement_provenance_fields
+     assert payload["settlement_validation"] == "accepted"
+     assert payload["settlement_acceptance"] == "ACCEPT_REALIZED_SETTLEMENT"
+     assert payload["pnl"] == 19.1
+-    assert float(rc.risk_desk.realized_pnl) == 19.1
++    assert float(rc.risk_desk.realized_pnl) == pytest.approx(19.09)  # v12: netto conservativo (commissione stimata: 4,5% doc. + 0,01 arrotondamento)
+ 
+ 
+ @pytest.mark.integration
+@@ -875,7 +875,7 @@ def test_runtime_controller_close_updates_realized_pnl_even_with_exchange_first_
+         }
+     )
+ 
+-    assert float(rc.risk_desk.realized_pnl) == 7.64
++    assert float(rc.risk_desk.realized_pnl) == pytest.approx(7.63)  # v12: netto conservativo (commissione stimata: 4,5% doc. + 0,01 arrotondamento)
+ 
+ 
+     assert float(rc.risk_desk.bankroll_current) == 150.0
+diff --git a/tests/integration/test_runtime_controller_live_sim_parity.py b/tests/integration/test_runtime_controller_live_sim_parity.py
+index a090407..38e62f4 100644
+--- a/tests/integration/test_runtime_controller_live_sim_parity.py
++++ b/tests/integration/test_runtime_controller_live_sim_parity.py
+@@ -1609,7 +1609,7 @@ def test_runtime_controller_rejected_settlement_boundary_is_fail_closed_and_does
+     }
+     rc._on_close_position(canonical_payload)
+     realized_after_canonical = float(rc.risk_desk.realized_pnl)
+-    assert realized_after_canonical == pytest.approx(19.1)
++    assert realized_after_canonical == pytest.approx(19.09)  # v12: netto conservativo (commissione stimata: 4,5% doc. + 0,01 arrotondamento)
+ 
+     helper_like_non_canonical = {
+         "event_key": "evt-helper-rejected",

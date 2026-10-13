@@ -1,0 +1,20 @@
+== BASELINE_GREEN
+183 passed, 1 xfailed in 2.72s
+== M25_verificata_sempre
+5 failed, 178 passed, 1 xfailed in 2.86s
+== M26_verifica_senza_confronto
+3 failed, 180 passed, 1 xfailed in 2.81s
+== M27_etichetta_non_propagata
+183 passed, 1 xfailed in 2.80s
+== M28_vuoto_non_segnalato
+10 failed, 173 passed, 1 xfailed in 3.02s
+== M29_corrotto_opzionale_non_segnalato
+11 failed, 172 passed, 1 xfailed in 2.83s
+== M30_assente_opzionale_non_segnalato
+10 failed, 173 passed, 1 xfailed in 2.74s
+== M31_default_non_segnalato
+2 failed, 181 passed, 1 xfailed in 2.70s
+== M32_corrotto_non_blocca
+11 failed, 172 passed, 1 xfailed in 2.85s
+== M27 (rerun con test chiusura)
+1 failed, 183 passed, 1 xfailed in 2.72s

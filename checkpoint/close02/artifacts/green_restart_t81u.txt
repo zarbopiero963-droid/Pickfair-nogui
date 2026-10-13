@@ -1,0 +1,35 @@
+ERROR    core.state_recovery:state_recovery.py:127 startup_order_exists failed
+ERROR    core.state_recovery:state_recovery.py:127 startup_order_exists failed
+ERROR    core.state_recovery:state_recovery.py:127 startup_order_exists failed
+PASSED tests/close02/test_close02_restart.py::test_rst001_recovery_incerta_non_attiva_il_runtime
+PASSED tests/close02/test_close02_restart.py::test_rst001_resume_non_scavalca_recovery_incompleta
+PASSED tests/close02/test_close02_restart.py::test_rst001_recovery_ok_resta_attivo
+PASSED tests/close02/test_close02_restart.py::test_rst002_schema_startup_orders_esiste
+PASSED tests/close02/test_close02_restart.py::test_rst002_ordine_fantasma_registrato
+PASSED tests/close02/test_close02_restart.py::test_rst002_errore_lettura_ordini_fail_closed
+PASSED tests/close02/test_close02_restart.py::test_rst003_memoria_drawdown_dopo_kill9[989.0-True]
+PASSED tests/close02/test_close02_restart.py::test_rst003_memoria_drawdown_dopo_kill9[990.0-True]
+PASSED tests/close02/test_close02_restart.py::test_rst003_memoria_drawdown_dopo_kill9[990.01-False]
+PASSED tests/close02/test_close02_restart_t81u.py::test_a_nessun_percorso_ordini_dopo_recovery_non_riuscita[incerto]
+PASSED tests/close02/test_close02_restart_t81u.py::test_a_nessun_percorso_ordini_dopo_recovery_non_riuscita[merge_errore]
+PASSED tests/close02/test_close02_restart_t81u.py::test_a_nessun_percorso_ordini_dopo_recovery_non_riuscita[db_errore]
+PASSED tests/close02/test_close02_restart_t81u.py::test_a_nessun_percorso_ordini_dopo_recovery_non_riuscita[recover_eccezione]
+PASSED tests/close02/test_close02_restart_t81u.py::test_a_controllo_discriminante_recovery_ok_raggiunge_il_sizing
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_picco_sopravvive_kill9[989.0-True]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_picco_sopravvive_kill9[990.0-True]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_picco_sopravvive_kill9[990.01-False]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_kill_ripetuti_non_abbassano_il_picco
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_riga_picco_corrotta_fail_closed[abc]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_riga_picco_corrotta_fail_closed[nan]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_riga_picco_corrotta_fail_closed[-5]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_riga_picco_corrotta_fail_closed[{"peak": "x"}]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_riga_picco_mancante_usa_copia_file
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_tutte_le_copie_picco_mancanti_fail_closed
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_primo_avvio_autentico_non_bloccato
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_risk_stop_sopravvive_kill9_ripetuti
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_risk_stop_riga_corrotta_fail_closed
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_risk_stop_righe_mancanti_fail_closed
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_daily_loss_sopravvive_kill9_ripetuti
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_daily_loss_riga_corrotta_o_mancante_fail_closed[{corrotto]
+PASSED tests/close02/test_close02_restart_t81u.py::test_b_daily_loss_riga_corrotta_o_mancante_fail_closed[None]
+31 passed in 4.58s

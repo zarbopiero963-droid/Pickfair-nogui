@@ -1,0 +1,648 @@
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index 7854a87..f65454c 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -1521,6 +1521,9 @@ class DutchingController:
+             # monetario CONFIGURATO `max_open_exposure` (stessa regola del
+             # runtime A2, nessun valore hardcoded); uguaglianza ammessa;
+             # esposizione non verificabile => blocco.
++            _t80u = validators.owner_t80u_new_risk_block_reason(config)
++            if _t80u:  # owner t80u (1)/(3)
++                return self._fail(f"Nuovo rischio bloccato ({_t80u})")
+             exposure = validators.order_exposure_or_inf(
+                 self._normalize_side(payload.get("bet_type", "BACK")), stake, price
+             )
+diff --git a/core/risk_desk.py b/core/risk_desk.py
+index 87850fe..7cf315b 100644
+--- a/core/risk_desk.py
++++ b/core/risk_desk.py
+@@ -51,6 +51,8 @@ class RiskDesk:
+         self.bankroll_start = 0.0
+         self.bankroll_current = 0.0
+         self.equity_peak = 0.0
++        # PROPOSTA close02 v9: callback su ogni nuovo massimo (persistenza in-sessione).
++        self.on_new_peak = None
+ 
+         self.realized_pnl = 0.0
+         self.unrealized_pnl = 0.0
+@@ -64,6 +66,15 @@ class RiskDesk:
+         self.updated_at = datetime.utcnow().isoformat()
+         if self.bankroll_current > self.equity_peak:
+             self.equity_peak = self.bankroll_current
++            self._notify_new_peak()
++
++    def _notify_new_peak(self) -> None:
++        cb = getattr(self, "on_new_peak", None)
++        if callable(cb):
++            try:
++                cb(self.equity_peak)
++            except Exception:
++                pass  # il chiamante registra e blocca (fail-closed) da se'
+ 
+     def _safe_mode_value(self, value: RuntimeMode | str) -> str:
+         if isinstance(value, RuntimeMode):
+@@ -89,8 +100,10 @@ class RiskDesk:
+ 
+             if self.equity_peak <= 0.0:
+                 self.equity_peak = bankroll_current
++                self._notify_new_peak()
+             elif bankroll_current > self.equity_peak:
+                 self.equity_peak = bankroll_current
++                self._notify_new_peak()
+ 
+             self._touch()
+ 
+diff --git a/core/risk_persistence.py b/core/risk_persistence.py
+index 6418d96..f60b23e 100644
+--- a/core/risk_persistence.py
++++ b/core/risk_persistence.py
+@@ -144,6 +144,8 @@ def restore_equity_peak(db: Any) -> Tuple[Optional[float], str]:
+         return max(vals), ""
+     if was_written(db, "equity_peak"):
+         return None, "equity_peak_mancante"
++    if reinit_required(db):
++        return None, "risk_ledger_mancante"
+     return None, ""
+ 
+ 
+@@ -171,3 +173,38 @@ def persist_equity_peak(db: Any, peak: float) -> bool:
+     if ok:
+         ok = mark(db, "equity_peak")
+     return ok
++
++
++REINIT_REQUIRED = "ledger_reinit_required"
++HISTORY_KEYS = ("daily_loss_state", "risk_stop_state", "emergency_stopped", EQUITY_PEAK_KEY)
++
++
++def ledger_missing_with_history(db: Any) -> bool:
++    """v9: registro assente (DB e file) ma il DB mostra storia di rischio
++    (stato daily-loss/risk-stop/emergenza/picco scritto dal runtime) ⇒ NON e' un primo
++    avvio: le copie protette potrebbero essere sparite insieme al registro."""
++    led = ledger(db)
++    if led is _UNREADABLE:
++        return True
++    if led:
++        return False
++    s = _settings(db)
++    if s is _UNREADABLE:
++        return True
++    if any(s.get(k) not in (None, "") for k in HISTORY_KEYS):
++        return True
++    # Le saghe ordini NON sono usate come prova: sono scritte anche fuori dal
++    # runtime e bloccherebbero in modo permanente installazioni legittime.
++    return False
++
++
++def reinit_required(db: Any) -> bool:
++    led = ledger(db)
++    return led is _UNREADABLE or REINIT_REQUIRED in led
++
++
++def ledger_has(db: Any, name: str) -> bool:
++    """True solo se il registro leggibile contiene `name` (un registro
++    illeggibile e' gestito a parte: REINIT_REQUIRED al riavvio)."""
++    led = ledger(db)
++    return led is not _UNREADABLE and name in led
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index bee6b1a..0179e35 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -98,11 +98,14 @@ class RuntimeController:
+         self.safe_mode = safe_mode
+         self._startup_recovery_blocked = ""
+         self._equity_peak_blocked = ""
++        self._equity_peak_restored = False  # v9: niente scritture del picco prima del ripristino
++        self._daily_loss_state_missing = False  # v9: riga daily-loss sparita dopo la scrittura
+ 
+         self.config = self.settings_service.load_roserpina_config()
+         self.table_manager = TableManager(table_count=self.config.table_count)
+         self.duplication_guard = DuplicationGuard()
+         self.risk_desk = RiskDesk()
++        self.risk_desk.on_new_peak = lambda _p: self._persist_equity_peak()  # v9: ogni nuovo massimo
+         self.mm = RoserpinaMoneyManagement(self.config)
+ 
+         self.batch_manager = DutchingBatchManager(db, bus=bus)
+@@ -290,6 +293,11 @@ class RuntimeController:
+         self._session_pnl_baseline: Optional[float] = None  # P37, da start()
+         self._session_loss_alerted = False
+         self._risk_stop_lock = threading.RLock()  # P38: transizione + persistenza atomiche
++        # v9: registro protezioni sparito insieme alle copie protette ⇒ non e'
++        # un primo avvio: blocco durevole (marcato nel registro) del nuovo rischio.
++        if risk_persistence.ledger_missing_with_history(self.db):
++            logger.critical("RISK LEDGER MANCANTE con storia di rischio nel DB: nuovo rischio bloccato")
++            risk_persistence.mark(self.db, risk_persistence.REINIT_REQUIRED)
+         self._risk_stop_reason = stop_rules.restore_risk_stop(self.db)
+         if not self._risk_stop_reason and risk_persistence.was_written(self.db, "risk_stop") \
+                 and stop_rules.risk_stop_state_missing(self.db):
+@@ -297,9 +305,13 @@ class RuntimeController:
+             logger.critical("RISK STOP: stato persistito mancante dopo essere stato scritto, fail-closed")
+         self._daily_loss_monitor_state.update(loss_limits.restore_daily_loss(  # F4
+             self.db, today_utc=self._daily_loss_monitor_state["day_utc"], realized_pnl=float(self.risk_desk.realized_pnl)))
++        if risk_persistence.ledger_has(self.db, "daily_loss_missing"):
++            self._daily_loss_state_missing = True  # v9: blocco durevole finche' non risolto dall'operatore
+         if risk_persistence.was_written(self.db, "daily_loss") and loss_limits.daily_loss_state_missing(self.db):
+             # t81u: riga daily-loss sparita dopo essere stata scritta ⇒ fail-closed
+             logger.critical("DAILY LOSS: stato persistito mancante, fail-closed")
++            self._daily_loss_state_missing = True
++            risk_persistence.mark(self.db, "daily_loss_missing")  # durevole tra i riavvii
+             self._daily_loss_monitor_state.update({"breached": True, "last_status": "DAILY_LOSS_BREACHED",
+                                                    "reason": "daily_loss_state_mancante"})
+         self._daily_loss_persisted = loss_limits.persist_daily_loss(self.db, self._daily_loss_monitor_state, None)
+@@ -1228,13 +1240,16 @@ class RuntimeController:
+     def _limits_block_reason(self) -> str:
+         if loss_limits.persist_failed(getattr(self, "_daily_loss_persisted", None)):
+             return "daily_loss_state_non_persistito"
++        if getattr(self, "_daily_loss_state_missing", False):
++            return "daily_loss_state_mancante"
+         return self._session_loss_block_reason()
+ 
+     def _loss_block_reason(self) -> str:
+         stopped = getattr(self, "_risk_stop_reason", "")
+         peak_blocked = getattr(self, "_equity_peak_blocked", "")  # CL02-RST-003/t81u
+         return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+-                or (f"drawdown_state_non_verificabile:{peak_blocked}" if peak_blocked else ""))
++                or (f"drawdown_state_non_verificabile:{peak_blocked}" if peak_blocked else "")
++                or validators.owner_t80u_new_risk_block_reason(getattr(self, "config", None)))
+ 
+     def _publish_session_loss_breach(self) -> None:
+         reason = self._session_loss_block_reason()
+@@ -1994,6 +2009,9 @@ class RuntimeController:
+         try:
+             settings = self.db.get_settings() if hasattr(self.db, "get_settings") else {}
+             flag = str((settings or {}).get("emergency_stopped", "")).strip().lower()
++            if flag == "" and risk_persistence.was_written(self.db, "emergency"):
++                flag = "1"  # v9: riga emergenza sparita dopo essere stata scritta ⇒ fail-closed
++                settings = dict(settings or {}, emergency_reason="emergency_state_mancante")
+             if flag not in {"1", "true"}:
+                 return
+             self._emergency_stopped = True
+@@ -2042,6 +2060,8 @@ class RuntimeController:
+         if not hasattr(self.db, "save_settings"):
+             return "db_save_settings_unavailable"
+         try:
++            if self._emergency_stopped:
++                risk_persistence.mark(self.db, "emergency")
+             self.db.save_settings({
+                 "emergency_stopped": "1" if self._emergency_stopped else "0",
+                 "emergency_stopped_at": self._emergency_stopped_at,
+@@ -2063,6 +2083,8 @@ class RuntimeController:
+         if not hasattr(self.db, "save_settings"):
+             return "db_save_settings_unavailable"
+         try:
++            if active:
++                risk_persistence.mark(self.db, "emergency")
+             self.db.save_settings({
+                 "emergency_stopped": "1" if active else "0",
+                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
+@@ -2557,6 +2579,7 @@ class RuntimeController:
+         del nuovo rischio (mai reset implicito del limite 10 €)."""
+         stored, blocked = risk_persistence.restore_equity_peak(self.db)
+         self._equity_peak_blocked = blocked
++        self._equity_peak_restored = True
+         if blocked:
+             logger.critical("EQUITY PEAK NON VERIFICABILE: %s (nuovo rischio bloccato)", blocked)
+             return
+@@ -2566,6 +2589,8 @@ class RuntimeController:
+         self._persist_equity_peak()
+ 
+     def _persist_equity_peak(self) -> None:
++        if not getattr(self, "_equity_peak_restored", False):
++            return  # il picco persistito non e' ancora stato riletto: mai sovrascriverlo
+         blocked = getattr(self, "_equity_peak_blocked", "")
+         if blocked and blocked != "equity_peak_non_persistito":
+             return  # illeggibile/mancante al riavvio: resta bloccato (fail-closed)
+@@ -3106,6 +3131,15 @@ class RuntimeController:
+         if missing:
+             self._reject_signal(signal, f"campi_mancanti:{','.join(missing)}")
+             return
++        # owner t80u (1)/(3): il cashout (riduzione rischio) resta disponibile;
++        # ogni nuovo rischio e' bloccato prima di sizing/builder/executor/broker.
++        if getattr(self, "_daily_loss_state_missing", False):  # v9: perdita del giorno non verificabile
++            self._reject_signal(signal, "daily_loss_state_mancante")
++            return
++        _t80u = validators.owner_t80u_new_risk_block_reason(getattr(self, "config", None))
++        if _t80u:  # owner t80u (1)/(3): nessun nuovo rischio prima di sizing/builder/broker
++            self._reject_signal(signal, _t80u)
++            return
+ 
+         # PR27 (#461, PKG-P24-A): campi d'ordine fail-closed PRIMA di
+         # anti-duplicazione, tavoli e money management. Prima un selection id
+diff --git a/core/system_state.py b/core/system_state.py
+index 9db2e46..c0ca45f 100644
+--- a/core/system_state.py
++++ b/core/system_state.py
+@@ -70,6 +70,12 @@ class RoserpinaConfig:
+     max_drawdown_abs: Optional[float] = None
+     # PROPOSTA close02: chiavi presenti ma corrotte al caricamento (vuoto = nessuna).
+     corrupt_keys: tuple = ()
++    # PROPOSTA close02 v9 (owner t80u #426/6143637861): chiavi obbligatorie assenti.
++    absent_keys: tuple = field(default=(), compare=False)
++    # PROPOSTA close02 v9 (RSR-38..40): cap assoluti EUR caricati nel runtime (vuoto = non impostato).
++    max_order_exposure: Optional[float] = None
++    max_market_exposure: Optional[float] = None
++    max_event_exposure_abs: Optional[float] = None
+     # PROPOSTA close02 RACE-001: valori come caricati (per salvataggio dei soli campi cambiati).
+     loaded_values: dict = field(default_factory=dict, compare=False, repr=False)
+     max_open_exposure: Optional[float] = None
+diff --git a/core/validators.py b/core/validators.py
+index 552f717..0dab1c4 100644
+--- a/core/validators.py
++++ b/core/validators.py
+@@ -300,3 +300,25 @@ def safe_filename_core(name: str) -> str:
+     if cleaned.casefold() in WIN_RESERVED:
+         cleaned = "_" + cleaned
+     return cleaned
++
++
++# PROPOSTA close02 v9 — owner t80u (#426/6143637861) regole (1) e (3).
++OWNER_T80U_BLOCKING_KEYS = (
++    "roserpina.max_single_bet_pct",
++    "roserpina.max_total_exposure_pct",
++    "roserpina.max_event_exposure_pct",
++    "roserpina.max_stake_abs",
++    "roserpina.commission_pct",
++)
++
++
++def owner_t80u_new_risk_block_reason(config) -> str:
++    """"" se il nuovo rischio e' ammesso; altrimenti il motivo (fail-closed).
++    Config mancante => non verificabile => blocco."""
++    if config is None:
++        return "owner_t80u_config_non_verificabile"
++    bad = [k for k in OWNER_T80U_BLOCKING_KEYS
++           if k in tuple(getattr(config, "absent_keys", ()) or ()) or k in tuple(getattr(config, "corrupt_keys", ()) or ())]
++    if bad:
++        return "owner_t80u_nuovo_rischio_bloccato:" + ",".join(sorted(bad))
++    return ""
+diff --git a/services/setting_service.py b/services/setting_service.py
+index 162039a..f6a8729 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -2,6 +2,7 @@ from __future__ import annotations
+ 
+ import sqlite3
+ 
++import logging
+ import math
+ import json
+ import os
+@@ -21,6 +22,9 @@ from core.system_state import (
+ )
+ 
+ 
++logger = logging.getLogger(__name__)
++
++
+ class SettingsService:
+     """
+     Service centrale impostazioni.
+@@ -338,11 +342,49 @@ class SettingsService:
+         try:
+             cfg = self._load_roserpina_config_values()
+             cfg.corrupt_keys = tuple(self._corrupt_sink)
++            self._apply_owner_t80u(cfg)
+             cfg.loaded_values = dict(self._roserpina_payload(cfg))
+         finally:
+             self._corrupt_sink = None
+         return cfg
+ 
++    # PROPOSTA close02 v9 — regole owner ratificate t80u (#426/6143637861):
++    # (1) cap % / stake assenti, non validi o non verificabili => blocco di
++    #     tutto il nuovo rischio; nessun default del codice approvato.
++    # (2) recovery: assente/non valido => nessuna nuova recovery (mai True,
++    #     nessun massimo inventato).
++    # (3) commissione: solo tasso verificato; altrimenti nessuna decisione che
++    #     aumenti il rischio.
++    OWNER_T80U_RISK_KEYS = (
++        "roserpina.max_single_bet_pct",
++        "roserpina.max_total_exposure_pct",
++        "roserpina.max_event_exposure_pct",
++        "roserpina.max_stake_abs",
++        "roserpina.commission_pct",
++    )
++    OWNER_T80U_RECOVERY_KEYS = ("roserpina.max_recovery_tables", "roserpina.allow_recovery")
++
++    def _apply_owner_t80u(self, cfg: RoserpinaConfig) -> None:
++        try:
++            data = self.get_all_settings() or {}
++        except Exception:
++            data = None
++        keys = self.OWNER_T80U_RISK_KEYS + self.OWNER_T80U_RECOVERY_KEYS
++        if not isinstance(data, dict):
++            absent = keys  # non verificabile => trattato come assente (fail-closed)
++        else:
++            absent = tuple(k for k in keys if data.get(k) is None or str(data.get(k)).strip() == "")
++        for k in absent:
++            logger.warning("OWNER t80u: chiave obbligatoria assente %s: nessun default del codice approvato", k)
++        cfg.absent_keys = tuple(absent)
++        bad = set(absent) | set(cfg.corrupt_keys or ())
++        if bad & set(self.OWNER_T80U_RECOVERY_KEYS):
++            cfg.allow_recovery = False  # (2) mai True per assenza
++        if "roserpina.max_recovery_tables" in bad:
++            cfg.max_recovery_tables = 0  # (2) nessun massimo inventato
++        if "roserpina.commission_pct" in bad:
++            cfg.commission_pct = None  # (3) nessuna commissione inventata: tasso non verificato
++
+     def _load_roserpina_config_values(self) -> RoserpinaConfig:
+         data = self.get_all_settings()
+ 
+@@ -374,6 +416,9 @@ class SettingsService:
+                 "roserpina.max_drawdown_abs",
+                 fallback_key="max_drawdown_abs",
+             ),
++            max_order_exposure=self._optional_hard_stop_value(data, "roserpina.max_order_exposure"),
++            max_market_exposure=self._optional_hard_stop_value(data, "roserpina.max_market_exposure"),
++            max_event_exposure_abs=self._optional_hard_stop_value(data, "roserpina.max_event_exposure_abs"),
+             max_open_exposure=self._optional_hard_stop_value(
+                 data,
+                 "roserpina.max_open_exposure",
+@@ -470,6 +515,9 @@ class SettingsService:
+             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
+         if config.max_drawdown_abs is not None:
+             payload["roserpina.max_drawdown_abs"] = config.max_drawdown_abs
++        for _k in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs"):
++            if getattr(config, _k, None) is not None:
++                payload["roserpina." + _k] = getattr(config, _k)
+         if config.max_open_exposure is not None:
+             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+         if config.max_session_loss is not None:
+diff --git a/tests/close02/test_close02_gaps.py b/tests/close02/test_close02_gaps.py
+index ac897f5..d6a2d27 100644
+--- a/tests/close02/test_close02_gaps.py
++++ b/tests/close02/test_close02_gaps.py
+@@ -309,10 +309,10 @@ def test_race001_roundtrip_types_preserved():
+     import dataclasses
+     from core.system_state import RoserpinaConfig
+     s = _svc_shared(); a = s.load_roserpina_config()
+-    a.max_single_bet_pct = 12.5; a.table_count = 3; a.allow_recovery = not a.allow_recovery
++    a.max_single_bet_pct = 12.5; a.table_count = 3; a.allow_recovery = not a.allow_recovery; a.max_recovery_tables = 2
+     s.save_roserpina_config(a); b = s.load_roserpina_config()
+     for f in dataclasses.fields(RoserpinaConfig):
+-        if f.name in ("loaded_values", "corrupt_keys"):
++        if f.name in ("loaded_values", "corrupt_keys", "absent_keys"):
+             continue
+         va, vb = getattr(a, f.name), getattr(b, f.name)
+         assert va == vb and type(va) is type(vb), f.name
+diff --git a/tests/close02/test_close02_restart.py b/tests/close02/test_close02_restart.py
+index bdcad28..dc87aa1 100644
+--- a/tests/close02/test_close02_restart.py
++++ b/tests/close02/test_close02_restart.py
+@@ -26,6 +26,10 @@ class _RE:
+ 
+ def _controller(path, monkeypatch, scen="normale", funds=1000.0, db=None):
+     db = db or Database(path)
++    db.save_settings({"roserpina.max_single_bet_pct": "5.0", "roserpina.max_total_exposure_pct": "20.0",
++                      "roserpina.max_event_exposure_pct": "10.0", "roserpina.max_stake_abs": "50.0",
++                      "roserpina.commission_pct": "5.0", "roserpina.max_recovery_tables": "1",
++                      "roserpina.allow_recovery": "0"})  # owner t80u: valori espliciti
+     ss = SettingsService(db)
+     bf = MagicMock(); bf._session_invalid = False
+     bf.connect.return_value = {"ok": True}; bf.get_account_funds.return_value = {"available": funds}
+diff --git a/tests/close02/test_close02_restart_t81u.py b/tests/close02/test_close02_restart_t81u.py
+index 693948b..901fe84 100644
+--- a/tests/close02/test_close02_restart_t81u.py
++++ b/tests/close02/test_close02_restart_t81u.py
+@@ -11,6 +11,11 @@ from core.system_state import RuntimeMode
+ import core.state_recovery as sr
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++# Valori owner espliciti e validi (t80u): senza di essi il nuovo rischio e' bloccato.
++OWNER_VALID = {"roserpina.max_single_bet_pct": "5.0", "roserpina.max_total_exposure_pct": "20.0",
++               "roserpina.max_event_exposure_pct": "10.0", "roserpina.max_stake_abs": "50.0",
++               "roserpina.commission_pct": "5.0", "roserpina.max_recovery_tables": "1",
++               "roserpina.allow_recovery": "0"}
+ ORDER_WORDS = ("place", "replace", "submit_order", "quick_bet", "execute")
+ 
+ 
+@@ -31,8 +36,10 @@ class _RE:
+     def __getattr__(self, n): return MagicMock()
+ 
+ 
+-def _ctl(path, monkeypatch, scen="normale", funds=1000.0):
+-    db = Database(path); ss = SettingsService(db)
++def _ctl(path, monkeypatch, scen="normale", funds=1000.0, owner=None):
++    db = Database(path)
++    db.save_settings(OWNER_VALID if owner is None else owner)
++    ss = SettingsService(db)
+     bf = MagicMock(); bf._session_invalid = False
+     bf.connect.return_value = {"ok": True}; bf.get_account_funds.return_value = {"available": funds}
+     te, ex, bus = MagicMock(), MagicMock(), MagicMock()
+@@ -123,7 +130,7 @@ _CHILD = textwrap.dedent("""
+     from core.runtime_controller import RuntimeController
+     p, funds, action = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+     db = Database(p); ss = SettingsService(db)
+-    if action == "daily_loss":
++    if action in ("daily_loss", "daily_loss_parziale"):
+         c = ss.load_roserpina_config(); c.max_daily_loss = 10.0; ss.save_roserpina_config(c)
+     bf = MagicMock(); bf._session_invalid = False
+     bf.connect.return_value = {"ok": True}; bf.get_account_funds.return_value = {"available": funds}
+@@ -137,6 +144,11 @@ _CHILD = textwrap.dedent("""
+         rc.start(execution_mode="SIMULATION")
+         if action == "risk_stop":
+             rc.risk_stop("session_loss_breached:test")
++        if action == "emergenza":
++            rc.emergency_stop("test_manuale")
++        if action == "daily_loss_parziale":
++            rc.risk_desk.realized_pnl = -8.0
++            rc._monitor_daily_loss_breach(source="TEST")
+         if action == "daily_loss":
+             rc.risk_desk.realized_pnl = -12.0
+             st = rc._monitor_daily_loss_breach(source="TEST")
+diff --git a/tests/close02/test_close02_v9.py b/tests/close02/test_close02_v9.py
+new file mode 100644
+index 0000000..2f4f5d2
+--- /dev/null
++++ b/tests/close02/test_close02_v9.py
+@@ -0,0 +1,191 @@
++"""close02 v9: regole owner t80u (#426/6143637861), RSR-38..40 nel runtime, registro
++daily-loss/emergenza indispensabile, picco persistito a ogni nuovo massimo, registro
++sparito con storia ⇒ fail-closed. RED a 028cee9, GREEN col patch proposto."""
++import json, os, signal, sqlite3, subprocess, sys, textwrap
++from unittest.mock import MagicMock
++import pytest
++from database import Database
++from services.setting_service import SettingsService
++from tests.close02.test_close02_restart_t81u import (
++    OWNER_VALID, SIGNALS, _ctl, _arm_spies, _order_calls, _fire_all, _run_and_kill, _set_raw, _restart, _blocked, ROOT)
++
++BLOCKING = ["roserpina.max_single_bet_pct", "roserpina.max_total_exposure_pct",
++            "roserpina.max_event_exposure_pct", "roserpina.max_stake_abs", "roserpina.commission_pct"]
++
++
++def _owner_without(key, raw):
++    d = dict(OWNER_VALID)
++    if raw is None:
++        d.pop(key)
++    else:
++        d[key] = raw
++    return d
++
++
++# ---------------- t80u regole (1) e (3): nessun percorso ordini ----------------
++@pytest.mark.parametrize("raw", [None, "abc", "", "nan"])
++@pytest.mark.parametrize("key", BLOCKING)
++def test_t80u_chiave_assente_o_non_valida_blocca_ogni_percorso_ordini(tmp_path, monkeypatch, key, raw):
++    rc = _ctl(str(tmp_path / "o.sqlite"), monkeypatch, owner=_owner_without(key, raw))
++    rej = []
++    rc.start(execution_mode="SIMULATION")
++    monkeypatch.setattr(rc, "_reject_signal", lambda sg, r: rej.append(r))
++    _arm_spies(rc, monkeypatch)
++    _fire_all(rc)
++    assert _order_calls(rc) == [], (key, raw)
++    assert rej and all("owner_t80u" in str(r) or "config_corrotta" in str(r) for r in rej), rej
++    ok, why = rc._risk_allows_auto_trade()
++    assert ok is False
++
++
++def test_t80u_controllo_tutte_valide_raggiunge_il_sizing(tmp_path, monkeypatch):
++    rc = _ctl(str(tmp_path / "o.sqlite"), monkeypatch)
++    rc.start(execution_mode="SIMULATION")
++    _arm_spies(rc, monkeypatch)
++    rc._on_signal_received(dict(SIGNALS[0]))
++    assert "sizing" in _order_calls(rc)
++
++
++def test_t80u_config_non_verificabile_blocca():
++    from core import validators
++    assert validators.owner_t80u_new_risk_block_reason(None)
++
++
++# ---------------- t80u regola (2): recovery ----------------
++@pytest.mark.parametrize("key", ["roserpina.max_recovery_tables", "roserpina.allow_recovery"])
++@pytest.mark.parametrize("raw", [None, "abc", ""])
++def test_t80u_recovery_assente_o_non_valida_mai_attiva(tmp_path, key, raw):
++    db = Database(str(tmp_path / "r.sqlite"))
++    d = _owner_without(key, raw); d["roserpina.allow_recovery"] = d.get("roserpina.allow_recovery", "1") if key != "roserpina.allow_recovery" else d.get(key)
++    if key != "roserpina.allow_recovery":
++        d["roserpina.allow_recovery"] = "1"  # anche con allow_recovery=1 esplicito
++    db.save_settings({k: v for k, v in d.items() if v is not None})
++    cfg = SettingsService(db).load_roserpina_config()
++    assert cfg.allow_recovery is False                     # mai True per assenza/invalidita'
++    if key == "roserpina.max_recovery_tables":
++        assert cfg.max_recovery_tables == 0                # nessun massimo inventato
++    else:
++        assert cfg.max_recovery_tables == 1                # il massimo esplicito valido resta
++
++
++@pytest.mark.parametrize("raw", [None, "abc", ""])
++def test_t80u_commissione_non_verificata_non_inventata(tmp_path, raw):
++    db = Database(str(tmp_path / "c.sqlite"))
++    db.save_settings({k: v for k, v in _owner_without("roserpina.commission_pct", raw).items()})
++    cfg = SettingsService(db).load_roserpina_config()
++    assert cfg.commission_pct is None
++
++
++def test_t80u_recovery_esplicita_valida_conservata(tmp_path):
++    db = Database(str(tmp_path / "r.sqlite"))
++    db.save_settings(dict(OWNER_VALID, **{"roserpina.allow_recovery": "1", "roserpina.max_recovery_tables": "3"}))
++    cfg = SettingsService(db).load_roserpina_config()
++    assert cfg.allow_recovery is True and cfg.max_recovery_tables == 3
++
++
++def test_t80u_load_segnala_assenza(tmp_path):
++    cfg = SettingsService(Database(str(tmp_path / "a.sqlite"))).load_roserpina_config()
++    assert set(BLOCKING) <= set(getattr(cfg, "absent_keys", ()))
++
++
++# ---------------- RSR-38..40 nel runtime ----------------
++@pytest.mark.parametrize("key", ["max_order_exposure", "max_market_exposure", "max_event_exposure_abs"])
++def test_rsr38_40_caricate_dopo_riavvio(tmp_path, key):
++    p = str(tmp_path / "c.sqlite")
++    Database(p).save_settings({"roserpina." + key: "7.5"})
++    cfg = SettingsService(Database(p)).load_roserpina_config()
++    assert getattr(cfg, key, "<assente>") == 7.5
++
++
++# ---------------- M10: registro daily-loss/emergenza indispensabile ----------------
++def test_daily_loss_ed_emergenza_righe_sparite_fail_closed(tmp_path, monkeypatch):
++    p = str(tmp_path / "l.sqlite")
++    _run_and_kill(p, action="daily_loss")
++    for k in ("daily_loss_state", "emergency_stopped", "emergency_stopped_at", "emergency_reason"):
++        _set_raw(p, k, None)
++    for f in os.listdir(tmp_path):
++        if f.endswith(".daily_loss_pending.json"):
++            os.remove(tmp_path / f)
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc), rej
++    rc2, rej2 = _restart(p, monkeypatch, 1000.0)   # il blocco resta anche al riavvio successivo
++    assert _blocked(rc2), rej2
++
++
++# ---------------- picco persistito a ogni nuovo massimo in sessione ----------------
++_CHILD_HIGH = textwrap.dedent("""
++    import os, sys, signal, io, contextlib
++    sys.path.insert(0, %r)
++    from unittest.mock import MagicMock
++    from database import Database
++    from services.setting_service import SettingsService
++    from core.runtime_controller import RuntimeController
++    db = Database(sys.argv[1]); ss = SettingsService(db)
++    bf = MagicMock(); bf._session_invalid = False
++    bf.connect.return_value = {"ok": True}; bf.get_account_funds.return_value = {"available": 1000.0}
++    class RE:
++        def fetch_startup_active_orders(self): return []
++        def __getattr__(self, n): return MagicMock()
++    with contextlib.redirect_stdout(io.StringIO()):
++        rc = RuntimeController(bus=MagicMock(), db=db, settings_service=ss, betfair_service=bf, telegram_service=MagicMock())
++        rc._catalog_sync = MagicMock(); rc._start_market_data_feed = lambda: None; rc._start_settlement_poller = lambda: None
++        rc._build_reconciliation_engine = lambda: RE()
++        rc.start(execution_mode="SIMULATION")
++        rc.risk_desk.sync_bankroll(1100.0)   # nuovo massimo in sessione (es. settlement vinto)
++    os.kill(os.getpid(), signal.SIGKILL)
++""") % ROOT
++
++
++@pytest.mark.parametrize("funds,blocca", [(1089.0, True), (1090.0, True), (1090.01, False)])
++def test_picco_nuovo_massimo_in_sessione_sopravvive_kill9(tmp_path, monkeypatch, funds, blocca):
++    p = str(tmp_path / "h.sqlite")
++    r = subprocess.run([sys.executable, "-c", _CHILD_HIGH, p], capture_output=True, text=True, timeout=120)
++    assert r.returncode == -signal.SIGKILL, r.stderr[-500:]
++    rc, rej = _restart(p, monkeypatch, funds)
++    assert _blocked(rc) is blocca, rej
++
++
++# ---------------- registro sparito insieme alle copie protette ----------------
++def test_registro_e_copie_spariti_con_storia_fail_closed(tmp_path, monkeypatch):
++    p = str(tmp_path / "v.sqlite")
++    _run_and_kill(p)
++    for k in ("risk.equity_peak_eur", "risk.persist_ledger"):
++        _set_raw(p, k, None)
++    for f in os.listdir(tmp_path):
++        if f.endswith((".equity_peak.json", ".risk_ledger.json")):
++            os.remove(tmp_path / f)
++    rc, rej = _restart(p, monkeypatch, 989.0)
++    assert _blocked(rc), rej
++    # e il blocco e' durevole: un secondo riavvio non lo trasforma in primo avvio
++    rc2, rej2 = _restart(p, monkeypatch, 989.0)
++    assert _blocked(rc2), rej2
++
++
++def test_primo_avvio_autentico_resta_ammesso(tmp_path, monkeypatch):
++    rc, rej = _restart(str(tmp_path / "nuovo.sqlite"), monkeypatch, 1000.0)
++    assert not _blocked(rc), rej
++
++
++def test_daily_loss_parziale_riga_sparita_non_azzera_la_perdita(tmp_path, monkeypatch):
++    """Perdita del giorno 8 € su 10 (nessun breach, nessuna emergenza): la riga
++    daily-loss sparisce dopo il kill -9 ⇒ il riavvio NON deve ripartire da 0 €."""
++    p = str(tmp_path / "pz.sqlite")
++    _run_and_kill(p, action="daily_loss_parziale")
++    _set_raw(p, "daily_loss_state", None)
++    for f in os.listdir(tmp_path):
++        if f.endswith(".daily_loss_pending.json"):
++            os.remove(tmp_path / f)
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc), rej
++    rc2, rej2 = _restart(p, monkeypatch, 1000.0)   # il blocco resta anche al riavvio successivo
++    assert _blocked(rc2), rej2
++
++
++def test_emergenza_riga_sparita_dopo_kill9_resta_attiva(tmp_path, monkeypatch):
++    """Emergency stop manuale (nessun breach daily-loss): righe emergenza sparite ⇒ fail-closed."""
++    p = str(tmp_path / "em.sqlite")
++    _run_and_kill(p, action="emergenza")
++    for k in ("emergency_stopped", "emergency_stopped_at", "emergency_reason"):
++        _set_raw(p, k, None)
++    rc, rej = _restart(p, monkeypatch, 1000.0)
++    assert _blocked(rc), rej

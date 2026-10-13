@@ -1,0 +1,1120 @@
+{
+ "generated": "2026-10-13",
+ "base": "028cee9",
+ "code_findings": [
+  {
+   "id": "F1",
+   "descrizione": "cap esposizione in € non applicato in manual_bet",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "F2",
+   "descrizione": "LAY misurato come stake in manual_bet",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "F3",
+   "descrizione": "drawdown solo in %",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "F4",
+   "descrizione": "drawdown non applicato in SIM; equity NaN",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "F5",
+   "descrizione": "tolleranza 1e-9 su cap/limiti",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "F6",
+   "descrizione": "config_version assente",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "D1",
+   "descrizione": "soglia drawdown configurabile con tetto campagna #351 non implementata",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  },
+  {
+   "id": "D2",
+   "descrizione": "cap obbligatorio assente non blocca",
+   "stato": "OPEN — proposta in patches/close02_findings_proposal_v3.patch (non applicata)"
+  }
+ ],
+ "candidate_gaps": [
+  {
+   "id": "CL02-BF-001",
+   "descrizione": "betfair_market_api.list_event_types: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-01-AUTH"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "root BF-LIST: test_bf001_*"
+  },
+  {
+   "id": "CL02-BF-002",
+   "descrizione": "betfair_market_api.list_competitions: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-02-AUTH",
+    "DIFF-PF-BF-02-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-BF-001 (stessa radice)"
+  },
+  {
+   "id": "CL02-BF-003",
+   "descrizione": "betfair_market_api.list_events: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-04-AUTH",
+    "DIFF-PF-BF-04-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-BF-001"
+  },
+  {
+   "id": "CL02-BF-004",
+   "descrizione": "betfair_market_api.list_market_catalogue: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-08-AUTH",
+    "DIFF-PF-BF-08-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-BF-001"
+  },
+  {
+   "id": "CL02-BF-005",
+   "descrizione": "betfair_market_api.get_market_book: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna None (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-09-AUTH",
+    "DIFF-PF-BF-09-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "test_bf005_*"
+  },
+  {
+   "id": "CL02-BF-006",
+   "descrizione": "betfair_market_api.get_current_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-12-AUTH",
+    "DIFF-PF-BF-12-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "test_bf006_* + test_get_current_orders_missing_current_orders_is_malformed"
+  },
+  {
+   "id": "CL02-BF-007",
+   "descrizione": "simulation_broker.place_bet: mercato sconosciuto 1.999 ⇒ SUCCESS",
+   "records": [
+    "DIFF-PF-BF-14-AUTH",
+    "DIFF-PF-BF-14-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — da decidere",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "NOT_DEMONSTRATED",
+   "nota": "SIM senza anagrafica mercati: sconosciuto != invalido; fix tentato rompeva 30+ test del contratto F8 (#453); serve decisione; xfail strict test_bf007"
+  },
+  {
+   "id": "CL02-BF-008",
+   "descrizione": "betfair_client.cancel_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 0 (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-15-AUTH",
+    "DIFF-PF-BF-15-ERROR",
+    "DIFF-PF-BF-15-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "test_bf008_*"
+  },
+  {
+   "id": "CL02-BF-009",
+   "descrizione": "betfair_client.replace_orders: result di tipo inatteso/FAILURE restituito grezzo, nessun ok/False normalizzato",
+   "records": [
+    "DIFF-PF-BF-16-AUTH",
+    "DIFF-PF-BF-16-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "order_manager.replace verifica instructionReports[0].status ⇒ REPLACE_REJECTED"
+  },
+  {
+   "id": "CL02-BF-010",
+   "descrizione": "betfair_market_api.get_account_funds: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'available': 0.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit':  (indistinguibile da esito valido/vuoto)",
+   "records": [
+    "DIFF-PF-BF-18-AUTH",
+    "DIFF-PF-BF-18-PROOF"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "stub di _post_jsonrpc: gli errori JSON-RPC sollevano; raggiungibile solo con result di tipo inatteso o percorso SIM",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "test_bf010_*"
+  },
+  {
+   "id": "CL02-RSR-001",
+   "descrizione": "LOAD roserpina.max_total_exposure_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['35.0', 'nan', 'inf', '35.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-03-SAVE",
+    "DIFF-PF-RSR-03-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "root LOAD-float: test_rsr_corrupt_*; = finding S (_f/_b) Q1/Q2"
+  },
+  {
+   "id": "CL02-RSR-002",
+   "descrizione": "LOAD roserpina.max_total_exposure_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-03-SAVE",
+    "DIFF-PF-RSR-03-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-003",
+   "descrizione": "LOAD roserpina.max_event_exposure_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['18.0', 'nan', 'inf', '18.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-04-LOAD",
+    "DIFF-PF-RSR-04-RESTART",
+    "DIFF-PF-RSR-04-SAVE",
+    "DIFF-PF-RSR-04-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-004",
+   "descrizione": "LOAD roserpina.max_event_exposure_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-04-LOAD",
+    "DIFF-PF-RSR-04-RESTART",
+    "DIFF-PF-RSR-04-SAVE",
+    "DIFF-PF-RSR-04-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-005",
+   "descrizione": "LOAD roserpina.auto_reset_drawdown_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['15.0', 'nan', 'inf', '15.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-05-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-006",
+   "descrizione": "LOAD roserpina.auto_reset_drawdown_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-05-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-007",
+   "descrizione": "LOAD roserpina.defense_drawdown_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['7.5', 'nan', 'inf', '7.5'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-06-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-008",
+   "descrizione": "LOAD roserpina.defense_drawdown_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-06-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-009",
+   "descrizione": "LOAD roserpina.lockdown_drawdown_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['20.0', 'nan', 'inf', '20.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-07-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-010",
+   "descrizione": "LOAD roserpina.lockdown_drawdown_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-07-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-011",
+   "descrizione": "LOAD roserpina.expansion_profit_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['5.0', 'nan', 'inf', '5.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-08-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-012",
+   "descrizione": "LOAD roserpina.expansion_profit_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-08-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-013",
+   "descrizione": "LOAD roserpina.expansion_multiplier: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['1.1', 'nan', 'inf', '1.1'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-09-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-014",
+   "descrizione": "LOAD roserpina.expansion_multiplier: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-09-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-015",
+   "descrizione": "LOAD roserpina.defense_multiplier: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['0.8', 'nan', 'inf', '0.8'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-10-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-016",
+   "descrizione": "LOAD roserpina.defense_multiplier: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-10-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-017",
+   "descrizione": "LOAD roserpina.table_count: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['5', '5', '5', '5'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-11-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "root LOAD-int: test_rsr_corrupt_*; = finding S (_f/_b) Q1/Q2"
+  },
+  {
+   "id": "CL02-RSR-018",
+   "descrizione": "LOAD roserpina.table_count: '-1' accettato ⇒ -1 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-11-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-019",
+   "descrizione": "LOAD roserpina.max_recovery_tables: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['2', '2', '2', '2'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-12-LOAD",
+    "DIFF-PF-RSR-12-RESTART",
+    "DIFF-PF-RSR-12-SAVE",
+    "DIFF-PF-RSR-12-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-017"
+  },
+  {
+   "id": "CL02-RSR-020",
+   "descrizione": "LOAD roserpina.max_recovery_tables: '-1' accettato ⇒ -1 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-12-LOAD",
+    "DIFF-PF-RSR-12-RESTART",
+    "DIFF-PF-RSR-12-SAVE",
+    "DIFF-PF-RSR-12-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-021",
+   "descrizione": "LOAD roserpina.commission_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['4.5', 'nan', 'inf', '4.5'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-13-LOAD",
+    "DIFF-PF-RSR-13-RESTART",
+    "DIFF-PF-RSR-13-SAVE",
+    "DIFF-PF-RSR-13-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-022",
+   "descrizione": "LOAD roserpina.commission_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-13-LOAD",
+    "DIFF-PF-RSR-13-RESTART",
+    "DIFF-PF-RSR-13-SAVE",
+    "DIFF-PF-RSR-13-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-023",
+   "descrizione": "LOAD roserpina.min_stake: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['0.1', 'nan', 'inf', '0.1'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-14-LOAD",
+    "DIFF-PF-RSR-14-RESTART",
+    "DIFF-PF-RSR-14-SAVE",
+    "DIFF-PF-RSR-14-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-024",
+   "descrizione": "LOAD roserpina.min_stake: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-14-LOAD",
+    "DIFF-PF-RSR-14-RESTART",
+    "DIFF-PF-RSR-14-SAVE",
+    "DIFF-PF-RSR-14-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-025",
+   "descrizione": "LOAD roserpina.max_stake_abs: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['10000.0', 'nan', 'inf', '10000.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-15-LOAD",
+    "DIFF-PF-RSR-15-RESTART",
+    "DIFF-PF-RSR-15-SAVE",
+    "DIFF-PF-RSR-15-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-026",
+   "descrizione": "LOAD roserpina.max_stake_abs: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-15-LOAD",
+    "DIFF-PF-RSR-15-RESTART",
+    "DIFF-PF-RSR-15-SAVE",
+    "DIFF-PF-RSR-15-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-027",
+   "descrizione": "LOAD roserpina.max_daily_loss: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['nan', 'nan', 'inf', 'None'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-16-LOAD",
+    "DIFF-PF-RSR-16-RESTART",
+    "DIFF-PF-RSR-16-SAVE",
+    "DIFF-PF-RSR-16-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "corrotto ⇒ NaN ⇒ cap/stop non valido nega (PR27); '' ⇒ None (per max_open_exposure blocca per D2)"
+  },
+  {
+   "id": "CL02-RSR-028",
+   "descrizione": "LOAD roserpina.max_daily_loss: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-16-LOAD",
+    "DIFF-PF-RSR-16-RESTART",
+    "DIFF-PF-RSR-16-SAVE",
+    "DIFF-PF-RSR-16-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "limite -1 ⇒ superato sempre ⇒ blocco (fail-closed)"
+  },
+  {
+   "id": "CL02-RSR-029",
+   "descrizione": "LOAD roserpina.max_open_exposure: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['nan', 'nan', 'inf', 'None'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-17-LOAD",
+    "DIFF-PF-RSR-17-RESTART",
+    "DIFF-PF-RSR-17-SAVE",
+    "DIFF-PF-RSR-17-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "corrotto ⇒ NaN ⇒ cap/stop non valido nega (PR27); '' ⇒ None (per max_open_exposure blocca per D2)"
+  },
+  {
+   "id": "CL02-RSR-030",
+   "descrizione": "LOAD roserpina.max_open_exposure: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-17-LOAD",
+    "DIFF-PF-RSR-17-RESTART",
+    "DIFF-PF-RSR-17-SAVE",
+    "DIFF-PF-RSR-17-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "limite -1 ⇒ superato sempre ⇒ blocco (fail-closed)"
+  },
+  {
+   "id": "CL02-RSR-031",
+   "descrizione": "LOAD roserpina.max_session_loss: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['nan', 'nan', 'inf', 'None'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-18-LOAD",
+    "DIFF-PF-RSR-18-RESTART",
+    "DIFF-PF-RSR-18-SAVE",
+    "DIFF-PF-RSR-18-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "corrotto ⇒ NaN ⇒ cap/stop non valido nega (PR27); '' ⇒ None (per max_open_exposure blocca per D2)"
+  },
+  {
+   "id": "CL02-RSR-032",
+   "descrizione": "LOAD roserpina.max_session_loss: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-18-LOAD",
+    "DIFF-PF-RSR-18-RESTART",
+    "DIFF-PF-RSR-18-SAVE",
+    "DIFF-PF-RSR-18-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "limite -1 ⇒ superato sempre ⇒ blocco (fail-closed)"
+  },
+  {
+   "id": "CL02-RSR-033",
+   "descrizione": "LOAD roserpina.max_exposure_stop: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['nan', 'nan', 'inf', 'None'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-19-LOAD",
+    "DIFF-PF-RSR-19-RESTART",
+    "DIFF-PF-RSR-19-SAVE",
+    "DIFF-PF-RSR-19-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "corrotto ⇒ NaN ⇒ cap/stop non valido nega (PR27); '' ⇒ None (per max_open_exposure blocca per D2)"
+  },
+  {
+   "id": "CL02-RSR-034",
+   "descrizione": "LOAD roserpina.max_exposure_stop: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-19-LOAD",
+    "DIFF-PF-RSR-19-RESTART",
+    "DIFF-PF-RSR-19-SAVE",
+    "DIFF-PF-RSR-19-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "limite -1 ⇒ superato sempre ⇒ blocco (fail-closed)"
+  },
+  {
+   "id": "CL02-RSR-035",
+   "descrizione": "LOAD roserpina.max_drawdown_hard_stop_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['nan', 'nan', 'inf', 'None'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-20-LOAD",
+    "DIFF-PF-RSR-20-RESTART",
+    "DIFF-PF-RSR-20-SAVE",
+    "DIFF-PF-RSR-20-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "corrotto ⇒ NaN ⇒ cap/stop non valido nega (PR27); '' ⇒ None (per max_open_exposure blocca per D2)"
+  },
+  {
+   "id": "CL02-RSR-036",
+   "descrizione": "LOAD roserpina.max_drawdown_hard_stop_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-20-LOAD",
+    "DIFF-PF-RSR-20-RESTART",
+    "DIFF-PF-RSR-20-SAVE",
+    "DIFF-PF-RSR-20-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "COPERTO (nessuna modifica)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "ALREADY_COVERED",
+   "nota": "limite -1 ⇒ superato sempre ⇒ blocco (fail-closed)"
+  },
+  {
+   "id": "CL02-RSR-037",
+   "descrizione": "LOAD roserpina.book_warning: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['105.0', 'nan', 'inf', '105.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-21-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-038",
+   "descrizione": "LOAD roserpina.book_warning: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-21-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-039",
+   "descrizione": "LOAD roserpina.book_block: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['110.0', 'nan', 'inf', '110.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-22-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-040",
+   "descrizione": "LOAD roserpina.book_block: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-22-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-041",
+   "descrizione": "LOAD roserpina.liquidity_multiplier: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['3.0', 'nan', 'inf', '3.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-23-LOAD",
+    "DIFF-PF-RSR-23-RESTART",
+    "DIFF-PF-RSR-23-SAVE",
+    "DIFF-PF-RSR-23-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-042",
+   "descrizione": "LOAD roserpina.liquidity_multiplier: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-23-LOAD",
+    "DIFF-PF-RSR-23-RESTART",
+    "DIFF-PF-RSR-23-SAVE",
+    "DIFF-PF-RSR-23-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-043",
+   "descrizione": "LOAD roserpina.min_liquidity_absolute: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['50.0', 'nan', 'inf', '50.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-24-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-044",
+   "descrizione": "LOAD roserpina.min_liquidity_absolute: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-24-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-045",
+   "descrizione": "LOAD roserpina.min_price: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['1.02', 'nan', 'inf', '1.02'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-25-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-046",
+   "descrizione": "LOAD roserpina.min_price: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-25-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-047",
+   "descrizione": "LOAD roserpina.max_win: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['10000.0', 'nan', 'inf', '10000.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-26-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-048",
+   "descrizione": "LOAD roserpina.max_win: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-26-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-049",
+   "descrizione": "LOAD roserpina.max_stake_pct: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['30.0', 'nan', 'inf', '30.0'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-27-LOAD",
+    "DIFF-PF-RSR-27-RESTART",
+    "DIFF-PF-RSR-27-SAVE",
+    "DIFF-PF-RSR-27-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-050",
+   "descrizione": "LOAD roserpina.max_stake_pct: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-27-LOAD",
+    "DIFF-PF-RSR-27-RESTART",
+    "DIFF-PF-RSR-27-SAVE",
+    "DIFF-PF-RSR-27-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-051",
+   "descrizione": "LOAD roserpina.profit_epsilon: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['0.5', 'nan', 'inf', '0.5'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-28-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-052",
+   "descrizione": "LOAD roserpina.profit_epsilon: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-28-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-053",
+   "descrizione": "LOAD roserpina.auto_green_delay_sec: valori corrotti ['abc', 'nan', 'inf', 'empty'] ⇒ ['2.5', 'nan', 'inf', '2.5'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-29-LOAD",
+    "DIFF-PF-RSR-29-RESTART",
+    "DIFF-PF-RSR-29-SAVE",
+    "DIFF-PF-RSR-29-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN (segue la radice)",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "DUPLICATE",
+   "nota": "di CL02-RSR-001"
+  },
+  {
+   "id": "CL02-RSR-054",
+   "descrizione": "LOAD roserpina.auto_green_delay_sec: '-1' accettato ⇒ -1.0 (nessuna validazione di dominio al caricamento)",
+   "records": [
+    "DIFF-PF-RSR-29-LOAD",
+    "DIFF-PF-RSR-29-RESTART",
+    "DIFF-PF-RSR-29-SAVE",
+    "DIFF-PF-RSR-29-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "BLOCKED",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "BLOCKED_PENDING_OWNER_DOMAIN",
+   "nota": "dominio non definito da fonte (Q1/Q2)"
+  },
+  {
+   "id": "CL02-RSR-055",
+   "descrizione": "LOAD roserpina.risk_profile: valori corrotti ['abc', 'nan', 'inf', '-1', 'empty'] ⇒ [\"<RiskProfile.BALANCED: 'BALANCED'>\", \"<RiskProfile.BALANCED: 'BALANCED'>\", \"<RiskProfile.BALANCED: 'BALANCED'>\", \"<RiskProfile.BALANCED: 'BALANCED'>\", \"<RiskProfile.BALANCED: 'BALANCED'>\"] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-30-RESTART"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "root LOAD-enum: test_rsr_corrupt_*; = finding S (_f/_b) Q1/Q2"
+  },
+  {
+   "id": "CL02-RSR-056",
+   "descrizione": "LOAD roserpina.auto_green_delay_enabled: valori corrotti ['abc', 'nan', 'inf', '-1', 'empty'] ⇒ ['False', 'False', 'False', 'False', 'False'] (fallback silenzioso / NaN propagato)",
+   "records": [
+    "DIFF-PF-RSR-36-LOAD",
+    "DIFF-PF-RSR-36-RESTART",
+    "DIFF-PF-RSR-36-SAVE",
+    "DIFF-PF-RSR-36-VALID"
+   ],
+   "oracolo_violato": "REQUIREMENT delle clausole dei record citati (provenienza in record_specific_L*.json)",
+   "evidenza": "sonda eseguita su 028cee9 (probe_all.json / probe_rsr.json)",
+   "stato": "OPEN — RED riprodotto; fix in proposta v3",
+   "raggiungibilita": "DB sqlite temporaneo reale; percorso loader SettingsService",
+   "fix": "nessuno (solo registrazione)",
+   "classificazione": "REAL",
+   "nota": "root LOAD-bool: test_rsr_corrupt_*; = finding S (_f/_b) Q1/Q2"
+  }
+ ],
+ "env_findings": [
+  {
+   "id": "CL02-ENV-001",
+   "descrizione": "Fallback Tk senza customtkinter: CTkComboBox(command=) su ttk.Combobox ⇒ TclError \"-command\" (mini_gui.py:182-184, chiamata :919-925); poi opzioni solo-CTk (progress_color) e Tabview.set mancanti",
+   "dipendenza_ambiente": "customtkinter assente dal venv (solo requirements-build-linux) + DISPLAY=:7",
+   "repro": "tests/close02/test_close02_tk_fallback.py RED a 028cee9; senza DISPLAY 1 passed 1 skipped",
+   "proposta": "command→<<ComboboxSelected>>, opzioni CTk scartate; pr04_quater[True] skip BLOCKED_ENV senza customtkinter",
+   "stato": "OPEN — proposta"
+  }
+ ],
+ "probe_findings": [
+  {
+   "id": "CL02-RSR-RACE-001",
+   "descrizione": "save_roserpina_config salva l'intera configurazione: due salvataggi interleaved (A carica, B carica, A salva K, B salva un'altra chiave) perdono la modifica di A su K; config_version non persistito a 028cee9",
+   "chiavi": [
+    "RSR-01",
+    "RSR-02",
+    "RSR-03",
+    "RSR-04",
+    "RSR-05",
+    "RSR-06",
+    "RSR-07",
+    "RSR-08",
+    "RSR-09",
+    "RSR-10",
+    "RSR-11",
+    "RSR-12",
+    "RSR-13",
+    "RSR-14",
+    "RSR-15",
+    "RSR-21",
+    "RSR-22",
+    "RSR-23",
+    "RSR-24",
+    "RSR-25",
+    "RSR-26",
+    "RSR-27",
+    "RSR-28",
+    "RSR-29",
+    "RSR-30",
+    "RSR-31",
+    "RSR-32",
+    "RSR-33",
+    "RSR-34",
+    "RSR-35",
+    "RSR-36",
+    "RSR-37"
+   ],
+   "n": 32,
+   "oracolo_violato": "RACE P1 «Una modifica concorrente o più segnali/tavoli non possono perdere limiti, prenotazioni o identità di configurazione»",
+   "evidenza": "probe_apply_race.json (028cee9)",
+   "stato": "OPEN_CANDIDATE — da riprodurre con test RED",
+   "nota": "la proposta F6 (transazione+config_version) non risolve il read-modify-write da config stantia"
+  }
+ ]
+}

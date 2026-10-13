@@ -1,0 +1,30 @@
+_____________ test_f6_red_config_version_persisted_and_incremented _____________
+
+    def test_f6_red_config_version_persisted_and_incremented():
+        from database import Database
+        from services.setting_service import SettingsService
+    
+        with tempfile.TemporaryDirectory() as td:
+            db = Database(str(Path(td) / "cfg.sqlite"))
+            svc = SettingsService(db)
+            svc.save_roserpina_config(RoserpinaConfig())
+            v1 = db.get_settings().get("roserpina.config_version")
+            svc.save_roserpina_config(RoserpinaConfig(max_single_bet_pct=17.5))
+            v2 = db.get_settings().get("roserpina.config_version")
+>           assert v1 is not None and v2 is not None, "nessuna versione salvata"
+E           AssertionError: nessuna versione salvata
+E           assert (None is not None)
+
+tests/close02/test_close02_findings.py:262: AssertionError
+=========================== short test summary info ============================
+FAILED tests/close02/test_close02_findings.py::test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows
+FAILED tests/close02/test_close02_findings.py::test_f1_unverifiable_exposure_blocks_new_risk
+FAILED tests/close02/test_close02_findings.py::test_f2_red_lay_measured_as_liability_against_single_cap
+FAILED tests/close02/test_close02_findings.py::test_f2_lay_liability_counts_toward_10_eur
+FAILED tests/close02/test_close02_findings.py::test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached[LIVE]
+FAILED tests/close02/test_close02_findings.py::test_f3_boundary_drawdown_exactly_10_eur_stops
+FAILED tests/close02/test_close02_findings.py::test_f4_red_drawdown_applies_in_simulation
+FAILED tests/close02/test_close02_findings.py::test_f4_unverifiable_equity_fails_closed
+FAILED tests/close02/test_close02_findings.py::test_f5_red_amount_above_cap_by_less_than_1e9_exceeds
+FAILED tests/close02/test_close02_findings.py::test_f6_red_config_version_persisted_and_incremented
+10 failed, 4 passed in 0.28s

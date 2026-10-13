@@ -1,0 +1,82 @@
+[
+ [
+  "DIFF-PF-BF-01-AUTH",
+  "betfair_market_api.list_event_types: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-02-AUTH",
+  "betfair_market_api.list_competitions: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-02-PROOF",
+  "betfair_market_api.list_competitions: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-04-AUTH",
+  "betfair_market_api.list_events: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-04-PROOF",
+  "betfair_market_api.list_events: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-08-AUTH",
+  "betfair_market_api.list_market_catalogue: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-08-PROOF",
+  "betfair_market_api.list_market_catalogue: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-09-AUTH",
+  "betfair_market_api.get_market_book: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna None (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-09-PROOF",
+  "betfair_market_api.get_market_book: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna None (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-12-AUTH",
+  "betfair_market_api.get_current_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-12-PROOF",
+  "betfair_market_api.get_current_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna [] (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-14-AUTH",
+  "simulation_broker.place_bet: mercato sconosciuto 1.999 ⇒ SUCCESS"
+ ],
+ [
+  "DIFF-PF-BF-14-PROOF",
+  "simulation_broker.place_bet: mercato sconosciuto 1.999 ⇒ SUCCESS"
+ ],
+ [
+  "DIFF-PF-BF-15-AUTH",
+  "betfair_client.cancel_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 0 (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-15-ERROR",
+  "betfair_client.cancel_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 0 (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-15-PROOF",
+  "betfair_client.cancel_orders: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'ok': True, 'market_id': '1.230000001', 'status': 'SUCCESS', 'cancelled_count': 0 (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-16-AUTH",
+  "betfair_client.replace_orders: result di tipo inatteso/FAILURE restituito grezzo, nessun ok/False normalizzato"
+ ],
+ [
+  "DIFF-PF-BF-16-PROOF",
+  "betfair_client.replace_orders: result di tipo inatteso/FAILURE restituito grezzo, nessun ok/False normalizzato"
+ ],
+ [
+  "DIFF-PF-BF-18-AUTH",
+  "betfair_market_api.get_account_funds: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'available': 0.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit':  (indistinguibile da esito valido/vuoto)"
+ ],
+ [
+  "DIFF-PF-BF-18-PROOF",
+  "betfair_market_api.get_account_funds: result JSON-RPC di tipo inatteso (gli errori JSON-RPC invece sollevano in _post_jsonrpc) ⇒ ritorna {'available': 0.0, 'exposure': 0.0, 'retained_commission': 0.0, 'exposure_limit':  (indistinguibile da esito valido/vuoto)"
+ ]
+]

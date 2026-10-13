@@ -1,0 +1,142 @@
+{
+ "RSR-03": {
+  "key": "roserpina.max_total_exposure_pct",
+  "raw_prima": "36.25",
+  "raw_dopo": "36.25",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-04": {
+  "key": "roserpina.max_event_exposure_pct",
+  "raw_prima": "19.25",
+  "raw_dopo": "19.25",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-12": {
+  "key": "roserpina.max_recovery_tables",
+  "raw_prima": "3",
+  "raw_dopo": "3",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-13": {
+  "key": "roserpina.commission_pct",
+  "raw_prima": "5.75",
+  "raw_dopo": "5.75",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-14": {
+  "key": "roserpina.min_stake",
+  "raw_prima": "1.35",
+  "raw_dopo": "1.35",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-15": {
+  "key": "roserpina.max_stake_abs",
+  "raw_prima": "10001.25",
+  "raw_dopo": "10001.25",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-16": {
+  "key": "roserpina.max_daily_loss",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-17": {
+  "key": "roserpina.max_open_exposure",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-18": {
+  "key": "roserpina.max_session_loss",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-19": {
+  "key": "roserpina.max_exposure_stop",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-20": {
+  "key": "roserpina.max_drawdown_hard_stop_pct",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-23": {
+  "key": "roserpina.liquidity_multiplier",
+  "raw_prima": "4.25",
+  "raw_dopo": "4.25",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-27": {
+  "key": "roserpina.max_stake_pct",
+  "raw_prima": "31.25",
+  "raw_dopo": "31.25",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-29": {
+  "key": "roserpina.auto_green_delay_sec",
+  "raw_prima": "3.75",
+  "raw_dopo": "3.75",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-31": {
+  "key": "roserpina.allow_recovery",
+  "raw_prima": "False",
+  "raw_dopo": "0",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-36": {
+  "key": "roserpina.auto_green_delay_enabled",
+  "raw_prima": "True",
+  "raw_dopo": "1",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-38": {
+  "key": "roserpina.max_order_exposure",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-39": {
+  "key": "roserpina.max_market_exposure",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-40": {
+  "key": "roserpina.max_event_exposure_abs",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ },
+ "RSR-41": {
+  "key": "roserpina.max_drawdown_abs",
+  "raw_prima": "7.5",
+  "raw_dopo": "7.5",
+  "versione_dopo": null,
+  "altre_chiavi_cambiate": []
+ }
+}

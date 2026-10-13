@@ -1,0 +1,19 @@
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_market_coincidente_verifica_il_pl
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override0-importo diverso]
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override1-altre bet nel mercato (non attribuibile)]
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override2-profit del rollup diverso]
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override3-commissione non finita]
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_attribuibile_o_diverso_resta_stimato[override4-commissione assente]
+FAILED tests/close02/test_close02_v11.py::test_a_rollup_non_disponibile_settlement_emesso_e_stimato
+FAILED tests/close02/test_close02_v11.py::test_a_commissione_a_livello_bet_non_documentata_ignorata
+FAILED tests/close02/test_close02_v11.py::test_a_perdita_con_commissione_zero_verificata
+FAILED tests/close02/test_close02_v11.py::test_a_due_bet_stesso_mercato_verifica_solo_sull_ultima
+FAILED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[STIMATO]
+FAILED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[None]
+FAILED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[verificato?]
+FAILED tests/close02/test_close02_v11.py::test_b_vincita_con_commissione_stimata_nessun_nuovo_ordine[]
+FAILED tests/close02/test_close02_v11.py::test_b_commissione_illeggibile_fail_closed
+FAILED tests/close02/test_close02_v11.py::test_c_gui_storico_mostra_etichetta
+FAILED tests/close02/test_close02_v11.py::test_c_gui_refresh_storico_usa_etichetta
+FAILED tests/close02/test_close02_v11.py::test_c_telegram_alert_mostra_etichetta
+18 failed, 3 passed in 0.49s

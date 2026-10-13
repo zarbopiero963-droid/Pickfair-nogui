@@ -1,0 +1,109 @@
+[
+ {
+  "id": "DIFF-PF-RSR-04-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-12-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-13-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-14-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-15-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-16-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-17-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-18-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-19-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-20-LOAD",
+  "errori": [
+   "clausole non verificate"
+  ],
+  "verificato_indipendente": false
+ },
+ {
+  "id": "DIFF-PF-RSR-23-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-27-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-29-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-31-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-36-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-38-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-39-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-40-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-41-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-02-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ },
+ {
+  "id": "DIFF-PF-RSR-03-LOAD",
+  "errori": [],
+  "verificato_indipendente": true
+ }
+]

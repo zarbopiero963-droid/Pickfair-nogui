@@ -1,0 +1,476 @@
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index aaaad1b..e6bcf73 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -9,6 +9,7 @@ import time
+ from typing import Any, Dict, List, Optional
+ 
+ import trading_config
++from core import validators
+ from core.order_identity import (
+     derive_customer_ref,
+     new_operation_customer_ref,
+@@ -673,9 +674,12 @@ class DutchingController:
+         table_manager = self._table_manager()
+         if table_manager and hasattr(table_manager, "total_exposure"):
+             try:
+-                return float(table_manager.total_exposure() or 0.0)
++                value = float(table_manager.total_exposure() or 0.0)
+             except Exception:
+-                return 0.0
++                # PROPOSTA close02 F1 (Q4 #426): esposizione non verificabile
++                # => nessun nuovo rischio (prima: 0.0, fail-open).
++                return float("inf")
++            return value if math.isfinite(value) and value >= 0.0 else float("inf")
+         return 0.0
+ 
+     def _event_current_exposure(self, event_key: str) -> float:
+@@ -1512,10 +1516,21 @@ class DutchingController:
+                 if not duplication_guard.acquire(event_key):
+                     return self._fail("Duplicato bloccato")
+ 
++            # PROPOSTA close02 F1/F2 (owner Q3/Q4 #426/6141450045):
++            # rischio = BACK stake / LAY liability; capitale a rischio totale
++            # <= 10.00 EUR (uguaglianza ammessa, nessuna tolleranza);
++            # esposizione non verificabile => blocco.
++            exposure = validators.order_exposure_or_inf(
++                self._normalize_side(payload.get("bet_type", "BACK")), stake, price
++            )
++            current_total_exposure = self._table_total_exposure()
++            if not math.isfinite(exposure) or not math.isfinite(current_total_exposure):
++                return self._fail("Esposizione non verificabile")
++            if validators.exceeds_cap(current_total_exposure + exposure, validators.OWNER_MAX_CAPITAL_AT_RISK_EUR):
++                return self._fail("Capitale a rischio oltre il limite owner 10.00 EUR")
++
+             bankroll = self._bankroll_current()
+             if bankroll > 0 and config is not None:
+-                exposure = stake
+-                current_total_exposure = self._table_total_exposure()
+                 max_total_exposure = bankroll * (
+                     float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
+                 )
+@@ -1523,10 +1538,10 @@ class DutchingController:
+                     float(getattr(config, "max_single_bet_pct", 18.0)) / 100.0
+                 )
+ 
+-                if exposure > max_single_bet + 1e-9:
++                if validators.exceeds_cap(exposure, max_single_bet):
+                     return self._fail("Stake oltre max_single_bet")
+ 
+-                if current_total_exposure + exposure > max_total_exposure + 1e-9:
++                if validators.exceeds_cap(current_total_exposure + exposure, max_total_exposure):
+                     return self._fail("Esposizione globale oltre limite")
+ 
+             order = {
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 707403c..6095683 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -3091,17 +3091,31 @@ class RuntimeController:
+         event_exposure = self._event_current_exposure(event_key)
+ 
+         # Enforcement A1: Drawdown Hard Stop (#320)
+-        if str(self.execution_mode).upper() == "LIVE":
++        # PROPOSTA close02 F3/F4 (owner Q5 #426): perdita assoluta
++        # peak - bankroll >= 10.00 EUR => stop, in SIM e LIVE; la soglia % resta
++        # un controllo aggiuntivo in entrambe le modalita'. Equity non
++        # verificabile (NaN/inf/illeggibile) => nessun nuovo rischio.
++        try:
++            current_bankroll = float(self.risk_desk.bankroll_current)
++            peak = float(self.risk_desk.equity_peak)
++        except (TypeError, ValueError, AttributeError):
++            current_bankroll = peak = float("nan")
++        if not (math.isfinite(current_bankroll) and math.isfinite(peak)):
++            self._reject_signal(signal, "equity_non_verificabile")
++            return
++        if peak > 0 and current_bankroll < peak:
++            loss = peak - current_bankroll
++            if validators.reaches_limit(loss, validators.OWNER_MAX_DRAWDOWN_EUR):
++                self.force_lockdown(f"drawdown_hard_stop_triggered:{loss:.2f}EUR")
++                self._reject_signal(signal, "drawdown_hard_stop_active")
++                return
+             drawdown_limit = getattr(self.config, "max_drawdown_hard_stop_pct", None)
+             if drawdown_limit is not None:
+-                current_bankroll = float(self.risk_desk.bankroll_current)
+-                peak = float(self.risk_desk.equity_peak)
+-                if peak > 0 and current_bankroll < peak:
+-                    current_dd = ((peak - current_bankroll) / peak) * 100.0
+-                    if current_dd >= float(drawdown_limit):
+-                        self.force_lockdown(f"drawdown_hard_stop_triggered:{current_dd:.2f}%")
+-                        self._reject_signal(signal, "drawdown_hard_stop_active")
+-                        return
++                current_dd = (loss / peak) * 100.0
++                if validators.reaches_limit(current_dd, drawdown_limit):
++                    self.force_lockdown(f"drawdown_hard_stop_triggered:{current_dd:.2f}%")
++                    self._reject_signal(signal, "drawdown_hard_stop_active")
++                    return
+ 
+         decision = self.mm.calculate(
+             signal=signal,
+diff --git a/core/validators.py b/core/validators.py
+index 04fb54c..160a76b 100644
+--- a/core/validators.py
++++ b/core/validators.py
+@@ -18,6 +18,7 @@ Modulo **puro**: nessuna dipendenza da GUI/CSV/Telegram, testabile headless.
+ """
+ 
+ import math
++from decimal import Decimal, InvalidOperation
+ 
+ # Nomi device riservati di Windows: un file con questo nome-base (anche con
+ # estensione) non è creabile. Match ESATTO, case-insensitive (es. "con" sì,
+@@ -208,18 +209,41 @@ def signal_cap_reason(signal, stake, cap_raw, total_exposure) -> str:
+     return open_exposure_cap_reason(cap_raw, total_exposure, risk)
+ 
+ 
++# Owner #426/6141450045 (Q3/Q5): capitale massimo a rischio e perdita massima
++# assoluta, 10.00 EUR, uguaglianza ammessa / stop a >= 10.00. PROPOSTA close02.
++OWNER_MAX_CAPITAL_AT_RISK_EUR = Decimal("10.00")
++OWNER_MAX_DRAWDOWN_EUR = Decimal("10.00")
++
++
++def _exact_decimal(value):
++    """Valore come Decimal esatto (repr del float, nessuna tolleranza).
++    Non finito / non numerico / bool => None (il chiamante nega)."""
++    if isinstance(value, bool):
++        return None
++    try:
++        d = value if isinstance(value, Decimal) else Decimal(repr(value) if isinstance(value, float) else str(value))
++    except (InvalidOperation, ValueError, TypeError):
++        return None
++    return d if d.is_finite() else None
++
++
+ def reaches_limit(amount, limit) -> bool:
+-    """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
+-    return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
++    """True se `amount` raggiunge `limit` (>=, esatto, owner Q3/Q5 #426).
++    PROPOSTA close02 F5: rimossa la tolleranza 1e-9 (#393 H-14), in conflitto
++    con Q3 "nessuna tolleranza". Valore illeggibile => True (fail-closed)."""
++    a, l = _exact_decimal(amount), _exact_decimal(limit)
++    if a is None or l is None:
++        return True
++    return a >= l
+ 
+ 
+ def exceeds_cap(amount, cap) -> bool:
+-    """True se `amount` supera `cap` oltre la tolleranza float.
+-
+-    Alla soglia esatta (anche con errore di arrotondamento) non supera."""
+-    if amount <= cap:
+-        return False
+-    return not math.isclose(amount, cap, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
++    """True se `amount` supera `cap` (>, esatto). Uguaglianza ammessa (Q3).
++    PROPOSTA close02 F5: nessuna tolleranza; illeggibile => True (fail-closed)."""
++    a, c = _exact_decimal(amount), _exact_decimal(cap)
++    if a is None or c is None:
++        return True
++    return a > c
+ 
+ 
+ def safe_filename_core(name: str) -> str:
+diff --git a/services/setting_service.py b/services/setting_service.py
+index a524e3d..721fcbc 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -422,7 +422,21 @@ class SettingsService:
+         if config.max_recovery_chase_abs is not None:
+             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
+ 
+-        self.db.save_settings(payload)
++        # PROPOSTA close02 F6: versione di configurazione persistita e
++        # incrementata nella STESSA transazione dei valori (lettura+scrittura
++        # sotto il write lock del Database). Versione corrotta => errore,
++        # nessun reset silenzioso a 1.
++        with self.db.transaction():
++            raw = self.db.get_settings().get("roserpina.config_version")
++            if raw in (None, ""):
++                previous = 0
++            else:
++                text = str(raw).strip()
++                if not text.isdigit():
++                    raise ValueError("roserpina.config_version non valida")
++                previous = int(text)
++            payload["roserpina.config_version"] = previous + 1
++            self.db.save_settings(payload)
+ 
+     def _optional_hard_stop_value(
+         self,
+diff --git a/tests/close02/test_close02_findings.py b/tests/close02/test_close02_findings.py
+new file mode 100644
+index 0000000..6e0c00d
+--- /dev/null
++++ b/tests/close02/test_close02_findings.py
+@@ -0,0 +1,272 @@
++"""PF-OWNER-CLOSE-ALL-02 §5 — test RED dei 6 finding di codice @028cee9 (proposta, non su #505).
++
++Regole owner: Q3/Q4 #426/6141450045, Q5 #426/6141136157, limiti 10 € #426/5656005416 e #426/6131980558.
++F1 esposizione solo in %; F2 LAY misurato sullo stake; F3 drawdown in %; F4 drawdown solo LIVE;
++F5 tolleranza 1e-9 sul cap; F6 nessuna versione di configurazione.
++"""
++from __future__ import annotations
++
++import tempfile
++from decimal import Decimal
++from pathlib import Path
++
++import pytest
++
++from core import validators
++from core.runtime_controller import RuntimeController
++from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
++
++
++# ---------------------------------------------------------------- harness dutching (manual_bet)
++class _Mode:
++    value = "ACTIVE"
++
++
++class _Cfg:
++    anti_duplication_enabled = False
++    allow_recovery = True
++    max_total_exposure_pct = 35.0
++    max_event_exposure_pct = 18.0
++    max_single_bet_pct = 18.0
++
++
++class _Desk:
++    def __init__(self, bankroll):
++        self.bankroll_current = bankroll
++
++
++class _TM:
++    def __init__(self, exposure=0.0, raises=False):
++        self._e, self._r = exposure, raises
++
++    def total_exposure(self):
++        if self._r:
++            raise RuntimeError("esposizione non verificabile")
++        return self._e
++
++    def find_by_event_key(self, _k):
++        return None
++
++
++class _Bus:
++    def __init__(self):
++        self.published = []
++
++    def publish(self, topic, payload):
++        self.published.append((topic, payload))
++
++
++class _RT:
++    def __init__(self, bankroll=100.0, exposure=0.0, raises=False, **cfg):
++        self.mode = _Mode()
++        self.config = _Cfg()
++        for k, v in cfg.items():
++            setattr(self.config, k, v)
++        self.risk_desk = _Desk(bankroll)
++        self.duplication_guard = None
++        self.table_manager = _TM(exposure, raises)
++        self.dutching_batch_manager = None
++
++
++def _bet(rt, side, stake, price):
++    from controllers.dutching_controller import DutchingController
++
++    bus = _Bus()
++    res = DutchingController(bus=bus, runtime_controller=rt).manual_bet(
++        {"market_id": "1.100", "selection_id": 7, "price": price, "stake": stake, "bet_type": side}
++    )
++    return res, bus
++
++
++# F1 — esposizione in € come capitale a rischio (10,00 €), non solo % del bankroll
++def test_f1_red_exposure_over_10_eur_blocked_even_if_pct_allows():
++    # 9.00 € già a rischio + BACK 2.00 = 11.00 € > 10.00 € ; la % (35% di 100 = 35 €) lo consentirebbe
++    res, bus = _bet(_RT(exposure=9.0), "BACK", 2.0, 2.0)
++    assert res["ok"] is False, "11.00 € di capitale a rischio deve essere bloccato (limite owner 10 €)"
++
++
++def test_f1_boundary_exposure_equal_10_eur_allowed():
++    # Q3: esposizione == cap ammessa
++    res, _ = _bet(_RT(exposure=8.0), "BACK", 2.0, 2.0)
++    assert res["ok"] is True
++
++
++def test_f1_unverifiable_exposure_blocks_new_risk():
++    # Q4: nessun nuovo ordine che aumenta il rischio se l'esposizione non è verificabile
++    res, _ = _bet(_RT(raises=True), "BACK", 1.0, 2.0)
++    assert res["ok"] is False
++
++
++# F2 — LAY: rischio = liability = stake*(quota-1)
++def test_f2_red_lay_measured_as_liability_against_single_cap():
++    # cap singolo 5% di 100 = 5.00 € ; LAY 1.00@10 => liability 9.00 > 5.00 (lo stake 1.00 passerebbe)
++    res, _ = _bet(_RT(max_single_bet_pct=5.0), "LAY", 1.0, 10.0)
++    assert res["ok"] is False
++
++
++def test_f2_lay_liability_counts_toward_10_eur():
++    # 2.00 € a rischio + LAY 1.00@10 (liability 9.00) = 11.00 € > 10.00 €
++    res, _ = _bet(_RT(exposure=2.0, max_single_bet_pct=100.0, max_total_exposure_pct=100.0), "LAY", 1.0, 10.0)
++    assert res["ok"] is False
++
++
++# ---------------------------------------------------------------- harness runtime (drawdown)
++class _RBus:
++    def __init__(self):
++        self.events = []
++
++    def subscribe(self, *_a):
++        return None
++
++    def publish(self, topic, payload=None):
++        self.events.append((topic, payload or {}))
++
++
++class _DB:
++    def _execute(self, *_a, **_k):
++        return None
++
++    def _fetch_one(self, *_a, **_k):
++        return None
++
++    def _fetch_all(self, *_a, **_k):
++        return []
++
++
++class _Settings:
++    def __init__(self, pct):
++        self.pct = pct
++
++    def load_roserpina_config(self):
++        cfg = RoserpinaConfig()
++        cfg.anti_duplication_enabled = False
++        cfg.max_daily_loss = 100.0
++        cfg.max_drawdown_hard_stop_pct = self.pct
++        cfg.max_open_exposure = 250.0
++        return cfg
++
++    def load_market_data_config(self):
++        return {"market_data_mode": "poll", "enabled": False, "market_ids": [], "snapshot_fallback_enabled": True, "snapshot_fallback_interval_sec": 1}
++
++
++class _BF:
++    def set_simulation_mode(self, _e):
++        return None
++
++    def get_account_funds(self):
++        return {"available": 0.0}
++
++    def status(self):
++        return {"connected": True}
++
++    def get_live_client(self):
++        return object()
++
++    def get_market_book_snapshot(self, _m):
++        return None
++
++    def ensure_stream_session_ready(self):
++        return True
++
++
++class _TG:
++    def start(self):
++        return {"started": True}
++
++    def stop(self):
++        return None
++
++    def status(self):
++        return {"connected": True}
++
++
++def _runtime(mode, pct, peak, bankroll):
++    bus = _RBus()
++    rc = RuntimeController(bus=bus, db=_DB(), settings_service=_Settings(pct), betfair_service=_BF(), telegram_service=_TG())
++    rc.mode = RuntimeMode.ACTIVE
++    rc.execution_mode = mode
++    if mode == "LIVE":
++        # Harness: il deploy gate reale (NO-GO senza readiness) rifiuterebbe il
++        # segnale PRIMA del controllo drawdown; lo stub isola il punto in esame.
++        rc.enforce_deploy_gate = lambda **_kw: {"allowed": True, "reason": "TEST_STUB", "reasons": []}
++    rc.risk_desk.equity_peak = peak
++    rc.risk_desk.bankroll_current = bankroll
++    rc.mm.calculate = lambda **_kw: type("D", (), {"approved": True, "recommended_stake": 1.0, "table_id": 1, "reason": "ok", "desk_mode": DeskMode.NORMAL, "metadata": {}})()
++    return rc, bus
++
++
++def _drawdown_rejected(bus):
++    return [e for e in bus.events if e[0] == "SIGNAL_REJECTED" and "drawdown" in str(e[1].get("reason", ""))]
++
++
++def _sig():
++    return {"market_id": "1.2", "selection_id": 11, "price": 2.0}
++
++
++# F3 — drawdown vincolante in € assoluti (10,00 €), la % non lo sostituisce
++@pytest.mark.parametrize("mode", ["LIVE"])
++def test_f3_red_drawdown_10_01_eur_stops_even_if_pct_not_reached(mode):
++    rc, bus = _runtime(mode, 20.0, 100.0, 89.99)  # perdita 10.01 € = 10.01% < 20%
++    rc._on_signal_received(_sig())
++    assert _drawdown_rejected(bus), "drawdown 10.01 € deve fermare (Q5)"
++
++
++def test_f3_boundary_drawdown_exactly_10_eur_stops():
++    rc, bus = _runtime("LIVE", 20.0, 100.0, 90.0)  # Q3: stop se perdita >= 10.00
++    rc._on_signal_received(_sig())
++    assert _drawdown_rejected(bus)
++
++
++def test_f3_below_10_eur_no_drawdown_stop():
++    rc, bus = _runtime("LIVE", 20.0, 100.0, 92.0)
++    rc._on_signal_received(_sig())
++    assert not _drawdown_rejected(bus)
++    # il segnale deve aver superato il punto drawdown (test non vacuo)
++    assert not [e for e in bus.events if "deploy_gate" in str(e[1])]
++
++
++# F4 — drawdown anche in SIM
++def test_f4_red_drawdown_applies_in_simulation():
++    rc, bus = _runtime("SIMULATION", 20.0, 100.0, 89.99)
++    rc._on_signal_received(_sig())
++    assert _drawdown_rejected(bus), "Q5: il limite vale in SIM e LIVE"
++
++
++def test_f4_unverifiable_equity_fails_closed():
++    rc, bus = _runtime("SIMULATION", 20.0, float("nan"), 95.0)
++    rc._on_signal_received(_sig())
++    assert not [e for e in bus.events if e[0] == "CMD_QUICK_BET"], "equity non verificabile => nessun nuovo rischio"
++
++
++# F5 — nessuna tolleranza numerica sul cap
++def test_f5_red_amount_above_cap_by_less_than_1e9_exceeds():
++    assert validators.exceeds_cap(10.000000001, 10.0) is True
++
++
++def test_f5_equality_allowed_and_one_cent_over_blocked():
++    assert validators.exceeds_cap(Decimal("10.00"), Decimal("10.00")) is False
++    assert validators.exceeds_cap(Decimal("10.01"), Decimal("10.00")) is True
++
++
++def test_f5_decimal_sum_exact_at_cap():
++    total = Decimal("0.1") + Decimal("0.2")
++    assert validators.exceeds_cap(total, Decimal("0.3")) is False
++
++
++# F6 — versione di configurazione salvata insieme ai valori
++def test_f6_red_config_version_persisted_and_incremented():
++    from database import Database
++    from services.setting_service import SettingsService
++
++    with tempfile.TemporaryDirectory() as td:
++        db = Database(str(Path(td) / "cfg.sqlite"))
++        svc = SettingsService(db)
++        svc.save_roserpina_config(RoserpinaConfig())
++        v1 = db.get_settings().get("roserpina.config_version")
++        svc.save_roserpina_config(RoserpinaConfig(max_single_bet_pct=17.5))
++        v2 = db.get_settings().get("roserpina.config_version")
++        assert v1 is not None and v2 is not None, "nessuna versione salvata"
++        assert int(v2) == int(v1) + 1
++        # restart: nuovo processo sullo stesso file
++        db2 = Database(str(Path(td) / "cfg.sqlite"))
++        assert int(db2.get_settings()["roserpina.config_version"]) == int(v2)

@@ -1,0 +1,169 @@
+{
+ "per_record": [
+  {
+   "rid": "RSR-04",
+   "inizio": "12:04:32",
+   "sonda_s": 0.09,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-12",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-13",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-14",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-15",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-16",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-17",
+   "inizio": "12:04:33",
+   "sonda_s": 0.09,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-18",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-19",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-20",
+   "inizio": "12:04:33",
+   "sonda_s": 0.07,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-23",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-27",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-29",
+   "inizio": "12:04:33",
+   "sonda_s": 0.07,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-31",
+   "inizio": "12:04:33",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-36",
+   "inizio": "12:04:34",
+   "sonda_s": 0.07,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-38",
+   "inizio": "12:04:34",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-39",
+   "inizio": "12:04:34",
+   "sonda_s": 0.07,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-40",
+   "inizio": "12:04:34",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-41",
+   "inizio": "12:04:34",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-02",
+   "inizio": "12:04:34",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  },
+  {
+   "rid": "RSR-03",
+   "inizio": "12:04:34",
+   "sonda_s": 0.08,
+   "build_s": 0.008,
+   "verifica_s": 0.019
+  }
+ ],
+ "verify_out": "20 / 21",
+ "tempo_agente": {
+  "inizio": "11:53",
+  "fine": "12:04",
+  "minuti": 11,
+  "record": 20,
+  "sec_per_record": 33
+ },
+ "cause_rilavorazione": [
+  "fonte P1/P2 nella riga di fase #461/6085510337, non nella sezione controllo citata (17 record)",
+  "id clausole sfalsati in RSR-29 (frammento intestazione)",
+  "sonda inadeguata per chiavi assenti in RoserpinaConfig (RSR-38..41)",
+  "predicati troppo permissivi: bool nan->False, riavvio NA==NA",
+  "clausole D derivate da ALIGN-D02: ri-ancorate a citazioni verbatim SHA",
+  "casi D3 non applicabili senza sonda",
+  "termini monetari nel testo NA"
+ ],
+ "blocco": "RSR-20-LOAD: clausola owner drawdown 10 € non osservabile in LOAD (serve sonda APPLY/FAILSAFE)"
+}
