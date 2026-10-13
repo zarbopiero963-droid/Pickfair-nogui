@@ -1,0 +1,32 @@
+{
+ "CASH-14-FULL": {
+  "atteso": "fill completo => CASHOUT_SUCCESS",
+  "eventi": [
+   [
+    "CASHOUT_SUCCESS",
+    {
+     "status": "DONE",
+     "matched": 2.86,
+     "green_up": -7.15,
+     "reason": null
+    }
+   ]
+  ],
+  "verdetto": "CONFORME"
+ },
+ "CASH-14-PARTIAL": {
+  "atteso": "fill parziale => nessun DONE con green_up intero; parziale e residuo dichiarati",
+  "eventi": [
+   [
+    "CASHOUT_FAILED",
+    {
+     "status": "PARTIAL",
+     "matched": 1.0,
+     "green_up": null,
+     "reason": "partial_fill"
+    }
+   ]
+  ],
+  "verdetto": "CONFORME"
+ }
+}

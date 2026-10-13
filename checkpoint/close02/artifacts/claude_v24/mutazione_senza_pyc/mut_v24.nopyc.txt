@@ -1,0 +1,8 @@
+UCCISO           W01 parziale come successo
+UCCISO           W02 confronto senza centesimi
+UCCISO           W03 residuo non riportato
+UCCISO           W04 ledger parziale come MATCHED
+UCCISO           W05 severita' bassa
+UCCISO           W06 eseguito/residuo non persistiti
+UCCISO           W07 stato sbagliato
+uccisi 7 / 7

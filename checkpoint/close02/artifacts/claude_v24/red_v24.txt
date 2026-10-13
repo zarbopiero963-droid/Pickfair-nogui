@@ -1,0 +1,5 @@
+        h.on_cashout_failed({"status": "PARTIAL", "reason": "partial_fill", "bet_id": "900000000555",
+FAILED tests/close02/test_close02_v24_cashout_partial.py::test_parziale_non_e_un_successo_ne_un_done
+FAILED tests/close02/test_close02_v24_cashout_partial.py::test_ledger_registra_parziale
+FAILED tests/close02/test_close02_v24_cashout_partial.py::test_gestore_residuo_notifica_alta_e_non_cancella_l_hedge
+3 failed, 3 passed in 0.09s

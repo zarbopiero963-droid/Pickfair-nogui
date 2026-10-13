@@ -14,7 +14,8 @@
 8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch`. Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
 9. `artifacts/patches/close02_v20_to_v21_delta.patch`: v21 (Claude, CLOSE03), correzione CL21-RACE-ADMIT-001 + test. Cumulativo: `close02_findings_proposal_v21.patch`. Verificato: v20 + delta = v21 (sha256 a3c0ed140bb7…).
 10. `artifacts/patches/close02_v21_to_v22_delta.patch`: v22 (Claude, CLOSE03), correzione CL22-AUDIT-DECISION-001 + test. Cumulativo: `close02_findings_proposal_v22.patch`. Verificato: v21 + delta = v22 (sha256 387146c272ab…).
-11. `artifacts/patches/close02_v22_to_v23_delta.patch`: v23 (Claude, CLOSE03), correzioni CL25-CFG-VALID-001 e CL24-CFG-CONFLICT-NORM-001 + test + design handoff. Cumulativo: `close02_findings_proposal_v23.patch` (**ultimo**). Verificato su worktree pulito: v22 cumulativa + delta = v23 (sha256 483fd79b3fc4…).
+11. `artifacts/patches/close02_v22_to_v23_delta.patch`: v23 (Claude, CLOSE03), correzioni CL25-CFG-VALID-001 e CL24-CFG-CONFLICT-NORM-001 + test + design handoff. Cumulativo: `close02_findings_proposal_v23.patch`. Verificato su worktree pulito: v22 cumulativa + delta = v23 (sha256 483fd79b3fc4…).
+12. `artifacts/patches/close02_v23_to_v24_delta.patch`: v24 (Claude, CLOSE03), correzione CL26-CASH-PARTIAL-001 + test + design handoff. Cumulativo: `close02_findings_proposal_v24.patch` (**ultimo**). Verificato: v23 + delta = v24 (sha256 1ba2e209f56f…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -592,3 +593,40 @@ Correzione:
 - **Mutazione mirata:** 11/11 uccisi.
 - **Suite completa py3.11:** **7659 passed, 0 failed**.
 - **Design handoff** (§7 tab Roserpina) aggiornato con la regola di salvataggio e il messaggio `CONFIG_INVALID:<chiave>`.
+
+### 8. L4 CASH — CL26-CASH-PARTIAL-001 (P1) corretto in v24
+**Fonti** (#461/6085516609, righe verbatim): «PF-CASH-14 | Fill completo verificato», «PF-CASH-15 | Fill parziale e residuo protetto»; V2 «parziale→contabilizzare solo eseguito e mantenere residuo».
+
+I casi CASH del template L4 sono generici («la clausola P1 è soddisfatta»): oracoli presi dalle righe verbatim.
+
+**Difetto (main, #505, v23).** Hedge LAY 2,86 abbinato per 1,00 ⇒ `CASHOUT_SUCCESS` con stato `DONE` e `green_up` intero (−7,15). Su `CASHOUT_SUCCESS` `telegram_sender` invia «🚨 CASHOUT ESEGUITO» ai follower.
+
+**Correzione.**
+- Abbinato al centesimo meno del richiesto ⇒ `CASHOUT_FAILED` con stato `PARTIAL`, `matched` e `remaining`; nessun `CASHOUT_SUCCESS`.
+- Ledger del bot: stato `PARTIAL`; il bet resta nell'identità del bot.
+- Residual handler: notifica con gravità HIGH e record con eseguito e residuo; l'hedge residuo a riposo NON viene cancellato, perché se si abbina riduce il rischio.
+- Docstring dell'executor e design handoff (§16 Cashout) aggiornati.
+
+**Prove.**
+- **RED su v23:** 3/6 falliti.
+- **GREEN:** 6/6.
+- **Mutazione mirata:** 7/7 uccisi.
+- **Suite completa py3.11:** **7665 passed, 0 failed**.
+- **Sonda `probe_l4_cash14.py`:** v24 CONFORME, main/#505/v23 NON_CONFORME.
+
+### 9. Mutazione: artefatto della cache bytecode e riesecuzione di tutte le campagne
+**Problema.** Un mutante con la stessa dimensione del sorgente, scritto nello stesso secondo, può essere eseguito dal `.pyc` dell'originale (mutante «sopravvissuto» falso), e in teoria il `.pyc` di un mutante può restare dopo il ripristino.
+
+**Riesecuzione.** Tutte le campagne v18–v24 sono state rieseguite con `PYTHONDONTWRITEBYTECODE=1` e cache rimossa, ciascuna sullo snapshot che verificava (v19 e v20 su `refs/claude/v19snap` / `v20snap`). Esiti in `claude_v24/mutazione_senza_pyc/`:
+
+| Campagna | Uccisi | Note |
+|---|---|---|
+| v18 | 15/16 | G10 equivalente, prova in `core/validators.py:242-263` |
+| v19 | 11/11 | |
+| v20 | 12/12 | |
+| v21 | 7/7 | |
+| v22 | 11/11 | |
+| v23 | 11/11 | |
+| v24 | 7/7 | |
+
+Nessuna uccisione falsa né sopravvivenza nascosta.

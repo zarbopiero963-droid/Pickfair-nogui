@@ -1,0 +1,2 @@
+7665 passed, 16 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 203.52s (0:03:23)
+comando: python3.11 -m pytest -q -p no:cacheprovider -n 8 (028cee9 + v24; poi rafforzata una sola asserzione del test v24: tests/close02 410 passed)
