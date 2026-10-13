@@ -7,6 +7,8 @@
 2. `artifacts/patches/close02_v13_to_v14_delta.patch`: v14, delta sopra v13. Suite completa verde; **non verificato in modo indipendente, nessun picco ratificato dall'owner.**
 3. `artifacts/patches/close02_v14_to_v15_delta.patch`: v15, solo test (`tests/close02/test_close02_v15.py`), mirati a M8 e al mutante M27 originale.
 
+4. `artifacts/patches/close02_v15_to_v16_delta.patch`: v16 (Claude), solo test (`tests/close02/test_close02_v16.py`), uccide M51. Cumulativo: `close02_findings_proposal_v16.patch`.
+
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
 ## Requisiti
@@ -56,6 +58,60 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 - Nessuno dei tre è "chiuso con prova": restano da formalizzare.
 
 **Stato v14:** suite completa verde e mutazione completa eseguita. **NON VERIFICATO in modo indipendente** e non ratificato dall'owner.
+
+## v16 — passaggio Grok → Claude (13/10/2026)
+Solo continuità. Patch isolata, nessuna integrazione. Gate A **NON PASS**. #505 non toccata; nessuna PR, nessun merge, nessun LIVE. Spesa AI extra: 0 €.
+
+**Verifica del checkpoint (Claude, copia pulita).**
+- Ramo `checkpoint/gate-a-close02` alla testa `79e2978` (v15); `681353d` (v14) ne è l'antenato.
+- `SHA256SUMS_checkpoint`: **328/328 OK** dalla radice del repo.
+- Ambiente: Python **3.11.15** (venv), pytest 9.1.1, xdist 3.8.0, 4 CPU.
+
+| Controllo | Dichiarato (Grok) | Riprodotto (Claude) | Esito |
+|---|---|---|---|
+| `reproduce.sh v14`: tests/close02 | 271 passed, 1 xfailed | 270 passed, **1 skipped**, 1 xfailed | differenza solo ENV (vedi sotto) |
+| preflight L7b / L9 (base) | 21/21, 38/38 | 21/21, 38/38 | uguale |
+| indip L7b / L9, t80u | 21/21 + 7/7, 38/38 | uguale | uguale |
+| test preflight/indep | 39 passed | 39 passed | uguale |
+| Suite completa v14 (-n 4) | 7525 passed, 15 skipped | 7524 passed, **16 skipped**, 2 xfailed, 0 failed | differenza solo ENV |
+| Sonda LOAD v3 su v14 (`claude_v16/probe_load_v3_v14_claude.json`) | `probe_load_v3_v14.json` | identica a parte `pid_sonda` (21 campi, volatili) | uguale |
+| Valutazione L7b su v14 dalla sonda di Claude | 315 / 0 / 11 | **315 / 0 / 11** | uguale |
+| Sonda RESTART v2 su v14 (`claude_v16/probe_restart_v2_v14_claude.json`) | `probe_restart_v2_v14.json` | **0 differenze** su 38 chiavi | uguale |
+| L9 ricostruito dalla sonda di Claude (`claude_v16/record_specific_L9_v14_claude.json`) | 38 record, 357/357 | **38 record, 357/357 CONFORMI** | uguale |
+| Mutanti M8, M81 (v15) | uccisi | uccisi | uguale |
+
+**Unica differenza.** `tests/close02/test_close02_tk_fallback.py` viene saltato: "ENV: richiede DISPLAY e customtkinter assente". Il container Claude non ha tkinter (CL02-ENV-001). Non è una regressione.
+
+**Mutazioni (`claude_v16/mutation_v16_claude.txt`).**
+- **M27 (ricostruito): EQUIVALENTE DIMOSTRATO.**
+  - Il sito mutato è `core/pnl_engine.py:556`, `str(realized.get("pnl_status","STIMATO"))`.
+  - `realized` viene solo da `_apply_realized_market_net_commission` (`:370-371`), che restituisce `MarketNetRealizedSettlementAggregator.apply()` (`:43-75`).
+  - Quel dizionario contiene sempre `**commission_labels(False)`, cioè `pnl_status="STIMATO"` (`:21-26`, perché `False is True` è falso).
+  - Fra `:526` e `:556` `realized` non viene modificato.
+  - Nessuna sottoclasse né riassegnazione di `_apply_realized_market_net_commission` o di `_market_net_realized_aggregator` nel codice di produzione (grep, test esclusi; le riassegnazioni in `simulation_broker.py` riguardano un altro oggetto).
+  - Quindi l'espressione vale `"STIMATO"` per ogni input, come il mutante. VERIFICATO arriva solo dopo, via `payload.update(commission_labels(True))` (`:576`).
+- **M51: NON equivalente, ora UCCISO** da `tests/close02/test_close02_v16.py` (solo test).
+  - In `_apply_realized_pnl_without_mutating_bankroll` l'hook `on_new_peak` scatta nella finestra solo se `equity_peak <= 0`. Il ripristino `sync_bankroll(bankroll_before)` (`core/risk_desk.py:101-103`) notifica infatti un "nuovo massimo".
+  - Col mutante, `_persist_equity_peak` scrive su DB un picco non proveniente da un saldo verificato (contro la regola v12, commento `runtime_controller.py:4096-4098`) e azzera il blocco `equity_peak_non_persistito`.
+  - Esiti: v15 + v16 **2 passed**; con il mutante **1 failed**.
+- **M8 e M81: uccisi** (riprodotti).
+- Mutazione completa M1–M81 su v16: **non ancora rieseguita** da Claude (prossima attività).
+
+**Suite completa v16** (v15 + test v16, -n 4): **7528 passed, 16 skipped, 2 xfailed, 0 failed**.
+
+**Patch.**
+- `close02_v15_to_v16_delta.patch`: solo il nuovo file di test.
+- `close02_findings_proposal_v16.patch`: cumulativo v1–v16. Verificato che il cumulativo v15 ricostruito dall'albero coincide con `close02_findings_proposal_v15.patch` (a parte le righe `index`).
+- `git apply --check` su 028cee9: cumulativo v16 OK; delta v15→v16 sopra v15 OK.
+
+**Prossime attività (in ordine, regola anti-stallo owner).**
+1. Mutazione completa M1–M81 su v16 (FULL), per confermare il conteggio 77/80 di v14 più i 3 di v15–v16.
+2. Lotti L4, L6 e CASH (record NOT_READY) con le regole L7b/L8b/L9.
+
+**Bloccato (decisione o autorizzazione owner).**
+- Revisione indipendente L1/L2 (Sol, a pagamento).
+- Ratifica del picco equity ricostruito.
+- Semantica `betIds`+`groupBy=MARKET`.
 
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |

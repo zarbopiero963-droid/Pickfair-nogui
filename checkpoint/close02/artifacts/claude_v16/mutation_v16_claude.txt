@@ -1,0 +1,14 @@
+# close02 v16 — mutazione mirata (Claude, 13/10/2026). Python 3.11.15 (venv), pytest 9.1.1, xdist 3.8.0, -n 4.
+# Albero: 028cee9 + v13 + v13->v14 + v14->v15 (= close02_findings_proposal_v15.patch, verificato identico).
+# Harness: artifacts/mut_all.py con solo percorso interprete/backup locali e -n 4 (sottoinsieme T predefinito).
+== M8_gate_segnale_rimosso
+1 failed, 2804 passed, 8 skipped, 2 xfailed, 19 warnings in 31.24s      -> UCCISO (riprodotto v15)
+== M27_etichetta_non_propagata
+2944 passed, 8 skipped, 2 xfailed, 19 warnings in 21.00s                 -> SOPRAVVISSUTO: EQUIVALENTE DIMOSTRATO (vedi CHECKPOINT.md)
+== M51_hook_picco_attivo
+2944 passed, 8 skipped, 2 xfailed, 19 warnings in 18.99s                 -> SOPRAVVISSUTO su v15: NON equivalente
+== M81_storico_senza_etichetta_M27_originale
+1 failed, 2805 passed, 8 skipped, 2 xfailed, 19 warnings in 17.15s      -> UCCISO (riprodotto v15)
+# v16: tests/close02/test_close02_v16.py (solo test)
+v16 su albero v15:          2 passed
+v16 con mutante M51 attivo: 1 failed, 1 passed                           -> M51 UCCISO

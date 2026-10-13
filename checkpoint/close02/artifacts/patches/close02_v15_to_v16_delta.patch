@@ -1,0 +1,51 @@
+diff --git a/tests/close02/test_close02_v16.py b/tests/close02/test_close02_v16.py
+new file mode 100644
+index 0000000..5f56af3
+--- /dev/null
++++ b/tests/close02/test_close02_v16.py
+@@ -0,0 +1,45 @@
++"""close02 v16 (Claude, passaggio Grok->Claude) — test mirato per il mutante M51.
++
++M51 riattiva l'hook ``on_new_peak`` durante ``_apply_realized_pnl_without_mutating_bankroll``.
++Non e' equivalente: con picco <= 0 il ripristino ``sync_bankroll(bankroll_before)`` notifica un
++"nuovo massimo" e l'hook scriverebbe su DB un picco che non viene da un saldo verificato
++(regola v12, commento in ``core/runtime_controller.py``). Il test fissa il comportamento atteso:
++l'applicazione del P/L realizzato non scrive mai il picco e non altera lo stato di blocco.
++Solo test: nessuna modifica al codice."""
++from core import risk_persistence
++from core.risk_desk import RiskDesk
++from core.runtime_controller import RuntimeController
++
++
++def _rc_minimo(peak, bankroll):
++    rc = RuntimeController.__new__(RuntimeController)
++    rc.db = object()
++    rc.risk_desk = RiskDesk()
++    rc.risk_desk.bankroll_current = bankroll
++    rc.risk_desk.equity_peak = peak
++    rc.risk_desk.on_new_peak = lambda _p: rc._persist_equity_peak()
++    rc._equity_peak_restored = True
++    rc._equity_peak_blocked = "equity_peak_non_persistito"
++    rc._equity_peak_persisted = 0.0
++    return rc
++
++
++def test_m51_pnl_realizzato_non_scrive_il_picco_con_picco_zero(monkeypatch):
++    scritture = []
++    monkeypatch.setattr(risk_persistence, "persist_equity_peak",
++                        lambda db, peak: scritture.append(peak) or True)
++    rc = _rc_minimo(peak=0.0, bankroll=0.0)
++    rc._apply_realized_pnl_without_mutating_bankroll(-5.0)
++    assert scritture == [], scritture
++    assert rc._equity_peak_blocked == "equity_peak_non_persistito"
++    assert rc.risk_desk.equity_peak == 0.0
++    assert rc.risk_desk.bankroll_current == 0.0
++
++
++def test_m51_hook_ripristinato_dopo_il_pnl(monkeypatch):
++    monkeypatch.setattr(risk_persistence, "persist_equity_peak", lambda db, peak: True)
++    rc = _rc_minimo(peak=100.0, bankroll=90.0)
++    hook = rc.risk_desk.on_new_peak
++    rc._apply_realized_pnl_without_mutating_bankroll(25.0)
++    assert rc.risk_desk.on_new_peak is hook
++    assert rc.risk_desk.equity_peak == 100.0 and rc.risk_desk.bankroll_current == 90.0
