@@ -196,6 +196,56 @@ Sostituiti, per le chiavi monetarie, dai casi discriminanti della sonda. **I tes
 2. L4 (461 record: BF, AUTH/SCHEMA/ERROR/STATE/PROOF, OBSERVABLE, S1…) e CASH (5 record).
 3. Preparare il pacchetto di revisione indipendente con le nuove evidenze (senza chiamate a pagamento).
 
+### 6. Lotto CASH (aggiunta v17, nessuna modifica al codice)
+Il lotto CASH ha 5 record (PF-CASH-04/19/21/23/25), con 3 casi ciascuno, dalla fonte #461/6085516609 (sha 56fc7836…, paragrafo «Dopo richiesta cashout» V1–V5). Le sonde sono dinamiche, girano su `#505` (618884e) e su `v17`, senza rete né credenziali.
+
+Script e output stanno in `artifacts/claude_v17/cash/` (`probe_cash04.py`, `probe_cash25.py`, `probe_cash_rest.py`, `cash*_{pr505,v17}.json`, `cash_summary.json`).
+
+Riproduzione: `PROBE_ROOT=<albero> PROBE_OUT=<out.json> python3.11 probe_cash*.py`.
+
+| Caso | #505 | v17 | Nota |
+|---|---|---|---|
+| CASH-04-R1 | CONFORME | CONFORME | Cancel del residuo B2 confermato prima dell'hedge; hedge LAY 2.86@7.0 solo sul matched |
+| CASH-04-R1 cancel KO | CONFORME | CONFORME | Nessun hedge |
+| CASH-04-R2 | CONFORME | CONFORME | listCurrentOrders KO ⇒ CASHOUT_FAILED |
+| CASH-04-R3 | NON_CONFORME | NON_CONFORME | Ordine ambiguo senza betId ignorato, hedge pubblicato (identità solo per betId, cfr. L06-F1) |
+| CASH-25-CTRL | CONFORME | CONFORME | |
+| CASH-25-R1 | CONFORME | NON_CONFORME | Il fencing esiste solo nella #505 |
+| CASH-25-R1b | NON_CONFORME | NON_CONFORME | Barriera per selezione: l'altra selezione dello stesso mercato passa. Interpretazione dello scope, da confermare in revisione |
+| CASH-25-R2 | CONFORME | NON_CONFORME | `cashout_invalidation_stale` |
+| CASH-25-R3 | NON_CONFORME | NON_CONFORME | Il fencing finisce con l'hedge parziale anche con il residuo aperto. Oracolo preparato, non verbatim |
+| CASH-21-R1 (×2 esiti) | CONFORME | CONFORME | Lordo dai profit per-bet = −50/7 su entrambi gli esiti |
+| CASH-21-R2 | CONFORME | CONFORME | Eseguito 1,50: lordo +1,00, netto 0,955. Il residuo esposto ricade su CASH-25-R3 |
+| CASH-21-R3 | CONFORME | CONFORME | Retry ⇒ `CLEARED_SETTLEMENT_DUPLICATE` per ogni bet, un solo evento per bet |
+| CASH-19-R1/R2 | NON_CONFORME | NON_CONFORME | Il poller di chiusura legge solo i cleared, senza confronto con i current (L07-F5, MISSING) |
+| CASH-19-R3 | test | test | `test_betfair_client_cleared_orders.py` (moreAvailable incompleto ⇒ raise): PASS su entrambi |
+| CASH-23-R1 | NON_CONFORME | NON_CONFORME | **Nuovo CL17-RST-GHOST-001**, vedi sotto |
+| CASH-23-R2 | NON_CONFORME | CONFORME | recover KO ⇒ v17 blocca (CL02-RST-001). La #505 ignora l'esito della recovery (`runtime_controller.py:2456-2464`) |
+| CASH-23-R2b | NON_CONFORME | NON_CONFORME | Hedge ambiguo pre-crash non visibile al riavvio: nessuna traccia locale, perché l'hedge passa da `OrderRouter.place` senza saga. Debole: Betfair rende visibile l'ordine se esiste |
+| CASH-23-R3 | test | test | `test_poll_dedupe_durevole_dopo_riavvio_nessuna_riemissione`, `test_sim_giro_checkpoint_durevole_presente_non_riemette`: PASS su entrambi (24/24 con i test cleared) |
+
+**CL17-RST-GHOST-001 (P0, aperto, non corretto).** Al riavvio, un hedge LAY 2.86@7.00 ancora EXECUTABLE sull'exchange viene recuperato come ghost order (`LIVE_WITH_RECOVERED_GHOSTS`), ma:
+- `STARTUP_GHOST_ORDER_RECOVERED` non ha alcun subscriber (main, #505, v17);
+- `table_manager.total_exposure()` resta 0;
+- un nuovo ingresso sullo stesso mercato viene ammesso, con una liability reale di ≈17,14 € invisibile al tetto `max_open_exposure` di 10 €.
+
+Questo viola OWNER-EXPOSURE-01 («matched e unmatched», «non sottostimare», «esito non modellato ⇒ fallisce in sicurezza») e V3.
+
+**Perché non è corretto nel patch.** La ricostruzione dell'esposizione dai ghost order richiede il collegamento ordine ↔ tavolo ↔ posizione e le condizioni di rilascio. OWNER-SETTLEMENT-02 li ordina ai passi 1 e 5 e vieta tavoli bloccati in permanenza. Due opzioni per la correzione, da scegliere in revisione o in #505 fase 3:
+- (a) occupare un tavolo `RECOVERY` con il caso peggiore dell'ordine, rilasciato dal settlement o dalla scomparsa dai current;
+- (b) bloccare il nuovo rischio finché esistono ordini remoti non modellati, ricontrollando a ogni giro.
+
+La sonda `probe_cash_rest.py` è la riproduzione RED.
+
+**Bilancio CASH.** Casi valutati: 20 (15 dal record più R1b, R1-cancel-ko, R2b e lo sdoppiamento per esito di CASH-21-R1).
+
+| Albero | Conformi | Non conformi | Coperti da test esistenti |
+|---|---|---|---|
+| #505 | 10 | 8 | 2 |
+| v17 | 9 | 9 | 2 |
+
+Il lotto resta **NOT_READY** per il Gate A: CASH-19 è MISSING, CL17-RST-GHOST-001 è aperto, CASH-04-R3 e CASH-25-R3 sono aperti.
+
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |
 |---|---|

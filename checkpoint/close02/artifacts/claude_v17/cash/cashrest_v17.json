@@ -1,0 +1,127 @@
+{
+ "CASH-21-R1[selezione vince]": {
+  "atteso": "P/L dai profit per-bet del settlement: lordo -50/7, nessuna commissione su netto di mercato negativo",
+  "osservato": {
+   "close_events": 2,
+   "gross_sum": -7.142857,
+   "net_sum": -7.142857,
+   "duplicate_raises": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-21-R1[selezione perde]": {
+  "atteso": "P/L dai profit per-bet del settlement: lordo -50/7, nessuna commissione su netto di mercato negativo",
+  "osservato": {
+   "close_events": 2,
+   "gross_sum": -7.142857,
+   "net_sum": -7.142857,
+   "duplicate_raises": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-21-R2": {
+  "atteso": "P/L sul solo eseguito: +10 - 9 = +1.00 lordo (non -50/7 del richiesto)",
+  "osservato": {
+   "close_events": 2,
+   "gross_sum": 1.0,
+   "net_sum": 0.955,
+   "duplicate_raises": []
+  },
+  "verdetto": "CONFORME",
+  "nota": "la parte 'residuo resta esposto' e' coperta da CASH-25-R3/CASH-04-R1 (tavolo/fencing)"
+ },
+ "CASH-21-R3": {
+  "atteso": "un solo aggiornamento per bet; il retry e' rifiutato (CLEARED_SETTLEMENT_DUPLICATE)",
+  "osservato": {
+   "close_events": 2,
+   "gross_sum": -7.142857,
+   "net_sum": -7.142857,
+   "duplicate_raises": [
+    "CLEARED_SETTLEMENT_DUPLICATE",
+    "CLEARED_SETTLEMENT_DUPLICATE"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-19-R1": {
+  "atteso": "chiusura dichiarata solo se current e cleared concordano sui due bet",
+  "osservato": {
+   "poller_legge_current_orders": false
+  },
+  "verdetto": "NON_CONFORME",
+  "nota": "statico: il ciclo di chiusura reale realizza dai soli cleared (nessun confronto con i current); il payoff -50/7 e' comunque corretto (CASH-21-R1)"
+ },
+ "CASH-19-R2": {
+  "atteso": "hedge matched nei cleared ma ancora EXECUTABLE nei current => nessuna chiusura",
+  "osservato": {
+   "poller_legge_current_orders": false
+  },
+  "verdetto": "NON_CONFORME",
+  "nota": "senza lettura dei current la discordanza non e' rilevabile (L07-F5)"
+ },
+ "CASH-19-R3": {
+  "atteso": "lettura cleared incompleta (moreAvailable) => nessuna riconciliazione",
+  "osservato": {
+   "pagina_vuota_con_moreAvailable_solleva": true
+  },
+  "verdetto": "VEDI_TEST",
+  "nota": "coperto dai test tests/unit/test_betfair_client_cleared_orders.py (eseguiti a parte)"
+ },
+ "CASH-23-R1": {
+  "atteso": "hedge unmatched ritrovato al riavvio: tavolo/rischio del mercato restano aperti; nuovo ingresso nello scope non ammesso finche' il cashout non e' risolto",
+  "osservato": {
+   "recover": {
+    "ok": true,
+    "reason": "RECOVERED",
+    "pending_sagas": 0,
+    "ghost_orders_recovered": 1,
+    "startup_mode": "LIVE_WITH_RECOVERED_GHOSTS"
+   },
+   "exposure_dopo_recovery": 0.0,
+   "orders": 1,
+   "rejects": []
+  },
+  "verdetto": "NON_CONFORME",
+  "nota": "STARTUP_GHOST_ORDER_RECOVERED non ha subscriber: l'ordine e' solo registrato"
+ },
+ "CASH-23-R2": {
+  "atteso": "esito non verificabile al riavvio => nessun nuovo ingresso",
+  "osservato": {
+   "recover": {
+    "ok": false,
+    "reason": "STARTUP_RECONCILIATION_REQUIRED",
+    "pending_sagas": 0,
+    "ghost_orders_recovered": 0,
+    "startup_mode": "BLOCKED"
+   },
+   "exposure_dopo_recovery": 0.0,
+   "orders": 0,
+   "rejects": [
+    "startup_recovery_blocked:STARTUP_RECONCILIATION_REQUIRED"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-23-R2b": {
+  "atteso": "cashout ambiguo pre-crash => nessun nuovo ingresso finche' non risolto",
+  "osservato": {
+   "recover": {
+    "ok": true,
+    "reason": "RECOVERED",
+    "pending_sagas": 0,
+    "ghost_orders_recovered": 0,
+    "startup_mode": "LIVE_FLAT"
+   },
+   "exposure_dopo_recovery": 0.0,
+   "orders": 1,
+   "rejects": []
+  },
+  "verdetto": "NON_CONFORME",
+  "nota": "l'hedge del cashout passa da OrderRouter.place senza saga durevole: al riavvio non resta traccia locale dell'esito ambiguo"
+ },
+ "CASH-23-R3": {
+  "atteso": "settlement gia' applicato prima del crash: nessuna ripetizione",
+  "verdetto": "VEDI_TEST",
+  "nota": "coperto da tests/core/test_settlement_poller.py::test_poll_dedupe_durevole_dopo_riavvio_nessuna_riemissione e ::test_sim_giro_checkpoint_durevole_presente_non_riemette"
+ }
+}

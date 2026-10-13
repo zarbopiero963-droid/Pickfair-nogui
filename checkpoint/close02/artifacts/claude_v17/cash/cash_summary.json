@@ -1,0 +1,82 @@
+{
+ "CASH-04-R1": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-04-R1-cancel-ko": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-04-R2": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-04-R3": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-25-CTRL": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-25-R1": {
+  "pr505": "CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-25-R1b": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-25-R2": {
+  "pr505": "CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-25-R3": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-21-R1[selezione vince]": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-21-R1[selezione perde]": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-21-R2": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-21-R3": {
+  "pr505": "CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-19-R1": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-19-R2": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-19-R3": {
+  "pr505": "VEDI_TEST",
+  "v17": "VEDI_TEST"
+ },
+ "CASH-23-R1": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-23-R2": {
+  "pr505": "NON_CONFORME",
+  "v17": "CONFORME"
+ },
+ "CASH-23-R2b": {
+  "pr505": "NON_CONFORME",
+  "v17": "NON_CONFORME"
+ },
+ "CASH-23-R3": {
+  "pr505": "VEDI_TEST",
+  "v17": "VEDI_TEST"
+ }
+}

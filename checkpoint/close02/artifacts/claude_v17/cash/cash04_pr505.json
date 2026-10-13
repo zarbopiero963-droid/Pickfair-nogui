@@ -1,0 +1,126 @@
+{
+ "CASH-04-R1": {
+  "atteso": "cancel del residuo B2 confermato prima dell'hedge; hedge solo sul matched (20/7)",
+  "osservato": {
+   "summary": {
+    "published": 1,
+    "positions": 1,
+    "skipped": 0
+   },
+   "cancels": [
+    [
+     "1.230000777",
+     [
+      "B2"
+     ]
+    ]
+   ],
+   "hedges": [
+    {
+     "market_id": "1.230000777",
+     "selection_id": 1222347,
+     "side": "LAY",
+     "stake": 2.86,
+     "price": 7.0,
+     "green_up": -7.15,
+     "original_pos": {
+      "side": "BACK",
+      "stake": 10.0,
+      "price": 2.0
+     },
+     "source": "TELEGRAM"
+    }
+   ],
+   "fails": [],
+   "eventi": [
+    "REQ_EXECUTE_CASHOUT"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-04-R1-cancel-ko": {
+  "atteso": "cancel del residuo non confermato => nessun hedge pubblicato",
+  "osservato": {
+   "summary": {
+    "published": 0,
+    "positions": 1,
+    "skipped": 1
+   },
+   "cancels": [
+    [
+     "1.230000777",
+     [
+      "B2"
+     ]
+    ],
+    [
+     "1.230000777",
+     [
+      "B2"
+     ]
+    ]
+   ],
+   "hedges": [],
+   "fails": [],
+   "eventi": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-04-R2": {
+  "atteso": "nessun hedge; CASHOUT_FAILED (fail-closed)",
+  "osservato": {
+   "summary": {
+    "published": 0,
+    "positions": 0,
+    "skipped": 0,
+    "reason": "current_orders_error"
+   },
+   "cancels": [],
+   "hedges": [],
+   "fails": [
+    {
+     "reason": "list_current_orders:listCurrentOrders: errore",
+     "status": "ERROR",
+     "source": "TELEGRAM"
+    }
+   ],
+   "eventi": [
+    "CASHOUT_FAILED"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "CASH-04-R3": {
+  "atteso": "ordine ambiguo nello scope => nessuna chiusura dichiarata sul solo matched (hedge sospeso o ambiguo conteggiato)",
+  "osservato": {
+   "summary": {
+    "published": 1,
+    "positions": 1,
+    "skipped": 0
+   },
+   "cancels": [],
+   "hedges": [
+    {
+     "market_id": "1.230000777",
+     "selection_id": 1222347,
+     "side": "LAY",
+     "stake": 2.86,
+     "price": 7.0,
+     "green_up": -7.15,
+     "original_pos": {
+      "side": "BACK",
+      "stake": 10.0,
+      "price": 2.0
+     },
+     "source": "TELEGRAM"
+    }
+   ],
+   "fails": [],
+   "eventi": [
+    "REQ_EXECUTE_CASHOUT"
+   ]
+  },
+  "verdetto": "NON_CONFORME",
+  "nota": "l'ambiguo senza betId non entra nell'identita' del router (cfr. L06-F1)"
+ }
+}

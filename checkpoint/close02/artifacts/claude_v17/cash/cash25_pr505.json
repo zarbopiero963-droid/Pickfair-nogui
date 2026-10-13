@@ -1,0 +1,69 @@
+{
+ "CASH-25-CTRL": {
+  "descrizione": "nessun cashout in corso",
+  "atteso": "AMMESSO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R1": {
+  "descrizione": "cashout in corso (scope mercato) + ingresso stesso mercato",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "cashout_invalidation_active"
+   ],
+   "scope_barriera": [
+    [
+     "market",
+     "1.234"
+    ]
+   ]
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R1b": {
+  "descrizione": "cashout su selezione + ingresso altra selezione stesso mercato",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "scope_barriera": [
+    [
+     "selection",
+     "1.234",
+     11
+    ]
+   ]
+  },
+  "nota": "oracolo CASH-25-R1: scope del tavolo = mercato; la barriera per selezione non copre le altre selezioni",
+  "verdetto": "NON_CONFORME"
+ },
+ "CASH-25-R2": {
+  "descrizione": "ingresso accodato prima del cashout, eseguito dopo",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "cashout_invalidation_stale"
+   ]
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R3": {
+  "descrizione": "cashout concluso parziale, residuo aperto, nuovo ingresso nello scope",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "nota": "oracolo: il fencing resta finche' lo scope ha residuo aperto",
+  "verdetto": "NON_CONFORME"
+ }
+}
