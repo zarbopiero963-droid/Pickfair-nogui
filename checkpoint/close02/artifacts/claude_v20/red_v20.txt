@@ -1,0 +1,15 @@
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[drawdown_10_eur-_dd]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[config_corrotta-_corrupt]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[risk_stop-_riskstop]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[picco_non_persistito-_peak]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[recovery_avvio_bloccata-_startup]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_bloccato_come_il_segnale[esposizione_remota-_remote]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[drawdown_10_eur-_dd]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[config_corrotta-_corrupt]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[risk_stop-_riskstop]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[picco_non_persistito-_peak]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[recovery_avvio_bloccata-_startup]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_bloccato[esposizione_remota-_remote]
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_manual_bet_esposizione_remota_entra_nel_cap
+FAILED tests/close02/test_close02_v20_parity_lanes.py::test_precheck_dutching_cap_assoluto_max_open_exposure
+14 failed, 1 passed in 0.64s

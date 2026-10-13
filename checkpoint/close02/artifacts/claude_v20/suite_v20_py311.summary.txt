@@ -1,0 +1,2 @@
+7585 passed, 16 skipped, 2 xfailed, 25 warnings, 8 subtests passed in 212.70s (0:03:32)
+comando: python3.11 -m pytest -q -p no:cacheprovider -n 8 (028cee9 + v20 cumulativa, finale)

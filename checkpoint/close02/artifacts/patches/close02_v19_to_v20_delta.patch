@@ -1,0 +1,386 @@
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index f65454c..81915d9 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -670,7 +670,29 @@ class DutchingController:
+     def _batch_manager(self):
+         return getattr(self.runtime, "dutching_batch_manager", None)
+ 
++    def _runtime_block_reason(self) -> str:
++        """PROPOSTA close02 v20 (CL20-PAR-MANUAL-001): blocchi di nuovo rischio del runtime
++        (drawdown, config corrotta, risk stop, picco, recovery, daily loss) anche sulle
++        corsie GUI. Un gate presente ma che solleva => blocco (fail-closed)."""
++        gate = getattr(self.runtime, "entry_risk_block_reason", None)
++        if not callable(gate):
++            return ""
++        try:
++            return str(gate() or "")
++        except Exception:
++            logger.exception("Gate di rischio del runtime illeggibile")
++            return "gate_rischio_runtime_illeggibile"
++
+     def _table_total_exposure(self) -> float:
++        # PROPOSTA close02 v20 (CL20): stessa esposizione dei cap del runtime
++        # (tavoli + ordini remoti ritrovati al riavvio, CL17).
++        total_fn = getattr(self.runtime, "_open_exposure_total", None)
++        if callable(total_fn):
++            try:
++                value = float(total_fn(refresh=True))
++            except Exception:
++                return float("inf")
++            return value if math.isfinite(value) and value >= 0.0 else float("inf")
+         table_manager = self._table_manager()
+         if table_manager and hasattr(table_manager, "total_exposure"):
+             try:
+@@ -1030,6 +1052,10 @@ class DutchingController:
+         if not self._runtime_active():
+             return self._fail("Runtime non attivo")
+ 
++        blocco = self._runtime_block_reason()  # PROPOSTA close02 v20 (CL20)
++        if blocco:
++            return self._fail(f"Nuovo rischio bloccato ({blocco})")
++
+         try:
+             results, avg_profit, book_pct, avg_net_profit = (
+                 self._calculate_dutching_with_commission(payload)
+@@ -1151,6 +1177,20 @@ class DutchingController:
+             profit_epsilon_enabled and raw_spread is not None and raw_spread > profit_epsilon + 1e-9
+         )
+ 
++        if config is not None:
++            # PROPOSTA close02 v20 (CL20-PAR-MANUAL-001): il cap assoluto in euro
++            # `max_open_exposure` (RSR-17, owner D2) vale anche per il batch dutching,
++            # come per la corsia segnale e il bet manuale; esposizione non
++            # verificabile => blocco.
++            if not (math.isfinite(current_total_exposure) and math.isfinite(batch_exposure)):
++                return self._fail("Esposizione non verificabile")
++            cap_reason = validators.open_exposure_cap_reason(
++                getattr(config, "max_open_exposure", None), current_total_exposure, batch_exposure)
++            if cap_reason:
++                return self._fail(f"Esposizione oltre il cap configurato ({cap_reason})",
++                                  batch_exposure=round(batch_exposure, 2),
++                                  current_total_exposure=round(current_total_exposure, 2))
++
+         if bankroll > 0 and config is not None:
+             max_total_exposure = bankroll * (
+                 float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
+@@ -1469,6 +1509,10 @@ class DutchingController:
+             if not self._runtime_active():
+                 return self._fail("Runtime non attivo")
+ 
++            blocco = self._runtime_block_reason()  # PROPOSTA close02 v20 (CL20)
++            if blocco:
++                return self._fail(f"Nuovo rischio bloccato ({blocco})")
++
+             if not self._bus_available():
+                 return self._fail("EventBus non disponibile")
+ 
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 166b5de..11b577d 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2746,6 +2746,40 @@ class RuntimeController:
+             },
+         )
+ 
++    def entry_risk_block_reason(self) -> str:
++        """Motivo di blocco di OGNI nuovo rischio, per le corsie che non passano da
++        ``_on_signal_received`` (bet manuale e dutching GUI). PROPOSTA close02 v20
++        (CL20-PAR-MANUAL-001): stessa regola della corsia segnale (L6 PARITY), senza
++        effetti collaterali. Stringa vuota = nessun blocco; dati non verificabili => blocco."""
++        if getattr(self, "_startup_recovery_blocked", ""):
++            return f"startup_recovery_blocked:{self._startup_recovery_blocked}"
++        corrupt = tuple(getattr(self.config, "corrupt_keys", ()) or ())
++        if corrupt:
++            return "config_corrotta:" + ",".join(corrupt)
++        if self._daily_loss_entry_blocked():
++            return "emergency_stop_active"
++        reason = self._loss_block_reason() or self._exposure_stop(trigger=False)
++        if reason:
++            return reason
++        try:
++            bankroll = float(self.risk_desk.bankroll_current)
++            peak = float(self.risk_desk.equity_peak)
++        except (TypeError, ValueError, AttributeError):
++            return "equity_non_verificabile"
++        if not (math.isfinite(bankroll) and math.isfinite(peak)):
++            return "equity_non_verificabile"
++        if peak > 0 and bankroll < peak:
++            loss = peak - bankroll
++            dd_eur = validators.effective_drawdown_eur(getattr(self.config, "max_drawdown_abs", None))
++            if dd_eur is None:
++                return "drawdown_threshold_non_valido"
++            if validators.reaches_limit(loss, dd_eur):
++                return "drawdown_hard_stop_active"
++            dd_pct = getattr(self.config, "max_drawdown_hard_stop_pct", None)
++            if dd_pct is not None and validators.reaches_limit((loss / peak) * 100.0, dd_pct):
++                return "drawdown_hard_stop_active"
++        return ""
++
+     def _open_exposure_total(self, refresh: bool = False) -> float:
+         """Esposizione aperta per i cap: tavoli di questo processo + ordini remoti ritrovati
+         al riavvio (PROPOSTA close02 v18, CL17-RST-GHOST-001). Mai sotto-stimata: un valore
+diff --git a/tests/close02/test_close02_v20_parity_lanes.py b/tests/close02/test_close02_v20_parity_lanes.py
+new file mode 100644
+index 0000000..aae0d3b
+--- /dev/null
++++ b/tests/close02/test_close02_v20_parity_lanes.py
+@@ -0,0 +1,141 @@
++"""close02 v20 — CL20-PAR-MANUAL-001: le corsie GUI (bet manuale e dutching) applicano gli stessi blocchi di
++nuovo rischio della corsia segnale.
++
++Fonte: L6 PARITY (#461/6085510337) «Applicare la stessa regola pertinente a BACK/LAY e GUI/headless/MCP»;
++owner #426/6141902809 D1/D2 (drawdown 10 EUR, cap assente => blocco di ogni nuovo rischio); #426/6143637861 t80u;
++#506/6144980907 (blocco anche «nel dutching manuale»); OWNER-EXPOSURE-01 (esposizione mai sotto-stimata).
++RED su v19: manual_bet e precheck ammettevano con drawdown raggiunto, config corrotta, risk stop, picco non
++persistito, recovery di avvio bloccata ed esposizione remota oltre il tetto."""
++from pathlib import Path
++
++import pytest
++
++from controllers.dutching_controller import DutchingController
++from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
++from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
++
++CAPS = {"max_open_exposure": 10.0, "max_order_exposure": 1.0, "max_market_exposure": 2.0,
++        "max_event_exposure_abs": 2.0, "max_drawdown_abs": 10.0}
++H1 = {"betId": "100000000002", "marketId": "1.230000777", "selectionId": 1222347, "side": "LAY", "handicap": 0.0,
++      "priceSize": {"price": 7.0, "size": 2.86}, "sizeMatched": 0.0, "sizeRemaining": 2.86, "status": "EXECUTABLE"}
++MANUAL = {"market_id": "1.234", "selection_id": 11, "price": 2.0, "stake": 0.5, "bet_type": "BACK",
++          "event_key": "man-1"}
++DUTCH = {"market_id": "1.234", "event_name": "Alpha v Beta", "market_name": "Match Odds", "total_stake": 1.0,
++         "commission": 4.5, "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"},
++                                            {"selectionId": 2, "price": 4.0, "side": "BACK"}]}
++
++
++def _chain(tmp_path, setup=None):
++    c = _catena(Path(tmp_path))
++    for k, v in CAPS.items():
++        setattr(c.rc.config, k, v)
++    if setup:
++        setup(c)
++    return c
++
++
++def _dd(c):
++    c.rc.risk_desk.equity_peak, c.rc.risk_desk.bankroll_current = 1000.0, 990.0
++
++
++def _corrupt(c):
++    c.rc.config.corrupt_keys = ("roserpina.book_block",)
++
++
++def _riskstop(c):
++    c.rc._risk_stop_reason = "risk_stop_manuale"
++
++
++def _peak(c):
++    c.rc._equity_peak_blocked = "equity_peak_non_persistito"
++
++
++def _startup(c):
++    c.rc._startup_recovery_blocked = "STARTUP_RECONCILIATION_REQUIRED"
++
++
++def _remote(c):
++    c.rc.remote_exposure.seed([dict(H1)])
++    c.rc.betfair_service.list_current_orders = lambda market_ids=None: [dict(H1)]
++
++
++BLOCCHI = [("drawdown_10_eur", _dd), ("config_corrotta", _corrupt), ("risk_stop", _riskstop),
++           ("picco_non_persistito", _peak), ("recovery_avvio_bloccata", _startup), ("esposizione_remota", _remote)]
++
++
++@pytest.mark.parametrize("nome,setup", BLOCCHI)
++def test_manual_bet_bloccato_come_il_segnale(tmp_path, nome, setup):
++    c = _chain(tmp_path / "s", setup)
++    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
++    assert len(c.broker.state.orders) == 0 and _rifiuti(c), nome  # la corsia segnale blocca gia'
++    m = _chain(tmp_path / "m", setup)
++    r = DutchingController(m.bus, m.rc).manual_bet(dict(MANUAL))
++    assert len(m.broker.state.orders) == 0, (nome, r)
++    assert not r.get("ok", r.get("success", False)), (nome, r)
++
++
++@pytest.mark.parametrize("nome,setup", BLOCCHI)
++def test_precheck_dutching_bloccato(tmp_path, nome, setup):
++    c = _chain(tmp_path, setup)
++    pre = DutchingController(c.bus, c.rc).precheck(dict(DUTCH))
++    assert pre["ok"] is False, (nome, pre)
++
++
++def test_controllo_corsie_gui_ammesse_senza_blocchi(tmp_path):
++    m = _chain(tmp_path / "m")
++    r = DutchingController(m.bus, m.rc).manual_bet(dict(MANUAL))
++    assert len(m.broker.state.orders) == 1, r
++    d = _chain(tmp_path / "d")
++    assert DutchingController(d.bus, d.rc).precheck(dict(DUTCH))["ok"] is True
++
++
++def test_manual_bet_esposizione_remota_entra_nel_cap(tmp_path):
++    # 17.16 di liability remota + 0.50 > 10: il bet manuale vede la stessa esposizione del runtime
++    m = _chain(tmp_path, _remote)
++    r = DutchingController(m.bus, m.rc).manual_bet(dict(MANUAL))
++    assert len(m.broker.state.orders) == 0, r
++    assert "esposizione" in str(r).lower() or "exposure" in str(r).lower(), r
++
++
++def test_precheck_dutching_cap_assoluto_max_open_exposure(tmp_path):
++    # esposizione aperta 9.50 + batch 1.00 > 10: bloccato; il % bankroll (50% di 1000) non basta a fermarlo
++    def occupy(c):
++        t = c.rc.table_manager._tables[2]
++        t.status, t.current_event_key, t.market_id, t.current_exposure = "ACTIVE", "altro", "1.999", 9.5
++    c = _chain(tmp_path, occupy)
++    pre = DutchingController(c.bus, c.rc).precheck(dict(DUTCH))
++    assert pre["ok"] is False and "max_open_exposure" in str(pre.get("error")), pre
++
++
++def test_precheck_dutching_cap_assente_blocca_d2(tmp_path):
++    c = _chain(tmp_path, lambda c: setattr(c.rc.config, "max_open_exposure", None))
++    pre = DutchingController(c.bus, c.rc).precheck(dict(DUTCH))
++    assert pre["ok"] is False and "max_open_exposure_assente" in str(pre.get("error")), pre
++
++
++def _pending(c):
++    c.rc._daily_loss_pending_stop = True
++
++
++def _nan_equity(c):
++    c.rc.risk_desk.bankroll_current = float("nan")
++
++
++@pytest.mark.parametrize("nome,setup", [("daily_loss_pending_stop", _pending), ("equity_nan", _nan_equity)])
++def test_manual_bet_rifiutato_dal_gate_non_solo_al_broker(tmp_path, nome, setup):
++    # l'esito del bet manuale e' un rifiuto esplicito (motivo leggibile), non un ok seguito da uno stop al broker
++    m = _chain(tmp_path, setup)
++    r = DutchingController(m.bus, m.rc).manual_bet(dict(MANUAL))
++    assert not r.get("ok", r.get("success", False)) and "Nuovo rischio bloccato" in str(r.get("error")), (nome, r)
++    assert len(m.broker.state.orders) == 0
++
++
++def test_gate_runtime_che_solleva_blocca_fail_closed(tmp_path):
++    m = _chain(tmp_path)
++
++    def boom():
++        raise RuntimeError("stato rischio illeggibile")
++    m.rc.entry_risk_block_reason = boom
++    r = DutchingController(m.bus, m.rc).manual_bet(dict(MANUAL))
++    assert not r.get("ok", r.get("success", False)) and "gate_rischio_runtime_illeggibile" in str(r.get("error")), r
++    assert len(m.broker.state.orders) == 0
+diff --git a/tests/e2e/test_dutching_controller_e2e.py b/tests/e2e/test_dutching_controller_e2e.py
+index 83b753f..1965ce2 100644
+--- a/tests/e2e/test_dutching_controller_e2e.py
++++ b/tests/e2e/test_dutching_controller_e2e.py
+@@ -17,6 +17,8 @@ class FakeConfig:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+ 
+diff --git a/tests/failure/test_dutching_controller_failures.py b/tests/failure/test_dutching_controller_failures.py
+index aa17060..9465739 100644
+--- a/tests/failure/test_dutching_controller_failures.py
++++ b/tests/failure/test_dutching_controller_failures.py
+@@ -41,6 +41,8 @@ class FakeConfig:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+ 
+diff --git a/tests/integration/test_dutching_book_guard.py b/tests/integration/test_dutching_book_guard.py
+index a222049..3d848e4 100644
+--- a/tests/integration/test_dutching_book_guard.py
++++ b/tests/integration/test_dutching_book_guard.py
+@@ -38,6 +38,8 @@ class _Config:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+     # book_block / book_warning volutamente ASSENTI di default: verifica fallback.
+diff --git a/tests/integration/test_dutching_controller_integration.py b/tests/integration/test_dutching_controller_integration.py
+index eb25cd6..1ebb170 100644
+--- a/tests/integration/test_dutching_controller_integration.py
++++ b/tests/integration/test_dutching_controller_integration.py
+@@ -17,6 +17,8 @@ class FakeConfig:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+ 
+diff --git a/tests/integration/test_dutching_liquidity_guard.py b/tests/integration/test_dutching_liquidity_guard.py
+index 2b3d39b..1facc83 100644
+--- a/tests/integration/test_dutching_liquidity_guard.py
++++ b/tests/integration/test_dutching_liquidity_guard.py
+@@ -43,6 +43,8 @@ class _Config:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+     book_warning = 105.0
+diff --git a/tests/integration/test_dutching_max_stake_pct_guard.py b/tests/integration/test_dutching_max_stake_pct_guard.py
+index b3c0a62..d314df9 100644
+--- a/tests/integration/test_dutching_max_stake_pct_guard.py
++++ b/tests/integration/test_dutching_max_stake_pct_guard.py
+@@ -40,6 +40,8 @@ class _Config:
+     allow_recovery = True
+     # Gate bloccanti RILASSATI (100%) => non interferiscono col warning testato.
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+     # max_stake_pct volutamente ASSENTE di default: verifica fallback costante.
+diff --git a/tests/integration/test_dutching_profit_epsilon_guard.py b/tests/integration/test_dutching_profit_epsilon_guard.py
+index e2638bd..a449533 100644
+--- a/tests/integration/test_dutching_profit_epsilon_guard.py
++++ b/tests/integration/test_dutching_profit_epsilon_guard.py
+@@ -40,6 +40,8 @@ class _Config:
+     allow_recovery = True
+     # Gate bloccanti RILASSATI (100%) => non interferiscono col warning testato.
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+     # profit_epsilon volutamente ASSENTE di default: verifica fallback costante.
+diff --git a/tests/invariant/test_dutching_controller_invariants.py b/tests/invariant/test_dutching_controller_invariants.py
+index 9acaa26..69ff74f 100644
+--- a/tests/invariant/test_dutching_controller_invariants.py
++++ b/tests/invariant/test_dutching_controller_invariants.py
+@@ -17,6 +17,8 @@ class FakeConfig:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+ 
+diff --git a/tests/unit/test_dutching_controller.py b/tests/unit/test_dutching_controller.py
+index f892242..33315dd 100644
+--- a/tests/unit/test_dutching_controller.py
++++ b/tests/unit/test_dutching_controller.py
+@@ -17,6 +17,8 @@ class FakeConfig:
+     anti_duplication_enabled = True
+     allow_recovery = True
+     max_total_exposure_pct = 100.0
++    # close02 v20 (CL20, owner D2): cap assoluto obbligatorio dichiarato; assente => blocco
++    max_open_exposure = 1_000_000.0
+     max_event_exposure_pct = 100.0
+     max_single_bet_pct = 100.0
+ 

@@ -10,7 +10,8 @@
 4. `artifacts/patches/close02_v15_to_v16_delta.patch`: v16 (Claude), solo test (`tests/close02/test_close02_v16.py`), uccide M51. Cumulativo: `close02_findings_proposal_v16.patch`.
 5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch`.
 6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch`. Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
-7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch` (**ultimo**). Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
+7. `artifacts/patches/close02_v18_to_v19_delta.patch`: v19 (Claude), correzioni CL18-CASH-LEDGER-001 e CL19-CASH-REF-001 + test. Cumulativo: `close02_findings_proposal_v19.patch`. Verificato: v18 + delta = v19 (sha256 8f9004ea0234…).
+8. `artifacts/patches/close02_v19_to_v20_delta.patch`: v20 (Claude, CLOSE03), correzione CL20-PAR-MANUAL-001 + test. Cumulativo: `close02_findings_proposal_v20.patch` (**ultimo**). Verificato: v19 ricomposta + delta = v20 (sha256 20c7dadc7887…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -423,3 +424,81 @@ Nessuna modifica a #505 o a `main`. **Gate A: NON PASS.** Le prove stanno in `ar
 1. Lotti Gate A L4, L6 e CASH con le regole L7b/L8b/L9.
 2. Lotti Gate A L4, L6 e CASH (sonde dinamiche) con le stesse regole.
 3. Revisione indipendente L1/L2 solo con autorizzazione owner.
+
+## CLOSE03 — v20, Claude (mandato owner «PICKFAIR GATE A CLOSE03», 13/10/2026)
+Nessuna modifica a #505 o a `main`. **Gate A: NON PASS. LIVE: NO-GO.** Le prove stanno in `artifacts/claude_v20/`.
+
+### 0. Verifica della baseline v19 dichiarata
+| Punto | Esito |
+|---|---|
+| Branch remoto | `8ef215b` = commit dichiarato |
+| `main` | `028cee9` (invariato) |
+| `#505` | `618884e` (invariata) |
+| SHA256SUMS_checkpoint | 385/385 OK |
+| Catena delle patch | v13 + delta v14…v19 applicati in sequenza su 028cee9 = cumulativa v19 (sha256 8f9004ea…); tree ricomposto `ccb4a751` = tree testato |
+| Riproducibilità | suite completa sull'albero v19 ricomposto da zero: **7566 passed, 0 failed** (`suite_v19_baseline_ricomposta.summary.txt`) |
+| Scansione segreti dell'intero checkpoint | unico match: la riga di policy in questo file; nessuna credenziale |
+| #506 | commenti 6151964578 (v18) e 6152140837 (v19) restituiti dall'API alla pubblicazione |
+
+**Differenze rispetto alla baseline:** nessuna.
+
+### 1. L6 PARITY — sonda fra corsie d'ingresso (`probe_l6_parity.py`)
+**Perché una sonda nuova.** I 771 casi del template PARITY ripetono gli stessi tre oracoli (K1…K12 identici), quindi non discriminano fra alberi. Sostituiti, come per APPLY, da casi discriminanti sull'invariante della fase: «stessa regola per BACK/LAY e GUI/headless/MCP; non confondere stake e liability».
+
+**Sonda:** corsia segnale (`_on_signal_received`) contro corsia GUI (`DutchingController.manual_bet`), stessa catena reale.
+
+| Caso | main | #505 | v19 | v20 |
+|---|---|---|---|---|
+| controllo | C | C | C | C |
+| LAY liability oltre il cap | NC (manuale ammette) | NC | C | C |
+| BACK uguale al cap | C | C | C | C |
+| perdita ≥ 10 € (D1) | NC | NC | NC | C |
+| config corrotta | NC | NC | NC | C |
+| risk stop (P38) | NC | NC | NC | C |
+| picco non persistito | NC | NC | NC | C |
+| esposizione remota (CL17) | n/a | n/a | NC | C |
+| MCP | NOT VERIFIED (corsia inesistente) | | | |
+
+**SIM/LIVE.** La regola è lo stesso codice del runtime per entrambe le modalità. Nessuna prova sull'exchange reale: **NOT VERIFIED** per LIVE.
+
+### 2. CL20-PAR-MANUAL-001 (P0) corretto in v20, RED → GREEN
+**Difetto.** Le corsie GUI (bet manuale e dutching `precheck`) pubblicavano `CMD_QUICK_BET` senza i blocchi di nuovo rischio della corsia segnale:
+- drawdown 10 €;
+- config corrotta;
+- risk stop;
+- picco non persistito;
+- recovery di avvio bloccata;
+- daily-loss pending;
+- esposizione remota;
+- inoltre il `precheck` dutching non applicava il cap assoluto `max_open_exposure` (RSR-17, D2).
+
+`RiskGate` del TradingEngine controlla solo limiti per-ordine (stake minimo, quota, max_win, book, liquidità). Fonti: L6 PARITY; D1/D2; t80u; #506/6144980907 (blocco anche «nel dutching manuale»).
+
+**Correzione.**
+- `RuntimeController.entry_risk_block_reason()`: stessa regola della corsia segnale, senza effetti collaterali.
+- `manual_bet` e `precheck` la applicano; un gate che solleva ⇒ blocco.
+- L'esposizione delle corsie GUI è `_open_exposure_total(refresh=True)` (tavoli + registro remoto).
+- Il `precheck` applica `max_open_exposure`.
+
+**Prove.**
+- **RED su v19 pulito:** 14/15 falliti (`red_v20.txt`).
+- **GREEN:** 19/19.
+- **Mutazione mirata:** 12/12 uccisi (`mut_v20.txt`). Il primo giro (8/12) ha mostrato 3 test mancanti, aggiunti: equity NaN, daily-loss pending, gate che solleva.
+- **Suite completa py3.11:** **7585 passed, 0 failed**.
+- **Test esistenti adeguati:** 9 file di test dutching usavano config finti senza `max_open_exposure`; per D2 un cap assente blocca ogni nuovo rischio, quindi le fixture ora dichiarano il cap (`max_open_exposure = 1_000_000.0`). Nessuna asserzione indebolita.
+- **Caso di blocco esplicito aggiunto:** cap assente ⇒ `precheck` bloccato.
+
+### 3. L6 RACE — nuovo CL21-RACE-ADMIT-001 (P0, aperto, prossima correzione v21)
+**Sonda `probe_l6_race.py`.** Il bus reale consegna con 4 worker. Due segnali concorrenti da 0,60 su mercati diversi, con `max_open_exposure` 1,00; interleaving forzato con una barriera nel sizing.
+
+| Albero | Ordini ammessi | Esposizione registrata | Verdetto |
+|---|---|---|---|
+| v20 | 2 | 0,60 | NON_CONFORME |
+| main | 2 | 0,60 | NON_CONFORME |
+| #505 | 1 | 0,60 | CONFORME (lock di ammissione) |
+
+Due effetti:
+1. il cap viene superato (1,20 > 1,00);
+2. entrambi i segnali prendono lo stesso tavolo FREE e il secondo `activate` sovrascrive il primo: esposizione registrata 0,60 invece di 1,20, quindi una prenotazione persa.
+
+Con cap 1,20 (uguale) #505 registra correttamente 1,20.

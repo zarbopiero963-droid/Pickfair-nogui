@@ -1,0 +1,13 @@
+UCCISO           P01 recovery ignorata
+UCCISO           P02 config corrotta ignorata
+UCCISO           P03 loss/risk stop ignorati
+UCCISO           P04 drawdown 10 ignorato
+UCCISO           P05 drawdown con > invece di >=
+UCCISO           P06 equity non finita ammessa
+UCCISO           P07 gate manuale assente
+UCCISO           P08 gate precheck assente
+UCCISO           P09 gate che solleva ammette
+UCCISO           P10 esposizione solo tavoli
+UCCISO           P11 cap assoluto precheck assente
+UCCISO           P12 emergency/daily ignorato
+uccisi 12 / 12

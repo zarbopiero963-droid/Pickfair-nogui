@@ -1,0 +1,127 @@
+{
+ "PAR-CTRL": {
+  "descrizione": "nessun vincolo attivo",
+  "atteso": "AMMESSO",
+  "segnale": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "CONFORME"
+ },
+ "PAR-LAY-LIAB": {
+  "descrizione": "esposizione 9.50 + LAY 0.50@3.00 (liability 1.00) > 10",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": 0,
+   "reason": "max_open_exposure_exceeded:limit=10.0€",
+   "esito": "BLOCCATO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "PAR-BACK-EQ": {
+  "descrizione": "esposizione 9.50 + BACK 0.50 = 10.00 (uguale al cap)",
+  "atteso": "AMMESSO",
+  "segnale": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "CONFORME"
+ },
+ "PAR-DD": {
+  "descrizione": "perdita 10.00 su picco 1000 (D1: stop a >= 10)",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": 0,
+   "reason": "max_drawdown_abs_active",
+   "esito": "BLOCCATO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "PAR-CORRUPT": {
+  "descrizione": "config con chiave corrotta (FAILSAFE)",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "PAR-RISKSTOP": {
+  "descrizione": "risk stop attivo (P38)",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": 0,
+   "reason": "risk_stop_active:risk_stop_manuale",
+   "esito": "BLOCCATO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "PAR-PEAK": {
+  "descrizione": "picco equity non persistito (CL02-RST-003)",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "manuale_gui": {
+   "orders": 1,
+   "reason": "",
+   "esito": "AMMESSO"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "PAR-REMOTE": {
+  "descrizione": "ordine remoto al riavvio, liability 17.16 > cap 10 (CL17)",
+  "atteso": "BLOCCATO",
+  "segnale": {
+   "orders": null,
+   "reason": "NON_APPLICABILE: registro esposizione remota assente nell'albero",
+   "esito": "N/A"
+  },
+  "manuale_gui": {
+   "orders": null,
+   "reason": "NON_APPLICABILE: registro esposizione remota assente nell'albero",
+   "esito": "N/A"
+  },
+  "verdetto": "N/A"
+ },
+ "PAR-MCP": {
+  "descrizione": "corsia MCP",
+  "verdetto": "NOT_VERIFIED",
+  "nota": "nessuna corsia MCP nel codice"
+ }
+}

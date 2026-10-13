@@ -1,0 +1,30 @@
+{
+ "RACE-OPEN": {
+  "cap": {
+   "max_open_exposure": 1.0
+  },
+  "stake_per_segnale": 0.6,
+  "atteso_max_ordini": 1,
+  "osservato": {
+   "ordini": 1,
+   "esposizione_tavoli": 0.6,
+   "rifiuti": [
+    "max_open_exposure_exceeded:limit=1.0€"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "RACE-OPEN-EQ": {
+  "cap": {
+   "max_open_exposure": 1.2
+  },
+  "stake_per_segnale": 0.6,
+  "atteso_max_ordini": 2,
+  "osservato": {
+   "ordini": 2,
+   "esposizione_tavoli": 1.2,
+   "rifiuti": []
+  },
+  "verdetto": "CONFORME"
+ }
+}
