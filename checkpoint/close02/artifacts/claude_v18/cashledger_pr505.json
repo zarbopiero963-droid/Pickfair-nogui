@@ -1,0 +1,16 @@
+{
+ "statico": {
+  "cashout_scrive_ledger_bot": false
+ },
+ "CASH-21-R1-ledger": {
+  "atteso": "P/L realizzato del mercato = -7.14 (ingresso +10, hedge -17.14)",
+  "osservato": {
+   "close": 1,
+   "gross": 10.0,
+   "bet_applicate": [
+    "cleared:1.230000777:101"
+   ]
+  },
+  "verdetto": "NON_CONFORME"
+ }
+}

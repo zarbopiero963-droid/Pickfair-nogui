@@ -1,0 +1,80 @@
+{
+ "CASH-25-CTRL": {
+  "descrizione": "nessun cashout in corso",
+  "atteso": "AMMESSO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R1": {
+  "descrizione": "cashout in corso (scope mercato) + ingresso stesso mercato",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "cashout_invalidation_active"
+   ],
+   "scope_barriera": [
+    [
+     "market",
+     "1.234"
+    ]
+   ]
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R1b": {
+  "descrizione": "cashout su selezione + ingresso altra selezione stesso mercato",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "scope_barriera": [
+    [
+     "selection",
+     "1.234",
+     11
+    ]
+   ]
+  },
+  "nota": "fonte: PF-CASH-01 'scope esplicito', PF-CASH-25 'per tutto lo scope cashout'; nessuna fonte estende lo scope di un cashout per selezione alle altre selezioni",
+  "verdetto": "NA_ORACOLO_SENZA_FONTE"
+ },
+ "CASH-25-R-EVENT": {
+  "descrizione": "cashout per solo evento + ingresso su altro mercato dello stesso evento",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "scope_barriera": []
+  },
+  "nota": "fonte #351 PF-HARD-F06-FENCE e #453 F06 (scope evento)",
+  "verdetto": "NON_CONFORME"
+ },
+ "CASH-25-R2": {
+  "descrizione": "ingresso accodato prima del cashout, eseguito dopo",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "cashout_invalidation_stale"
+   ]
+  },
+  "nota": "",
+  "verdetto": "CONFORME"
+ },
+ "CASH-25-R3": {
+  "descrizione": "cashout concluso parziale, residuo aperto, nuovo ingresso nello scope",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "nota": "fonte: V2 'parziale->mantenere residuo' riguarda quantita'/liability (esposizione), non la durata del fencing; nessuna fonte estende il fencing oltre la richiesta di cashout",
+  "verdetto": "NA_ORACOLO_SENZA_FONTE"
+ }
+}

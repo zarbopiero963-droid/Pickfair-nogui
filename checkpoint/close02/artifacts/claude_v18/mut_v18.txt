@@ -1,0 +1,18 @@
+UCCISO           G01 seed non chiamato
+UCCISO           G02 nessun refresh all'ammissione
+UCCISO           G03 lettura fallita => rilascio
+UCCISO           G04 somma senza netting
+UCCISO           G05 arrotondamento non per eccesso
+UCCISO           G06 non modellabile ignorato
+UCCISO           G07 residuo sempre abbinato
+UCCISO           G08 LAY al prezzo minimo
+UCCISO           G09 BACK al prezzo massimo
+SOPRAVVISSUTO    G10 totale ignora infinito
+UCCISO           G11 recovery senza istantanea
+UCCISO           G12 rilascio fuori scope
+UCCISO           G13 ordini nuovi nel registro
+UCCISO           G14 handicap ignorato
+UCCISO           G15 riga non modellabile in refresh rilasciata
+UCCISO           G16 liability residuo LAY a 0
+uccisi 15 / 16
+EQUIVALENTE G10: validators.money_sum (core/validators.py:242-263) restituisce Decimal('Infinity') per un addendo non finito; float(Infinity)=inf, quindi il controllo esplicito e' ridondante (verificato: money_sum(0.0, inf) -> inf).

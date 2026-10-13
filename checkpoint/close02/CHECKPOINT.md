@@ -8,7 +8,8 @@
 3. `artifacts/patches/close02_v14_to_v15_delta.patch`: v15, solo test (`tests/close02/test_close02_v15.py`), mirati a M8 e al mutante M27 originale.
 
 4. `artifacts/patches/close02_v15_to_v16_delta.patch`: v16 (Claude), solo test (`tests/close02/test_close02_v16.py`), uccide M51. Cumulativo: `close02_findings_proposal_v16.patch`.
-5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch` (**ultimo**).
+5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch`.
+6. `artifacts/patches/close02_v17_to_v18_delta.patch`: v18 (Claude), correzione CL17-RST-GHOST-001 + test. Cumulativo: `close02_findings_proposal_v18.patch` (**ultimo**). Verificato: v17 cumulativa + delta = v18 cumulativa (sha256 7226963402c3…).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -245,6 +246,76 @@ La sonda `probe_cash_rest.py` è la riproduzione RED.
 | v17 | 9 | 9 | 2 |
 
 Il lotto resta **NOT_READY** per il Gate A: CASH-19 è MISSING, CL17-RST-GHOST-001 è aperto, CASH-04-R3 e CASH-25-R3 sono aperti.
+
+## v18 — Claude, PF-AUTO-MASTER-01 (13/10/2026, mandato owner di correzione autonoma)
+Nessuna modifica a #505 o a `main`. **Gate A: NON PASS.** Le prove stanno in `artifacts/claude_v18/`.
+
+### 1. Correzione CL17-RST-GHOST-001 (P0), RED → GREEN
+**Dipendenze, nell'ordine di OWNER-SETTLEMENT-02.**
+- Passo 1 (collegamento): l'identità è il `betId` dell'exchange, unica e già usata dal poller dei settlement (`cleared:<market>:<betId>`).
+- Passi 2-4 (riconciliazione, settlement ritardato/UNKNOWN, idempotenza): restano al poller esistente; questo patch non li tocca.
+- Passo 5 (condizioni di rilascio): un ordine esce dal registro solo quando una lettura COMPLETA e RIUSCITA dei correnti del suo mercato non lo contiene più. Su Betfair un ordine resta fra i correnti (anche EXECUTION_COMPLETE) finché il mercato non è regolato, quindi la sua assenza significa che non c'è più capitale impegnato. Lettura fallita ⇒ nessun rilascio.
+- Passo 6: non applicabile, il patch non rimuove alcun rilascio esistente.
+- Nessun tavolo viene occupato, quindi nessun tavolo resta bloccato in permanenza.
+
+**Calcolo (OWNER-EXPOSURE-01).** Il nuovo modulo `core/remote_exposure.py` calcola il caso peggiore netto per mercato sugli esiti mutuamente esclusivi:
+- ogni selezione presente vince, oppure nessuna;
+- parte abbinata certa; il residuo a riposo al peggiore fra «non si abbina» e «si abbina per intero»;
+- liability LAY al prezzo più alto fra medio e limite; vincita BACK al più basso;
+- arrotondamento per eccesso al centesimo;
+- riga non modellabile (lato ignoto, prezzo ≤ 1, importi non finiti o negativi, handicap ≠ 0) ⇒ esposizione infinita del mercato, quindi blocco di ogni nuovo rischio finché una rilettura pulita non la scioglie.
+
+**Collegamento nel runtime.**
+- `StateRecovery.recover()` restituisce l'istantanea completa `remote_active_orders`, compresi gli ordini già registrati in un riavvio precedente.
+- `start()` carica il registro prima di passare ad ACTIVE.
+- `RuntimeController._open_exposure_total()` (tavoli + registro) sostituisce `table_manager.total_exposure()` in ingresso segnale, auto-trade, stop di esposizione e snapshot.
+- La rilettura (`_refresh_remote_exposure`) avviene all'ammissione, solo se il registro non è vuoto.
+- Gli ordini piazzati da questo processo non entrano nel registro: li contano i tavoli.
+
+**Prove.**
+- **RED su v17 pulito** (snapshot `refs/claude/v17snap`, modulo presente ma non collegato): 7 test runtime falliscono, perché esce `CMD_QUICK_BET` con 10 € di esposizione remota. File `red_v17_clean.txt`.
+- **GREEN:** `test_close02_v18_remote_exposure.py` 21/21; suite completa py3.11 finale 7555 passed, 0 failed.
+- **Suite completa py3.11:** `suite_v18_py311.summary.txt`, rilanciata sull'albero finale.
+- **Mutazione mirata:** 16 mutanti, 15 uccisi. G10 è equivalente: `validators.money_sum` (`core/validators.py:242-263`) restituisce già Infinity per un addendo non finito. File `mut_v18.txt`.
+- **Sonda CASH-23 aggiornata** per seguire `start()`: su v18 R1 è CONFORME (esposizione dopo la recovery 17,16 €, ingresso rifiutato `max_open_exposure_exceeded`); su #505 resta NON_CONFORME.
+
+**Limiti dichiarati.**
+- Un ordine ambiguo pre-crash e assente dai correnti al riavvio non lascia traccia locale (CASH-23-R2b). Se assente, non c'è capitale impegnato sull'exchange; il caso resta registrato come osservazione.
+- Il P/L realizzato di questi ordini resta al poller: vedi il punto 3.
+
+### 2. CASH-25 R3 e R1b: verifica della fonte (gli oracoli preparati non sono requisiti)
+- **Fonte verbatim:**
+  - PF-CASH-25: «Fencing contro ingressi in volo per tutto lo scope cashout»;
+  - PF-CASH-01: «Richiesta identificata e scope esplicito»;
+  - V2: «parziale→contabilizzare solo eseguito e mantenere residuo».
+- **R3:** nessuna fonte estende il fencing oltre la richiesta di cashout. V2 riguarda quantità e liability residue, cioè l'esposizione, non il fencing. Riclassificato `NA_ORACOLO_SENZA_FONTE`.
+- **R1b:** nessuna fonte estende lo scope di un cashout per selezione alle altre selezioni. Riclassificato `NA_ORACOLO_SENZA_FONTE`.
+- **Caso aggiunto con fonte, CASH-25-R-EVENT** (fonti #351/6087232395 PF-HARD-F06-FENCE «scope event e market entrambi coperti» e #453/6085517147 F06 «begin/end CASHOUT event_name-only o altro mercato stesso evento: valid=True, atteso False»):
+  - #505: NON_CONFORME. La barriera di un cashout con solo `event_name` ha scope vuoto e l'ingresso su un altro mercato dell'evento passa. Coincide con F06 già registrato su #453, non è un finding nuovo.
+  - v18: NON_CONFORME, perché il fencing manca del tutto.
+
+### 3. Nuovo finding CL18-CASH-LEDGER-001 (P0 LIVE, aperto)
+- **Difetto:** l'hedge del cashout passa da `CashoutExecutor → core.OrderRouter.place` e non viene mai scritto nel ledger ordini del bot (`orders`, scritto solo da `TradingEngine.insert_order`). Il poller dei settlement LIVE filtra le righe cleared per l'allowlist del ledger e scarta quella dell'hedge.
+- **Sonda `probe_cash_ledger.py`** (BACK 10@2 vince, hedge LAY 20/7@7 perde): P/L realizzato applicato **+10,00 invece di −7,14**, su v17/v18 e su #505.
+- **Effetto:** daily-loss e drawdown sottostimati di 17,14 €.
+- **SIM:** non colpita, perché regola dal registro del broker, che contiene tutti i bet.
+- **Fonti:** V1 «fill completo→riconciliare payoff netto», PF-CASH-21, #506/6124429007 «P&L realizzato (solo da listClearedOrders)».
+- **Prossima correzione isolata (v19):** registrare l'hedge nell'identità del bot con il riferimento della posizione che riduce (#426/6067971776 «cashout/hedge orders inheriting the ref of the position they reduce»).
+
+### Bilancio CASH aggiornato (22 casi)
+| Albero | Conformi | Non conformi | NA (oracolo senza fonte) | Coperti da test |
+|---|---|---|---|---|
+| #505 | 10 | 8 | 2 | 2 |
+| v18 | 10 | 8 | 2 | 2 |
+
+Note sui file:
+- Il ricalcolo di CASH-25 è girato sull'albero v18 (`cash25_v18tree.json`): il codice di fencing è identico a v17.
+- `cashrest_v17.json` (in `claude_v17/cash/`) resta l'esito pre-correzione.
+
+### Prossime attività
+1. v19: CL18-CASH-LEDGER-001 (RED→GREEN, una sola modifica attiva).
+2. L6 resto: FAILSAFE con chiave corrotta via loader reale per le 41 chiavi su main/#505/v18; poi PARITY, RACE, AUDIT, OBSERVABLE, S1.
+3. L4.
 
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |

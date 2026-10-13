@@ -1,0 +1,561 @@
+diff --git a/core/remote_exposure.py b/core/remote_exposure.py
+new file mode 100644
+index 0000000..3787cdb
+--- /dev/null
++++ b/core/remote_exposure.py
+@@ -0,0 +1,215 @@
++"""Esposizione degli ordini remoti ritrovati al riavvio (PROPOSTA close02 v18, CL17-RST-GHOST-001).
++
++Dopo un riavvio i tavoli del processo sono vuoti, ma sull'exchange possono restare ordini del
++processo precedente (ingressi abbinati non ancora regolati, hedge di cashout a riposo). Senza
++questo registro la loro esposizione vale 0 nei cap e un nuovo ingresso passa oltre il tetto.
++
++Regole applicate (owner #426/6124156631):
++- OWNER-EXPOSURE-01: caso peggiore NETTO per mercato sugli esiti mutuamente esclusivi
++  (ogni selezione presente vince, oppure nessuna di esse); parte abbinata e residuo a
++  riposo; liability BACK e LAY; arrotondamento conservativo al centesimo per eccesso;
++  un ordine non modellabile (lato ignoto, prezzo/importi non finiti, handicap) rende
++  l'esposizione del suo mercato infinita: il calcolo fallisce in sicurezza.
++- OWNER-SETTLEMENT-02: nessun blocco permanente e nessun rilascio di capitale impegnato.
++  Un ordine esce dal registro solo quando una lettura COMPLETA e RIUSCITA degli ordini
++  correnti del suo mercato non lo contiene piu': su Betfair un ordine resta fra i
++  correnti (anche EXECUTION_COMPLETE) finche' il mercato non e' regolato, quindi la sua
++  assenza significa che non c'e' piu' capitale impegnato sull'exchange. Lettura fallita
++  => il registro resta com'e' (fail-closed).
++
++Il P/L realizzato di questi ordini resta al poller dei settlement (cleared orders): questo
++modulo misura solo il rischio aperto.
++"""
++from __future__ import annotations
++
++import math
++import threading
++from decimal import ROUND_CEILING, Decimal, InvalidOperation
++from typing import Any, Dict, Iterable, List, Optional
++
++_CENT = Decimal("0.01")
++_UNKNOWN_MARKET = "?"
++
++
++def _num(row: Dict[str, Any], *keys: str) -> Optional[Decimal]:
++    """Primo valore numerico finito fra le chiavi; None se assente; NaN se illeggibile."""
++    for key in keys:
++        if key in row and row[key] is not None:
++            value = row[key]
++            if isinstance(value, bool):
++                return Decimal("NaN")
++            try:
++                dec = Decimal(str(value))
++            except (InvalidOperation, ValueError):
++                return Decimal("NaN")
++            return dec if dec.is_finite() else Decimal("NaN")
++    return None
++
++
++def _price_size(row: Dict[str, Any]) -> Dict[str, Any]:
++    ps = row.get("priceSize")
++    return ps if isinstance(ps, dict) else {}
++
++
++def normalize_order(row: Any) -> Optional[Dict[str, Any]]:
++    """Riduce una riga di listCurrentOrders (camelCase o snake_case) alla forma del calcolo.
++
++    Ritorna ``{"bet_id", "market_id", "selection_id", "side", "matched", "avg_price",
++    "remaining", "price"}`` oppure ``None`` se la riga non e' modellabile."""
++    if not isinstance(row, dict):
++        return None
++    ps = _price_size(row)
++    side = str(row.get("side") or row.get("bet_type") or "").strip().upper()
++    sel = str(row.get("selectionId") or row.get("selection_id") or "").strip()
++    market = str(row.get("marketId") or row.get("market_id") or "").strip()
++    handicap = _num(row, "handicap")
++    price = _num(ps, "price")
++    if price is None:
++        price = _num(row, "price")
++    size = _num(ps, "size")
++    if size is None:
++        size = _num(row, "size")
++    matched = _num(row, "sizeMatched", "size_matched", "matched_size")
++    remaining = _num(row, "sizeRemaining", "size_remaining")
++    avg = _num(row, "averagePriceMatched", "average_price_matched")
++    if matched is None:
++        matched = Decimal(0)
++    if remaining is None:
++        remaining = (size - matched) if size is not None and size.is_finite() else None
++    values = (price, matched, remaining)
++    if (side not in ("BACK", "LAY") or not sel or not market
++            or any(v is None or not v.is_finite() for v in values)
++            or (handicap is not None and (not handicap.is_finite() or handicap != 0))
++            or matched < 0 or remaining < 0 or price <= 1
++            or (avg is not None and (not avg.is_finite() or (matched > 0 and avg <= 1)))):
++        return None
++    if avg is None or avg <= 1:
++        avg = price
++    return {"bet_id": str(row.get("betId") or row.get("bet_id") or "").strip(),
++            "market_id": market, "selection_id": sel, "side": side,
++            "matched": matched, "avg_price": avg, "remaining": remaining, "price": price}
++
++
++def market_worst_case(orders: Iterable[Dict[str, Any]]) -> Decimal:
++    """Perdita massima netta (>= 0) di un mercato, su ordini gia' normalizzati.
++
++    Esiti: ogni selezione presente vince (le altre perdono) oppure nessuna vince. Per la
++    parte abbinata il contributo e' certo; per il residuo a riposo si prende il peggiore
++    fra "non si abbina" (0) e "si abbina per intero" (lineare nell'abbinato => estremi)."""
++    rows = list(orders)
++    selections = sorted({o["selection_id"] for o in rows})
++    worst = Decimal(0)
++    for winner in selections + [None]:
++        pnl = Decimal(0)
++        for o in rows:
++            wins = o["selection_id"] == winner
++            m, r = o["matched"], o["remaining"]
++            if o["side"] == "BACK":
++                # vincita al prezzo piu' basso fra medio e limite: guadagno sotto-stimato
++                low = min(o["avg_price"], o["price"])
++                pnl += m * (low - 1) if wins else -m
++                pnl += Decimal(0) if wins else -r
++            else:
++                # liability al prezzo piu' alto fra medio e limite: perdita sovra-stimata
++                high = max(o["avg_price"], o["price"])
++                pnl += -m * (high - 1) if wins else m
++                pnl += -r * (o["price"] - 1) if wins else Decimal(0)
++        worst = max(worst, -pnl)
++    return worst.quantize(_CENT, rounding=ROUND_CEILING)
++
++
++class RemoteExposureRegistry:
++    """Registro thread-safe degli ordini remoti non tracciati dai tavoli di questo processo."""
++
++    def __init__(self) -> None:
++        self._lock = threading.RLock()
++        self._orders: Dict[str, Dict[str, Any]] = {}  # bet_id -> ordine normalizzato
++        self._unmodeled: Dict[str, int] = {}  # market_id (o "?") -> righe non modellabili
++
++    def seed(self, rows: Iterable[Any]) -> None:
++        with self._lock:
++            self._orders.clear()
++            self._unmodeled.clear()
++            for row in rows or []:
++                self._add(row)
++
++    def _add(self, row: Any) -> None:
++        norm = normalize_order(row)
++        if norm is None or not norm["bet_id"]:
++            market = ""
++            if isinstance(row, dict):
++                market = str(row.get("marketId") or row.get("market_id") or "").strip()
++            key = market or _UNKNOWN_MARKET
++            self._unmodeled[key] = self._unmodeled.get(key, 0) + 1
++            return
++        self._orders[norm["bet_id"]] = norm
++
++    def empty(self) -> bool:
++        with self._lock:
++            return not self._orders and not self._unmodeled
++
++    def markets(self) -> List[str]:
++        with self._lock:
++            return sorted({o["market_id"] for o in self._orders.values()} | set(self._unmodeled))
++
++    def bet_ids(self) -> List[str]:
++        with self._lock:
++            return sorted(self._orders)
++
++    def market_exposure(self, market_id: str) -> float:
++        with self._lock:
++            if market_id in self._unmodeled or _UNKNOWN_MARKET in self._unmodeled:
++                return math.inf
++            rows = [o for o in self._orders.values() if o["market_id"] == market_id]
++            return float(market_worst_case(rows)) if rows else 0.0
++
++    def total(self) -> float:
++        with self._lock:
++            if self._unmodeled:
++                return math.inf
++            total = Decimal(0)
++            for market in {o["market_id"] for o in self._orders.values()}:
++                total += market_worst_case(o for o in self._orders.values() if o["market_id"] == market)
++            return float(total)
++
++    def refresh(self, snapshot: Iterable[Any], markets: Optional[List[str]]) -> List[str]:
++        """Aggiorna con una lettura COMPLETA e RIUSCITA dei correnti di ``markets``.
++
++        ``markets=None`` significa lettura di tutto il conto. Gli ordini del registro ancora
++        presenti vengono aggiornati; quelli assenti escono (nessun capitale impegnato). Le
++        righe non tracciate qui (ordini nuovi di questo processo) sono ignorate: le contano
++        i tavoli. Ritorna i bet_id rilasciati."""
++        rows = [r for r in (snapshot or []) if isinstance(r, dict)]
++        scope = None if markets is None else {str(m) for m in markets}
++        with self._lock:
++            by_id = {str(r.get("betId") or r.get("bet_id") or "").strip(): r for r in rows}
++            released = []
++            for bet_id, old in list(self._orders.items()):
++                if scope is not None and old["market_id"] not in scope:
++                    continue
++                fresh = by_id.get(bet_id)
++                if fresh is None:
++                    released.append(bet_id)
++                    self._orders.pop(bet_id, None)
++                    continue
++                norm = normalize_order(fresh)
++                if norm is None or not norm["bet_id"]:
++                    self._orders.pop(bet_id, None)
++                    key = old["market_id"]
++                    self._unmodeled[key] = self._unmodeled.get(key, 0) + 1
++                else:
++                    self._orders[bet_id] = norm
++            # Righe non modellabili: si sciolgono solo se la lettura del loro mercato (o del
++            # conto intero per "?") non contiene piu' righe non identificabili/non modellabili.
++            for key in list(self._unmodeled):
++                if scope is not None and key not in scope:
++                    continue
++                if key == _UNKNOWN_MARKET and scope is not None:
++                    continue
++                bad = [r for r in rows
++                       if (key == _UNKNOWN_MARKET or str(r.get("marketId") or r.get("market_id") or "").strip() == key)
++                       and (normalize_order(r) is None
++                            or not str(r.get("betId") or r.get("bet_id") or "").strip())]
++                if not bad:
++                    self._unmodeled.pop(key, None)
++            return released
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index f755f94..166b5de 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -32,6 +32,7 @@ from core import risk_persistence
+ from core.safety_layer import assert_live_gate_or_refuse
+ from core.system_state import DeskMode, RuntimeMode
+ from core.table_manager import TableManager
++from core.remote_exposure import RemoteExposureRegistry
+ from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
+ from core.type_helpers import safe_bool
+ from services.catalog_sync_service import CatalogSyncService
+@@ -112,6 +113,9 @@ class RuntimeController:
+ 
+         self.config = self.settings_service.load_roserpina_config()
+         self.table_manager = TableManager(table_count=self.config.table_count)
++        # PROPOSTA close02 v18 (CL17-RST-GHOST-001): esposizione degli ordini remoti
++        # ritrovati al riavvio, non tracciati dai tavoli di questo processo.
++        self.remote_exposure = RemoteExposureRegistry()
+         self.duplication_guard = DuplicationGuard()
+         self.risk_desk = RiskDesk()
+         self.risk_desk.on_new_peak = lambda _p: self._persist_equity_peak()  # v9: ogni nuovo massimo
+@@ -1360,7 +1364,7 @@ class RuntimeController:
+ 
+     def _exposure_stop(self, trigger=True) -> str:
+         reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None),
+-                                                 self.table_manager.total_exposure())
++                                                 self._open_exposure_total())
+         if trigger and stop_rules.is_stop_trigger(reason):
+             self.risk_stop(reason)  # pre-submit
+         return reason
+@@ -2577,6 +2581,9 @@ class RuntimeController:
+                 "status": status,
+             }
+         self._startup_recovery_blocked = ""
++        # PROPOSTA close02 v18 (CL17-RST-GHOST-001): prima di ammettere ingressi,
++        # l'esposizione degli ordini remoti del processo precedente entra nei cap.
++        self.remote_exposure.seed(recovery_result.get("remote_active_orders") or [])
+ 
+         self.mode = RuntimeMode.ACTIVE
+         self.last_error = ""
+@@ -2739,6 +2746,42 @@ class RuntimeController:
+             },
+         )
+ 
++    def _open_exposure_total(self, refresh: bool = False) -> float:
++        """Esposizione aperta per i cap: tavoli di questo processo + ordini remoti ritrovati
++        al riavvio (PROPOSTA close02 v18, CL17-RST-GHOST-001). Mai sotto-stimata: un valore
++        non finito di uno dei due addendi rende infinito il totale (fail-closed)."""
++        if refresh:
++            self._refresh_remote_exposure()
++        tables = self.table_manager.total_exposure()
++        registry = getattr(self, "remote_exposure", None)
++        remote = registry.total() if registry is not None else 0.0
++        if not (math.isfinite(tables) and math.isfinite(remote)):
++            return float("inf")
++        return float(validators.money_sum(tables, remote))
++
++    def _refresh_remote_exposure(self) -> None:
++        """Rilettura dei correnti dei mercati con ordini remoti (OWNER-SETTLEMENT-02).
++
++        Solo una lettura riuscita aggiorna/rilascia; un errore lascia il registro intatto
++        (nessun rilascio di capitale ancora impegnato)."""
++        registry = getattr(self, "remote_exposure", None)
++        if registry is None or registry.empty():
++            return
++        markets = registry.markets()
++        scope = None if "?" in markets else markets
++        try:
++            snapshot = self.betfair_service.list_current_orders(market_ids=scope)
++        except Exception as exc:
++            logger.warning("Esposizione remota: lettura correnti fallita, nessun rilascio (%s)", exc)
++            return
++        if not isinstance(snapshot, list):
++            logger.warning("Esposizione remota: risposta correnti non valida, nessun rilascio")
++            return
++        released = registry.refresh(snapshot, scope)
++        if released:
++            self.bus.publish("REMOTE_EXPOSURE_RELEASED", {"bet_ids": list(released),
++                                                         "remaining_total": registry.total()})
++
+     def _event_current_exposure(self, event_key: str) -> float:
+         table = self.table_manager.find_by_event_key(event_key)
+         if not table:
+@@ -3267,7 +3310,7 @@ class RuntimeController:
+             self._reject_signal(signal, "nessun_tavolo_disponibile")
+             return
+ 
+-        total_exposure = self.table_manager.total_exposure()
++        total_exposure = self._open_exposure_total(refresh=True)
+         event_exposure = self._event_current_exposure(event_key)
+ 
+         # PROPOSTA close02 (LOAD/FAILSAFE): configurazione con chiavi corrotte
+@@ -4558,7 +4601,7 @@ class RuntimeController:
+             signal=signal,
+             bankroll_current=float(self.risk_desk.bankroll_current),
+             equity_peak=float(self.risk_desk.equity_peak),
+-            current_total_exposure=self.table_manager.total_exposure(),
++            current_total_exposure=self._open_exposure_total(refresh=True),
+             event_current_exposure=next_event_exposure,
+             table=table,
+             cycle_id=str(cycle_id or ""),
+@@ -4654,7 +4697,7 @@ class RuntimeController:
+         risk_allowed, risk_reason = self._risk_allows_auto_trade()
+         if risk_allowed:  # PR28: cap A2 come per il segnale
+             risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
+-                self.config, "max_open_exposure", None), self.table_manager.total_exposure()) or risk_reason
++                self.config, "max_open_exposure", None), self._open_exposure_total()) or risk_reason
+             risk_allowed = risk_reason == "risk_approved"
+         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
+         if not risk_allowed:
+@@ -5051,7 +5094,7 @@ class RuntimeController:
+         snapshot = self.risk_desk.build_snapshot(
+             runtime_mode=self.mode,
+             desk_mode=self._desk_mode(),
+-            total_exposure=self.table_manager.total_exposure(),
++            total_exposure=self._open_exposure_total(),
+             telegram_connected=bool(self.telegram_service.status().get("connected")),
+             betfair_connected=bool(self.betfair_service.status().get("connected")),
+             active_tables=len(self.table_manager.active_tables()),
+diff --git a/core/state_recovery.py b/core/state_recovery.py
+index dd0a28e..7aed1e8 100644
+--- a/core/state_recovery.py
++++ b/core/state_recovery.py
+@@ -73,6 +73,10 @@ class StateRecovery:
+             "pending_sagas": len(recovered_sagas),
+             "ghost_orders_recovered": ghost_count,
+             "startup_mode": startup_mode,
++            # PROPOSTA close02 v18 (CL17-RST-GHOST-001): istantanea COMPLETA degli
++            # ordini remoti attivi, anche quelli gia' registrati in un riavvio
++            # precedente: il runtime ne ricostruisce l'esposizione aperta.
++            "remote_active_orders": list(startup.get("remote_orders") or []),
+         }
+ 
+     def _reconcile_startup_ghost_orders(self) -> Dict[str, Any]:
+@@ -113,6 +117,7 @@ class StateRecovery:
+             "required": True,
+             "completed": True,
+             "ghost_orders_recovered": len(recovered),
++            "remote_orders": [dict(o) for o in remote_orders if isinstance(o, dict)],
+         }
+ 
+     def _is_missing_in_db(self, order: Dict[str, Any]) -> bool:
+diff --git a/tests/close02/test_close02_v18_remote_exposure.py b/tests/close02/test_close02_v18_remote_exposure.py
+new file mode 100644
+index 0000000..426cd60
+--- /dev/null
++++ b/tests/close02/test_close02_v18_remote_exposure.py
+@@ -0,0 +1,191 @@
++"""close02 v18 — CL17-RST-GHOST-001: ordini remoti ritrovati al riavvio contati nell'esposizione.
++
++Fonte: #461/6085516609 (PF-CASH-23, V3); owner #426/6124156631 OWNER-EXPOSURE-01 (caso peggiore
++netto, matched+unmatched, esito non modellato => blocco) e OWNER-SETTLEMENT-02 (nessun blocco
++permanente, nessun rilascio di capitale impegnato). RED su v17 (esposizione 0, ingresso
++ammesso oltre il tetto di 10 EUR), GREEN col patch v18.
++
++Scenario del caso Under 1.5 HT: BACK 10.00@2.00 abbinato (B1) e hedge LAY 20/7 ~ 2.86@7.00 a
++riposo (H1) sul mercato 1.230000777; al riavvio entrambi sono fra gli ordini correnti."""
++from decimal import Decimal
++from unittest.mock import MagicMock
++
++import pytest
++
++from core.remote_exposure import RemoteExposureRegistry, market_worst_case, normalize_order
++from tests.close02.test_close02_restart_t81u import OWNER_VALID, _ctl
++
++M = "1.230000777"
++B1 = {"betId": "100000000001", "marketId": M, "selectionId": 1222347, "side": "BACK", "handicap": 0.0,
++      "priceSize": {"price": 2.0, "size": 10.0}, "sizeMatched": 10.0, "sizeRemaining": 0.0,
++      "averagePriceMatched": 2.0, "status": "EXECUTION_COMPLETE"}
++H1 = {"betId": "100000000002", "marketId": M, "selectionId": 1222347, "side": "LAY", "handicap": 0.0,
++      "priceSize": {"price": 7.0, "size": 2.86}, "sizeMatched": 0.0, "sizeRemaining": 2.86,
++      "averagePriceMatched": 0.0, "status": "EXECUTABLE"}
++OWNER = dict(OWNER_VALID, **{"roserpina.max_open_exposure": "10"})
++SIGNAL = {"market_id": "1.555", "selection_id": "77", "price": 2.0, "signal_type": "BACK"}
++
++
++class _Recon:
++    def __init__(self, rows):
++        self.rows = rows
++
++    def fetch_startup_active_orders(self):
++        return [dict(r) for r in self.rows]
++
++    def merge_startup_active_orders(self, rows):
++        return {"orders": list(rows)}
++
++    def reconcile_all_open_batches(self):
++        return None
++
++    def __getattr__(self, name):
++        return MagicMock()
++
++
++def _avvia(tmp_path, monkeypatch, rows, db_name="r.sqlite"):
++    rc = _ctl(str(tmp_path / db_name), monkeypatch, owner=OWNER)
++    monkeypatch.setattr(rc, "_build_reconciliation_engine", lambda: _Recon(rows))
++    out = rc.start(execution_mode="SIMULATION")
++    assert out.get("started") is not False, out
++    # decisione nuova a ogni chiamata: il runtime muta approved/reason sul rifiuto
++    monkeypatch.setattr(rc.mm, "calculate", MagicMock(
++        side_effect=lambda **kw: MagicMock(approved=True, recommended_stake=1.0, table_id=1, reason="")))
++    rej = []
++    monkeypatch.setattr(rc, "_reject_signal", lambda sg, r: rej.append(r))
++    rc.bus.reset_mock()
++    return rc, rej
++
++
++def _inviati(rc):
++    return [c for c in rc.bus.publish.call_args_list if c.args and c.args[0] == "CMD_QUICK_BET"]
++
++
++# ----------------------------------------------------------------- calcolo (OWNER-EXPOSURE-01)
++def _n(*rows):
++    return [normalize_order(r) for r in rows]
++
++
++def test_caso_peggiore_netto_cashout_residuo_a_riposo_10_euro():
++    # selezione vince: +10 - 6*2.86 = -7.16 ; nessuna vince: -10 + 0 (hedge non abbinato) = -10
++    assert market_worst_case(_n(B1, H1)) == Decimal("10.00")
++
++
++def test_caso_peggiore_netto_hedge_abbinato_per_intero_arrotondato_per_eccesso():
++    h = dict(H1, sizeMatched=20 / 7, sizeRemaining=0.0, averagePriceMatched=7.0)
++    # vince: +10 - 6*20/7 = -50/7 ; perde: -10 + 20/7 = -50/7 => 7.142857 -> 7.15 (per eccesso)
++    assert market_worst_case(_n(B1, h)) == Decimal("7.15")
++
++
++def test_liability_lay_a_riposo_e_back_a_riposo():
++    assert market_worst_case(_n(H1)) == Decimal("17.16")  # 6 * 2.86
++    back = dict(B1, sizeMatched=0.0, sizeRemaining=3.0, status="EXECUTABLE")
++    assert market_worst_case(_n(back)) == Decimal("3.00")
++
++
++@pytest.mark.parametrize("campo,valore", [("side", "X"), ("handicap", 1.5), ("sizeRemaining", float("nan")),
++                                          ("priceSize", {"price": 1.0, "size": 2.86}), ("sizeMatched", -1.0),
++                                          ("selectionId", None), ("sizeRemaining", True)])
++def test_riga_non_modellabile_esposizione_infinita(campo, valore):
++    reg = RemoteExposureRegistry()
++    reg.seed([B1, dict(H1, **{campo: valore})])
++    assert reg.total() == float("inf")
++    assert reg.market_exposure(M) == float("inf")
++
++
++# --------------------------------------------------------------------------- RED/GREEN runtime
++def test_controllo_senza_ordini_remoti_ingresso_ammesso(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [])
++    rc._on_signal_received(dict(SIGNAL))
++    assert rej == [] and len(_inviati(rc)) == 1
++
++
++def test_riavvio_con_hedge_a_riposo_nuovo_ingresso_oltre_tetto_bloccato(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [B1, H1])
++    rc.betfair_service.list_current_orders.return_value = [dict(B1), dict(H1)]
++    rc._on_signal_received(dict(SIGNAL))
++    assert _inviati(rc) == []
++    assert rej and rej[0].startswith("max_open_exposure_exceeded"), rej
++    assert rc._open_exposure_total() == pytest.approx(10.0)
++
++
++def test_secondo_riavvio_ordini_gia_registrati_restano_contati(tmp_path, monkeypatch):
++    _avvia(tmp_path, monkeypatch, [B1, H1], db_name="s.sqlite")  # primo avvio: li registra
++    rc, rej = _avvia(tmp_path, monkeypatch, [B1, H1], db_name="s.sqlite")
++    rc.betfair_service.list_current_orders.return_value = [dict(B1), dict(H1)]
++    rc._on_signal_received(dict(SIGNAL))
++    assert _inviati(rc) == [] and rej and rej[0].startswith("max_open_exposure_exceeded"), rej
++
++
++def test_lettura_correnti_fallita_nessun_rilascio(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [B1, H1])
++    rc.betfair_service.list_current_orders.side_effect = ConnectionError("exchange non raggiungibile")
++    rc._on_signal_received(dict(SIGNAL))
++    assert _inviati(rc) == [] and rej, rej
++    assert rc._open_exposure_total() == pytest.approx(10.0)
++
++
++def test_ordini_spariti_dai_correnti_rilascio_e_ingresso_ammesso(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [B1, H1])
++    rc.betfair_service.list_current_orders.return_value = []  # mercato regolato: nulla di impegnato
++    rc._on_signal_received(dict(SIGNAL))
++    assert rej == [] and len(_inviati(rc)) == 1
++    assert rc.remote_exposure.empty() and rc.remote_exposure.total() == 0.0
++    rilasci = [c for c in rc.bus.publish.call_args_list if c.args and c.args[0] == "REMOTE_EXPOSURE_RELEASED"]
++    assert rilasci and sorted(rilasci[0].args[1]["bet_ids"]) == [B1["betId"], H1["betId"]]
++
++
++def test_hedge_ancora_a_riposo_solo_b1_regolato_resta_la_liability(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [B1, H1])
++    rc.betfair_service.list_current_orders.return_value = [dict(H1)]
++    rc._on_signal_received(dict(SIGNAL))
++    assert _inviati(rc) == [] and rej and rej[0].startswith("max_open_exposure_exceeded"), rej
++    assert rc._open_exposure_total() == pytest.approx(17.16)
++
++
++def test_riga_non_modellabile_blocca_finche_la_lettura_non_e_pulita(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [dict(H1, side="?")])
++    rc.betfair_service.list_current_orders.return_value = [dict(H1, side="?")]
++    rc._on_signal_received(dict(SIGNAL))
++    assert _inviati(rc) == [] and rej, rej
++    rc.betfair_service.list_current_orders.return_value = []
++    rej.clear()
++    rc._on_signal_received(dict(SIGNAL))
++    assert rej == [] and len(_inviati(rc)) == 1
++
++
++def test_ordini_di_questo_processo_non_entrano_nel_registro(tmp_path, monkeypatch):
++    rc, rej = _avvia(tmp_path, monkeypatch, [H1])
++    nuovo = dict(B1, betId="100000000099", marketId="1.777")
++    rc.betfair_service.list_current_orders.return_value = [dict(H1), nuovo]
++    rc._refresh_remote_exposure()
++    assert rc.remote_exposure.bet_ids() == [H1["betId"]]
++
++
++def test_prezzi_conservativi_lay_al_massimo_back_al_minimo_fra_medio_e_limite():
++    # LAY abbinato 2.00 a medio 7.20 (limite 7.00): liability 6.2*2 = 12.40, non 12.00
++    lay = dict(H1, sizeMatched=2.0, sizeRemaining=0.0, averagePriceMatched=7.2)
++    assert market_worst_case(_n(lay)) == Decimal("12.40")
++    # BACK 10 abbinato a medio 2.10 (limite 2.00) + LAY 2.86@7 abbinato: la vincita si conta a 2.00
++    # vince: +10*(2.0-1) - 6*2.86 = -7.16 ; perde: -10 + 2.86 = -7.14 => 7.16
++    back = dict(B1, averagePriceMatched=2.1)
++    h = dict(H1, sizeMatched=2.86, sizeRemaining=0.0, averagePriceMatched=7.0)
++    assert market_worst_case(_n(back, h)) == Decimal("7.16")
++
++
++def test_rilettura_parziale_non_rilascia_mercati_non_letti():
++    reg = RemoteExposureRegistry()
++    altro = dict(B1, betId="100000000003", marketId="1.888")
++    reg.seed([B1, altro])
++    assert reg.refresh([], ["1.888"]) == ["100000000003"]
++    assert reg.bet_ids() == [B1["betId"]] and reg.total() == 10.0
++
++
++def test_residuo_back_a_riposo_non_compensa_la_liability():
++    # LAY 2.00 abbinato a 5.00 (selezione vince: -8.00) + BACK 3.00 a riposo a 4.00 sulla stessa selezione.
++    # Il residuo puo' non abbinarsi: il caso peggiore resta -8.00, non -8 + 3*3 = +1.
++    lay = dict(H1, betId="100000000010", priceSize={"price": 5.0, "size": 2.0}, sizeMatched=2.0,
++               sizeRemaining=0.0, averagePriceMatched=5.0)
++    back = dict(B1, betId="100000000011", priceSize={"price": 4.0, "size": 3.0}, sizeMatched=0.0,
++                sizeRemaining=3.0, averagePriceMatched=0.0)
++    assert market_worst_case(_n(lay, back)) == Decimal("8.00")
