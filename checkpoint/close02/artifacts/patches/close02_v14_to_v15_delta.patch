@@ -1,0 +1,42 @@
+diff --git a/tests/close02/test_close02_v15.py b/tests/close02/test_close02_v15.py
+new file mode 100644
+index 0000000..0d221f2
+--- /dev/null
++++ b/tests/close02/test_close02_v15.py
+@@ -0,0 +1,36 @@
++"""close02 v15 — test mirati per i mutanti sopravvissuti M8 (gate di recovery a
++livello di segnale) e M27 originale (etichetta P/L nello storico Risk Desk).
++Solo test: nessuna modifica al codice. Difesa in profondita': il gate di segnale
++deve reggere anche se il modo fosse riportato ad ACTIVE da un altro percorso."""
++from unittest.mock import MagicMock
++from core.system_state import RuntimeMode
++from tests.close02.test_close02_restart_t81u import _ctl, _arm_spies, _order_calls, SIGNALS
++from tests.integration.test_runtime_controller_auto_trade_mm import _make_controller, _canonical_close_payload
++
++
++def test_m8_gate_segnale_regge_anche_con_modo_active(tmp_path, monkeypatch):
++    rc = _ctl(str(tmp_path / "g.sqlite"), monkeypatch, scen="incerto")
++    rc.start(execution_mode="SIMULATION")
++    assert rc._startup_recovery_blocked
++    rc.mode = RuntimeMode.ACTIVE          # modo riaperto da un percorso diverso da resume()
++    rej = []
++    monkeypatch.setattr(rc, "_reject_signal", lambda sg, r: rej.append(r))
++    _arm_spies(rc, monkeypatch)
++    rc._on_signal_received(dict(SIGNALS[0]))
++    assert rej and rej[0].startswith("startup_recovery_blocked"), rej
++    assert "sizing" not in _order_calls(rc)
++
++
++def _history(rc):
++    return [c.args[0] for c in rc.db.add_risk_position_history.call_args_list]
++
++
++def test_m27_storico_porta_etichetta_verificato():
++    rc, _ = _make_controller(responses=[{"available": 150.0}] * 4)
++    rc.mode = RuntimeMode.ACTIVE
++    rc.db.add_risk_position_history = MagicMock()
++    p = _canonical_close_payload(event_key="h1", correlation_id="h1")
++    p.update(pnl_status="VERIFICATO", commission_status="VERIFICATA", batch_id="bh1")
++    rc._on_close_position(p)
++    h = _history(rc)
++    assert h and h[-1]["pnl_status"] == "VERIFICATO" and h[-1]["commission_status"] == "VERIFICATA"

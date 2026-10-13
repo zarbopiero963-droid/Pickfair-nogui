@@ -1,0 +1,8 @@
+== M8_gate_segnale_rimosso
+1 failed, 2897 passed, 7 skipped, 2 xfailed, 19 warnings in 10.32s
+== M27_etichetta_non_propagata
+2945 passed, 7 skipped, 2 xfailed, 19 warnings in 11.36s
+== M51_hook_picco_attivo
+2945 passed, 7 skipped, 2 xfailed, 19 warnings in 12.15s
+== M81_storico_senza_etichetta_M27_originale
+1 failed, 2898 passed, 7 skipped, 2 xfailed, 19 warnings in 10.26s

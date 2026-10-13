@@ -4,7 +4,8 @@
 
 ## Ordine di applicazione (su 028cee9)
 1. `artifacts/patches/close02_findings_proposal_v13.patch`: **VERIFICATO** (patch isolata cumulativa v1–v13).
-2. `artifacts/patches/close02_v13_to_v14_delta.patch`: **v14 NON VERIFICATO (WIP)**, delta da applicare sopra v13.
+2. `artifacts/patches/close02_v13_to_v14_delta.patch`: v14, delta sopra v13. Suite completa verde; **non verificato in modo indipendente, nessun picco ratificato dall'owner.**
+3. `artifacts/patches/close02_v14_to_v15_delta.patch`: v15, solo test (`tests/close02/test_close02_v15.py`), mirati a M8 e al mutante M27 originale.
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -35,12 +36,20 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 | indip L7b (patched) | 21 / 21 completi, t80u 7 / 7 | = |
 | indip L9 (patched) | 38 / 38 completi | = |
 | test_preflight_L7b/L9 + test_t80u | 39 passed | = |
-| L7b eval (con v13) | 315 CONFORMI / 0 NON / 11 N.A. | non rieseguito |
-| L9 RESTART (con v13) | 357 / 357 CONFORMI | non rieseguito |
+| L7b eval | v13: 315 CONFORMI / 0 NON / 11 N.A. | v14: 315 / 0 / 11 (`record_specific_L7b_v14.json`) |
+| L9 RESTART | v13: 357 / 357 CONFORMI | v14: 357 / 357 (`record_specific_L9_v14.json`) |
 | RED→GREEN | v12: 16 RED → 17 GREEN; v13: 24 RED → 25 GREEN | v14: 23 RED → 23 GREEN |
 | Mutazione | v12 9/10 (M51 equivalente), v13 13/13 | M1–M80 completa: 77/80 uccisi. Sopravvissuti anche sulla suite completa: M8, M27, M51 (vedi nota) |
 
-**Nota sui mutanti sopravvissuti (v14, suite completa).**
+**v15 (solo test).**
+- M8 ora è ucciso: il gate di segnale regge anche con il modo forzato ad ACTIVE.
+- M81, il mutante M27 originale (etichetta P/L nello storico Risk Desk), è ucciso.
+- Equivalenti giustificati:
+  - M27 ricostruito: `MarketNetRealizedSettlementAggregator` emette sempre `commission_labels(False)`, e VERIFICATO arriva solo dopo, via `payload.update`.
+  - M51.
+- Log: `mutation_v15_targeted.txt`.
+
+**Nota storica sui mutanti sopravvissuti (v14, suite completa).**
 - **M8:** toglie solo il gate di recovery a livello di segnale. A valle restano i gate di modo PAUSED e di pre-submit, quindi è ridondante. Il mutante originale v9 ("gate rimosso **e** modo attivo") era stato ucciso.
 - **M27:** il pattern ricostruito è equivalente, perché `realized` porta sempre STIMATO.
 - **M51:** equivalente (giustificato in v18).
@@ -59,8 +68,9 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 | artifacts/record_specific_L9.json | d192c8b3cf45ea1624007452816a3dc7a00ebbcfaa240d26b0349a64a70205a5 |
 | artifacts/record_specific_L9_patched.json | 731c0933c79da95d13b4142b2dd8d828ef65475b0d97a6081e555011a2ef338c |
 | artifacts/findings_register.json | 2ef0c09fc32e30d2c8a0ff13ccd854bf473fff6aa7e269915de7e1bce28bed21 |
-| artifacts/mut_all.py | 1c7637235993f5318c4c39236d6cb8feb05e2887096760061f4e811ed093a3eb |
+| artifacts/mut_all.py | 390260a975cf08c8859538506b2cbce9f97971d5f3d89e9276c18fd02c0b1df5 |
 | reproduce.sh | 6aba84823816656aa2c0a0fdcd2e33e64b8d9712b7d171cf86abd7055af17ee2 |
+| artifacts/patches/close02_v14_to_v15_delta.patch | 3edf28b9e864ebdf32c46b7d335c87293cce64ca3f8da38250b34710ade85bf1 |
 
 ## Contenuto
 - **`artifacts/`**: copia della cartella di lavoro close02.
@@ -108,6 +118,6 @@ python <WORKDIR>/bf2/close02/mut_all.py            # tutti i mutanti, oppure: ..
 - Ricostruzione del picco, opzione A: https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6146717266
 
 ## Prossime attività / come riprendere
-1. v14: test mirati per M8 (solo gate di segnale) e per il mutante originale M27, sonde L7b/L9 su v14, report su #506.
+1. Lotti Gate A L4, L6 e CASH con le regole L7b/L8b/L9.
 2. Lotti Gate A L4, L6 e CASH (sonde dinamiche) con le stesse regole.
 3. Revisione indipendente L1/L2 solo con autorizzazione owner.

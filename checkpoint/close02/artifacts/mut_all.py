@@ -117,6 +117,7 @@ M = [
 ("M77_saldo_attuale_come_picco", PR, '        elif cur > peak:\n            peak = cur', '        else:\n            peak = cur'),
 ("M78_duplicati_ammessi", PR, '        if key in seen:', '        if False:'),
 ("M79_pagine_non_contigue_ammesse", PR, '            reasons.append(f"pagina_{i}_fromRecord_non_contiguo")', '            pass'),
+("M81_storico_senza_etichetta_M27_originale", RC, '                "pnl_status": pnl_label.pnl_label(payload),', '                "pnl_status": "STIMATO",'),
 ("M80_owner_non_obbligatorio", PR, '    if not str(owner or "").strip() or not str(owner_ref or "").strip():', '    if False:'),
 ]
 T = ['tests'] if os.environ.get('FULL') else ['tests/close02', 'tests/core', 'tests/integration', 'tests/services', 'tests/unit']
