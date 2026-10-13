@@ -1,0 +1,785 @@
+{
+ "RSR-38-A1": {
+  "descrizione": "BACK = cap",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0
+  },
+  "segnale": {
+   "stake": 1.0,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-38-A2": {
+  "descrizione": "BACK cap+0.01",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0
+  },
+  "segnale": {
+   "stake": 1.01,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-A3": {
+  "descrizione": "LAY liability = cap (0.50@3.00)",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "price": 3.0,
+   "bet_type": "LAY"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-38-A4": {
+  "descrizione": "LAY liability > cap (0.51@3.00=1.02)",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0
+  },
+  "segnale": {
+   "stake": 0.51,
+   "price": 3.0,
+   "bet_type": "LAY"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-A5": {
+  "descrizione": "cap assente (None) => D2 blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": null
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-A6": {
+  "descrizione": "cap non valido (NaN) => D2 blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": "nan"
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_order_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-A1": {
+  "descrizione": "esistente 1.50 + 0.50 = cap 2.00",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 100.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "max_market_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-39-A2": {
+  "descrizione": "esistente 1.50 + 0.51 > cap",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 100.0
+  },
+  "segnale": {
+   "stake": 0.51,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_market_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-A3": {
+  "descrizione": "cap mercato assente => D2 blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": null,
+   "max_event_exposure_abs": 100.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_market_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-A1": {
+  "descrizione": "esistente 1.50 + 0.50 = cap evento 2.00",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 100.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "max_event_exposure_abs",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-40-A2": {
+  "descrizione": "esistente 1.50 + 0.51 > cap evento",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 100.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.51,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_event_exposure_abs",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-A3": {
+  "descrizione": "cap evento assente => D2 blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 100.0,
+   "max_event_exposure_abs": null
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_event_exposure_abs",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-41-A1": {
+  "descrizione": "perdita 9.99 => ammesso",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_drawdown_abs": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "drawdown",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-41-A2": {
+  "descrizione": "perdita 10.00 => stop",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_drawdown_abs": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "drawdown",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "drawdown_hard_stop_active"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-41-A3": {
+  "descrizione": "perdita 11.00 => stop",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_drawdown_abs": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "drawdown",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "drawdown_hard_stop_active"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-02-A1": {
+  "descrizione": "max_single_bet_pct assente => blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_single_bet_pct": null,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_single_bet_pct",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "supera_max_single_bet"
+   ],
+   "exception": null
+  },
+  "verdetto": "BLOCCATO_PER_ALTRO_MOTIVO"
+ },
+ "RSR-03-A1": {
+  "descrizione": "max_total_exposure_pct assente => blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_total_exposure_pct": null,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_total_exposure_pct",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "supera_max_total_exposure"
+   ],
+   "exception": null
+  },
+  "verdetto": "BLOCCATO_PER_ALTRO_MOTIVO"
+ },
+ "RSR-04-A1": {
+  "descrizione": "max_event_exposure_pct assente => blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_event_exposure_pct": null,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_event_exposure_pct",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "supera_max_event_exposure"
+   ],
+   "exception": null
+  },
+  "verdetto": "BLOCCATO_PER_ALTRO_MOTIVO"
+ },
+ "RSR-15-A1": {
+  "descrizione": "max_stake_abs assente => blocco",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_stake_abs": null,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_stake_abs",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-17-A1": {
+  "descrizione": "aperta 9.50 + 0.50 = cap 10",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 100.0,
+   "max_event_exposure_abs": 100.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "max_open_exposure",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-17-A2": {
+  "descrizione": "aperta 9.50 + 0.51 > cap 10",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 100.0,
+   "max_event_exposure_abs": 100.0
+  },
+  "segnale": {
+   "stake": 0.51,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_open_exposure",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_open_exposure_exceeded:limit=10.0€"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-17-A3": {
+  "descrizione": "max_open_exposure assente => D2 blocco",
+  "config": {
+   "max_open_exposure": null,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "max_open_exposure",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "max_open_exposure_assente"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-14-A1": {
+  "descrizione": "min_stake 0.50, stake 0.49 => non inviato",
+  "config": {
+   "max_open_exposure": 10.0,
+   "min_stake": 0.5,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.49,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "min",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "stake_sotto_minimo"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-14-A2": {
+  "descrizione": "min_stake 0.50, stake 0.50 => inviato",
+  "config": {
+   "max_open_exposure": 10.0,
+   "min_stake": 0.5,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "min",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-18-A1": {
+  "descrizione": "perdita sessione 5.00 = limite 5 => stop",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_session_loss": 5.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "BLOCCATO",
+  "chiave_motivo": "session",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "session_loss_breached:loss=5.00:limit=5.0"
+   ],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-18-A2": {
+  "descrizione": "perdita sessione 4.99 < limite 5 => ammesso",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_session_loss": 5.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "session",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "CTRL-A1": {
+  "descrizione": "config completa valida, 0.50 BACK => ammesso",
+  "config": {
+   "max_open_exposure": 10.0,
+   "max_order_exposure": 1.0,
+   "max_market_exposure": 2.0,
+   "max_event_exposure_abs": 2.0,
+   "max_drawdown_abs": 10.0
+  },
+  "segnale": {
+   "stake": 0.5,
+   "bet_type": "BACK"
+  },
+  "atteso": "AMMESSO",
+  "chiave_motivo": "",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-38-L-assente": {
+  "descrizione": "roserpina.max_order_exposure assente via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [],
+   "valore_caricato": "None"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-38-L-corrotto": {
+  "descrizione": "roserpina.max_order_exposure corrotto via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "config_corrotta:roserpina.max_order_exposure"
+   ],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [
+    "roserpina.max_order_exposure"
+   ],
+   "valore_caricato": "nan"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-39-L-assente": {
+  "descrizione": "roserpina.max_market_exposure assente via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [],
+   "valore_caricato": "None"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-39-L-corrotto": {
+  "descrizione": "roserpina.max_market_exposure corrotto via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "config_corrotta:roserpina.max_market_exposure"
+   ],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [
+    "roserpina.max_market_exposure"
+   ],
+   "valore_caricato": "nan"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-40-L-assente": {
+  "descrizione": "roserpina.max_event_exposure_abs assente via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 1,
+   "rejects": [],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [],
+   "valore_caricato": "None"
+  },
+  "verdetto": "NON_CONFORME"
+ },
+ "RSR-40-L-corrotto": {
+  "descrizione": "roserpina.max_event_exposure_abs corrotto via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "config_corrotta:roserpina.max_event_exposure_abs"
+   ],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [
+    "roserpina.max_event_exposure_abs"
+   ],
+   "valore_caricato": "nan"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-15-L-assente": {
+  "descrizione": "roserpina.max_stake_abs assente via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "owner_t80u_nuovo_rischio_bloccato:roserpina.max_stake_abs"
+   ],
+   "exception": null,
+   "absent_keys": [
+    "roserpina.max_stake_abs"
+   ],
+   "corrupt_keys": [],
+   "valore_caricato": "10000.0"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-15-L-corrotto": {
+  "descrizione": "roserpina.max_stake_abs corrotto via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "owner_t80u_nuovo_rischio_bloccato:roserpina.max_stake_abs"
+   ],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [
+    "roserpina.max_stake_abs"
+   ],
+   "valore_caricato": "10000.0"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-02-L-assente": {
+  "descrizione": "roserpina.max_single_bet_pct assente via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "owner_t80u_nuovo_rischio_bloccato:roserpina.max_single_bet_pct"
+   ],
+   "exception": null,
+   "absent_keys": [
+    "roserpina.max_single_bet_pct"
+   ],
+   "corrupt_keys": [],
+   "valore_caricato": "18.0"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-02-L-corrotto": {
+  "descrizione": "roserpina.max_single_bet_pct corrotto via SettingsService reale => blocco nuovo rischio (D2/t80u)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "owner_t80u_nuovo_rischio_bloccato:roserpina.max_single_bet_pct"
+   ],
+   "exception": null,
+   "absent_keys": [],
+   "corrupt_keys": [
+    "roserpina.max_single_bet_pct"
+   ],
+   "valore_caricato": "18.0"
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-41-L-assente_perdita_0": {
+  "descrizione": "max_drawdown_abs assente, assente_perdita_0 (D1: tetto 10 EUR)",
+  "atteso": "AMMESSO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-41-L-assente_perdita_10": {
+  "descrizione": "max_drawdown_abs assente, assente_perdita_10 (D1: tetto 10 EUR)",
+  "atteso": "BLOCCATO",
+  "osservato": {
+   "orders": 0,
+   "rejects": [
+    "drawdown_hard_stop_active"
+   ]
+  },
+  "verdetto": "CONFORME"
+ },
+ "RSR-41-L-assente_perdita_9.99": {
+  "descrizione": "max_drawdown_abs assente, assente_perdita_9.99 (D1: tetto 10 EUR)",
+  "atteso": "AMMESSO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "verdetto": "CONFORME"
+ },
+ "CTRL-L": {
+  "descrizione": "tutte le chiavi valide via loader => ammesso",
+  "atteso": "AMMESSO",
+  "osservato": {
+   "orders": 1,
+   "rejects": []
+  },
+  "verdetto": "CONFORME"
+ }
+}

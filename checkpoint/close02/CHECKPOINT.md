@@ -8,6 +8,7 @@
 3. `artifacts/patches/close02_v14_to_v15_delta.patch`: v15, solo test (`tests/close02/test_close02_v15.py`), mirati a M8 e al mutante M27 originale.
 
 4. `artifacts/patches/close02_v15_to_v16_delta.patch`: v16 (Claude), solo test (`tests/close02/test_close02_v16.py`), uccide M51. Cumulativo: `close02_findings_proposal_v16.patch`.
+5. `artifacts/patches/close02_v16_to_v17_delta.patch`: v17 (Claude), correzione CL16-MINSTAKE-001 + test. Cumulativo: `close02_findings_proposal_v17.patch` (**ultimo**).
 
 `git apply --check` in sequenza su 028cee9 senza conflitti: verificato. In alternativa `close02_findings_proposal_v14.patch` = v1–v14 in un solo patch.
 
@@ -112,6 +113,88 @@ Solo continuità. Patch isolata, nessuna integrazione. Gate A **NON PASS**. #505
 - Revisione indipendente L1/L2 (Sol, a pagamento).
 - Ratifica del picco equity ricostruito.
 - Semantica `betIds`+`groupBy=MARKET`.
+
+## v17 — Claude, PF-AUTO-MASTER-01 (13/10/2026)
+Solo continuità. Patch isolata, nessuna integrazione. Gate A **NON PASS**. #505 non toccata. Nessuna PR, nessun merge, nessun LIVE. Spesa extra: 0 €.
+
+**Ordine di applicazione.** Applicare `close02_v16_to_v17_delta.patch` dopo la v16, oppure in alternativa il cumulativo `close02_findings_proposal_v17.patch`. Verificato su 028cee9 da copie pulite:
+- v16 + delta = cumulativo v17, alberi identici;
+- l'albero ottenuto coincide con quello testato.
+
+### 1. Mutazione M1–M81 su v16: completa
+- Esito: **80 uccisi su 81**. L'unico sopravvissuto è **M27, equivalente dimostrato** (vedi sezione v16).
+- Harness: `artifacts/mut_all.py` con soli percorsi locali (`claude_v17/mut_all_local_claude.py`), sottoinsieme di test predefinito, `-n 4`.
+- Log: `claude_v17/mutation_all_v16_claude.txt` e riepilogo `claude_v17/mutation_v16_final_summary.txt`.
+- **Nota di integrità (errore dell'operatore, corretto).** Per alcuni minuti le modifiche v17 sono state scritte per errore nello stesso albero in cui girava la campagna.
+  - Mutanti coinvolti: circa M36–M52.
+  - L'albero è stato ripristinato a v16 e gli stessi mutanti sono stati rieseguiti sull'albero pulito: **tutti uccisi** (`claude_v17/mutation_rerun_M36_M52.txt`).
+  - Il riepilogo usa i risultati della riesecuzione.
+
+### 2. Lotto L6-APPLY, sottoinsieme monetario: sonda dinamica sulla catena reale
+**Strumento.** `claude_v17/probe_apply_money.py`, eseguito sulla catena reale: `RuntimeController` + money management vero + `SimulationBroker`, harness `_catena`.
+- Oracoli ricavati dalle regole owner: D1/D2 (#426/6141902809), Q3/Q4 (#506/6141450045), t80u(1) (#426/6143637861), Small Bet (#506/6114505989).
+- **Casi "loader reale":** le chiavi assenti o corrotte passano dal vero `SettingsService`, con `absent_keys`/`corrupt_keys`.
+- **Controllo positivo** su tutti gli alberi (`CTRL-A1`, `CTRL-L`): configurazione valida ⇒ ordine ammesso. Serve a escludere i falsi CONFORME dovuti a blocchi generici.
+
+**Errori dell'autore corretti prima della pubblicazione.**
+1. La fixture non conteneva RSR-17 (`max_open_exposure`), che v16 rende obbligatoria. I blocchi osservati erano quindi dovuti a RSR-17. Corretto aggiungendo RSR-17 alla fixture.
+2. L'oracolo di RSR-41 assente era errato. D1 fissa un tetto di 10 €, non un blocco totale. Rifatto con perdita 0 / 9,99 / 10,00.
+
+**Risultati** (`claude_v17/apply_money_{main028,v16,v17,pr505}.json`, riepilogo `apply_money_summary.json`):
+
+| Regola | main 028cee9 | v16 | v17 | #505 (618884e) |
+|---|---|---|---|---|
+| RSR-38/39/40: cap ordine, mercato, evento (= cap ammesso, oltre bloccato, LAY = liability) | NON CONF | NON CONF (cap non presenti nel patch) | NON CONF | **CONFORME** |
+| RSR-38/39/40 assenti via loader ⇒ blocco (D2) | NON CONF | NON CONF | NON CONF | **NON CONF**: il loader inserisce i default 1/2/2 e l'ordine passa |
+| RSR-38/39/40 corrotti ⇒ blocco | NON CONF | CONF | CONF | CONF |
+| RSR-02/15 assenti o corrotti via loader ⇒ blocco (t80u 1) | NON CONF (default 18%/10000) | **CONF** | **CONF** | **NON CONF** (default 18%/10000) |
+| RSR-41 drawdown 10 € (perdita ≥ 10,00 ⇒ stop, 9,99 ⇒ ammesso; anche con chiave assente) | **NON CONF** (CL02-DD-001) | CONF | CONF | CONF |
+| RSR-17 max_open_exposure (= cap, oltre bloccato, assente ⇒ blocco D2) | assente ⇒ NON CONF | CONF | CONF | assente ⇒ NON CONF |
+| RSR-18 perdita di sessione (5,00 ⇒ stop, 4,99 ⇒ ammesso) | CONF | CONF | CONF | CONF |
+| RSR-14 min_stake: nessun aumento automatico | **NON CONF** | **NON CONF** | **CONF** | **NON CONF** |
+
+### 3. Nuovo difetto CL16-MINSTAKE-001 (P1, corretto in v17)
+**Il difetto.**
+- Il money management portava lo stake sotto il minimo fino al minimo (`core/money_management.py`, `_clamp(recommended, min_stake, …)`). Esempio: segnale da 0,30 € inviato come 0,50 €.
+- Questo viola la regola owner «non aumentare automaticamente stake/liability per raggiungere un minimo» (#506/6114505989, #426/6068305820).
+- Presente su main, v16 e #505.
+
+**Correzione v17.** Stake sotto il minimo ⇒ rifiuto `stake_sotto_minimo`. Il confronto è esatto (`validators.exceeds_cap`, valori illeggibili ⇒ rifiuto). La riduzione al tetto singolo resta invariata.
+
+**Prove.**
+- RED su v16: 2 su 5 falliscono (`tests/close02/test_close02_v17_min_stake.py`).
+- GREEN su v17: 5 su 5.
+- Mutazione mirata della correzione: rimozione del controllo ⇒ ucciso; tolleranza di 0,01 ⇒ ucciso.
+
+**Due test esistenti aggiornati** (codificavano l'aumento vietato; lo scopo dichiarato è conservato):
+- `tests/core/test_min_stake_single_source.py::test_money_management_fallback_follows_trading_config`.
+  - Asseriva che 1,0 venisse portato a 2,0.
+  - Ora asserisce il rifiuto con `metadata["min_stake"] == 2.0`, che continua a dimostrare la fonte unica `trading_config.MIN_STAKE`. Con il vecchio fallback di 0,10 fallirebbe.
+- `tests/core/test_money_management_caps_and_malformed.py::test_tiny_bankroll_rejects_with_suggested_cap_stake`.
+  - Lo scenario passa a quota 1,05, dove lo stake è ≥ minimo e supera il cap. Il contratto `supera_max_single_bet` con stake suggerito 0,075 resta testato.
+  - Aggiunto `test_tiny_bankroll_stake_below_minimum_is_rejected_not_raised` per il vecchio scenario.
+
+**Suite completa v17:** **7534 passati, 16 saltati, 2 xfailed, 0 falliti**.
+
+### 4. Difetto di specifica nel lotto L6, così come preparato
+I casi APPLY generati da template non sono eseguibili così come sono:
+- **oracoli contraddittori:** K3/K6/K9/K12 dicono insieme «10,00 = limite ⇒ ammesso» e «cap assente/corrotto ⇒ nessun ordine»;
+- **casi non discriminanti:** K2 usa un ordine da 0,01 € che resta sotto sia il cap 25 sia il cap 15, quindi non distingue il valore vecchio dal nuovo;
+- **duplicati:** K1/K4/K7/K10 identici, cambia solo `covers`.
+
+Sostituiti, per le chiavi monetarie, dai casi discriminanti della sonda. **I testi normativi non sono stati modificati.** Il resto di L6 (FAILSAFE, PARITY, RACE, AUDIT, OBSERVABLE, S1) resta da strutturare con lo stesso metodo.
+
+### 5. Finding per il Gate A #505 (fase 3, correzioni #505: NON applicate qui)
+- **F-505-D2 (P0):** con RSR-38/39/40 assenti, il loader della #505 inserisce i default 1/2/2 e l'ordine passa. Questo viola D2 («nessun default implicito; assente ⇒ blocco»). Anche con attributo `None`, la #505 non applica alcun limite (casi `RSR-38-A5`, `-39-A3`, `-40-A3`).
+- **F-505-T80U (P0):** la #505 non contiene il gate t80u della v16. RSR-02/15 assenti ⇒ si usano i default 18%/10000.
+- **F-505-RSR17 (P0):** la #505 non contiene il gate D2 di RSR-17 della v16.
+- **F-505-MINSTAKE (P1):** CL16-MINSTAKE-001 presente anche nella #505.
+- **Conseguenza:** le correzioni della #505 devono incorporare il patch close02 (t80u, D2, drawdown, min_stake) e aggiungere D2 per RSR-38/39/40.
+
+### Prossime attività
+1. Strutturare il resto di L6 (FAILSAFE, PARITY, RACE…) con sonde discriminanti.
+2. L4 (461 record: BF, AUTH/SCHEMA/ERROR/STATE/PROOF, OBSERVABLE, S1…) e CASH (5 record).
+3. Preparare il pacchetto di revisione indipendente con le nuove evidenze (senza chiamate a pagamento).
 
 ## Tabella SHA-256 (file chiave; elenco completo in `SHA256SUMS_checkpoint`)
 | File | sha256 |

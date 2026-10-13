@@ -1,0 +1,34 @@
+== M36_rollup_non_chiesto
+1 failed, 2581 passed, 8 skipped, 2 xfailed, 19 warnings in 16.81s
+== M37_betcount_ignorato
+1 failed, 2583 passed, 8 skipped, 2 xfailed, 19 warnings in 17.42s
+== M38_profit_rollup_ignorato
+1 failed, 2140 passed, 8 skipped, 1 xfailed, 19 warnings in 15.82s
+== M39_commissione_su_ogni_riga
+1 failed, 2565 passed, 8 skipped, 2 xfailed, 11 warnings in 17.16s
+== M40_commissione_bet_level_usata
+1 failed, 2555 passed, 8 skipped, 2 xfailed, 13 warnings in 16.50s
+== M41_sim_etichetta_stimata
+2 failed, 814 passed, 1 skipped, 1 xfailed, 2 warnings in 15.96s
+== M42_gui_senza_etichetta
+1 failed, 2567 passed, 8 skipped, 2 xfailed, 13 warnings in 16.45s
+== M43_telegram_senza_pl
+1 failed, 2609 passed, 8 skipped, 2 xfailed, 19 warnings in 16.67s
+== M44_gui_ignora_payload_json
+1 failed, 2600 passed, 8 skipped, 2 xfailed, 19 warnings in 16.44s
+== M45_proiezione_netto_stimato
+1 failed, 2585 passed, 8 skipped, 2 xfailed, 13 warnings in 16.08s
+== M46_apply_netto_stimato
+3 failed, 749 passed, 1 skipped, 1 xfailed, 2 warnings in 14.98s
+== M47_senza_margine_arrotondamento
+3 failed, 739 passed, 1 skipped, 1 xfailed, 2 warnings in 14.88s
+== M48_senza_commissione_massima
+3 failed, 739 passed, 1 skipped, 1 xfailed, 2 warnings in 15.09s
+== M49_fallback_netto_invece_di_zero
+1 failed, 2582 passed, 8 skipped, 2 xfailed, 11 warnings in 17.35s
+== M50_picco_non_ripristinato_apply
+2 failed, 2446 passed, 8 skipped, 2 xfailed, 13 warnings in 16.83s
+== M51_hook_picco_attivo
+1 failed, 2765 passed, 8 skipped, 2 xfailed, 19 warnings in 16.51s
+== M52_rollup_attivo_di_default
+1 failed, 1700 passed, 8 skipped, 1 xfailed, 19 warnings in 14.40s

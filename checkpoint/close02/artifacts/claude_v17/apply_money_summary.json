@@ -1,0 +1,238 @@
+{
+ "lotto": "L6-APPLY (sottoinsieme monetario) — sonda dinamica close02 v17 (Claude)",
+ "alberi": {
+  "main028": "028cee9",
+  "v16": "028cee9 + close02_findings_proposal_v16.patch",
+  "pr505": "618884e (PR #505, sola lettura)"
+ },
+ "regole": [
+  "D1/D2 #426/6141902809",
+  "Q3/Q4 #426/6141450045 (#506/6141450045)",
+  "t80u(1) #426/6143637861",
+  "Small Bet #506/6114505989"
+ ],
+ "conteggi": {
+  "main028": {
+   "CONFORME": 14,
+   "NON_CONFORME": 24,
+   "BLOCCATO_PER_ALTRO_MOTIVO": 3
+  },
+  "v16": {
+   "CONFORME": 25,
+   "NON_CONFORME": 13,
+   "BLOCCATO_PER_ALTRO_MOTIVO": 3
+  },
+  "pr505": {
+   "CONFORME": 25,
+   "NON_CONFORME": 13,
+   "BLOCCATO_PER_ALTRO_MOTIVO": 3
+  }
+ },
+ "casi": {
+  "RSR-38-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-38-A2": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-38-A3": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-38-A4": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-38-A5": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-38-A6": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-39-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-39-A2": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-39-A3": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-40-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-40-A2": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-40-A3": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-41-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-41-A2": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-41-A3": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-02-A1": {
+   "main028": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "v16": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "pr505": "BLOCCATO_PER_ALTRO_MOTIVO"
+  },
+  "RSR-03-A1": {
+   "main028": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "v16": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "pr505": "BLOCCATO_PER_ALTRO_MOTIVO"
+  },
+  "RSR-04-A1": {
+   "main028": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "v16": "BLOCCATO_PER_ALTRO_MOTIVO",
+   "pr505": "BLOCCATO_PER_ALTRO_MOTIVO"
+  },
+  "RSR-15-A1": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-17-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-17-A2": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-17-A3": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-14-A1": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-14-A2": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-18-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-18-A2": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "CTRL-A1": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-38-L-assente": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-38-L-corrotto": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-39-L-assente": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-39-L-corrotto": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-40-L-assente": {
+   "main028": "NON_CONFORME",
+   "v16": "NON_CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-40-L-corrotto": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-15-L-assente": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-15-L-corrotto": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-02-L-assente": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-02-L-corrotto": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "NON_CONFORME"
+  },
+  "RSR-41-L-assente_perdita_0": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-41-L-assente_perdita_10": {
+   "main028": "NON_CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "RSR-41-L-assente_perdita_9.99": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  },
+  "CTRL-L": {
+   "main028": "CONFORME",
+   "v16": "CONFORME",
+   "pr505": "CONFORME"
+  }
+ }
+}

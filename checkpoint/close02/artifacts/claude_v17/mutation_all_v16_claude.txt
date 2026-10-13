@@ -1,0 +1,162 @@
+== M1_start_attivo_anche_se_recovery_ko
+2 failed, 1183 passed, 7 skipped, 1 xfailed, 13 warnings in 17.09s
+== M2_schema_startup_orders_rimosso
+1 failed, 1449 passed, 7 skipped, 1 xfailed, 19 warnings in 16.79s
+== M3_errore_lettura_ordini_ignorato
+1 failed, 1328 passed, 7 skipped, 1 xfailed, 13 warnings in 18.72s
+== M4_picco_non_ripristinato
+2 failed, 1363 passed, 7 skipped, 1 xfailed, 19 warnings in 9.59s
+== M5_riga_corrotta_ignorata
+1 failed, 1954 passed, 7 skipped, 1 xfailed, 19 warnings in 14.96s
+== M6_mancante_come_primo_avvio
+1 failed, 1518 passed, 7 skipped, 1 xfailed, 13 warnings in 15.35s
+== M7_risk_stop_mancante_riapre
+1 failed, 2266 passed, 7 skipped, 1 xfailed, 19 warnings in 16.00s
+== M8_gate_segnale_rimosso
+1 failed, 2806 passed, 8 skipped, 2 xfailed, 19 warnings in 18.53s
+== M9_resume_scavalca
+1 failed, 1536 passed, 7 skipped, 1 xfailed, 19 warnings in 13.80s
+== M10_daily_loss_mancante_ignorato
+1 failed, 2852 passed, 8 skipped, 2 xfailed, 19 warnings in 16.69s
+== M11_gate_t80u_segnale_rimosso
+1 failed, 2767 passed, 8 skipped, 2 xfailed, 19 warnings in 19.40s
+== M12_t80u_fuori_da_loss_block
+1 failed, 2767 passed, 8 skipped, 2 xfailed, 19 warnings in 15.46s
+== M13_assenza_non_segnalata
+1 failed, 2767 passed, 8 skipped, 2 xfailed, 19 warnings in 18.42s
+== M14_recovery_assente_resta_true
+1 failed, 2832 passed, 8 skipped, 2 xfailed, 19 warnings in 17.90s
+== M15_rsr38_non_caricata
+1 failed, 2843 passed, 8 skipped, 2 xfailed, 19 warnings in 18.65s
+== M16_hook_nuovo_massimo_rimosso
+1 failed, 2847 passed, 8 skipped, 2 xfailed, 19 warnings in 18.65s
+== M17_registro_sparito_ignorato
+2 failed, 1159 passed, 8 skipped, 1 xfailed, 16 warnings in 9.32s
+== M18_blocco_registro_non_durevole
+2 failed, 1036 passed, 8 skipped, 1 xfailed, 10 warnings in 9.06s
+== M19_emergenza_mancante_ignorata
+1 failed, 2853 passed, 8 skipped, 2 xfailed, 19 warnings in 15.16s
+== M20_picco_scritto_prima_del_ripristino
+4 failed, 876 passed, 1 xfailed, 8 warnings in 4.08s
+== M21_blocco_daily_loss_non_durevole
+1 failed, 2852 passed, 8 skipped, 2 xfailed, 19 warnings in 18.33s
+== M22_gate_daily_loss_mancante_rimosso
+1 failed, 2852 passed, 8 skipped, 2 xfailed, 19 warnings in 19.21s
+== M23_commissione_inventata
+1 failed, 2838 passed, 8 skipped, 2 xfailed, 19 warnings in 18.50s
+== M24_massimo_recovery_azzerato_per_altra_chiave
+1 failed, 2632 passed, 8 skipped, 2 xfailed, 19 warnings in 16.84s
+== M25_verificata_sempre
+2 failed, 796 passed, 1 skipped, 1 xfailed, 2 warnings in 15.08s
+== M26_verifica_senza_confronto
+1 failed, 2576 passed, 8 skipped, 2 xfailed, 19 warnings in 15.83s
+== M27_etichetta_non_propagata
+2946 passed, 8 skipped, 2 xfailed, 19 warnings in 15.96s
+== M28_vuoto_non_segnalato
+1 failed, 2432 passed, 8 skipped, 2 xfailed, 13 warnings in 18.87s
+== M29_corrotto_opzionale_non_segnalato
+1 failed, 2550 passed, 8 skipped, 2 xfailed, 16 warnings in 15.89s
+== M30_assente_opzionale_non_segnalato
+1 failed, 1526 passed, 8 skipped, 1 xfailed, 13 warnings in 14.65s
+== M31_default_non_segnalato
+1 failed, 1654 passed, 8 skipped, 1 xfailed, 19 warnings in 14.82s
+== M32_corrotto_non_blocca
+1 failed, 885 passed, 1 xfailed, 2 warnings in 13.72s
+== M33_gate_pl_stimato_rimosso
+1 failed, 2599 passed, 8 skipped, 2 xfailed, 19 warnings in 16.04s
+== M34_stimato_ammesso
+3 failed, 737 passed, 1 skipped, 1 xfailed, 2 warnings in 13.77s
+== M35_commissione_illeggibile_ammessa
+1 failed, 2565 passed, 8 skipped, 2 xfailed, 13 warnings in 18.02s
+== M36_rollup_non_chiesto
+1 failed, 2548 passed, 8 skipped, 2 xfailed, 13 warnings in 16.90s
+== M37_betcount_ignorato
+1 failed, 2590 passed, 8 skipped, 2 xfailed, 19 warnings in 16.33s
+== M38_profit_rollup_ignorato
+1 failed, 1667 passed, 8 skipped, 1 xfailed, 19 warnings in 15.56s
+== M39_commissione_su_ogni_riga
+1 failed, 2558 passed, 8 skipped, 2 xfailed, 13 warnings in 15.96s
+== M40_commissione_bet_level_usata
+1 failed, 2007 passed, 8 skipped, 1 xfailed, 13 warnings in 15.69s
+== M41_sim_etichetta_stimata
+2 failed, 814 passed, 1 skipped, 1 xfailed, 2 warnings in 16.51s
+== M42_gui_senza_etichetta
+1 failed, 1683 passed, 8 skipped, 1 xfailed, 19 warnings in 16.84s
+== M43_telegram_senza_pl
+1 failed, 1891 passed, 8 skipped, 1 xfailed, 19 warnings in 15.31s
+== M44_gui_ignora_payload_json
+1 failed, 1643 passed, 8 skipped, 1 xfailed, 13 warnings in 15.99s
+== M45_proiezione_netto_stimato
+1 failed, 2618 passed, 8 skipped, 2 xfailed, 19 warnings in 17.38s
+== M46_apply_netto_stimato
+3 failed, 749 passed, 1 skipped, 1 xfailed, 2 warnings in 15.30s
+== M47_senza_margine_arrotondamento
+3 failed, 739 passed, 1 skipped, 1 xfailed, 2 warnings in 15.88s
+== M48_senza_commissione_massima
+3 failed, 739 passed, 1 skipped, 1 xfailed, 2 warnings in 15.88s
+== M49_fallback_netto_invece_di_zero
+1 failed, 1974 passed, 8 skipped, 1 xfailed, 13 warnings in 15.89s
+== M50_picco_non_ripristinato_apply
+2 failed, 2446 passed, 8 skipped, 2 xfailed, 13 warnings in 16.46s
+== M51_hook_picco_attivo
+1 failed, 2811 passed, 8 skipped, 2 xfailed, 19 warnings in 19.57s
+== M52_rollup_attivo_di_default
+1 failed, 1983 passed, 8 skipped, 1 xfailed, 13 warnings in 15.62s
+== M53_stimato_non_conservativo
+3 failed, 739 passed, 1 skipped, 1 xfailed, 2 warnings in 17.83s
+== M54_nessun_blocco_pre_migrazione
+2 failed, 1789 passed, 8 skipped, 1 xfailed, 19 warnings in 20.61s
+== M55_picco_mancante_ammesso
+1 failed, 2622 passed, 8 skipped, 2 xfailed, 19 warnings in 21.52s
+== M56_copie_incoerenti_ammesse
+1 failed, 945 passed, 1 skipped, 1 xfailed, 8 warnings in 11.83s
+== M57_ordini_incerti_ignorati
+1 failed, 1162 passed, 8 skipped, 1 xfailed, 16 warnings in 12.08s
+== M58_digest_ignorato
+1 failed, 947 passed, 1 skipped, 1 xfailed, 8 warnings in 11.50s
+== M59_migrazione_disarma_risk_stop
+1 failed, 1449 passed, 8 skipped, 1 xfailed, 19 warnings in 11.72s
+== M60_illeggibile_ammesso
+1 failed, 944 passed, 1 skipped, 1 xfailed, 8 warnings in 11.80s
+== M61_una_tantum_rimossa
+1 failed, 1537 passed, 8 skipped, 1 xfailed, 19 warnings in 11.59s
+== M62_audit_recupero_rimosso
+1 failed, 2137 passed, 8 skipped, 1 xfailed, 19 warnings in 20.05s
+== M63_operatore_non_obbligatorio
+1 failed, 1359 passed, 8 skipped, 1 xfailed, 19 warnings in 13.73s
+== M64_azzera_perdita_giorno
+1 failed, 1360 passed, 8 skipped, 1 xfailed, 19 warnings in 19.22s
+== M65_commit_solo_db
+1 failed, 1360 passed, 8 skipped, 1 xfailed, 19 warnings in 14.24s
+== M66_audit_intento_non_scritto
+1 failed, 1360 passed, 8 skipped, 1 xfailed, 19 warnings in 18.22s
+== M67_includeitem_non_forzato
+1 failed, 2455 passed, 8 skipped, 2 xfailed, 19 warnings in 14.09s
+== M68_troncamento_ignorato
+1 failed, 2459 passed, 8 skipped, 2 xfailed, 19 warnings in 16.49s
+== M69_copertura_periodo_ignorata
+1 failed, 1551 passed, 8 skipped, 1 xfailed, 19 warnings in 12.77s
+== M70_catena_non_verificata
+1 failed, 1556 passed, 8 skipped, 1 xfailed, 19 warnings in 11.49s
+== M71_saldo_attuale_non_confrontato
+1 failed, 1635 passed, 8 skipped, 1 xfailed, 19 warnings in 11.87s
+== M72_picco_al_ribasso
+1 failed, 1907 passed, 8 skipped, 1 xfailed, 19 warnings in 12.05s
+== M73_sha_ignorato
+1 failed, 1638 passed, 8 skipped, 1 xfailed, 19 warnings in 13.37s
+== M74_bloccata_ratificabile
+1 failed, 2528 passed, 8 skipped, 2 xfailed, 19 warnings in 20.24s
+== M75_manomissione_non_rilevata
+1 failed, 2389 passed, 8 skipped, 1 xfailed, 19 warnings in 19.41s
+== M76_copia_illeggibile_sovrascritta
+1 failed, 2471 passed, 8 skipped, 2 xfailed, 19 warnings in 17.54s
+== M77_saldo_attuale_come_picco
+1 failed, 2357 passed, 8 skipped, 1 xfailed, 19 warnings in 17.55s
+== M78_duplicati_ammessi
+1 failed, 2194 passed, 8 skipped, 1 xfailed, 19 warnings in 19.16s
+== M79_pagine_non_contigue_ammesse
+1 failed, 2460 passed, 8 skipped, 2 xfailed, 19 warnings in 20.19s
+== M81_storico_senza_etichetta_M27_originale
+1 failed, 2783 passed, 8 skipped, 2 xfailed, 19 warnings in 19.63s
+== M80_owner_non_obbligatorio
+1 failed, 2466 passed, 8 skipped, 2 xfailed, 19 warnings in 21.95s
