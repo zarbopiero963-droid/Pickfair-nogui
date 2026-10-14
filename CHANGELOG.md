@@ -19,6 +19,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
   esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
   parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+- **F029:** `TableManager.allocate` non riassegna più un tavolo in recovery già occupato da una posizione aperta,
+  né un tavolo oltre `table_count`. Prima, con recovery attivo e dopo una perdita, un secondo ingresso riceveva
+  lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un
+  tavolo. Trovato dalla campagna di simulazione Roserpina (con un solo tavolo), reso raggiungibile da F2.
 
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at

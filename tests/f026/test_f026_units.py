@@ -6,6 +6,7 @@
 - F2: al settlement senza table_id si libera il tavolo del mercato solo se univoco e certo.
 """
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -38,6 +39,11 @@ def test_account_invalid_or_incomplete_funds_fail_closed(funds):
     assert account(funds)["ok"] is False
 
 
+@pytest.mark.parametrize("funds", [{"available": 10.0}, {"exposure": 0.0}, {"available": 10.0, "exposure": None}])
+def test_account_missing_field_is_reported_as_missing_not_as_zero(funds):
+    assert account(funds)["reason"] == "BALANCE_FIELD_MISSING"
+
+
 def _rc():
     rc = RuntimeController.__new__(RuntimeController)
     rc.table_manager = TableManager(table_count=3)
@@ -60,6 +66,51 @@ def test_cash_drawdown_not_evaluable_without_valid_snapshot():
     rc._record_account_snapshot({"available": 100.0, "exposure": 0.0}, source="t")
     rc._record_account_snapshot({"available": 50.0}, source="t")                     # esposizione mancante
     assert rc._cash_drawdown_pct() is None, "dato non valutabile: nessun auto-reset"
+
+
+class _Bus:
+    def __init__(self):
+        self.events = []
+
+    def publish(self, name, payload=None):
+        self.events.append((name, dict(payload or {})))
+
+
+def _rc_threshold(pct):
+    rc = _rc()
+    rc.config = SimpleNamespace(auto_reset_drawdown_pct=pct)
+    rc.bus = _Bus()
+    rc.cycle_resets = 0
+
+    def _cycle():                                # ciclo di recovery: fuori dall'oggetto del test
+        rc.cycle_resets += 1
+    rc._reset_recovery_cycle_keeping_losses = _cycle
+    return rc
+
+
+def test_auto_reset_fires_only_at_or_beyond_threshold_on_settled_cash():
+    rc = _rc_threshold(15.0)
+    rc._record_account_snapshot({"available": 100.0, "exposure": 0.0}, source="t")
+    rc._record_account_snapshot({"available": 60.0, "exposure": 30.0}, source="t")   # cassa -10%: sotto soglia
+    assert rc._maybe_auto_reset(40.0) is False and rc.bus.events == [] and rc.cycle_resets == 0
+    rc._record_account_snapshot({"available": 60.0, "exposure": 25.0}, source="t")   # cassa -15%: soglia
+    assert rc._maybe_auto_reset(40.0) is True and rc.cycle_resets == 1
+    name, payload = rc.bus.events[-1]
+    assert name == "ROSERPINA_AUTO_RESET" and payload["drawdown_basis"] == "cash_equity"
+    assert math.isclose(payload["drawdown_pct"], 15.0) and payload["available_drawdown_pct"] == 40.0
+    assert rc._cash_equity_peak == 85.0, "il reset ribasa il picco di cassa (OC-04)"
+
+
+def test_auto_reset_never_fires_on_unevaluable_account():
+    rc = _rc_threshold(0.0)                     # soglia minima: qualunque drawdown valutato scatterebbe
+    _activate(rc, 1, "EV-SETTLED", "1.10")
+    rc._mark_market_settled("1.10")             # un reset lo libererebbe
+    assert rc._maybe_auto_reset(99.0) is False, "nessuno snapshot: nessun auto-reset"
+    rc._record_account_snapshot({"available": 100.0, "exposure": 0.0}, source="t")
+    rc._record_account_snapshot({"available": 10.0}, source="t")                      # esposizione mancante
+    assert rc._maybe_auto_reset(99.0) is False, "dato non valutabile: nessun auto-reset (fail-closed)"
+    assert rc.bus.events == [] and rc.cycle_resets == 0
+    assert rc.table_manager.snapshot()[0]["current_event_key"] == "EV-SETTLED"
 
 
 def test_invalid_snapshot_never_moves_cash_peak():
@@ -136,6 +187,25 @@ def test_settlement_without_table_id_with_two_tables_on_market_releases_nothing(
     rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=5.0)
     t = _tables(rc)
     assert t[1]["current_event_key"] == "EV-A" and t[2]["current_event_key"] == "EV-A2"
+
+
+def test_settlement_marks_market_even_when_its_tables_are_held_so_reset_can_free_them():
+    rc = _rc()
+    _activate(rc, 1, "EV-A", "1.10")
+    _activate(rc, 2, "EV-A2", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=5.0)   # due tavoli: nessun rilascio
+    assert "1.10" in rc._settled_market_ids
+    rc._reset_reservations_keeping_uncertain()
+    t = _tables(rc)
+    assert t[1]["current_event_key"] == "" and t[2]["current_event_key"] == "", "mercato regolato: il reset libera"
+    assert rc.duplication_guard.acquire("EV-A") and rc.duplication_guard.acquire("EV-A2")
+
+
+def test_settlement_with_table_id_also_marks_the_market_settled():
+    rc = _rc()
+    _activate(rc, 1, "EV-A", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=1, pnl=2.0)
+    assert "1.10" in rc._settled_market_ids
 
 
 def test_settlement_without_market_and_table_releases_nothing():

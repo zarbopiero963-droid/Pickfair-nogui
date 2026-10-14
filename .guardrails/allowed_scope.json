@@ -2187,6 +2187,7 @@
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
         "core/runtime_controller.py",
+        "core/table_manager.py",
         "docs/roserpina_bankroll_equity.md",
         "tests/f001/child_autoreset.py",
         "tests/f001/test_f001_release_and_wait_units.py",
@@ -2194,11 +2195,12 @@
         "tests/f026/test_f018_rebuild_units.py",
         "tests/f026/test_f026_financial.py",
         "tests/f026/test_f026_units.py",
+        "tests/f029/test_f029_recovery_table_occupied.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
       ],
-      "max_files": 11,
+      "max_files": 13,
       "allow_tests": true,
-      "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders)."
+      "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders). ESTENSIONE DICHIARATA (stessa chiave): F029 — TableManager.allocate non riassegna un tavolo in recovery gia' occupato ne' oltre table_count (core/table_manager.py, tests/f029/); trovato dalla campagna PF-ROSERPINA-41-FULL-SIMULATION-02 e attivato da F2."
     }
   }
 }

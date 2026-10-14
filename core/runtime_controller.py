@@ -3559,7 +3559,10 @@ class RuntimeController:
         rilascia SOLO se il tavolo e' univoco: una riserva incerta (AMBIGUOUS, F024/F004) resta
         trattenuta, e con piu' tavoli sullo stesso mercato l'attribuzione del P&L per tavolo non
         e' determinabile => nessun rilascio automatico (fail-closed, log).
+        PF-ALL-F026: il mercato viene marcato regolato in ogni caso, anche quando il tavolo resta
+        trattenuto, cosi' un successivo auto-reset puo' liberarne i tavoli.
         """
+        self._mark_market_settled((payload or {}).get("market_id"))
         if table_id is not None:
             self.table_manager.release(int(table_id), pnl=pnl)
             return
@@ -3643,6 +3646,33 @@ class RuntimeController:
             if account["cash_equity"] > peak:
                 self._cash_equity_peak = account["cash_equity"]
         return account
+
+    def _maybe_auto_reset(self, available_drawdown: float) -> bool:
+        """PF-ALL-F026: auto-reset Roserpina deciso sul drawdown dell'equity di cassa (il regolato).
+
+        Snapshot del conto non valutabile o drawdown sotto soglia => nessun reset (fail-closed).
+        Il reset trattiene posizioni non regolate e riserve incerte e ribasa il picco di cassa.
+        """
+        cash_drawdown = self._cash_drawdown_pct()
+        if cash_drawdown is None:
+            return False
+        if cash_drawdown < self.config.auto_reset_drawdown_pct:
+            return False
+        self._reset_reservations_keeping_uncertain()   # PF-ALL-F024 / F026
+        self._reset_recovery_cycle_keeping_losses()
+        account = getattr(self, "_account_snapshot", None) or {}
+        if account.get("ok"):
+            self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
+        self.bus.publish(
+            "ROSERPINA_AUTO_RESET",
+            {
+                "reason": "drawdown_limit",
+                "drawdown_pct": cash_drawdown,
+                "drawdown_basis": "cash_equity",
+                "available_drawdown_pct": available_drawdown,
+            },
+        )
+        return True
 
     def _cash_drawdown_pct(self) -> Optional[float]:
         """Drawdown dell'equity di cassa (regolato) rispetto al suo picco; None se non valutabile."""
@@ -3979,8 +4009,7 @@ class RuntimeController:
             self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
             return
 
-        self._mark_market_settled(payload.get("market_id"))          # PF-ALL-F026
-        self._release_settled_tables(payload, table_id=table_id, pnl=pnl)   # PF-ALL-F2
+        self._release_settled_tables(payload, table_id=table_id, pnl=pnl)   # PF-ALL-F026 / F2
 
         # Persistenza cronologia Risk Desk (Issue #274/293)
         try:
@@ -4130,23 +4159,7 @@ class RuntimeController:
         # del REGOLATO (equity di cassa), mai sul solo disponibile: le puntate aperte non sono
         # perdite. Dati del conto non valutabili => nessun auto-reset (fail-closed). I blocchi
         # protettivi (lockdown sotto, difesa nel MM) restano sulla base invariata.
-        cash_drawdown = self._cash_drawdown_pct()
-        if cash_drawdown is not None and cash_drawdown >= self.config.auto_reset_drawdown_pct:
-            self._reset_reservations_keeping_uncertain()   # PF-ALL-F024 / F026
-            self._reset_recovery_cycle_keeping_losses()
-            account = getattr(self, "_account_snapshot", None) or {}
-            if account.get("ok"):
-                self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
-
-            self.bus.publish(
-                "ROSERPINA_AUTO_RESET",
-                {
-                    "reason": "drawdown_limit",
-                    "drawdown_pct": cash_drawdown,
-                    "drawdown_basis": "cash_equity",
-                    "available_drawdown_pct": current_drawdown,
-                },
-            )
+        self._maybe_auto_reset(current_drawdown)
 
         if current_drawdown >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")

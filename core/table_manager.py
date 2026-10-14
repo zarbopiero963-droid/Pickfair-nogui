@@ -105,11 +105,16 @@ class TableManager:
                 if table.status == "FREE" and table.table_id <= self.table_count:
                     return TableState(**table.to_dict())
 
-            # 2) recovery consentito
+            # 2) recovery consentito. PF-ALL-F029: solo un tavolo in recovery
+            #    NON occupato (activate sovrascriverebbe la posizione aperta:
+            #    esposizione persa dai cap, due posizioni su un tavolo) ed entro
+            #    table_count, come per i tavoli liberi.
             if allow_recovery:
                 recovery_candidates = [
                     t for t in self._tables.values()
-                    if t.status in {"RECOVERY", "LOCKED"} or t.in_recovery
+                    if (t.status in {"RECOVERY", "LOCKED"} or t.in_recovery)
+                    and not t.current_event_key
+                    and t.table_id <= self.table_count
                 ]
                 if recovery_candidates:
                     recovery_candidates.sort(key=lambda t: (t.loss_amount, t.table_id))

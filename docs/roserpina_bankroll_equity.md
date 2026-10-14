@@ -1,4 +1,4 @@
-# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018)
+# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018, F029)
 
 Riferimenti: #453 (PF-ALL-F026, F2, F018), #426/6146717266 («Non confondere il saldo disponibile con l'equity»),
 OWNER-SETTLEMENT-02 e OC-04 (nessuna liberazione di capitale ancora impegnato), OD-PF-RECON-02 (un dato mancante
@@ -20,7 +20,8 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 
 ## Auto-reset
 
-`ROSERPINA_AUTO_RESET` ribasa il picco e libera risorse. Per questo si decide sul drawdown dell'equity di cassa,
+`RuntimeController._maybe_auto_reset`, chiamata a ogni settlement contabilizzato. `ROSERPINA_AUTO_RESET`
+ribasa il picco e libera risorse. Per questo si decide sul drawdown dell'equity di cassa,
 cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono perdite.
 
 - Snapshot del conto non valutabile ⇒ nessun auto-reset (fail-closed).
@@ -36,6 +37,11 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   La base del drawdown è una decisione owner aperta (registro D04, punto 6.O2): non viene cambiata qui.
 - **F027.** In PAUSED o LOCKDOWN il poller dei settlement non gira (contratto «runtime non ACTIVE ⇒ zero rete»).
   I settlement di posizioni già aperte non vengono contabilizzati finché il runtime non torna ACTIVE.
+- **F028.** Un ordine d'ingresso con abbinato zero che decade alla chiusura del mercato (LAPSED) o viene
+  annullato (CANCELLED, es. dal RISK_STOP) non produce settlement: il tavolo e la sua esposizione restano
+  occupati fino al riavvio, quando F018 lo trova assente dall'exchange e non lo ricostruisce. È in direzione
+  prudente sui cap (esposizione sovrastimata) ma riduce i tavoli e può far scattare lo stop di esposizione.
+  Serve una riconciliazione degli esiti d'ordine non abbinati: non è in questo cambiamento.
 - Il trattamento dei prelievi e dei depositi nel drawdown non è deciso. Oggi muovono l'equity di cassa come
   qualsiasi variazione del conto.
 
@@ -47,6 +53,13 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   con il P&L del tavolo, **solo se è univoco e certo**;
 - una riserva incerta resta trattenuta (F024/F004);
 - con più tavoli sullo stesso mercato non si rilascia nulla automaticamente (log).
+
+## F029 — tavoli in recovery
+
+`TableManager.allocate` assegna un tavolo in recovery solo se **libero** (nessuna posizione aperta) ed entro
+`table_count`, come i tavoli liberi. Senza questo vincolo, dopo una perdita, un secondo ingresso riceveva il
+tavolo in recovery già occupato e `activate` ne sovrascriveva la posizione: esposizione persa dai cap, due
+posizioni sullo stesso tavolo, tavolo non più rilasciabile al settlement della prima.
 
 ## F018 — ricostruzione al riavvio
 

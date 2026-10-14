@@ -92,7 +92,7 @@ def test_exchange_unreadable_blocks_and_holds_every_candidate_as_uncertain():
     rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", bet_id="B1"), _row("r2", "AMBIGUOUS", "1.2", 2, "K2")],
              _Exchange(fail=True))
     res = rc._rebuild_open_positions()
-    assert res["ok"] is False and res["reason"].startswith("EXCHANGE_ORDERS_UNAVAILABLE")
+    assert res["ok"] is False and res["reason"] == "EXCHANGE_ORDERS_UNAVAILABLE:RuntimeError", "causa diagnosticabile"
     assert sorted(res["uncertain"]) == ["r1", "r2"], "un dato mancante non vale «posizione chiusa»"
     assert rc.table_manager.total_exposure() == pytest.approx(6.0)
 
