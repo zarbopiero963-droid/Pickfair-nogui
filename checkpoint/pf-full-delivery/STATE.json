@@ -1,0 +1,43 @@
+{
+  "schema": "pf-agent-state/1",
+  "seq": 1,
+  "updated_at": "2026-10-14T21:30:00Z",
+  "agent": {"kind": "claude-code", "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb", "lock": "none (lease agent-lock non ancora autorizzata)"},
+  "mandates": ["PF-FULL-DELIVERY-01", "PF-ROSERPINA-CONFIG-41-MCP-01", "PF-ROSERPINA-41-FULL-SIMULATION-02"],
+  "repo": {"name": "zarbopiero963-droid/Pickfair-nogui", "main_sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93", "verified_with": "git ls-remote"},
+  "protected": {"pr505_head": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4", "must_not_modify": ["main", "PR#505"]},
+  "work": {
+    "branch": "ccr-bcc81683-ud0hgc",
+    "base_sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
+    "commits": [
+      {"sha": "69a84e6", "task": "issue461-pr26-0-f001-executor-outcome", "what": "F001/F023/F024 (= d666de9 locale, albero identico 564e827)"},
+      {"sha": "5f80756", "task": "issue461-pr26-0-f001-executor-outcome", "what": "F024 reset"},
+      {"sha": "c92bb79", "task": "issue461-pr26-0-f001-executor-outcome", "what": "test mutante M7"},
+      {"sha": "afebec7", "task": "issue461-pr28-f026v2-f2-f018-positions", "what": "F026 v2 + F2 + F018"}
+    ],
+    "head_sha": "afebec796afd2b165a0235933c1203f7dc0c4a21",
+    "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
+    "pr": null
+  },
+  "tests": [
+    {"id": "regression_full", "sha": "afebec7", "result": "7363 passed / 0 failed / 14 skipped / 1 xfailed (py3.12 venv, Xvfb, -n 4)"},
+    {"id": "tests/f026 (integrazione 14 + unit 36)", "sha": "afebec7", "result": "PASS"},
+    {"id": "RED tests/f026 su c92bb79", "result": "25 failed + errori di raccolta unit (funzioni assenti)"},
+    {"id": "mutation_v2 (18 mutanti F026v2/F2/F018)", "sha": "afebec7", "result": "IN CORSO"}
+  ],
+  "findings": {
+    "fixed_with_evidence": ["F001", "F023", "F024", "F026 (v2)", "F2", "F018"],
+    "open": ["F004", "F011", "F025", "OBS-1", "OBS-2", "F027 (settlement non contabilizzati in PAUSED/LOCKDOWN)",
+             "LOCKDOWN su drawdown del disponibile (base caso peggiore; decisione owner 6.O2)"]
+  },
+  "gates": {"A_global": "NON_PASS", "B_global": "NOT_VERIFIED", "LIVE": "NO_GO", "source": "#506"},
+  "authorizations": [
+    {"id": "PF-FULL-DELIVERY-01", "source": "prompt owner in chat 14/10", "scope": "sviluppo reale, checkpoint persistenti; nessun merge/PR/LIVE/main/#505"},
+    {"id": "PF-ROSERPINA-CONFIG-41-MCP-01", "source": "prompt owner in chat 14/10"},
+    {"id": "PF-ROSERPINA-41-FULL-SIMULATION-02", "source": "prompt owner in chat 14/10"}
+  ],
+  "owner_decisions_pending": ["base drawdown (6.O2) e lockdown", "10s vs 30s saldo LIVE", "prelievi/depositi", "ordine PR F001/F026 vs #505", "F027: contabilizzazione settlement in PAUSED/LOCKDOWN con emergency stop", "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"],
+  "uncertain_ops": [],
+  "next_atomic_action": "completare mutation_v2; scenario critico multi-tavolo su afebec7; poi inventario RSR-01..41 e servizio unico di configurazione",
+  "stop_conditions": ["autorizzazione owner mancante", "head mismatch main/#505", "hash/albero non riproducibili", "decisione finanziaria non presente nelle fonti"]
+}
