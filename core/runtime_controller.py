@@ -2546,8 +2546,7 @@ class RuntimeController:
         }
 
     def reset_cycle(self) -> dict:
-        self.table_manager.reset_all()
-        self.duplication_guard.clear()
+        self._reset_reservations_keeping_uncertain()       # PF-ALL-F024
         self._reset_recovery_cycle_keeping_losses()
 
         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
@@ -3371,11 +3370,16 @@ class RuntimeController:
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
 
+        uncertain = self._uncertain_reservations_map()
         if event_name in _NO_RELEASE_UNCERTAIN_EVENTS:
             # PF-ALL-F024: un esito AMBIGUOUS non prova che l'ordine non sia
             # sull'exchange. Tavolo, esposizione, riserva e chiave duplicati
             # restano acquisiti finche' la riconciliazione non porta un esito
             # certo (FAILED / settlement). Nessun retry, nessun nuovo ingresso.
+            # La riserva e' marcata incerta: nemmeno un reset (auto-reset da
+            # drawdown, reset_cycle) la libera.
+            if event_key:
+                uncertain[event_key] = table_id
             logger.warning(
                 "Esito incerto %s: riserva trattenuta event_key=%s table_id=%s customer_ref=%s",
                 event_name, event_key, table_id, payload.get("customer_ref"),
@@ -3383,6 +3387,7 @@ class RuntimeController:
             return
 
         if event_key:
+            uncertain.pop(event_key, None)       # esito certo: non piu' incerta
             self.duplication_guard.release(event_key)
 
         if table_id is not None:
@@ -3397,6 +3402,23 @@ class RuntimeController:
                     )
             except Exception:
                 logger.exception("Errore rilascio tavolo table_id=%s", table_id)
+
+    def _uncertain_reservations_map(self) -> dict:
+        """event_key -> table_id delle riserve con esito AMBIGUOUS (PF-ALL-F024)."""
+        current = getattr(self, "_uncertain_reservations", None)
+        if current is None:
+            current = {}
+            self._uncertain_reservations = current
+        return current
+
+    def _reset_reservations_keeping_uncertain(self) -> None:
+        """Reset di tavoli e chiavi duplicati che NON libera le riserve incerte."""
+        uncertain = dict(self._uncertain_reservations_map())
+        keep_tables = {int(t) for t in uncertain.values() if t is not None}
+        self.table_manager.reset_all(keep_table_ids=keep_tables)
+        self.duplication_guard.clear(keep_keys=set(uncertain))
+        if uncertain:
+            logger.warning("Reset tavoli: %d riserve incerte trattenute (%s)", len(uncertain), sorted(uncertain))
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
@@ -3870,8 +3892,7 @@ class RuntimeController:
             )
 
         if current_drawdown >= self.config.auto_reset_drawdown_pct:
-            self.table_manager.reset_all()
-            self.duplication_guard.clear()
+            self._reset_reservations_keeping_uncertain()   # PF-ALL-F024
             self._reset_recovery_cycle_keeping_losses()
 
             self.bus.publish(

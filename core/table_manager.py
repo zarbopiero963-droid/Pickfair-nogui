@@ -281,9 +281,14 @@ class TableManager:
     # =========================================================
     # RESET / SNAPSHOT
     # =========================================================
-    def reset_all(self) -> None:
+    def reset_all(self, keep_table_ids=None) -> None:
+        """Azzera i tavoli. ``keep_table_ids``: tavoli che portano una riserva
+        con esito incerto (AMBIGUOUS, PF-ALL-F024) e NON vanno liberati."""
+        keep = {int(t) for t in (keep_table_ids or ())}
         with self._lock:
             for table in self._tables.values():
+                if table.table_id in keep:
+                    continue
                 table.status = "FREE"
                 table.current_event_key = ""
                 table.current_exposure = 0.0

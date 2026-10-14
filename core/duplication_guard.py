@@ -195,7 +195,18 @@ class DuplicationGuard:
     # =========================================================
     # CLEAR
     # =========================================================
-    def clear(self):
+    def clear(self, keep_keys=None):
+        """Svuota le chiavi. ``keep_keys``: chiavi di ordini con esito incerto
+        (AMBIGUOUS, PF-ALL-F024) che restano acquisite."""
+        keep = {str(k or "").strip() for k in (keep_keys or ())} - {""}
         with self._lock:
-            self._active.clear()
-            self._registered_at.clear()
+            if not keep:
+                self._active.clear()
+                self._registered_at.clear()
+                return
+            for key in list(self._active):
+                if key not in keep:
+                    self._active.pop(key, None)
+            for key in list(self._registered_at):
+                if key not in keep:
+                    self._registered_at.pop(key, None)

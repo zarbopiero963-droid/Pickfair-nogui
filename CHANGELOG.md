@@ -117,7 +117,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   holds that order's reservation (`TableManager.force_unlock_if_event`,
   idempotent, lock-protected).
 - `QUICK_BET_AMBIGUOUS` no longer releases the table, the exposure or the
-  anti-duplicate key (PF-ALL-F024): the risk is held until reconciliation.
+  anti-duplicate key (PF-ALL-F024): the risk is held until reconciliation, also
+  across `ROSERPINA_AUTO_RESET` and `reset_cycle` (`TableManager.reset_all` and
+  `DuplicationGuard.clear` keep the uncertain reservations).
   See `docs/trading_engine_executor_contract.md`.
 - RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
   PKG-P24-B: P38 and the P37 exposure stop).

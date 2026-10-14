@@ -189,3 +189,36 @@ def test_non_dict_response_after_client_call_is_ambiguous(resp):
 def test_nested_success_report_is_accepted():
     _engine_with(None)._raise_if_failed_semantic_response(
         {"ok": True, "result": {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS", "betId": "B"}]}})
+
+
+# ------------------------------------------------------------------ F024: reset (auto-reset drawdown / reset_cycle)
+def test_reset_keeps_ambiguous_reservation_and_frees_the_rest():
+    rc = _runtime_stub()
+    for key, tid in (("EV-AMB", 1), ("EV-OK", 2)):
+        assert rc.duplication_guard.acquire(key)
+        _active(rc.table_manager, tid, key)
+    rc._release_if_terminal({"event_key": "EV-AMB", "table_id": 1}, event_name="QUICK_BET_AMBIGUOUS")
+    rc._reset_reservations_keeping_uncertain()
+    tabs = {t["table_id"]: t for t in rc.table_manager.snapshot()}
+    assert tabs[1]["current_exposure"] == 30.0 and tabs[1]["current_event_key"] == "EV-AMB"
+    assert tabs[2]["status"] == "FREE"
+    assert not rc.duplication_guard.acquire("EV-AMB"), "F024: chiave dell'ordine incerto liberata dal reset"
+    assert rc.duplication_guard.acquire("EV-OK")
+
+
+def test_later_certain_outcome_clears_uncertain_mark():
+    rc = _runtime_stub()
+    _active(rc.table_manager, 1, "EV-1")
+    rc._release_if_terminal({"event_key": "EV-1", "table_id": 1}, event_name="QUICK_BET_AMBIGUOUS")
+    rc._release_if_terminal({"event_key": "EV-1", "table_id": 1}, event_name="QUICK_BET_FAILED")
+    assert rc._uncertain_reservations_map() == {}
+    assert rc.table_manager.total_exposure() == 0.0
+
+
+def test_reset_without_uncertain_reservations_is_unchanged():
+    rc = _runtime_stub()
+    for key, tid in (("EV-A", 1), ("EV-B", 2)):
+        rc.duplication_guard.acquire(key); _active(rc.table_manager, tid, key)
+    rc._reset_reservations_keeping_uncertain()
+    assert rc.table_manager.total_exposure() == 0.0
+    assert rc.duplication_guard.acquire("EV-A") and rc.duplication_guard.acquire("EV-B")
