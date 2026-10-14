@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import logging
 import threading
@@ -344,6 +345,8 @@ class TradingEngine:
             created_at=time.time(),
             event_key=normalized.get("event_key"),
             simulation_mode=normalized.get("simulation_mode"),
+            table_id=normalized.get("table_id"),
+            market_id=(str(normalized["market_id"]) if normalized.get("market_id") is not None else None),
         )
 
     # ==================================================================
@@ -578,25 +581,105 @@ class TradingEngine:
     # ==================================================================
     # [A2] EXECUTOR ROUTING HELPER — Explicit contract
     # ==================================================================
+    # Attesa massima dell'esito di un task affidato all'executor quando
+    # l'executor non dichiara un ``default_timeout`` proprio (F001).
+    _EXECUTOR_WAIT_FALLBACK_SEC = 30.0
+
     def _execute_via_executor(self, operation_name: str, fn: Any) -> Any:
         """
-        [A2] Executor routing with explicit contract.
+        [A2] Executor routing with explicit contract (PF-ALL-F001).
 
-        SUPPORTED MODES:
-        1. executor.submit(operation_name, fn) returning final concrete result
-        2. direct fn() execution when executor is None or has no submit()
+        Restituisce SEMPRE il risultato concreto di ``fn`` oppure solleva:
+        mai un ``Future``, un awaitable o un segnaposto.
 
-        NOT SUPPORTED:
-        - raw coroutine return values
-        - native async awaiting inside TradingEngine
+        1. executor assente / senza ``submit()``: ``fn()`` diretto.
+        2. ``submit()`` che restituisce un risultato concreto (executor
+           sincrono): restituito invariato.
+        3. ``submit()`` che restituisce un ``concurrent.futures.Future``
+           (``ExecutorManager`` di produzione): l'esito si attende e si
+           classifica in ``_resolve_executor_future``.
 
-        REQUIREMENT:
-        - async executors must normalize internally and return concrete result, not awaitable
+        Un errore nato PRIMA che ``fn`` partisse (submit rifiutato, task mai
+        avviato) e' ``_ErrorePrimaDellInvio``: nulla e' stato inviato, FAILED
+        e' la verita'. Tutto cio' che accade dopo l'avvio del task non prova
+        nulla sull'invio: AMBIGUOUS + riconciliazione, mai FAILED, mai retry.
         """
         submit_fn = getattr(self.executor, "submit", None)
-        if callable(submit_fn):
-            return submit_fn(operation_name, fn)
-        return fn()
+        if not callable(submit_fn):
+            return fn()
+        prefix = str(getattr(self.executor, "thread_name_prefix", "") or "")
+        if prefix and threading.current_thread().name.startswith(prefix):
+            # Attendere un task dello stesso pool dal suo stesso worker puo'
+            # esaurire il pool (deadlock): si rifiuta prima di inviare.
+            raise _ErrorePrimaDellInvio("EXECUTOR_REENTRANT_SUBMIT_REFUSED")
+        started = threading.Event()
+
+        def _tracked() -> Any:
+            started.set()
+            return fn()
+
+        try:
+            handle = submit_fn(operation_name, _tracked)
+        except Exception as exc:
+            if started.is_set():
+                # Executor sincrono: l'eccezione e' di fn (client), propagata
+                # INVARIATA come sul percorso diretto.
+                raise
+            raise _ErrorePrimaDellInvio(f"EXECUTOR_SUBMIT_REFUSED:{type(exc).__name__}") from exc
+        if not isinstance(handle, concurrent.futures.Future):
+            return handle
+        return self._resolve_executor_future(handle)
+
+    def _executor_wait_seconds(self) -> float:
+        raw = getattr(self.executor, "default_timeout", None)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return self._EXECUTOR_WAIT_FALLBACK_SEC
+        if value != value or value <= 0 or value == float("inf"):
+            return self._EXECUTOR_WAIT_FALLBACK_SEC
+        return value
+
+    def _resolve_executor_future(self, handle: "concurrent.futures.Future") -> Any:
+        """Attende e classifica l'esito del ``Future`` (PF-ALL-F001).
+
+        - risultato o eccezione di ``fn``: restituito / propagata INVARIATA,
+          cosi' la classificazione e' identica al percorso diretto;
+        - ``Future`` cancellato: ``fn`` non e' mai partita => pre-invio;
+        - attesa scaduta con task non partito: ``cancel()`` riuscito garantisce
+          che ``fn`` non partira' mai => pre-invio;
+        - attesa scaduta con task partito, o executor guasto: esito ignoto =>
+          AMBIGUOUS (l'ordine puo' essere sull'exchange).
+
+        I messaggi pre-invio non contengono la parola che ``_handle_submit_exception``
+        legge come ambiguita' ("timeout"): la loro classificazione e' per tipo.
+        """
+        wait_s = self._executor_wait_seconds()
+        try:
+            return handle.result(timeout=wait_s)
+        except concurrent.futures.CancelledError as exc:
+            raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START") from exc
+        except concurrent.futures.TimeoutError:
+            if handle.done():
+                # Su Python >= 3.11 il TimeoutError dell'attesa e' lo stesso tipo
+                # di quello che puo' sollevare il client: se il task e' concluso
+                # l'esito vero e' il suo (valore o eccezione), non l'attesa.
+                if handle.cancelled():
+                    raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START")
+                return handle.result(timeout=0)
+            if handle.cancel():
+                raise _ErrorePrimaDellInvio("EXECUTOR_QUEUE_EXPIRED_NOT_STARTED")
+            raise ExecutionError(
+                f"EXECUTOR_WAIT_EXPIRED_AFTER_START wait_s={wait_s}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_TIMEOUT,
+            )
+        except concurrent.futures.BrokenExecutor as exc:
+            raise ExecutionError(
+                f"EXECUTOR_BROKEN_AFTER_SUBMIT:{exc}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            ) from exc
 
     # ==================================================================
     # [FIX 3] DUPLICATE HANDLER HELPER
@@ -685,7 +768,10 @@ class TradingEngine:
         publish = getattr(self.bus, "publish", None)
         if callable(publish):
             try:
-                publish(event_name, {**self._ctx_metadata(ctx), **extra})
+                # PF-ALL-F023: gli eventi portano l'identita' della riserva
+                # (tavolo, mercato) per il rilascio dell'ordine giusto.
+                publish(event_name, {**self._ctx_metadata(ctx),
+                                     "table_id": ctx.table_id, "market_id": ctx.market_id, **extra})
             except Exception:
                 logger.exception("Failed to publish %s", event_name)
 
@@ -1106,6 +1192,16 @@ class TradingEngine:
         if inspect.isawaitable(response):
             raise RuntimeError("ASYNC_EXECUTOR_NOT_NORMALIZED")
 
+        # [F001] Fail-closed: un Future non risolto non e' mai una risposta del
+        # broker (es. executor non standard che lo restituisce annidato). Il
+        # task puo' essere partito => esito ignoto, mai SUBMITTED.
+        if isinstance(response, concurrent.futures.Future):
+            raise ExecutionError(
+                f"EXECUTOR_RESULT_NOT_RESOLVED for cid={ctx.correlation_id}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
+
         # [A1] None is ambiguity
         if response is None:
             raise ExecutionError(
@@ -1116,9 +1212,27 @@ class TradingEngine:
         self._raise_if_failed_semantic_response(response)
         return response
 
+    @staticmethod
+    def _instruction_reports(response: Dict[str, Any]) -> list:
+        """``instructionReports`` nelle forme note: top-level (broker SIM, risposta
+        Betfair grezza) o annidati sotto ``result`` / ``raw`` (``BetfairClient``)."""
+        reports: list = []
+        for container in (response, response.get("result"), response.get("raw")):
+            if isinstance(container, dict):
+                for report in container.get("instructionReports") or []:
+                    if isinstance(report, dict):
+                        reports.append(report)
+        return reports
+
     def _raise_if_failed_semantic_response(self, response: Any) -> None:
         if not isinstance(response, dict):
-            return
+            # PF-ALL-F001 / F025: il client e' stato chiamato ma la risposta non
+            # e' interpretabile. L'ordine puo' esistere => mai SUBMITTED.
+            raise ExecutionError(
+                f"DOWNSTREAM_MALFORMED_RESPONSE:type={type(response).__name__}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
 
         status = str(response.get("status") or "").upper()
         reason_code = str(response.get("reason_code") or "").upper()
@@ -1148,6 +1262,23 @@ class TradingEngine:
         )
         if semantic_failure:
             raise RuntimeError(f"DOWNSTREAM_SEMANTIC_FAILURE:{response}")
+
+        # PF-ALL-F001: l'esito vero e' nei report di istruzione. Status top-level
+        # SUCCESS con report FAILURE (es. LAPSED) e' un rifiuto confermato, non
+        # un successo; report discordanti non provano nulla.
+        reports = self._instruction_reports(response)
+        report_status = {str(r.get("status") or "").upper() for r in reports}
+        if reports and report_status == {"FAILURE"}:
+            raise RuntimeError(f"DOWNSTREAM_REPORT_FAILURE:{response}")
+        if "FAILURE" in report_status:
+            raise ExecutionError(
+                f"DOWNSTREAM_MIXED_REPORTS:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SPLIT_STATE,
+            )
+
+        # PF-ALL-F025 (successo senza betId) NON e' in questo lotto: cambierebbe il
+        # contratto di ack esistente ({"ok": True}); resta RED in B-RED-17d.
 
     # ==================================================================
     # [G] AMBIGUITY RESOLUTION — Single enqueue

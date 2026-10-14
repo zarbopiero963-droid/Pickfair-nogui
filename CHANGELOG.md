@@ -104,6 +104,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Order outcome with the production `ExecutorManager` (PF-ALL-F001, #453): the
+  `TradingEngine` now waits for and classifies the `Future` instead of treating
+  it as the broker response. Rejections are `FAILED`; timeouts after the task
+  started, lost responses, `order_unknown`, mixed or malformed responses are
+  `AMBIGUOUS` with reconciliation; a task still queued when the wait expires is
+  cancelled and reported as pre-send `FAILED`. A top-level `SUCCESS` whose
+  instruction reports are all `FAILURE` is a rejection. No order is recorded as
+  `SUBMITTED` without the real broker response.
+- Table release on terminal events (PF-ALL-F023): engine bus events carry
+  `table_id` and `market_id`; a confirmed failure frees the table only if it still
+  holds that order's reservation (`TableManager.force_unlock_if_event`,
+  idempotent, lock-protected).
+- `QUICK_BET_AMBIGUOUS` no longer releases the table, the exposure or the
+  anti-duplicate key (PF-ALL-F024): the risk is held until reconciliation.
+  See `docs/trading_engine_executor_contract.md`.
 - RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
   PKG-P24-B: P38 and the P37 exposure stop).
   - Before, reaching the session-loss limit only blocked new entries: the bot's

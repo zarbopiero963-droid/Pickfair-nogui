@@ -120,7 +120,13 @@ def test_non_normalized_async_executor_keeps_inflight_key():
         }
     )
 
-    assert result["ok"] is True
+    # PF-ALL-F001 (contratto aggiornato, autorizzazione owner PF-F001-FIX-RED-GREEN-01):
+    # l'handle non normalizzato restituito dall'executor (qui un Thread) NON e' una
+    # risposta del broker. Prima veniva registrato come successo (ok=True, SUBMITTED):
+    # era il falso successo di F001. Ora l'esito e' AMBIGUOUS e l'invariante del test
+    # - la chiave in-flight resta trattenuta, nessun reinvio - continua a valere.
+    assert result["ok"] is False
+    assert result["status"] == "AMBIGUOUS"
 
     time.sleep(0.2)
 

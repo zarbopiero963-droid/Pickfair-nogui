@@ -205,6 +205,26 @@ class TableManager:
             self._touch(table)
             self._prune_if_surplus(table)
 
+    def force_unlock_if_event(self, table_id: int, event_key: str) -> bool:
+        """Rilascia il tavolo SOLO se occupa ancora la riserva di ``event_key``.
+
+        PF-ALL-F023: il rilascio da evento terminale deve colpire l'ordine giusto.
+        Controllo e rilascio avvengono sotto lo stesso lock, quindi:
+        - idempotente: un secondo evento trova ``current_event_key`` vuoto => no-op;
+        - sicuro in concorrenza: un tavolo gia' riassegnato a un altro evento non
+          viene mai liberato da un evento terminale vecchio.
+        Restituisce True solo se ha rilasciato.
+        """
+        key = str(event_key or "")
+        if not key:
+            return False
+        with self._lock:
+            table = self._get(int(table_id))
+            if not table or table.current_event_key != key:
+                return False
+            self.force_unlock(int(table_id))
+            return True
+
     # =========================================================
     # LOOKUPS
     # =========================================================

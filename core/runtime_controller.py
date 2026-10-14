@@ -54,6 +54,9 @@ _DIRECT_TTL_ACK_EVENTS = frozenset({"QUICK_BET_ACCEPTED", "QUICK_BET_PARTIAL"})
 # abbinato vivo su Betfair — rimuoverlo lo toglierebbe dall'allowlist del poller
 # TTL, che quindi non lo cancellerebbe più (Greptile P2). Fail-safe: resta
 # tracciato finché un terminale certo lo rimuove o il poller lo cancella.
+# PF-ALL-F024: esiti che NON autorizzano il rilascio di tavolo, esposizione e
+# chiave duplicati (l'ordine puo' essere vivo sull'exchange).
+_NO_RELEASE_UNCERTAIN_EVENTS = frozenset({"QUICK_BET_AMBIGUOUS"})
 _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
     "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_ROLLBACK_DONE",
 })
@@ -3368,14 +3371,32 @@ class RuntimeController:
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
 
+        if event_name in _NO_RELEASE_UNCERTAIN_EVENTS:
+            # PF-ALL-F024: un esito AMBIGUOUS non prova che l'ordine non sia
+            # sull'exchange. Tavolo, esposizione, riserva e chiave duplicati
+            # restano acquisiti finche' la riconciliazione non porta un esito
+            # certo (FAILED / settlement). Nessun retry, nessun nuovo ingresso.
+            logger.warning(
+                "Esito incerto %s: riserva trattenuta event_key=%s table_id=%s customer_ref=%s",
+                event_name, event_key, table_id, payload.get("customer_ref"),
+            )
+            return
+
         if event_key:
             self.duplication_guard.release(event_key)
 
         if table_id is not None:
             try:
-                self.table_manager.force_unlock(int(table_id))
+                # PF-ALL-F023: rilascia solo il tavolo che porta ancora questa
+                # riserva (idempotente, mai un tavolo riassegnato).
+                released = self.table_manager.force_unlock_if_event(int(table_id), event_key)
+                if not released:
+                    logger.info(
+                        "Rilascio tavolo non applicato %s: table_id=%s non porta event_key=%s",
+                        event_name, table_id, event_key,
+                    )
             except Exception:
-                logger.exception("Errore force_unlock table_id=%s", table_id)
+                logger.exception("Errore rilascio tavolo table_id=%s", table_id)
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
