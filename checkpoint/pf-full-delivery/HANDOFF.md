@@ -19,3 +19,11 @@ La chat e gli Artifact NON sono la fonte di verità.
 ## Non fare
 - Nessuna PR (una PR per repository: #505 è aperta), nessun merge, nessuna modifica a main o #505, nessun LIVE.
 - Non integrare la patch F026 v1 (`b766261`): sostituita da v2.
+
+
+## seq 2 (a2032fb)
+- F029 corretto (TableManager.allocate: recovery solo se libero ed entro table_count), trovato dalla campagna.
+- Regressione 7374/0; mutation 19/19 killed; guard + full-diff PASS sul range c92bb79..a2032fb.
+- Campagna 41 parametri: 1684 scenari, 0 violazioni, 619 con difetti noti F027/F028. Non certificata.
+- Codice della campagna in campaign/ (rieseguibile: generate -> run -> judge_all -> report).
+- Aperti: F027 (P1), F028, F030, OBS-3, OBS-4. CONFIG-41 bloccato (#505, MCP assente).
