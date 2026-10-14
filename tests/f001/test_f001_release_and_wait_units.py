@@ -222,3 +222,27 @@ def test_reset_without_uncertain_reservations_is_unchanged():
     rc._reset_reservations_keeping_uncertain()
     assert rc.table_manager.total_exposure() == 0.0
     assert rc.duplication_guard.acquire("EV-A") and rc.duplication_guard.acquire("EV-B")
+
+
+# ------------------------------------------------------------------ F001: executor sincrono (submit esegue fn)
+def test_sync_executor_client_error_after_send_is_not_reclassified_pre_send():
+    """Un executor sincrono esegue fn dentro submit(): un errore del client DOPO l'invio deve
+    propagarsi invariato (TimeoutError => AMBIGUOUS a valle), mai come 'nulla inviato'."""
+    class Sync:
+        def submit(self, _name, fn):
+            return fn()
+
+    def client_lost_response():
+        raise TimeoutError("response lost after send")
+    with pytest.raises(TimeoutError, match="response lost"):
+        _engine_with(Sync())._execute_via_executor("quick_bet", client_lost_response)
+
+
+def test_executor_refusing_before_running_fn_is_pre_send():
+    class Closed:
+        def submit(self, _name, fn):
+            raise RuntimeError("ExecutorManager già chiuso")
+    called = []
+    with pytest.raises(_ErrorePrimaDellInvio, match="EXECUTOR_SUBMIT_REFUSED"):
+        _engine_with(Closed())._execute_via_executor("quick_bet", lambda: called.append(1))
+    assert called == []
