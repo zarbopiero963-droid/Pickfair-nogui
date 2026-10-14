@@ -198,6 +198,9 @@ def test_reset_keeps_ambiguous_reservation_and_frees_the_rest():
         assert rc.duplication_guard.acquire(key)
         _active(rc.table_manager, tid, key)
     rc._release_if_terminal({"event_key": "EV-AMB", "table_id": 1}, event_name="QUICK_BET_AMBIGUOUS")
+    # PF-ALL-F026: il reset libera solo posizioni con settlement confermato; il tavolo 2 ("EV-OK") e' regolato.
+    rc.table_manager.activate(table_id=2, event_key="EV-OK", exposure=30.0, market_id="1.2", selection_id=7)
+    rc._mark_market_settled("1.2")
     rc._reset_reservations_keeping_uncertain()
     tabs = {t["table_id"]: t for t in rc.table_manager.snapshot()}
     assert tabs[1]["current_exposure"] == 30.0 and tabs[1]["current_event_key"] == "EV-AMB"
@@ -215,10 +218,11 @@ def test_later_certain_outcome_clears_uncertain_mark():
     assert rc.table_manager.total_exposure() == 0.0
 
 
-def test_reset_without_uncertain_reservations_is_unchanged():
+def test_reset_frees_settled_positions_without_uncertain_reservations():
     rc = _runtime_stub()
     for key, tid in (("EV-A", 1), ("EV-B", 2)):
         rc.duplication_guard.acquire(key); _active(rc.table_manager, tid, key)
+    rc._mark_market_settled("1.1")              # PF-ALL-F026: solo i regolati sono liberabili dal reset
     rc._reset_reservations_keeping_uncertain()
     assert rc.table_manager.total_exposure() == 0.0
     assert rc.duplication_guard.acquire("EV-A") and rc.duplication_guard.acquire("EV-B")

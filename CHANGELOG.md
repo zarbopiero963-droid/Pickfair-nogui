@@ -8,6 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **F026 (v2):** Roserpina distingue saldo disponibile, fondi impegnati ed equità di cassa del conto
+  (`RuntimeController._account_from_funds`, soli campi exchange). L'auto-reset, che ribasa il picco e libera
+  risorse, si decide sul regolato e non sul solo disponibile: le puntate aperte non sono più perdite. Il reset
+  trattiene tavoli e chiavi delle posizioni non regolate. La base di stake e dei limiti percentuali **non cambia**
+  (resta il disponibile). Vedi `docs/roserpina_bankroll_equity.md`.
+- **F2:** un settlement senza `table_id` (poller SIM/cleared) libera il tavolo del suo mercato, solo se univoco e
+  con esito certo.
+- **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
+  esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
+  parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).

@@ -3,8 +3,9 @@
 argv: TREE OUT
 HeadlessApp reale in SIM (ExecutorManager di produzione). Mercato 1.811: risposta persa DOPO
 l'invio (ordine vivo sull'exchange, esito AMBIGUOUS). Mercato 1.812: ordine normale, poi
-settlement vincente. Soglia auto-reset abbassata a 1% (parametro SIM dichiarato): il bankroll
-sincronizzato dal saldo disponibile dell'exchange fa scattare ROSERPINA_AUTO_RESET.
+settlement PERDENTE. Soglia auto-reset abbassata a 1% (parametro SIM dichiarato): la perdita reale
+regolata (circa 3%) fa scattare ROSERPINA_AUTO_RESET. Prima di F026 il reset scattava anche con un
+settlement vincente, per il falso drawdown del saldo disponibile: dopo F026 serve una perdita vera.
 """
 import json, os, sys, tempfile, time, traceback
 TREE, OUT = sys.argv[1:3]
@@ -48,7 +49,7 @@ try:
                    "orders": {json.loads(dict(r)["payload_json"])["market_id"]: dict(r)["status"] for r in
                               app.db._execute("SELECT status, payload_json FROM orders", fetch=True, commit=False) or []}}
     amb_key = next((d.get("event_key") for e, d in EV if e == "QUICK_BET_AMBIGUOUS"), None)
-    book("1.812", status="CLOSED", winner=11)
+    book("1.812", status="CLOSED", winner=12)
     time.sleep(5)
     R["auto_reset"] = [d.get("reason") for e, d in EV if e == "ROSERPINA_AUTO_RESET"]
     R["auto_reset_events"] = sum(1 for e, _ in EV if e == "ROSERPINA_AUTO_RESET")

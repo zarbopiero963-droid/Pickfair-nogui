@@ -2181,6 +2181,24 @@
       "max_files": 15,
       "allow_tests": true,
       "description": "#461 PR26-0 (prerequisito PR26/PR29/PR30): PF-ALL-F001 esito reale del Future di ExecutorManager, PF-ALL-F023 table_id/market_id negli eventi terminali con rilascio idempotente legato all'ordine, PF-ALL-F024 AMBIGUOUS non rilascia tavolo/esposizione/chiave duplicati. Mandato owner PF-F001-FIX-RED-GREEN-01 (#453). F011/F025 esclusi (non strettamente necessari, RED conservati). Baseline main 028cee9. F024 esteso al percorso ROSERPINA_AUTO_RESET/reset_cycle (riserve incerte trattenute); F026 (drawdown dal saldo disponibile) registrato come residuo."
+    },
+    "issue461-pr28-f026v2-f2-f018-positions": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_controller.py",
+        "docs/roserpina_bankroll_equity.md",
+        "tests/f001/child_autoreset.py",
+        "tests/f001/test_f001_release_and_wait_units.py",
+        "tests/f026/child_f026.py",
+        "tests/f026/test_f018_rebuild_units.py",
+        "tests/f026/test_f026_financial.py",
+        "tests/f026/test_f026_units.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "max_files": 11,
+      "allow_tests": true,
+      "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders)."
     }
   }
 }
