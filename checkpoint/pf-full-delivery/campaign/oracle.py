@@ -172,10 +172,10 @@ def judge(sdir):
                 continue
             # ---- ingresso
             ref = item.get("ref")
+            if ref in failed_refs:
+                continue          # negato in questa fase: l'eventuale ordine con la stessa ref nasce in un'altra fase
             od = by_ref.get(ref)
             if od is None:
-                if ref in failed_refs:
-                    continue
                 # comando senza ordine sull'exchange: rifiutato prima dell'invio o non arrivato
                 continue
             placed_seen += 1
@@ -228,6 +228,18 @@ def judge(sdir):
             if session is not None:
                 C.put("C10b_session_loss_stop", "VIOLATION" if cum_loss_session >= session - EPS else "PASS",
                       f"{ref} perdita sessione {cum_loss_session} >= {session}")
+            # C14 (F030): liquidita' eseguibile ricalcolata dal book DICHIARATO dello scenario.
+            if S.get("roserpina.liquidity_guard_enabled", True) and not S.get("roserpina.liquidity_warning_only", True):
+                bk = spec["books"].get(od["market_id"], {})
+                size = D(str(bk.get("back_size", 100.0)))
+                for st in spec["phases"][ph] if ph < len(spec["phases"]) else []:
+                    if st.get("op") == "mode" and st.get("m") == od["market_id"] and st.get("mode") == "partial":
+                        size = D(str(st.get("size", 1.0)))
+                liq = size if side == "BACK" else D(0)          # LAY: availableToLay a quota+0.02, mai eseguibile
+                need = max(stake * d(S.get("roserpina.liquidity_multiplier", 3.0)),
+                           d(S.get("roserpina.min_liquidity_absolute", 50.0)))
+                C.put("C14_liquidity_guard_single_entry", "VIOLATION" if liq < need else "PASS",
+                      f"{ref} liq={liq} need={need}")
             if od.get("market_id") in settle_t and settle_t[od["market_id"]] < t:
                 C.put("C13_no_entry_on_closed_market", "VIOLATION", ref)
             open_now[ref] = (od["market_id"], ex)

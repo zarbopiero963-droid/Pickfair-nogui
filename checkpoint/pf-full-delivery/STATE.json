@@ -1,7 +1,7 @@
 {
  "schema": "pf-agent-state/1",
- "seq": 2,
- "updated_at": "2026-10-14T22:24:55.113821Z",
+ "seq": 3,
+ "updated_at": "2026-10-15T08:17:05.871379+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -10,7 +10,8 @@
  "mandates": [
   "PF-FULL-DELIVERY-01",
   "PF-ROSERPINA-CONFIG-41-MCP-01",
-  "PF-ROSERPINA-41-FULL-SIMULATION-02"
+  "PF-ROSERPINA-41-FULL-SIMULATION-02",
+  "PF-ROSERPINA-FINANCIAL-CLOSURE-03 (attivo)"
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
@@ -52,9 +53,14 @@
     "sha": "a2032fb",
     "task": "issue461-pr28-f026v2-f2-f018-positions",
     "what": "F029 (tavolo recovery occupato non riassegnato) + _maybe_auto_reset + test anti-mutanti"
+   },
+   {
+    "sha": "b33b54d",
+    "task": "issue461-pr28-f026v2-f2-f018-positions",
+    "what": "CLOSURE-03: F027, F028, F031, F030, stop esposizione candidato, Max Win GUI, test mirati 41 parametri"
    }
   ],
-  "head_sha": "a2032fb",
+  "head_sha": "b33b54d",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
   "pr": null
  },
@@ -100,6 +106,36 @@
   {
    "id": "guard + full-diff c92bb79..a2032fb",
    "result": "guardrail_check PASS (13 file = scope), full-diff PASS"
+  },
+  {
+   "id": "regression_full",
+   "sha": "b33b54d (albero prima degli ultimi test aggiunti)",
+   "result": "7435 passed / 0 failed / 14 skipped / 1 xfailed"
+  },
+  {
+   "id": "suite toccate (f026,f001,f029,roserpina41,P38,risk_gate,dutching liquidity/max_win)",
+   "sha": "b33b54d",
+   "result": "488 passed, 2 xfailed attesi (F032, F033)"
+  },
+  {
+   "id": "RED->GREEN",
+   "result": "F027 6/6 integr + 10/10 unit RED; F028/F031 3 integr + 21 unit RED; F030 4 integr RED; RISK_STOP 2 RED; tutti GREEN"
+  },
+  {
+   "id": "guard + full-diff c92bb79..b33b54d",
+   "result": "PASS, 26 file = scope, nessun owner-manual, nessuna dipendenza/segreto"
+  },
+  {
+   "id": "campagna su b33b54d",
+   "result": "base 1152/1152 PASS, stress 96/96, frontiera 432/432, zero KNOWN; oracolo C14 liquidita' aggiunto (RED su codice vecchio: 207 violazioni); durata e mutation in corso al checkpoint"
+  },
+  {
+   "id": "mutation c03",
+   "result": "parziale al checkpoint: 9/9 uccisi (MC1-MC9), MC10-MC17 da completare"
+  },
+  {
+   "id": "merge di prova con PR #505 (worktree, nessuna modifica)",
+   "result": "conflitti solo testuali (allowed_scope.json, CHANGELOG); con i 4 cap #505 configurati: f026/f001/f029 178/178 e acceptance #505+P38+auto-trade 137/137"
   }
  ],
  "findings": {
@@ -110,7 +146,13 @@
    "F026 (v2)",
    "F2",
    "F018",
-   "F029"
+   "F029",
+   "F027",
+   "F028",
+   "F030",
+   "F031",
+   "RISK_STOP candidato (decisione owner)",
+   "Max Win label"
   ],
   "open": [
    "F004",
@@ -118,12 +160,11 @@
    "F025",
    "OBS-1",
    "OBS-2",
-   "F027 (settlement non contabilizzati in PAUSED/LOCKDOWN)",
    "LOCKDOWN su drawdown del disponibile (base caso peggiore; decisione owner 6.O2)",
-   "F028 (ordine non abbinato LAPSED/CANCELLED trattiene il tavolo fino al riavvio, P2)",
-   "F030 (book_pct/available_liquidity non forniti al risk gate sul percorso segnale singolo: book block e liquidity guard inattivi fuori dal dutching)",
-   "OBS-3 (un candidato che raggiunge max_exposure_stop arma un RISK_STOP persistente senza posizioni aperte)",
-   "OBS-4 (etichetta GUI 'Max Win: solo avviso' fuorviante: sul percorso ordine max_win blocca sempre)"
+   "F032 (EXPANSION irraggiungibile in runtime: RSR-08/09 FAIL; decisione owner sulla base della crescita)",
+   "F033 (cap evento per event_key, non aggrega mercati dello stesso incontro; fix nella PR #505: BLOCKED)",
+   "RSR-12 semantica max_recovery_tables (domanda owner)",
+   "RSR-20 solo LIVE: NOT VERIFIED"
   ]
  },
  "gates": {
@@ -152,18 +193,19 @@
   "10s vs 30s saldo LIVE",
   "prelievi/depositi",
   "ordine PR F001/F026 vs #505",
-  "F027: contabilizzazione settlement in PAUSED/LOCKDOWN con emergency stop",
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461",
-  "F030: book/liquidita' anche sul percorso segnale singolo?",
-  "OBS-3: semantica stop esposizione sul candidato"
+  "F032 base della crescita EXPANSION",
+  "RSR-12 significato del limite"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "pubblicare report campagna; CONFIG-41 bloccato da sovrapposizione con PR #505 e assenza Control API/MCP: attendere decisione owner sull'ordine PR; possibile proposta F028/F027 come PR separata dopo decisione",
+ "next_atomic_action": "Lunedi': 1) rieseguire mutation_c03 MC10-MC17 (fd/mutate_c03.py, ricreabile dai mutanti elencati nel commit) e la campagna durata sull'albero b33b54d; 2) scenario critico replay2 su b33b54d; 3) commento di tracciabilita' su #453/#511; 4) poi Dutching FT/HT (#511, 72 combinazioni) solo dopo i gate; nessuna nuova PR finche' #505 e' aperta",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
   "hash/albero non riproducibili",
   "decisione finanziaria non presente nelle fonti"
  ],
- "campaign_artifacts": "scratchpad di sessione (non persistente): campaign/{generate.py,generate_stress.py,gen_durability.py,child_campaign.py,oracle.py,run.py,report.py}; copia in checkpoint/pf-full-delivery/campaign/"
+ "campaign_artifacts": "scratchpad di sessione (non persistente): campaign/{generate.py,generate_stress.py,gen_durability.py,child_campaign.py,oracle.py,run.py,report.py}; copia in checkpoint/pf-full-delivery/campaign/",
+ "parameters_41": "33 PASS (RSR-04 con riserva F033), 2 FAIL (RSR-08/09 F032), 2 NOT VERIFIED (RSR-12, RSR-20), 4 BLOCKED (RSR-38..41); scheda in docs/roserpina41_parameter_dossier.md",
+ "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato"
 }
