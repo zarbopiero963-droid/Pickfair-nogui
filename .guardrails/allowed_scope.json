@@ -2221,6 +2221,18 @@
       "max_files": 33,
       "allow_tests": true,
       "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders). ESTENSIONE DICHIARATA (stessa chiave): F029 — TableManager.allocate non riassegna un tavolo in recovery gia' occupato ne' oltre table_count (core/table_manager.py, tests/f029/); trovato dalla campagna PF-ROSERPINA-41-FULL-SIMULATION-02 e attivato da F2. ESTENSIONE DICHIARATA (stessa chiave, mandato owner PF-ROSERPINA-FINANCIAL-CLOSURE-03): F027 settlement contabilizzati in PAUSED/LOCKDOWN/emergency senza nuovi ordini; F028 rilascio di ordini con stato finale non abbinato confermato dal broker; F031 parita' SIM del parziale annullato; F030 Liquidity Guard sugli ingressi singoli (core/liquidity.py condiviso col dutching, RiskGate RISK_LIQUIDITY_UNKNOWN); stop di esposizione che distingue candidato e violazione effettiva (acceptance P38 aggiornata alla decisione); etichette GUI Max Win e Liquidity e checkbox su piu' righe (design handoff, ops/config_console). Test mirati e scheda dei 41 parametri (tests/roserpina41, docs/roserpina41_parameter_dossier.md); F032/F033 documentati con xfail stretto. ESTENSIONE DICHIARATA (mandato owner PF-ROSERPINA-CONTINUOUS-DELIVERY-04): F032 espansione sulla baseline persistente del ciclo (core/money_management.py) e RSR-12 stato dei tavoli di recovery persistente. ESTENSIONE DICHIARATA (mandato owner PF-UNIVERSAL-CHECKPOINT-V1): protocollo di checkpoint multi-agente pf-checkpoint/3 (tools/agent_checkpoint/pfckpt.py, tests/agent_checkpoint, docs/agent_checkpoint_protocol.md) e regole minime in AGENTS.md/CLAUDE.md: file di governance => la PR diventa a merge MANUALE dell'owner; nessun cambio al comportamento finanziario."
+    },
+    "issue461-pr26-0-f011-f025-betid": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "core/trading_engine.py",
+        "database.py",
+        "docs/trading_engine_executor_contract.md",
+        "tests/f001/test_b_red_f001.py"
+      ],
+      "max_files": 5,
+      "allow_tests": true,
+      "description": "PF-CROSS-AGENT-HANDOFF-A06-01: F011 estrae betId dagli instructionReports top-level e canonicalizza ID numerici; F025 tratta un esito d ordine esplicitamente SUCCESS senza betId come AMBIGUOUS fail-closed, conservando la riserva e richiedendo riconciliazione. Nessun LIVE, PR o merge."
     }
   }
 }

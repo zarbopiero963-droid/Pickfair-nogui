@@ -15,6 +15,7 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
 | Attesa scaduta con task **non** avviato: `Future.cancel()` riuscito | `FAILED` pre-invio: è garantito che il task non partirà mai | sì |
 | Attesa scaduta con task **avviato**, executor guasto dopo l'avvio | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta persa / `TimeoutError` del client, `order_unknown`, report discordanti, risposta non-dict | `AMBIGUOUS` + riconciliazione | **no** |
+| Risposta che dichiara esplicitamente `SUCCESS` senza alcun `betId` | `AMBIGUOUS` + riconciliazione | **no** |
 | Eccezione sollevata dal client | propagata **invariata**: stessa classificazione del percorso diretto | secondo la classificazione |
 
 - **Attesa.** Il tempo di attesa vale `executor.default_timeout`. Se il valore manca o non è valido si usano 30 s (`ExecutorManager` di produzione: 30 s). Deve restare **maggiore** del timeout HTTP del `BetfairClient` (20 s), altrimenti si producono AMBIGUOUS evitabili. Il valore per LIVE resta un'ipotesi da validare (decisione owner).
@@ -29,11 +30,12 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
   - **`QUICK_BET_AMBIGUOUS`**: non rilascia nulla. Tavolo, esposizione, riserva e chiave anti-duplicato restano acquisiti fino a un esito certo. Nessun retry, nessun nuovo ingresso sullo stesso intento.
   - **Esiti certi** (`QUICK_BET_FAILED`, …): rilascio della chiave duplicati e del tavolo tramite `TableManager.force_unlock_if_event(table_id, event_key)`. Il tavolo si libera **solo** se porta ancora la riserva di quell'`event_key`. Controllo e rilascio avvengono sotto lo stesso lock: l'operazione è idempotente e non colpisce mai un tavolo riassegnato.
 - **Reset** (`ROSERPINA_AUTO_RESET` da drawdown, `reset_cycle`): il runtime tiene la mappa delle riserve incerte (`event_key` → `table_id`). Il reset passa da `_reset_reservations_keeping_uncertain`, che chiama `TableManager.reset_all(keep_table_ids=…)` e `DuplicationGuard.clear(keep_keys=…)`, quindi tavolo e chiave di un ordine AMBIGUOUS sopravvivono. Un esito certo successivo per lo stesso `event_key` toglie la marcatura.
+- Il ledger estrae il `betId` dalle forme normalizzate top-level e dagli
+  `instructionReports` top-level o annidati sotto `result`/`raw`; gli ID
+  numerici vengono canonicalizzati a stringa per il confronto al riavvio.
 
 ## 3. Fuori da questo contratto (residui tracciati in #453)
 
-- F011: estrazione del `betId` dagli `instructionReports` top-level o intero in `Database._order_bet_id`.
-- F025: successo senza `betId`.
 - F2 / OWNER-SETTLEMENT-02: rilascio del tavolo al settlement.
 - F004 / F018: recovery e ricostruzione dei tavoli al riavvio. La mappa delle riserve incerte è in memoria, quindi dopo un riavvio non esiste.
 - F026: il bankroll sincronizzato dal saldo **disponibile** dell'exchange tratta le puntate aperte come perdita. Ne seguono un drawdown apparente e un `ROSERPINA_AUTO_RESET` che libera i tavoli delle posizioni vive (non incerte) e azzera il realizzato del ciclo.

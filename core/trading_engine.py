@@ -1224,6 +1224,19 @@ class TradingEngine:
                         reports.append(report)
         return reports
 
+    @classmethod
+    def _response_bet_ids(cls, response: Dict[str, Any]) -> list:
+        """Identita' d'ordine esplicite nelle shape broker supportate."""
+        ids = []
+        direct = response.get("betId") or response.get("bet_id")
+        if direct not in (None, ""):
+            ids.append(str(direct))
+        for report in cls._instruction_reports(response):
+            value = report.get("betId") or report.get("bet_id")
+            if value not in (None, ""):
+                ids.append(str(value))
+        return ids
+
     def _raise_if_failed_semantic_response(self, response: Any) -> None:
         if not isinstance(response, dict):
             # PF-ALL-F001 / F025: il client e' stato chiamato ma la risposta non
@@ -1277,8 +1290,18 @@ class TradingEngine:
                 ambiguity_reason=AMBIGUITY_SPLIT_STATE,
             )
 
-        # PF-ALL-F025 (successo senza betId) NON e' in questo lotto: cambierebbe il
-        # contratto di ack esistente ({"ok": True}); resta RED in B-RED-17d.
+        # PF-ALL-F025: una risposta che dichiara esplicitamente SUCCESS senza
+        # identita' Betfair non e' riconciliabile. Non e' pero' un rifiuto
+        # certo: resta AMBIGUOUS e conserva la riserva. Un generico {"ok":
+        # True} senza status/report e' un ACK applicativo, non una prova di
+        # ordine riuscito, quindi non viene riclassificato qui.
+        semantic_order_success = status == "SUCCESS" or "SUCCESS" in report_status
+        if semantic_order_success and not self._response_bet_ids(response):
+            raise ExecutionError(
+                f"DOWNSTREAM_SUCCESS_WITHOUT_BET_ID:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
 
     # ==================================================================
     # [G] AMBIGUITY RESOLUTION — Single enqueue

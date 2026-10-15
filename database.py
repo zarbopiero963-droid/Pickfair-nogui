@@ -1972,17 +1972,16 @@ class Database:
         """``betId`` dal ``response_json`` di un ordine live.
 
         Copre le shape note: chiave normalizzata ``bet_id``/``betId`` (``OrderRouter``),
-        e i ``instructionReports`` annidati sia sotto ``result`` (broker
-        ``BetfairClient.place_bet`` ``{"ok": True, "result": {...}}``) sia sotto
-        ``raw``. ``''`` se non determinabile.
+        e i ``instructionReports`` top-level oppure annidati sotto ``result``
+        (broker ``BetfairClient.place_bet`` ``{"ok": True, "result": {...}}``)
+        o ``raw``. ``''`` se non determinabile.
         """
         if not isinstance(response, dict):
             return ""
         bet_id = response.get("bet_id") or response.get("betId")
         if bet_id:
             return str(bet_id)
-        for container_key in ("result", "raw"):
-            container = response.get(container_key)
+        for container in (response, response.get("result"), response.get("raw")):
             if isinstance(container, dict):
                 for report in container.get("instructionReports") or []:
                     if isinstance(report, dict):

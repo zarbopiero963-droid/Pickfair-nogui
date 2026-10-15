@@ -390,16 +390,27 @@ def test_B_RED_16_duplicate_same_request_single_broker_call():
 
 
 # =================================================================== B-RED-17
-# Nel repository restano solo i casi del lotto F001/F023/F024. I casi top-level/intero
-# (F011) e "SUCCESS senza betId" (F025) sono RED differiti: vivono nella suite
-# d'evidenza della fase B (sha256 e3691ce5...) e nella scheda che correggera' F011/F025.
 @pytest.mark.parametrize("mode,expected", [
     ("nested_betid", "B-NEST-1"),   # F001 puro (diretto: PASS)
+    ("live", "B-LIVE-1"),           # F011: instructionReports top-level
+    ("int_betid", "424242"),        # F011: identita' Betfair numerica canonizzata
 ])
 def test_B_RED_17_betid_other_formats_recoverable(mode, expected):
     rig = Rig(em()); rig.broker.modes["1.9"] = mode; rig.bet(ref="r17"); settle()
     ids = [o["bet_id"] for o in rig.db._live_bot_orders()]
     assert expected in ids, f"C8: betId {mode} non recuperabile dal ledger ({ids})"
+
+
+@pytest.mark.parametrize("path", ["exec", "direct"])
+def test_B_RED_17d_success_without_betid_is_ambiguous(path):
+    rig = Rig(em() if path == "exec" else None)
+    rig.broker.modes["1.9"] = "no_betid"
+    rig.bet(ref=f"r17d-{path}")
+    settle()
+    rows = rig.rows(f"r17d-{path}")
+    assert [r["status"] for r in rows] == ["AMBIGUOUS"], rows
+    assert rig.broker.calls == [("1.9", 7)], "il client deve essere stato chiamato una sola volta"
+    assert any(e == "QUICK_BET_AMBIGUOUS" for e, _ in rig.received)
 
 
 # =================================================================== B-RED-18
