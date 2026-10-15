@@ -1,0 +1,36 @@
+            import os
+            baseName = os.path.basename(sys.argv[0])
+            baseName, ext = os.path.splitext(baseName)
+            if ext not in ('.py', '.pyc'):
+                baseName = baseName + ext
+        interactive = False
+>       self.tk = _tkinter.create(screenName, baseName, className, interactive, wantobjects, useTk, sync, use)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       _tkinter.TclError: couldn't connect to display ":99"
+
+/usr/lib/python3.12/tkinter/__init__.py:2345: TclError
+=========================== short test summary info ============================
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-xai-grok46.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-openrouter-fugu-ultra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-openrouter-gpt-astra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-claude-fable5.yml: effort 'assente', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-openrouter-fugu-ultra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-openrouter-gpt-astra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-xai-grok46.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:168: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:207: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:235: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:262: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:285: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:320: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:350: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+XFAIL tests/unit/test_session_recorder.py::TestCablaggioInPickfair::test_un_entrypoint_di_pickfair_costruisce_un_session_recorder - Recorder A2: il cablaggio in Pickfair non esiste ancora
+XFAIL tests/f026/test_f026_financial.py::test_F033_event_cap_aggregates_markets_of_the_same_event - F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.
+FAILED tests/acceptance/test_issue461_pr04_quater.py::test_gui_save_reopen_file_pickers_and_live_boundary[True]
+1 failed, 7559 passed, 14 skipped, 2 xfailed, 9249 warnings, 8 subtests passed in 518.74s (0:08:38)
+exit 1
+--- analisi dell'unico fallimento
+tests/acceptance/test_issue461_pr04_quater.py::test_gui_save_reopen_file_pickers_and_live_boundary[True]:
+_tkinter.TclError: couldn't connect to display ":99" -> Xvfb terminato durante la corsa (ambiente, non codice).
+Xvfb riavviato: tests/acceptance/test_issue461_pr04_quater.py 18 passed in 4/4 esecuzioni consecutive su 82f499c.
+Esito: 7560/7560 eseguiti verdi su 82f499c (7559 nella corsa completa + 1 rieseguito dopo ripristino del display), 14 skipped (credenziali Telegram live), 2 xfailed attesi.

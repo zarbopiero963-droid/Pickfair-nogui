@@ -1,0 +1,4114 @@
+{
+ "schema": "pf-a06-crosswalk/1",
+ "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+ "axes_source": "#461 comment 6085510337",
+ "scope": "contributo di evidenze ad A06 (#506); NON e' il verdetto A06 ne' Gate A",
+ "total": 410,
+ "counts": {
+  "NOT VERIFIED": 233,
+  "BLOCKED": 77,
+  "PASS": 100
+ },
+ "cells": [
+  {
+   "id": "PF-RSR-01-GUI",
+   "rsr": "RSR-01",
+   "axis": "GUI",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-01-VALID",
+   "rsr": "RSR-01",
+   "axis": "VALID",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[target_profit_cycle_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-01-SAVE",
+   "rsr": "RSR-01",
+   "axis": "SAVE",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[target_profit_cycle_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-01-LOAD",
+   "rsr": "RSR-01",
+   "axis": "LOAD",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[target_profit_cycle_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[target_profit_cycle_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-01-RESTART",
+   "rsr": "RSR-01",
+   "axis": "RESTART",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[target_profit_cycle_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-01-APPLY",
+   "rsr": "RSR-01",
+   "axis": "APPLY",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr01_target_profit_sets_base_stake; tests/core/test_money_management_*",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-01-PARITY",
+   "rsr": "RSR-01",
+   "axis": "PARITY",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-01-RACE",
+   "rsr": "RSR-01",
+   "axis": "RACE",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-01-FAILSAFE",
+   "rsr": "RSR-01",
+   "axis": "FAILSAFE",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-01-AUDIT",
+   "rsr": "RSR-01",
+   "axis": "AUDIT",
+   "key": "roserpina.target_profit_cycle_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-02-GUI",
+   "rsr": "RSR-02",
+   "axis": "GUI",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-02-VALID",
+   "rsr": "RSR-02",
+   "axis": "VALID",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_single_bet_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-02-SAVE",
+   "rsr": "RSR-02",
+   "axis": "SAVE",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_single_bet_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-02-LOAD",
+   "rsr": "RSR-02",
+   "axis": "LOAD",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_single_bet_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_single_bet_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-02-RESTART",
+   "rsr": "RSR-02",
+   "axis": "RESTART",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_single_bet_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-02-APPLY",
+   "rsr": "RSR-02",
+   "axis": "APPLY",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/core/test_money_management_caps_and_malformed.py; campagna C02",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-02-PARITY",
+   "rsr": "RSR-02",
+   "axis": "PARITY",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-02-RACE",
+   "rsr": "RSR-02",
+   "axis": "RACE",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-02-FAILSAFE",
+   "rsr": "RSR-02",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-02-AUDIT",
+   "rsr": "RSR-02",
+   "axis": "AUDIT",
+   "key": "roserpina.max_single_bet_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-03-GUI",
+   "rsr": "RSR-03",
+   "axis": "GUI",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-03-VALID",
+   "rsr": "RSR-03",
+   "axis": "VALID",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_total_exposure_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-03-SAVE",
+   "rsr": "RSR-03",
+   "axis": "SAVE",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_total_exposure_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-03-LOAD",
+   "rsr": "RSR-03",
+   "axis": "LOAD",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_total_exposure_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_total_exposure_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-03-RESTART",
+   "rsr": "RSR-03",
+   "axis": "RESTART",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_total_exposure_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-03-APPLY",
+   "rsr": "RSR-03",
+   "axis": "APPLY",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/core/test_money_management_caps_and_malformed.py; campagna C05",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-03-PARITY",
+   "rsr": "RSR-03",
+   "axis": "PARITY",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-03-RACE",
+   "rsr": "RSR-03",
+   "axis": "RACE",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-03-FAILSAFE",
+   "rsr": "RSR-03",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-03-AUDIT",
+   "rsr": "RSR-03",
+   "axis": "AUDIT",
+   "key": "roserpina.max_total_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-04-GUI",
+   "rsr": "RSR-04",
+   "axis": "GUI",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-04-VALID",
+   "rsr": "RSR-04",
+   "axis": "VALID",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_event_exposure_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-04-SAVE",
+   "rsr": "RSR-04",
+   "axis": "SAVE",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_event_exposure_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-04-LOAD",
+   "rsr": "RSR-04",
+   "axis": "LOAD",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_event_exposure_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_event_exposure_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-04-RESTART",
+   "rsr": "RSR-04",
+   "axis": "RESTART",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_event_exposure_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-04-APPLY",
+   "rsr": "RSR-04",
+   "axis": "APPLY",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/core/test_money_management_caps_and_malformed.py; campagna C06; F033 xfail",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri); PASS per event_key; aggregazione per evento BLOCKED (F033, #505)"
+  },
+  {
+   "id": "PF-RSR-04-PARITY",
+   "rsr": "RSR-04",
+   "axis": "PARITY",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-04-RACE",
+   "rsr": "RSR-04",
+   "axis": "RACE",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-04-FAILSAFE",
+   "rsr": "RSR-04",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-04-AUDIT",
+   "rsr": "RSR-04",
+   "axis": "AUDIT",
+   "key": "roserpina.max_event_exposure_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-05-GUI",
+   "rsr": "RSR-05",
+   "axis": "GUI",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-05-VALID",
+   "rsr": "RSR-05",
+   "axis": "VALID",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[auto_reset_drawdown_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-05-SAVE",
+   "rsr": "RSR-05",
+   "axis": "SAVE",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_reset_drawdown_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-05-LOAD",
+   "rsr": "RSR-05",
+   "axis": "LOAD",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_reset_drawdown_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[auto_reset_drawdown_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-05-RESTART",
+   "rsr": "RSR-05",
+   "axis": "RESTART",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_reset_drawdown_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-05-APPLY",
+   "rsr": "RSR-05",
+   "axis": "APPLY",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/f026/test_f026_units.py::test_auto_reset_*; test_F026_07",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-05-PARITY",
+   "rsr": "RSR-05",
+   "axis": "PARITY",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-05-RACE",
+   "rsr": "RSR-05",
+   "axis": "RACE",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-05-FAILSAFE",
+   "rsr": "RSR-05",
+   "axis": "FAILSAFE",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-05-AUDIT",
+   "rsr": "RSR-05",
+   "axis": "AUDIT",
+   "key": "roserpina.auto_reset_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-06-GUI",
+   "rsr": "RSR-06",
+   "axis": "GUI",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-06-VALID",
+   "rsr": "RSR-06",
+   "axis": "VALID",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[defense_drawdown_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-06-SAVE",
+   "rsr": "RSR-06",
+   "axis": "SAVE",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_drawdown_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-06-LOAD",
+   "rsr": "RSR-06",
+   "axis": "LOAD",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_drawdown_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[defense_drawdown_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-06-RESTART",
+   "rsr": "RSR-06",
+   "axis": "RESTART",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_drawdown_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-06-APPLY",
+   "rsr": "RSR-06",
+   "axis": "APPLY",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr06_rsr10_defense_mode_scales_stake_by_defense_multiplier",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-06-PARITY",
+   "rsr": "RSR-06",
+   "axis": "PARITY",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-06-RACE",
+   "rsr": "RSR-06",
+   "axis": "RACE",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-06-FAILSAFE",
+   "rsr": "RSR-06",
+   "axis": "FAILSAFE",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-06-AUDIT",
+   "rsr": "RSR-06",
+   "axis": "AUDIT",
+   "key": "roserpina.defense_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-07-GUI",
+   "rsr": "RSR-07",
+   "axis": "GUI",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-07-VALID",
+   "rsr": "RSR-07",
+   "axis": "VALID",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[lockdown_drawdown_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-07-SAVE",
+   "rsr": "RSR-07",
+   "axis": "SAVE",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[lockdown_drawdown_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-07-LOAD",
+   "rsr": "RSR-07",
+   "axis": "LOAD",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[lockdown_drawdown_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[lockdown_drawdown_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-07-RESTART",
+   "rsr": "RSR-07",
+   "axis": "RESTART",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[lockdown_drawdown_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-07-APPLY",
+   "rsr": "RSR-07",
+   "axis": "APPLY",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr07_lockdown_drawdown_blocks_entries; test_F027_01",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-07-PARITY",
+   "rsr": "RSR-07",
+   "axis": "PARITY",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-07-RACE",
+   "rsr": "RSR-07",
+   "axis": "RACE",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-07-FAILSAFE",
+   "rsr": "RSR-07",
+   "axis": "FAILSAFE",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-07-AUDIT",
+   "rsr": "RSR-07",
+   "axis": "AUDIT",
+   "key": "roserpina.lockdown_drawdown_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-08-GUI",
+   "rsr": "RSR-08",
+   "axis": "GUI",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-08-VALID",
+   "rsr": "RSR-08",
+   "axis": "VALID",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[expansion_profit_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-08-SAVE",
+   "rsr": "RSR-08",
+   "axis": "SAVE",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[expansion_profit_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-08-LOAD",
+   "rsr": "RSR-08",
+   "axis": "LOAD",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[expansion_profit_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[expansion_profit_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-08-RESTART",
+   "rsr": "RSR-08",
+   "axis": "RESTART",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/f026/test_f026_financial.py::test_F032_01_expansion_after_net_profit_and_after_restart",
+   "note": "processo figlio terminato (crash) e nuovo processo sullo stesso stato"
+  },
+  {
+   "id": "PF-RSR-08-APPLY",
+   "rsr": "RSR-08",
+   "axis": "APPLY",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr08_rsr09_expansion_in_money_management_unit; test_..._F032 (xfail)",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri); PASS (F032 corretto)"
+  },
+  {
+   "id": "PF-RSR-08-PARITY",
+   "rsr": "RSR-08",
+   "axis": "PARITY",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-08-RACE",
+   "rsr": "RSR-08",
+   "axis": "RACE",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-08-FAILSAFE",
+   "rsr": "RSR-08",
+   "axis": "FAILSAFE",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-08-AUDIT",
+   "rsr": "RSR-08",
+   "axis": "AUDIT",
+   "key": "roserpina.expansion_profit_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-09-GUI",
+   "rsr": "RSR-09",
+   "axis": "GUI",
+   "key": "roserpina.expansion_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-09-VALID",
+   "rsr": "RSR-09",
+   "axis": "VALID",
+   "key": "roserpina.expansion_multiplier",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[expansion_multiplier]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-09-SAVE",
+   "rsr": "RSR-09",
+   "axis": "SAVE",
+   "key": "roserpina.expansion_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[expansion_multiplier]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-09-LOAD",
+   "rsr": "RSR-09",
+   "axis": "LOAD",
+   "key": "roserpina.expansion_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[expansion_multiplier]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[expansion_multiplier]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-09-RESTART",
+   "rsr": "RSR-09",
+   "axis": "RESTART",
+   "key": "roserpina.expansion_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/f026/test_f026_financial.py::test_F032_01_expansion_after_net_profit_and_after_restart",
+   "note": "processo figlio terminato (crash) e nuovo processo sullo stesso stato"
+  },
+  {
+   "id": "PF-RSR-09-APPLY",
+   "rsr": "RSR-09",
+   "axis": "APPLY",
+   "key": "roserpina.expansion_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: come RSR-08",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri); PASS (F032 corretto)"
+  },
+  {
+   "id": "PF-RSR-09-PARITY",
+   "rsr": "RSR-09",
+   "axis": "PARITY",
+   "key": "roserpina.expansion_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-09-RACE",
+   "rsr": "RSR-09",
+   "axis": "RACE",
+   "key": "roserpina.expansion_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-09-FAILSAFE",
+   "rsr": "RSR-09",
+   "axis": "FAILSAFE",
+   "key": "roserpina.expansion_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-09-AUDIT",
+   "rsr": "RSR-09",
+   "axis": "AUDIT",
+   "key": "roserpina.expansion_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-10-GUI",
+   "rsr": "RSR-10",
+   "axis": "GUI",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-10-VALID",
+   "rsr": "RSR-10",
+   "axis": "VALID",
+   "key": "roserpina.defense_multiplier",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[defense_multiplier]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-10-SAVE",
+   "rsr": "RSR-10",
+   "axis": "SAVE",
+   "key": "roserpina.defense_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_multiplier]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-10-LOAD",
+   "rsr": "RSR-10",
+   "axis": "LOAD",
+   "key": "roserpina.defense_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_multiplier]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[defense_multiplier]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-10-RESTART",
+   "rsr": "RSR-10",
+   "axis": "RESTART",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[defense_multiplier]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-10-APPLY",
+   "rsr": "RSR-10",
+   "axis": "APPLY",
+   "key": "roserpina.defense_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr06_rsr10_defense_mode_scales_stake_by_defense_multiplier",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-10-PARITY",
+   "rsr": "RSR-10",
+   "axis": "PARITY",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-10-RACE",
+   "rsr": "RSR-10",
+   "axis": "RACE",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-10-FAILSAFE",
+   "rsr": "RSR-10",
+   "axis": "FAILSAFE",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-10-AUDIT",
+   "rsr": "RSR-10",
+   "axis": "AUDIT",
+   "key": "roserpina.defense_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-11-GUI",
+   "rsr": "RSR-11",
+   "axis": "GUI",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-11-VALID",
+   "rsr": "RSR-11",
+   "axis": "VALID",
+   "key": "roserpina.table_count",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-11-SAVE",
+   "rsr": "RSR-11",
+   "axis": "SAVE",
+   "key": "roserpina.table_count",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[table_count]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-11-LOAD",
+   "rsr": "RSR-11",
+   "axis": "LOAD",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[table_count]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-11-RESTART",
+   "rsr": "RSR-11",
+   "axis": "RESTART",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[table_count]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-11-APPLY",
+   "rsr": "RSR-11",
+   "axis": "APPLY",
+   "key": "roserpina.table_count",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr28.py; tests/f029; campagna C09",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-11-PARITY",
+   "rsr": "RSR-11",
+   "axis": "PARITY",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-11-RACE",
+   "rsr": "RSR-11",
+   "axis": "RACE",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-11-FAILSAFE",
+   "rsr": "RSR-11",
+   "axis": "FAILSAFE",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-11-AUDIT",
+   "rsr": "RSR-11",
+   "axis": "AUDIT",
+   "key": "roserpina.table_count",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-12-GUI",
+   "rsr": "RSR-12",
+   "axis": "GUI",
+   "key": "roserpina.max_recovery_tables",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-12-VALID",
+   "rsr": "RSR-12",
+   "axis": "VALID",
+   "key": "roserpina.max_recovery_tables",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-12-SAVE",
+   "rsr": "RSR-12",
+   "axis": "SAVE",
+   "key": "roserpina.max_recovery_tables",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_recovery_tables]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-12-LOAD",
+   "rsr": "RSR-12",
+   "axis": "LOAD",
+   "key": "roserpina.max_recovery_tables",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_recovery_tables]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-12-RESTART",
+   "rsr": "RSR-12",
+   "axis": "RESTART",
+   "key": "roserpina.max_recovery_tables",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/f026/test_f026_financial.py::test_RSR12_01_recovery_tables_survive_crash_and_restart",
+   "note": "processo figlio terminato (crash) e nuovo processo sullo stesso stato"
+  },
+  {
+   "id": "PF-RSR-12-APPLY",
+   "rsr": "RSR-12",
+   "axis": "APPLY",
+   "key": "roserpina.max_recovery_tables",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: solo comportamento (runtime_controller 3150-3161)",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri); PASS (RSR-12 decisione owner)"
+  },
+  {
+   "id": "PF-RSR-12-PARITY",
+   "rsr": "RSR-12",
+   "axis": "PARITY",
+   "key": "roserpina.max_recovery_tables",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-12-RACE",
+   "rsr": "RSR-12",
+   "axis": "RACE",
+   "key": "roserpina.max_recovery_tables",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/f026/test_f026_financial.py::test_RSR12_02_idle_recovery_tables_count_on_the_signal_path; tests/f029/",
+   "note": "piu' segnali/tavoli: il limite non si perde con tavoli inattivi (MD10 ucciso)"
+  },
+  {
+   "id": "PF-RSR-12-FAILSAFE",
+   "rsr": "RSR-12",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_recovery_tables",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/f026/test_f032_rsr12_units.py::test_rsr12_unreadable_state_is_fail_closed",
+   "note": "stato illeggibile => capacita' esaurita"
+  },
+  {
+   "id": "PF-RSR-12-AUDIT",
+   "rsr": "RSR-12",
+   "axis": "AUDIT",
+   "key": "roserpina.max_recovery_tables",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-13-GUI",
+   "rsr": "RSR-13",
+   "axis": "GUI",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-13-VALID",
+   "rsr": "RSR-13",
+   "axis": "VALID",
+   "key": "roserpina.commission_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[commission_pct]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-13-SAVE",
+   "rsr": "RSR-13",
+   "axis": "SAVE",
+   "key": "roserpina.commission_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[commission_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-13-LOAD",
+   "rsr": "RSR-13",
+   "axis": "LOAD",
+   "key": "roserpina.commission_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[commission_pct]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[commission_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-13-RESTART",
+   "rsr": "RSR-13",
+   "axis": "RESTART",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[commission_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-13-APPLY",
+   "rsr": "RSR-13",
+   "axis": "APPLY",
+   "key": "roserpina.commission_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr28b.py; test_F027_04; campagna A2",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-13-PARITY",
+   "rsr": "RSR-13",
+   "axis": "PARITY",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-13-RACE",
+   "rsr": "RSR-13",
+   "axis": "RACE",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-13-FAILSAFE",
+   "rsr": "RSR-13",
+   "axis": "FAILSAFE",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-13-AUDIT",
+   "rsr": "RSR-13",
+   "axis": "AUDIT",
+   "key": "roserpina.commission_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-14-GUI",
+   "rsr": "RSR-14",
+   "axis": "GUI",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-14-VALID",
+   "rsr": "RSR-14",
+   "axis": "VALID",
+   "key": "roserpina.min_stake",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-14-SAVE",
+   "rsr": "RSR-14",
+   "axis": "SAVE",
+   "key": "roserpina.min_stake",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_stake]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-14-LOAD",
+   "rsr": "RSR-14",
+   "axis": "LOAD",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_stake]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-14-RESTART",
+   "rsr": "RSR-14",
+   "axis": "RESTART",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_stake]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-14-APPLY",
+   "rsr": "RSR-14",
+   "axis": "APPLY",
+   "key": "roserpina.min_stake",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/core/test_min_stake_single_source.py; tests/core/test_risk_gate.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-14-PARITY",
+   "rsr": "RSR-14",
+   "axis": "PARITY",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-14-RACE",
+   "rsr": "RSR-14",
+   "axis": "RACE",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-14-FAILSAFE",
+   "rsr": "RSR-14",
+   "axis": "FAILSAFE",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-14-AUDIT",
+   "rsr": "RSR-14",
+   "axis": "AUDIT",
+   "key": "roserpina.min_stake",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-15-GUI",
+   "rsr": "RSR-15",
+   "axis": "GUI",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-15-VALID",
+   "rsr": "RSR-15",
+   "axis": "VALID",
+   "key": "roserpina.max_stake_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_stake_abs]",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-15-SAVE",
+   "rsr": "RSR-15",
+   "axis": "SAVE",
+   "key": "roserpina.max_stake_abs",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_abs]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-15-LOAD",
+   "rsr": "RSR-15",
+   "axis": "LOAD",
+   "key": "roserpina.max_stake_abs",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_abs]; ::test_rsr_unreadable_numeric_value_falls_back_to_code_default[max_stake_abs]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-15-RESTART",
+   "rsr": "RSR-15",
+   "axis": "RESTART",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_abs]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-15-APPLY",
+   "rsr": "RSR-15",
+   "axis": "APPLY",
+   "key": "roserpina.max_stake_abs",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr27.py; campagna C02 (capmode abs)",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-15-PARITY",
+   "rsr": "RSR-15",
+   "axis": "PARITY",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-15-RACE",
+   "rsr": "RSR-15",
+   "axis": "RACE",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-15-FAILSAFE",
+   "rsr": "RSR-15",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-15-AUDIT",
+   "rsr": "RSR-15",
+   "axis": "AUDIT",
+   "key": "roserpina.max_stake_abs",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-16-GUI",
+   "rsr": "RSR-16",
+   "axis": "GUI",
+   "key": "roserpina.max_daily_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-16-VALID",
+   "rsr": "RSR-16",
+   "axis": "VALID",
+   "key": "roserpina.max_daily_loss",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-16-SAVE",
+   "rsr": "RSR-16",
+   "axis": "SAVE",
+   "key": "roserpina.max_daily_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_daily_loss]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-16-LOAD",
+   "rsr": "RSR-16",
+   "axis": "LOAD",
+   "key": "roserpina.max_daily_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_daily_loss]; ::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_daily_loss]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-16-RESTART",
+   "rsr": "RSR-16",
+   "axis": "RESTART",
+   "key": "roserpina.max_daily_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_daily_loss]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-16-APPLY",
+   "rsr": "RSR-16",
+   "axis": "APPLY",
+   "key": "roserpina.max_daily_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr16_daily_loss_puts_desk_in_lockdown; tests/acceptance/test_issue437_pr03.py, pr28b; campagna C10",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-16-PARITY",
+   "rsr": "RSR-16",
+   "axis": "PARITY",
+   "key": "roserpina.max_daily_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-16-RACE",
+   "rsr": "RSR-16",
+   "axis": "RACE",
+   "key": "roserpina.max_daily_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-16-FAILSAFE",
+   "rsr": "RSR-16",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_daily_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_daily_loss]",
+   "note": "valore corrotto non disattiva lo stop"
+  },
+  {
+   "id": "PF-RSR-16-AUDIT",
+   "rsr": "RSR-16",
+   "axis": "AUDIT",
+   "key": "roserpina.max_daily_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-17-GUI",
+   "rsr": "RSR-17",
+   "axis": "GUI",
+   "key": "roserpina.max_open_exposure",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-17-VALID",
+   "rsr": "RSR-17",
+   "axis": "VALID",
+   "key": "roserpina.max_open_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-17-SAVE",
+   "rsr": "RSR-17",
+   "axis": "SAVE",
+   "key": "roserpina.max_open_exposure",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_open_exposure]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-17-LOAD",
+   "rsr": "RSR-17",
+   "axis": "LOAD",
+   "key": "roserpina.max_open_exposure",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_open_exposure]; ::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_open_exposure]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-17-RESTART",
+   "rsr": "RSR-17",
+   "axis": "RESTART",
+   "key": "roserpina.max_open_exposure",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_open_exposure]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-17-APPLY",
+   "rsr": "RSR-17",
+   "axis": "APPLY",
+   "key": "roserpina.max_open_exposure",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr27.py, pr28.py; campagna C07",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-17-PARITY",
+   "rsr": "RSR-17",
+   "axis": "PARITY",
+   "key": "roserpina.max_open_exposure",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-17-RACE",
+   "rsr": "RSR-17",
+   "axis": "RACE",
+   "key": "roserpina.max_open_exposure",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-17-FAILSAFE",
+   "rsr": "RSR-17",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_open_exposure",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_open_exposure]",
+   "note": "valore corrotto non disattiva lo stop"
+  },
+  {
+   "id": "PF-RSR-17-AUDIT",
+   "rsr": "RSR-17",
+   "axis": "AUDIT",
+   "key": "roserpina.max_open_exposure",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-18-GUI",
+   "rsr": "RSR-18",
+   "axis": "GUI",
+   "key": "roserpina.max_session_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-18-VALID",
+   "rsr": "RSR-18",
+   "axis": "VALID",
+   "key": "roserpina.max_session_loss",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-18-SAVE",
+   "rsr": "RSR-18",
+   "axis": "SAVE",
+   "key": "roserpina.max_session_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_session_loss]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-18-LOAD",
+   "rsr": "RSR-18",
+   "axis": "LOAD",
+   "key": "roserpina.max_session_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_session_loss]; ::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_session_loss]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-18-RESTART",
+   "rsr": "RSR-18",
+   "axis": "RESTART",
+   "key": "roserpina.max_session_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_session_loss]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-18-APPLY",
+   "rsr": "RSR-18",
+   "axis": "APPLY",
+   "key": "roserpina.max_session_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr28b.py, pr28c.py; campagna C10b",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-18-PARITY",
+   "rsr": "RSR-18",
+   "axis": "PARITY",
+   "key": "roserpina.max_session_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-18-RACE",
+   "rsr": "RSR-18",
+   "axis": "RACE",
+   "key": "roserpina.max_session_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-18-FAILSAFE",
+   "rsr": "RSR-18",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_session_loss",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_session_loss]",
+   "note": "valore corrotto non disattiva lo stop"
+  },
+  {
+   "id": "PF-RSR-18-AUDIT",
+   "rsr": "RSR-18",
+   "axis": "AUDIT",
+   "key": "roserpina.max_session_loss",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-19-GUI",
+   "rsr": "RSR-19",
+   "axis": "GUI",
+   "key": "roserpina.max_exposure_stop",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-19-VALID",
+   "rsr": "RSR-19",
+   "axis": "VALID",
+   "key": "roserpina.max_exposure_stop",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-19-SAVE",
+   "rsr": "RSR-19",
+   "axis": "SAVE",
+   "key": "roserpina.max_exposure_stop",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_exposure_stop]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-19-LOAD",
+   "rsr": "RSR-19",
+   "axis": "LOAD",
+   "key": "roserpina.max_exposure_stop",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_exposure_stop]; ::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_exposure_stop]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-19-RESTART",
+   "rsr": "RSR-19",
+   "axis": "RESTART",
+   "key": "roserpina.max_exposure_stop",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_exposure_stop]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-19-APPLY",
+   "rsr": "RSR-19",
+   "axis": "APPLY",
+   "key": "roserpina.max_exposure_stop",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/acceptance/test_issue437_pr28c.py; campagna C08",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-19-PARITY",
+   "rsr": "RSR-19",
+   "axis": "PARITY",
+   "key": "roserpina.max_exposure_stop",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-19-RACE",
+   "rsr": "RSR-19",
+   "axis": "RACE",
+   "key": "roserpina.max_exposure_stop",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-19-FAILSAFE",
+   "rsr": "RSR-19",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_exposure_stop",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_exposure_stop]",
+   "note": "valore corrotto non disattiva lo stop"
+  },
+  {
+   "id": "PF-RSR-19-AUDIT",
+   "rsr": "RSR-19",
+   "axis": "AUDIT",
+   "key": "roserpina.max_exposure_stop",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-20-GUI",
+   "rsr": "RSR-20",
+   "axis": "GUI",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-20-VALID",
+   "rsr": "RSR-20",
+   "axis": "VALID",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-20-SAVE",
+   "rsr": "RSR-20",
+   "axis": "SAVE",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_drawdown_hard_stop_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-20-LOAD",
+   "rsr": "RSR-20",
+   "axis": "LOAD",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_drawdown_hard_stop_pct]; ::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_drawdown_hard_stop_pct]",
+   "note": "ricarica + valore illeggibile"
+  },
+  {
+   "id": "PF-RSR-20-RESTART",
+   "rsr": "RSR-20",
+   "axis": "RESTART",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_drawdown_hard_stop_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-20-APPLY",
+   "rsr": "RSR-20",
+   "axis": "APPLY",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/integration/test_deploy_gate.py (configurazione); percorso d'ordine LIVE non eseguibile qui",
+   "note": "NOT VERIFIED (solo LIVE)"
+  },
+  {
+   "id": "PF-RSR-20-PARITY",
+   "rsr": "RSR-20",
+   "axis": "PARITY",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-20-RACE",
+   "rsr": "RSR-20",
+   "axis": "RACE",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-20-FAILSAFE",
+   "rsr": "RSR-20",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_hard_stop_unreadable_is_never_silently_disabled[max_drawdown_hard_stop_pct]",
+   "note": "valore corrotto non disattiva lo stop"
+  },
+  {
+   "id": "PF-RSR-20-AUDIT",
+   "rsr": "RSR-20",
+   "axis": "AUDIT",
+   "key": "roserpina.max_drawdown_hard_stop_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-21-GUI",
+   "rsr": "RSR-21",
+   "axis": "GUI",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-21-VALID",
+   "rsr": "RSR-21",
+   "axis": "VALID",
+   "key": "roserpina.book_warning",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-21-SAVE",
+   "rsr": "RSR-21",
+   "axis": "SAVE",
+   "key": "roserpina.book_warning",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_warning]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-21-LOAD",
+   "rsr": "RSR-21",
+   "axis": "LOAD",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_warning]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-21-RESTART",
+   "rsr": "RSR-21",
+   "axis": "RESTART",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_warning]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-21-APPLY",
+   "rsr": "RSR-21",
+   "axis": "APPLY",
+   "key": "roserpina.book_warning",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_book_guard.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-21-PARITY",
+   "rsr": "RSR-21",
+   "axis": "PARITY",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-21-RACE",
+   "rsr": "RSR-21",
+   "axis": "RACE",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-21-FAILSAFE",
+   "rsr": "RSR-21",
+   "axis": "FAILSAFE",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-21-AUDIT",
+   "rsr": "RSR-21",
+   "axis": "AUDIT",
+   "key": "roserpina.book_warning",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-22-GUI",
+   "rsr": "RSR-22",
+   "axis": "GUI",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-22-VALID",
+   "rsr": "RSR-22",
+   "axis": "VALID",
+   "key": "roserpina.book_block",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-22-SAVE",
+   "rsr": "RSR-22",
+   "axis": "SAVE",
+   "key": "roserpina.book_block",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_block]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-22-LOAD",
+   "rsr": "RSR-22",
+   "axis": "LOAD",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_block]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-22-RESTART",
+   "rsr": "RSR-22",
+   "axis": "RESTART",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[book_block]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-22-APPLY",
+   "rsr": "RSR-22",
+   "axis": "APPLY",
+   "key": "roserpina.book_block",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_book_guard.py; tests/core/test_risk_gate.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-22-PARITY",
+   "rsr": "RSR-22",
+   "axis": "PARITY",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-22-RACE",
+   "rsr": "RSR-22",
+   "axis": "RACE",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-22-FAILSAFE",
+   "rsr": "RSR-22",
+   "axis": "FAILSAFE",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-22-AUDIT",
+   "rsr": "RSR-22",
+   "axis": "AUDIT",
+   "key": "roserpina.book_block",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-23-GUI",
+   "rsr": "RSR-23",
+   "axis": "GUI",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-23-VALID",
+   "rsr": "RSR-23",
+   "axis": "VALID",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-23-SAVE",
+   "rsr": "RSR-23",
+   "axis": "SAVE",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_multiplier]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-23-LOAD",
+   "rsr": "RSR-23",
+   "axis": "LOAD",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_multiplier]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-23-RESTART",
+   "rsr": "RSR-23",
+   "axis": "RESTART",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_multiplier]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-23-APPLY",
+   "rsr": "RSR-23",
+   "axis": "APPLY",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_liquidity_guard.py; test_F030_*; tests/f026/test_f030_units.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-23-PARITY",
+   "rsr": "RSR-23",
+   "axis": "PARITY",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-23-RACE",
+   "rsr": "RSR-23",
+   "axis": "RACE",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-23-FAILSAFE",
+   "rsr": "RSR-23",
+   "axis": "FAILSAFE",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-23-AUDIT",
+   "rsr": "RSR-23",
+   "axis": "AUDIT",
+   "key": "roserpina.liquidity_multiplier",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-24-GUI",
+   "rsr": "RSR-24",
+   "axis": "GUI",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-24-VALID",
+   "rsr": "RSR-24",
+   "axis": "VALID",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-24-SAVE",
+   "rsr": "RSR-24",
+   "axis": "SAVE",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_liquidity_absolute]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-24-LOAD",
+   "rsr": "RSR-24",
+   "axis": "LOAD",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_liquidity_absolute]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-24-RESTART",
+   "rsr": "RSR-24",
+   "axis": "RESTART",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_liquidity_absolute]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-24-APPLY",
+   "rsr": "RSR-24",
+   "axis": "APPLY",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_F030_04; tests/f026/test_f030_units.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-24-PARITY",
+   "rsr": "RSR-24",
+   "axis": "PARITY",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-24-RACE",
+   "rsr": "RSR-24",
+   "axis": "RACE",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-24-FAILSAFE",
+   "rsr": "RSR-24",
+   "axis": "FAILSAFE",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-24-AUDIT",
+   "rsr": "RSR-24",
+   "axis": "AUDIT",
+   "key": "roserpina.min_liquidity_absolute",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-25-GUI",
+   "rsr": "RSR-25",
+   "axis": "GUI",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-25-VALID",
+   "rsr": "RSR-25",
+   "axis": "VALID",
+   "key": "roserpina.min_price",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-25-SAVE",
+   "rsr": "RSR-25",
+   "axis": "SAVE",
+   "key": "roserpina.min_price",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_price]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-25-LOAD",
+   "rsr": "RSR-25",
+   "axis": "LOAD",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_price]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-25-RESTART",
+   "rsr": "RSR-25",
+   "axis": "RESTART",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[min_price]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-25-APPLY",
+   "rsr": "RSR-25",
+   "axis": "APPLY",
+   "key": "roserpina.min_price",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_min_price_guard.py; tests/core/test_risk_gate.py; campagna C04",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-25-PARITY",
+   "rsr": "RSR-25",
+   "axis": "PARITY",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-25-RACE",
+   "rsr": "RSR-25",
+   "axis": "RACE",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-25-FAILSAFE",
+   "rsr": "RSR-25",
+   "axis": "FAILSAFE",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-25-AUDIT",
+   "rsr": "RSR-25",
+   "axis": "AUDIT",
+   "key": "roserpina.min_price",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-26-GUI",
+   "rsr": "RSR-26",
+   "axis": "GUI",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-26-VALID",
+   "rsr": "RSR-26",
+   "axis": "VALID",
+   "key": "roserpina.max_win",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-26-SAVE",
+   "rsr": "RSR-26",
+   "axis": "SAVE",
+   "key": "roserpina.max_win",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-26-LOAD",
+   "rsr": "RSR-26",
+   "axis": "LOAD",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-26-RESTART",
+   "rsr": "RSR-26",
+   "axis": "RESTART",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-26-APPLY",
+   "rsr": "RSR-26",
+   "axis": "APPLY",
+   "key": "roserpina.max_win",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_max_win_guard.py; tests/core/test_risk_gate.py; campagna C03",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-26-PARITY",
+   "rsr": "RSR-26",
+   "axis": "PARITY",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-26-RACE",
+   "rsr": "RSR-26",
+   "axis": "RACE",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-26-FAILSAFE",
+   "rsr": "RSR-26",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-26-AUDIT",
+   "rsr": "RSR-26",
+   "axis": "AUDIT",
+   "key": "roserpina.max_win",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-27-GUI",
+   "rsr": "RSR-27",
+   "axis": "GUI",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-27-VALID",
+   "rsr": "RSR-27",
+   "axis": "VALID",
+   "key": "roserpina.max_stake_pct",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-27-SAVE",
+   "rsr": "RSR-27",
+   "axis": "SAVE",
+   "key": "roserpina.max_stake_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_pct]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-27-LOAD",
+   "rsr": "RSR-27",
+   "axis": "LOAD",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_pct]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-27-RESTART",
+   "rsr": "RSR-27",
+   "axis": "RESTART",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_stake_pct]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-27-APPLY",
+   "rsr": "RSR-27",
+   "axis": "APPLY",
+   "key": "roserpina.max_stake_pct",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_max_stake_pct_guard.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-27-PARITY",
+   "rsr": "RSR-27",
+   "axis": "PARITY",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-27-RACE",
+   "rsr": "RSR-27",
+   "axis": "RACE",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-27-FAILSAFE",
+   "rsr": "RSR-27",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-27-AUDIT",
+   "rsr": "RSR-27",
+   "axis": "AUDIT",
+   "key": "roserpina.max_stake_pct",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-28-GUI",
+   "rsr": "RSR-28",
+   "axis": "GUI",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-28-VALID",
+   "rsr": "RSR-28",
+   "axis": "VALID",
+   "key": "roserpina.profit_epsilon",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-28-SAVE",
+   "rsr": "RSR-28",
+   "axis": "SAVE",
+   "key": "roserpina.profit_epsilon",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-28-LOAD",
+   "rsr": "RSR-28",
+   "axis": "LOAD",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-28-RESTART",
+   "rsr": "RSR-28",
+   "axis": "RESTART",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-28-APPLY",
+   "rsr": "RSR-28",
+   "axis": "APPLY",
+   "key": "roserpina.profit_epsilon",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_profit_epsilon_guard.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-28-PARITY",
+   "rsr": "RSR-28",
+   "axis": "PARITY",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-28-RACE",
+   "rsr": "RSR-28",
+   "axis": "RACE",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-28-FAILSAFE",
+   "rsr": "RSR-28",
+   "axis": "FAILSAFE",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-28-AUDIT",
+   "rsr": "RSR-28",
+   "axis": "AUDIT",
+   "key": "roserpina.profit_epsilon",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-29-GUI",
+   "rsr": "RSR-29",
+   "axis": "GUI",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-29-VALID",
+   "rsr": "RSR-29",
+   "axis": "VALID",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-29-SAVE",
+   "rsr": "RSR-29",
+   "axis": "SAVE",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_sec]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-29-LOAD",
+   "rsr": "RSR-29",
+   "axis": "LOAD",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_sec]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-29-RESTART",
+   "rsr": "RSR-29",
+   "axis": "RESTART",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_sec]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-29-APPLY",
+   "rsr": "RSR-29",
+   "axis": "APPLY",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/unit/test_auto_green_delay_trigger.py; tests/acceptance/test_issue437_pr04.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-29-PARITY",
+   "rsr": "RSR-29",
+   "axis": "PARITY",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-29-RACE",
+   "rsr": "RSR-29",
+   "axis": "RACE",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-29-FAILSAFE",
+   "rsr": "RSR-29",
+   "axis": "FAILSAFE",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-29-AUDIT",
+   "rsr": "RSR-29",
+   "axis": "AUDIT",
+   "key": "roserpina.auto_green_delay_sec",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-30-GUI",
+   "rsr": "RSR-30",
+   "axis": "GUI",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-30-VALID",
+   "rsr": "RSR-30",
+   "axis": "VALID",
+   "key": "roserpina.risk_profile",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-30-SAVE",
+   "rsr": "RSR-30",
+   "axis": "SAVE",
+   "key": "roserpina.risk_profile",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[risk_profile]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-30-LOAD",
+   "rsr": "RSR-30",
+   "axis": "LOAD",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[risk_profile]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-30-RESTART",
+   "rsr": "RSR-30",
+   "axis": "RESTART",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[risk_profile]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-30-APPLY",
+   "rsr": "RSR-30",
+   "axis": "APPLY",
+   "key": "roserpina.risk_profile",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr30_risk_profile_multiplier",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-30-PARITY",
+   "rsr": "RSR-30",
+   "axis": "PARITY",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-30-RACE",
+   "rsr": "RSR-30",
+   "axis": "RACE",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-30-FAILSAFE",
+   "rsr": "RSR-30",
+   "axis": "FAILSAFE",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-30-AUDIT",
+   "rsr": "RSR-30",
+   "axis": "AUDIT",
+   "key": "roserpina.risk_profile",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-31-GUI",
+   "rsr": "RSR-31",
+   "axis": "GUI",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-31-VALID",
+   "rsr": "RSR-31",
+   "axis": "VALID",
+   "key": "roserpina.allow_recovery",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-31-SAVE",
+   "rsr": "RSR-31",
+   "axis": "SAVE",
+   "key": "roserpina.allow_recovery",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[allow_recovery]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-31-LOAD",
+   "rsr": "RSR-31",
+   "axis": "LOAD",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[allow_recovery]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-31-RESTART",
+   "rsr": "RSR-31",
+   "axis": "RESTART",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[allow_recovery]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-31-APPLY",
+   "rsr": "RSR-31",
+   "axis": "APPLY",
+   "key": "roserpina.allow_recovery",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_rsr31_*; tests/f029",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-31-PARITY",
+   "rsr": "RSR-31",
+   "axis": "PARITY",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-31-RACE",
+   "rsr": "RSR-31",
+   "axis": "RACE",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-31-FAILSAFE",
+   "rsr": "RSR-31",
+   "axis": "FAILSAFE",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-31-AUDIT",
+   "rsr": "RSR-31",
+   "axis": "AUDIT",
+   "key": "roserpina.allow_recovery",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-32-GUI",
+   "rsr": "RSR-32",
+   "axis": "GUI",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-32-VALID",
+   "rsr": "RSR-32",
+   "axis": "VALID",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-32-SAVE",
+   "rsr": "RSR-32",
+   "axis": "SAVE",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[anti_duplication_enabled]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-32-LOAD",
+   "rsr": "RSR-32",
+   "axis": "LOAD",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[anti_duplication_enabled]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-32-RESTART",
+   "rsr": "RSR-32",
+   "axis": "RESTART",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[anti_duplication_enabled]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-32-APPLY",
+   "rsr": "RSR-32",
+   "axis": "APPLY",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/f026 (riconsegne), campagna C01/R2",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-32-PARITY",
+   "rsr": "RSR-32",
+   "axis": "PARITY",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-32-RACE",
+   "rsr": "RSR-32",
+   "axis": "RACE",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-32-FAILSAFE",
+   "rsr": "RSR-32",
+   "axis": "FAILSAFE",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-32-AUDIT",
+   "rsr": "RSR-32",
+   "axis": "AUDIT",
+   "key": "roserpina.anti_duplication_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-33-GUI",
+   "rsr": "RSR-33",
+   "axis": "GUI",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-33-VALID",
+   "rsr": "RSR-33",
+   "axis": "VALID",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-33-SAVE",
+   "rsr": "RSR-33",
+   "axis": "SAVE",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_guard_enabled]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-33-LOAD",
+   "rsr": "RSR-33",
+   "axis": "LOAD",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_guard_enabled]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-33-RESTART",
+   "rsr": "RSR-33",
+   "axis": "RESTART",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_guard_enabled]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-33-APPLY",
+   "rsr": "RSR-33",
+   "axis": "APPLY",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_F030_06; tests/integration/test_dutching_liquidity_guard.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-33-PARITY",
+   "rsr": "RSR-33",
+   "axis": "PARITY",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-33-RACE",
+   "rsr": "RSR-33",
+   "axis": "RACE",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-33-FAILSAFE",
+   "rsr": "RSR-33",
+   "axis": "FAILSAFE",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-33-AUDIT",
+   "rsr": "RSR-33",
+   "axis": "AUDIT",
+   "key": "roserpina.liquidity_guard_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-34-GUI",
+   "rsr": "RSR-34",
+   "axis": "GUI",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-34-VALID",
+   "rsr": "RSR-34",
+   "axis": "VALID",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-34-SAVE",
+   "rsr": "RSR-34",
+   "axis": "SAVE",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_warning_only]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-34-LOAD",
+   "rsr": "RSR-34",
+   "axis": "LOAD",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_warning_only]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-34-RESTART",
+   "rsr": "RSR-34",
+   "axis": "RESTART",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[liquidity_warning_only]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-34-APPLY",
+   "rsr": "RSR-34",
+   "axis": "APPLY",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: test_F030_02, test_F030_05",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-34-PARITY",
+   "rsr": "RSR-34",
+   "axis": "PARITY",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-34-RACE",
+   "rsr": "RSR-34",
+   "axis": "RACE",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-34-FAILSAFE",
+   "rsr": "RSR-34",
+   "axis": "FAILSAFE",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-34-AUDIT",
+   "rsr": "RSR-34",
+   "axis": "AUDIT",
+   "key": "roserpina.liquidity_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-35-GUI",
+   "rsr": "RSR-35",
+   "axis": "GUI",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-35-VALID",
+   "rsr": "RSR-35",
+   "axis": "VALID",
+   "key": "roserpina.max_win_warning_only",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-35-SAVE",
+   "rsr": "RSR-35",
+   "axis": "SAVE",
+   "key": "roserpina.max_win_warning_only",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win_warning_only]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-35-LOAD",
+   "rsr": "RSR-35",
+   "axis": "LOAD",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win_warning_only]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-35-RESTART",
+   "rsr": "RSR-35",
+   "axis": "RESTART",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[max_win_warning_only]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-35-APPLY",
+   "rsr": "RSR-35",
+   "axis": "APPLY",
+   "key": "roserpina.max_win_warning_only",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_max_win_guard.py; tests/core/test_risk_gate.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-35-PARITY",
+   "rsr": "RSR-35",
+   "axis": "PARITY",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-35-RACE",
+   "rsr": "RSR-35",
+   "axis": "RACE",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-35-FAILSAFE",
+   "rsr": "RSR-35",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-35-AUDIT",
+   "rsr": "RSR-35",
+   "axis": "AUDIT",
+   "key": "roserpina.max_win_warning_only",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-36-GUI",
+   "rsr": "RSR-36",
+   "axis": "GUI",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-36-VALID",
+   "rsr": "RSR-36",
+   "axis": "VALID",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-36-SAVE",
+   "rsr": "RSR-36",
+   "axis": "SAVE",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_enabled]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-36-LOAD",
+   "rsr": "RSR-36",
+   "axis": "LOAD",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_enabled]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-36-RESTART",
+   "rsr": "RSR-36",
+   "axis": "RESTART",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[auto_green_delay_enabled]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-36-APPLY",
+   "rsr": "RSR-36",
+   "axis": "APPLY",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/unit/test_auto_green_delay_trigger.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-36-PARITY",
+   "rsr": "RSR-36",
+   "axis": "PARITY",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-36-RACE",
+   "rsr": "RSR-36",
+   "axis": "RACE",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-36-FAILSAFE",
+   "rsr": "RSR-36",
+   "axis": "FAILSAFE",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-36-AUDIT",
+   "rsr": "RSR-36",
+   "axis": "AUDIT",
+   "key": "roserpina.auto_green_delay_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-37-GUI",
+   "rsr": "RSR-37",
+   "axis": "GUI",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "nessuna prova GUI per-parametro in questo branch; vedi lotti GUI su checkpoint/gate-a-close02"
+  },
+  {
+   "id": "PF-RSR-37-VALID",
+   "rsr": "RSR-37",
+   "axis": "VALID",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "il loader torna al default di codice, non all'ultimo valore valido; range ammessi = decisioni owner Q1/Q2 aperte"
+  },
+  {
+   "id": "PF-RSR-37-SAVE",
+   "rsr": "RSR-37",
+   "axis": "SAVE",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon_enabled]",
+   "note": "SettingsService + SQLite reale su file"
+  },
+  {
+   "id": "PF-RSR-37-LOAD",
+   "rsr": "RSR-37",
+   "axis": "LOAD",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon_enabled]",
+   "note": "solo ricarica; assente/corrotto non distinti da un test"
+  },
+  {
+   "id": "PF-RSR-37-RESTART",
+   "rsr": "RSR-37",
+   "axis": "RESTART",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart[profit_epsilon_enabled]",
+   "note": "nuove istanze sullo stesso DB nello STESSO processo: non e' la terminazione+nuovo processo richiesta dall'asse"
+  },
+  {
+   "id": "PF-RSR-37-APPLY",
+   "rsr": "RSR-37",
+   "axis": "APPLY",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "PASS",
+   "code_sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+   "evidence": "scheda docs/roserpina41_parameter_dossier.md: tests/integration/test_dutching_profit_epsilon_guard.py",
+   "note": "effetto attivato e osservato (scheda dei 41 parametri)"
+  },
+  {
+   "id": "PF-RSR-37-PARITY",
+   "rsr": "RSR-37",
+   "axis": "PARITY",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "BACK/LAY, GUI/headless/MCP e SIM/LIVE non confrontati per-parametro; MCP non implementato"
+  },
+  {
+   "id": "PF-RSR-37-RACE",
+   "rsr": "RSR-37",
+   "axis": "RACE",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "modifica concorrente della configurazione non provata"
+  },
+  {
+   "id": "PF-RSR-37-FAILSAFE",
+   "rsr": "RSR-37",
+   "axis": "FAILSAFE",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": ""
+  },
+  {
+   "id": "PF-RSR-37-AUDIT",
+   "rsr": "RSR-37",
+   "axis": "AUDIT",
+   "key": "roserpina.profit_epsilon_enabled",
+   "status": "NOT VERIFIED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "ricostruzione valore/decisione/correlation_id non provata per-parametro"
+  },
+  {
+   "id": "PF-RSR-38-GUI",
+   "rsr": "RSR-38",
+   "axis": "GUI",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-VALID",
+   "rsr": "RSR-38",
+   "axis": "VALID",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-SAVE",
+   "rsr": "RSR-38",
+   "axis": "SAVE",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-LOAD",
+   "rsr": "RSR-38",
+   "axis": "LOAD",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-RESTART",
+   "rsr": "RSR-38",
+   "axis": "RESTART",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-APPLY",
+   "rsr": "RSR-38",
+   "axis": "APPLY",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-PARITY",
+   "rsr": "RSR-38",
+   "axis": "PARITY",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-RACE",
+   "rsr": "RSR-38",
+   "axis": "RACE",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-FAILSAFE",
+   "rsr": "RSR-38",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-38-AUDIT",
+   "rsr": "RSR-38",
+   "axis": "AUDIT",
+   "key": "roserpina.max_order_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-GUI",
+   "rsr": "RSR-39",
+   "axis": "GUI",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-VALID",
+   "rsr": "RSR-39",
+   "axis": "VALID",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-SAVE",
+   "rsr": "RSR-39",
+   "axis": "SAVE",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-LOAD",
+   "rsr": "RSR-39",
+   "axis": "LOAD",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-RESTART",
+   "rsr": "RSR-39",
+   "axis": "RESTART",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-APPLY",
+   "rsr": "RSR-39",
+   "axis": "APPLY",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-PARITY",
+   "rsr": "RSR-39",
+   "axis": "PARITY",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-RACE",
+   "rsr": "RSR-39",
+   "axis": "RACE",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-FAILSAFE",
+   "rsr": "RSR-39",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-39-AUDIT",
+   "rsr": "RSR-39",
+   "axis": "AUDIT",
+   "key": "roserpina.max_market_exposure",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-GUI",
+   "rsr": "RSR-40",
+   "axis": "GUI",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-VALID",
+   "rsr": "RSR-40",
+   "axis": "VALID",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-SAVE",
+   "rsr": "RSR-40",
+   "axis": "SAVE",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-LOAD",
+   "rsr": "RSR-40",
+   "axis": "LOAD",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-RESTART",
+   "rsr": "RSR-40",
+   "axis": "RESTART",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-APPLY",
+   "rsr": "RSR-40",
+   "axis": "APPLY",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-PARITY",
+   "rsr": "RSR-40",
+   "axis": "PARITY",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-RACE",
+   "rsr": "RSR-40",
+   "axis": "RACE",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-FAILSAFE",
+   "rsr": "RSR-40",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-40-AUDIT",
+   "rsr": "RSR-40",
+   "axis": "AUDIT",
+   "key": "roserpina.max_event_exposure_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-GUI",
+   "rsr": "RSR-41",
+   "axis": "GUI",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-VALID",
+   "rsr": "RSR-41",
+   "axis": "VALID",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-SAVE",
+   "rsr": "RSR-41",
+   "axis": "SAVE",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-LOAD",
+   "rsr": "RSR-41",
+   "axis": "LOAD",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-RESTART",
+   "rsr": "RSR-41",
+   "axis": "RESTART",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-APPLY",
+   "rsr": "RSR-41",
+   "axis": "APPLY",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-PARITY",
+   "rsr": "RSR-41",
+   "axis": "PARITY",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-RACE",
+   "rsr": "RSR-41",
+   "axis": "RACE",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-FAILSAFE",
+   "rsr": "RSR-41",
+   "axis": "FAILSAFE",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  },
+  {
+   "id": "PF-RSR-41-AUDIT",
+   "rsr": "RSR-41",
+   "axis": "AUDIT",
+   "key": "roserpina.max_drawdown_abs",
+   "status": "BLOCKED",
+   "code_sha": null,
+   "evidence": "",
+   "note": "parametro assente al HEAD: esiste solo nella PR #505 (protetta)"
+  }
+ ]
+}
