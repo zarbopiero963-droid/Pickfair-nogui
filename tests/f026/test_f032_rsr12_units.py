@@ -221,3 +221,25 @@ def test_rsr12_unreadable_state_is_fail_closed(tmp_path):
     assert rc._restore_recovery_tables() is False
     assert rc._recovery_state_unreadable is True
     assert rc._active_recovery_count() >= rc.config.max_recovery_tables, "stato illeggibile: capacita' non liberata"
+
+
+def test_f032_public_reset_cycle_rebases_baseline_and_persists_recovery(tmp_path):
+    """reset_cycle() (transizione esplicita, metodo pubblico) ribasa la baseline sull'exchange e salva lo stato
+    dei tavoli di recovery (mutante MD6)."""
+    import threading
+    rc = _rc(tmp_path / "w.db", funds={"available": 130.0, "exposure": 0.0})
+    rc.simulation_mode = False
+    rc._daily_loss_state_lock = threading.Lock()
+    rc._daily_loss_monitor_state = {"realized_pnl_day_baseline": 0.0, "realized_pnl": 0.0}
+    rc._session_pnl_baseline = None
+    rc.get_status = lambda: {}
+    rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0})
+    rc._record_account_snapshot({"available": 130.0, "exposure": 0.0}, source="settlement")
+    assert rc._expansion_growth_pct() == pytest.approx(30.0)
+    _lose(rc, 1, "A", 2.0)
+    assert rc.reset_cycle()["reset"] is True
+    assert rc._expansion_growth_pct() == pytest.approx(0.0), "reset_cycle non ha aperto un nuovo ciclo (F032)"
+    state = json.loads(rc.db.get_settings()["roserpina.expansion_baseline_state"])
+    assert state["reason"] == "reset_cycle" and state["baseline"] == pytest.approx(130.0)
+    assert json.loads(rc.db.get_settings()["roserpina.recovery_tables_state"]) == {}, \
+        "il reset del ciclo azzera la recovery e lo stato persistito deve seguirlo"
