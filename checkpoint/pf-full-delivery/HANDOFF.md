@@ -43,3 +43,6 @@ La chat e gli Artifact NON sono la fonte di verità.
 
 ## seq 5 (f6ee25e)
 - Campagna 1684/1684 su 180f405; scenario critico PASS; mutation c03 16/16 validi, d04 parziale (MD6 chiuso con test).
+
+## seq 6 (f6ee25e) — chiusura sessione al 97% budget
+- Pendenti: mutation MD6 (conferma), MD10, MD11 su f6ee25e; regressione completa su f6ee25e NOT VERIFIED.

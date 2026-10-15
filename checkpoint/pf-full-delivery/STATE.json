@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/2",
- "seq": 5,
- "updated_at": "2026-10-15T09:21:10.662804+00:00",
+ "seq": 6,
+ "updated_at": "2026-10-15T09:28:37.963409+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -194,6 +194,12 @@
    "verified": true,
    "result": "conflitti solo testuali; con i 4 cap configurati 405 pass + 5 fixture senza lato corrette (ce34e49); F033 PASSA sull'albero fuso (xfail stretto -> XPASS)",
    "artifact": "results/merge505_probe_180f405.txt"
+  },
+  {
+   "id": "tests/f026 + tests/roserpina41",
+   "sha": "f6ee25e",
+   "verified": true,
+   "result": "212 passed, 1 xfailed (F033)"
   }
  ],
  "findings": {
@@ -254,7 +260,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Lotto C: rieseguire mutate_d04 su f6ee25e (mutation/mutate_d04.py) e registrare; poi regressione completa su f6ee25e; poi contributo A06 (matrice RSR 41x10) per Gate A #506",
+ "next_atomic_action": "Rieseguire mutation/mutate_d04.py su f6ee25e e registrare MD6/MD10/MD11; poi regressione completa su f6ee25e; poi matrice RSR 41x10 per A06 (#506). Vedi RUNBOOK.md.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -265,7 +271,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
  "mandate_current": "PF-ROSERPINA-CONTINUOUS-DELIVERY-04",
- "previous_checkpoint_sha": "fa5bb35",
+ "previous_checkpoint_sha": "734eb9c",
  "lotto_corrente": "C (mutation) + D (durata/recovery)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -274,9 +280,9 @@
   "E (campagna completa su 180f405)"
  ],
  "lotti_pendenti": [
-  "C: rieseguire mutation d04 su f6ee25e per confermare MD6 e completare MD9-MD11",
-  "F: report dipendenze #505/#506 (parziale in stato)",
-  "regressione completa su f6ee25e (solo test aggiunti dopo 180f405)"
+  "C: rieseguire mutation/mutate_d04.py su f6ee25e (MD6 conferma, MD10, MD11)",
+  "Regressione completa su f6ee25e: NOT VERIFIED (ultima completa 7530/0 su 180f405; f6ee25e cambia solo 2 file di test)",
+  "A06 Gate A: matrice RSR 41x10"
  ],
  "decisions_applied": [
   "F027",
@@ -290,7 +296,7 @@
  ],
  "mutation": {
   "c03_on_b33b54d": "17/17 KILLED; MC8 NON VALIDO (SyntaxError) => 16/16 validi",
-  "d04_on_180f405": "MC8v KILLED (valido), MD1-MD5 KILLED, MD6 SURVIVED -> test aggiunto f6ee25e (verificato a mano: fallisce col mutante), MD7-MD8 KILLED, MD9-MD11 in corso",
+  "d04_on_180f405": "MC8v, MD1-MD5, MD7-MD9 KILLED (validi); MD6 SURVIVED su 180f405 -> test aggiunto in f6ee25e (verificato manualmente: fallisce col mutante); MD10-MD11 NON COMPLETATI (sessione chiusa per budget)",
   "rule": "mutante che non compila = INVALID, mai KILLED"
  },
  "environment": {
@@ -310,5 +316,6 @@
   "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata",
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
- }
+ },
+ "session_end": "interrotta volontariamente al 97% del budget; stato completo e verificato"
 }
