@@ -618,3 +618,18 @@ def test_RSR12_01_recovery_tables_survive_crash_and_restart():
     rec = [t for t in s["tables"] if t["status"] == "RECOVERY"]
     assert len(rec) == 2 and all(D(str(t["loss"])) > 0 for t in rec), \
         "dopo il riavvio la recovery attiva e' sparita (RSR-12): " + str(s["tables"])
+
+
+def test_RSR12_02_idle_recovery_tables_count_on_the_signal_path():
+    """RSR-12 sul percorso reale del segnale (mutante MD10): due tavoli in recovery SENZA ordini aperti esauriscono
+    max_recovery_tables=2; con nessun tavolo FREE il terzo segnale e' rifiutato, nessun ordine nuovo."""
+    r = run([{"op": "signal", "m": "1.995", "price": 2.0}, {"op": "signal", "m": "1.996", "price": 2.0},
+             {"op": "settle", "m": "1.995", "win": False}, {"op": "settle", "m": "1.996", "win": False},
+             {"op": "signal", "m": "1.997", "price": 2.0}],
+            settings={"roserpina.table_count": 2, "roserpina.max_recovery_tables": 2, "roserpina.allow_recovery": True})
+    s = r["snaps"][-1]
+    assert not [x for x in s["orders"] if x["market_id"] == "1.997"], "ordine oltre il limite dei tavoli di recovery"
+    rec = [t for t in s["tables"] if t["status"] == "RECOVERY" and not t["event_key"]]
+    assert len(rec) == 2, "due tavoli in recovery inattivi attesi: " + str(s["tables"])
+    reasons = [e["reason"] for e in r["events"] if e["e"] == "SIGNAL_REJECTED"]
+    assert any(str(x).startswith("max_recovery_tables_reached:2") for x in reasons), reasons
