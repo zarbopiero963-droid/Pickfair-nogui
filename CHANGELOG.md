@@ -19,6 +19,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
   esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
   parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+- **F027:** i settlement confermati si contabilizzano anche in PAUSED, LOCKDOWN ed emergency stop (nessun nuovo
+  ordine dalla riconciliazione; dopo un emergency stop in LIVE il registro SIM non viene usato e l'incertezza si
+  segnala).
+- **F028:** un ordine d'ingresso con stato finale confermato dal broker e nessun abbinato libera tavolo e riserva;
+  gli esiti incerti non vengono mai liberati.
+- **F031:** nel broker SIM un ordine parzialmente abbinato con residuo annullato resta fra gli ordini correnti
+  (parità con Betfair): F018 lo ricostruisce al riavvio.
+- **F030:** il Liquidity Guard protegge anche gli ingressi singoli BACK/LAY (liquidità eseguibile al prezzo, lato
+  corretto del book, `core/liquidity.py`); un book assente o non attendibile nega l'ingresso anche in solo-avviso.
+  Il Book Block resta sul dutching: per una singola selezione non esiste un book percentuale significativo.
+- **Stop di esposizione:** un ordine candidato che raggiungerebbe `max_exposure_stop` si rifiuta senza armare un
+  RISK_STOP persistente; lo stop scatta quando è l'esposizione reale a raggiungere il limite.
+- **GUI Roserpina:** etichette Max Win e Liquidity riallineate al comportamento (Max Win resta un blocco hard sul
+  percorso ordine); checkbox su quattro righe, prima gli ultimi uscivano dalla finestra.
 - **F029:** `TableManager.allocate` non riassegna più un tavolo in recovery già occupato da una posizione aperta,
   né un tavolo oltre `table_count`. Prima, con recovery attivo e dopo una perdita, un secondo ingresso riceveva
   lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un

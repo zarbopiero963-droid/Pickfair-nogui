@@ -1,4 +1,4 @@
-# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018, F029)
+# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018, F027–F031)
 
 Riferimenti: #453 (PF-ALL-F026, F2, F018), #426/6146717266 («Non confondere il saldo disponibile con l'equity»),
 OWNER-SETTLEMENT-02 e OC-04 (nessuna liberazione di capitale ancora impegnato), OD-PF-RECON-02 (un dato mancante
@@ -35,13 +35,6 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
 - **Lockdown e difesa** restano sul drawdown del disponibile, cioè sulla base «caso peggiore». Con un'esposizione
   aperta oltre la soglia di lockdown (default 20%), un settlement porta in LOCKDOWN anche senza perdite equivalenti.
   La base del drawdown è una decisione owner aperta (registro D04, punto 6.O2): non viene cambiata qui.
-- **F027.** In PAUSED o LOCKDOWN il poller dei settlement non gira (contratto «runtime non ACTIVE ⇒ zero rete»).
-  I settlement di posizioni già aperte non vengono contabilizzati finché il runtime non torna ACTIVE.
-- **F028.** Un ordine d'ingresso con abbinato zero che decade alla chiusura del mercato (LAPSED) o viene
-  annullato (CANCELLED, es. dal RISK_STOP) non produce settlement: il tavolo e la sua esposizione restano
-  occupati fino al riavvio, quando F018 lo trova assente dall'exchange e non lo ricostruisce. È in direzione
-  prudente sui cap (esposizione sovrastimata) ma riduce i tavoli e può far scattare lo stop di esposizione.
-  Serve una riconciliazione degli esiti d'ordine non abbinati: non è in questo cambiamento.
 - Il trattamento dei prelievi e dei depositi nel drawdown non è deciso. Oggi muovono l'equity di cassa come
   qualsiasi variazione del conto.
 
@@ -53,6 +46,35 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   con il P&L del tavolo, **solo se è univoco e certo**;
 - una riserva incerta resta trattenuta (F024/F004);
 - con più tavoli sullo stesso mercato non si rilascia nulla automaticamente (log).
+
+## F027 — settlement fuori da ACTIVE (decisione owner, CLOSURE-03)
+
+LOCKDOWN, PAUSE ed emergency stop bloccano i **nuovi ingressi**, non la riconciliazione delle posizioni aperte
+(`RuntimeController._settlement_reconciliation_allowed`: ACTIVE, PAUSED, LOCKDOWN; non STOPPED, dove il servizio
+è disconnesso e la riconciliazione riparte da `start()`).
+- I settlement confermati si contabilizzano: P&L, commissione una volta, conto, tavoli. Il modo resta quello che era.
+- La riconciliazione non produce ordini: l'auto-next del ciclo è riservato ad ACTIVE (`_runtime_not_active_reason`).
+- Emergency stop scattato in LIVE: il servizio passa in SIM e il registro SIM non descrive le posizioni reali.
+  Nessuna emissione, esposizione mantenuta, evento `SETTLEMENT_RECONCILIATION_UNCERTAIN` (una volta). Le posizioni
+  LIVE si riconciliano al successivo avvio autorizzato (F018 + sweep completo). Verifica LIVE: MANUAL_ONLY.
+- Nessuna doppia contabilizzazione dopo un crash: dedupe del consumer (checkpoint durevole) invariato.
+
+## F028 — ordine mai abbinato (decisione owner, CLOSURE-03)
+
+`RuntimeController._release_final_unmatched_orders`, a ogni giro del poller dopo i settlement:
+- solo righe `SUBMITTED` con betId e riserva non incerta; AMBIGUOUS/INFLIGHT non sono mai «annullati per timeout»;
+- SIM: stato del registro del broker `CANCELLED/LAPSED/VOIDED/EXPIRED` con abbinato zero;
+- LIVE: betId assente dagli ordini correnti, presente fra i cleared LAPSED/CANCELLED/VOIDED, assente dai cleared
+  SETTLED; un errore di lettura non libera nulla (verifica contro Betfair reale: MANUAL_ONLY);
+- rilascio idempotente (`force_unlock_if_event`), perdita di recovery del tavolo conservata, chiave anti-duplicato
+  trattenuta (un segnale riconsegnato non si rigioca); evento `UNMATCHED_ORDER_RELEASED`;
+- crash fra conferma della cancellazione e rilascio: al riavvio F018 trova l'ordine assente e non ricostruisce il tavolo.
+
+## F031 — parziale abbinato con residuo annullato (parità SIM/LIVE)
+
+Su Betfair un ordine con parte abbinata e residuo annullato resta fra gli ordini correnti (EXECUTION_COMPLETE) fino
+al settlement. Il broker SIM lo marcava CANCELLED e lo escludeva: al riavvio F018 non ricostruiva una posizione
+abbinata viva. `SimulationBroker.get_current_orders` ora lo riporta come EXECUTION_COMPLETE.
 
 ## F029 — tavoli in recovery
 

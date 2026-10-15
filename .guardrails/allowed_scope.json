@@ -2186,21 +2186,34 @@
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/liquidity.py",
+        "core/risk_gate.py",
         "core/runtime_controller.py",
         "core/table_manager.py",
+        "docs/design/design_handoff.md",
+        "docs/roserpina41_parameter_dossier.md",
         "docs/roserpina_bankroll_equity.md",
+        "mini_gui.py",
+        "ops/config_console.md",
+        "simulation_broker.py",
+        "tests/acceptance/test_issue437_pr28c.py",
         "tests/f001/child_autoreset.py",
         "tests/f001/test_f001_release_and_wait_units.py",
         "tests/f026/child_f026.py",
         "tests/f026/test_f018_rebuild_units.py",
         "tests/f026/test_f026_financial.py",
         "tests/f026/test_f026_units.py",
+        "tests/f026/test_f027_units.py",
+        "tests/f026/test_f028_units.py",
+        "tests/f026/test_f030_units.py",
         "tests/f029/test_f029_recovery_table_occupied.py",
-        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/roserpina41/test_rsr_targeted.py"
       ],
-      "max_files": 13,
+      "max_files": 26,
       "allow_tests": true,
-      "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders). ESTENSIONE DICHIARATA (stessa chiave): F029 — TableManager.allocate non riassegna un tavolo in recovery gia' occupato ne' oltre table_count (core/table_manager.py, tests/f029/); trovato dalla campagna PF-ROSERPINA-41-FULL-SIMULATION-02 e attivato da F2."
+      "description": "PF-FULL-DELIVERY-01 (#453 F026, F2, F018): grandezze del conto separate (disponibile, impegnato, equita' di cassa) senza cambiare la base di stake/limiti; auto-reset sul regolato, reset che trattiene posizioni non regolate; rilascio tavolo al settlement senza table_id (univoco e certo); ricostruzione delle posizioni al riavvio da DB + exchange con avvio in PAUSED se la riconciliazione e' incompleta. Impilato su issue461-pr26-0-f001-executor-outcome. Sostituisce la patch locale F026 v1 (b766261, non integrata). Harness di test reso fedele al servizio reale (exposure in get_account_funds, list_current_orders). ESTENSIONE DICHIARATA (stessa chiave): F029 — TableManager.allocate non riassegna un tavolo in recovery gia' occupato ne' oltre table_count (core/table_manager.py, tests/f029/); trovato dalla campagna PF-ROSERPINA-41-FULL-SIMULATION-02 e attivato da F2. ESTENSIONE DICHIARATA (stessa chiave, mandato owner PF-ROSERPINA-FINANCIAL-CLOSURE-03): F027 settlement contabilizzati in PAUSED/LOCKDOWN/emergency senza nuovi ordini; F028 rilascio di ordini con stato finale non abbinato confermato dal broker; F031 parita' SIM del parziale annullato; F030 Liquidity Guard sugli ingressi singoli (core/liquidity.py condiviso col dutching, RiskGate RISK_LIQUIDITY_UNKNOWN); stop di esposizione che distingue candidato e violazione effettiva (acceptance P38 aggiornata alla decisione); etichette GUI Max Win e Liquidity e checkbox su piu' righe (design handoff, ops/config_console). Test mirati e scheda dei 41 parametri (tests/roserpina41, docs/roserpina41_parameter_dossier.md); F032/F033 documentati con xfail stretto."
     }
   }
 }

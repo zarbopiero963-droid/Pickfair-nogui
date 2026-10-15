@@ -1146,25 +1146,33 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             width=220,
         ).pack(side=tk.LEFT, padx=8, pady=8)
 
+        # Checkbox su piu' righe (CLOSURE-03): su una riga sola gli ultimi uscivano dalla finestra
+        # ("Auto-green" tagliato, "Profit epsilon" invisibile a 1400 px).
         cb = ctk.CTkFrame(outer)
         cb.pack(fill=tk.X, padx=12, pady=6)
+        cb_liq = ctk.CTkFrame(outer)
+        cb_liq.pack(fill=tk.X, padx=12, pady=(0, 6))
+        cb_win = ctk.CTkFrame(outer)
+        cb_win.pack(fill=tk.X, padx=12, pady=(0, 6))
+        cb_misc = ctk.CTkFrame(outer)
+        cb_misc.pack(fill=tk.X, padx=12, pady=(0, 6))
         ctk.CTkCheckBox(cb, text="Allow Recovery", variable=self.rs_allow_recovery_var).pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkCheckBox(cb, text="Anti Duplication Enabled", variable=self.rs_anti_dup_var).pack(side=tk.LEFT, padx=8, pady=8)
         ctk.CTkCheckBox(cb, text="Liquidity Guard attivo", variable=self.rs_liq_guard_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
         # #383: il guard puo' BLOCCARE il submit se la liquidita' eseguibile e'
         # insufficiente. "Solo avviso" (default opt-in) lo tiene in osservazione;
         # TOGLIERE la spunta arma il BLOCCO reale (money-management).
-        ctk.CTkCheckBox(cb, text="Liquidity: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
-        # G5: il cap Max Win puo' BLOCCARE il submit (dutching + bet manuale) se la
-        # vincita/payout potenziale di una gamba supera la soglia. "Solo avviso"
-        # (default opt-in) lo tiene in osservazione; TOGLIERE la spunta arma il BLOCCO.
-        ctk.CTkCheckBox(cb, text="Max Win: solo avviso (⚠ togliere = BLOCCA il submit)", variable=self.rs_max_win_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb_liq, text="Liquidity: solo avviso (⚠ togliere = BLOCCA il submit; dati assenti bloccano sempre)", variable=self.rs_liq_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
+        # G5: il flag "solo avviso" governa SOLO il precheck dutching. Sul percorso
+        # ordine il RiskGate blocca SEMPRE oltre Max Win (H-14, decisione owner
+        # CLOSURE-03: limite finanziario hard, mai declassato ad avviso).
+        ctk.CTkCheckBox(cb_win, text="Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)", variable=self.rs_max_win_warning_only_var).pack(side=tk.LEFT, padx=8, pady=8)
         # G5: grace OPT-IN prima di instradare il cashout (auto-green). Default
         # disarmato => route immediata come oggi; SPUNTARE arma il ritardo (s sopra).
-        ctk.CTkCheckBox(cb, text="Auto-green: attiva grace prima del cashout (ritardo)", variable=self.rs_auto_green_delay_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb_misc, text="Auto-green: attiva grace prima del cashout (ritardo)", variable=self.rs_auto_green_delay_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
         # G5: interruttore ON/OFF dell'avviso profit_epsilon (non-bloccante).
         # Default spuntato => l'avviso e' attivo; TOGLIERE la spunta lo silenzia.
-        ctk.CTkCheckBox(cb, text="Profit epsilon: mostra avviso varianza profitto", variable=self.rs_profit_epsilon_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
+        ctk.CTkCheckBox(cb_misc, text="Profit epsilon: mostra avviso varianza profitto", variable=self.rs_profit_epsilon_enabled_var).pack(side=tk.LEFT, padx=8, pady=8)
 
         self.btn_save_roserpina = ctk.CTkButton(
             outer,

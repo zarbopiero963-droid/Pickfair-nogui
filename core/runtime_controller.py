@@ -10,7 +10,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from core import loss_limits, validators
+from core import liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
@@ -600,6 +600,10 @@ class RuntimeController:
                     else int(generation)
                 )
             )
+            try:
+                self._release_final_unmatched_orders()   # PF-ALL-F028, dopo i settlement del giro
+            except Exception:
+                logger.exception("F028: rilascio ordini non abbinati abortito (nessun rilascio)")
         finally:
             self._settlement_poll_round_lock.release()
 
@@ -733,7 +737,7 @@ class RuntimeController:
         if self.simulation_mode:
             self._poll_simulated_settlements_locked()
             return
-        if self.mode is not RuntimeMode.ACTIVE:
+        if not self._settlement_reconciliation_allowed():
             return
 
         identity_getter = getattr(self.db, "get_bot_active_orders", None)
@@ -909,6 +913,31 @@ class RuntimeController:
             # il lookback (rilievi Fable/GPT-5.6 su #440).
             self._settlement_sweep_done_generation = generation
 
+    _SETTLEMENT_RECONCILIATION_MODES = (RuntimeMode.ACTIVE, RuntimeMode.PAUSED, RuntimeMode.LOCKDOWN)
+
+    def _settlement_reconciliation_allowed(self) -> bool:
+        """PF-ALL-F027 (decisione owner, PF-ROSERPINA-FINANCIAL-CLOSURE-03).
+
+        LOCKDOWN, PAUSE ed emergency stop impediscono i NUOVI ingressi, non la riconciliazione
+        finanziaria delle posizioni gia' aperte: i settlement confermati si contabilizzano anche li'.
+        STOPPED no: il servizio e' disconnesso e la riconciliazione riparte da start() (F018 + sweep).
+        La riconciliazione non produce ordini: l'auto-next resta riservato ad ACTIVE.
+        """
+        return self.mode in self._SETTLEMENT_RECONCILIATION_MODES
+
+    def _report_settlement_source_uncertain(self, reason: str) -> None:
+        """Esposizione mantenuta prudenzialmente: si segnala una volta per motivo, mai un settlement presunto."""
+        reported = getattr(self, "_settlement_uncertain_reported", None)
+        if reported is None:
+            reported = set()
+            self._settlement_uncertain_reported = reported
+        if reason in reported:
+            return
+        reported.add(reason)
+        logger.warning("Settlement non riconciliabile: %s (esposizione mantenuta)", reason)
+        self.bus.publish("SETTLEMENT_RECONCILIATION_UNCERTAIN", {
+            "reason": reason, "open_exposure": float(self.table_manager.total_exposure())})
+
     def _poll_simulated_settlements_locked(self) -> None:
         """Giro SIM del poller settlement (PR03 #461).
 
@@ -928,8 +957,16 @@ class RuntimeController:
         emissione sospesa senza marcare), guardia nel motore. Cosi' il
         settlement persistito dal broker prima di un riavvio arriva al
         ciclo dopo il riavvio, e mai due volte.
+
+        PF-ALL-F027: gira anche in PAUSED e LOCKDOWN (emergency stop compreso), vedi
+        ``_settlement_reconciliation_allowed``. Dopo un emergency stop scattato in LIVE il servizio
+        e' stato portato in SIM: il registro SIM non descrive le posizioni reali, quindi nessuna
+        emissione e l'incertezza si segnala (``SETTLEMENT_RECONCILIATION_UNCERTAIN``).
         """
-        if self.mode is not RuntimeMode.ACTIVE:
+        if not self._settlement_reconciliation_allowed():
+            return
+        if getattr(self, "_settlement_source_before_emergency", "") == "LIVE":
+            self._report_settlement_source_uncertain("LIVE_POSITIONS_AFTER_EMERGENCY_SIM_FLIP")
             return
         getter = getattr(self.betfair_service, "get_simulation_broker", None)
         broker = getter() if callable(getter) else None
@@ -1263,12 +1300,30 @@ class RuntimeController:
         self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"risk_stop_reset": True, "reason": ""}
 
-    def _exposure_stop(self, trigger=True) -> str:
-        reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None),
-                                                 self.table_manager.total_exposure())
-        if trigger and stop_rules.is_stop_trigger(reason):
-            self.risk_stop(reason)  # pre-submit
-        return reason
+    def _exposure_stop(self, trigger=True, candidate_exposure: float = 0.0) -> str:
+        """Stop di esposizione complessiva (P38), con la distinzione decisa dall'owner (CLOSURE-03).
+
+        ``candidate_exposure`` e' la parte del totale che appartiene all'ordine ancora candidato (gia'
+        riservato sul tavolo, non inviato). Se e' solo il candidato a raggiungere il limite, il candidato si
+        rifiuta (``exposure_stop_candidate_rejected``) e NON si arma un RISK_STOP persistente. Se lo
+        raggiunge l'esposizione reale gia' presente, e' una violazione effettiva: RISK_STOP. Esposizione o
+        limite non valutabili bloccano (motivo non-trigger), come prima.
+        """
+        limit = getattr(self.config, "max_exposure_stop", None)
+        total = self.table_manager.total_exposure()
+        reason = stop_rules.exposure_stop_reason(limit, total)
+        if not stop_rules.is_stop_trigger(reason):
+            return reason
+        candidate = validators.finite_number(candidate_exposure)
+        if candidate is None or candidate < 0.0:
+            return "esposizione_non_valida"
+        real_reason = stop_rules.exposure_stop_reason(limit, max(0.0, total - candidate)) if candidate > 0.0 \
+            else reason
+        if stop_rules.is_stop_trigger(real_reason):
+            if trigger:
+                self.risk_stop(real_reason)  # pre-submit: violazione effettiva
+            return real_reason
+        return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
         now = datetime.utcnow()
@@ -2104,6 +2159,9 @@ class RuntimeController:
             self.mode = RuntimeMode.LOCKDOWN
             cancel_errors.append({"stage": "force_lockdown", "error": str(exc)})
 
+        # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM.
+        if not getattr(self, "_settlement_source_before_emergency", ""):
+            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
         # Ora possiamo flippare a SIMULATION in sicurezza
         self.execution_mode = "SIMULATION"
         self.set_simulation_mode(True)
@@ -2219,6 +2277,7 @@ class RuntimeController:
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
+        self._settlement_source_before_emergency = ""
         with self._daily_loss_stop_lock:
             self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
@@ -3254,6 +3313,9 @@ class RuntimeController:
                                               reason="esposizione_cresciuta_dopo_best_price")
             return
 
+        # PF-ALL-F030: liquidita' eseguibile dell'ingresso singolo, alla quota finale, per il RiskGate.
+        self._attach_single_entry_liquidity(payload)
+
         # Gate finali pre-submit, RIESEGUITI dopo lo snapshot. Vanno PRIMA di
         # SIGNAL_APPROVED perche' l'audit consuma sia SIGNAL_APPROVED sia
         # SIGNAL_REJECTED: approvare-poi-rifiutare registrerebbe un ordine
@@ -3280,7 +3342,8 @@ class RuntimeController:
                 reason="emergency_stop_active:pre_submit_recheck",
             )
             return
-        session_block = self._loss_block_reason() or self._exposure_stop()  # F4/P37/P38
+        session_block = self._loss_block_reason() or self._exposure_stop(
+            candidate_exposure=order_exposure)  # F4/P37/P38; candidato != violazione (CLOSURE-03)
         if session_block:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=session_block)
@@ -3315,6 +3378,32 @@ class RuntimeController:
         except Exception:
             logger.exception("Errore force_unlock table_id=%s", table_id)
         self._reject_signal(signal, reason)
+
+    def _attach_single_entry_liquidity(self, payload: dict) -> None:
+        """PF-ALL-F030 (decisione owner, CLOSURE-03): il Liquidity Guard protegge anche gli ingressi singoli.
+
+        Snapshot fresco del book del mercato (mai la cache: un dato vecchio non e' attendibile), liquidita'
+        eseguibile al lato e alla quota dell'ordine (``core.liquidity``). Il RiskGate applica moltiplicatore,
+        minimo assoluto e solo-avviso; ``liquidity_required`` gli dice che un dato assente va negato.
+        Book Block non si applica: per una singola selezione non esiste un book percentuale significativo.
+        Guard disattivato dalla config => nessun fetch, nessun marcatore (il gate lo salta comunque).
+        """
+        if not bool(getattr(self.config, "liquidity_guard_enabled", True)):
+            return
+        payload["liquidity_required"] = True
+        book = None
+        try:
+            book = self.betfair_service.get_market_book_snapshot(str(payload.get("market_id") or ""),
+                                                                 include_prices=True)
+        except Exception as exc:
+            logger.warning("F030: book del mercato non leggibile (%s)", exc)
+        value, reason = liquidity.single_entry_liquidity(book, payload.get("selection_id"),
+                                                         payload.get("bet_type"), payload.get("price"))
+        if value is None:
+            payload.pop("available_liquidity", None)
+            payload["liquidity_unknown_reason"] = reason
+        else:
+            payload["available_liquidity"] = float(value)
 
     def _apply_direct_best_price(self, payload: dict) -> bool:
         """Sovrascrive ``payload['price']`` col best price DIRECT difensivo (B6.2).
@@ -3483,6 +3572,82 @@ class RuntimeController:
                 continue
             candidates.append(item)
         return candidates, unattributed
+
+    _UNMATCHED_FINAL_STATUSES = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED"})
+
+    def _final_unmatched_bets(self, market_ids: list, bet_ids: list) -> Optional[set]:
+        """PF-ALL-F028: betId con stato finale CONFERMATO dal broker e nessun abbinato.
+
+        None se lo stato non e' leggibile (nessun rilascio). SIM: registro del broker simulato.
+        LIVE: un betId vale solo se assente dagli ordini correnti, presente fra i cleared
+        LAPSED/CANCELLED/VOIDED e assente dai cleared SETTLED (nessuna parte abbinata).
+        """
+        if not bet_ids:
+            return set()
+        try:
+            if self.simulation_mode:
+                broker = self.betfair_service.get_simulation_broker()
+                rows = (broker.list_current_orders(market_ids) or {}).get("currentOrders") or []
+                return {str(o.get("betId")) for o in rows
+                        if str(o.get("status") or "").upper() in self._UNMATCHED_FINAL_STATUSES
+                        and float(o.get("sizeMatched") or 0.0) == 0.0}
+            current = {str(o.get("bet_id") or o.get("betId") or "")
+                       for o in (self.betfair_service.list_current_orders(market_ids) or [])}
+            ids = [b for b in bet_ids if b not in current]
+            if not ids:
+                return set()
+            settled = {str(o.get("betId") or o.get("bet_id") or "")
+                       for o in self.betfair_service.list_cleared_orders(bet_status="SETTLED", bet_ids=ids)}
+            final = set()
+            for status in ("LAPSED", "CANCELLED", "VOIDED"):
+                for o in self.betfair_service.list_cleared_orders(bet_status=status, bet_ids=ids):
+                    bid = str(o.get("betId") or o.get("bet_id") or "")
+                    if bid and bid not in settled:
+                        final.add(bid)
+            return final
+        except Exception as exc:
+            logger.warning("F028: stato finale degli ordini non leggibile (%s): nessun rilascio", exc)
+            return None
+
+    def _release_final_unmatched_orders(self) -> list:
+        """PF-ALL-F028 (decisione owner, CLOSURE-03): libera tavolo e riserva di un ordine d'ingresso
+        il cui stato finale (annullato, decaduto, chiuso) e' confermato dal broker senza alcun abbinato.
+
+        Solo righe SUBMITTED con betId: un esito incerto (AMBIGUOUS/INFLIGHT, riserve incerte) non e'
+        mai considerato annullato. Rilascio idempotente (``force_unlock_if_event``): la perdita di
+        recovery del tavolo resta. La chiave anti-duplicato resta acquisita: un segnale riconsegnato
+        non viene rigiocato. Dopo un riavvio la stessa conclusione la trae F018 (ordine assente).
+        """
+        if not self._settlement_reconciliation_allowed():
+            return []
+        uncertain = set(self._uncertain_reservations_map())
+        held = {str(t.get("current_event_key") or ""): t for t in self.table_manager.snapshot()
+                if str(t.get("current_event_key") or "") and str(t.get("current_event_key")) not in uncertain}
+        if not held:
+            return []
+        try:
+            candidates, _ = self._open_order_candidates()
+        except Exception as exc:
+            logger.warning("F028: ordini del bot illeggibili (%s): nessun rilascio", exc)
+            return []
+        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]]
+        if not eligible:
+            return []
+        final = self._final_unmatched_bets(sorted({c["market_id"] for c in eligible}),
+                                           sorted({c["bet_id"] for c in eligible}))
+        if not final:
+            return []
+        released = []
+        for c in eligible:
+            if c["bet_id"] not in final:
+                continue
+            table = held[c["event_key"]]
+            if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"]):
+                released.append(c["customer_ref"])
+                self.bus.publish("UNMATCHED_ORDER_RELEASED", {
+                    "customer_ref": c["customer_ref"], "bet_id": c["bet_id"], "market_id": c["market_id"],
+                    "table_id": table["table_id"], "released_exposure": table.get("current_exposure")})
+        return released
 
     def _rebuild_open_positions(self) -> dict:
         """PF-ALL-F018: ricostruisce tavoli, esposizione e chiavi anti-duplicato delle posizioni aperte.
@@ -4462,6 +4627,12 @@ class RuntimeController:
             return ""
         return "|".join(parts)
 
+    def _runtime_not_active_reason(self) -> str:
+        """Nessun nuovo ordine fuori da ACTIVE (PF-ALL-F027): un settlement contabilizzato in PAUSED o
+        LOCKDOWN non puo' far partire l'ordine successivo del ciclo."""
+        mode = getattr(self, "mode", None)
+        return "" if mode is RuntimeMode.ACTIVE else f"runtime_not_active:{getattr(mode, 'value', mode)}"
+
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
         settlement_key = self._build_bankroll_sync_key(payload)
         source_corr_id = str(sync_result.get("correlation_id") or "")
@@ -4803,11 +4974,17 @@ class RuntimeController:
                 },
             )
 
+        self._attach_single_entry_liquidity(submit_payload)   # PF-ALL-F030: anche l'ingresso del ciclo
+
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
         stop_block = ("emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
-                      else self._loss_block_reason() or self._exposure_stop())  # P38
+                      else self._runtime_not_active_reason()          # PF-ALL-F027: riconciliazione != ingresso
+                      or self._loss_block_reason() or self._exposure_stop(
+                          candidate_exposure=validators.order_exposure_or_inf(
+                              submit_payload["bet_type"], submit_payload["stake"], submit_payload["price"])
+                          if table_id is not None else 0.0))  # P38; candidato != violazione
         if stop_block:
             # Sblocca il tavolo attivato sopra: nessun CMD_QUICK_BET parte, quindi
             # nessun evento terminale lo libererebbe (tavolo/esposizione fantasma).

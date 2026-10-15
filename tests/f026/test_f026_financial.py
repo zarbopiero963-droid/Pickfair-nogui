@@ -329,3 +329,239 @@ def test_F026_11c_restart_with_unreadable_exchange_stays_paused_and_places_nothi
     s = second["snaps"][-1]
     assert not [o for o in s["orders"] if o["market_id"] == "1.799"], "nuovo ingresso con riconciliazione incompleta"
     assert {"1.701", "1.702", "1.703"} <= table_markets(s), "posizioni non trattenute: " + describe(s)
+
+
+# ================================================================ PF-ALL-F027 (decisione owner, mandato CLOSURE-03)
+# LOCKDOWN, PAUSE ed emergency stop bloccano i NUOVI ingressi, non la riconciliazione finanziaria delle posizioni
+# esistenti: settlement confermati contabilizzati (vincite, perdite, commissione), conto e tavoli aggiornati, modo
+# conservato, nessun nuovo ordine prodotto dalla riconciliazione, nessuna doppia contabilizzazione dopo un riavvio.
+def _entries_after(r, tag_prefix):
+    """Ordini nel ledger comparsi dopo lo snapshot con tag che inizia per tag_prefix."""
+    idx = next(i for i, s in enumerate(r["snaps"]) if s["tag"].split(":", 2)[1:2] == [tag_prefix])
+    before = {(x["market_id"], x["status"]) for x in r["snaps"][idx]["orders"]}
+    return [x for x in r["snaps"][-1]["orders"] if (x["market_id"], x["status"]) not in before
+            and x["status"] not in ("DUPLICATE_BLOCKED", "DENIED")]
+
+
+@pytest.mark.parametrize("win", [True, False])
+def test_F027_01_settlement_during_lockdown_is_booked_and_lockdown_stays(win):
+    r = run(five_open(prices=(2.0, 2.0, 2.0)) + [{"op": "lockdown"},
+                                                {"op": "settle", "m": "1.701", "win": win},
+                                                {"op": "signal", "m": "1.790", "price": 2.0}])
+    s = r["snaps"][-1]
+    o = Oracle(s, {"1.701": win})
+    assert s["mode"] == "LOCKDOWN", "la riconciliazione ha tolto il LOCKDOWN: " + describe(s, o)
+    assert q(s["realized"]) == q(o.realized()), "settlement in LOCKDOWN non contabilizzato (F027): " + describe(s, o)
+    assert table_markets(s) == {"1.702", "1.703"}, "tavolo del mercato regolato non liberato: " + describe(s, o)
+    account_ok(s, o)
+    assert not [x for x in s["orders"] if x["market_id"] == "1.790"], "nuovo ingresso in LOCKDOWN"
+    assert not _entries_after(r, "lockdown"), "la riconciliazione ha prodotto nuovi ordini"
+    stake_base_unchanged(r)
+
+
+def test_F027_02_settlement_during_pause_is_booked_and_pause_stays():
+    r = run(five_open(prices=(2.0, 2.0)) + [{"op": "pause"}, {"op": "settle", "m": "1.702", "win": False}])
+    s = r["snaps"][-1]
+    o = Oracle(s, {"1.702": False})
+    assert s["mode"] == "PAUSED", describe(s, o)
+    assert q(s["realized"]) == q(o.realized()), "settlement in PAUSED non contabilizzato (F027): " + describe(s, o)
+    assert table_markets(s) == {"1.701"}, describe(s, o)
+    account_ok(s, o)
+
+
+def test_F027_03_settlement_during_emergency_stop_is_booked_and_emergency_stays():
+    r = run(five_open(prices=(2.0, 2.0)) + [{"op": "emergency"}, {"op": "settle", "m": "1.701", "win": True},
+                                           {"op": "signal", "m": "1.791", "price": 2.0}])
+    s = r["snaps"][-1]
+    o = Oracle(s, {"1.701": True})
+    assert s["emergency"] is True and s["mode"] == "LOCKDOWN", describe(s, o)
+    assert q(s["realized"]) == q(o.realized()), "settlement in emergency stop non contabilizzato (F027): " + describe(s, o)
+    assert "1.701" not in table_markets(s), describe(s, o)
+    account_ok(s, o)
+    assert not [x for x in s["orders"] if x["market_id"] == "1.791"], "nuovo ingresso dopo emergency stop"
+
+
+def test_F027_04_simultaneous_settlements_in_lockdown_each_booked_once_with_commission():
+    r = run(five_open(prices=(2.0, 2.0, 2.0)) + [{"op": "lockdown"},
+                                                {"op": "settle", "m": "1.701", "win": True, "nowait": True},
+                                                {"op": "settle", "m": "1.702", "win": False, "nowait": True},
+                                                {"op": "settle", "m": "1.703", "win": True},
+                                                {"op": "resettle", "m": "1.701"}])
+    s = r["snaps"][-1]
+    o = Oracle(s, {"1.701": True, "1.702": False, "1.703": True})
+    closes = [e for e in r["events"] if e["e"] == "RUNTIME_CLOSE_POSITION"]
+    for m in ("1.701", "1.702", "1.703"):
+        mine = [e for e in closes if e["market_id"] == m]
+        assert mine and q(mine[0]["pnl"]) == q(o.pnl(m)), f"{m}: P&L != oracolo (commissione una volta): " + describe(s, o)
+    assert q(s["realized"]) == q(o.realized()), "doppia contabilizzazione o settlement mancante: " + describe(s, o)
+    assert table_markets(s) == set(), describe(s, o)
+    assert s["mode"] == "LOCKDOWN"
+    account_ok(s, o)
+
+
+def test_F027_05_crash_after_settlement_in_emergency_restart_counts_once_and_stays_blocked():
+    home = tempfile.mkdtemp(prefix="f027crash_")
+    first = run(five_open(prices=(2.0, 2.0)) + [{"op": "emergency"}, {"op": "crash_after_settlement"},
+                                               {"op": "settle", "m": "1.701", "win": False}], home=home)
+    assert first.get("crashed_at") == "BANKROLL_SYNC_RESULT", "precondizione: crash subito dopo la contabilizzazione"
+    second = run([{"op": "wait", "s": 3}, {"op": "signal", "m": "1.792", "price": 2.0}], home=home)
+    s = second["snaps"][-1]
+    o = Oracle(s, {"1.701": False})
+    assert s["emergency"] is True, "l'emergency stop persistito deve sopravvivere al riavvio: " + describe(s, o)
+    rows = [x for x in s["orders"] if x["market_id"] == "1.792"]
+    assert not rows or all(x["status"] in ("DENIED", "DUPLICATE_BLOCKED") for x in rows), "ingresso dopo riavvio in emergenza"
+    closes = [e for e in first["events"] + second["events"] if e["e"] == "RUNTIME_CLOSE_POSITION" and e["market_id"] == "1.701"]
+    assert len(closes) == 1, f"settlement contabilizzato {len(closes)} volte tra crash e riavvio: " + describe(s, o)
+    assert q(D(str(s["funds"]["total"]))) == q(o.equity()), "exchange != oracolo: " + describe(s, o)
+
+
+# ================================================================ PF-ALL-F028 / F031 (decisione owner, CLOSURE-03)
+# Un ordine con stato finale CONFERMATO dal broker (annullato, decaduto, chiuso) e nessun abbinato libera tavolo e
+# riserva. Un esito incerto non si considera mai annullato. Un parziale abbinato resta una posizione viva (F031).
+def _broker_status(s, m):
+    return [x["status"] for x in s["orders"] if x["market_id"] == m]
+
+
+def test_F028_01_unmatched_order_lapsed_at_market_close_frees_table_and_reserve():
+    r = run([{"op": "mode", "m": "1.801", "mode": "nomatch"}, {"op": "signal", "m": "1.801", "price": 2.0},
+             {"op": "signal", "m": "1.802", "price": 2.0},
+             {"op": "settle", "m": "1.801", "win": True}, {"op": "wait", "s": 3}])
+    s0 = next(x for x in r["snaps"] if x["tag"].startswith("1:signal"))
+    assert "1.801" in table_markets(s0), "precondizione: ordine non abbinato con tavolo riservato " + describe(s0)
+    s = r["snaps"][-1]
+    o = Oracle(s, {})
+    assert table_markets(s) == {"1.802"}, "ordine decaduto senza abbinato: tavolo ancora trattenuto (F028) " + describe(s)
+    assert q(sum(D(str(t["exposure"])) for t in s["tables"])) == q(o.capital_at_risk() - D(str(
+        next(x for x in s["orders"] if x["market_id"] == "1.801")["stake"]))), describe(s)
+    assert q(s["realized"]) == q(D(0)), "un ordine mai abbinato non produce P&L: " + describe(s)
+    # nessun settlement: il conto si verifica sull'exchange (oracolo), non sullo snapshot aggiornato ai settlement
+    stake2 = D(str(next(x for x in s["orders"] if x["market_id"] == "1.802")["stake"]))
+    assert q(s["funds"]["total"]) == START and q(s["funds"]["exposure"]) == q(stake2), describe(s)
+
+
+def test_F028_02_unmatched_order_cancelled_by_risk_stop_frees_table_and_places_nothing():
+    r = run([{"op": "mode", "m": "1.811", "mode": "nomatch"}, {"op": "signal", "m": "1.811", "price": 2.0},
+             {"op": "risk_stop"}, {"op": "wait", "s": 3}, {"op": "signal", "m": "1.812", "price": 2.0}])
+    s = r["snaps"][-1]
+    assert "1.811" not in table_markets(s), "ordine annullato senza abbinato: tavolo trattenuto (F028) " + describe(s)
+    assert not [x for x in s["orders"] if x["market_id"] == "1.812"], "ingresso dopo RISK_STOP"
+    account_ok(s)
+
+
+def test_F028_03_partial_match_then_cancel_keeps_live_position_until_settlement():
+    r = run([{"op": "mode", "m": "1.821", "mode": "partial"}, {"op": "signal", "m": "1.821", "price": 2.0},
+             {"op": "risk_stop"}, {"op": "wait", "s": 3}])
+    s = r["snaps"][-1]
+    assert "1.821" in table_markets(s), "parziale abbinato liberato dopo il cancel del residuo: " + describe(s)
+
+
+def test_F028_04_ambiguous_unmatched_order_is_never_released_as_cancelled():
+    r = run([{"op": "mode", "m": "1.831", "mode": "nomatch"}, {"op": "mode", "m": "1.831", "mode": "lost"},
+             {"op": "signal", "m": "1.831", "price": 2.0}, {"op": "settle", "m": "1.831", "win": True},
+             {"op": "wait", "s": 3}])
+    s = r["snaps"][-1]
+    assert "AMBIGUOUS" in _broker_status(s, "1.831"), "precondizione: esito incerto " + describe(s)
+    assert "1.831" in table_markets(s), "esito incerto liberato come annullato: " + describe(s)
+
+
+def test_F028_05_crash_between_cancel_and_release_restart_frees_and_never_replays():
+    home = tempfile.mkdtemp(prefix="f028crash_")
+    first = run([{"op": "mode", "m": "1.841", "mode": "nomatch"}, {"op": "signal", "m": "1.841", "price": 2.0},
+                 {"op": "risk_stop"}, {"op": "crash_now"}], home=home)
+    assert first.get("crashed_at") == "NOW"
+    second = run([{"op": "wait", "s": 3}, {"op": "signal", "m": "1.841", "price": 2.0}], home=home)
+    s = second["snaps"][-1]
+    assert "1.841" not in table_markets(s), "dopo il riavvio il tavolo dell'ordine annullato e' ancora occupato: " + describe(s)
+    sent = [x for x in s["orders"] if x["market_id"] == "1.841" and x["status"] in ("SUBMITTED", "AMBIGUOUS", "INFLIGHT")]
+    assert len(sent) <= 1, "segnale riconsegnato rigiocato dopo il riavvio: " + describe(s)
+    account_ok(s)
+
+
+def test_F031_partial_then_cancel_restart_rebuilds_live_position():
+    home = tempfile.mkdtemp(prefix="f031_")
+    run([{"op": "mode", "m": "1.851", "mode": "partial"}, {"op": "signal", "m": "1.851", "price": 2.0},
+         {"op": "risk_stop"}, {"op": "crash_now"}], home=home)
+    second = run([{"op": "wait", "s": 1}], home=home)
+    s = second["snaps"][-1]
+    assert "1.851" in table_markets(s), "parziale abbinato vivo non ricostruito al riavvio (F031): " + describe(s)
+
+
+# ================================================================ PF-ALL-F030 (decisione owner, CLOSURE-03)
+# Il Liquidity Guard protegge anche gli ingressi singoli BACK/LAY: liquidita' eseguibile al prezzo dell'ordine,
+# lato corretto del book; avviso/blocco come da config; dato assente => negato anche in solo-avviso.
+LIQ_BLOCK = {"roserpina.liquidity_guard_enabled": True, "roserpina.liquidity_warning_only": False,
+             "roserpina.liquidity_multiplier": 3.0, "roserpina.min_liquidity_absolute": 50.0}
+
+
+def _row(s, m):
+    rows = [x for x in s["orders"] if x["market_id"] == m]
+    assert rows, f"nessuna riga per {m}: " + describe(s)
+    return rows[-1]
+
+
+def test_F030_01_single_back_without_executable_liquidity_is_blocked():
+    r = run([{"op": "mode", "m": "1.901", "mode": "nomatch"}, {"op": "signal", "m": "1.901", "price": 2.0}],
+            settings=LIQ_BLOCK)
+    row = _row(r["snaps"][-1], "1.901")
+    assert row["status"] == "DENIED" and row["reason"] == "RISK_LIQUIDITY_INSUFFICIENT", row
+
+
+def test_F030_02_warning_only_lets_thin_market_through():
+    r = run([{"op": "mode", "m": "1.902", "mode": "nomatch"}, {"op": "signal", "m": "1.902", "price": 2.0}],
+            settings=dict(LIQ_BLOCK, **{"roserpina.liquidity_warning_only": True}))
+    assert _row(r["snaps"][-1], "1.902")["status"] == "SUBMITTED"
+
+
+def test_F030_03_single_lay_uses_lay_side_of_the_book():
+    # LAY a 2.0: availableToLay del book SIM e' a 2.02, non eseguibile a 2.0 => liquidita' eseguibile 0
+    r = run([{"op": "signal", "m": "1.903", "price": 2.0, "side": "LAY"}], settings=LIQ_BLOCK)
+    row = _row(r["snaps"][-1], "1.903")
+    assert row["status"] == "DENIED" and row["reason"] == "RISK_LIQUIDITY_INSUFFICIENT", row
+
+
+def test_F030_04_sufficient_liquidity_passes_and_floor_blocks():
+    ok = run([{"op": "signal", "m": "1.904", "price": 2.0}], settings=LIQ_BLOCK)
+    assert _row(ok["snaps"][-1], "1.904")["status"] == "SUBMITTED"
+    floor = run([{"op": "signal", "m": "1.905", "price": 2.0}],
+                settings=dict(LIQ_BLOCK, **{"roserpina.min_liquidity_absolute": 500.0}))
+    assert _row(floor["snaps"][-1], "1.905")["reason"] == "RISK_LIQUIDITY_INSUFFICIENT"
+
+
+def test_F030_05_missing_book_is_denied_even_in_warning_only():
+    r = run([{"op": "book_down"}, {"op": "signal", "m": "1.906", "price": 2.0}],
+            settings=dict(LIQ_BLOCK, **{"roserpina.liquidity_warning_only": True}))
+    row = _row(r["snaps"][-1], "1.906")
+    assert row["status"] == "DENIED" and row["reason"] == "RISK_LIQUIDITY_UNKNOWN", row
+
+
+def test_F030_06_guard_disabled_does_not_check():
+    r = run([{"op": "mode", "m": "1.907", "mode": "nomatch"}, {"op": "signal", "m": "1.907", "price": 2.0}],
+            settings=dict(LIQ_BLOCK, **{"roserpina.liquidity_guard_enabled": False}))
+    assert _row(r["snaps"][-1], "1.907")["status"] == "SUBMITTED"
+
+
+# ================================================================ famiglia A: crash prima del settlement
+def test_F027_06_crash_with_open_positions_market_settles_while_down_booked_once_after_restart():
+    home = tempfile.mkdtemp(prefix="f027down_")
+    run(five_open(prices=(2.0, 2.0)) + [{"op": "crash_now"}], home=home)
+    second = run([{"op": "settle", "m": "1.701", "win": True}, {"op": "wait", "s": 2}], home=home)
+    s = second["snaps"][-1]
+    o = Oracle(s, {"1.701": True})
+    closes = [e for e in second["events"] if e["e"] == "RUNTIME_CLOSE_POSITION" and e["market_id"] == "1.701"]
+    assert len(closes) == 1 and q(closes[0]["pnl"]) == q(o.pnl("1.701")), describe(s, o)
+    assert table_markets(s) == {"1.702"}, "dopo il riavvio: tavolo regolato liberato, posizione viva ricostruita " + describe(s, o)
+    account_ok(s, o)
+
+
+# ================================================================ famiglia D: due mercati dello stesso evento (F033)
+@pytest.mark.xfail(strict=True, reason="F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due "
+                                       "mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per "
+                                       "identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.")
+def test_F033_event_cap_aggregates_markets_of_the_same_event():
+    ev = "Juventus v Inter"
+    r = run([{"op": "signal", "m": "1.951", "price": 2.0, "event": ev},
+             {"op": "signal", "m": "1.952", "price": 2.0, "event": ev}],
+            settings={"roserpina.max_event_exposure_pct": 4.0})
+    s = r["snaps"][-1]
+    placed = [x for x in s["orders"] if x["status"] == "SUBMITTED"]
+    assert len(placed) == 1, "cap evento superato con due mercati dello stesso incontro: " + describe(s)

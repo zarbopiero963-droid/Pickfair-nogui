@@ -1001,11 +1001,17 @@ class SimulationBroker:
         detection consistent.
         """
         orders = self.list_current_orders(market_ids).get("currentOrders") or []
-        return [
-            o
-            for o in orders
-            if str(o.get("status") or "").upper() not in self._TERMINAL_ORDER_STATUSES
-        ]
+        out = []
+        for o in orders:
+            status = str(o.get("status") or "").upper()
+            if status == "CANCELLED" and float(o.get("sizeMatched") or 0.0) > 0.0:
+                # PF-ALL-F031 (parita' LIVE): su Betfair un ordine con parte abbinata e residuo annullato
+                # resta fra gli ordini correnti (EXECUTION_COMPLETE) fino al settlement: e' una posizione viva.
+                out.append(dict(o, status="EXECUTION_COMPLETE"))
+                continue
+            if status not in self._TERMINAL_ORDER_STATUSES:
+                out.append(o)
+        return out
 
     def cancel_order(
         self,

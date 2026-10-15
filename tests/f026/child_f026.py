@@ -10,6 +10,11 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "risk_stop"}                                               RISK_STOP (cancel + cashout)
   {"op": "cashout", "m": "1.701"}                                   cashout PARZIALE: solo la posizione di quel mercato
   {"op": "crash_after_reset"}                                       os._exit(1) appena scatta ROSERPINA_AUTO_RESET
+  {"op": "mode", "m": "1.701", "mode": "nomatch"}                  book peggiore del prezzo: l'ordine resta non abbinato
+  {"op": "book_down"}                                               snapshot del book assente da qui in poi
+  {"op": "crash_now"}                                               os._exit(1) subito (stato SIM persistito)
+  {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
+  {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
 Ogni passo produce uno snapshot: fondi exchange, bankroll Roserpina, picco, drawdown, realizzato, tavoli,
 ordini (SQLite), eventi. Nessun calcolo atteso qui: l'oracolo vive nei test.
@@ -30,7 +35,7 @@ def dump():
     R["events"] = [{"t": round(t - T0, 3), "e": e, "market_id": d.get("market_id"), "table_id": d.get("table_id"),
                     "reason": d.get("reason"), "pnl": d.get("pnl"),
                     "bankroll_after": d.get("bankroll_after"), "drawdown_pct": d.get("drawdown_pct")}
-                   for t, e, d in EV if e.startswith(("QUICK_BET", "SIGNAL_REJ", "RUNTIME_CLOSE", "ROSERPINA", "BANKROLL_SYNC",
+                   for t, e, d in EV if e.startswith(("QUICK_BET", "SETTLEMENT_", "EMERGENCY", "RUNTIME_LOCK", "SIGNAL_REJ", "RUNTIME_CLOSE", "ROSERPINA", "BANKROLL_SYNC",
                                                       "RISK_STOP", "CASHOUT", "REQ_EXECUTE", "CMD_QUICK"))]
     json.dump(R, open(OUT, "w"), indent=1, default=str)
     sys.stdout.flush()
@@ -43,6 +48,10 @@ try:
 
     def rec(e, d=None):
         EV.append((time.time(), e, d if isinstance(d, dict) else {}))
+        if e == "BANKROLL_SYNC_RESULT" and CRASH.get("after_settlement"):
+            res = orig(e, d)        # il consumer ha gia' contabilizzato e persistito il checkpoint del settlement
+            app.betfair_service._persist_simulation_state_if_needed(force=True)
+            R["crashed_at"] = "BANKROLL_SYNC_RESULT"; dump(); os._exit(1)
         if e == "ROSERPINA_AUTO_RESET" and CRASH["armed"]:
             # l'exchange (SIM) ha gia' regolato: il suo stato sopravvive al crash del bot
             app.betfair_service._persist_simulation_state_if_needed(force=True)
@@ -105,6 +114,8 @@ try:
 
     def book(m, status="OPEN", winner=None, back_size=100.0):
         price = BOOK.get(m, {}).get("price", 2.0)
+        if BOOK.get(m, {}).get("nomatch"):
+            price = round(price - 0.2, 2)        # BACK al prezzo del segnale non trova contropartita
         brk.update_market_book({"marketId": m, "status": status, "inplay": False, "runners": [
             {"selectionId": s, "status": "ACTIVE" if status == "OPEN" else ("WINNER" if s == winner else "LOSER"),
              "ex": {"availableToBack": [{"price": price, "size": back_size}],
@@ -119,17 +130,18 @@ try:
                  "market_id": t.get("market_id"), "event_key": t.get("current_event_key")}
                 for t in rt.table_manager.snapshot() if "FREE" not in str(t.get("status"))]
         orders = []
-        for r in app.db._execute("SELECT customer_ref, status, payload_json, response_json FROM orders", fetch=True, commit=False) or []:
+        for r in app.db._execute("SELECT customer_ref, status, reason, payload_json, response_json FROM orders", fetch=True, commit=False) or []:
             r = dict(r); p = json.loads(r["payload_json"] or "{}")
             try:
                 rep = (json.loads(r["response_json"] or "{}").get("instructionReports") or [{}])[0]
             except Exception:
                 rep = {}
-            orders.append({"market_id": p.get("market_id"), "status": r["status"], "stake": p.get("stake"), "price": p.get("price"),
+            orders.append({"market_id": p.get("market_id"), "status": r["status"], "reason": r.get("reason"), "stake": p.get("stake"), "price": p.get("price"),
                            "side": p.get("bet_type"), "matched": rep.get("sizeMatched")})
         d = rt.risk_desk
         acct = dict(getattr(rt, "_account_snapshot", None) or {})
-        R["snaps"].append({"tag": tag, "funds": funds, "bankroll": d.bankroll_current, "peak": d.equity_peak,
+        R["snaps"].append({"tag": tag, "mode": getattr(rt.mode, "value", str(rt.mode)),
+                           "emergency": bool(getattr(rt, "_emergency_stopped", False)), "funds": funds, "bankroll": d.bankroll_current, "peak": d.equity_peak,
                            "account": acct, "cash_peak": getattr(rt, "_cash_equity_peak", None),
                            "drawdown_pct": d.drawdown_pct(), "realized": d.realized_pnl, "tables": tabs, "orders": orders,
                            "auto_resets": sum(1 for _, e, _ in EV if e == "ROSERPINA_AUTO_RESET"),
@@ -142,6 +154,8 @@ try:
             MODE[st["m"]] = st["mode"]
             if st["mode"] == "partial":
                 BOOK.setdefault(st["m"], {})["partial"] = True
+            if st["mode"] == "nomatch":
+                BOOK.setdefault(st["m"], {})["nomatch"] = True
             continue
         if op == "signal":
             BOOK[st["m"]] = {"price": st.get("price", 2.0), **BOOK.get(st["m"], {})}
@@ -149,12 +163,14 @@ try:
             book(st["m"], back_size=1.0 if BOOK[st["m"]].get("partial") else 100.0)
             side = st.get("side", "BACK")
             app.bus.publish("SIGNAL_RECEIVED", {"market_id": st["m"], "selection_id": 11, "price": st.get("price", 2.0),
-                                                "side": side, "bet_type": side, "event_name": f"Ev{st['m']} v X",
+                                                "side": side, "bet_type": side, "event_name": st.get("event", f"Ev{st['m']} v X"),
                                                 "market_name": "Match Odds", "runner_name": f"Ev{st['m']}",
                                                 "simulation_mode": True, "source": "F026"})
             time.sleep(1.5)
         elif op == "settle":
             book(st["m"], status="CLOSED", winner=11 if st.get("win") else 12)
+            if st.get("nowait"):                 # piu' mercati chiusi nello stesso giro del poller
+                continue
             time.sleep(4)
         elif op == "resettle":
             app.bus.publish("RUNTIME_CLOSE_POSITION", dict(next((d for _, e, d in reversed(EV)
@@ -172,6 +188,22 @@ try:
             time.sleep(4)
         elif op == "crash_after_reset":
             CRASH["armed"] = True; continue
+        elif op == "book_down":
+            # book del mercato non disponibile allo snapshot pre-submit (PF-ALL-F030)
+            _snap = app.betfair_service.get_market_book_snapshot
+            app.betfair_service.get_market_book_snapshot = lambda *a, **k: None
+            continue
+        elif op == "crash_now":
+            app.betfair_service._persist_simulation_state_if_needed(force=True)
+            R["crashed_at"] = "NOW"; snap("crash"); dump(); os._exit(1)
+        elif op == "crash_after_settlement":
+            CRASH["after_settlement"] = True; continue
+        elif op == "lockdown":
+            rt.force_lockdown("f027_test"); time.sleep(0.3)
+        elif op == "pause":
+            rt.pause(); time.sleep(0.3)
+        elif op == "emergency":
+            R["emergency"] = str(rt.emergency_stop("f027_test"))[:200]; time.sleep(0.5)
         elif op == "wait":
             time.sleep(st.get("s", 2))
         snap(f"{i}:{op}:{st.get('m', '')}")
