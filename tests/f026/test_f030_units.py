@@ -77,7 +77,8 @@ def _close(rc):
         cycle_executor_enabled=True,
         mm_context={"cycle_active": True, "cycle_id": "cy-f030",
                     "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
-                    "next_signal": {"market_id": "1.234", "selection_id": 11, "price": 2.0}}))
+                    "next_signal": {"market_id": "1.234", "selection_id": 11, "price": 2.0,
+                                    "side": "BACK", "bet_type": "BACK"}}))
 
 
 def _cmd(bus):
