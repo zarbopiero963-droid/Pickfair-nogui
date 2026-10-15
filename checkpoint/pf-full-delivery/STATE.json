@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/2",
- "seq": 6,
- "updated_at": "2026-10-15T09:28:37.963409+00:00",
+ "seq": 7,
+ "updated_at": "2026-10-15T09:30:50.289973+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -260,7 +260,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Rieseguire mutation/mutate_d04.py su f6ee25e e registrare MD6/MD10/MD11; poi regressione completa su f6ee25e; poi matrice RSR 41x10 per A06 (#506). Vedi RUNBOOK.md.",
+ "next_atomic_action": "1) Aggiungere test d'integrazione RSR-12 sul percorso del segnale (_on_signal_received): 2 tavoli in recovery inattivi, max_recovery_tables=2, nessun tavolo FREE => rifiuto max_recovery_tables_reached (uccide MD10); 2) rieseguire mutation/mutate_d04.py su HEAD; 3) regressione completa; 4) matrice RSR 41x10 per A06 (#506).",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -271,7 +271,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
  "mandate_current": "PF-ROSERPINA-CONTINUOUS-DELIVERY-04",
- "previous_checkpoint_sha": "734eb9c",
+ "previous_checkpoint_sha": "7611024",
  "lotto_corrente": "C (mutation) + D (durata/recovery)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -296,7 +296,7 @@
  ],
  "mutation": {
   "c03_on_b33b54d": "17/17 KILLED; MC8 NON VALIDO (SyntaxError) => 16/16 validi",
-  "d04_on_180f405": "MC8v, MD1-MD5, MD7-MD9 KILLED (validi); MD6 SURVIVED su 180f405 -> test aggiunto in f6ee25e (verificato manualmente: fallisce col mutante); MD10-MD11 NON COMPLETATI (sessione chiusa per budget)",
+  "d04_on_180f405": "10 KILLED, 2 SURVIVED (MD6: test aggiunto in f6ee25e, da riconfermare; MD10: manca un test sul percorso del segnale che verifichi il rifiuto max_recovery_tables_reached con tavoli in recovery INATTIVI e nessun FREE), 0 invalid",
   "rule": "mutante che non compila = INVALID, mai KILLED"
  },
  "environment": {
