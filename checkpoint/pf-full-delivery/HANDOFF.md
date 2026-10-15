@@ -35,3 +35,8 @@ La chat e gli Artifact NON sono la fonte di verità.
 - Campagna su b33b54d: 1680/1680 PASS (base, stress, frontiera), zero KNOWN; durata e mutation MC10-MC17 da completare.
 - Merge di prova con #505: compatibile (solo conflitti testuali), nessuna modifica a #505/main.
 - Ripresa: vedi next_atomic_action in STATE.json.
+
+## seq 4 (180f405) — mandato PF-ROSERPINA-CONTINUOUS-DELIVERY-04
+- Lotto A: baseline verificata. Lotto B: F032 (baseline persistente del ciclo) e RSR-12 (recovery persistente) corretti RED→GREEN.
+- Regressione 7530/0 su 180f405; guard/full-diff PASS. Parametri: 36 PASS, 1 NOT VERIFIED, 4 BLOCKED.
+- Strumenti di ripresa: RUNBOOK.md, tools/save_checkpoint.sh (readback), mutation/, critical/, campaign/.

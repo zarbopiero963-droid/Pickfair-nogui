@@ -1,7 +1,7 @@
 {
- "schema": "pf-agent-state/1",
- "seq": 3,
- "updated_at": "2026-10-15T08:17:05.871379+00:00",
+ "schema": "pf-checkpoint/2",
+ "seq": 4,
+ "updated_at": "2026-10-15T08:37:36.808206+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -58,9 +58,14 @@
     "sha": "b33b54d",
     "task": "issue461-pr28-f026v2-f2-f018-positions",
     "what": "CLOSURE-03: F027, F028, F031, F030, stop esposizione candidato, Max Win GUI, test mirati 41 parametri"
+   },
+   {
+    "sha": "180f405",
+    "task": "issue461-pr28-f026v2-f2-f018-positions",
+    "what": "F032 baseline persistente del ciclo; RSR-12 tavoli di recovery persistenti"
    }
   ],
-  "head_sha": "b33b54d",
+  "head_sha": "180f405",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
   "pr": null
  },
@@ -136,6 +141,24 @@
   {
    "id": "merge di prova con PR #505 (worktree, nessuna modifica)",
    "result": "conflitti solo testuali (allowed_scope.json, CHANGELOG); con i 4 cap #505 configurati: f026/f001/f029 178/178 e acceptance #505+P38+auto-trade 137/137"
+  },
+  {
+   "id": "RED->GREEN lotto B",
+   "sha": "180f405",
+   "verified": true,
+   "result": "RED su b33b54d: 16 unit + 3 integrazione; GREEN: 19 unit + 4 integrazione; mirati 85 PASS"
+  },
+  {
+   "id": "regression_full",
+   "sha": "180f405",
+   "verified": true,
+   "result": "7530 passed / 0 failed / 14 skipped / 2 xfailed (session recorder, F033)"
+  },
+  {
+   "id": "guard + full-diff c92bb79..180f405",
+   "sha": "180f405",
+   "verified": true,
+   "result": "PASS, 28 file = scope; secret scan pulito"
   }
  ],
  "findings": {
@@ -152,7 +175,9 @@
    "F030",
    "F031",
    "RISK_STOP candidato (decisione owner)",
-   "Max Win label"
+   "Max Win label",
+   "F032",
+   "RSR-12 persistenza recovery"
   ],
   "open": [
    "F004",
@@ -161,9 +186,7 @@
    "OBS-1",
    "OBS-2",
    "LOCKDOWN su drawdown del disponibile (base caso peggiore; decisione owner 6.O2)",
-   "F032 (EXPANSION irraggiungibile in runtime: RSR-08/09 FAIL; decisione owner sulla base della crescita)",
    "F033 (cap evento per event_key, non aggrega mercati dello stesso incontro; fix nella PR #505: BLOCKED)",
-   "RSR-12 semantica max_recovery_tables (domanda owner)",
    "RSR-20 solo LIVE: NOT VERIFIED"
   ]
  },
@@ -193,12 +216,10 @@
   "10s vs 30s saldo LIVE",
   "prelievi/depositi",
   "ordine PR F001/F026 vs #505",
-  "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461",
-  "F032 base della crescita EXPANSION",
-  "RSR-12 significato del limite"
+  "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Lunedi': 1) rieseguire mutation_c03 MC10-MC17 (fd/mutate_c03.py, ricreabile dai mutanti elencati nel commit) e la campagna durata sull'albero b33b54d; 2) scenario critico replay2 su b33b54d; 3) commento di tracciabilita' su #453/#511; 4) poi Dutching FT/HT (#511, 72 combinazioni) solo dopo i gate; nessuna nuova PR finche' #505 e' aperta",
+ "next_atomic_action": "Lotto C: completare mutation (MC13-MC17, MC8 valido) e mutanti F032/RSR-12 su 180f405; Lotto D: durata 1/10/100/1000 e scenario critico su 180f405; Lotto E: campagna completa su 180f405; Lotto F: merge di prova con #505 su 180f405. Comandi in RUNBOOK.md",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -206,6 +227,46 @@
   "decisione finanziaria non presente nelle fonti"
  ],
  "campaign_artifacts": "scratchpad di sessione (non persistente): campaign/{generate.py,generate_stress.py,gen_durability.py,child_campaign.py,oracle.py,run.py,report.py}; copia in checkpoint/pf-full-delivery/campaign/",
- "parameters_41": "33 PASS (RSR-04 con riserva F033), 2 FAIL (RSR-08/09 F032), 2 NOT VERIFIED (RSR-12, RSR-20), 4 BLOCKED (RSR-38..41); scheda in docs/roserpina41_parameter_dossier.md",
- "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato"
+ "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
+ "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
+ "mandate_current": "PF-ROSERPINA-CONTINUOUS-DELIVERY-04",
+ "previous_checkpoint_sha": "46e0d8f",
+ "lotto_corrente": "C (mutation) + D (durata/recovery)",
+ "lotti_completati": [
+  "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
+  "B (F032 + RSR-12, commit 180f405)"
+ ],
+ "lotti_pendenti": [
+  "C mutation 17/17 su b33b54d + mutanti F032/RSR-12 su 180f405 + rifare MC8 (ancora non valida)",
+  "D durata 1/10/100/1000 + crash + scenario critico su 180f405",
+  "E rieseguire prove mirate e campagna su 180f405",
+  "F compatibilita' #505 e dipendenze Gate A"
+ ],
+ "decisions_applied": [
+  "F027",
+  "F028",
+  "F030",
+  "RISK_STOP candidato",
+  "Max Win hard",
+  "F032 (CD-04)",
+  "RSR-12 (CD-04)",
+  "F033: nessuna anticipazione di #505"
+ ],
+ "mutation": {
+  "c03_on_b33b54d": "in corso al checkpoint: MC1-MC12 KILLED (validi), MC8 NON VALIDO (sostituzione lasciava testo => SyntaxError, da rifare), MC13-MC17 pendenti",
+  "f032_rsr12": "da definire ed eseguire su 180f405"
+ },
+ "environment": {
+  "os": "Ubuntu 24.04.5",
+  "python": "3.12.3",
+  "pytest": "9.1.1",
+  "pytest-xdist": "3.8.0",
+  "requests": "2.32.5",
+  "customtkinter": "6.0.0",
+  "netguard": "tools/sitecustomize.py (nega rete non-loopback)"
+ },
+ "verified_vs_declared": "verified=True solo per test eseguiti in questa sessione sullo SHA indicato; il resto e' dichiarato",
+ "gate_a_506": "NON PASS",
+ "pr_505": "aperta, non toccata",
+ "live": "NO-GO"
 }

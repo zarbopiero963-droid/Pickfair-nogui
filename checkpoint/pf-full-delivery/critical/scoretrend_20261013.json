@@ -1,0 +1,26 @@
+{
+ "source": "#510 commento 6166174278 (owner, 2026-10-14): 13 segnali ScoreTrend del 13/10/2026",
+ "authentic_fields": ["match", "market", "selection", "price"],
+ "sim_parameters_declared": {
+  "time_slot": "NON fornito per segnale nell'issue: assegnazione SIM = ordine del dataset, i primi 4 alle 20:45, i successivi 8 alle 21:00, l'ultimo alle 00:30",
+  "market_id_selection_id": "sintetici SIM",
+  "liquidity": "100 EUR su back/lay, lay = back + 0.02 (sintetico SIM)",
+  "outcome": "risultati HT/FT dell'owner NON presenti nel testo dell'issue: esito SIM dichiarato 'SIM-OUT-A' = vince il segnale con indice pari, perde quello dispari (0-based)",
+  "stake": "deciso esclusivamente dal vero Roserpina MM del runtime; la '1 unita'' ScoreTrend e' ignorata"
+ },
+ "signals": [
+  {"i": 0,  "match": "Chapecoense v Athletico-PR", "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.69},
+  {"i": 1,  "match": "Cardiff v Watford",         "market": "Match Odds",     "selection": "Cardiff",   "price": 1.72},
+  {"i": 2,  "match": "Wolves v Bolton",           "market": "Match Odds",     "selection": "Wolves",    "price": 1.41},
+  {"i": 3,  "match": "Burnley v Charlton",        "market": "Match Odds",     "selection": "Burnley",   "price": 1.66},
+  {"i": 4,  "match": "Wolves v Bolton",           "market": "First Half Goals 0.5", "selection": "Over 0.5 HT", "price": 1.31},
+  {"i": 5,  "match": "Birmingham v Preston",      "market": "Match Odds",     "selection": "Birmingham","price": 1.52},
+  {"i": 6,  "match": "Atletico Madrid v Man Utd", "market": "Match Odds",     "selection": "Atletico Madrid", "price": 1.84},
+  {"i": 7,  "match": "Atletico Madrid v Man Utd", "market": "First Half Goals 0.5", "selection": "Over 0.5 HT", "price": 1.35},
+  {"i": 8,  "match": "Stoke v Middlesbrough",     "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.87},
+  {"i": 9,  "match": "Birmingham v Preston",      "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.77},
+  {"i": 10, "match": "RB Leipzig v PSV",          "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.29},
+  {"i": 11, "match": "Inter v Club Brugge",       "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.28},
+  {"i": 12, "match": "Galatasaray v Barcelona",   "market": "Over/Under 2.5", "selection": "Over 2.5",  "price": 1.22}
+ ]
+}
