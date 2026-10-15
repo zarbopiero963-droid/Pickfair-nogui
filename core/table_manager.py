@@ -304,6 +304,26 @@ class TableManager:
                 table.meta = {}
                 self._touch(table)
 
+    def recovery_state(self) -> Dict[int, float]:
+        """RSR-12: tavoli con recovery attiva (perdita da recuperare), anche senza ordini aperti."""
+        with self._lock:
+            return {t.table_id: float(t.loss_amount) for t in self._tables.values()
+                    if t.loss_amount > 0.0 or t.in_recovery}
+
+    def restore_recovery_state(self, state: Dict[int, float]) -> None:
+        """RSR-12: ripristina al riavvio la perdita da recuperare dei tavoli. Non tocca posizione ed
+        esposizione di un tavolo gia' occupato (ricostruito da F018): ne ripristina solo la perdita."""
+        with self._lock:
+            for table_id, loss in (state or {}).items():
+                table = self._get(int(table_id))
+                loss = float(loss)
+                if table is None or loss <= 0.0:
+                    continue
+                table.loss_amount = loss
+                table.in_recovery = True
+                table.status = "RECOVERY"
+                self._touch(table)
+
     def snapshot(self) -> List[Dict[str, Any]]:
         with self._lock:
             return [t.to_dict() for t in self._tables.values()]

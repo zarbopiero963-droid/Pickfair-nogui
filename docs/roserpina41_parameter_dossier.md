@@ -1,4 +1,4 @@
-# Roserpina — scheda dei 41 parametri (mandato PF-ROSERPINA-FINANCIAL-CLOSURE-03)
+# Roserpina — scheda dei 41 parametri (mandati CLOSURE-03 e CONTINUOUS-DELIVERY-04)
 
 Per ogni parametro disponibile al HEAD: persistenza e rilettura dopo riavvio (`tests/roserpina41/test_rsr_targeted.py::test_rsr_persisted_and_reloaded_after_restart`), valore non leggibile (`test_rsr_unreadable_numeric_value_falls_back_to_code_default`, `test_rsr_hard_stop_unreadable_is_never_silently_disabled`), test che raggiunge la condizione di attivazione ed evidenza osservabile. I range ammessi (Q1/Q2) restano decisioni owner aperte: il loader riporta un numero illeggibile al default di codice, gli hard stop illeggibili restano «configurati non validi» e bloccano.
 
@@ -13,11 +13,11 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
 | RSR-05 | Auto Reset Drawdown % | `roserpina.auto_reset_drawdown_pct` | 15.0 | core/runtime_controller.py:_on_close_position:4133-4149 | auto-reset sul drawdown di cassa (F026) | tests/f026/test_f026_units.py::test_auto_reset_*; test_F026_07 | PASS |
 | RSR-06 | Defense Drawdown % | `roserpina.defense_drawdown_pct` | 7.5 | core/money_management.py:determine_desk_mode:103-138 | soglia del modo DEFENSE (drawdown del disponibile) | test_rsr06_rsr10_defense_mode_scales_stake_by_defense_multiplier | PASS |
 | RSR-07 | Lockdown Drawdown % | `roserpina.lockdown_drawdown_pct` | 20.0 | core/money_management.py:determine_desk_mode:125; core/runtime_controller.py:_on_close_position:4151 | soglia LOCKDOWN: nessun ingresso | test_rsr07_lockdown_drawdown_blocks_entries; test_F027_01 | PASS |
-| RSR-08 | Expansion Profit % | `roserpina.expansion_profit_pct` | 5.0 | core/money_management.py:determine_desk_mode:131-136 | soglia del modo EXPANSION | test_rsr08_rsr09_expansion_in_money_management_unit; test_..._F032 (xfail) | FAIL (F032) |
-| RSR-09 | Expansion Multiplier | `roserpina.expansion_multiplier` | 1.1 | core/money_management.py:_desk_mode_multiplier:150-151 | moltiplicatore dello stake in EXPANSION | come RSR-08 | FAIL (F032) |
+| RSR-08 | Expansion Profit % | `roserpina.expansion_profit_pct` | 5.0 | core/money_management.py:determine_desk_mode:131-136 | soglia del modo EXPANSION | test_rsr08_rsr09_expansion_in_money_management_unit; test_..._F032 (xfail) | PASS (F032 corretto) |
+| RSR-09 | Expansion Multiplier | `roserpina.expansion_multiplier` | 1.1 | core/money_management.py:_desk_mode_multiplier:150-151 | moltiplicatore dello stake in EXPANSION | come RSR-08 | PASS (F032 corretto) |
 | RSR-10 | Defense Multiplier | `roserpina.defense_multiplier` | 0.8 | core/money_management.py:_desk_mode_multiplier:152-153 | moltiplicatore dello stake in DEFENSE | test_rsr06_rsr10_defense_mode_scales_stake_by_defense_multiplier | PASS |
 | RSR-11 | Table Count | `roserpina.table_count` | 5 | core/runtime_controller.py:__init__:104; core/runtime_controller.py:1929-1933 | numero di tavoli: posizioni concorrenti ≤ table_count | tests/acceptance/test_issue437_pr28.py; tests/f029; campagna C09 | PASS |
-| RSR-12 | Max Recovery Tables | `roserpina.max_recovery_tables` | 2 | core/runtime_controller.py:_on_signal_received:3091-3102 | numero di tavoli di recovery ammessi | solo comportamento (runtime_controller 3150-3161) | NOT VERIFIED (semantica) |
+| RSR-12 | Max Recovery Tables | `roserpina.max_recovery_tables` | 2 | core/runtime_controller.py:_on_signal_received:3091-3102 | numero di tavoli di recovery ammessi | solo comportamento (runtime_controller 3150-3161) | PASS (RSR-12 decisione owner) |
 | RSR-13 | Commission % | `roserpina.commission_pct` | 4.5 | core/runtime_controller.py:_execute_cashout_route:2941-2960; controllers/dutching_controller.py:_resolve_commission_pct:778-800; services/setting_service.py:loa | commissione sul netto positivo del mercato, una volta | tests/acceptance/test_issue437_pr28b.py; test_F027_04; campagna A2 | PASS |
 | RSR-14 | Min Stake | `roserpina.min_stake` | 0.1 | core/money_management.py:calculate:401-421; core/risk_gate.py:_ROSERPINA_MAP | stake minimo (clamp verso l'alto, poi cap) | tests/core/test_min_stake_single_source.py; tests/core/test_risk_gate.py | PASS |
 | RSR-15 | Max Stake Assoluto | `roserpina.max_stake_abs` | 10000.0 | core/money_management.py:_max_single_stake_abs:75-84 | cap assoluto dello stake per ordine | tests/acceptance/test_issue437_pr27.py; campagna C02 (capmode abs) | PASS |
@@ -50,8 +50,8 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
 
 ## Note per parametro
 
-- **RSR-08.** In runtime `RiskDesk.sync_bankroll` alza `equity_peak` col bankroll: crescita sempre 0, EXPANSION mai raggiunto. La base della crescita aumenta gli stake: decisione owner.
-- **RSR-12.** Il conteggio include i tavoli in RECOVERY liberi: raggiunto il massimo non si rientra in un tavolo di recovery inattivo (si usa un FREE o si rifiuta). Da chiarire se il limite riguarda i tavoli in perdita o quelli in gioco.
+- **RSR-08/09 (F032 corretto, decisione owner CONTINUOUS-DELIVERY-04).** La crescita si misura sull'equità di cassa regolata rispetto alla baseline persistente del ciclo (`RuntimeController._start_expansion_cycle`, chiave `roserpina.expansion_baseline_state`), fissata al primo avvio, all'auto-reset e al reset del ciclo; distinta dal picco del drawdown, che non cambia. Dato incerto (snapshot non valido, riserva incerta, baseline assente) ⇒ nessuna espansione. Prove: `tests/f026/test_f032_rsr12_units.py`, `test_F032_*`.
+- **RSR-12 (decisione owner).** Il limite conta i tavoli con recovery attiva o pendente, anche senza ordini (`_active_recovery_count`). Lo stato di recovery è persistente (`roserpina.recovery_tables_state`) e ripristinato al riavvio prima di F018; esce dal conteggio solo con la perdita recuperata o con un reset autorizzato del ciclo. Stato illeggibile ⇒ capacità considerata esaurita. Prove: `test_rsr12_*`, `test_RSR12_01`.
 - **RSR-20.** Applicato in `_on_signal_received` solo in esecuzione LIVE: nessuna prova automatica possibile qui (MANUAL_ONLY).
 - **RSR-04.** Due mercati dello stesso incontro non si sommano (F033). L'aggregazione canonica è nella PR #505.
 - **RSR-22.** Decisione owner CLOSURE-03: nessun book % inventato per la selezione singola.
@@ -64,4 +64,4 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
 - Max win × solo avviso: il flag vale solo nel precheck dutching; il RiskGate blocca sempre (H-14).
 - Liquidity guard × solo avviso × dato assente: dato assente nega sempre, il solo-avviso vale solo per mercati sottili osservati (F030).
 - Stop di esposizione × candidato: il candidato si rifiuta senza RISK_STOP; l'esposizione reale al limite fa scattare lo stop.
-- Riepilogo: 33 PASS (RSR-04 con riserva: aggregazione per evento BLOCKED, F033), 2 FAIL (RSR-08, RSR-09), 2 NOT VERIFIED (RSR-12, RSR-20), 4 BLOCKED (RSR-38..41). Nessuna certificazione: #351 non avviata.
+- Riepilogo: 36 PASS (RSR-04 con riserva: aggregazione per evento BLOCKED, F033), 0 FAIL, 1 NOT VERIFIED (RSR-20, solo LIVE), 4 BLOCKED (RSR-38..41). Nessuna certificazione: #351 non avviata.

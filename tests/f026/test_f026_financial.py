@@ -565,3 +565,56 @@ def test_F033_event_cap_aggregates_markets_of_the_same_event():
     s = r["snaps"][-1]
     placed = [x for x in s["orders"] if x["status"] == "SUBMITTED"]
     assert len(placed) == 1, "cap evento superato con due mercati dello stesso incontro: " + describe(s)
+
+
+# ================================================================ F032 / RSR-12 (decisioni owner CONTINUOUS-DELIVERY-04)
+EXP = {"roserpina.expansion_profit_pct": 2.0, "roserpina.expansion_multiplier": 1.5}
+
+
+def _stake(s, m):
+    return D(str(next(x for x in s["orders"] if x["market_id"] == m and x["status"] == "SUBMITTED")["stake"]))
+
+
+def test_F032_01_expansion_after_net_profit_and_after_restart():
+    home = tempfile.mkdtemp(prefix="f032_")
+    first = run([{"op": "signal", "m": "1.961", "price": 2.0}, {"op": "settle", "m": "1.961", "win": True},
+                 {"op": "signal", "m": "1.962", "price": 2.0}, {"op": "crash_now"}], home=home, settings=EXP)
+    s = first["snaps"][-1]
+    o = Oracle(s, {"1.961": True})
+    cash = START + o.realized()                                   # netto di commissione: 100 + 3*1*(1-0.045)
+    growth = (cash - START) / START * 100
+    assert growth >= 2, "precondizione: crescita netta oltre soglia"
+    expected = cash * D("0.03") / (D("2.0") - 1) * D("1.5")       # target 3%, BALANCED, EXPANSION 1.5
+    assert q(_stake(s, "1.962")) == q(expected), f"stake {_stake(s, '1.962')} != atteso in espansione {q(expected)}"
+    second = run([{"op": "signal", "m": "1.963", "price": 2.0}], home=home)
+    s2 = second["snaps"][-1]
+    assert _stake(s2, "1.963") > cash * D("0.03"), "dopo il riavvio la baseline del ciclo e' persa (F032)"
+
+
+def test_F032_02_below_threshold_no_expansion():
+    r = run([{"op": "signal", "m": "1.971", "price": 2.0}, {"op": "settle", "m": "1.971", "win": True},
+             {"op": "signal", "m": "1.972", "price": 2.0}], settings=dict(EXP, **{"roserpina.expansion_profit_pct": 5.0}))
+    s = r["snaps"][-1]
+    o = Oracle(s, {"1.971": True})
+    cash = START + o.realized()
+    assert q(_stake(s, "1.972")) == q(cash * D("0.03")), "espansione sotto soglia"
+
+
+def test_F032_03_losses_never_expand():
+    r = run([{"op": "signal", "m": "1.981", "price": 2.0}, {"op": "settle", "m": "1.981", "win": False},
+             {"op": "signal", "m": "1.982", "price": 2.0}], settings=dict(EXP, **{"roserpina.expansion_profit_pct": 0.0}))
+    s = r["snaps"][-1]
+    rows = [x for x in s["orders"] if x["market_id"] == "1.982" and x["status"] == "SUBMITTED"]
+    assert rows and D(str(rows[0]["stake"])) <= D("3"), "espansione dopo una perdita"
+
+
+def test_RSR12_01_recovery_tables_survive_crash_and_restart():
+    home = tempfile.mkdtemp(prefix="rsr12_")
+    run([{"op": "signal", "m": "1.991", "price": 2.0}, {"op": "signal", "m": "1.992", "price": 2.0},
+         {"op": "settle", "m": "1.991", "win": False}, {"op": "settle", "m": "1.992", "win": False},
+         {"op": "crash_now"}], home=home)
+    second = run([{"op": "wait", "s": 1}], home=home)
+    s = second["snaps"][-1]
+    rec = [t for t in s["tables"] if t["status"] == "RECOVERY"]
+    assert len(rec) == 2 and all(D(str(t["loss"])) > 0 for t in rec), \
+        "dopo il riavvio la recovery attiva e' sparita (RSR-12): " + str(s["tables"])

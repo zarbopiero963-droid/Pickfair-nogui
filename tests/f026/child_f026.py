@@ -127,6 +127,7 @@ try:
         app.betfair_service._persist_simulation_state_if_needed(force=True)
         funds = brk.get_account_funds()
         tabs = [{"table_id": t.get("table_id"), "status": str(t.get("status")), "exposure": t.get("current_exposure"),
+                 "loss": t.get("loss_amount"),
                  "market_id": t.get("market_id"), "event_key": t.get("current_event_key")}
                 for t in rt.table_manager.snapshot() if "FREE" not in str(t.get("status"))]
         orders = []

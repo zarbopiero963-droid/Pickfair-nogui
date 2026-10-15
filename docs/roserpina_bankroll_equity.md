@@ -1,4 +1,4 @@
-# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018, F027–F031)
+# Roserpina — grandezze del conto, auto-reset, settlement e ricostruzione al riavvio (F026 v2, F2, F018, F027–F032, RSR-12)
 
 Riferimenti: #453 (PF-ALL-F026, F2, F018), #426/6146717266 («Non confondere il saldo disponibile con l'equity»),
 OWNER-SETTLEMENT-02 e OC-04 (nessuna liberazione di capitale ancora impegnato), OD-PF-RECON-02 (un dato mancante
@@ -75,6 +75,23 @@ LOCKDOWN, PAUSE ed emergency stop bloccano i **nuovi ingressi**, non la riconcil
 Su Betfair un ordine con parte abbinata e residuo annullato resta fra gli ordini correnti (EXECUTION_COMPLETE) fino
 al settlement. Il broker SIM lo marcava CANCELLED e lo escludeva: al riavvio F018 non ricostruiva una posizione
 abbinata viva. `SimulationBroker.get_current_orders` ora lo riporta come EXECUTION_COMPLETE.
+
+## F032 — espansione sulla baseline del ciclo (decisione owner, CONTINUOUS-DELIVERY-04)
+
+La soglia `expansion_profit_pct` si confronta con la crescita dell'**equità di cassa regolata** rispetto a una baseline
+persistente del ciclo (`roserpina.expansion_baseline_state`), fissata solo da transizioni esplicite: primo avvio
+senza baseline, auto-reset, `reset_cycle`. Sopravvive al riavvio. È distinta dal saldo, dal disponibile e dal picco
+del drawdown (invariato). Profitti netti di commissione (fondi dell'exchange), nessun profitto virtuale: i fondi
+impegnati in posizioni aperte contano come capitale, non come guadagno. Snapshot non valido, riserva incerta o
+baseline assente ⇒ crescita ignota ⇒ nessuna espansione. Lo stake espanso resta soggetto a cap, RiskGate, STOP e
+LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
+
+## RSR-12 — tavoli di recovery persistenti (decisione owner)
+
+`max_recovery_tables` conta i tavoli con recovery attiva o pendente anche senza ordini aperti. Lo stato (perdita da
+recuperare per tavolo) è salvato a ogni settlement e reset (`roserpina.recovery_tables_state`) e ripristinato al
+riavvio prima della ricostruzione F018. Un tavolo esce dal conteggio solo a perdita recuperata o con un reset
+autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery.
 
 ## F029 — tavoli in recovery
 

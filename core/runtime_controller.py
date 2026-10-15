@@ -2484,6 +2484,8 @@ class RuntimeController:
             raise
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
         self._record_account_snapshot(funds, source="start")          # PF-ALL-F026
+        if not self._load_expansion_baseline():                       # F032: primo avvio => apre il ciclo
+            self._start_expansion_cycle("first_start", funds=funds)
 
         start_telegram = time.monotonic()
         try:
@@ -2516,6 +2518,7 @@ class RuntimeController:
         # PF-ALL-F018: ricostruzione delle posizioni aperte (DB + ordini correnti dell'exchange) PRIMA
         # di accettare nuovi ingressi. Riconciliazione incompleta => runtime in PAUSED, mai ACTIVE
         # (ATOMIC-RESERVE-01 regola 7: nessun nuovo ingresso prima della riconciliazione completa).
+        self._restore_recovery_tables()                                # RSR-12, prima di F018
         rebuild = self._rebuild_open_positions()
         self._last_position_rebuild = dict(rebuild)
         self._reconciliation_required = not rebuild["ok"]
@@ -2636,6 +2639,8 @@ class RuntimeController:
             except Exception:
                 logger.exception("Errore reset_simulation")
 
+        self._start_expansion_cycle("reset_cycle")   # F032: nuovo ciclo, dopo l'eventuale reset SIM
+        self._persist_recovery_tables()              # RSR-12
         status = self.get_status()
         self.bus.publish("RUNTIME_CYCLE_RESET", status)
         return {
@@ -3148,7 +3153,7 @@ class RuntimeController:
             return
 
         # Enforcement A3: Limite Tavoli Recovery (#320)
-        active_recovery_count = len([t for t in self.table_manager._tables.values() if getattr(t, 'in_recovery', False) and t.status != "FREE"])
+        active_recovery_count = self._active_recovery_count()   # RSR-12: anche i tavoli in recovery senza ordini
         max_recovery = getattr(self.config, "max_recovery_tables", 2)
         
         allow_recovery = bool(getattr(self.config, "allow_recovery", False))
@@ -3187,7 +3192,7 @@ class RuntimeController:
                         return
 
         decision = self.mm.calculate(
-            signal=signal,
+            signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
@@ -3812,6 +3817,97 @@ class RuntimeController:
                 self._cash_equity_peak = account["cash_equity"]
         return account
 
+    # ================================================================= PF-ALL-F032 / RSR-12
+    _EXPANSION_KEY = "roserpina.expansion_baseline_state"
+    _RECOVERY_KEY = "roserpina.recovery_tables_state"
+
+    def _start_expansion_cycle(self, reason: str, funds: Any = None) -> bool:
+        """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
+        nessun profitto virtuale) all'inizio di un ciclo autorizzato. Si fissa solo su transizioni esplicite
+        (primo avvio senza baseline, auto-reset, reset del ciclo) e si persiste. Dati non validi o
+        persistenza fallita => nessuna baseline => nessuna espansione."""
+        if funds is None:
+            try:
+                funds = self.betfair_service.get_account_funds()
+            except Exception as exc:
+                logger.warning("F032: fondi illeggibili alla transizione di ciclo (%s)", exc)
+                funds = None
+        account = self._account_from_funds(funds)
+        baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
+        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat()}
+        try:
+            self.db.save_settings({self._EXPANSION_KEY: json.dumps(state)})
+        except Exception as exc:
+            logger.error("F032: baseline del ciclo non persistita (%s): nessuna espansione", exc)
+            baseline = None
+        self._expansion_baseline = baseline
+        return baseline is not None
+
+    def _load_expansion_baseline(self) -> bool:
+        """F032: la baseline persistita sopravvive al riavvio. Assente => False (il chiamante apre il ciclo);
+        illeggibile => nessuna baseline (nessuna espansione) finche' una transizione esplicita non la fissa."""
+        self._expansion_baseline = None
+        try:
+            raw = (self.db.get_settings() or {}).get(self._EXPANSION_KEY)
+        except Exception as exc:
+            logger.warning("F032: stato della baseline illeggibile (%s)", exc)
+            return True
+        if raw in (None, ""):
+            return False
+        try:
+            value = validators.finite_number(json.loads(raw).get("baseline"))
+        except Exception:
+            logger.warning("F032: stato della baseline corrotto: nessuna espansione")
+            return True
+        self._expansion_baseline = value if value is not None and value > 0.0 else None
+        return True
+
+    def _expansion_growth_pct(self) -> Optional[float]:
+        """Crescita % dell'equita' di cassa regolata sulla baseline del ciclo; None se incerta."""
+        baseline = getattr(self, "_expansion_baseline", None)
+        account = getattr(self, "_account_snapshot", None) or {}
+        if baseline is None or baseline <= 0.0 or not account.get("ok"):
+            return None
+        if self._uncertain_reservations_map():
+            return None
+        return (float(account["cash_equity"]) - baseline) / baseline * 100.0
+
+    def _with_expansion_snapshot(self, signal: dict) -> dict:
+        """Copia del segnale con la crescita per il money management (None = nessuna espansione)."""
+        out = dict(signal or {})
+        out["expansion_growth_snapshot"] = self._expansion_growth_pct()
+        return out
+
+    def _active_recovery_count(self) -> int:
+        """RSR-12 (decisione owner): tavoli con recovery attiva o pendente, con o senza ordini. Stato di
+        recovery illeggibile al riavvio => capacita' considerata esaurita (fail-closed)."""
+        if getattr(self, "_recovery_state_unreadable", False):
+            return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+        return len(self.table_manager.recovery_state())
+
+    def _persist_recovery_tables(self) -> bool:
+        try:
+            state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+            self.db.save_settings({self._RECOVERY_KEY: json.dumps(state)})
+            return True
+        except Exception as exc:
+            logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
+            return False
+
+    def _restore_recovery_tables(self) -> bool:
+        self._recovery_state_unreadable = False
+        try:
+            raw = (self.db.get_settings() or {}).get(self._RECOVERY_KEY)
+            state = json.loads(raw) if raw not in (None, "") else {}
+            if not isinstance(state, dict):
+                raise ValueError("stato non dict")
+            self.table_manager.restore_recovery_state({int(k): float(v) for k, v in state.items()})
+            return True
+        except Exception as exc:
+            logger.error("RSR-12: stato dei tavoli di recovery illeggibile (%s): capacita' bloccata", exc)
+            self._recovery_state_unreadable = True
+            return False
+
     def _maybe_auto_reset(self, available_drawdown: float) -> bool:
         """PF-ALL-F026: auto-reset Roserpina deciso sul drawdown dell'equity di cassa (il regolato).
 
@@ -3828,6 +3924,10 @@ class RuntimeController:
         account = getattr(self, "_account_snapshot", None) or {}
         if account.get("ok"):
             self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
+        self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
+                                                         "exposure": account.get("committed")}
+                                    if account.get("ok") else None)      # F032: nuovo ciclo
+        self._persist_recovery_tables()                                  # RSR-12
         self.bus.publish(
             "ROSERPINA_AUTO_RESET",
             {
@@ -4175,6 +4275,7 @@ class RuntimeController:
             return
 
         self._release_settled_tables(payload, table_id=table_id, pnl=pnl)   # PF-ALL-F026 / F2
+        self._persist_recovery_tables()                                     # RSR-12
 
         # Persistenza cronologia Risk Desk (Issue #274/293)
         try:
@@ -4791,7 +4892,7 @@ class RuntimeController:
         except Exception:
             next_event_exposure = float("inf")
         decision = self.mm.evaluate_next_trade_after_settlement(
-            signal=signal,
+            signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),

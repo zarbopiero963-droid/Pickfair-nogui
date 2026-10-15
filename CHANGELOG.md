@@ -19,6 +19,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
   esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
   parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+- **F032:** l'espansione dello stake Roserpina si raggiunge davvero: la crescita si misura sull'equità di cassa
+  regolata rispetto a una baseline persistente del ciclo (non più sul picco che segue il saldo); dati incerti ⇒
+  nessuna espansione.
+- **RSR-12:** lo stato dei tavoli di recovery è persistente e sopravvive al riavvio; il limite conta anche i tavoli
+  in recovery senza ordini.
 - **F027:** i settlement confermati si contabilizzano anche in PAUSED, LOCKDOWN ed emergency stop (nessun nuovo
   ordine dalla riconciliazione; dopo un emergency stop in LIVE il registro SIM non viene usato e l'incertezza si
   segnala).

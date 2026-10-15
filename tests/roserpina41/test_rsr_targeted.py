@@ -140,15 +140,15 @@ def test_rsr08_rsr09_expansion_in_money_management_unit():
     assert d.recommended_stake == pytest.approx(110.0 * 0.04 / 2.0 * 1.25)
 
 
-@pytest.mark.xfail(strict=True, reason="F032: nel runtime equity_peak segue il bankroll (RiskDesk.sync_bankroll), "
-                                       "quindi la crescita vale sempre 0 ed EXPANSION non si raggiunge. La base della "
-                                       "crescita e' una decisione owner (aumenta gli stake): non corretto qui.")
-def test_rsr08_rsr09_expansion_reachable_through_runtime_risk_desk_F032():
+def test_rsr08_rsr09_expansion_reachable_through_runtime_cycle_baseline_F032():
+    """F032 corretto (decisione owner CONTINUOUS-DELIVERY-04): la crescita si misura sulla baseline persistente del
+    ciclo, non sul picco che segue il bankroll. Prove complete in tests/f026/test_f032_rsr12_units.py e F032_* integrazione."""
     desk = RiskDesk()
     desk.sync_bankroll(100.0)
-    desk.sync_bankroll(110.0)                                       # +10% di bankroll regolato
+    desk.sync_bankroll(110.0)
     mm = _mm(target_profit_cycle_pct=4.0, expansion_profit_pct=5.0, expansion_multiplier=1.25)
-    d = _calc(mm, bankroll=desk.bankroll_current, peak=desk.equity_peak)
+    d = mm.calculate(signal=dict(SIG, expansion_growth_snapshot=10.0), bankroll_current=desk.bankroll_current,
+                     equity_peak=desk.equity_peak, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
     assert d.desk_mode is DeskMode.EXPANSION
 
 
