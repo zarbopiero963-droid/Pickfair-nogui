@@ -4,15 +4,21 @@ Istruzione di ripresa: «Riprendi Pickfair dal checkpoint persistente più recen
 Verifica stato remoto, manifest, SHA, lotti completati e test ancora necessari. Prosegui dal primo passo non
 completato, rispettando decisioni owner e gate. Non ripartire da zero.»
 
-## 1. Verifica dello stato
+## 1. Ripresa da zero (protocollo pf-checkpoint/3, qualunque agente)
+
+Serve solo git + Python 3 (stdlib). Nessuna cronologia di chat, nessun file locale.
 
 ```bash
-git fetch origin agent-state/pf-full-delivery ccr-bcc81683-ud0hgc main
-git show origin/agent-state/pf-full-delivery:checkpoint/pf-full-delivery/STATE.json      # stato, SHA, prossima azione
-git worktree add /tmp/state origin/agent-state/pf-full-delivery
-(cd /tmp/state/checkpoint/pf-full-delivery && sha256sum -c MANIFEST.sha256)             # integrita' degli artefatti
-git rev-parse origin/ccr-bcc81683-ud0hgc                                                  # deve essere STATE.work.head_sha
+git clone https://github.com/zarbopiero963-droid/Pickfair-nogui.git /tmp/pf && cd /tmp/pf
+git fetch origin agent-state/pf-full-delivery ccr-bcc81683-ud0hgc
+git show origin/agent-state/pf-full-delivery:checkpoint/pf-full-delivery/tools/pfckpt.py > /tmp/pfckpt.py
+python3 /tmp/pfckpt.py bootstrap --url https://github.com/zarbopiero963-droid/Pickfair-nogui.git \
+    --branch agent-state/pf-full-delivery --dest /tmp/state --code-branch ccr-bcc81683-ud0hgc
 ```
+
+`READY` (exit 0) => leggere `next_atomic_action`, `owner_authorizations`, `blocks` e lavorare su `code.sha`.
+`LATEST_CHECKPOINT_CORRUPT` (exit 2) => FERMARSI: il report indica `last_valid_checkpoint`; nessun rollback
+automatico, decide l'owner o una riconciliazione esplicita. Verifica puntuale: `pfckpt.py verify --repo /tmp/state --ref HEAD`.
 
 ## 2. Ambiente (verificato: Ubuntu 24.04, Python 3.12.3, pytest 9.1.1, pytest-xdist 3.8.0, requests 2.32.5)
 
@@ -48,10 +54,17 @@ python3 ../critical/critical_oracle.py out X
 `scripts/guardrail_check.py` (con pr_meta.json, pr_files_raw.json, allowed_scope_base.json dalla base c92bb79) e
 `scripts/pr_autonomy_policy.py full-diff`; scope `issue461-pr28-f026v2-f2-f018-positions` = file del diff.
 
-## 5. Salvataggio del checkpoint
+## 5. Salvataggio del checkpoint (dopo ogni lotto)
 
-`checkpoint/pf-full-delivery/tools/save_checkpoint.sh <worktree> "<messaggio>"`: aggiornamento ottimistico (nessun
-force-push), MANIFEST.sha256, readback remoto. Solo con «DURABLE <sha>» il checkpoint è salvato.
+1. `EXP=$(git -C /tmp/state ls-remote origin refs/heads/agent-state/pf-full-delivery | cut -f1)` e il worktree deve essere su `EXP`.
+2. Aggiornare `STATE.json`: `seq` = precedente + 1, `previous_checkpoint_sha` = `EXP`, `code.sha` (40 caratteri), test con
+   stato `PASS/FAIL/BLOCKED/NOT VERIFIED/MISSING` e SHA del codice, artefatti dichiarati presenti nella directory.
+3. `python3 tools/pfckpt.py save --repo /tmp/state --branch agent-state/pf-full-delivery --expected $EXP --message "..." --code-branch ccr-bcc81683-ud0hgc`
+
+Solo `"status": "DURABLE"` (readback da clone pulito superato) vale come salvato. Exit 3 = un altro agente ha avanzato
+lo stato: leggere il nuovo checkpoint, riconciliare a mano, ripartire da quello SHA (mai force-push, mai merge automatico).
+Dopo un crash si riesegue lo stesso comando: riprende da commit locale o push gia' avvenuto senza duplicare.
+Specifica completa: `docs/agent_checkpoint_protocol.md` sul branch di codice.
 
 ## Vincoli
 

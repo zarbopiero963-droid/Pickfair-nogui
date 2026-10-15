@@ -1,3 +1,15 @@
+# HANDOFF — seq 8 (PF-UNIVERSAL-CHECKPOINT-V1)
+
+Stato: checkpoint migrato a schema `pf-checkpoint/3`, verificabile con `tools/pfckpt.py`.
+
+Incidente INC-b45f528: il checkpoint seq 7 (b45f528) elencava nel MANIFEST tre log mai committati
+(`*.log` in `.gitignore`). Originali ritrovati nel worktree locale con SHA-256 identici al manifest e committati
+in questo checkpoint; b45f528 resta nella storia invariato. Prova: `results/incident_b45f528_verify.json`.
+`tools/save_checkpoint.sh` ritirato (causa del difetto), sostituito da `tools/pfckpt.py`.
+
+Prossima azione: vedi `STATE.json.next_atomic_action` (MD10, mutation d04 su HEAD, regressione completa, matrice A06).
+
+---
 # HANDOFF — PF-FULL-DELIVERY-01 (stato persistente, leggibile da qualsiasi agente)
 
 **Fonte di verità:** questo branch (`agent-state/pf-full-delivery`) + branch di lavoro `ccr-bcc81683-ud0hgc`.
@@ -39,7 +51,7 @@ La chat e gli Artifact NON sono la fonte di verità.
 ## seq 4 (180f405) — mandato PF-ROSERPINA-CONTINUOUS-DELIVERY-04
 - Lotto A: baseline verificata. Lotto B: F032 (baseline persistente del ciclo) e RSR-12 (recovery persistente) corretti RED→GREEN.
 - Regressione 7530/0 su 180f405; guard/full-diff PASS. Parametri: 36 PASS, 1 NOT VERIFIED, 4 BLOCKED.
-- Strumenti di ripresa: RUNBOOK.md, tools/save_checkpoint.sh (readback), mutation/, critical/, campaign/.
+- Strumenti di ripresa: RUNBOOK.md, tools/pfckpt.py (bootstrap/verify/save con readback), mutation/, critical/, campaign/.
 
 ## seq 5 (f6ee25e)
 - Campagna 1684/1684 su 180f405; scenario critico PASS; mutation c03 16/16 validi, d04 parziale (MD6 chiuso con test).
