@@ -1,0 +1,112 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................................................ [ 17%]
+.................................F...................................... [ 35%]
+........................................................................ [ 52%]
+........................................................................ [ 70%]
+........................................................................ [ 87%]
+............................................FFFFF..                      [100%]
+=================================== FAILURES ===================================
+___________ test_F033_event_cap_aggregates_markets_of_the_same_event ___________
+[gw1] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+[XPASS(strict)] F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.
+______________ test_auto_next_entry_carries_executable_liquidity _______________
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    def test_auto_next_entry_carries_executable_liquidity():
+        rc, bus = _make_controller(responses=[{"available": 150.0}])
+        rc.betfair_service.get_market_book_snapshot = lambda market_id, include_prices=False: BOOK
+        rc.mode = RuntimeMode.ACTIVE
+        rc.risk_desk.sync_bankroll(100.0)
+        _close(rc)
+>       (cmd,) = _cmd(bus)
+        ^^^^^^
+E       ValueError: not enough values to unpack (expected 1, got 0)
+
+tests/f026/test_f030_units.py:93: ValueError
+_______ test_auto_next_entry_without_book_is_marked_unknown_for_the_gate _______
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    def test_auto_next_entry_without_book_is_marked_unknown_for_the_gate():
+        rc, bus = _make_controller(responses=[{"available": 150.0}])
+        rc.betfair_service.get_market_book_snapshot = lambda market_id, include_prices=False: None
+        rc.mode = RuntimeMode.ACTIVE
+        rc.risk_desk.sync_bankroll(100.0)
+        _close(rc)
+>       (cmd,) = _cmd(bus)
+        ^^^^^^
+E       ValueError: not enough values to unpack (expected 1, got 0)
+
+tests/f026/test_f030_units.py:103: ValueError
+_____ test_auto_next_never_submits_outside_active_F027[RuntimeMode.PAUSED] _____
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+mode = <RuntimeMode.PAUSED: 'PAUSED'>
+
+    @pytest.mark.parametrize("mode", [RuntimeMode.PAUSED, RuntimeMode.LOCKDOWN])
+    def test_auto_next_never_submits_outside_active_F027(mode):
+        rc, bus = _make_controller(responses=[{"available": 150.0}])
+        rc.mode = mode
+        rc.risk_desk.sync_bankroll(100.0)
+        _close(rc)
+        assert _cmd(bus) == [], "la riconciliazione ha prodotto un nuovo ordine fuori da ACTIVE"
+        (res,) = [p for n, p in bus.events if n == "AUTO_TRADE_MM_RESULT"]
+>       assert res["reason"].startswith("runtime_not_active")
+E       AssertionError: assert False
+E        +  where False = <built-in method startswith of str object at 0x7f2bbf087df0>('runtime_not_active')
+E        +    where <built-in method startswith of str object at 0x7f2bbf087df0> = 'lato_non_valido'.startswith
+
+tests/f026/test_f030_units.py:116: AssertionError
+____ test_auto_next_never_submits_outside_active_F027[RuntimeMode.LOCKDOWN] ____
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+mode = <RuntimeMode.LOCKDOWN: 'LOCKDOWN'>
+
+    @pytest.mark.parametrize("mode", [RuntimeMode.PAUSED, RuntimeMode.LOCKDOWN])
+    def test_auto_next_never_submits_outside_active_F027(mode):
+        rc, bus = _make_controller(responses=[{"available": 150.0}])
+        rc.mode = mode
+        rc.risk_desk.sync_bankroll(100.0)
+        _close(rc)
+        assert _cmd(bus) == [], "la riconciliazione ha prodotto un nuovo ordine fuori da ACTIVE"
+        (res,) = [p for n, p in bus.events if n == "AUTO_TRADE_MM_RESULT"]
+>       assert res["reason"].startswith("runtime_not_active")
+E       AssertionError: assert False
+E        +  where False = <built-in method startswith of str object at 0x7f2bbf087df0>('runtime_not_active')
+E        +    where <built-in method startswith of str object at 0x7f2bbf087df0> = 'lato_non_valido'.startswith
+
+tests/f026/test_f030_units.py:116: AssertionError
+__ test_auto_next_pre_submit_recheck_blocks_mode_change_after_first_gate_F027 __
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    def test_auto_next_pre_submit_recheck_blocks_mode_change_after_first_gate_F027():
+        """Il modo cambia (LOCKDOWN) dopo il gate d'ingresso dell'auto-next: il recheck pre-invio blocca."""
+        rc, bus = _make_controller(responses=[{"available": 150.0}])
+        rc.mode = RuntimeMode.ACTIVE
+        rc.risk_desk.sync_bankroll(100.0)
+        real = rc._risk_allows_auto_trade
+    
+        def gate_then_lockdown():
+            out = real()
+            rc.mode = RuntimeMode.LOCKDOWN          # LOCKDOWN concorrente fra gate e invio
+            return out
+        rc._risk_allows_auto_trade = gate_then_lockdown
+        _close(rc)
+        assert _cmd(bus) == []
+        (res,) = [p for n, p in bus.events if n == "AUTO_TRADE_MM_RESULT"]
+>       assert res["reason"] == "runtime_not_active:LOCKDOWN"
+E       AssertionError: assert 'lato_non_valido' == 'runtime_not_active:LOCKDOWN'
+E         
+E         - runtime_not_active:LOCKDOWN
+E         + lato_non_valido
+
+tests/f026/test_f030_units.py:134: AssertionError
+=========================== short test summary info ============================
+FAILED tests/f026/test_f026_financial.py::test_F033_event_cap_aggregates_markets_of_the_same_event
+FAILED tests/f026/test_f030_units.py::test_auto_next_entry_carries_executable_liquidity
+FAILED tests/f026/test_f030_units.py::test_auto_next_entry_without_book_is_marked_unknown_for_the_gate
+FAILED tests/f026/test_f030_units.py::test_auto_next_never_submits_outside_active_F027[RuntimeMode.PAUSED]
+FAILED tests/f026/test_f030_units.py::test_auto_next_never_submits_outside_active_F027[RuntimeMode.LOCKDOWN]
+FAILED tests/f026/test_f030_units.py::test_auto_next_pre_submit_recheck_blocks_mode_change_after_first_gate_F027
+6 failed, 405 passed, 2339 warnings in 292.72s (0:04:52)

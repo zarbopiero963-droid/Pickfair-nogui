@@ -1,0 +1,148 @@
+{
+ "tree": "ce34",
+ "errors": [
+  "",
+  ""
+ ],
+ "crashed": true,
+ "broker_calls_pre": [
+  "1.9502",
+  "1.9501",
+  "1.9503",
+  "1.9500",
+  "1.9504"
+ ],
+ "broker_calls_post": [],
+ "no_duplicate_send_after_restart": true,
+ "db_orders_final": {
+  "1.9502": [
+   "SUBMITTED"
+  ],
+  "1.9501": [
+   "AMBIGUOUS"
+  ],
+  "1.9503": [
+   "AMBIGUOUS"
+  ],
+  "1.9500": [
+   "SUBMITTED",
+   "DUPLICATE_BLOCKED"
+  ],
+  "1.9504": [
+   "INFLIGHT"
+  ]
+ },
+ "status_ok": {
+  "1.9502": true,
+  "1.9501": true,
+  "1.9503": true,
+  "1.9500": true,
+  "1.9504": true
+ },
+ "pnl": {
+  "oracle": "-3.3205",
+  "broker_delta": "-3.3205",
+  "detail": [
+   {
+    "market_id": "1.9500",
+    "win": true,
+    "matched": "4.3478",
+    "avg_price": "1.69",
+    "pnl": "2.8650"
+   },
+   {
+    "market_id": "1.9501",
+    "win": false,
+    "matched": "4.1667",
+    "avg_price": "1.77",
+    "pnl": "-4.1667"
+   },
+   {
+    "market_id": "1.9502",
+    "win": true,
+    "matched": "1.0000",
+    "avg_price": "1.41",
+    "pnl": "0.3916"
+   },
+   {
+    "market_id": "1.9503",
+    "win": false,
+    "matched": "4.5455",
+    "avg_price": "1.71",
+    "pnl": "-4.5455"
+   },
+   {
+    "market_id": "1.9504",
+    "win": true,
+    "matched": "7.2118",
+    "avg_price": "1.31",
+    "pnl": "2.1351"
+   }
+  ],
+  "runtime_realized_pre": "2.8650",
+  "runtime_realized_post": "-6.1855"
+ },
+ "broker_matches_oracle": true,
+ "bankroll_vs_equity": [
+  [
+   "after_20_45",
+   "100.0000",
+   "100.0000"
+  ],
+  [
+   "after_settle_0",
+   "93.1529",
+   "102.8650"
+  ],
+  [
+   "after_restart_before_signals",
+   "85.9410",
+   "102.8650"
+  ],
+  [
+   "after_redelivery",
+   "85.9410",
+   "102.8650"
+  ],
+  [
+   "after_settlement",
+   "96.6795",
+   "96.6795"
+  ],
+  [
+   "final",
+   "96.6795",
+   "96.6795"
+  ]
+ ],
+ "bankroll_equals_equity_after_restart": false,
+ "auto_resets": [
+  0,
+  0
+ ],
+ "tables_after_restart": [
+  [
+   1,
+   "1.9504"
+  ],
+  [
+   2,
+   "1.9501"
+  ],
+  [
+   3,
+   "1.9502"
+  ],
+  [
+   4,
+   "1.9503"
+  ]
+ ],
+ "open_positions_after_restart": [
+  "1.9501",
+  "1.9502",
+  "1.9503",
+  "1.9504"
+ ],
+ "F018_tables_rebuilt": true
+}

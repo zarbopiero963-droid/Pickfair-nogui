@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/2",
- "seq": 4,
- "updated_at": "2026-10-15T08:37:36.808206+00:00",
+ "seq": 5,
+ "updated_at": "2026-10-15T09:21:10.662804+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -63,9 +63,17 @@
     "sha": "180f405",
     "task": "issue461-pr28-f026v2-f2-f018-positions",
     "what": "F032 baseline persistente del ciclo; RSR-12 tavoli di recovery persistenti"
+   },
+   {
+    "sha": "ce34e49",
+    "what": "fixture con lato esplicito (compatibilita' #505)"
+   },
+   {
+    "sha": "f6ee25e",
+    "what": "test reset_cycle (uccide MD6)"
    }
   ],
-  "head_sha": "180f405",
+  "head_sha": "f6ee25e",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
   "pr": null
  },
@@ -159,6 +167,33 @@
    "sha": "180f405",
    "verified": true,
    "result": "PASS, 28 file = scope; secret scan pulito"
+  },
+  {
+   "id": "campagna completa",
+   "sha": "180f405 (codice di produzione identico a f6ee25e)",
+   "verified": true,
+   "result": "1684/1684 PASS: base 1152, stress 96, frontiera 432, durata 4 (1/10/100/1000 cicli, crash a meta'); zero KNOWN; oracolo C14 incluso",
+   "artifact": "results/campaign_180f405_*.txt"
+  },
+  {
+   "id": "RED di riferimento campagna",
+   "sha": "a2032fb",
+   "verified": true,
+   "result": "stesso oracolo: 207 violazioni C14, 459 tavoli trattenuti (F027/F028 KNOWN)",
+   "artifact": "results/campaign_a2032fb_base_RED_reference.txt"
+  },
+  {
+   "id": "scenario critico multi-tavolo + crash",
+   "sha": "ce34e49",
+   "verified": true,
+   "result": "nessun invio duplicato; P&L broker = oracolo -3.3205; 4 tavoli ricostruiti",
+   "artifact": "results/critical_ce34e49.json"
+  },
+  {
+   "id": "merge di prova #505 su 180f405",
+   "verified": true,
+   "result": "conflitti solo testuali; con i 4 cap configurati 405 pass + 5 fixture senza lato corrette (ce34e49); F033 PASSA sull'albero fuso (xfail stretto -> XPASS)",
+   "artifact": "results/merge505_probe_180f405.txt"
   }
  ],
  "findings": {
@@ -219,7 +254,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Lotto C: completare mutation (MC13-MC17, MC8 valido) e mutanti F032/RSR-12 su 180f405; Lotto D: durata 1/10/100/1000 e scenario critico su 180f405; Lotto E: campagna completa su 180f405; Lotto F: merge di prova con #505 su 180f405. Comandi in RUNBOOK.md",
+ "next_atomic_action": "Lotto C: rieseguire mutate_d04 su f6ee25e (mutation/mutate_d04.py) e registrare; poi regressione completa su f6ee25e; poi contributo A06 (matrice RSR 41x10) per Gate A #506",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -230,17 +265,18 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
  "mandate_current": "PF-ROSERPINA-CONTINUOUS-DELIVERY-04",
- "previous_checkpoint_sha": "46e0d8f",
+ "previous_checkpoint_sha": "fa5bb35",
  "lotto_corrente": "C (mutation) + D (durata/recovery)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
-  "B (F032 + RSR-12, commit 180f405)"
+  "B (F032 + RSR-12, commit 180f405)",
+  "D (durata 1/10/100/1000 + crash, scenario critico)",
+  "E (campagna completa su 180f405)"
  ],
  "lotti_pendenti": [
-  "C mutation 17/17 su b33b54d + mutanti F032/RSR-12 su 180f405 + rifare MC8 (ancora non valida)",
-  "D durata 1/10/100/1000 + crash + scenario critico su 180f405",
-  "E rieseguire prove mirate e campagna su 180f405",
-  "F compatibilita' #505 e dipendenze Gate A"
+  "C: rieseguire mutation d04 su f6ee25e per confermare MD6 e completare MD9-MD11",
+  "F: report dipendenze #505/#506 (parziale in stato)",
+  "regressione completa su f6ee25e (solo test aggiunti dopo 180f405)"
  ],
  "decisions_applied": [
   "F027",
@@ -253,8 +289,9 @@
   "F033: nessuna anticipazione di #505"
  ],
  "mutation": {
-  "c03_on_b33b54d": "in corso al checkpoint: MC1-MC12 KILLED (validi), MC8 NON VALIDO (sostituzione lasciava testo => SyntaxError, da rifare), MC13-MC17 pendenti",
-  "f032_rsr12": "da definire ed eseguire su 180f405"
+  "c03_on_b33b54d": "17/17 KILLED; MC8 NON VALIDO (SyntaxError) => 16/16 validi",
+  "d04_on_180f405": "MC8v KILLED (valido), MD1-MD5 KILLED, MD6 SURVIVED -> test aggiunto f6ee25e (verificato a mano: fallisce col mutante), MD7-MD8 KILLED, MD9-MD11 in corso",
+  "rule": "mutante che non compila = INVALID, mai KILLED"
  },
  "environment": {
   "os": "Ubuntu 24.04.5",
@@ -268,5 +305,10 @@
  "verified_vs_declared": "verified=True solo per test eseguiti in questa sessione sullo SHA indicato; il resto e' dichiarato",
  "gate_a_506": "NON PASS",
  "pr_505": "aperta, non toccata",
- "live": "NO-GO"
+ "live": "NO-GO",
+ "dependencies": {
+  "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata",
+  "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
+  "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
+ }
 }

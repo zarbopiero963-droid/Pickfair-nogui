@@ -40,3 +40,6 @@ La chat e gli Artifact NON sono la fonte di verità.
 - Lotto A: baseline verificata. Lotto B: F032 (baseline persistente del ciclo) e RSR-12 (recovery persistente) corretti RED→GREEN.
 - Regressione 7530/0 su 180f405; guard/full-diff PASS. Parametri: 36 PASS, 1 NOT VERIFIED, 4 BLOCKED.
 - Strumenti di ripresa: RUNBOOK.md, tools/save_checkpoint.sh (readback), mutation/, critical/, campaign/.
+
+## seq 5 (f6ee25e)
+- Campagna 1684/1684 su 180f405; scenario critico PASS; mutation c03 16/16 validi, d04 parziale (MD6 chiuso con test).
