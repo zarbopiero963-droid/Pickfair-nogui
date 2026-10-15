@@ -1,0 +1,34 @@
+commit 5862ff02f629b5924637a7cd58edd2cb8ea1494e
+tests/agent_checkpoint/test_pfckpt.py::test_valid_first_checkpoint_verifies PASSED [  3%]
+tests/agent_checkpoint/test_pfckpt.py::test_historical_bug_gitignored_artifact_is_detected PASSED [  7%]
+tests/agent_checkpoint/test_pfckpt.py::test_save_commits_gitignored_artifacts PASSED [ 10%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[missing] PASSED [ 14%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[altered] PASSED [ 17%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[wrong_hash] PASSED [ 21%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[incomplete_manifest] PASSED [ 25%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[bad_json] PASSED [ 28%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[unknown_code_sha] PASSED [ 32%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[wrong_seq] PASSED [ 35%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[wrong_previous] PASSED [ 39%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[bad_status] PASSED [ 42%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[pass_without_sha] PASSED [ 46%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[declared_artifact_absent] PASSED [ 50%]
+tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[secret] PASSED [ 53%]
+tests/agent_checkpoint/test_pfckpt.py::test_save_refuses_invalid_state_and_publishes_nothing PASSED [ 57%]
+tests/agent_checkpoint/test_pfckpt.py::test_crash_before_commit_then_save_again PASSED [ 60%]
+tests/agent_checkpoint/test_pfckpt.py::test_crash_after_commit_before_push_resumes PASSED [ 64%]
+tests/agent_checkpoint/test_pfckpt.py::test_crash_during_push_network_failure_then_resume PASSED [ 67%]
+tests/agent_checkpoint/test_pfckpt.py::test_crash_after_push_before_readback_resumes PASSED [ 71%]
+tests/agent_checkpoint/test_pfckpt.py::test_resume_after_commit_refuses_artifact_left_only_on_disk PASSED [ 75%]
+tests/agent_checkpoint/test_pfckpt.py::test_push_that_does_not_reach_the_source_of_truth_is_not_durable PASSED [ 78%]
+tests/agent_checkpoint/test_pfckpt.py::test_restart_after_complete_checkpoint_bootstraps PASSED [ 82%]
+tests/agent_checkpoint/test_pfckpt.py::test_two_agents_same_base_second_push_blocked_then_reconciled PASSED [ 85%]
+tests/agent_checkpoint/test_pfckpt.py::test_stale_local_base_is_refused PASSED [ 89%]
+tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_in_clean_environment_without_history_or_local_files PASSED [ 92%]
+tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_on_corrupt_latest_reports_last_valid_without_rollback PASSED [ 96%]
+tests/agent_checkpoint/test_pfckpt.py::test_cli_exit_codes PASSED        [100%]
+============================= 28 passed in 12.31s ==============================
+--- mutanti (ciascuno deve far fallire >=1 test)
+M1 senza add -f: KILLED; M2 senza LOCAL_ONLY_FILES: KILLED; M3 senza hash: KILLED; M4 senza seq: KILLED; M5 senza controllo concorrenza: KILLED; M6 verify locale al posto del readback: KILLED
+--- tests/agent_checkpoint+tests/guardrails+tests/scripts: 2687 passed, 7 skipped
+--- guardrail_check c92bb79..5862ff0: PASS (33 file = scope); full-diff: PASS, owner_manual_merge_required=true (AGENTS.md, CLAUDE.md)

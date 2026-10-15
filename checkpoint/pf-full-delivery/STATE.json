@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 8,
- "updated_at": "2026-10-15T10:05:11.907878+00:00",
+ "seq": 9,
+ "updated_at": "2026-10-15T10:10:39.924732+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -71,9 +71,13 @@
    {
     "sha": "f6ee25e",
     "what": "test reset_cycle (uccide MD6)"
+   },
+   {
+    "sha": "5862ff0",
+    "what": "pfckpt pf-checkpoint/3 + docs/agent_checkpoint_protocol.md + regole AGENTS.md/CLAUDE.md (governance => merge manuale owner)"
    }
   ],
-  "head_sha": "f6ee25e",
+  "head_sha": "5862ff0",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
   "pr": null
  },
@@ -270,14 +274,15 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
  "mandate_current": "PF-UNIVERSAL-CHECKPOINT-V1 (poi ripresa PF-ROSERPINA-CONTINUOUS-DELIVERY-04)",
- "previous_checkpoint_sha": "b45f5280e71382028af292c432d8b7a4fdd6d1eb",
- "lotto_corrente": "PF-UNIVERSAL-CHECKPOINT-V1: riparazione storica + protocollo",
+ "previous_checkpoint_sha": "1297f7f4fa22fcff4b3c22b97ff5d0a7f8c7ae9c",
+ "lotto_corrente": "ripresa CD-04 lotto C: MD10 + mutation d04 su HEAD",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
   "D (durata 1/10/100/1000 + crash, scenario critico)",
   "E (campagna completa su 180f405)",
-  "PF-UNIVERSAL-CHECKPOINT-V1: strumento pfckpt + riparazione INC-b45f528 (seq 8)"
+  "PF-UNIVERSAL-CHECKPOINT-V1: strumento pfckpt + riparazione INC-b45f528 (seq 8)",
+  "PF-UNIVERSAL-CHECKPOINT-V1: codice 5862ff0 pushato, guard PASS (seq 9)"
  ],
  "lotti_pendenti": [
   "C: rieseguire mutation/mutate_d04.py su f6ee25e (MD6 conferma, MD10, MD11)",
@@ -322,7 +327,7 @@
  "mandate_id": "PF-UNIVERSAL-CHECKPOINT-V1",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "f6ee25ec97620de73409e323e0f0aca3df3569d6",
+  "sha": "5862ff02f629b5924637a7cd58edd2cb8ea1494e",
   "verified_with": "git ls-remote"
  },
  "blocks": [
@@ -405,6 +410,18 @@
    "sha": "b45f528",
    "result": "3 artefatti nel manifest assenti dal commit + schema v2",
    "artifact": "results/incident_b45f528_verify.json"
+  },
+  {
+   "id": "pfckpt: 28 test git reale + 6 mutanti + guard/full-diff",
+   "status": "PASS",
+   "sha": "5862ff0",
+   "artifact": "results/pfckpt_tests_5862ff0.txt"
+  },
+  {
+   "id": "bootstrap da GitHub in ambiente nuovo (HOME vuota, strumento letto dal remoto)",
+   "status": "PASS",
+   "sha": "5862ff0",
+   "result": "READY 1297f7f seq 8, 3 log presenti"
   }
  ],
  "tests_missing": [
