@@ -691,6 +691,26 @@ When a handoff file is provided and no PR exists:
 
 ---
 
+## Persistent checkpoint (multi-agent continuity)
+
+Long work is resumed only from the persistent checkpoint branch, never from chat
+memory, local files or private artifacts. Protocol and commands:
+[docs/agent_checkpoint_protocol.md](docs/agent_checkpoint_protocol.md)
+(`tools/agent_checkpoint/pfckpt.py`). Every agent, whatever its provider:
+
+- runs `pfckpt.py bootstrap`/`verify` before starting; a corrupt latest
+  checkpoint => stop and report `last_valid_checkpoint`, no silent rollback;
+- trusts a result only with evidence: status, code SHA and committed artifact;
+- saves with `pfckpt.py save` after every completed lotto;
+- calls a checkpoint DURABLE only when `save` reports `DURABLE` (full integrity
+  plus readback from a clean remote clone);
+- on a concurrency conflict reconciles explicitly: no force-push, no overwrite,
+  no automatic state merge;
+- never uses the checkpoint to bypass a gate, an owner decision or a stop
+  condition of this file.
+
+---
+
 ## PR behavior
 
 - Create exactly one PR per task.

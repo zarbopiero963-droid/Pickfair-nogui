@@ -64,6 +64,14 @@ vale la regola più severa; dove decide esplicitamente (PR safety-critical
 runtime/core in auto-merge con tutti i gate di §0.9, senza override per-issue)
 sostituisce il testo più vecchio.
 
+## Checkpoint persistente multi-agente
+
+Regole in AGENTS.md («Persistent checkpoint»), protocollo in
+[docs/agent_checkpoint_protocol.md](docs/agent_checkpoint_protocol.md): verifica
+del checkpoint prima di iniziare, salvataggio con `pfckpt.py save` dopo ogni
+lotto, DURABLE solo dopo readback remoto integro, concorrenza ottimistica senza
+force-push, nessun bypass dei gate.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le
