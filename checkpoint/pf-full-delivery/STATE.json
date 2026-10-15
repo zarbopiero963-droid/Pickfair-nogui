@@ -1,17 +1,18 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 11,
- "updated_at": "2026-10-15T11:05:35.376427+00:00",
+ "seq": 12,
+ "updated_at": "2026-10-15T19:00:00+00:00",
  "agent": {
-  "kind": "claude-code",
-  "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
+  "kind": "chatgpt-work",
+  "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
   "lock": "concorrenza ottimistica: --expected = SHA remoto di partenza; nessun force-push"
  },
  "mandates": [
   "PF-FULL-DELIVERY-01",
   "PF-ROSERPINA-CONFIG-41-MCP-01",
   "PF-ROSERPINA-41-FULL-SIMULATION-02",
-  "PF-ROSERPINA-FINANCIAL-CLOSURE-03 (attivo)"
+  "PF-ROSERPINA-FINANCIAL-CLOSURE-03",
+  "PF-CROSS-AGENT-HANDOFF-A06-01 (attivo)"
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
@@ -79,9 +80,14 @@
    {
     "sha": "82f499c",
     "what": "test RSR12_02 sul percorso del segnale (uccide MD10)"
+   },
+   {
+    "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
+    "task": "issue461-pr26-0-f011-f025-betid",
+    "what": "F011: betId top-level/numerico; F025: SUCCESS esplicito senza betId => AMBIGUOUS fail-closed"
    }
   ],
-  "head_sha": "82f499c",
+  "head_sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
   "pr": null
  },
@@ -230,8 +236,6 @@
   ],
   "open": [
    "F004",
-   "F011",
-   "F025",
    "OBS-1",
    "OBS-2",
    "LOCKDOWN su drawdown del disponibile (base caso peggiore; decisione owner 6.O2)",
@@ -268,7 +272,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "1) leggere (senza modificare) i lotti A06 di checkpoint/gate-a-close02 e riconciliarli con results/a06_crosswalk_82f499c.json; 2) altri lotti indipendenti #461 non dipendenti da #505 o Control API/MCP.",
+ "next_atomic_action": "Selezionare il prossimo finding indipendente della roadmap #461 che non dipenda da PR #505, Control API/MCP, LIVE o decisioni finanziarie aperte; partire da test RED sul codice c5e4422. Non modificare main/#505 e non inventare range VALID.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -276,10 +280,10 @@
   "decisione finanziaria non presente nelle fonti"
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
- "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
- "mandate_current": "PF-UNIVERSAL-CHECKPOINT-V1 (poi ripresa PF-ROSERPINA-CONTINUOUS-DELIVERY-04)",
- "previous_checkpoint_sha": "657bbc172f84cdcff758ea353179d26215660511",
- "lotto_corrente": "A06: riconciliazione crosswalk con checkpoint/gate-a-close02 (sola lettura)",
+ "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
+ "mandate_current": "PF-CROSS-AGENT-HANDOFF-A06-01",
+ "previous_checkpoint_sha": "a14adea2abd90262cdf2e29a7be15766e197bd09",
+ "lotto_corrente": "A06 riconciliata; F011/F025 completati e pubblicati",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -288,12 +292,14 @@
   "PF-UNIVERSAL-CHECKPOINT-V1: strumento pfckpt + riparazione INC-b45f528 (seq 8)",
   "PF-UNIVERSAL-CHECKPOINT-V1: codice 5862ff0 pushato, guard PASS (seq 9)",
   "CD-04 C parziale: MD10 test (82f499c); regressione completa 82f499c; crosswalk A06 (seq 10)",
-  "CD-04 C: mutation d04 su 82f499c 12/12 KILLED (seq 11)"
+  "CD-04 C: mutation d04 su 82f499c 12/12 KILLED (seq 11)",
+  "Cross-provider Claude -> ChatGPT Work PASS; A06 410 celle riconciliate (seq 12)",
+  "F011/F025 betId fail-closed, regressione completa e guard PASS (seq 12)"
  ],
  "lotti_pendenti": [
-  "C: rieseguire mutation/mutate_d04.py su f6ee25e (MD6 conferma, MD10, MD11)",
-  "Regressione completa su f6ee25e: NOT VERIFIED (ultima completa 7530/0 su 180f405; f6ee25e cambia solo 2 file di test)",
-  "A06 Gate A: matrice RSR 41x10"
+  "Decisione owner sui range numerici generali per 37 celle VALID",
+  "F033 bloccato dalla PR protetta #505; RSR-20 richiede LIVE ed e' vietato",
+  "Prova cross-provider Grok: NOT VERIFIED"
  ],
  "decisions_applied": [
   "F027",
@@ -329,12 +335,12 @@
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "interrotta volontariamente al 97% del budget; stato completo e verificato",
+ "session_end": "seq 12 preparata da ChatGPT Work; pubblicazione e readback remoto obbligatori prima di DURABLE",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-UNIVERSAL-CHECKPOINT-V1",
+ "mandate_id": "PF-CROSS-AGENT-HANDOFF-A06-01",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "82f499c852f4bdb38db2183c4fae8cb099910c9a",
+  "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
   "verified_with": "git ls-remote"
  },
  "blocks": [
@@ -355,7 +361,7 @@
   "telegram_copy_mirror": false,
   "push_code_branch": "solo ccr-bcc81683-ud0hgc",
   "push_state_branch": "solo agent-state/pf-full-delivery, senza force",
-  "source": "mandati owner in chat 14-15/10/2026 (PF-FULL-DELIVERY-01 ... PF-UNIVERSAL-CHECKPOINT-V1)"
+  "source": "mandati owner in chat 14-15/10/2026, incluso PF-CROSS-AGENT-HANDOFF-A06-01"
  },
  "tests_executed": [
   {
@@ -463,11 +469,37 @@
     "results/mutation_d04_82f499c.log",
     "results/mutation_d04_82f499c.json"
    ]
+  },
+  {
+   "id": "cross-provider Claude -> ChatGPT Work",
+   "status": "PASS",
+   "sha": "a14adea2abd90262cdf2e29a7be15766e197bd09",
+   "result": "bootstrap READY; checkpoint VALID; manifest 41/41; next_atomic_action e governance ricostruiti senza cronologia Claude; Grok NOT VERIFIED",
+   "artifact": "results/cross_provider_chatgpt_work_seq12.md"
+  },
+  {
+   "id": "A06 reconciliation checkpoint/gate-a-close02",
+   "status": "PASS",
+   "sha": "1734dee1f170bd8e5ea3c7eff6c602bf7e8c306f",
+   "result": "410/410 celle classificate: 100 PASS, 0 FAIL, 233 NOT VERIFIED, 77 BLOCKED, 0 MISSING; 368 celle con record concorrenti, 42 senza; nessun upgrade cross-SHA",
+   "artifact": [
+    "results/a06_reconciliation_seq12.json",
+    "results/a06_reconciliation_seq12.md",
+    "results/gate_close02_manifest_verify.txt"
+   ]
+  },
+  {
+   "id": "F011/F025 RED->GREEN e regressione completa",
+   "status": "PASS",
+   "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
+   "result": "4 RED sulla baseline; 76 mirati GREEN; full 7563 passed, 15 skipped, 2 xfailed, 8 subtests; tree 4d49b590 identico al commit locale testato; guard e full-diff PASS",
+   "artifact": "results/regression_c5e4422.txt"
   }
  ],
  "tests_missing": [
-  "matrice RSR 41x10 (A06)",
-  "portabilita' cross-provider (ChatGPT Work / Grok): NOT VERIFIED"
+  "GUI/X11: Xvfb non disponibile nell'ambiente; 8 test saltati",
+  "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati",
+  "portabilita' cross-provider Grok: NOT VERIFIED"
  ],
  "missing_historical_evidence": [
   {

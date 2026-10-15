@@ -16,17 +16,17 @@ python3 /tmp/pfckpt.py bootstrap --url https://github.com/zarbopiero963-droid/Pi
     --branch agent-state/pf-full-delivery --dest /tmp/state --code-branch ccr-bcc81683-ud0hgc
 ```
 
-`READY` (exit 0) => leggere `next_atomic_action`, `owner_authorizations`, `blocks` e lavorare su `code.sha`.
+`READY` (exit 0) => leggere `next_atomic_action`, `authorizations`, `stop_conditions` e lavorare su `work.head_sha`.
 `LATEST_CHECKPOINT_CORRUPT` (exit 2) => FERMARSI: il report indica `last_valid_checkpoint`; nessun rollback
 automatico, decide l'owner o una riconciliazione esplicita. Verifica puntuale: `pfckpt.py verify --repo /tmp/state --ref HEAD`.
 
-## 2. Ambiente (verificato: Ubuntu 24.04, Python 3.12.3, pytest 9.1.1, pytest-xdist 3.8.0, requests 2.32.5)
+## 2. Ambiente (ultima prova ChatGPT Work: Python 3.12.14; Xvfb non disponibile)
 
 ```bash
 python3.12 -m venv /tmp/venv && /tmp/venv/bin/pip install -r requirements.txt pytest pytest-xdist pytest-asyncio
 mkdir -p /tmp/netguard && cp checkpoint/pf-full-delivery/tools/sitecustomize.py /tmp/netguard/   # blocco rete nei test
 export PF_PY=/tmp/venv/bin/python PF_NETGUARD=/tmp/netguard
-Xvfb :99 -screen 0 1400x900x24 &   # per i test GUI
+Xvfb :99 -screen 0 1400x900x24 &   # per i test GUI; se assente, classificare GUI BLOCKED/SKIP, non PASS
 ```
 
 ## 3. Test (dalla radice del repo sul commit `STATE.work.head_sha`)
@@ -51,8 +51,10 @@ python3 ../critical/critical_oracle.py out X
 
 ## 4. Guard prima di ogni push di codice
 
-`scripts/guardrail_check.py` (con pr_meta.json, pr_files_raw.json, allowed_scope_base.json dalla base c92bb79) e
-`scripts/pr_autonomy_policy.py full-diff`; scope `issue461-pr28-f026v2-f2-f018-positions` = file del diff.
+`scripts/guardrail_check.py` (con pr_meta.json, pr_files_raw.json e allowed_scope_base.json dalla base effettiva) e
+`scripts/pr_autonomy_policy.py full-diff`; lo scope dichiarato deve coincidere esattamente con i file del diff.
+
+Per F011/F025 è stato usato `issue461-pr26-0-f011-f025-betid` (5 file); entrambi i gate hanno restituito PASS.
 
 ## 5. Salvataggio del checkpoint (dopo ogni lotto)
 

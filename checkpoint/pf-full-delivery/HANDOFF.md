@@ -1,3 +1,18 @@
+# HANDOFF — seq 12 (PF-CROSS-AGENT-HANDOFF-A06-01)
+
+ChatGPT Work ha ripreso da clone/checkpoint remoto senza cronologia Claude: bootstrap `READY`, verifica `VALID`,
+manifest 41/41. Il branch Gate-A concorrente `1734dee` è stato letto senza modificarlo e il suo manifest è 459/459.
+Riconciliazione A06: 410 celle, 100 PASS, 0 FAIL, 233 NOT VERIFIED, 77 BLOCKED, 0 MISSING; nessun PASS trasferito
+da un altro SHA. Dettagli e provenienza in `results/a06_reconciliation_seq12.{json,md}`.
+
+Lotto indipendente F011/F025 pubblicato su `ccr-bcc81683-ud0hgc@c5e44221689c4e34c52cf6f55b69807cdac4c399`:
+betId top-level/numerico recuperato; SUCCESS esplicito senza betId è AMBIGUOUS fail-closed. RED 4, mirati 76 PASS,
+regressione 7563 PASS / 15 SKIP / 2 XFAIL / 8 subtest; guard e full-diff PASS. Gate A resta NON PASS, LIVE NO-GO.
+
+Prossima azione atomica: vedi `STATE.json.next_atomic_action`. Non modificare main o PR #505; non inventare range.
+
+---
+
 # HANDOFF — seq 8 (PF-UNIVERSAL-CHECKPOINT-V1)
 
 Stato: checkpoint migrato a schema `pf-checkpoint/3`, verificabile con `tools/pfckpt.py`.
