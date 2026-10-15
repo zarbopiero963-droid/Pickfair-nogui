@@ -1,0 +1,127 @@
+[
+ {
+  "mutant": "M0_BASELINE",
+  "applied": true,
+  "summary": "330 passed, 1 xfailed, 1514 warnings in 223.63s (0:03:43)",
+  "killed": false,
+  "killing_tests": []
+ },
+ {
+  "mutant": "MC8v_F028_never_called",
+  "applied": true,
+  "summary": "2 failed, 328 passed, 1 xfailed, 1514 warnings in 333.76s (0:05:33)",
+  "killed": true,
+  "killing_tests": [
+   "test_F028_01_unmatched_order_lapsed_at_market_close_frees_table_and_reserve",
+   "test_F028_02_unmatched_order_cancelled_by_risk_stop_frees_table_and_places_nothing"
+  ]
+ },
+ {
+  "mutant": "MD1_F032_growth_ignores_uncertain",
+  "applied": true,
+  "summary": "2 failed, 328 passed, 1 xfailed, 1514 warnings in 215.50s (0:03:35)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_uncertain_state_means_no_growth[uncertain_reservation]",
+   "test_f032_signal_carries_growth_snapshot"
+  ]
+ },
+ {
+  "mutant": "MD2_F032_growth_on_invalid_snapshot",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1515 warnings in 331.14s (0:05:31)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_uncertain_state_means_no_growth[invalid_snapshot]"
+  ]
+ },
+ {
+  "mutant": "MD3_F032_baseline_not_persisted",
+  "applied": true,
+  "summary": "4 failed, 326 passed, 1 xfailed, 1513 warnings in 213.84s (0:03:33)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_baseline_set_at_cycle_start_persisted_and_restored",
+   "test_f032_cycle_transition_rebases_baseline",
+   "test_f032_public_reset_cycle_rebases_baseline_and_persists_recovery",
+   "test_F032_01_expansion_after_net_profit_and_after_restart"
+  ]
+ },
+ {
+  "mutant": "MD4_MM_unknown_growth_expands",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1515 warnings in 215.08s (0:03:35)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_unknown_growth_never_expands"
+  ]
+ },
+ {
+  "mutant": "MD5_MM_legacy_peak_growth",
+  "applied": true,
+  "summary": "5 failed, 325 passed, 1 xfailed, 1515 warnings in 212.53s (0:03:32)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_growth_snapshot_drives_expansion[5.0-DeskMode.EXPANSION]",
+   "test_f032_growth_snapshot_drives_expansion[12.0-DeskMode.EXPANSION]",
+   "test_rsr08_rsr09_expansion_reachable_through_runtime_cycle_baseline_F032",
+   "test_F032_01_expansion_after_net_profit_and_after_restart",
+   "test_F032_03_losses_never_expand - ..."
+  ]
+ },
+ {
+  "mutant": "MD6_F032_reset_cycle_no_rebase",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1514 warnings in 214.91s (0:03:34)",
+  "killed": true,
+  "killing_tests": [
+   "test_f032_public_reset_cycle_rebases_baseline_and_persists_recovery"
+  ]
+ },
+ {
+  "mutant": "MD7_RSR12_not_restored",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1513 warnings in 215.10s (0:03:35)",
+  "killed": true,
+  "killing_tests": [
+   "test_RSR12_01_recovery_tables_survive_crash_and_restart"
+  ]
+ },
+ {
+  "mutant": "MD8_RSR12_not_persisted_on_settlement",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1513 warnings in 213.97s (0:03:33)",
+  "killed": true,
+  "killing_tests": [
+   "test_RSR12_01_recovery_tables_survive_crash_and_restart"
+  ]
+ },
+ {
+  "mutant": "MD9_RSR12_unreadable_not_fail_closed",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1514 warnings in 214.19s (0:03:34)",
+  "killed": true,
+  "killing_tests": [
+   "test_rsr12_unreadable_state_is_fail_closed"
+  ]
+ },
+ {
+  "mutant": "MD10_RSR12_signal_path_old_count",
+  "applied": true,
+  "summary": "1 failed, 329 passed, 1 xfailed, 1516 warnings in 329.45s (0:05:29)",
+  "killed": true,
+  "killing_tests": [
+   "test_RSR12_02_idle_recovery_tables_count_on_the_signal_path"
+  ]
+ },
+ {
+  "mutant": "MD11_F032_first_start_no_baseline",
+  "applied": true,
+  "summary": "2 failed, 328 passed, 1 xfailed, 1507 warnings in 211.74s (0:03:31)",
+  "killed": true,
+  "killing_tests": [
+   "test_F032_01_expansion_after_net_profit_and_after_restart",
+   "test_F032_03_losses_never_expand - ..."
+  ]
+ }
+]

@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 10,
- "updated_at": "2026-10-15T10:25:07.290073+00:00",
+ "seq": 11,
+ "updated_at": "2026-10-15T11:05:35.376427+00:00",
  "agent": {
   "kind": "claude-code",
   "session": "https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb",
@@ -268,7 +268,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "1) completare mutation/mutate_d04.py su 82f499c (in corso al seq 10: baseline PASS, MC8v KILLED) e salvare results/mutation_d04_82f499c.*; 2) riconciliare il crosswalk A06 con i lotti di checkpoint/gate-a-close02 (altro agente: leggere, non sovrascrivere); 3) altri lotti indipendenti #461.",
+ "next_atomic_action": "1) leggere (senza modificare) i lotti A06 di checkpoint/gate-a-close02 e riconciliarli con results/a06_crosswalk_82f499c.json; 2) altri lotti indipendenti #461 non dipendenti da #505 o Control API/MCP.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -278,8 +278,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (certificazione non raggiunta: F032 aperto, F033 dipende da #505, RSR-38..41 BLOCKED); nessun difetto P1 aperto sul codice esercitato",
  "mandate_current": "PF-UNIVERSAL-CHECKPOINT-V1 (poi ripresa PF-ROSERPINA-CONTINUOUS-DELIVERY-04)",
- "previous_checkpoint_sha": "aea393e36c5677fbd9293890ea471d793a9f896a",
- "lotto_corrente": "CD-04 C: mutation d04 su 82f499c in corso",
+ "previous_checkpoint_sha": "657bbc172f84cdcff758ea353179d26215660511",
+ "lotto_corrente": "A06: riconciliazione crosswalk con checkpoint/gate-a-close02 (sola lettura)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -287,7 +287,8 @@
   "E (campagna completa su 180f405)",
   "PF-UNIVERSAL-CHECKPOINT-V1: strumento pfckpt + riparazione INC-b45f528 (seq 8)",
   "PF-UNIVERSAL-CHECKPOINT-V1: codice 5862ff0 pushato, guard PASS (seq 9)",
-  "CD-04 C parziale: MD10 test (82f499c); regressione completa 82f499c; crosswalk A06 (seq 10)"
+  "CD-04 C parziale: MD10 test (82f499c); regressione completa 82f499c; crosswalk A06 (seq 10)",
+  "CD-04 C: mutation d04 su 82f499c 12/12 KILLED (seq 11)"
  ],
  "lotti_pendenti": [
   "C: rieseguire mutation/mutate_d04.py su f6ee25e (MD6 conferma, MD10, MD11)",
@@ -307,7 +308,8 @@
  "mutation": {
   "c03_on_b33b54d": "17/17 KILLED; MC8 NON VALIDO (SyntaxError) => 16/16 validi",
   "d04_on_180f405": "10 KILLED, 2 SURVIVED (MD6: test aggiunto in f6ee25e, da riconfermare; MD10: manca un test sul percorso del segnale che verifichi il rifiuto max_recovery_tables_reached con tavoli in recovery INATTIVI e nessun FREE), 0 invalid",
-  "rule": "mutante che non compila = INVALID, mai KILLED"
+  "rule": "mutante che non compila = INVALID, mai KILLED",
+  "d04_on_82f499c": "12/12 KILLED, baseline PASS"
  },
  "environment": {
   "os": "Ubuntu 24.04.5",
@@ -451,10 +453,19 @@
     "results/a06_crosswalk_82f499c.md",
     "results/a06_crosswalk_82f499c_ids_run.txt"
    ]
+  },
+  {
+   "id": "mutation d04",
+   "status": "PASS",
+   "sha": "82f499c",
+   "result": "baseline PASS; 12/12 KILLED (MC8v, MD1-MD11), 0 SURVIVED, 0 INVALID; MD6 e MD10 ora uccisi",
+   "artifact": [
+    "results/mutation_d04_82f499c.log",
+    "results/mutation_d04_82f499c.json"
+   ]
   }
  ],
  "tests_missing": [
-  "mutation d04 su HEAD (MD6 conferma, MD10)",
   "matrice RSR 41x10 (A06)",
   "portabilita' cross-provider (ChatGPT Work / Grok): NOT VERIFIED"
  ],
