@@ -134,6 +134,13 @@
      "environment": "Python 3.12.3 venv312, Linux 6.18, netguard, Xvfb :99",
      "timestamp": "2026-10-17T22:45:51Z",
      "result": "PASS"
+    },
+    {
+     "sha": "757869f4555f7bdd1dc6292a7954ed80e75dfe25",
+     "command": "venv312/bin/python -m pytest -q -p no:cacheprovider tests/test_pr512_review_cycle4.py::test_recover_failure_on_an_existing_saga_keeps_its_reservation (PASS; RED su 464f347)",
+     "environment": "Python 3.12.3 venv312, Linux 6.18, netguard",
+     "timestamp": "2026-10-17T23:11:29Z",
+     "result": "PASS"
     }
    ],
    "findings": [
@@ -984,7 +991,7 @@
    "source": "mandato owner PF-PR-RECOVERY-DECISIONS-02 (17/10/2026), decisione 2; #426 c.6242324827",
    "owner_decision": "PF-PR-RECOVERY-DECISIONS-02 D2",
    "activity": "ACTIVE",
-   "status": "IMPLEMENTED",
+   "status": "TESTED",
    "issue": [
     "#512",
     "#426"
@@ -1000,7 +1007,15 @@
     "tests/core/test_money_management_decision2_20261017.py",
     "tests/core/test_money_management_caps_and_malformed.py::test_recovery_stake_never_exceeds_single_bet_cap"
    ],
-   "evidence": [],
+   "evidence": [
+    {
+     "sha": "757869f4555f7bdd1dc6292a7954ed80e75dfe25",
+     "command": "venv312/bin/python -m pytest -q -p no:cacheprovider tests/core/test_money_management_decision2_20261017.py tests/core/test_money_management_caps_and_malformed.py tests/acceptance/test_issue437_pr27.py tests/f026/test_f032_rsr12_units.py (152 passed; RED su 464f347: 7 failed)",
+     "environment": "Python 3.12.3 venv312, Linux 6.18, netguard",
+     "timestamp": "2026-10-17T23:11:29Z",
+     "result": "PASS"
+    }
+   ],
    "findings": [],
    "reviewer": null,
    "gate": "B",
