@@ -46,6 +46,17 @@ def committed(path, repo):
         return None
 
 
+def commit_status(repo, sha):
+    """OK se `sha` e' un commit del repository, MISSING se non lo e', NO_REPO se `repo` non e' un repository git,
+    SHALLOW_MISSING se manca ma il clone e' shallow (la storia non e' tutta disponibile)."""
+    if subprocess.run(["git", "-C", repo, "rev-parse", "--git-dir"], capture_output=True).returncode != 0:
+        return "NO_REPO"
+    if subprocess.run(["git", "-C", repo, "cat-file", "-e", f"{sha}^{{commit}}"], capture_output=True).returncode == 0:
+        return "OK"
+    shallow = subprocess.run(["git", "-C", repo, "rev-parse", "--is-shallow-repository"], capture_output=True, text=True)
+    return "SHALLOW_MISSING" if shallow.stdout.strip() == "true" else "MISSING"
+
+
 def test_exists(repo, ref):
     m = TEST_RE.match(ref)
     if not m:
@@ -69,6 +80,7 @@ def validate(data, repo=".", previous=None):
     for rid, n in ids.items():
         if n > 1:
             errors.append(f"{rid}: id duplicato ({n})")
+    sha_cache = {}
     prev_ev = {}
     if previous:
         for r in previous.get("requirements", []):
@@ -92,6 +104,17 @@ def validate(data, repo=".", previous=None):
                 errors.append(f"{rid}: evidenza malformata"); continue
             if not SHA_RE.match(str(e.get("sha", ""))):
                 errors.append(f"{rid}: evidenza senza SHA valido ({e.get('command', '')[:40]})")
+            else:
+                # rilievo Codex #512: uno SHA sintatticamente valido deve risolversi a un commit reale
+                st = sha_cache.get(e["sha"])
+                if st is None:
+                    st = sha_cache[e["sha"]] = commit_status(repo, e["sha"])
+                if st == "MISSING":
+                    errors.append(f"{rid}: evidenza con SHA {e['sha']} non risolto a un commit del repository")
+                elif st == "NO_REPO":
+                    errors.append(f"{rid}: evidenza con SHA {e['sha']} non verificabile (repo non git)")
+                elif st == "SHALLOW_MISSING":
+                    warnings.append(f"{rid}: evidenza con SHA {e['sha']} non verificabile in un clone shallow")
             if e.get("result") not in RESULTS:
                 errors.append(f"{rid}: evidenza con result non ammesso {e.get('result')!r}")
             for k in ("command", "timestamp", "environment"):

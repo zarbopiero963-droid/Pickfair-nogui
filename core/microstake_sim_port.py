@@ -15,6 +15,7 @@ adapter LIVE: in LIVE l'engine resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILAB
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from decimal import Decimal, InvalidOperation
 from enum import Enum
@@ -28,6 +29,8 @@ from core.microstake_safe import (
     Side,
     SimOrder,
 )
+
+logger = logging.getLogger(__name__)
 
 D = Decimal
 SAGA_SETTINGS_KEY = "microstake.sagas"
@@ -138,6 +141,7 @@ class SimulationExchangePort:
                 raise TypeError(f"broker senza {name}")
         self.broker = broker
         self.operation_log: List[tuple] = []
+        self.snapshot_failures = 0
         self._faults: List[str] = []
         self._lock = threading.RLock()
         self._reservations: Dict[str, Decimal] = {}
@@ -200,10 +204,13 @@ class SimulationExchangePort:
             self._reservations.pop(customer_ref, None)
 
     def _snapshot(self) -> None:
-        """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash."""
+        """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
+        Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
+        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS."""
         persist = getattr(self.broker, "persist_snapshot", None)
-        if callable(persist):
-            persist()
+        if callable(persist) and persist() is False:
+            self.snapshot_failures += 1
+            logger.warning("Microstake: snapshot del broker SIM non persistito (fallimenti=%s)", self.snapshot_failures)
 
     # -- operazioni exchange ---------------------------------------------------------------------------
     def place(self, *, market_id: str, selection_id: int, side: Side, size: Decimal, price: Decimal,
@@ -316,8 +323,13 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
 
     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         before = len(self.port.operation_log)
+        snapshot_failures_before = self.port.snapshot_failures
         try:
-            return super().execute(payload)
+            out = super().execute(payload)
+            if len(self.port.operation_log) > before:
+                # dichiarato, mai silenzioso: la fonte di reload del broker e' aggiornata oppure no
+                out["snapshot_persisted"] = self.port.snapshot_failures == snapshot_failures_before
+            return out
         except SagaStoreError as exc:
             if len(self.port.operation_log) > before:
                 return {"status": "AMBIGUOUS", "order_unknown": True, "microstake": True,

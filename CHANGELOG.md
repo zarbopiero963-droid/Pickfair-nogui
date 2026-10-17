@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+- **PF-PR-RECOVERY-DECISIONS-02 (owner 17/10, lotto unico sui sei finding triagiati di PR #512):** `resume()` ritenta
+  anche la recovery delle saghe Microstake (non solo F018) e resta PAUSED finché entrambe non riescono; stake con più
+  di due decimali rifiutato prima dell'invio (`invalid_size_precision`) e residuo del broker diverso dallo stake
+  richiesto ⇒ AMBIGUOUS `unexpected_residual_size`; ladder del book malformata ⇒ liquidità ignota (RiskGate nega),
+  mai un'eccezione dopo tavolo e dedupe acquisiti; `persist_snapshot` del broker SIM scritto sotto lock e fallimento
+  dichiarato nel risultato (`snapshot_persisted`); `pre_send` calcolato per `customer_ref`; scan segreti del
+  checkpoint esteso ai sorgenti Python (esente solo `pfckpt.py`); `pf_trace` verifica che ogni SHA di evidenza sia un
+  commit reale (clone shallow ⇒ warning, `--strict` lo rende errore). Test: `tests/test_pr512_recovery_fixes.py`.
+
 ### Added
 - **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e
   PF-MICROSTAKE-OWNER-RECTIFICATION-20261017):** ogni importo sotto il minimo exchange (2 EUR) passa dal Microstake

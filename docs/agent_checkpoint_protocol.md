@@ -139,5 +139,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 - Provato con git reale offline (repository bare locali: 39 test, inclusi lease/fencing, patch del codice, recover) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
-- Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera; i file `.py` sono esclusi dal pattern.
+- Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera. È esente **solo** `pfckpt.py` (contiene i
+  pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
+  Codex #512, PF-PR-RECOVERY-DECISIONS-02).
 - La concorrenza è ottimistica: due agenti possono lavorare in parallelo, ma solo uno pubblica per volta.

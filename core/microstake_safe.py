@@ -427,6 +427,10 @@ class MicrostakeCoordinator:
             return self._result(Phase.BLOCKED, req=req, reason="invalid_numeric_input")
         if not (p.minimum_economic_stake <= req.economic_stake < p.exchange_stub_size):
             return self._result(Phase.BLOCKED, req=req, reason="outside_microstake_range")
+        if req.economic_stake != req.economic_stake.quantize(D("0.01")):
+            # Rilievo Codex #512: un importo non rappresentabile in centesimi verrebbe arrotondato
+            # dall'exchange, cioe' eseguito diverso da quello richiesto. Rifiuto esplicito PRIMA dell'invio.
+            return self._result(Phase.BLOCKED, req=req, reason="invalid_size_precision")
         transient = order_exposure(req.side, p.exchange_stub_size, stub_price)
         if not self.exchange.reserve(req.customer_ref, transient, cap):
             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
@@ -475,6 +479,12 @@ class MicrostakeCoordinator:
         if order.matched > 0:
             self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS, matched=order.matched)
             return self._result(Phase.AMBIGUOUS, req=req, reason="match_cancel_race",
+                                order=order, max_exposure=transient, held=True)
+        if order.remaining != req.economic_stake:
+            # Importo eseguito != importo richiesto (rettifica owner 17/10): mai ACTIVE su un residuo
+            # diverso; riconciliazione, come gia' fa recover() sullo stesso caso.
+            self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)
+            return self._result(Phase.AMBIGUOUS, req=req, reason="unexpected_residual_size",
                                 order=order, max_exposure=transient, held=True)
         self.store.save(req.customer_ref, phase=Phase.REDUCED)
         if order.price == req.target_price:
@@ -634,14 +644,16 @@ class NativeMicrostakeExecutor:
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         log = getattr(self.coordinator.exchange, "operation_log", None)
-        before = len(log) if log is not None else None
+        ref = str((payload or {}).get("customer_ref") or "")
 
         def blocked(reason: str, *, transient: Decimal = D("0")) -> dict[str, Any]:
-            # pre_send=True SOLO se nessuna operazione exchange e' partita: l'engine
-            # puo' allora rilasciare l'intento dedupe (un nuovo tentativo dopo che la
-            # condizione transitoria e' passata non e' un duplicato). Rilievo Codex #512.
+            # pre_send=True SOLO se nessuna operazione exchange e' partita PER QUESTA saga: l'engine
+            # puo' allora rilasciare l'intento dedupe (un nuovo tentativo dopo che la condizione
+            # transitoria e' passata non e' un duplicato). Rilievo Codex #512; per customer_ref e non
+            # dalla lunghezza globale del log (rilievo Grok: una saga concorrente non deve mascherarlo).
             out = self._blocked(reason, transient=transient)
-            out["pre_send"] = before is not None and len(log) == before
+            out["pre_send"] = (log is not None and bool(ref) and not any(
+                isinstance(op, tuple) and len(op) >= 5 and op[0] == "PLACE" and op[-1] == ref for op in log))
             return out
 
         try:

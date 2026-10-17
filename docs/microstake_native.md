@@ -47,7 +47,11 @@ sono raggiunti solo dall'engine o dal router). Importi >= 2 EUR restano sul perc
    `test_insufficient_available_funds_block_...`, `test_total_exposure_headroom_caps_...`;
 3. **PLACE** dello stub da 2 EUR al prezzo passivo, riserva transitoria tenuta (rilasciata all'attivazione: dopo
    la saga i fondi dell'ordine economico li contabilizza l'exchange; resta tenuta solo in AMBIGUOUS);
-4. **cancellazione parziale** `sizeReduction = 2 − importo` => residuo esatto = importo economico;
+4. **cancellazione parziale** `sizeReduction = 2 − importo` => residuo esatto = importo economico. L'importo deve
+   essere rappresentabile in centesimi: più di due decimali => BLOCKED `invalid_size_precision` **prima** dell'invio
+   (l'exchange arrotonderebbe, cioè eseguirebbe un importo diverso da quello richiesto). Un residuo del broker diverso
+   dall'importo richiesto non diventa mai ACTIVE: AMBIGUOUS `unexpected_residual_size`, riconciliazione (rilievo
+   Codex #512, PF-PR-RECOVERY-DECISIONS-02);
 5. **REPLACE** al prezzo target **solo se diverso** dallo stub (Betfair crea un **nuovo betId**: la saga persiste la
    nuova identità e smette di riferirsi alla vecchia). Senza controparte lo stub è già al target: identità invariata;
 6. stub abbinato (in tutto o in parte), risposta persa o **qualsiasi eccezione del broker dopo l'invio** (timeout,
@@ -56,6 +60,11 @@ sono raggiunti solo dall'engine o dal router). Importi >= 2 EUR restano sul perc
    tenuta e `order_unknown=True` verso l'engine (riconciliazione, **mai retry**: un ref AMBIGUOUS risponde
    `DUPLICATE_BLOCKED`);
 7. replace rifiutato => rollback (cancel del residuo) dall'identità persistita, mai per scansione di prezzo.
+
+Blocco **pre-invio** (`pre_send=True` nel risultato): calcolato **per `customer_ref`** (nessuna `PLACE` di questa
+saga nel log operazioni dell'adapter), non dalla lunghezza globale del log: una saga concorrente che invia il proprio
+stub nello stesso istante non maschera il blocco (rilievo Grok #512). Solo con `pre_send=True` l'engine rilascia
+l'intento dedupe; AMBIGUOUS e rollback dopo PLACE restano `pre_send=False`.
 
 Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commission`), invariata.
 
@@ -87,6 +96,14 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
 (solo riduzione/replace mancanti, **mai un nuovo PLACE**). Se resta una saga pendente, lo store è illeggibile o manca
 l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
 e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
+`resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
+riescono (rilievo Codex #512: prima ritentava solo F018).
+
+Snapshot del broker SIM: dopo ogni operazione della saga l'adapter chiama `SimulationBroker.persist_snapshot()`
+(scrittura **sotto il lock** del broker, così due saghe concorrenti non pubblicano uno snapshot più vecchio dopo uno
+più nuovo). Un fallimento non è silenzioso: contato in `port.snapshot_failures` e dichiarato nel risultato
+dell'esecutore (`snapshot_persisted: false`); la saga persistita resta l'autorità e un riavvio senza stub
+ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE.
 
 ## 6. Limiti dichiarati (non PASS)
 

@@ -955,9 +955,11 @@ class SimulationBroker:
         if not (self.db and hasattr(self.db, "save_simulation_state")):
             return False
         try:
+            # Salvataggio SOTTO il lock (rilievo Grok #512): due saghe concorrenti non possono
+            # pubblicare uno snapshot piu' vecchio dopo uno piu' nuovo (lost update).
             with self._lock:
                 snapshot = self.state.to_dict()
-            self.db.save_simulation_state("default", snapshot)
+                self.db.save_simulation_state("default", snapshot)
             return True
         except Exception:
             logger.exception("Errore save_simulation_state (persist_snapshot)")

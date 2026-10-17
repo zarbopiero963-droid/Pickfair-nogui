@@ -207,7 +207,9 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         data = blob(repo, commit, files[f])
         if hashlib.sha256(data).hexdigest() != manifest[f]:
             problems.append(f"hash errato: {f}")
-        if not f.endswith(".py"):
+        if os.path.basename(f) != "pfckpt.py":
+            # esente SOLO lo scanner stesso (contiene i pattern): ogni altro file, sorgenti Python del
+            # code_patch compresi, viene scansionato (rilievo Codex #512)
             for pat in SECRET_PATTERNS:
                 if pat.search(data.decode(errors="ignore")):
                     problems.append(f"possibile segreto in {f}")

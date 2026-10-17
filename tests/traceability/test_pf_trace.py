@@ -17,11 +17,18 @@ REG = os.path.join(ROOT, "docs", "traceability", "requirements.json")
 
 def _good(tmp_path):
     test_file = tmp_path / "tests" / "test_x.py"
-    test_file.parent.mkdir(parents=True)
-    test_file.write_text("def test_ok():\n    assert True\n")
+    if not test_file.exists():
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("def test_ok():\n    assert True\n")
+        # rilievo Codex #512: lo SHA di un'evidenza deve essere un commit reale del repository
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
+        subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+        subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, env=env)
+        subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "c"], check=True, env=env)
+    sha = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "--short=7", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     req = {"id": "R-1", "text": "t", "source": "s", "owner_decision": "D", "activity": "ACTIVE", "status": "TESTED",
            "issue": ["#1"], "component": ["x.py"], "code": ["x.py::f"], "oracle": "o", "tests": ["tests/test_x.py::test_ok"],
-           "evidence": [{"sha": "8ffb4f3", "command": "pytest", "environment": "venv", "timestamp": "2026-10-17T00:00:00Z", "result": "PASS"}],
+           "evidence": [{"sha": sha, "command": "pytest", "environment": "venv", "timestamp": "2026-10-17T00:00:00Z", "result": "PASS"}],
            "findings": [], "reviewer": None, "gate": "A", "limitations": []}
     return {"schema": "pf-traceability/1", "requirements": [req]}
 
@@ -69,7 +76,8 @@ def test_evidence_is_append_only_and_requirements_cannot_disappear(tmp_path):
     data["requirements"][0]["evidence"][0]["note"] = "riscritta"         # modifica di un'evidenza precedente
     assert any("append-only" in e for e in _errs(data, tmp_path, previous))
     data2 = copy.deepcopy(previous)
-    data2["requirements"][0]["evidence"].append({"sha": "abcdef1", "command": "pytest", "environment": "venv",
+    real_sha = previous["requirements"][0]["evidence"][0]["sha"]
+    data2["requirements"][0]["evidence"].append({"sha": real_sha, "command": "pytest", "environment": "venv",
                                                  "timestamp": "2026-10-18T00:00:00Z", "result": "PASS"})
     assert _errs(data2, tmp_path, previous) == []                        # aggiungere e' sempre ammesso
     data3 = {"schema": "pf-traceability/1", "requirements": []}

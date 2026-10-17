@@ -2622,6 +2622,15 @@ class RuntimeController:
             return {"resumed": False, "reason": session_block, "status": self._safe_status_snapshot()}
         if getattr(self, "_reconciliation_required", False):
             # PF-ALL-F018: il resume non scavalca una riconciliazione post-riavvio incompleta: la ritenta.
+            # Microstake (rilievo Codex #512, PF-PR-RECOVERY-DECISIONS-02): anche le saghe pendenti vanno
+            # ritentate qui, altrimenti una ricostruzione F018 riuscita azzererebbe il flag con uno stub da
+            # 2 EUR ancora irrisolto sull'exchange. Entrambe devono riuscire prima di ACTIVE.
+            microstake = self._recover_native_microstake()
+            if not microstake.get("ok", False):
+                return {"resumed": False,
+                        "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
+                                  f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
+                        "microstake": microstake, "status": self._safe_status_snapshot()}
             rebuild = self._rebuild_open_positions()
             self._last_position_rebuild = dict(rebuild)
             if not rebuild["ok"]:
@@ -3677,7 +3686,7 @@ class RuntimeController:
 
     def _recover_native_microstake(self) -> Dict[str, Any]:
         """Riconciliazione delle saghe Microstake pendenti via engine; errore => non ok (fail-closed)."""
-        fn = getattr(self.trading_engine, "recover_native_microstake_sagas", None)
+        fn = getattr(getattr(self, "trading_engine", None), "recover_native_microstake_sagas", None)
         if not callable(fn):
             return {"ok": True, "status": "ENGINE_WITHOUT_MICROSTAKE", "pending": []}
         try:

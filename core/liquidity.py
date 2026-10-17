@@ -16,7 +16,10 @@ def liquidity_crosses(side: Any, order_price: float, book_price: float) -> bool:
 
 def sum_executable_liquidity(ladder: Any, side: Any, order_price: float) -> float:
     total = 0.0
-    for level in ladder or []:
+    if not isinstance(ladder, (list, tuple)):
+        # ladder malformata (rilievo Codex #512): nessuna liquidita' dimostrabile, mai un'eccezione
+        return total
+    for level in ladder:
         try:
             lvl_price = float((level or {}).get("price", 0.0) or 0.0)
             lvl_size = float((level or {}).get("size", 0.0) or 0.0)
@@ -51,8 +54,10 @@ def executable_liquidity(book: Any, selection_id: Any, side: Any, price: Any) ->
                 continue
         except (TypeError, ValueError):
             continue
-        ladder = (runner.get("ex") or {}).get(ladder_key)
-        if ladder is None:
+        ex = runner.get("ex")
+        ladder = ex.get(ladder_key) if isinstance(ex, dict) else None
+        if not isinstance(ladder, (list, tuple)):
+            # assente o malformata (rilievo Codex #512): dato ignoto => il RiskGate nega (fail-closed)
             return None
         return sum_executable_liquidity(ladder, side, order_price)
     return None

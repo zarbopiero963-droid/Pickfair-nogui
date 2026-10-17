@@ -133,7 +133,7 @@ def test_save_commits_gitignored_artifacts(world):
 
 @pytest.mark.parametrize("case", ["missing", "altered", "wrong_hash", "incomplete_manifest", "bad_json",
                                   "unknown_code_sha", "wrong_seq", "wrong_previous", "bad_status", "pass_without_sha",
-                                  "declared_artifact_absent", "secret"])
+                                  "declared_artifact_absent", "secret", "secret_py"])
 def test_integrity_violations_are_rejected(world, case):
     a = agent(world, "a")
     head = next_state(a, world)
@@ -155,6 +155,9 @@ def test_integrity_violations_are_rejected(world, case):
     json.dump(st, open(st_path, "w"))
     if case == "secret":
         add_artifact(a, "leak.txt", 'api_key = "abcdefghijklmnopqrstuvwxyz"\n')
+    if case == "secret_py":
+        # rilievo Codex #512: un sorgente Python catturato nel code_patch non e' esente dallo scan
+        add_artifact(a, "local_credentials.py", 'APP_KEY = "abcdefghijklmnopqrstuvwxyz"\n')
     pfckpt.write_manifest(a, D)
     if case == "missing":
         os.remove(os.path.join(a, D, "results", "r.txt"))

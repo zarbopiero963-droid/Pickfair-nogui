@@ -93,7 +93,12 @@
     "tests/test_microstake_engine_native.py::test_lost_cancel_response_is_ambiguous_and_keeps_the_reservation",
     "tests/test_microstake_engine_native.py::test_broker_timeout_on_place_is_recovered_by_ref_or_ambiguous_never_failed",
     "tests/integration/test_issue461_pr26a_customer_ref_provenance.py::test_pass_dutching_identity_ignores_order_sensitive_stake_rounding",
-    "tests/test_pr512_codex_findings.py"
+    "tests/test_pr512_codex_findings.py",
+    "tests/test_pr512_recovery_fixes.py::test_stake_with_more_than_two_decimals_is_rejected_before_any_exchange_operation",
+    "tests/test_pr512_recovery_fixes.py::test_residual_different_from_the_requested_stake_is_ambiguous_never_active",
+    "tests/test_pr512_recovery_fixes.py::test_sim_snapshot_is_written_while_the_broker_lock_is_held",
+    "tests/test_pr512_recovery_fixes.py::test_snapshot_failure_is_declared_in_the_executor_result",
+    "tests/test_pr512_recovery_fixes.py::test_pre_send_is_not_masked_by_a_concurrent_place_of_another_saga"
    ],
    "evidence": [
     {
@@ -133,6 +138,16 @@
      "id": "CODEX-512-4303297596",
      "state": "FIXED",
      "text": "snapshot del broker SIM non persistito dopo lo stub: persist_snapshot dopo ogni operazione della saga"
+    },
+    {
+     "id": "CODEX-512-4303374312",
+     "state": "FIXED",
+     "note": "precisione 2 decimali + residuo verificato (PF-PR-RECOVERY-DECISIONS-02)"
+    },
+    {
+     "id": "GROK-512-6236399723",
+     "state": "FIXED",
+     "note": "snapshot sotto lock e dichiarato; pre_send per customer_ref"
     }
    ],
    "reviewer": null,
@@ -604,7 +619,9 @@
    "oracle": "riavvio con ordini aperti: posizioni ricostruite da DB + exchange, saghe pendenti completate, PAUSED se incompleto; riavvio dopo STOP: STOP conservato",
    "tests": [
     "tests/f026/test_f026_financial.py::test_RSR12_01_recovery_tables_survive_crash_and_restart",
-    "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending"
+    "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending",
+    "tests/test_pr512_recovery_fixes.py::test_resume_keeps_the_runtime_paused_while_a_microstake_saga_is_still_pending",
+    "tests/test_pr512_recovery_fixes.py::test_resume_becomes_active_only_when_both_recovery_paths_succeed"
    ],
    "evidence": [
     {
@@ -621,6 +638,11 @@
      "id": "CODEX-512-4303297587",
      "state": "OPEN",
      "text": "LIVE: cleared per bet, il primo settlement rilascia il tavolo e le leg successive dello stesso tavolo non aggiornano la recovery; aggregazione = decisione di design (finestra/CLOSED), portata all'owner"
+    },
+    {
+     "id": "CODEX-512-4303374299",
+     "state": "FIXED",
+     "note": "resume() ritenta la recovery Microstake"
     }
    ],
    "reviewer": null,
@@ -761,7 +783,8 @@
     "tests/agent_checkpoint/test_pfckpt.py::test_tampered_pointer_makes_the_checkpoint_invalid",
     "tests/agent_checkpoint/test_pfckpt.py::test_code_patch_is_captured_and_restored_in_a_fresh_environment",
     "tests/agent_checkpoint/test_pfckpt.py::test_recover_materialises_the_last_valid_checkpoint_without_touching_the_remote",
-    "tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_in_clean_environment_without_history_or_local_files"
+    "tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_in_clean_environment_without_history_or_local_files",
+    "tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[secret_py]"
    ],
    "evidence": [
     {
@@ -773,7 +796,13 @@
      "note": "40 passed; mutanti M1-M6 uccisi; checkpoint reale seq 14 d655d55 DURABLE con code_patch"
     }
    ],
-   "findings": [],
+   "findings": [
+    {
+     "id": "CODEX-512-4303374317",
+     "state": "FIXED",
+     "note": "scan segreti esteso ai .py"
+    }
+   ],
    "reviewer": null,
    "gate": "A #506",
    "limitations": [
@@ -803,7 +832,9 @@
    ],
    "oracle": "ogni violazione elencata produce FAIL con messaggio; il registro corrente valida PASS",
    "tests": [
-    "tests/traceability/test_pf_trace.py"
+    "tests/traceability/test_pf_trace.py",
+    "tests/test_pr512_recovery_fixes.py::test_fabricated_evidence_sha_is_rejected_and_a_real_one_is_accepted",
+    "tests/test_pr512_recovery_fixes.py::test_evidence_sha_outside_a_git_repository_is_not_verifiable"
    ],
    "evidence": [
     {
@@ -815,7 +846,13 @@
      "note": "17 passed; registro PASS (19 requisiti, 0 errori)"
     }
    ],
-   "findings": [],
+   "findings": [
+    {
+     "id": "CODEX-512-4303374326",
+     "state": "FIXED",
+     "note": "SHA evidenze risolti a commit"
+    }
+   ],
    "reviewer": null,
    "gate": "A #506 (A11/A12)",
    "limitations": [
