@@ -711,6 +711,39 @@ memory, local files or private artifacts. Protocol and commands:
 
 ---
 
+## Native Microstake and dynamic best price (owner decisions, 2026-10-17)
+
+Sources: #426 — PF-MICROSTAKE-NATIVE-AUTO-01 (c.6210870965),
+PF-MICROSTAKE-OWNER-RECTIFICATION-20261017 (c.6235508131),
+PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755); technical contract in
+[docs/microstake_native.md](docs/microstake_native.md). Every agent:
+
+- lets Money Management compute and request the exact stake: no artificial
+  minimum, no rounding up, no fixed 1/2 EUR cap (below the configured
+  minimum the decision is an explicit `stake_sotto_min_stake` rejection);
+- routes every amount below the exchange minimum through the native
+  Microstake saga (Quick Bet, Dutching, Roserpina, cashout hedge), with no
+  toggle; executes it exactly or fails explicitly; LIVE without an adapter
+  stays fail-closed;
+- keeps requested stake, execution stake, temporary order size (2 EUR stub,
+  within available funds and exposure headroom), matched/unmatched exposure,
+  LAY liability, funds and risk controls separate;
+- treats any unknown outcome after a send as AMBIGUOUS plus reconciliation,
+  never a retry; never alters the matched part of an order;
+- treats dynamic best price (BACK higher, LAY lower, unmatched part only,
+  verifiable chase limits, protective exits never delayed) as a registered,
+  NOT implemented requirement to build on the same execution engine;
+- applies PF-EXECUTION-SAFETY-DECISIONS-01 (#426 c.6235676826):
+  PF-EXEC-01 re-bet only the confirmed-cancelled unmatched remainder;
+  PF-EXEC-02 partial Dutching rebalanced, hedged or suspended; PF-EXEC-03
+  protective exits prioritise risk reduction, no chasing; PF-EXEC-04
+  insufficient funds block the bet, never resize it; PF-EXEC-05 suspended
+  market / unreliable feed / disconnection: no new entries, no repricing,
+  no blind retry, reconcile first; PF-EXEC-06 restart restores, reconciles,
+  keeps a prior STOP and resumes only when every check is coherent.
+
+---
+
 ## PR behavior
 
 - Create exactly one PR per task.

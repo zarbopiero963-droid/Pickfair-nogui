@@ -143,7 +143,11 @@ class Rig:
                                     safe_mode=get_safe_mode_manager(),
                                     risk_middleware=RiskGate(config=RoserpinaRiskLimits(settings)) if risk else None)
 
-    def bet(self, mid="1.9", ref="pf-f001", stake=0.5, sel=7):
+    # PF-MICROSTAKE-NATIVE-INTEGRATION-02: sotto 2 EUR l'engine instrada SEMPRE nel
+    # Microstake nativo (saga sul broker reale), mai nel trasporto diretto che questa
+    # suite pilota con risposte sintetiche (FaultBroker). Il contratto F001 C1..C12
+    # riguarda il trasporto diretto: lo stake di default resta sopra il minimo exchange.
+    def bet(self, mid="1.9", ref="pf-f001", stake=2.5, sel=7):
         p = {"market_id": mid, "selection_id": sel, "side": "BACK", "bet_type": "BACK", "stake": stake, "price": 3.0,
              "event_key": f"A{mid} v B:{sel}", "event_name": f"A{mid} v B", "customer_ref": ref, "simulation_mode": True}
         try:

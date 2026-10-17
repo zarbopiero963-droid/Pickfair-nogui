@@ -1,7 +1,14 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Dict, Tuple
+import math
+import uuid
+from typing import Any, Callable, Dict, Optional, Tuple
+
+#: Minimo del singolo ordine sull'exchange (Betfair, EUR). Sotto questa soglia
+#: il router non chiama MAI il broker direttamente: passa dal Microstake nativo
+#: (PF-MICROSTAKE-NATIVE-INTEGRATION-02) oppure fallisce chiuso.
+EXCHANGE_MINIMUM_STAKE = 2.0
 
 
 class OrderRouter:
@@ -54,8 +61,13 @@ class OrderRouter:
     #: Campi richiesti nel payload (fail-closed: assenza => KeyError).
     REQUIRED_FIELDS: Tuple[str, ...] = ("market_id", "selection_id", "bet_type", "price", "stake")
 
-    def __init__(self, betfair_service):
+    def __init__(self, betfair_service, microstake_executor_provider: Optional[Callable[[], Any]] = None):
         self.service = betfair_service
+        # Microstake nativo (decisione owner PF-MICROSTAKE-NATIVE-AUTO-01): non e'
+        # una flag ma l'esecutore dell'engine, risolto lazy a ogni invio perche'
+        # il broker attivo (SIM/LIVE) si decide al momento del place. Assente
+        # (es. LIVE senza adapter) => un hedge sotto il minimo fallisce chiuso.
+        self._microstake_executor_provider = microstake_executor_provider
 
     def place(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Piazza un ordine sul broker attivo e ritorna l'esito normalizzato."""
@@ -63,6 +75,9 @@ class OrderRouter:
         for field in self.REQUIRED_FIELDS:
             if field not in payload:
                 raise KeyError(field)
+
+        if self._below_exchange_minimum(payload.get("stake")):
+            return self._place_native_microstake(payload)
 
         # Tutti i kwargs che un broker POTREBBE accettare; _filter_kwargs
         # taglia quelli fuori firma del broker attivo (no TypeError sul live,
@@ -88,6 +103,77 @@ class OrderRouter:
         # mascherate come piazzamento riuscito.
         raw = client.place_bet(**call_kwargs)
         return self._normalize(raw)
+
+    @staticmethod
+    def _below_exchange_minimum(raw_stake: Any) -> bool:
+        """True solo per uno stake numerico finito in (0, minimo exchange).
+
+        Tutto il resto (non numerico, NaN/Inf, <= 0) resta al broker, che lo
+        rifiuta come sempre: qui non si valida, si instrada.
+        """
+        if raw_stake is None or isinstance(raw_stake, bool):
+            return False
+        try:
+            stake = float(raw_stake)
+        except (TypeError, ValueError):
+            return False
+        return math.isfinite(stake) and 0.0 < stake < EXCHANGE_MINIMUM_STAKE
+
+    def _place_native_microstake(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Importo sotto il minimo: solo il Microstake nativo, mai il broker diretto.
+
+        Il ``customer_ref`` del cashout e' la ``source`` del comando, non e' unico:
+        la saga ha bisogno di un'identita' propria, quindi se ne genera una per
+        questo invio (``raw["microstake_ref"]``). Il cashout non ritenta mai un
+        esito AMBIGUO (vedi ``CashoutExecutor``), percio' la perdita
+        dell'idempotenza per-ref sul retry non apre a un secondo hedge.
+        """
+        # Stesso contratto pre-invio del broker (DECISIONE-426 P13/P15): un lato
+        # assente o non BACK/LAY si rifiuta PRIMA di qualunque esecutore.
+        side = payload.get("bet_type")
+        if not isinstance(side, str) or side.strip().upper() not in {"BACK", "LAY"}:
+            raise RuntimeError("INVALID_SIDE")
+        provider = self._microstake_executor_provider
+        executor = provider() if callable(provider) else None
+        execute = getattr(executor, "execute", None)
+        if not callable(execute):
+            return self._result(
+                ok=False, placed=False, order_unknown=False, status="FAILURE",
+                matched=0.0, bet_id=None, error="MICROSTAKE_EXECUTOR_UNAVAILABLE", raw=None,
+            )
+        base_ref = str(payload.get("customer_ref") or "cashout").strip() or "cashout"
+        ref = f"{base_ref[:16]}-ms-{uuid.uuid4().hex[:12]}"
+        native_payload = {
+            "market_id": payload["market_id"],
+            "selection_id": payload["selection_id"],
+            "side": side.strip().upper(),
+            "bet_type": side.strip().upper(),
+            "price": payload["price"],
+            "stake": payload["stake"],
+            "size": payload["stake"],
+            "customer_ref": ref,
+        }
+        raw = execute(native_payload)
+        return self._normalize_native(raw, ref)
+
+    @classmethod
+    def _normalize_native(cls, raw: Any, ref: str) -> Dict[str, Any]:
+        """Esito dell'esecutore nativo nello shape del router (AMBIGUOUS mai mascherato)."""
+        if not isinstance(raw, dict):
+            return cls._result(ok=False, placed=False, order_unknown=False, status="UNKNOWN",
+                               matched=0.0, bet_id=None, error="NON_DICT_RESPONSE", raw=raw)
+        raw = dict(raw, microstake_ref=ref)
+        status = str(raw.get("status") or "").upper()
+        if raw.get("order_unknown") is True or status == "AMBIGUOUS":
+            return cls._result(ok=False, placed=False, order_unknown=True, status="AMBIGUOUS",
+                               matched=0.0, bet_id=None, error=raw.get("error"), raw=raw)
+        matched, bet_id = cls._sum_reports(raw.get("instructionReports"))
+        placed = status == "SUCCESS" and bet_id is not None
+        return cls._result(
+            ok=placed and matched > 0.0, placed=placed, order_unknown=False,
+            status=status or "UNKNOWN", matched=matched, bet_id=bet_id,
+            error=None if placed else (raw.get("error") or "BET_REJECTED"), raw=raw,
+        )
 
     @staticmethod
     def _filter_kwargs(fn: Callable[..., Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:

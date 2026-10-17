@@ -140,9 +140,11 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
 
     broker = SimulationBroker()
     router = OrderRouter(PaperService())
+    # stake sopra il minimo exchange: sotto, il router passa dal Microstake nativo
+    # (PF-MICROSTAKE-NATIVE-INTEGRATION-02) e qui si prova il trasporto diretto.
     routed = router.place({
         "market_id": "1.1", "selection_id": 7, "bet_type": "LAY",
-        "price": 2.0, "stake": 1.0,
+        "price": 2.0, "stake": 2.0,
     })
     assert routed["placed"] is True
     assert broker.state.orders[routed["bet_id"]].side == "LAY"
@@ -181,9 +183,11 @@ def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
         }}],
     })
     bus = Bus()
+    # hedge sopra il minimo exchange: sotto, il router passa dal Microstake nativo
+    # (qui non cablato); la parita' del lato si prova sul trasporto diretto.
     CashoutExecutor(bus, router).on_cmd_execute_cashout({
         "market_id": "1.1", "selection_id": 9, "side": "LAY",
-        "price": 1.8, "stake": 1.0, "green_up": 0.0,
+        "price": 1.8, "stake": 2.0, "green_up": 0.0,
     })
     assert len(bus.events) == 1
     assert bus.events[0][0] == "CASHOUT_SUCCESS"

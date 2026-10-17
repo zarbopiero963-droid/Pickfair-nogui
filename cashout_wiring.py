@@ -51,6 +51,7 @@ def cabla_catena_cashout(
     betfair_service: Any,
     persist: Callable[[Dict[str, Any]], None],
     notify: Callable[..., None],
+    microstake_executor_provider: Callable[[], Any] | None = None,
 ) -> CatenaCashout:
     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
 
@@ -75,7 +76,10 @@ def cabla_catena_cashout(
     if bus is None or betfair_service is None:
         raise RuntimeError("Bus/BetfairService non inizializzati per il wiring cashout")
 
-    order_router = OrderRouter(betfair_service)
+    # Microstake nativo anche per l'hedge del cashout (PF-MICROSTAKE-NATIVE-AUTO-01,
+    # lotto M4): sotto il minimo exchange il router non chiama il broker diretto.
+    # Senza provider (es. harness di test senza engine) resta fail-closed.
+    order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
     cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer())
     cashout_executor.wire()
 

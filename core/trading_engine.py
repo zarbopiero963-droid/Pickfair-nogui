@@ -3,6 +3,7 @@ from __future__ import annotations
 import concurrent.futures
 import inspect
 import logging
+import math
 import threading
 import time
 import uuid
@@ -192,7 +193,8 @@ class TradingEngine:
     def __init__(self, bus: Any, db: Any, client_getter: Any, executor: Any,
                  safe_mode: Any = None, risk_middleware: Any = None,
                  reconciliation_engine: Any = None, state_recovery: Any = None,
-                 async_db_writer: Any = None) -> None:
+                 async_db_writer: Any = None,
+                 microstake_executor: Any = None) -> None:
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
@@ -208,6 +210,10 @@ class TradingEngine:
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery = state_recovery or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
+        # Native automatic execution path.  This is dependency injection for
+        # the Exchange adapter, not a user-facing feature flag: every request
+        # below the Exchange minimum is routed here or denied fail-closed.
+        self.microstake_executor = microstake_executor
         self.runtime_controller = None
         self.simulation_broker = None
         self.betfair_client = None
@@ -1981,6 +1987,11 @@ class TradingEngine:
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             modalita_dichiarata = mode
             if mode == "SIMULATION":
+                routed, micro_result = self._route_native_microstake(
+                    ctx, payload, modalita_dichiarata
+                )
+                if routed:
+                    return micro_result
                 broker = self.simulation_broker
                 if broker is not None and callable(getattr(broker, "execute", None)):
                     return self._invia_marcando_l_intento(
@@ -2005,6 +2016,12 @@ class TradingEngine:
                 _betfair_svc = getattr(runtime, "betfair_service", None)
                 if _betfair_svc is not None and getattr(_betfair_svc, "_session_invalid", False) is True:
                     raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
+
+                routed, micro_result = self._route_native_microstake(
+                    ctx, payload, modalita_dichiarata
+                )
+                if routed:
+                    return micro_result
 
                 live_client = self._resolve_live_client()
                 live_client_risolto = True
@@ -2076,6 +2093,14 @@ class TradingEngine:
                         self._order_submission_breaker.record_success()
                         return result
 
+        # Test/embedded path without a RuntimeController.  Production always
+        # declares SIM/LIVE above, but the same automatic rule remains in
+        # force here so no alternate entry can send a small order directly.
+        if not modalita_dichiarata:
+            routed, micro_result = self._route_native_microstake(ctx, payload, "")
+            if routed:
+                return micro_result
+
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):
                 fn = getattr(self.order_manager, mn, None)
@@ -2145,6 +2170,193 @@ class TradingEngine:
                         lambda: place(**self._kwargs_per_place_bet(place, payload)))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
+
+    @staticmethod
+    def _native_microstake_amount(payload: Dict[str, Any]) -> Optional[float]:
+        raw = payload.get("stake", payload.get("size"))
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return amount if math.isfinite(amount) else None
+
+    def _route_native_microstake(
+        self,
+        ctx: _ExecutionContext,
+        payload: Dict[str, Any],
+        mode: str,
+    ) -> tuple[bool, Any]:
+        """Route sub-€2 requests through the single native coordinator.
+
+        Missing wiring is a pre-send, fail-closed error.  The ordinary direct
+        broker path is never used as a fallback for a small amount.
+        """
+        amount = self._native_microstake_amount(payload)
+        if amount is None or amount >= 2.0:
+            return False, None
+        if amount <= 0:
+            raise _ErrorePrimaDellInvio("INVALID_SIZE")
+        # Lato validato PRIMA dell'instradamento, come sul percorso diretto: un
+        # alias discordante e' un errore pre-invio (INVALID_SIDE), identico in
+        # SIM e LIVE, e non diventa mai un esito del Microstake.
+        payload = self._con_lato_valido(payload)
+        coordinator = self.microstake_executor
+        if coordinator is None:
+            coordinator = self._default_native_microstake_executor(mode)
+        execute = getattr(coordinator, "execute", None)
+        if not callable(execute):
+            raise _ErrorePrimaDellInvio("MICROSTAKE_EXECUTOR_UNAVAILABLE")
+        result = self._invia_marcando_l_intento(
+            ctx, mode, coordinator, lambda: execute(dict(payload))
+        )
+        return True, result
+
+    def native_microstake_executor(self) -> Any:
+        """Esecutore Microstake nativo per la modalita' corrente (None = non disponibile, fail-closed).
+
+        Usato anche fuori dal choke point (hedge del cashout via OrderRouter) cosi'
+        l'intera applicazione ha UN solo esecutore e UNA sola saga persistita.
+        """
+        if self.microstake_executor is not None:
+            return self.microstake_executor
+        runtime = self.runtime_controller
+        mode = ""
+        if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
+            try:
+                mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            except Exception:
+                return None
+        return self._default_native_microstake_executor(mode)
+
+    def recover_native_microstake_sagas(self) -> Dict[str, Any]:
+        """Riconcilia all'avvio le saghe Microstake non concluse (PF-MICROSTAKE-NATIVE-INTEGRATION-02, M5).
+
+        Fail-closed: ``ok`` e' True solo se non resta alcuna saga pendente. Store
+        illeggibile, esecutore assente con saghe pendenti, o una saga ancora
+        AMBIGUOUS dopo il recovery => ``ok`` False e l'elenco dei ref: il
+        runtime non deve accettare nuovi ingressi finche' uno stub da 2 EUR puo'
+        essere ancora sull'exchange.
+        """
+        try:
+            from core.microstake_sim_port import DbSagaStore, SagaStoreError
+        except Exception as exc:  # pragma: no cover - import difensivo
+            return {"ok": False, "status": "MODULE_UNAVAILABLE", "error": str(exc), "pending": []}
+        try:
+            store = DbSagaStore(self.db)
+        except TypeError:
+            return {"ok": True, "status": "NO_STORE", "pending": [], "results": {}}
+        try:
+            pending = store.pending_refs()
+        except SagaStoreError as exc:
+            return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc), "pending": []}
+        if not pending:
+            return {"ok": True, "status": "NOTHING_PENDING", "pending": [], "results": {}}
+        executor = self.native_microstake_executor()
+        recover = getattr(executor, "recover_pending", None)
+        if not callable(recover):
+            return {"ok": False, "status": "NO_EXECUTOR", "pending": pending, "results": {}}
+        results = recover()
+        still = sorted(ref for ref, phase in results.items() if phase != "ACTIVE")
+        return {"ok": not still, "status": "RECOVERED" if not still else "PENDING",
+                "pending": still, "results": results}
+
+    def _default_native_microstake_executor(self, mode: str) -> Any:
+        """Esecutore nativo costruito dal broker di simulazione, senza flag.
+
+        Solo per il broker SIM riconosciuto per identita'/classe e solo fuori dal
+        ramo LIVE: in LIVE non esiste ancora un adapter (fail-closed,
+        MICROSTAKE_EXECUTOR_UNAVAILABLE). Costruito una volta e riusato: lo
+        stato della saga vive nel DB dell'app, non nell'oggetto.
+        """
+        if str(mode or "").upper() == "LIVE":
+            return None
+        broker = self.simulation_broker
+        if broker is None and callable(self.client_getter):
+            try:
+                candidate = self.client_getter()
+            except Exception:
+                candidate = None
+            if candidate is not None:
+                try:
+                    from simulation_broker import SimulationBroker
+                except Exception:
+                    SimulationBroker = ()  # type: ignore[assignment]
+                if (self._e_il_broker_di_simulazione(candidate)
+                        or isinstance(candidate, SimulationBroker)):
+                    broker = candidate
+        if broker is None or self._e_il_client_betfair_reale(broker):
+            return None
+        try:
+            from core.microstake_sim_port import build_native_microstake_executor
+            self.microstake_executor = build_native_microstake_executor(
+                broker, self.db, self._native_transient_cap)
+        except Exception:
+            logger.exception("Microstake nativo: esecutore SIM non costruibile (fail-closed)")
+            return None
+        return self.microstake_executor
+
+    def _native_transient_cap(self, payload: Dict[str, Any]) -> Optional[float]:
+        """Cap dell'esposizione TEMPORANEA dello stub Microstake (PF-MICROSTAKE-OWNER-RECTIFICATION-20261017).
+
+        Lo stake richiesto e' gia' passato da Money Management e RiskGate con i cap
+        per singolo ordine: quelli valgono per lo stake richiesto/eseguito, NON per
+        l'importo nominale temporaneo della procedura exchange (decisione owner:
+        nessun cap fisso 1/2 EUR sul Microstake). L'importo temporaneo resta pero'
+        un'esposizione reale per pochi istanti e deve stare dentro cio' che e'
+        davvero disponibile: il minimo fra
+        - fondi disponibili dell'exchange (servizio Betfair del runtime o, senza
+          runtime, il broker di simulazione che eseguira' lo stub);
+        - headroom dell'esposizione totale configurata (max_total_exposure sul
+          bankroll noto meno l'esposizione aperta), quando il runtime la espone.
+        Nessuna fonte leggibile => None => BLOCKED (`transient_cap_unavailable`).
+        """
+        _ = payload
+        candidates = []
+        rc = self.runtime_controller
+        funds = None
+        svc = getattr(rc, "betfair_service", None)
+        read = getattr(svc, "get_account_funds", None)
+        if callable(read):
+            try:
+                funds = read()
+            except Exception:
+                return None
+        else:
+            broker = getattr(getattr(self.microstake_executor, "port", None), "broker", None)
+            read = getattr(broker, "get_account_funds", None)
+            if callable(read):
+                try:
+                    funds = read()
+                except Exception:
+                    return None
+        if isinstance(funds, dict) and funds.get("ok", True) is not False:
+            raw = funds.get("available")
+            if raw is not None and not isinstance(raw, bool):
+                try:
+                    available = float(raw)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(available):
+                    return None
+                candidates.append(max(0.0, available))
+        mm = getattr(rc, "mm", None)
+        desk = getattr(rc, "risk_desk", None)
+        tables = getattr(rc, "table_manager", None)
+        total_cap = getattr(mm, "_max_total_exposure_abs", None)
+        bankroll = getattr(desk, "bankroll_current", None)
+        open_exposure = getattr(tables, "total_exposure", None)
+        if (callable(total_cap) and callable(open_exposure) and isinstance(bankroll, (int, float))
+                and not isinstance(bankroll, bool) and math.isfinite(bankroll) and bankroll > 0):
+            try:
+                headroom = float(total_cap(bankroll)) - float(open_exposure())
+            except Exception:
+                return None
+            if not math.isfinite(headroom):
+                return None
+            candidates.append(max(0.0, headroom))
+        return min(candidates) if candidates else None
 
     def _classify_ambiguity(self, exc: Exception) -> str:
         text = str(exc).lower()

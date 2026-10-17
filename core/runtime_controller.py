@@ -2519,7 +2519,15 @@ class RuntimeController:
         # di accettare nuovi ingressi. Riconciliazione incompleta => runtime in PAUSED, mai ACTIVE
         # (ATOMIC-RESERVE-01 regola 7: nessun nuovo ingresso prima della riconciliazione completa).
         self._restore_recovery_tables()                                # RSR-12, prima di F018
+        # Microstake nativo (M5): uno stub da 2 EUR lasciato intero da un crash fra
+        # PLACE e riduzione va completato dalla sua identita' persistita PRIMA di
+        # ricostruire le posizioni, altrimenti F018 vedrebbe un'esposizione da 2 EUR.
+        microstake = self._recover_native_microstake()
         rebuild = self._rebuild_open_positions()
+        if not microstake.get("ok", False):
+            rebuild = dict(rebuild, ok=False, reason=(
+                f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
+                if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
         self._last_position_rebuild = dict(rebuild)
         self._reconciliation_required = not rebuild["ok"]
         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
@@ -3653,6 +3661,24 @@ class RuntimeController:
                     "customer_ref": c["customer_ref"], "bet_id": c["bet_id"], "market_id": c["market_id"],
                     "table_id": table["table_id"], "released_exposure": table.get("current_exposure")})
         return released
+
+    def _recover_native_microstake(self) -> Dict[str, Any]:
+        """Riconciliazione delle saghe Microstake pendenti via engine; errore => non ok (fail-closed)."""
+        fn = getattr(self.trading_engine, "recover_native_microstake_sagas", None)
+        if not callable(fn):
+            return {"ok": True, "status": "ENGINE_WITHOUT_MICROSTAKE", "pending": []}
+        try:
+            out = fn()
+        except Exception as exc:
+            logger.exception("Microstake: recovery delle saghe fallita")
+            return {"ok": False, "status": f"ERROR:{type(exc).__name__}", "pending": []}
+        if not isinstance(out, dict):
+            return {"ok": False, "status": "MALFORMED_RESULT", "pending": []}
+        if out.get("ok"):
+            logger.info("Microstake: saghe riconciliate (%s)", out.get("status"))
+        else:
+            logger.error("Microstake: saghe pendenti non riconciliate: %s", out)
+        return out
 
     def _rebuild_open_positions(self) -> dict:
         """PF-ALL-F018: ricostruisce tavoli, esposizione e chiavi anti-duplicato delle posizioni aperte.

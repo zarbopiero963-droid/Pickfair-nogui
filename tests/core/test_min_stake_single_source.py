@@ -90,10 +90,15 @@ def test_money_management_fallback_follows_trading_config(monkeypatch):
         event_current_exposure=0.0,
         table={"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
     )
-    # base_stake=1.0 ; il clamp lo alza al floor = fallback = trading_config.MIN_STAKE.
-    # NEW: fallback 2.0 => recommended 2.0. OLD: fallback 0.10 => recommended 1.0 => FALLISCE.
-    assert dec.approved is True
-    assert dec.recommended_stake == pytest.approx(2.0)
+    # base_stake=1.0 sotto il floor = fallback = trading_config.MIN_STAKE (2.0).
+    # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: il floor NON alza piu' lo stake
+    # (prima: recommended 2.0); e' un rifiuto esplicito con lo stake richiesto in
+    # chiaro. Il fallback resta trading_config.MIN_STAKE: con 0.10 la decisione
+    # sarebbe approvata a 1.0 (vedi guardia sotto).
+    assert dec.approved is False
+    assert dec.reason == "stake_sotto_min_stake"
+    assert dec.recommended_stake == pytest.approx(1.0)
+    assert dec.metadata["min_stake"] == pytest.approx(2.0)
 
 
 # ---------------------------------------------------------------------------

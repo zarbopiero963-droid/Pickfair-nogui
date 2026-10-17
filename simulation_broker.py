@@ -945,6 +945,41 @@ class SimulationBroker:
             "simulated": True,
         }
 
+    def best_counterparty_price(self, market_id: str, selection_id: int, side: str) -> Optional[float]:
+        """Miglior prezzo della controparte sul book simulato, o None se assente.
+
+        Lettura pubblica e coerente con `_match_order` (PF-MICROSTAKE-NATIVE-INTEGRATION-02):
+        un BACK si abbina sul miglior ``availableToBack``, un LAY sul miglior ``availableToLay``.
+        Senza book, runner o livello valido non c'e' nulla con cui incrociare.
+        """
+        with self._lock:
+            market = self.state.market_books.get(str(market_id))
+            if not market:
+                return None
+            runner = None
+            for r in market.get("runners") or []:
+                try:
+                    rid = int(r.get("selectionId") or r.get("selection_id") or 0)
+                except (TypeError, ValueError):
+                    rid = 0
+                if rid == int(selection_id):
+                    runner = r
+                    break
+            if not runner:
+                return None
+            ex = runner.get("ex") or {}
+            levels = ex.get("availableToBack" if str(side).upper() == "BACK" else "availableToLay") or []
+            if not levels:
+                return None
+            try:
+                price = float((levels[0] or {}).get("price") or 0.0)
+                size = float((levels[0] or {}).get("size") or 0.0)
+            except (TypeError, ValueError):
+                return None
+            if not math.isfinite(price) or price <= 1.0 or size <= 0.0:
+                return None
+            return price
+
     def list_current_orders(self, market_ids: Optional[List[str]] = None) -> Dict[str, Any]:
         with self._lock:
             orders = []
@@ -1041,6 +1076,7 @@ class SimulationBroker:
     ) -> Dict[str, Any]:
         _ = customer_ref
         reports = []
+        da_persistere_cancel: List[SimOrder] = []
         with self._lock:
             if not instructions:
                 for order in self.state.orders.values():
@@ -1073,17 +1109,47 @@ class SimulationBroker:
                     reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
                     continue
 
-                if order.status == "EXECUTABLE":
-                    order.status = "CANCELLED"
-                    order.updated_at = datetime.utcnow().isoformat()
-                    reports.append(
-                        {
-                            "status": "SUCCESS",
-                            "sizeCancelled": max(0.0, order.size - order.matched_size),
-                        }
-                    )
-                else:
+                if order.status != "EXECUTABLE":
                     reports.append({"status": "FAILURE", "sizeCancelled": 0.0})
+                    continue
+                remaining = max(0.0, order.size - order.matched_size)
+                # PF-MICROSTAKE-NATIVE-INTEGRATION-02 (M2): cancellazione PARZIALE con la
+                # semantica Betfair di `sizeReduction`. Assente/None => cancellazione
+                # intera (comportamento storico). Presente: deve essere un numero finito
+                # > 0, altrimenti FAILURE senza toccare lo stato (fail-closed, come il
+                # client LIVE che rifiuta l'istruzione). Una riduzione >= al residuo
+                # cancella tutto il residuo; una riduzione minore lascia l'ordine
+                # EXECUTABLE con ESATTAMENTE il residuo economico voluto, parte
+                # abbinata invariata e visibile.
+                raw_reduction = item.get("sizeReduction", item.get("size_reduction"))
+                if raw_reduction is not None:
+                    if isinstance(raw_reduction, bool):
+                        reports.append({"status": "FAILURE", "sizeCancelled": 0.0,
+                                        "errorCode": "INVALID_SIZE_REDUCTION"})
+                        continue
+                    try:
+                        reduction = float(raw_reduction)
+                    except (TypeError, ValueError):
+                        reduction = float("nan")
+                    if not math.isfinite(reduction) or reduction <= 0.0:
+                        reports.append({"status": "FAILURE", "sizeCancelled": 0.0,
+                                        "errorCode": "INVALID_SIZE_REDUCTION"})
+                        continue
+                    if reduction < remaining:
+                        order.size = round(order.size - reduction, 2)
+                        order.updated_at = datetime.utcnow().isoformat()
+                        da_persistere_cancel.append(order)
+                        reports.append({"status": "SUCCESS", "sizeCancelled": round(reduction, 2)})
+                        continue
+                order.status = "CANCELLED"
+                order.updated_at = datetime.utcnow().isoformat()
+                da_persistere_cancel.append(order)
+                reports.append({"status": "SUCCESS", "sizeCancelled": remaining})
+
+        # La cancellazione (totale o parziale) deve essere durevole come la
+        # sostituzione: un reload non deve resuscitare il residuo cancellato.
+        for order in da_persistere_cancel:
+            self._persist_order(order)
 
         return {
             "status": "SUCCESS",

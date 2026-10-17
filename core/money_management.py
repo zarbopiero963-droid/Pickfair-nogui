@@ -427,7 +427,27 @@ class RoserpinaMoneyManagement:
                 },
             )
 
-        # clamp tecnico
+        # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato NON si
+        # arrotonda mai verso l'alto fino al minimo. Il minimo configurato resta un
+        # limite: sotto, rifiuto ESPLICITO con lo stake richiesto in chiaro (il
+        # Microstake nativo esegue esattamente gli importi sotto il minimo exchange;
+        # un minimo software resta solo cio' che l'owner ha configurato).
+        if recommended < min_stake and not math.isclose(recommended, min_stake, rel_tol=0.0, abs_tol=1e-9):
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=recommended,
+                desk_mode=desk_mode,
+                reason="stake_sotto_min_stake",
+                table_id=table_id,
+                metadata={
+                    "base_stake": base_stake,
+                    "risk_mult": risk_mult,
+                    "desk_mult": desk_mult,
+                    "requested_stake": recommended,
+                    "min_stake": min_stake,
+                },
+            )
+        # clamp tecnico verso l'alto al tetto del singolo ordine (invariato)
         recommended = self._clamp(recommended, min_stake, max(max_single, min_stake))
         # Rischio dell'ordine (#461 PR28): BACK = stake, LAY = liability
         # stake*(quota-1). Prima tutti i cap confrontavano lo stake: una LAY 10

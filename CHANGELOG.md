@@ -9,6 +9,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Added
+- **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e
+  PF-MICROSTAKE-OWNER-RECTIFICATION-20261017):** ogni importo sotto il minimo exchange (2 EUR) passa dal Microstake
+  nativo — saga PLACE stub 2 EUR a prezzo passivo → `sizeReduction` al residuo esatto → REPLACE solo se serve (nuovo
+  betId persistito) — sul `SimulationBroker` reale (`core/microstake_sim_port.py`), senza flag; LIVE senza adapter
+  resta fail-closed. Vale per Quick Bet, Dutching, Roserpina e per l'hedge del cashout (`OrderRouter`). Esposizione
+  temporanea dello stub entro fondi disponibili e headroom di esposizione; saga nel DB (`microstake.sagas`),
+  recovery all'avvio prima di F018 (PAUSED se pendente). `SimulationBroker.cancel_orders` supporta `sizeReduction`.
+  Docs: `docs/microstake_native.md`.
+
+### Changed
+- **Money Management (rettifica owner 17/10/2026):** lo stake calcolato non viene più alzato in silenzio al
+  `min_stake`: sotto il minimo configurato la decisione è rifiutata con `stake_sotto_min_stake` e lo stake richiesto
+  in chiaro. Test F001/side-parity del trasporto diretto portati sopra il minimo exchange (il percorso diretto non
+  riceve più importi sotto 2 EUR).
 - **Checkpoint multi-agente `pf-checkpoint/3`** (`tools/agent_checkpoint/pfckpt.py`, `docs/agent_checkpoint_protocol.md`):
   verifica sul tree committato, salvataggio atomico con concorrenza ottimistica, ripresa idempotente dopo crash,
   readback da clone pulito, bootstrap da zero; ripara l'incidente INC-b45f528 (artefatti `*.log` esclusi dal

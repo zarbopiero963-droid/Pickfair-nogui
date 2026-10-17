@@ -72,6 +72,35 @@ del checkpoint prima di iniziare, salvataggio con `pfckpt.py save` dopo ogni
 lotto, DURABLE solo dopo readback remoto integro, concorrenza ottimistica senza
 force-push, nessun bypass dei gate.
 
+## Microstake nativo e miglior prezzo (decisioni owner 17/10/2026)
+
+Fonte: #426 — PF-MICROSTAKE-NATIVE-AUTO-01 (c.6210870965), rettifica
+PF-MICROSTAKE-OWNER-RECTIFICATION-20261017 (c.6235508131),
+PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
+[docs/microstake_native.md](docs/microstake_native.md). Regole:
+
+- il Money Management calcola e **richiede lo stake esatto**; nessun minimo
+  artificiale, nessun arrotondamento verso l'alto, nessun cap fisso da 1 o 2 EUR;
+  sotto il minimo configurato rifiuto esplicito (`stake_sotto_min_stake`);
+- sotto il minimo exchange ogni percorso (Quick Bet, Dutching, Roserpina, hedge
+  del cashout) passa dal **Microstake nativo**, senza flag; esecuzione esatta o
+  errore esplicito, mai un importo diverso; LIVE senza adapter = fail-closed;
+- tenere separati stake richiesto, stake eseguito, importo temporaneo della
+  procedura (stub 2 EUR, entro fondi disponibili e headroom di esposizione),
+  matched/unmatched, liability LAY, fondi, controlli di rischio;
+- esito ignoto dopo l'invio = AMBIGUOUS + riconciliazione, mai retry;
+- miglior prezzo dinamico (BACK più alta, LAY più bassa, solo sulla parte
+  unmatched, limiti di inseguimento verificabili, uscite protettive non
+  ritardate): decisione registrata, **non implementata** — stesso motore;
+- PF-EXECUTION-SAFETY-DECISIONS-01 (#426 c.6235676826), sei decisioni:
+  PF-EXEC-01 ripuntare solo il residuo dopo cancellazione confermata;
+  PF-EXEC-02 Dutching parziale ribilanciato, coperto o sospeso;
+  PF-EXEC-03 chiusura protettiva senza inseguimento; PF-EXEC-04 fondi
+  insufficienti = blocco, mai ridimensionamento; PF-EXEC-05 mercato
+  sospeso/feed/disconnessione = nessun ingresso, nessun riprezzamento,
+  nessun retry, riconciliazione; PF-EXEC-06 riavvio con ripristino,
+  riconciliazione, STOP persistente, ripresa solo se tutto coerente.
+
 ## REGOLA PRINCIPALE
 
 Prima di lavorare su questo repository, leggi e segui AGENTS.md: contiene le
