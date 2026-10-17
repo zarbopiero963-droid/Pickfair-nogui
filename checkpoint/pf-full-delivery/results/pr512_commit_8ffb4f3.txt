@@ -1,0 +1,55 @@
+[TASK: issue461-pr28-microstake-native-02] Native automatic Microstake on the real SimulationBroker, owner rectification 17/10
+
+PF-MICROSTAKE-NATIVE-INTEGRATION-02, resumed from the Codex handoff
+PF-MULTIAGENT-HANDOFF-SNAPSHOT-01 (sha256 008c29b2..., baseline c5e4422,
+restore and manifest verified, 53 Microstake tests re-run PASS, the preserved
+Dutching RED reproduced: 2 orders instead of 3).
+
+Owner decisions applied (#426): PF-MICROSTAKE-NATIVE-AUTO-01 (c.6210870965),
+PF-MICROSTAKE-OWNER-RECTIFICATION-20261017 (c.6235508131). Registered, not
+implemented: PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755),
+PF-EXECUTION-SAFETY-DECISIONS-01 (c.6235676826).
+
+- simulation_broker: cancel_orders honours Betfair sizeReduction (partial
+  cancel keeps the order EXECUTABLE with the exact remainder, matched part
+  untouched; invalid reduction = FAILURE with state intact; >= remainder =
+  full cancel); cancellations persisted; public best_counterparty_price.
+- core/microstake_sim_port: SimulationExchangePort (saga over the production
+  broker through public ops only; replace = new betId tracked by the saga;
+  any broker exception after the send = LostResponse/AMBIGUOUS, only the
+  INVALID_* pre-send rejections mean nothing left), DbSagaStore (saga in the
+  app DB, corrupt = fail-closed), SimulationQuoteProvider (passive stub from
+  the SIM book, never the historical 1.01/1000 stubs), NativeSimMicrostakeExecutor
+  with startup recover_pending.
+- core/microstake_safe (Codex): per-request transient cap, no replace when
+  the stub already rests at the target price (same identity).
+- core/trading_engine: sub-minimum amounts are routed to the native executor
+  in every mode (side validated first); the executor is built automatically
+  from the recognised SIM broker, LIVE without adapter stays fail-closed;
+  temporary stub exposure capped by available funds and total exposure
+  headroom (per-order caps apply to the requested stake, not to the
+  temporary order size); recover_native_microstake_sagas.
+- core/order_router + cashout_wiring + headless/mini_gui: the cashout hedge
+  below the exchange minimum goes through the same native executor or fails
+  closed, never straight to the broker.
+- core/runtime_controller: pending Microstake sagas reconciled before F018;
+  a pending saga keeps the runtime in PAUSED.
+- core/money_management: the calculated stake is requested as is; below the
+  configured min_stake the decision is an explicit stake_sotto_min_stake
+  rejection instead of a silent round-up.
+- Tests (all executed): adapter 17, engine 23, cashout+recovery 14, MM
+  rectification 8, Codex 53; the Dutching regression is GREEN for the right
+  reason (1.91 leg = 2.00 stub reduced by 0.09, same identity, 3 orders).
+  F001 and side-parity direct-transport tests moved above the exchange
+  minimum because sub-minimum amounts never reach the direct transport.
+- Docs: docs/microstake_native.md, CHANGELOG, RSR dossier; AGENTS.md and
+  CLAUDE.md carry the three owner decisions (governance: owner manual merge).
+- Scope registry: the task keys created on this branch are consolidated
+  into issue461-pr28-microstake-native-02 (files == full diff vs main).
+
+Not done / not verified: LIVE adapter (fail-closed), cross-process
+reservation (PR29), Control API/MCP (absent), Betfair acceptance of the
+sequence (NOT VERIFIED), best execution and PF-EXEC-01/02/03/05 (PLANNED).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb

@@ -1,0 +1,248 @@
+bringing up nodes...
+bringing up nodes...
+
+........................................s..s..s......................... [  0%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+..sss.s................................................................. [  8%]
+........................................................................ [  9%]
+..........................uuu.uuu.uu.................................... [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+.....................F.................................................. [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................sssssss......... [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 41%]
+........................................................................ [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+........................................................................ [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+.........................................x.............................. [ 84%]
+..................F..................................................... [ 85%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+...........F............................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+.................x...................................................... [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+........................................................................ [100%]
+=================================== FAILURES ===================================
+_____________ test_tiny_bankroll_rejects_with_suggested_cap_stake ______________
+[gw1] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    @pytest.mark.core
+    def test_tiny_bankroll_rejects_with_suggested_cap_stake():
+        """Contratto del percorso supera_max_single_bet: con bankroll
+        minuscolo (cap 25% di 0.30 = 0.075 < min_stake) la decisione e'
+        RIFIUTATA ma recommended_stake porta il cap SUGGERITO (positivo) —
+        e' l'unica eccezione alla regola 'non approvato => stake 0'."""
+        mm = _mm()
+        decision = _calc(mm, price=2.0, br=0.3, peak=0.3)
+        assert decision.approved is False
+        # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato (0.009) non viene
+        # piu' alzato al minimo (0.10) e poi confrontato col cap: sotto il minimo
+        # configurato il rifiuto e' esplicito e porta lo stake RICHIESTO, non un cap.
+        assert decision.reason == "stake_sotto_min_stake"
+        assert decision.recommended_stake == pytest.approx(0.009, abs=0.001)
+        assert decision.metadata["min_stake"] == pytest.approx(0.10)
+        # il percorso "supera_max_single_bet" con cap suggerito resta per stake >= minimo
+        cfg_cap = _mm(); cfg_cap.config.max_single_bet_pct = 1.0          # cap 1% di 100 = 1.0 < stake 3.0
+        capped = _calc(cfg_cap, price=2.0)
+>       assert capped.approved is False and capped.reason == "supera_max_single_bet"
+E       AssertionError: assert (True is False)
+E        +  where True = MoneyManagementDecision(approved=True, recommended_stake=1.0, desk_mode=<DeskMode.NORMAL: 'NORMAL'>, reason='approved'....0, 'risk_mult': 1.0, 'desk_mult': 1.0, 'max_single': 1.0, 'max_total': 50.0, 'max_event': 25.0, 'in_recovery': False}).approved
+
+tests/core/test_money_management_caps_and_malformed.py:81: AssertionError
+_______ test_real_paper_callers_pass_valid_sides_and_reject_missing_side _______
+[gw0] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    def test_real_paper_callers_pass_valid_sides_and_reject_missing_side():
+        """Exercise the actual router, manager and cashout with a real PAPER broker."""
+        class SagaDB:
+            def __init__(self):
+                self.sagas = {}
+                self.by_logical = {}
+    
+            def create_order_saga(self, **kwargs):
+                self.sagas[kwargs["customer_ref"]] = kwargs
+                self.by_logical[kwargs["logical_key"]] = kwargs
+    
+            def get_order_saga(self, customer_ref):
+                return self.sagas.get(customer_ref)
+    
+            def get_order_saga_by_logical_key(self, logical_key):
+                return self.by_logical.get(logical_key)
+    
+            def update_order_saga(self, **kwargs):
+                self.sagas[kwargs["customer_ref"]].update(kwargs)
+    
+        class PaperService:
+            def get_client(self):
+                return broker
+    
+            def is_simulation_mode(self):
+                return True
+    
+        class Bus:
+            def __init__(self):
+                self.events = []
+    
+            def publish(self, name, payload):
+                self.events.append((name, payload))
+    
+        broker = SimulationBroker()
+        router = OrderRouter(PaperService())
+        # stake sopra il minimo exchange: sotto, il router passa dal Microstake nativo
+        # (PF-MICROSTAKE-NATIVE-INTEGRATION-02) e qui si prova il trasporto diretto.
+        routed = router.place({
+            "market_id": "1.1", "selection_id": 7, "bet_type": "LAY",
+            "price": 2.0, "stake": 2.0,
+        })
+        assert routed["placed"] is True
+        assert broker.state.orders[routed["bet_id"]].side == "LAY"
+    
+        before = len(broker.state.orders)
+>       with pytest.raises(RuntimeError, match="^INVALID_SIDE$"):
+E       Failed: DID NOT RAISE RuntimeError
+
+tests/unit/test_simulation_broker_side_parity.py:153: Failed
+________ test_no_direct_client_order_submission_outside_allowed_layers _________
+[gw3] linux -- Python 3.12.3 /tmp/claude-0/-home-user-Pickfair-nogui/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/venv312/bin/python
+
+    @pytest.mark.guardrail
+    def test_no_direct_client_order_submission_outside_allowed_layers():
+        offenders = []
+    
+        allowed_exact = {
+            "order_manager.py",
+            "services/betfair_service.py",
+            "betfair_client.py",
+            "simulation_broker.py",
+            "core/order_router.py",
+        }
+    
+        for path in ROOT.rglob("*.py"):
+            rel = path.as_posix()
+    
+            if rel.startswith("tests/"):
+                continue
+            if rel in allowed_exact:
+                continue
+    
+            text = path.read_text(encoding="utf-8", errors="ignore")
+    
+            if ".place_bet(" in text or ".place_orders(" in text:
+                offenders.append(rel)
+    
+>       assert not offenders, (
+            "Bypass diretto client ordini fuori layer consentiti: "
+            f"{offenders}"
+        )
+E       AssertionError: Bypass diretto client ordini fuori layer consentiti: ['core/microstake_sim_port.py']
+E       assert not ['core/microstake_sim_port.py']
+
+tests/guardrails/test_no_bypass_paths.py:68: AssertionError
+=========================== short test summary info ============================
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-xai-grok46.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-openrouter-fugu-ultra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_effort.py:160: .github/workflows/pr-review-openrouter-gpt-astra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-claude-fable5.yml: effort 'assente', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-openrouter-fugu-ultra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-openrouter-gpt-astra.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/guardrails/test_ai_review_timeout.py:154: .github/workflows/pr-review-xai-grok46.yml: effort 'high', non e' fra ['max', 'xhigh']
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:168: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:207: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:235: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:262: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:285: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:320: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+SKIPPED [1] tests/integration/test_telegram_live_e2e.py:350: Credenziali Telegram non configurate (TG_API_ID, TG_API_HASH, TG_SESSION_STRING, TG_BOT_TOKEN, TG_TEST_CHAT_ID)
+XFAIL tests/unit/test_session_recorder.py::TestCablaggioInPickfair::test_un_entrypoint_di_pickfair_costruisce_un_session_recorder - Recorder A2: il cablaggio in Pickfair non esiste ancora
+XFAIL tests/f026/test_f026_financial.py::test_F033_event_cap_aggregates_markets_of_the_same_event - F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.
+FAILED tests/core/test_money_management_caps_and_malformed.py::test_tiny_bankroll_rejects_with_suggested_cap_stake
+FAILED tests/unit/test_simulation_broker_side_parity.py::test_real_paper_callers_pass_valid_sides_and_reject_missing_side
+FAILED tests/guardrails/test_no_bypass_paths.py::test_no_direct_client_order_submission_outside_allowed_layers
+3 failed, 7677 passed, 14 skipped, 2 xfailed, 9390 warnings, 8 subtests passed in 493.11s (0:08:13)
+exit 1

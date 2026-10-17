@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 12,
- "updated_at": "2026-10-15T19:00:00+00:00",
+ "seq": 13,
+ "updated_at": "2026-10-17T15:31:41.237897+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -85,11 +85,16 @@
     "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
     "task": "issue461-pr26-0-f011-f025-betid",
     "what": "F011: betId top-level/numerico; F025: SUCCESS esplicito senza betId => AMBIGUOUS fail-closed"
+   },
+   {
+    "sha": "8ffb4f3",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "Microstake nativo (adapter SIM, routing engine/router, recovery, MM senza arrotondamento, docs, governance)"
    }
   ],
-  "head_sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
+  "head_sha": "8ffb4f3",
   "superseded": "patch locale F026 v1 b766261 (NON integrata: effetto collaterale F026-R1 sulla base dello stake)",
-  "pr": null
+  "pr": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/512"
  },
  "tests": [
   {
@@ -272,7 +277,7 @@
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Selezionare il prossimo finding indipendente della roadmap #461 che non dipenda da PR #505, Control API/MCP, LIVE o decisioni finanziarie aperte; partire da test RED sul codice c5e4422. Non modificare main/#505 e non inventare range VALID.",
+ "next_atomic_action": "1) seguire CI/review PR #512 (rilievi Sol/Grok, regressione completa); 2) FASE 2 PF-AGENT-CONTINUITY-01: CURRENT.json/TASK_STATE.json/AGENT_LEASE.json + lease/fencing sopra pfckpt; 3) FASE 3 tracciabilita' (registro atomico + validatori); 4) FASE 4 riconciliazione 60 issue; 5) best execution + PF-EXEC-01..06 sullo stesso motore; 6) pacchetto handoff.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -282,8 +287,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-CROSS-AGENT-HANDOFF-A06-01",
- "previous_checkpoint_sha": "a14adea2abd90262cdf2e29a7be15766e197bd09",
- "lotto_corrente": "A06 riconciliata; F011/F025 completati e pubblicati",
+ "previous_checkpoint_sha": "a5098af2f4b9ecacb6cc298c19fb58387cabc160",
+ "lotto_corrente": "FASE 1 Microstake: PR #512 aperta (CI/review in corso)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -294,7 +299,9 @@
   "CD-04 C parziale: MD10 test (82f499c); regressione completa 82f499c; crosswalk A06 (seq 10)",
   "CD-04 C: mutation d04 su 82f499c 12/12 KILLED (seq 11)",
   "Cross-provider Claude -> ChatGPT Work PASS; A06 410 celle riconciliate (seq 12)",
-  "F011/F025 betId fail-closed, regressione completa e guard PASS (seq 12)"
+  "F011/F025 betId fail-closed, regressione completa e guard PASS (seq 12)",
+  "FASE 0 preflight (archivio Codex sha ok, restore c5e4422, 53 PASS, RED Dutching riprodotto)",
+  "FASE 1 M1-M5 Microstake nativo: commit 8ffb4f3, PR #512"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -337,21 +344,21 @@
  },
  "session_end": "seq 12 preparata da ChatGPT Work; pubblicazione e readback remoto obbligatori prima di DURABLE",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-CROSS-AGENT-HANDOFF-A06-01",
+ "mandate_id": "OWNER-EXECUTIVE-MANDATE-20261017 (PF-MICROSTAKE-NATIVE-INTEGRATION-02, PF-AGENT-CONTINUITY-01, PF-TRACEABILITY-ALL-01, PF-ISSUE-RECONCILIATION-01)",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
+  "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
   "verified_with": "git ls-remote"
  },
  "blocks": [
-  "Gate A #506 NON PASS (A01-A13)",
-  "PR #505 aperta: F033 e RSR-38..41 BLOCKED",
+  "Gate A #506 NON PASS",
+  "PR #505 protetta",
   "LIVE NO-GO",
-  "#351 non avviata"
+  "decisione owner aperta: stake sopra max_single_bet (ridimensionare o rifiutare)"
  ],
  "owner_authorizations": {
   "live": false,
-  "merge": false,
+  "merge": "solo gate + governance (PR tocca AGENTS/CLAUDE: merge manuale owner)",
   "deploy": false,
   "modify_main": false,
   "modify_pr_505": false,
@@ -359,9 +366,12 @@
   "costs": false,
   "render_neon": false,
   "telegram_copy_mirror": false,
-  "push_code_branch": "solo ccr-bcc81683-ud0hgc",
+  "push_code_branch": "ccr-bcc81683-ud0hgc",
   "push_state_branch": "solo agent-state/pf-full-delivery, senza force",
-  "source": "mandati owner in chat 14-15/10/2026, incluso PF-CROSS-AGENT-HANDOFF-A06-01"
+  "source": "OWNER EXECUTIVE MANDATE 17/10/2026 + addenda",
+  "commit": true,
+  "pr": true,
+  "publish_decisions_github": true
  },
  "tests_executed": [
   {
@@ -494,12 +504,39 @@
    "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
    "result": "4 RED sulla baseline; 76 mirati GREEN; full 7563 passed, 15 skipped, 2 xfailed, 8 subtests; tree 4d49b590 identico al commit locale testato; guard e full-diff PASS",
    "artifact": "results/regression_c5e4422.txt"
+  },
+  {
+   "id": "codex handoff restore + 53 microstake",
+   "status": "PASS",
+   "sha": "c5e4422",
+   "result": "manifest 21/21, restore verify ok, 53 passed; RED Dutching riprodotto (2 ordini)"
+  },
+  {
+   "id": "microstake suites (port 17, engine 23, cashout/recovery 14, MM rettifica 8, codex 53) + dutching GREEN",
+   "status": "PASS",
+   "sha": "8ffb4f3",
+   "result": "212 passed mirati nel checkout reale"
+  },
+  {
+   "id": "regression_full",
+   "status": "FAIL",
+   "sha": "8ffb4f3",
+   "result": "albero pre-commit (3 file poi corretti): 7677 passed, 14 skipped, 2 xfailed, 3 failed (side-parity, caps, no-bypass guardrail: corretti nel commit e riverificati 72 passed); regressione completa post-commit affidata alla CI della PR #512: NOT VERIFIED localmente"
+  },
+  {
+   "id": "guard + full-diff main..8ffb4f3",
+   "status": "PASS",
+   "sha": "8ffb4f3",
+   "result": "60 file = scope; owner_manual (AGENTS.md, CLAUDE.md)"
   }
  ],
  "tests_missing": [
+  "regressione completa post-commit su 8ffb4f3 (CI PR #512)",
+  "adapter LIVE Microstake (assente)",
+  "best execution dinamico + PF-EXEC-01..06 (PLANNED)",
+  "portabilita' cross-provider checkpoint",
   "GUI/X11: Xvfb non disponibile nell'ambiente; 8 test saltati",
-  "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati",
-  "portabilita' cross-provider Grok: NOT VERIFIED"
+  "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati"
  ],
  "missing_historical_evidence": [
   {
@@ -513,5 +550,20 @@
   }
  ],
  "gate_a": "NON PASS (#506, A01-A13 aperti)",
- "certification_verdict": "NO-GO"
+ "certification_verdict": "NO-GO",
+ "owner_decisions_published": {
+  "PF-MICROSTAKE-OWNER-RECTIFICATION-20261017": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6235508131",
+  "PF-BEST-EXECUTION-DYNAMIC-01": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6235560755",
+  "PF-EXECUTION-SAFETY-DECISIONS-01": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6235676826",
+  "links_461": [
+   "6235510313",
+   "6235562299",
+   "6235683777"
+  ],
+  "links_506": [
+   "6235511552",
+   "6235563250",
+   "6235685327"
+  ]
+ }
 }
