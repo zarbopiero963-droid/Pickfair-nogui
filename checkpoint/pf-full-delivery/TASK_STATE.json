@@ -5,7 +5,8 @@
   "LIVE NO-GO",
   "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 \u00a74/\u00a710)",
   "overlap-check rosso (tre PR aperte)",
-  "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505"
+  "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
+  "fix loop PR #512: 4 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0)"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -32,11 +33,12 @@
   "FASE 3 tracciabilita' (043e34c)",
   "FASE 4 riconciliazione 60 issue (339cd24)",
   "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)",
-  "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)"
+  "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)",
+  "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)"
  ],
- "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: lotto sei finding consegnato (21aab95); errata OD-01 #508 (4476108)",
+ "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: ciclo 4 review consegnato (464f347); fix loop 4/5",
  "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
- "next_atomic_action": "Attendere: autorizzazione owner per il lotto Decisione 2 (rifiuto esplicito sopra max_single_bet) sulla #512; verdetto OD-01 su #506; sequenza Gate A globale -> Gate A #505 -> riconciliazione cap-ordine -> Gate B #505 -> merge #505 autorizzato -> integrazione #512. Nessuna nuova PR, nessun merge.",
+ "next_atomic_action": "Fix loop 4/5 usato. Attendere: review Sol/Grok su 21aab95..464f347 (triage, patch solo se CURRENT_DEFECT e budget); decisioni owner (floor 0.10, ref cashout, Decisione 2 max_single_bet, OD-01, riconciliazione cap-ordine #505). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

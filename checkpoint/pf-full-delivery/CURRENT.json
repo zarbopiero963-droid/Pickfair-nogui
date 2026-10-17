@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "21aab951f2611c1d6f589c4bfa7614457c84fc97"
+  "sha": "464f347a3e3920ec7b4ff4810bc2cb176f94e94c"
  },
  "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
- "next_atomic_action": "Attendere: autorizzazione owner per il lotto Decisione 2 (rifiuto esplicito sopra max_single_bet) sulla #512; verdetto OD-01 su #506; sequenza Gate A globale -> Gate A #505 -> riconciliazione cap-ordine -> Gate B #505 -> merge #505 autorizzato -> integrazione #512. Nessuna nuova PR, nessun merge.",
- "previous_checkpoint_sha": "0d492a000e598350b71fb68b0f00cecd4176894d",
+ "next_atomic_action": "Fix loop 4/5 usato. Attendere: review Sol/Grok su 21aab95..464f347 (triage, patch solo se CURRENT_DEFECT e budget); decisioni owner (floor 0.10, ref cashout, Decisione 2 max_single_bet, OD-01, riconciliazione cap-ordine #505). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "previous_checkpoint_sha": "889649f19d142a9578e1a1c17a4f8caa466ca7bf",
  "schema": "pf-current/1",
- "seq": 16
+ "seq": 17
 }
