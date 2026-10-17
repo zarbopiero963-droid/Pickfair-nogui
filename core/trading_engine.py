@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import concurrent.futures
 import inspect
 import logging
+import math
 import threading
 import time
 import uuid
@@ -191,7 +193,8 @@ class TradingEngine:
     def __init__(self, bus: Any, db: Any, client_getter: Any, executor: Any,
                  safe_mode: Any = None, risk_middleware: Any = None,
                  reconciliation_engine: Any = None, state_recovery: Any = None,
-                 async_db_writer: Any = None) -> None:
+                 async_db_writer: Any = None,
+                 microstake_executor: Any = None) -> None:
         self.bus = bus
         self.db = db
         self.client_getter = client_getter
@@ -207,6 +210,10 @@ class TradingEngine:
         self.reconciliation_engine = reconciliation_engine or _NullReconciliationEngine()
         self.state_recovery = state_recovery or _NullStateRecovery()
         self.async_db_writer = async_db_writer or _NullAsyncDbWriter()
+        # Native automatic execution path.  This is dependency injection for
+        # the Exchange adapter, not a user-facing feature flag: every request
+        # below the Exchange minimum is routed here or denied fail-closed.
+        self.microstake_executor = microstake_executor
         self.runtime_controller = None
         self.simulation_broker = None
         self.betfair_client = None
@@ -344,6 +351,8 @@ class TradingEngine:
             created_at=time.time(),
             event_key=normalized.get("event_key"),
             simulation_mode=normalized.get("simulation_mode"),
+            table_id=normalized.get("table_id"),
+            market_id=(str(normalized["market_id"]) if normalized.get("market_id") is not None else None),
         )
 
     # ==================================================================
@@ -578,25 +587,105 @@ class TradingEngine:
     # ==================================================================
     # [A2] EXECUTOR ROUTING HELPER — Explicit contract
     # ==================================================================
+    # Attesa massima dell'esito di un task affidato all'executor quando
+    # l'executor non dichiara un ``default_timeout`` proprio (F001).
+    _EXECUTOR_WAIT_FALLBACK_SEC = 30.0
+
     def _execute_via_executor(self, operation_name: str, fn: Any) -> Any:
         """
-        [A2] Executor routing with explicit contract.
+        [A2] Executor routing with explicit contract (PF-ALL-F001).
 
-        SUPPORTED MODES:
-        1. executor.submit(operation_name, fn) returning final concrete result
-        2. direct fn() execution when executor is None or has no submit()
+        Restituisce SEMPRE il risultato concreto di ``fn`` oppure solleva:
+        mai un ``Future``, un awaitable o un segnaposto.
 
-        NOT SUPPORTED:
-        - raw coroutine return values
-        - native async awaiting inside TradingEngine
+        1. executor assente / senza ``submit()``: ``fn()`` diretto.
+        2. ``submit()`` che restituisce un risultato concreto (executor
+           sincrono): restituito invariato.
+        3. ``submit()`` che restituisce un ``concurrent.futures.Future``
+           (``ExecutorManager`` di produzione): l'esito si attende e si
+           classifica in ``_resolve_executor_future``.
 
-        REQUIREMENT:
-        - async executors must normalize internally and return concrete result, not awaitable
+        Un errore nato PRIMA che ``fn`` partisse (submit rifiutato, task mai
+        avviato) e' ``_ErrorePrimaDellInvio``: nulla e' stato inviato, FAILED
+        e' la verita'. Tutto cio' che accade dopo l'avvio del task non prova
+        nulla sull'invio: AMBIGUOUS + riconciliazione, mai FAILED, mai retry.
         """
         submit_fn = getattr(self.executor, "submit", None)
-        if callable(submit_fn):
-            return submit_fn(operation_name, fn)
-        return fn()
+        if not callable(submit_fn):
+            return fn()
+        prefix = str(getattr(self.executor, "thread_name_prefix", "") or "")
+        if prefix and threading.current_thread().name.startswith(prefix):
+            # Attendere un task dello stesso pool dal suo stesso worker puo'
+            # esaurire il pool (deadlock): si rifiuta prima di inviare.
+            raise _ErrorePrimaDellInvio("EXECUTOR_REENTRANT_SUBMIT_REFUSED")
+        started = threading.Event()
+
+        def _tracked() -> Any:
+            started.set()
+            return fn()
+
+        try:
+            handle = submit_fn(operation_name, _tracked)
+        except Exception as exc:
+            if started.is_set():
+                # Executor sincrono: l'eccezione e' di fn (client), propagata
+                # INVARIATA come sul percorso diretto.
+                raise
+            raise _ErrorePrimaDellInvio(f"EXECUTOR_SUBMIT_REFUSED:{type(exc).__name__}") from exc
+        if not isinstance(handle, concurrent.futures.Future):
+            return handle
+        return self._resolve_executor_future(handle)
+
+    def _executor_wait_seconds(self) -> float:
+        raw = getattr(self.executor, "default_timeout", None)
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            return self._EXECUTOR_WAIT_FALLBACK_SEC
+        if value != value or value <= 0 or value == float("inf"):
+            return self._EXECUTOR_WAIT_FALLBACK_SEC
+        return value
+
+    def _resolve_executor_future(self, handle: "concurrent.futures.Future") -> Any:
+        """Attende e classifica l'esito del ``Future`` (PF-ALL-F001).
+
+        - risultato o eccezione di ``fn``: restituito / propagata INVARIATA,
+          cosi' la classificazione e' identica al percorso diretto;
+        - ``Future`` cancellato: ``fn`` non e' mai partita => pre-invio;
+        - attesa scaduta con task non partito: ``cancel()`` riuscito garantisce
+          che ``fn`` non partira' mai => pre-invio;
+        - attesa scaduta con task partito, o executor guasto: esito ignoto =>
+          AMBIGUOUS (l'ordine puo' essere sull'exchange).
+
+        I messaggi pre-invio non contengono la parola che ``_handle_submit_exception``
+        legge come ambiguita' ("timeout"): la loro classificazione e' per tipo.
+        """
+        wait_s = self._executor_wait_seconds()
+        try:
+            return handle.result(timeout=wait_s)
+        except concurrent.futures.CancelledError as exc:
+            raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START") from exc
+        except concurrent.futures.TimeoutError:
+            if handle.done():
+                # Su Python >= 3.11 il TimeoutError dell'attesa e' lo stesso tipo
+                # di quello che puo' sollevare il client: se il task e' concluso
+                # l'esito vero e' il suo (valore o eccezione), non l'attesa.
+                if handle.cancelled():
+                    raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START")
+                return handle.result(timeout=0)
+            if handle.cancel():
+                raise _ErrorePrimaDellInvio("EXECUTOR_QUEUE_EXPIRED_NOT_STARTED")
+            raise ExecutionError(
+                f"EXECUTOR_WAIT_EXPIRED_AFTER_START wait_s={wait_s}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_TIMEOUT,
+            )
+        except concurrent.futures.BrokenExecutor as exc:
+            raise ExecutionError(
+                f"EXECUTOR_BROKEN_AFTER_SUBMIT:{exc}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            ) from exc
 
     # ==================================================================
     # [FIX 3] DUPLICATE HANDLER HELPER
@@ -685,7 +774,10 @@ class TradingEngine:
         publish = getattr(self.bus, "publish", None)
         if callable(publish):
             try:
-                publish(event_name, {**self._ctx_metadata(ctx), **extra})
+                # PF-ALL-F023: gli eventi portano l'identita' della riserva
+                # (tavolo, mercato) per il rilascio dell'ordine giusto.
+                publish(event_name, {**self._ctx_metadata(ctx),
+                                     "table_id": ctx.table_id, "market_id": ctx.market_id, **extra})
             except Exception:
                 logger.exception("Failed to publish %s", event_name)
 
@@ -1106,6 +1198,16 @@ class TradingEngine:
         if inspect.isawaitable(response):
             raise RuntimeError("ASYNC_EXECUTOR_NOT_NORMALIZED")
 
+        # [F001] Fail-closed: un Future non risolto non e' mai una risposta del
+        # broker (es. executor non standard che lo restituisce annidato). Il
+        # task puo' essere partito => esito ignoto, mai SUBMITTED.
+        if isinstance(response, concurrent.futures.Future):
+            raise ExecutionError(
+                f"EXECUTOR_RESULT_NOT_RESOLVED for cid={ctx.correlation_id}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
+
         # [A1] None is ambiguity
         if response is None:
             raise ExecutionError(
@@ -1116,9 +1218,40 @@ class TradingEngine:
         self._raise_if_failed_semantic_response(response)
         return response
 
+    @staticmethod
+    def _instruction_reports(response: Dict[str, Any]) -> list:
+        """``instructionReports`` nelle forme note: top-level (broker SIM, risposta
+        Betfair grezza) o annidati sotto ``result`` / ``raw`` (``BetfairClient``)."""
+        reports: list = []
+        for container in (response, response.get("result"), response.get("raw")):
+            if isinstance(container, dict):
+                for report in container.get("instructionReports") or []:
+                    if isinstance(report, dict):
+                        reports.append(report)
+        return reports
+
+    @classmethod
+    def _response_bet_ids(cls, response: Dict[str, Any]) -> list:
+        """Identita' d'ordine esplicite nelle shape broker supportate."""
+        ids = []
+        direct = response.get("betId") or response.get("bet_id")
+        if direct not in (None, ""):
+            ids.append(str(direct))
+        for report in cls._instruction_reports(response):
+            value = report.get("betId") or report.get("bet_id")
+            if value not in (None, ""):
+                ids.append(str(value))
+        return ids
+
     def _raise_if_failed_semantic_response(self, response: Any) -> None:
         if not isinstance(response, dict):
-            return
+            # PF-ALL-F001 / F025: il client e' stato chiamato ma la risposta non
+            # e' interpretabile. L'ordine puo' esistere => mai SUBMITTED.
+            raise ExecutionError(
+                f"DOWNSTREAM_MALFORMED_RESPONSE:type={type(response).__name__}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
 
         status = str(response.get("status") or "").upper()
         reason_code = str(response.get("reason_code") or "").upper()
@@ -1148,6 +1281,33 @@ class TradingEngine:
         )
         if semantic_failure:
             raise RuntimeError(f"DOWNSTREAM_SEMANTIC_FAILURE:{response}")
+
+        # PF-ALL-F001: l'esito vero e' nei report di istruzione. Status top-level
+        # SUCCESS con report FAILURE (es. LAPSED) e' un rifiuto confermato, non
+        # un successo; report discordanti non provano nulla.
+        reports = self._instruction_reports(response)
+        report_status = {str(r.get("status") or "").upper() for r in reports}
+        if reports and report_status == {"FAILURE"}:
+            raise RuntimeError(f"DOWNSTREAM_REPORT_FAILURE:{response}")
+        if "FAILURE" in report_status:
+            raise ExecutionError(
+                f"DOWNSTREAM_MIXED_REPORTS:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SPLIT_STATE,
+            )
+
+        # PF-ALL-F025: una risposta che dichiara esplicitamente SUCCESS senza
+        # identita' Betfair non e' riconciliabile. Non e' pero' un rifiuto
+        # certo: resta AMBIGUOUS e conserva la riserva. Un generico {"ok":
+        # True} senza status/report e' un ACK applicativo, non una prova di
+        # ordine riuscito, quindi non viene riclassificato qui.
+        semantic_order_success = status == "SUCCESS" or "SUCCESS" in report_status
+        if semantic_order_success and not self._response_bet_ids(response):
+            raise ExecutionError(
+                f"DOWNSTREAM_SUCCESS_WITHOUT_BET_ID:{response}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
 
     # ==================================================================
     # [G] AMBIGUITY RESOLUTION — Single enqueue
@@ -1827,6 +1987,11 @@ class TradingEngine:
             mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             modalita_dichiarata = mode
             if mode == "SIMULATION":
+                routed, micro_result = self._route_native_microstake(
+                    ctx, payload, modalita_dichiarata
+                )
+                if routed:
+                    return micro_result
                 broker = self.simulation_broker
                 if broker is not None and callable(getattr(broker, "execute", None)):
                     return self._invia_marcando_l_intento(
@@ -1851,6 +2016,12 @@ class TradingEngine:
                 _betfair_svc = getattr(runtime, "betfair_service", None)
                 if _betfair_svc is not None and getattr(_betfair_svc, "_session_invalid", False) is True:
                     raise RuntimeError("LIVE_BLOCKED_SESSION_INVALID")
+
+                routed, micro_result = self._route_native_microstake(
+                    ctx, payload, modalita_dichiarata
+                )
+                if routed:
+                    return micro_result
 
                 live_client = self._resolve_live_client()
                 live_client_risolto = True
@@ -1922,6 +2093,14 @@ class TradingEngine:
                         self._order_submission_breaker.record_success()
                         return result
 
+        # Test/embedded path without a RuntimeController.  Production always
+        # declares SIM/LIVE above, but the same automatic rule remains in
+        # force here so no alternate entry can send a small order directly.
+        if not modalita_dichiarata:
+            routed, micro_result = self._route_native_microstake(ctx, payload, "")
+            if routed:
+                return micro_result
+
         if self.order_manager is not None:
             for mn in ("submit", "place_order"):
                 fn = getattr(self.order_manager, mn, None)
@@ -1991,6 +2170,203 @@ class TradingEngine:
                         lambda: place(**self._kwargs_per_place_bet(place, payload)))
 
         raise RuntimeError("NO_VALID_EXECUTION_PATH")
+
+    @staticmethod
+    def _native_microstake_amount(payload: Dict[str, Any]) -> Optional[float]:
+        raw = payload.get("stake", payload.get("size"))
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            amount = float(raw)
+        except (TypeError, ValueError):
+            return None
+        return amount if math.isfinite(amount) else None
+
+    def _route_native_microstake(
+        self,
+        ctx: _ExecutionContext,
+        payload: Dict[str, Any],
+        mode: str,
+    ) -> tuple[bool, Any]:
+        """Route sub-€2 requests through the single native coordinator.
+
+        Missing wiring is a pre-send, fail-closed error.  The ordinary direct
+        broker path is never used as a fallback for a small amount.
+        """
+        amount = self._native_microstake_amount(payload)
+        if amount is None or amount >= 2.0:
+            return False, None
+        if amount <= 0:
+            raise _ErrorePrimaDellInvio("INVALID_SIZE")
+        # Lato validato PRIMA dell'instradamento, come sul percorso diretto: un
+        # alias discordante e' un errore pre-invio (INVALID_SIDE), identico in
+        # SIM e LIVE, e non diventa mai un esito del Microstake.
+        payload = self._con_lato_valido(payload)
+        coordinator = self.microstake_executor
+        if coordinator is None:
+            coordinator = self._default_native_microstake_executor(mode)
+        execute = getattr(coordinator, "execute", None)
+        if not callable(execute):
+            raise _ErrorePrimaDellInvio("MICROSTAKE_EXECUTOR_UNAVAILABLE")
+        def _invia() -> Any:
+            res = execute(dict(payload))
+            # Blocco PRIMA di qualunque operazione exchange (cap transitorio, book non
+            # verificabile, fondi): nulla e' partito, l'intento dedupe si rilascia e un
+            # nuovo tentativo a condizione passata non e' un duplicato. Riconosciuto
+            # per marker esplicito dell'esecutore, mai per testo (rilievo Codex #512).
+            if (isinstance(res, dict) and res.get("pre_send") is True
+                    and str(res.get("status") or "").upper() in {"FAILURE", "FAILED"}):
+                raise _ErrorePrimaDellInvio(
+                    f"MICROSTAKE_PRE_SEND_BLOCK:{res.get('error') or res.get('reason_code') or 'blocked'}")
+            return res
+
+        result = self._invia_marcando_l_intento(ctx, mode, coordinator, _invia)
+        return True, result
+
+    def native_microstake_executor(self) -> Any:
+        """Esecutore Microstake nativo per la modalita' corrente (None = non disponibile, fail-closed).
+
+        Usato anche fuori dal choke point (hedge del cashout via OrderRouter) cosi'
+        l'intera applicazione ha UN solo esecutore e UNA sola saga persistita.
+        """
+        if self.microstake_executor is not None:
+            return self.microstake_executor
+        runtime = self.runtime_controller
+        mode = ""
+        if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
+            try:
+                mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
+            except Exception:
+                return None
+        return self._default_native_microstake_executor(mode)
+
+    def recover_native_microstake_sagas(self) -> Dict[str, Any]:
+        """Riconcilia all'avvio le saghe Microstake non concluse (PF-MICROSTAKE-NATIVE-INTEGRATION-02, M5).
+
+        Fail-closed: ``ok`` e' True solo se non resta alcuna saga pendente. Store
+        illeggibile, esecutore assente con saghe pendenti, o una saga ancora
+        AMBIGUOUS dopo il recovery => ``ok`` False e l'elenco dei ref: il
+        runtime non deve accettare nuovi ingressi finche' uno stub da 2 EUR puo'
+        essere ancora sull'exchange.
+        """
+        try:
+            from core.microstake_sim_port import DbSagaStore, SagaStoreError
+        except Exception as exc:  # pragma: no cover - import difensivo
+            return {"ok": False, "status": "MODULE_UNAVAILABLE", "error": str(exc), "pending": []}
+        try:
+            store = DbSagaStore(self.db)
+        except TypeError:
+            return {"ok": True, "status": "NO_STORE", "pending": [], "results": {}}
+        try:
+            pending = store.pending_refs()
+        except SagaStoreError as exc:
+            return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc), "pending": []}
+        if not pending:
+            return {"ok": True, "status": "NOTHING_PENDING", "pending": [], "results": {}}
+        executor = self.native_microstake_executor()
+        recover = getattr(executor, "recover_pending", None)
+        if not callable(recover):
+            return {"ok": False, "status": "NO_EXECUTOR", "pending": pending, "results": {}}
+        results = recover()
+        still = sorted(ref for ref, phase in results.items() if phase != "ACTIVE")
+        return {"ok": not still, "status": "RECOVERED" if not still else "PENDING",
+                "pending": still, "results": results}
+
+    def _default_native_microstake_executor(self, mode: str) -> Any:
+        """Esecutore nativo costruito dal broker di simulazione, senza flag.
+
+        Solo per il broker SIM riconosciuto per identita'/classe e solo fuori dal
+        ramo LIVE: in LIVE non esiste ancora un adapter (fail-closed,
+        MICROSTAKE_EXECUTOR_UNAVAILABLE). Costruito una volta e riusato: lo
+        stato della saga vive nel DB dell'app, non nell'oggetto.
+        """
+        if str(mode or "").upper() == "LIVE":
+            return None
+        broker = self.simulation_broker
+        if broker is None and callable(self.client_getter):
+            try:
+                candidate = self.client_getter()
+            except Exception:
+                candidate = None
+            if candidate is not None:
+                try:
+                    from simulation_broker import SimulationBroker
+                except Exception:
+                    SimulationBroker = ()  # type: ignore[assignment]
+                if (self._e_il_broker_di_simulazione(candidate)
+                        or isinstance(candidate, SimulationBroker)):
+                    broker = candidate
+        if broker is None or self._e_il_client_betfair_reale(broker):
+            return None
+        try:
+            from core.microstake_sim_port import build_native_microstake_executor
+            self.microstake_executor = build_native_microstake_executor(
+                broker, self.db, self._native_transient_cap)
+        except Exception:
+            logger.exception("Microstake nativo: esecutore SIM non costruibile (fail-closed)")
+            return None
+        return self.microstake_executor
+
+    def _native_transient_cap(self, payload: Dict[str, Any]) -> Optional[float]:
+        """Cap dell'esposizione TEMPORANEA dello stub Microstake (PF-MICROSTAKE-OWNER-RECTIFICATION-20261017).
+
+        Lo stake richiesto e' gia' passato da Money Management e RiskGate con i cap
+        per singolo ordine: quelli valgono per lo stake richiesto/eseguito, NON per
+        l'importo nominale temporaneo della procedura exchange (decisione owner:
+        nessun cap fisso 1/2 EUR sul Microstake). L'importo temporaneo resta pero'
+        un'esposizione reale per pochi istanti e deve stare dentro cio' che e'
+        davvero disponibile: il minimo fra
+        - fondi disponibili dell'exchange (servizio Betfair del runtime o, senza
+          runtime, il broker di simulazione che eseguira' lo stub);
+        - headroom dell'esposizione totale configurata (max_total_exposure sul
+          bankroll noto meno l'esposizione aperta), quando il runtime la espone.
+        Nessuna fonte leggibile => None => BLOCKED (`transient_cap_unavailable`).
+        """
+        _ = payload
+        candidates = []
+        rc = self.runtime_controller
+        funds = None
+        svc = getattr(rc, "betfair_service", None)
+        read = getattr(svc, "get_account_funds", None)
+        if callable(read):
+            try:
+                funds = read()
+            except Exception:
+                return None
+        else:
+            broker = getattr(getattr(self.microstake_executor, "port", None), "broker", None)
+            read = getattr(broker, "get_account_funds", None)
+            if callable(read):
+                try:
+                    funds = read()
+                except Exception:
+                    return None
+        if isinstance(funds, dict) and funds.get("ok", True) is not False:
+            raw = funds.get("available")
+            if raw is not None and not isinstance(raw, bool):
+                try:
+                    available = float(raw)
+                except (TypeError, ValueError):
+                    return None
+                if not math.isfinite(available):
+                    return None
+                candidates.append(max(0.0, available))
+        mm = getattr(rc, "mm", None)
+        desk = getattr(rc, "risk_desk", None)
+        tables = getattr(rc, "table_manager", None)
+        total_cap = getattr(mm, "_max_total_exposure_abs", None)
+        bankroll = getattr(desk, "bankroll_current", None)
+        open_exposure = getattr(tables, "total_exposure", None)
+        if (callable(total_cap) and callable(open_exposure) and isinstance(bankroll, (int, float))
+                and not isinstance(bankroll, bool) and math.isfinite(bankroll) and bankroll > 0):
+            try:
+                headroom = float(total_cap(bankroll)) - float(open_exposure())
+            except Exception:
+                return None
+            if not math.isfinite(headroom):
+                return None
+            candidates.append(max(0.0, headroom))
+        return min(candidates) if candidates else None
 
     def _classify_ambiguity(self, exc: Exception) -> str:
         text = str(exc).lower()

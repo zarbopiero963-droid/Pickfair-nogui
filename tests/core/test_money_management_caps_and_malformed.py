@@ -69,8 +69,17 @@ def test_tiny_bankroll_rejects_with_suggested_cap_stake():
     mm = _mm()
     decision = _calc(mm, price=2.0, br=0.3, peak=0.3)
     assert decision.approved is False
-    assert decision.reason == "supera_max_single_bet"
-    assert decision.recommended_stake == pytest.approx(0.075, abs=0.001)
+    # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato (0.009) non viene
+    # piu' alzato al minimo (0.10) e poi confrontato col cap: sotto il minimo
+    # configurato il rifiuto e' esplicito e porta lo stake RICHIESTO, non un cap.
+    assert decision.reason == "stake_sotto_min_stake"
+    assert decision.recommended_stake == pytest.approx(0.009, abs=0.001)
+    assert decision.metadata["min_stake"] == pytest.approx(0.10)
+    # Sopra il minimo il comportamento RSR-02 e' invariato: BACK ridimensionato al cap
+    # (decisione owner aperta: ridimensionare o rifiutare), LAY oltre il cap rifiutato.
+    cfg_cap = _mm(); cfg_cap.config.max_single_bet_pct = 1.0          # cap 1% di 100 = 1.0 < stake 3.0
+    capped = _calc(cfg_cap, price=2.0)
+    assert capped.approved is True and capped.recommended_stake == pytest.approx(1.0, abs=0.001)
 
 
 @pytest.mark.core
@@ -199,7 +208,7 @@ def test_adversarial_grid_never_produces_invalid_stake():
                 if not decision.approved:
                     # Unica eccezione legittima: supera_max_single_bet porta
                     # il cap SUGGERITO (positivo) in recommended_stake.
-                    assert stake == 0.0 or decision.reason == "supera_max_single_bet", (
+                    assert stake == 0.0 or decision.reason in ("supera_max_single_bet", "stake_sotto_min_stake"), (
                         f"non approvato con stake>0 e reason={decision.reason!r}"
                     )
                 assert decision.reason, "reason sempre presente"

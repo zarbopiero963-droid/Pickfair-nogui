@@ -8,7 +8,7 @@ from trading_engine are unaffected (no public API change).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 # =========================================================
 # COMMAND / REQUEST NAMES
@@ -130,4 +130,9 @@ class _ExecutionContext:
     created_at: float
     event_key: Optional[str] = None
     simulation_mode: Optional[bool] = None
+    # PF-ALL-F023: identita' della riserva Roserpina (tavolo e mercato) presa dal
+    # payload CMD_QUICK_BET del RuntimeController; serve agli eventi terminali
+    # per rilasciare il tavolo giusto. None per gli ordini senza tavolo.
+    table_id: Optional[Any] = None
+    market_id: Optional[str] = None
     _engine_token: str = "TRADING_ENGINE_INTERNAL"

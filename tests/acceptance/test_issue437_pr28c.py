@@ -46,7 +46,10 @@ def _cashout_all(c):
 # ==========================================================================
 # 1. Exposure stop (owner limit, no default, fail-closed)
 # ==========================================================================
-def test_block_esposizione_raggiunta_rifiuta_e_scatta_risk_stop(tmp_path):
+def test_block_candidato_che_raggiunge_il_limite_e_rifiutato_senza_risk_stop(tmp_path):
+    """Decisione owner PF-ROSERPINA-FINANCIAL-CLOSURE-03: un ordine soltanto candidato che raggiungerebbe lo stop
+    di esposizione si rifiuta prima dell'invio; senza violazione effettiva non arma un RISK_STOP persistente.
+    (Sostituisce il contratto precedente, in cui il candidato armava lo stop.)"""
     c = _catena(tmp_path, max_exposure_stop=0.01)
     tavoli_prima = _tavoli_occupati(c)
 
@@ -54,16 +57,54 @@ def test_block_esposizione_raggiunta_rifiuta_e_scatta_risk_stop(tmp_path):
 
     assert c.broker.state.orders == {}
     assert c.bus.payloads("CMD_QUICK_BET") == []
-    assert _rifiuti(c)[-1].startswith("exposure_stop_reached")
+    assert _rifiuti(c)[-1].startswith("exposure_stop_candidate_rejected")
     assert _tavoli_occupati(c) == tavoli_prima
     assert c.rc.duplication_guard._active == {}
+    assert _stop_eventi(c) == [] and c.rc._risk_stop_reason == ""
+    c.rc.config.max_exposure_stop = 1000.0
+    c.rc._on_signal_received(_signal(market_id="1.777"))
+    assert len(c.broker.state.orders) == 1, "nessuno stop persistente: un candidato entro il limite passa"
+
+
+def test_block_esposizione_reale_al_limite_scatta_risk_stop(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=5.0)
+    c.rc.table_manager.activate(table_id=2, event_key="LIVE-1", exposure=5.0, market_id="1.555", selection_id=1)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
     (evento,) = _stop_eventi(c)
     assert evento["reason"].startswith("exposure_stop_reached")
     assert evento["cashout_attempted"] is True
+    assert c.rc._risk_stop_reason.startswith("exposure_stop_reached")
+
+
+def test_block_esposizione_reale_sotto_il_limite_candidato_oltre_rifiutato_senza_stop(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=5.0)
+    c.rc.table_manager.activate(table_id=2, event_key="LIVE-1", exposure=4.0, market_id="1.555", selection_id=1)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c)[-1].startswith("exposure_stop_candidate_rejected")
+    assert _stop_eventi(c) == []
+    assert c.rc.table_manager.total_exposure() == pytest.approx(4.0), "esposizione reale mai liberata"
+
+
+def test_block_esposizione_non_valutabile_blocca_senza_stop(tmp_path):
+    c = _catena(tmp_path, max_exposure_stop=5.0)
+    c.rc.table_manager.activate(table_id=2, event_key="LIVE-1", exposure=float("nan"), market_id="1.555",
+                                selection_id=1)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert _stop_eventi(c) == []
 
 
 def test_block_risk_stop_resta_attivo_anche_alzando_il_limite(tmp_path):
-    c = _catena(tmp_path, max_exposure_stop=0.01)
+    c = _catena(tmp_path, max_exposure_stop=5.0)
+    c.rc.table_manager.activate(table_id=2, event_key="LIVE-1", exposure=5.0, market_id="1.555", selection_id=1)
     c.rc._on_signal_received(_signal())
     c.rc.config.max_exposure_stop = 1000.0
 

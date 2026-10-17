@@ -8,6 +8,77 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e
+  PF-MICROSTAKE-OWNER-RECTIFICATION-20261017):** ogni importo sotto il minimo exchange (2 EUR) passa dal Microstake
+  nativo — saga PLACE stub 2 EUR a prezzo passivo → `sizeReduction` al residuo esatto → REPLACE solo se serve (nuovo
+  betId persistito) — sul `SimulationBroker` reale (`core/microstake_sim_port.py`), senza flag; LIVE senza adapter
+  resta fail-closed. Vale per Quick Bet, Dutching, Roserpina e per l'hedge del cashout (`OrderRouter`). Esposizione
+  temporanea dello stub entro fondi disponibili e headroom di esposizione; saga nel DB (`microstake.sagas`),
+  recovery all'avvio prima di F018 (PAUSED se pendente). `SimulationBroker.cancel_orders` supporta `sizeReduction`.
+  Docs: `docs/microstake_native.md`.
+
+- **Continuità multi-agente (PF-AGENT-CONTINUITY-01):** `pfckpt` aggiunge `CURRENT.json`, `TASK_STATE.json`
+  (puntatori verificati contro STATE.json), `AGENT_LEASE.json` (lease con scadenza e fencing token letto dal
+  checkpoint remoto: `save --agent` obbligatorio, `LEASE_HELD` se tenuto da altri, `--release` per l'handoff), cattura
+  e ripristino della patch del codice non committato (`--code-repo`, `restore-code`), comando `recover` (ultimo
+  checkpoint valido, remoto intatto) e rilevazione della divergenza del branch di codice in `bootstrap`.
+
+- **Riconciliazione delle issue aperte (PF-ISSUE-RECONCILIATION-01):** `docs/issue_reconciliation/` (csv/json/md):
+  60 issue aperte al 17/10/2026 classificate con motivazione ed evidenza, deduplicate per scheda #461.
+
+### Fixed
+- **Rilievi Codex su PR #512 (commit 8ffb4f3):** riserva transitoria del Microstake rilasciata all'attivazione; blocco
+  pre-invio del Microstake = errore pre-invio tipizzato (intento dedupe rilasciato, retry non duplicato); snapshot del
+  broker SIM persistito dopo ogni operazione della saga; ricostruzione F018: righe pendenti senza attribuzione =>
+  avvio non ok, chiavi dedupe dei tavoli gia' occupati riacquisite, betId annidato letto; RSR-12: tavolo surplus con
+  perdita ricreato al riavvio, write failure dello stato di recovery fail-closed.
+
+### Changed
+- **Money Management (rettifica owner 17/10/2026):** lo stake calcolato non viene più alzato in silenzio al
+  `min_stake`: sotto il minimo configurato la decisione è rifiutata con `stake_sotto_min_stake` e lo stake richiesto
+  in chiaro. Test F001/side-parity del trasporto diretto portati sopra il minimo exchange (il percorso diretto non
+  riceve più importi sotto 2 EUR).
+- **Checkpoint multi-agente `pf-checkpoint/3`** (`tools/agent_checkpoint/pfckpt.py`, `docs/agent_checkpoint_protocol.md`):
+  verifica sul tree committato, salvataggio atomico con concorrenza ottimistica, ripresa idempotente dopo crash,
+  readback da clone pulito, bootstrap da zero; ripara l'incidente INC-b45f528 (artefatti `*.log` esclusi dal
+  `.gitignore`). Regole per tutti gli agenti in AGENTS.md/CLAUDE.md. Nessun effetto sul runtime di trading.
+
+### Fixed
+- **F026 (v2):** Roserpina distingue saldo disponibile, fondi impegnati ed equità di cassa del conto
+  (`RuntimeController._account_from_funds`, soli campi exchange). L'auto-reset, che ribasa il picco e libera
+  risorse, si decide sul regolato e non sul solo disponibile: le puntate aperte non sono più perdite. Il reset
+  trattiene tavoli e chiavi delle posizioni non regolate. La base di stake e dei limiti percentuali **non cambia**
+  (resta il disponibile). Vedi `docs/roserpina_bankroll_equity.md`.
+- **F2:** un settlement senza `table_id` (poller SIM/cleared) libera il tavolo del suo mercato, solo se univoco e
+  con esito certo.
+- **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
+  esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
+  parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+- **F032:** l'espansione dello stake Roserpina si raggiunge davvero: la crescita si misura sull'equità di cassa
+  regolata rispetto a una baseline persistente del ciclo (non più sul picco che segue il saldo); dati incerti ⇒
+  nessuna espansione.
+- **RSR-12:** lo stato dei tavoli di recovery è persistente e sopravvive al riavvio; il limite conta anche i tavoli
+  in recovery senza ordini.
+- **F027:** i settlement confermati si contabilizzano anche in PAUSED, LOCKDOWN ed emergency stop (nessun nuovo
+  ordine dalla riconciliazione; dopo un emergency stop in LIVE il registro SIM non viene usato e l'incertezza si
+  segnala).
+- **F028:** un ordine d'ingresso con stato finale confermato dal broker e nessun abbinato libera tavolo e riserva;
+  gli esiti incerti non vengono mai liberati.
+- **F031:** nel broker SIM un ordine parzialmente abbinato con residuo annullato resta fra gli ordini correnti
+  (parità con Betfair): F018 lo ricostruisce al riavvio.
+- **F030:** il Liquidity Guard protegge anche gli ingressi singoli BACK/LAY (liquidità eseguibile al prezzo, lato
+  corretto del book, `core/liquidity.py`); un book assente o non attendibile nega l'ingresso anche in solo-avviso.
+  Il Book Block resta sul dutching: per una singola selezione non esiste un book percentuale significativo.
+- **Stop di esposizione:** un ordine candidato che raggiungerebbe `max_exposure_stop` si rifiuta senza armare un
+  RISK_STOP persistente; lo stop scatta quando è l'esposizione reale a raggiungere il limite.
+- **GUI Roserpina:** etichette Max Win e Liquidity riallineate al comportamento (Max Win resta un blocco hard sul
+  percorso ordine); checkbox su quattro righe, prima gli ultimi uscivano dalla finestra.
+- **F029:** `TableManager.allocate` non riassegna più un tavolo in recovery già occupato da una posizione aperta,
+  né un tavolo oltre `table_count`. Prima, con recovery attivo e dopo una perdita, un secondo ingresso riceveva
+  lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un
+  tavolo. Trovato dalla campagna di simulazione Roserpina (con un solo tavolo), reso raggiungibile da F2.
+
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).
@@ -104,6 +175,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Order outcome with the production `ExecutorManager` (PF-ALL-F001, #453): the
+  `TradingEngine` now waits for and classifies the `Future` instead of treating
+  it as the broker response. Rejections are `FAILED`; timeouts after the task
+  started, lost responses, `order_unknown`, mixed or malformed responses are
+  `AMBIGUOUS` with reconciliation; a task still queued when the wait expires is
+  cancelled and reported as pre-send `FAILED`. A top-level `SUCCESS` whose
+  instruction reports are all `FAILURE` is a rejection. No order is recorded as
+  `SUBMITTED` without the real broker response.
+- Table release on terminal events (PF-ALL-F023): engine bus events carry
+  `table_id` and `market_id`; a confirmed failure frees the table only if it still
+  holds that order's reservation (`TableManager.force_unlock_if_event`,
+  idempotent, lock-protected).
+- `QUICK_BET_AMBIGUOUS` no longer releases the table, the exposure or the
+  anti-duplicate key (PF-ALL-F024): the risk is held until reconciliation, also
+  across `ROSERPINA_AUTO_RESET` and `reset_cycle` (`TableManager.reset_all` and
+  `DuplicationGuard.clear` keep the uncertain reservations).
+  See `docs/trading_engine_executor_contract.md`.
 - RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
   PKG-P24-B: P38 and the P37 exposure stop).
   - Before, reaching the session-loss limit only blocked new entries: the bot's

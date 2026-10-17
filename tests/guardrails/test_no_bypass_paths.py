@@ -50,6 +50,10 @@ def test_no_direct_client_order_submission_outside_allowed_layers():
         "betfair_client.py",
         "simulation_broker.py",
         "core/order_router.py",
+        # Adapter exchange del Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02):
+        # la saga chiama il SimulationBroker solo tramite le sue operazioni pubbliche
+        # ed e' raggiunta esclusivamente da TradingEngine/OrderRouter.
+        "core/microstake_sim_port.py",
     }
 
     for path in ROOT.rglob("*.py"):

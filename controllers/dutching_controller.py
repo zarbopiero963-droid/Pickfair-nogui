@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 import trading_config
+from core import liquidity
 from core.order_identity import (
     derive_customer_ref,
     new_operation_customer_ref,
@@ -527,72 +528,17 @@ class DutchingController:
 
     @staticmethod
     def _liquidity_crosses(side, order_price, book_price) -> bool:
-        """Un livello del book e' eseguibile alla quota dell'ordine (book REALE Betfair).
-
-        Sul book reale un BACK a order_price viene riempito dai livelli di
-        availableToBack a quota >= order_price (quote uguali o migliori per il
-        backer) => eseguibile se book_price >= order_price. Un LAY a order_price dai
-        livelli di availableToLay a quota <= order_price => eseguibile se book_price
-        <= order_price. NB: direzione INVERTITA rispetto al mirror del matcher
-        interno del simulatore (#383): il market_tracker usa i campi Betfair-standard.
-        """
-        if str(side).upper() == "BACK":
-            return book_price >= order_price
-        return book_price <= order_price
+        """Delega a ``core.liquidity`` (PF-ALL-F030: una sola formula per dutching e ingressi singoli)."""
+        return liquidity.liquidity_crosses(side, order_price, book_price)
 
     @classmethod
     def _sum_executable_liquidity(cls, ladder, side, order_price) -> float:
-        """Somma le size dei soli livelli eseguibili alla quota dell'ordine."""
-        total = 0.0
-        for level in ladder or []:
-            try:
-                lvl_price = float((level or {}).get("price", 0.0) or 0.0)
-                lvl_size = float((level or {}).get("size", 0.0) or 0.0)
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if lvl_price <= 0.0 or lvl_size <= 0.0:
-                continue
-            if cls._liquidity_crosses(side, order_price, lvl_price):
-                total += lvl_size
-        return total
+        return liquidity.sum_executable_liquidity(ladder, side, order_price)
 
     @classmethod
     def _available_liquidity(cls, book, selection_id, side, price):
-        """Liquidita' ESEGUIBILE per una gamba dal book REALE gia' recuperato.
-
-        Lato ladder Betfair-standard (#383, deciso dall'owner): un BACK consuma
-        availableToBack, un LAY consuma availableToLay (e' la liquidita' che l'ordine
-        matcha davvero sul mercato reale; coerente con direct_best_price/
-        betfair_client). Filtrata per prezzo eseguibile (_liquidity_crosses). Le
-        `size` del book sono backer-stake, omogenee con lo `stake` della gamba (per
-        il LAY lo stake e' backer-stake, la liability e' un campo separato). Ritorna
-        None se book/selezione/ladder non disponibili (osservazione ignota).
-        """
-        if not isinstance(book, dict):
-            return None
-        runners = book.get("runners")
-        if not isinstance(runners, list):
-            return None
-        try:
-            target = int(selection_id)
-            order_price = float(price)
-        except (TypeError, ValueError):
-            return None
-        ladder_key = "availableToBack" if str(side).upper() == "BACK" else "availableToLay"
-        for runner in runners:
-            if not isinstance(runner, dict):
-                continue
-            sid = runner.get("selectionId")
-            try:
-                if sid is None or int(sid) != target:
-                    continue
-            except (TypeError, ValueError):
-                continue
-            ladder = (runner.get("ex") or {}).get(ladder_key)
-            if ladder is None:
-                return None  # ladder assente => ignoto
-            return cls._sum_executable_liquidity(ladder, side, order_price)
-        return None  # selezione non trovata
+        """Liquidita' ESEGUIBILE per una gamba dal book REALE (lato Betfair-standard #383); None se ignota."""
+        return liquidity.executable_liquidity(book, selection_id, side, price)
 
     @classmethod
     def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs):
