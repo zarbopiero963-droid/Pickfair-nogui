@@ -1,0 +1,42 @@
+{
+ "blocks": [
+  "Gate A #506 NON PASS",
+  "PR #505 protetta",
+  "LIVE NO-GO",
+  "decisione owner aperta: stake sopra max_single_bet (ridimensionare o rifiutare)"
+ ],
+ "dependencies": {
+  "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
+  "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)",
+  "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata"
+ },
+ "gate_a": "NON PASS (#506, A01-A13 aperti)",
+ "lotti_completati": [
+  "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
+  "B (F032 + RSR-12, commit 180f405)",
+  "D (durata 1/10/100/1000 + crash, scenario critico)",
+  "E (campagna completa su 180f405)",
+  "PF-UNIVERSAL-CHECKPOINT-V1: strumento pfckpt + riparazione INC-b45f528 (seq 8)",
+  "PF-UNIVERSAL-CHECKPOINT-V1: codice 5862ff0 pushato, guard PASS (seq 9)",
+  "CD-04 C parziale: MD10 test (82f499c); regressione completa 82f499c; crosswalk A06 (seq 10)",
+  "CD-04 C: mutation d04 su 82f499c 12/12 KILLED (seq 11)",
+  "Cross-provider Claude -> ChatGPT Work PASS; A06 410 celle riconciliate (seq 12)",
+  "F011/F025 betId fail-closed, regressione completa e guard PASS (seq 12)",
+  "FASE 0 preflight (archivio Codex sha ok, restore c5e4422, 53 PASS, RED Dutching riprodotto)",
+  "FASE 1 M1-M5 Microstake nativo: commit 8ffb4f3, PR #512",
+  "FASE 2 continuita': pfckpt v2 (40 test, 6 mutanti uccisi), docs; da committare su PR #512"
+ ],
+ "lotto_corrente": "FASE 2 PF-AGENT-CONTINUITY-01: lease/fencing, puntatori, patch codice, recover (lavoro non committato nel code_patch)",
+ "mandate_id": "OWNER-EXECUTIVE-MANDATE-20261017 (PF-MICROSTAKE-NATIVE-INTEGRATION-02, PF-AGENT-CONTINUITY-01, PF-TRACEABILITY-ALL-01, PF-ISSUE-RECONCILIATION-01)",
+ "next_atomic_action": "1) commit+push FASE 2 (pfckpt v2, docs, AGENTS/CLAUDE) su PR #512; 2) FASE 3 PF-TRACEABILITY-ALL-01: registro atomico docs/traceability + validatore tools/traceability/pf_trace.py + test; 3) FASE 4 riconciliazione 60 issue; 4) best execution + PF-EXEC-01..06 + PF-OD12; 5) pacchetto handoff.",
+ "pr_505": "aperta, head 618884e, non toccata",
+ "schema": "pf-task-state/1",
+ "tests_missing": [
+  "regressione completa post-commit su 8ffb4f3 (CI PR #512)",
+  "adapter LIVE Microstake (assente)",
+  "best execution dinamico + PF-EXEC-01..06 (PLANNED)",
+  "portabilita' cross-provider checkpoint",
+  "GUI/X11: Xvfb non disponibile nell'ambiente; 8 test saltati",
+  "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati"
+ ]
+}

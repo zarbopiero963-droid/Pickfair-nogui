@@ -13,7 +13,7 @@ git clone https://github.com/zarbopiero963-droid/Pickfair-nogui.git /tmp/pf && c
 git fetch origin agent-state/pf-full-delivery ccr-bcc81683-ud0hgc
 git show origin/agent-state/pf-full-delivery:checkpoint/pf-full-delivery/tools/pfckpt.py > /tmp/pfckpt.py
 python3 /tmp/pfckpt.py bootstrap --url https://github.com/zarbopiero963-droid/Pickfair-nogui.git \
-    --branch agent-state/pf-full-delivery --dest /tmp/state --code-branch ccr-bcc81683-ud0hgc
+    --branch agent-state/pf-full-delivery --dest /tmp/state --code-branch ccr-bcc81683-ud0hgc --agent <tuo-nome>
 ```
 
 `READY` (exit 0) => leggere `next_atomic_action`, `authorizations`, `stop_conditions` e lavorare su `work.head_sha`.
@@ -61,7 +61,8 @@ Per F011/F025 è stato usato `issue461-pr26-0-f011-f025-betid` (5 file); entramb
 1. `EXP=$(git -C /tmp/state ls-remote origin refs/heads/agent-state/pf-full-delivery | cut -f1)` e il worktree deve essere su `EXP`.
 2. Aggiornare `STATE.json`: `seq` = precedente + 1, `previous_checkpoint_sha` = `EXP`, `code.sha` (40 caratteri), test con
    stato `PASS/FAIL/BLOCKED/NOT VERIFIED/MISSING` e SHA del codice, artefatti dichiarati presenti nella directory.
-3. `python3 tools/pfckpt.py save --repo /tmp/state --branch agent-state/pf-full-delivery --expected $EXP --message "..." --code-branch ccr-bcc81683-ud0hgc`
+3. `python3 tools/pfckpt.py save --repo /tmp/state --branch agent-state/pf-full-delivery --expected $EXP --message "..." --code-branch ccr-bcc81683-ud0hgc --agent <tuo-nome> [--code-repo <repo di codice>] [--release]`
+   (`--agent` obbligatorio: lease letto dal checkpoint remoto, `LEASE_HELD` = exit 6; `--release` all'handoff; `--code-repo` cattura diff e file nuovi non committati)
 
 Solo `"status": "DURABLE"` (readback da clone pulito superato) vale come salvato. Exit 3 = un altro agente ha avanzato
 lo stato: leggere il nuovo checkpoint, riconciliare a mano, ripartire da quello SHA (mai force-push, mai merge automatico).

@@ -1,0 +1,13 @@
+{
+ "certification_verdict": "NO-GO",
+ "checkpoint_commit": null,
+ "code": {
+  "branch": "ccr-bcc81683-ud0hgc",
+  "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204"
+ },
+ "mandate_id": "OWNER-EXECUTIVE-MANDATE-20261017 (PF-MICROSTAKE-NATIVE-INTEGRATION-02, PF-AGENT-CONTINUITY-01, PF-TRACEABILITY-ALL-01, PF-ISSUE-RECONCILIATION-01)",
+ "next_atomic_action": "1) commit+push FASE 2 (pfckpt v2, docs, AGENTS/CLAUDE) su PR #512; 2) FASE 3 PF-TRACEABILITY-ALL-01: registro atomico docs/traceability + validatore tools/traceability/pf_trace.py + test; 3) FASE 4 riconciliazione 60 issue; 4) best execution + PF-EXEC-01..06 + PF-OD12; 5) pacchetto handoff.",
+ "previous_checkpoint_sha": "2ae04e03231fb27a5496ee54d03965ad57af929b",
+ "schema": "pf-current/1",
+ "seq": 14
+}
