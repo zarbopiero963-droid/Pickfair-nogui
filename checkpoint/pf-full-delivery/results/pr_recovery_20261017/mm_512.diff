@@ -1,0 +1,68 @@
+diff --git a/core/money_management.py b/core/money_management.py
+index 55667f4..c068991 100644
+--- a/core/money_management.py
++++ b/core/money_management.py
+@@ -106,6 +106,8 @@ class RoserpinaMoneyManagement:
+         bankroll_current: float,
+         equity_peak: float,
+         daily_loss: float = 0.0,
++        expansion_growth_pct: Any = None,
++        expansion_growth_given: bool = False,
+     ) -> DeskMode:
+         bankroll_current = self._safe_float(bankroll_current, 0.0)
+         equity_peak = self._safe_float(equity_peak, 0.0)
+@@ -129,8 +131,14 @@ class RoserpinaMoneyManagement:
+             return DeskMode.DEFENSE
+ 
+         growth_pct = 0.0
+-        if bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
+-            # Fix bug EXPANSION (#320): calcolo corretto della crescita
++        if expansion_growth_given:
++            # PF-ALL-F032 (decisione owner CONTINUOUS-DELIVERY-04): crescita dell'equita' di cassa regolata
++            # rispetto alla baseline persistente del ciclo, calcolata dal runtime. Ignota (None) => nessuna
++            # espansione: mai stake aumentato su dati incerti.
++            growth = validators.finite_number(expansion_growth_pct)
++            growth_pct = growth if growth is not None else 0.0
++        elif bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
++            # Chiamanti senza baseline del ciclo (es. dutching): calcolo storico #320.
+             growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0
+ 
+         if growth_pct >= self._safe_float(self.config.expansion_profit_pct, 5.0):
+@@ -337,6 +345,8 @@ class RoserpinaMoneyManagement:
+             bankroll_current=bankroll_current,
+             equity_peak=equity_peak,
+             daily_loss=daily_loss,
++            expansion_growth_pct=signal.get("expansion_growth_snapshot"),
++            expansion_growth_given="expansion_growth_snapshot" in signal,
+         )
+ 
+         if desk_mode == DeskMode.LOCKDOWN:
+@@ -417,7 +427,27 @@ class RoserpinaMoneyManagement:
+                 },
+             )
+ 
+-        # clamp tecnico
++        # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato NON si
++        # arrotonda mai verso l'alto fino al minimo. Il minimo configurato resta un
++        # limite: sotto, rifiuto ESPLICITO con lo stake richiesto in chiaro (il
++        # Microstake nativo esegue esattamente gli importi sotto il minimo exchange;
++        # un minimo software resta solo cio' che l'owner ha configurato).
++        if recommended < min_stake and not math.isclose(recommended, min_stake, rel_tol=0.0, abs_tol=1e-9):
++            return MoneyManagementDecision(
++                approved=False,
++                recommended_stake=recommended,
++                desk_mode=desk_mode,
++                reason="stake_sotto_min_stake",
++                table_id=table_id,
++                metadata={
++                    "base_stake": base_stake,
++                    "risk_mult": risk_mult,
++                    "desk_mult": desk_mult,
++                    "requested_stake": recommended,
++                    "min_stake": min_stake,
++                },
++            )
++        # clamp tecnico verso l'alto al tetto del singolo ordine (invariato)
+         recommended = self._clamp(recommended, min_stake, max(max_single, min_stake))
+         # Rischio dell'ordine (#461 PR28): BACK = stake, LAY = liability
+         # stake*(quota-1). Prima tutti i cap confrontavano lo stake: una LAY 10

@@ -1,0 +1,13 @@
+33ce5787292eb0298beefba274b0798817e6fb55
+.guardrails/allowed_scope.json
+CHANGELOG.md
+
+Auto-merging .guardrails/allowed_scope.json
+CONFLICT (content): Merge conflict in .guardrails/allowed_scope.json
+Auto-merging CHANGELOG.md
+CONFLICT (content): Merge conflict in CHANGELOG.md
+Auto-merging core/money_management.py
+Auto-merging core/runtime_controller.py
+Auto-merging docs/design/design_handoff.md
+Auto-merging mini_gui.py
+Auto-merging tests/integration/test_issue461_pr26a_customer_ref_provenance.py
