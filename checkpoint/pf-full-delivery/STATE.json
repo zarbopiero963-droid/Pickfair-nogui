@@ -1,13 +1,13 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 15,
- "updated_at": "2026-10-17T20:56:33.517961+00:00",
+ "seq": 16,
+ "updated_at": "2026-10-17T22:30:39.136183+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
   "lock": "concorrenza ottimistica: --expected = SHA remoto di partenza; nessun force-push",
   "last_writer": "claude-code",
-  "lease_status_at_write": "MINE"
+  "lease_status_at_write": "FREE"
  },
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -15,7 +15,8 @@
   "PF-ROSERPINA-41-FULL-SIMULATION-02",
   "PF-ROSERPINA-FINANCIAL-CLOSURE-03",
   "PF-CROSS-AGENT-HANDOFF-A06-01 (attivo)",
-  "PF-PR-RECOVERY-20261017 (attivo: produzione in sola lettura)"
+  "PF-PR-RECOVERY-20261017 (attivo: produzione in sola lettura)",
+  "PF-PR-RECOVERY-DECISIONS-02 (attivo: decisioni owner 1-5 approvate; nessun merge)"
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
@@ -108,6 +109,21 @@
     "sha": "339cd24",
     "task": "issue461-pr28-microstake-native-02",
     "what": "8 rilievi Codex corretti con test RED/GREEN + riconciliazione 60 issue (FASE 4)"
+   },
+   {
+    "sha": "5b4a589",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "sei finding triagiati corretti con test RED/GREEN (tests/test_pr512_recovery_fixes.py)"
+   },
+   {
+    "sha": "cad07e1",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "evidenze di tracciabilita' con SHA reale"
+   },
+   {
+    "sha": "21aab95",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "scan segreti checkpoint: esenzione solo tools/pfckpt.py (Sol)"
    }
   ],
   "head_sha": "8ffb4f3",
@@ -242,6 +258,11 @@
    "id": "regression_full",
    "sha": "339cd24",
    "result": "7720 passed / 0 failed / 14 skipped / 2 xfailed"
+  },
+  {
+   "id": "regression_full",
+   "sha": "21aab95",
+   "result": "7742 passed / 14 skipped / 2 xfailed / 0 failed (922 s)"
   }
  ],
  "findings": {
@@ -261,7 +282,9 @@
    "Max Win label",
    "F032",
    "RSR-12 persistenza recovery",
-   "Codex 4303297564/571/575/576/582/596/600/609 (commit 339cd24)"
+   "Codex 4303297564/571/575/576/582/596/600/609 (commit 339cd24)",
+   "Codex 4303374299/312/317/326/328 e Grok snapshot/pre_send (commit 5b4a589)",
+   "Sol esenzione basename pfckpt (21aab95)"
   ],
   "open": [
    "F004",
@@ -270,16 +293,11 @@
    "LOCKDOWN su drawdown del disponibile (base caso peggiore; decisione owner 6.O2)",
    "F033 (cap evento per event_key, non aggrega mercati dello stesso incontro; fix nella PR #505: BLOCKED)",
    "RSR-20 solo LIVE: NOT VERIFIED",
-   "Codex 4303374299 resume() senza recovery Microstake (PATCH_REQUIRED)",
-   "Codex 4303374312 precisione 2 decimali (PATCH_REQUIRED)",
-   "Codex 4303374328 ladder malformata (PATCH_REQUIRED)",
-   "Codex 4303374317 scan segreti .py pfckpt (PATCH_REQUIRED)",
-   "Codex 4303374326 SHA evidenze non risolti (PATCH_REQUIRED basso)",
    "Codex 4303374306 conferma auto-trade all'accodamento (preesistente, DEFERRED_BY_POLICY)",
    "Codex 4303297587 aggregazione settlement per-bet LIVE (design owner)",
-   "Grok persist_snapshot fuori lock / False ignorato (GUARDRAIL_GAP basso)",
-   "Grok pre_send len(operation_log) senza lock (GUARDRAIL_GAP basso)",
-   "INTEGRAZIONE #505x#512: stub 2 EUR vs cap assoluti per ordine/mercato/evento (decisione owner)"
+   "INTEGRAZIONE #505x#512: stub 2 EUR vs cap assoluti per ordine/mercato/evento (decisione owner)",
+   "Grok cad07e1: resume() con trading_engine assente => ok (THEORETICAL: senza engine nessun ordine possibile; opzione ENGINE_ABSENT=>PAUSED registrata)",
+   "DECISIONE 2 non ancora implementata: _clamp verso l'alto a max_single in core/money_management.py"
   ]
  },
  "gates": {
@@ -309,13 +327,12 @@
   "prelievi/depositi",
   "ordine PR F001/F026 vs #505",
   "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461",
-  "stub Microstake 2 EUR soggetto ai cap assoluti della #505 (SI/NO)",
-  "ordine di merge #505 prima di #512",
-  "verdetto OD-01 e chiusura #508 senza merge",
-  "riapertura della scrittura su #512 (push unico dei 6 fix triagiati)"
+  "verdetto OD-01 per ID su #506 (poi chiusura #508 senza merge)",
+  "riconciliazione del default cap-ordine 1 EUR della #505 con la Decisione 1 (PR #505 protetta: owner)",
+  "autorizzazione del lotto Decisione 2 (max_single_bet) sulla #512"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere le decisioni owner (stub vs cap assoluti; ordine merge; OD-01; riapertura scrittura). Alla riapertura: un solo push su #512 con i 6 fix triagiati (test RED/GREEN), regressione completa, giro Sol/Grok; nessuna nuova PR; #505 e main intoccate.",
+ "next_atomic_action": "Attendere: autorizzazione owner per il lotto Decisione 2 (rifiuto esplicito sopra max_single_bet) sulla #512; verdetto OD-01 su #506; sequenza Gate A globale -> Gate A #505 -> riconciliazione cap-ordine -> Gate B #505 -> merge #505 autorizzato -> integrazione #512. Nessuna nuova PR, nessun merge.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -324,9 +341,9 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
- "mandate_current": "PF-PR-RECOVERY-20261017",
- "previous_checkpoint_sha": "d655d5594965c895049e3ede9b3c25e51bf618c2",
- "lotto_corrente": "PF-PR-RECOVERY-20261017: audit #505/#508/#512 pubblicato, produzione in sola lettura",
+ "mandate_current": "PF-PR-RECOVERY-DECISIONS-02",
+ "previous_checkpoint_sha": "0d492a000e598350b71fb68b0f00cecd4176894d",
+ "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: lotto sei finding consegnato (21aab95); errata OD-01 #508 (4476108)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -345,7 +362,8 @@
   "FASE 2 continuita' (043e34c)",
   "FASE 3 tracciabilita' (043e34c)",
   "FASE 4 riconciliazione 60 issue (339cd24)",
-  "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)"
+  "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)",
+  "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -379,19 +397,19 @@
  },
  "verified_vs_declared": "verified=True solo per test eseguiti in questa sessione sullo SHA indicato; il resto e' dichiarato",
  "gate_a_506": "NON PASS",
- "pr_505": "aperta, head 618884e, non toccata; merge scratch con #512: 31 scenari F026 rifiutati dai cap assoluti (decisione owner)",
+ "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "live": "NO-GO",
  "dependencies": {
   "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata",
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "seq 15 Claude Code: audit PF-PR-RECOVERY-20261017, codice 339cd24, lease rilasciato",
+ "session_end": "seq 16 Claude Code: lotto PF-PR-RECOVERY-DECISIONS-02 consegnato, lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-PR-RECOVERY-20261017 (sopra OWNER-EXECUTIVE-MANDATE-20261017)",
+ "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "339cd244a8336d6d4ddd1d4880d588efccb0c2e1",
+  "sha": "21aab951f2611c1d6f589c4bfa7614457c84fc97",
   "verified_with": "git ls-remote",
   "patch": null
  },
@@ -399,10 +417,9 @@
   "Gate A #506 NON PASS",
   "PR #505 protetta",
   "LIVE NO-GO",
-  "PF-PR-RECOVERY-20261017: produzione in sola lettura, nessuna nuova PR, nessun merge",
+  "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 §4/§10)",
   "overlap-check rosso (tre PR aperte)",
-  "decisione owner aperta: stake sopra max_single_bet",
-  "decisione owner aperta: stub vs cap assoluti #505"
+  "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505"
  ],
  "owner_authorizations": {
   "live": false,
@@ -596,6 +613,41 @@
    "sha": "f63cf3a5ece48558fef9682ff126a6c437976186",
    "result": "848 passed / 31 failed (tutti tests/f026: SIGNAL_REJECTED max_order_exposure_exceeded:limit=1.0 EUR, cap assoluti #505)",
    "artifact": "results/pr_recovery_20261017/merged_tests.log"
+  },
+  {
+   "id": "RED nuovi test su 339cd24",
+   "status": "FAIL",
+   "sha": "339cd244a8336d6d4ddd1d4880d588efccb0c2e1",
+   "result": "18 failed / 3 passed (controlli) — atteso RED",
+   "artifact": "results/pr_recovery_decisions_02/red_339cd24.txt"
+  },
+  {
+   "id": "suite mirata lotto (Microstake/core/f026/f029/f001/parity/guardrail)",
+   "status": "PASS",
+   "sha": "5b4a589e6fef5c055505952a0562357ec5351bf5",
+   "result": "832 passed / 0 failed (albero di 5b4a589 pre-commit)",
+   "artifact": "results/pr_recovery_decisions_02/focused_patched.log"
+  },
+  {
+   "id": "regression_full",
+   "status": "PASS",
+   "sha": "cad07e1a778467ff65b6ee1a43de4911ad3b7c4c",
+   "result": "7740 passed / 14 skipped / 2 xfailed / 1 failed (GUI pr04_quater: TclError display :99, Xvfb morto; identico su 339cd24 dopo riavvio: ambientale)",
+   "artifact": "results/pr_recovery_decisions_02/fullreg_cad07e1_env.txt"
+  },
+  {
+   "id": "regression_full",
+   "status": "PASS",
+   "sha": "21aab951f2611c1d6f589c4bfa7614457c84fc97",
+   "result": "7742 passed / 14 skipped / 2 xfailed / 0 failed (922 s)",
+   "artifact": "results/pr_recovery_decisions_02/fullreg_21aab95_tail.txt"
+  },
+  {
+   "id": "merge scratch #505+#512 con cap assoluti alzati (esperimento, non pubblicato)",
+   "status": "PASS",
+   "sha": "f63cf3a5ece48558fef9682ff126a6c437976186",
+   "result": "tests/f026: 38 passed, 1 XPASS(strict)=F033 chiuso dalla #505; i 31 FAIL dipendono tutti dal cap ordine 1 EUR della #505",
+   "artifact": "results/pr_recovery_decisions_02/merged_capsoff.txt"
   }
  ],
  "tests_missing": [
@@ -605,7 +657,8 @@
   "GUI/X11: Xvfb non disponibile nell'ambiente; 8 test saltati",
   "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati",
   "regressione sull'albero integrato #505x#512 con cap assoluti configurati (31 scenari F026 da riallineare)",
-  "6 fix triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) non ancora spinti: produzione in sola lettura"
+  "Decisione owner 2 (stake > max_single_bet: rifiuto esplicito, mai ridimensionamento): da implementare sulla #512",
+  "albero integrato #505x#512 con cap configurati: scenari F026 (31), rimozione xfail F033, fence cashout x saga Microstake"
  ],
  "missing_historical_evidence": [
   {
@@ -636,6 +689,7 @@
    "6235685327",
    "6235871733"
   ],
-  "PF-OWNER-DECISIONS-12-20261017": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6235863600"
+  "PF-OWNER-DECISIONS-12-20261017": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/426#issuecomment-6235863600",
+  "PF-PR-RECOVERY-DECISIONS-02": "mandato owner in chat 17/10 (decisioni 1-5); rapporto lotto su #506"
  }
 }

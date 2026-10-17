@@ -1,0 +1,6 @@
+main run1: RuntimeError: main thread is not in main loop
+main run2: RuntimeError: main thread is not in main loop
+main run3: RuntimeError: main thread is not in main loop
+red run1: RuntimeError: main thread is not in main loop
+red run2: RuntimeError: main thread is not in main loop
+red run3: RuntimeError: main thread is not in main loop

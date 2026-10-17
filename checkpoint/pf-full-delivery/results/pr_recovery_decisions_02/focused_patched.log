@@ -1,0 +1,6 @@
+
+core/runtime_controller.py:3689: AttributeError
+=========================== short test summary info ============================
+XFAIL tests/f026/test_f026_financial.py::test_F033_event_cap_aggregates_markets_of_the_same_event - F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.
+FAILED tests/f026/test_f018_rebuild_units.py::test_resume_retries_reconciliation_and_refuses_while_incomplete
+1 failed, 831 passed, 1 xfailed, 2093 warnings in 470.82s (0:07:50)

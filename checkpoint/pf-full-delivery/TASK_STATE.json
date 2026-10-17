@@ -3,10 +3,9 @@
   "Gate A #506 NON PASS",
   "PR #505 protetta",
   "LIVE NO-GO",
-  "PF-PR-RECOVERY-20261017: produzione in sola lettura, nessuna nuova PR, nessun merge",
+  "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 \u00a74/\u00a710)",
   "overlap-check rosso (tre PR aperte)",
-  "decisione owner aperta: stake sopra max_single_bet",
-  "decisione owner aperta: stub vs cap assoluti #505"
+  "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -32,12 +31,13 @@
   "FASE 2 continuita' (043e34c)",
   "FASE 3 tracciabilita' (043e34c)",
   "FASE 4 riconciliazione 60 issue (339cd24)",
-  "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)"
+  "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)",
+  "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)"
  ],
- "lotto_corrente": "PF-PR-RECOVERY-20261017: audit #505/#508/#512 pubblicato, produzione in sola lettura",
- "mandate_id": "PF-PR-RECOVERY-20261017 (sopra OWNER-EXECUTIVE-MANDATE-20261017)",
- "next_atomic_action": "Attendere le decisioni owner (stub vs cap assoluti; ordine merge; OD-01; riapertura scrittura). Alla riapertura: un solo push su #512 con i 6 fix triagiati (test RED/GREEN), regressione completa, giro Sol/Grok; nessuna nuova PR; #505 e main intoccate.",
- "pr_505": "aperta, head 618884e, non toccata; merge scratch con #512: 31 scenari F026 rifiutati dai cap assoluti (decisione owner)",
+ "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: lotto sei finding consegnato (21aab95); errata OD-01 #508 (4476108)",
+ "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
+ "next_atomic_action": "Attendere: autorizzazione owner per il lotto Decisione 2 (rifiuto esplicito sopra max_single_bet) sulla #512; verdetto OD-01 su #506; sequenza Gate A globale -> Gate A #505 -> riconciliazione cap-ordine -> Gate B #505 -> merge #505 autorizzato -> integrazione #512. Nessuna nuova PR, nessun merge.",
+ "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [
   "adapter LIVE Microstake (assente)",
@@ -46,6 +46,7 @@
   "GUI/X11: Xvfb non disponibile nell'ambiente; 8 test saltati",
   "Telegram LIVE: credenziali assenti e LIVE vietato; 7 test saltati",
   "regressione sull'albero integrato #505x#512 con cap assoluti configurati (31 scenari F026 da riallineare)",
-  "6 fix triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) non ancora spinti: produzione in sola lettura"
+  "Decisione owner 2 (stake > max_single_bet: rifiuto esplicito, mai ridimensionamento): da implementare sulla #512",
+  "albero integrato #505x#512 con cap configurati: scenari F026 (31), rimozione xfail F033, fence cashout x saga Microstake"
  ]
 }

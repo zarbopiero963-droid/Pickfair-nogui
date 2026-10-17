@@ -1,0 +1,2 @@
+FAILED tests/f026/test_f026_financial.py::test_F033_event_cap_aggregates_markets_of_the_same_event
+1 failed, 38 passed in 394.44s (0:06:34)
