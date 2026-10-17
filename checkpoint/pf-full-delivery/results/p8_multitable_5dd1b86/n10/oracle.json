@@ -1,0 +1,82 @@
+{
+ "n": 10,
+ "settings": {
+  "roserpina.lockdown_drawdown_pct": 60.0,
+  "roserpina.table_count": 10,
+  "roserpina.max_total_exposure_pct": 100.0,
+  "roserpina.max_event_exposure_pct": 100.0,
+  "roserpina.max_single_bet_pct": 25.0
+ },
+ "expect": {
+  "1.901": {
+   "side": "BACK",
+   "mode": "normal",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.902": {
+   "side": "LAY",
+   "mode": "partial",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.903": {
+   "side": "BACK",
+   "mode": "nomatch",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.904": {
+   "side": "LAY",
+   "mode": "lost",
+   "max_order_rows": 1,
+   "rebuilt_table": false,
+   "ambiguous_allowed": true
+  },
+  "1.905": {
+   "side": "BACK",
+   "mode": "normal",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.906": {
+   "side": "LAY",
+   "mode": "partial",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.907": {
+   "side": "BACK",
+   "mode": "nomatch",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.908": {
+   "side": "LAY",
+   "mode": "lost",
+   "max_order_rows": 1,
+   "rebuilt_table": false,
+   "ambiguous_allowed": true
+  },
+  "1.909": {
+   "side": "BACK",
+   "mode": "normal",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  },
+  "1.910": {
+   "side": "LAY",
+   "mode": "partial",
+   "max_order_rows": 1,
+   "rebuilt_table": true,
+   "ambiguous_allowed": false
+  }
+ }
+}

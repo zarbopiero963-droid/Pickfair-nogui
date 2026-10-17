@@ -1,0 +1,166 @@
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index ebc6a04..fa590f4 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -432,6 +432,8 @@ class MicrostakeCoordinator:
+             # dall'exchange, cioe' eseguito diverso da quello richiesto. Rifiuto esplicito PRIMA dell'invio.
+             return self._result(Phase.BLOCKED, req=req, reason="invalid_size_precision")
+         transient = order_exposure(req.side, p.exchange_stub_size, stub_price)
++        has_reservation = getattr(self.exchange, "has_reservation", None)
++        pre_existing = bool(has_reservation(req.customer_ref)) if callable(has_reservation) else False
+         if not self.exchange.reserve(req.customer_ref, transient, cap):
+             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
+                                 max_exposure=transient)
+@@ -441,7 +443,10 @@ class MicrostakeCoordinator:
+         except Exception:
+             # Store illeggibile PRIMA di qualunque invio: la riserva transitoria appena presa
+             # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
+-            self.exchange.release_reservation(req.customer_ref)
++            # Una riserva PREESISTENTE (retry di un ref con saga gia' inviata) copre esposizione
++            # reale e resta (rilievo Sol #512 su 5dd1b86).
++            if not pre_existing:
++                self.exchange.release_reservation(req.customer_ref)
+             raise
+         if existing:
+             # Saga gia' avviata (invio precedente / AMBIGUOUS): la riserva copre esposizione REALE
+diff --git a/core/microstake_sim_port.py b/core/microstake_sim_port.py
+index 7a4c0d2..803201f 100644
+--- a/core/microstake_sim_port.py
++++ b/core/microstake_sim_port.py
+@@ -203,6 +203,10 @@ class SimulationExchangePort:
+         with self._lock:
+             self._reservations.pop(customer_ref, None)
+ 
++    def has_reservation(self, customer_ref: str) -> bool:
++        with self._lock:
++            return customer_ref in self._reservations
++
+     def _snapshot(self) -> None:
+         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
+         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
+diff --git a/core/trading_engine.py b/core/trading_engine.py
+index 1131f4a..1845c69 100644
+--- a/core/trading_engine.py
++++ b/core/trading_engine.py
+@@ -233,6 +233,10 @@ class TradingEngine:
+         self._max_seen_cid_size: int = 50_000
+ 
+         self._lock = threading.Lock()
++        # Costruzione/rebinding dell'esecutore Microstake serializzati (rilievo Codex #512, P1):
++        # due prime chiamate concorrenti (Quick Bet + hedge del cashout) devono ottenere LO STESSO
++        # esecutore, quindi una sola mappa di riserve transitorie e un solo store della saga.
++        self._microstake_executor_lock = threading.RLock()
+         self._runtime_state = NOT_READY
+         self._health: Dict[str, Any] = {}
+ 
+@@ -2242,20 +2246,22 @@ class TradingEngine:
+         Un esecutore costruito sul broker SIM di una sessione precedente (stop/start crea
+         un nuovo `SimulationBroker`) viene ricostruito; in LIVE l'adapter SIM non viene
+         mai riusato (fail-closed: None => MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore
+-        iniettato senza broker (test/adapter esterno) resta valido com'e'.
++        iniettato senza broker (test/adapter esterno) resta valido com'e'. Costruzione
++        e rebinding sono serializzati da un lock dedicato: mai due esecutori.
+         """
+-        cached = self.microstake_executor
+-        bound_broker = getattr(getattr(cached, "port", None), "broker", None)
+-        if cached is not None and bound_broker is None:
+-            return cached
+-        if str(mode or "").upper() == "LIVE":
+-            return None
+-        if cached is not None:
+-            if bound_broker is self._current_simulation_broker():
++        with self._microstake_executor_lock:
++            cached = self.microstake_executor
++            bound_broker = getattr(getattr(cached, "port", None), "broker", None)
++            if cached is not None and bound_broker is None:
+                 return cached
+-            logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
+-            self.microstake_executor = None
+-        return self._default_native_microstake_executor(mode)
++            if str(mode or "").upper() == "LIVE":
++                return None
++            if cached is not None:
++                if bound_broker is self._current_simulation_broker():
++                    return cached
++                logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
++                self.microstake_executor = None
++            return self._default_native_microstake_executor(mode)
+ 
+     def _current_simulation_broker(self) -> Any:
+         """Il broker SIM dimostrabile della sessione corrente, o None."""
+diff --git a/tests/test_pr512_review_cycle4.py b/tests/test_pr512_review_cycle4.py
+index d62ea20..05c3441 100644
+--- a/tests/test_pr512_review_cycle4.py
++++ b/tests/test_pr512_review_cycle4.py
+@@ -175,3 +175,19 @@ def test_recover_failure_on_an_existing_saga_keeps_its_reservation():
+                                stub_price=D("3.02"))
+     ex.coordinator.recover = original_recover
+     assert list(ex.port._reservations) == ["keep"], "riserva di una saga gia' inviata sciolta da un errore di recover"
++
++
++# ---------------------------------------------------------------- Sol su 5dd1b86: retry con saga esistente e store illeggibile
++def test_store_load_failure_on_a_retry_keeps_the_pre_existing_reservation():
++    engine, broker, _ = _engine()
++    engine._default_native_microstake_executor("SIMULATION")
++    ex = engine.microstake_executor
++    ex.port.inject_fault("LOST_CANCEL_RESPONSE")
++    assert ex.execute(_payload("again", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
++    assert list(ex.port._reservations) == ["again"]
++    original_load = ex.store.load
++    ex.store.load = lambda ref: (_ for _ in ()).throw(SagaStoreError("SAGA_STORE_CORRUPT:disk"))
++    res = ex.execute(_payload("again", size=0.10, price=3.0))               # retry dello stesso ref
++    ex.store.load = original_load
++    assert res["status"] in ("FAILURE", "AMBIGUOUS")
++    assert list(ex.port._reservations) == ["again"], "riserva preesistente sciolta da uno store illeggibile"
+diff --git a/tests/test_pr512_review_cycle6.py b/tests/test_pr512_review_cycle6.py
+new file mode 100644
+index 0000000..ef53662
+--- /dev/null
++++ b/tests/test_pr512_review_cycle6.py
+@@ -0,0 +1,46 @@
++"""PR #512, ciclo 6 del fix loop (in attesa di deroga owner) — rilievi confermati sul head ad13383.
++
++- Sol c.6242912622: retry dello stesso `customer_ref` con `store.load` fallito conserva la riserva preesistente
++  (test in `tests/test_pr512_review_cycle4.py::test_store_load_failure_on_a_retry_keeps_the_pre_existing_reservation`);
++- Codex r4304867227 (P1): costruzione pigra dell'esecutore Microstake serializzata: due chiamate concorrenti
++  (Quick Bet + hedge del cashout) ottengono LO STESSO esecutore, una sola mappa di riserve, un solo store.
++"""
++import threading
++
++import core.microstake_sim_port as sim_port
++from test_microstake_engine_native import _engine
++
++
++def test_concurrent_first_microstake_calls_build_one_single_executor(monkeypatch):
++    engine, broker, _ = _engine()
++    assert engine.microstake_executor is None
++    real_build = sim_port.build_native_microstake_executor
++    built = []
++    gate = threading.Barrier(2, timeout=5)
++
++    def slow_build(*args, **kwargs):
++        # entrambi i thread sono "dentro" la costruzione solo se nessun lock li serializza
++        try:
++            gate.wait()
++        except threading.BrokenBarrierError:
++            pass
++        ex = real_build(*args, **kwargs)
++        built.append(ex)
++        return ex
++
++    monkeypatch.setattr(sim_port, "build_native_microstake_executor", slow_build)
++    results = []
++
++    def worker():
++        results.append(engine.native_microstake_executor())
++
++    threads = [threading.Thread(target=worker) for _ in range(2)]
++    for t in threads:
++        t.start()
++    for t in threads:
++        t.join(timeout=10)
++    assert len(results) == 2 and all(r is not None for r in results)
++    assert results[0] is results[1], "due esecutori Microstake distinti: riserve e store non condivisi"
++    assert len(built) == 1, f"esecutore costruito {len(built)} volte"
++    assert engine.microstake_executor is results[0]
++    assert results[0].port.broker is broker

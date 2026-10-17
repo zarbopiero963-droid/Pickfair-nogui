@@ -1,0 +1,5 @@
+cmd: PYTHONPATH=netguard DISPLAY=:99 venv312/bin/python -m pytest -q -p no:cacheprovider tests
+Python 3.12.3
+6.18.44-fc-v139
+Sat Oct 17 23:11:31 UTC 2026
+5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f

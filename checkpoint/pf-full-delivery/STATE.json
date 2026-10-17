@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 17,
- "updated_at": "2026-10-17T23:01:50.309043+00:00",
+ "seq": 18,
+ "updated_at": "2026-10-17T23:46:30.191096+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -16,7 +16,8 @@
   "PF-ROSERPINA-FINANCIAL-CLOSURE-03",
   "PF-CROSS-AGENT-HANDOFF-A06-01 (attivo)",
   "PF-PR-RECOVERY-20261017 (attivo: produzione in sola lettura)",
-  "PF-PR-RECOVERY-DECISIONS-02 (attivo: decisioni owner 1-5 approvate; nessun merge)"
+  "PF-PR-RECOVERY-DECISIONS-02 (attivo: decisioni owner 1-5 approvate; nessun merge)",
+  "PF-MASTER-CERTIFICATION-351 / PF-351-INTEGRATED-CERTIFICATION-01 (attivo; 10 cicli autorizzati, da implementare)"
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
@@ -134,6 +135,26 @@
     "sha": "464f347",
     "task": "issue461-pr28-microstake-native-02",
     "what": "evidenze tracciabilita' ciclo 4"
+   },
+   {
+    "sha": "757869f",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "ciclo 5: Decisione owner 2 (stake > max_single_bet = rifiuto esplicito) + riserva saga esistente su recover fallito"
+   },
+   {
+    "sha": "5dd1b86",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "evidenze tracciabilita' ciclo 5 (PF-OD2-01 TESTED)"
+   },
+   {
+    "sha": "ad13383",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "oracle parita' MM LIVE/SIM allineato alla Decisione 2 (completamento ciclo 5, regressione 5dd1b86: 1 failed)"
+   },
+   {
+    "sha": "5ef61da",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "solo .guardrails/allowed_scope.json: registrati i due oracle (guard rosso su ad13383); codice identico ad ad13383"
    }
   ],
   "head_sha": "8ffb4f3",
@@ -278,6 +299,11 @@
    "id": "regression_full",
    "sha": "464f347",
    "result": "7760 passed / 14 skipped / 2 xfailed / 0 failed (912 s)"
+  },
+  {
+   "id": "regression_full",
+   "sha": "ad13383",
+   "result": "7766 passed, 14 skipped, 2 xfailed, 0 failed in 907s (ad13383)"
   }
  ],
  "findings": {
@@ -300,7 +326,9 @@
    "Codex 4303297564/571/575/576/582/596/600/609 (commit 339cd24)",
    "Codex 4303374299/312/317/326/328 e Grok snapshot/pre_send (commit 5b4a589)",
    "Sol esenzione basename pfckpt (21aab95)",
-   "Codex ciclo 4: 4304693618 (P1), 4304759974, 4304693616, 4304759970, 4304759964, 4304759979, 4304759984 + mitigazione 4304693614 (commit 4a47ab0)"
+   "Codex ciclo 4: 4304693618 (P1), 4304759974, 4304693616, 4304759970, 4304759964, 4304759979, 4304759984 + mitigazione 4304693614 (commit 4a47ab0)",
+   "Decisione owner 2 (757869f)",
+   "Sol/Grok 464f347 riserva saga esistente (757869f)"
   ],
   "open": [
    "F004",
@@ -315,7 +343,14 @@
    "Grok cad07e1: resume() con trading_engine assente => ok (THEORETICAL: senza engine nessun ordine possibile; opzione ENGINE_ABSENT=>PAUSED registrata)",
    "DECISIONE 2 non ancora implementata: _clamp verso l'alto a max_single in core/money_management.py",
    "Codex 4304693619: floor 0.10 EUR del coordinatore vs min_stake configurato (decisione owner)",
-   "Codex 4304693614: identita' stabile del ref cashout (design owner; mitigazione pending_same_position attiva)"
+   "Codex 4304693614: identita' stabile del ref cashout (design owner; mitigazione pending_same_position attiva)",
+   "Sol 5dd1b86: retry stesso ref con store.load fallito scioglie la riserva preesistente (CURRENT_DEFECT; patch pronta in pending_patch_cycle6.diff; budget fix loop esaurito => NEEDS_MANUAL)",
+   "P8: runtime ACTIVE dopo riavvio con ordini AMBIGUOUS in uncertain (design F018/F024 vs assunzione PAUSED): decisione owner",
+   "PF-QA-02 non formalizzato come issue (governance)",
+   "Codex r4304867227 (P1): costruzione concorrente esecutore Microstake (CURRENT_DEFECT; patch in pending_patch_cycle6.diff; NEEDS_MANUAL budget)",
+   "Codex r4304867229 (P1): payload currentOrders malformato filtrato a vuoto in betfair_client/betfair_service (GUARDRAIL_GAP preesistente, fuori files_allowed: decisione owner su scope)",
+   "Codex r4304867217 (P2): secondo hedge cashout con saga ACTIVE unmatched (stesso tema identita' ref cashout r4304693614: decisione owner)",
+   "Codex r4304867219/r4304867223/r4304867226 (P2 tooling): pf_trace base ref, porcelain rename, derived files obbligatori in verify (PATCH_REQUIRED, ciclo successivo)"
   ]
  },
  "gates": {
@@ -349,10 +384,15 @@
   "riconciliazione del default cap-ordine 1 EUR della #505 con la Decisione 1 (PR #505 protetta: owner)",
   "autorizzazione del lotto Decisione 2 (max_single_bet) sulla #512",
   "floor Microstake 0.10 EUR: sostituirlo con min_stake configurato (decisione 1) o dichiararlo limite exchange da collaudare",
-  "identita' stabile del ref del cashout nativo (chiave da usare)"
+  "identita' stabile del ref del cashout nativo (chiave da usare)",
+  "deroga 1 ciclo fix loop per #512 (patch ciclo 6) oppure attesa PR estensione a 10 cicli",
+  "riavvio con AMBIGUOUS pendenti: ACTIVE con riserva incerta trattenuta (attuale) o PAUSED fino a riconciliazione (PF-EXEC-06)",
+  "formalizzazione PF-QA-02 (issue/specifica)",
+  "estensione scope #512 (o follow-up) per fail-closed su currentOrders malformato in betfair_client/betfair_service",
+  "identita' per posizione del cashout / blocco hedge con ordine vivo unmatched (contratto cashout)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Fix loop 4/5 usato. Attendere: review Sol/Grok su 21aab95..464f347 (triage, patch solo se CURRENT_DEFECT e budget); decisioni owner (floor 0.10, ref cashout, Decisione 2 max_single_bet, OD-01, riconciliazione cap-ordine #505). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere decisioni owner: deroga ciclo 6 #512 (o PR 10 cicli dopo chiusura #512), ACTIVE vs PAUSED con AMBIGUOUS, floor 0.10, ref cashout, OD-01, PF-QA-02. Attivita' indipendenti eseguibili: campagna Roserpina C02 con oracle Decisione 2 (NOT VERIFIED), screenshot GUI Xvfb, preparazione issue PF-QA-02 (bozza). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -361,9 +401,9 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
- "mandate_current": "PF-PR-RECOVERY-DECISIONS-02",
- "previous_checkpoint_sha": "889649f19d142a9578e1a1c17a4f8caa466ca7bf",
- "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: ciclo 4 review consegnato (464f347); fix loop 4/5",
+ "mandate_current": "PF-MASTER-CERTIFICATION-351",
+ "previous_checkpoint_sha": "5f9ede62725b7ec0575a4a4f4c3a80996d82fc74",
+ "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 consegnato (5dd1b86 + oracle ad13383), Fase A #351 pubblicata, P8 multi-tavolo eseguito (non certificante), triage Codex 22:56 pubblicato",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -384,7 +424,10 @@
   "FASE 4 riconciliazione 60 issue (339cd24)",
   "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)",
   "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)",
-  "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)"
+  "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)",
+  "ciclo 5 PR #512 (757869f/5dd1b86): Decisione 2 + riserva saga esistente (seq 18)",
+  "Fase A #351: audit, matrice, piano P1-P12 (#351 c.6242905583)",
+  "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -425,12 +468,12 @@
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "seq 17 Claude Code: ciclo 4 review consegnato, lease rilasciato",
+ "session_end": "seq 18 Claude Code: ciclo 5 (ad13383) + Fase A #351 + P8 + triage Codex; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
+ "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "464f347a3e3920ec7b4ff4810bc2cb176f94e94c",
+  "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
   "verified_with": "git ls-remote",
   "patch": null
  },
@@ -441,7 +484,7 @@
   "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 §4/§10)",
   "overlap-check rosso (tre PR aperte)",
   "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
-  "fix loop PR #512: 4 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0)"
+  "fix loop PR #512: 5 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0, 757869f): NEEDS_MANUAL per nuovi PATCH_REQUIRED"
  ],
  "owner_authorizations": {
   "live": false,
@@ -691,6 +734,41 @@
    "sha": "464f347a3e3920ec7b4ff4810bc2cb176f94e94c",
    "result": "7760 passed / 14 skipped / 2 xfailed / 0 failed (912 s)",
    "artifact": "results/pr_recovery_decisions_02/fullreg_464f347_tail.txt"
+  },
+  {
+   "id": "RED ciclo 5 su 464f347",
+   "status": "FAIL",
+   "sha": "464f347a3e3920ec7b4ff4810bc2cb176f94e94c",
+   "result": "7 failed — atteso RED",
+   "artifact": "results/pr_recovery_decisions_02/red_464f347.txt"
+  },
+  {
+   "id": "regression_full 5dd1b86",
+   "status": "FAIL",
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "result": "1 failed, 7765 passed (oracle parita' MM, corretto in ad13383)",
+   "artifact": "results/pr_recovery_decisions_02/fullreg_5dd1b86_tail.txt"
+  },
+  {
+   "id": "regression_full",
+   "status": "PASS",
+   "sha": "ad133835515336e9a139cfbc9c60b17424e36939",
+   "result": "7766 passed, 14 skipped, 2 xfailed, 0 failed in 907s (ad13383) (codice identico al head 5ef61da: differisce solo .guardrails/allowed_scope.json)",
+   "artifact": "results/pr_recovery_decisions_02/fullreg_ad13383_tail.txt"
+  },
+  {
+   "id": "P8 multi-tavolo crash/recovery app reale SIM (2/5/10 tavoli, 2 crash)",
+   "status": "PASS",
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "result": "nessun duplicato, AMBIGUOUS conservato, tavoli/esposizione ripristinati dopo due crash; runtime ACTIVE con uncertain (design F018/F024, decisione owner da ratificare); NON certificante",
+   "artifact": "results/p8_multitable_5dd1b86/SUMMARY.json"
+  },
+  {
+   "id": "RED/GREEN patch ciclo 6 (NON spinta: budget esaurito) — Sol riserva preesistente + Codex lock esecutore",
+   "status": "PASS",
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "result": "RED 1+1 failed sul head; GREEN 90 passed suite Microstake con la patch in albero locale (sha256 096e3d36...c5516)",
+   "artifact": "results/pr_recovery_decisions_02/pending_patch_cycle6.diff"
   }
  ],
  "tests_missing": [

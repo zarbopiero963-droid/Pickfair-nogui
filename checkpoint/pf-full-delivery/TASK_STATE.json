@@ -6,7 +6,7 @@
   "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 \u00a74/\u00a710)",
   "overlap-check rosso (tre PR aperte)",
   "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
-  "fix loop PR #512: 4 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0)"
+  "fix loop PR #512: 5 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0, 757869f): NEEDS_MANUAL per nuovi PATCH_REQUIRED"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -34,11 +34,14 @@
   "FASE 4 riconciliazione 60 issue (339cd24)",
   "PF-PR-RECOVERY-20261017 audit: rapporto results/PF-PR-RECOVERY-20261017.md (seq 15)",
   "PF-PR-RECOVERY-DECISIONS-02: sei finding (5b4a589, cad07e1, 21aab95) + errata OD-01 #508 (4476108) + attribuzione 31 FAIL (seq 16)",
-  "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)"
+  "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)",
+  "ciclo 5 PR #512 (757869f/5dd1b86): Decisione 2 + riserva saga esistente (seq 18)",
+  "Fase A #351: audit, matrice, piano P1-P12 (#351 c.6242905583)",
+  "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)"
  ],
- "lotto_corrente": "PF-PR-RECOVERY-DECISIONS-02: ciclo 4 review consegnato (464f347); fix loop 4/5",
- "mandate_id": "PF-PR-RECOVERY-DECISIONS-02 (owner 17/10; sopra PF-PR-RECOVERY-20261017 e OWNER-EXECUTIVE-MANDATE-20261017)",
- "next_atomic_action": "Fix loop 4/5 usato. Attendere: review Sol/Grok su 21aab95..464f347 (triage, patch solo se CURRENT_DEFECT e budget); decisioni owner (floor 0.10, ref cashout, Decisione 2 max_single_bet, OD-01, riconciliazione cap-ordine #505). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 consegnato (5dd1b86 + oracle ad13383), Fase A #351 pubblicata, P8 multi-tavolo eseguito (non certificante), triage Codex 22:56 pubblicato",
+ "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
+ "next_atomic_action": "Attendere decisioni owner: deroga ciclo 6 #512 (o PR 10 cicli dopo chiusura #512), ACTIVE vs PAUSED con AMBIGUOUS, floor 0.10, ref cashout, OD-01, PF-QA-02. Attivita' indipendenti eseguibili: campagna Roserpina C02 con oracle Decisione 2 (NOT VERIFIED), screenshot GUI Xvfb, preparazione issue PF-QA-02 (bozza). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

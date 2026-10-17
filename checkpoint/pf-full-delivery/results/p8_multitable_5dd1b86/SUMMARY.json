@@ -1,0 +1,57 @@
+{
+ "schema": "p8-multitable/1",
+ "tree_sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+ "environment": "HeadlessApp reale (tests/f026/child_f026.py), SQLite reale, SimulationBroker reale, netguard, Linux 6.18, Python 3.12.3",
+ "procedure": "per tavolo i: BACK dispari / LAY pari; modi normal/partial/nomatch/lost (risposta persa dopo invio) ciclici; cashout tavolo 1; crash_now (os._exit); riavvio; attesa; crash_now; riavvio",
+ "oracle": "una riga ordine per mercato (mai duplicati); risposta persa => AMBIGUOUS mai FAILED; tavolo ricostruito per ordini vivi; righe invariate fra i due riavvii; (assunzione del driver, NON decisione owner) PAUSED se AMBIGUOUS pendenti",
+ "rows": [
+  {
+   "n": 2,
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "orders_after_restart": 2,
+   "ambiguous": 0,
+   "tables_rebuilt": 2,
+   "mode_after_restart": "ACTIVE",
+   "mode_after_second_restart": "ACTIVE",
+   "duplicates": 0,
+   "exposure_tables": 6.0,
+   "exposure_exchange_net": 0.03,
+   "driver_verdict": "PASS",
+   "driver_findings": []
+  },
+  {
+   "n": 5,
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "orders_after_restart": 5,
+   "ambiguous": 1,
+   "tables_rebuilt": 5,
+   "mode_after_restart": "ACTIVE",
+   "mode_after_second_restart": "ACTIVE",
+   "duplicates": 0,
+   "exposure_tables": 15.0,
+   "exposure_exchange_net": 3.03,
+   "driver_verdict": "FAIL",
+   "driver_findings": [
+    "modo dopo riavvio ACTIVE con AMBIGUOUS=True"
+   ]
+  },
+  {
+   "n": 10,
+   "sha": "5dd1b86a50b1b6f1be7cc02a0c065f11f9dac63f",
+   "orders_after_restart": 10,
+   "ambiguous": 2,
+   "tables_rebuilt": 10,
+   "mode_after_restart": "ACTIVE",
+   "mode_after_second_restart": "ACTIVE",
+   "duplicates": 0,
+   "exposure_tables": 30.0,
+   "exposure_exchange_net": 6.029999999999999,
+   "driver_verdict": "FAIL",
+   "driver_findings": [
+    "modo dopo riavvio ACTIVE con AMBIGUOUS=True"
+   ]
+  }
+ ],
+ "assessment": "PASS sugli invarianti finanziari 1/5/7 (nessun duplicato, AMBIGUOUS conservato con riserva trattenuta, esposizione dei tavoli ripristinata dopo due crash). L'unico rilievo del driver (runtime ACTIVE dopo il riavvio con ordini AMBIGUOUS in 'uncertain') e' una scelta di design gia' implementata (F018/F024: riserva incerta trattenuta, altri tavoli continuano) diversa dall'assunzione PAUSED del driver: da ratificare o rettificare dall'owner (PF-EXEC-06 'ripresa solo se tutto coerente'). Prova NON certificante: SIM offline, nessun exchange reale, nessun Windows.",
+ "verdict": "PASS_SIM_NON_CERTIFICANTE con 1 decisione owner aperta"
+}
