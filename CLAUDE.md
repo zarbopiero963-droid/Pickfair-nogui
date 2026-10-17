@@ -68,9 +68,11 @@ sostituisce il testo più vecchio.
 
 Regole in AGENTS.md («Persistent checkpoint»), protocollo in
 [docs/agent_checkpoint_protocol.md](docs/agent_checkpoint_protocol.md): verifica
-del checkpoint prima di iniziare, salvataggio con `pfckpt.py save` dopo ogni
-lotto, DURABLE solo dopo readback remoto integro, concorrenza ottimistica senza
-force-push, nessun bypass dei gate.
+del checkpoint prima di iniziare (`bootstrap --agent`), salvataggio con
+`pfckpt.py save --agent` dopo ogni lotto (lease con scadenza e fencing: tenuto
+da un altro agente ⇒ nessuna scrittura; `--release` all'handoff; `--code-repo`
+per il lavoro non committato), DURABLE solo dopo readback remoto integro,
+concorrenza ottimistica senza force-push, nessun bypass dei gate.
 
 ## Microstake nativo e miglior prezzo (decisioni owner 17/10/2026)
 
@@ -99,7 +101,14 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
   insufficienti = blocco, mai ridimensionamento; PF-EXEC-05 mercato
   sospeso/feed/disconnessione = nessun ingresso, nessun riprezzamento,
   nessun retry, riconciliazione; PF-EXEC-06 riavvio con ripristino,
-  riconciliazione, STOP persistente, ripresa solo se tutto coerente.
+  riconciliazione, STOP persistente, ripresa solo se tutto coerente;
+- PF-OWNER-DECISIONS-12-20261017 (#426 c.6235863600), PF-OD12-01..12, con
+  PF-OD12-04 definitiva: miglior prezzo cercato, nessun limite universale al
+  peggioramento della quota, esecuzione a quota peggiorata solo entro le
+  condizioni della richiesta/strategia, altrimenti blocco esplicito; fondi
+  solo disponibili e riconciliati; segnali validati prima dell'esecuzione;
+  STOP persistente; settlement exchange autorevole; storico verificabile;
+  parità decisionale SIM/LIVE con simulatore realistico.
 
 ## REGOLA PRINCIPALE
 

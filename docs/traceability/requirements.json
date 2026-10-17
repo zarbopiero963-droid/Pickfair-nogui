@@ -1,0 +1,767 @@
+{
+ "schema": "pf-traceability/1",
+ "note": "PF-TRACEABILITY-ALL-01 (#461 c.6225689722). Registro atomico append-only: validato da tools/traceability/pf_trace.py (evidenze mai rimosse, stati coerenti con le prove). Stati: PLANNED, IMPLEMENTED, TESTED, VERIFIED, CERTIFIED, BLOCKED, NOT VERIFIED. TESTED = test eseguiti dall'agente con PASS su uno SHA; VERIFIED richiede un revisore distinto; CERTIFIED richiede il gate. Nessun record qui e' CERTIFIED: Gate A #506 NON PASS.",
+ "requirements": [
+  {
+   "id": "PF-MS-01",
+   "text": "Ogni importo richiesto sotto il minimo exchange (2 EUR) e' instradato automaticamente nel Microstake nativo, senza flag, su ogni percorso che invia ordini (Quick Bet, Dutching, Roserpina, hedge del cashout); mai al trasporto diretto.",
+   "source": "#426 c.6210870965 (PF-MICROSTAKE-NATIVE-AUTO-01) punti 1-3",
+   "owner_decision": "PF-MICROSTAKE-NATIVE-AUTO-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/trading_engine.py",
+    "core/order_router.py"
+   ],
+   "code": [
+    "core/trading_engine.py::_route_native_microstake",
+    "core/order_router.py::OrderRouter._place_native_microstake"
+   ],
+   "oracle": "con stake in (0, 2): nessuna chiamata diretta place_bet; esecutore nativo o errore MICROSTAKE_EXECUTOR_UNAVAILABLE; con stake >= 2: percorso diretto invariato",
+   "tests": [
+    "tests/test_microstake_engine_native.py::test_small_amount_is_executed_natively_on_the_real_sim_broker_without_any_flag",
+    "tests/test_microstake_engine_native.py::test_amount_at_exchange_minimum_stays_on_the_direct_path",
+    "tests/test_microstake_cashout_and_recovery.py::test_router_below_minimum_without_executor_fails_closed_and_never_calls_the_broker",
+    "tests/test_microstake_cashout_and_recovery.py::test_router_at_or_above_minimum_stays_direct",
+    "tests/test_microstake_native_integration.py::test_red_trading_engine_automatically_routes_small_amount_to_microstake",
+    "tests/test_microstake_native_integration.py::test_red_small_amount_fails_closed_when_native_executor_is_missing"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_engine_native.py tests/test_microstake_cashout_and_recovery.py tests/test_microstake_native_integration.py",
+     "environment": "venv312 py3.12.3, netguard, offline/SIM",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS",
+     "artifact": "checkpoint seq13 results/pr512_commit_8ffb4f3.txt",
+     "note": "212 passed mirati nel checkout reale"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506 (A10 finding RED->GREEN); B non certificato",
+   "limitations": [
+    "LIVE senza adapter: fail-closed",
+    "Control API/MCP assenti"
+   ]
+  },
+  {
+   "id": "PF-MS-02",
+   "text": "La saga Microstake sul SimulationBroker reale: stub da 2 EUR a prezzo passivo (mai 1.01/1000), cancellazione parziale sizeReduction al residuo esatto, replace con nuovo betId solo se il prezzo target differisce, identita' persistita; esito ignoto dopo l'invio = AMBIGUOUS, mai retry.",
+   "source": "#426 c.6210870965 punti 5-6; NEXT_ACTION.md del checkpoint Codex",
+   "owner_decision": "PF-MICROSTAKE-NATIVE-AUTO-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#453"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "simulation_broker.py",
+    "core/microstake_sim_port.py",
+    "core/microstake_safe.py"
+   ],
+   "code": [
+    "simulation_broker.py::SimulationBroker.cancel_orders",
+    "core/microstake_sim_port.py::SimulationExchangePort",
+    "core/microstake_safe.py::MicrostakeCoordinator.execute"
+   ],
+   "oracle": "dopo la saga l'ordine residuo vale esattamente lo stake richiesto; lo stub non si abbina mai; con replace il vecchio betId e' CANCELLED a matched 0 e il nuovo porta l'importo; risposta persa => AMBIGUOUS con un solo PLACE",
+   "tests": [
+    "tests/test_microstake_sim_port.py::test_red_size_reduction_leaves_exactly_the_desired_unmatched_size",
+    "tests/test_microstake_sim_port.py::test_red_size_reduction_keeps_partial_match_visible",
+    "tests/test_microstake_sim_port.py::test_red_port_place_reduce_replace_tracks_the_new_bet_id_identity",
+    "tests/test_microstake_sim_port.py::test_red_saga_lost_cancel_response_is_ambiguous_and_never_retried",
+    "tests/test_microstake_engine_native.py::test_crossing_target_uses_passive_stub_then_replace_with_new_bet_id_and_matches_economic_size",
+    "tests/test_microstake_engine_native.py::test_lost_cancel_response_is_ambiguous_and_keeps_the_reservation",
+    "tests/test_microstake_engine_native.py::test_broker_timeout_on_place_is_recovered_by_ref_or_ambiguous_never_failed",
+    "tests/integration/test_issue461_pr26a_customer_ref_provenance.py::test_pass_dutching_identity_ignores_order_sensitive_stake_rounding"
+   ],
+   "evidence": [
+    {
+     "sha": "c5e44221689c4e34c52cf6f55b69807cdac4c399",
+     "command": "pytest -q tests/integration/test_issue461_pr26a_customer_ref_provenance.py::test_pass_dutching_identity_ignores_order_sensitive_stake_rounding",
+     "environment": "restore isolato del checkpoint Codex, venv312",
+     "timestamp": "2026-10-17T14:49:00Z",
+     "result": "FAIL",
+     "note": "RED riprodotto: 2 ordini su 3 (adapter assente)"
+    },
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_sim_port.py tests/test_microstake_engine_native.py tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+     "environment": "venv312, netguard, offline/SIM",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS",
+     "note": "GREEN: gamba 1.91 = stub 2.00 ridotto di 0.09, stessa identita', 3 ordini"
+    }
+   ],
+   "findings": [
+    {
+     "id": "MS-NI-001",
+     "state": "FIXED",
+     "text": "adapter SimulationBroker mancante (Codex)"
+    },
+    {
+     "id": "MS-NI-004",
+     "state": "OPEN",
+     "text": "riserva transitoria in-process, non cross-process (PR29)"
+    }
+   ],
+   "reviewer": null,
+   "gate": "A #506; B non certificato",
+   "limitations": [
+    "accettazione Betfair della sequenza PLACE->cancel parziale->replace: NOT VERIFIED"
+   ]
+  },
+  {
+   "id": "PF-MS-03",
+   "text": "Il Money Management richiede lo stake calcolato esattamente: nessun minimo artificiale, nessun arrotondamento verso l'alto, nessun cap fisso 1/2 EUR; sotto il minimo configurato rifiuto esplicito con lo stake richiesto in chiaro.",
+   "source": "#426 c.6235508131 (PF-MICROSTAKE-OWNER-RECTIFICATION-20261017)",
+   "owner_decision": "PF-MICROSTAKE-OWNER-RECTIFICATION-20261017",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/money_management.py"
+   ],
+   "code": [
+    "core/money_management.py::RoserpinaMoneyManagement.calculate"
+   ],
+   "oracle": "stake calcolato = richiesto per gli esempi owner (0.10..1.50); con min_stake 2.0 e calcolato 0.90: approved False, reason stake_sotto_min_stake, recommended_stake 0.90",
+   "tests": [
+    "tests/core/test_money_management_rectification_20261017.py::test_calculated_stake_is_requested_exactly_without_rounding_to_any_minimum",
+    "tests/core/test_money_management_rectification_20261017.py::test_configured_minimum_is_an_explicit_rejection_not_a_silent_round_up",
+    "tests/test_microstake_engine_native.py::test_requested_stake_is_executed_exactly_for_every_owner_example",
+    "tests/test_microstake_engine_native.py::test_per_order_cap_of_one_euro_no_longer_blocks_the_temporary_two_euro_stub"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/core/test_money_management_rectification_20261017.py tests/test_microstake_engine_native.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS",
+     "note": "RED sul codice precedente: il clamp alzava 0.90 a 2.0"
+    }
+   ],
+   "findings": [
+    {
+     "id": "OWN-Q-MAXSINGLE",
+     "state": "OPEN",
+     "text": "decisione owner aperta: stake calcolato sopra max_single_bet, oggi BACK ridimensionato al cap (RSR-02), LAY rifiutato"
+    }
+   ],
+   "reviewer": null,
+   "gate": "A #506 (A06 RSR-14)",
+   "limitations": []
+  },
+  {
+   "id": "PF-MS-04",
+   "text": "L'esposizione temporanea dello stub (BACK 2 EUR; LAY 2*(stub-1)) sta nei fondi disponibili e nell'headroom di esposizione configurato; uguale al limite consentita, oltre bloccata prima del PLACE; nessuna fonte leggibile => bloccato.",
+   "source": "#426 c.6235508131 (distinzione stake/importo temporaneo); PF-EXEC-04 (#426 c.6235676826); PF-OD12-02 (#426 c.6235863600)",
+   "owner_decision": "PF-MICROSTAKE-OWNER-RECTIFICATION-20261017",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/trading_engine.py",
+    "core/microstake_safe.py"
+   ],
+   "code": [
+    "core/trading_engine.py::_native_transient_cap",
+    "core/microstake_safe.py::SmartExecutionEngine.plan"
+   ],
+   "oracle": "available < esposizione stub => FAILED transient_exposure_cap senza ordini; available == stub => eseguito; fondi illeggibili => transient_cap_unavailable",
+   "tests": [
+    "tests/test_microstake_engine_native.py::test_insufficient_available_funds_block_the_temporary_stub_before_any_place",
+    "tests/test_microstake_engine_native.py::test_temporary_exposure_equal_to_available_funds_is_allowed_above_is_blocked",
+    "tests/test_microstake_engine_native.py::test_total_exposure_headroom_caps_the_temporary_stub",
+    "tests/test_microstake_engine_native.py::test_unreadable_funds_and_no_headroom_source_block_fail_closed",
+    "tests/test_microstake_engine_native.py::test_lay_transient_liability_uses_stub_liability_not_economic_stake"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_engine_native.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "fondi impegnati e liability LAY riconciliati (PF-OD12-02): da estendere"
+   ]
+  },
+  {
+   "id": "PF-MS-05",
+   "text": "All'avvio le saghe Microstake pendenti sono riconciliate dalla loro identita' persistita (riduzione/replace mancanti, mai un nuovo PLACE) prima della ricostruzione F018; saga pendente, store illeggibile o esecutore assente => runtime in PAUSED.",
+   "source": "#426 c.6210870965 punto 5; PF-EXEC-06 (#426 c.6235676826)",
+   "owner_decision": "PF-MICROSTAKE-NATIVE-AUTO-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#453"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/runtime_controller.py",
+    "core/trading_engine.py",
+    "core/microstake_sim_port.py"
+   ],
+   "code": [
+    "core/runtime_controller.py::_recover_native_microstake",
+    "core/trading_engine.py::recover_native_microstake_sagas",
+    "core/microstake_sim_port.py::NativeSimMicrostakeExecutor.recover_pending"
+   ],
+   "oracle": "crash dopo PLACE: al riavvio lo stub da 2.00 diventa 0.10 con la sola riduzione; store corrotto => ok False; LIVE senza esecutore => ok False; blocco di start => PAUSED con RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING",
+   "tests": [
+    "tests/test_microstake_engine_native.py::test_restart_recovers_pending_saga_from_persisted_identity_without_new_place",
+    "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_completes_pending_saga_without_new_place",
+    "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_store_unreadable_is_not_ok",
+    "tests/test_microstake_cashout_and_recovery.py::test_engine_recovery_live_mode_without_adapter_keeps_pending_not_ok",
+    "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_cashout_and_recovery.py tests/test_microstake_engine_native.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "riavvio dopo STOP (PF-OD12-07/PF-EXEC-06): test dedicato PLANNED"
+   ]
+  },
+  {
+   "id": "PF-MS-06",
+   "text": "L'hedge del cashout sotto il minimo exchange passa dallo stesso esecutore nativo dell'engine (OrderRouter) o fallisce chiuso; esito incerto => order_unknown, mai placed.",
+   "source": "#426 c.6210870965 punto 3 (cashout totale e frazionario)",
+   "owner_decision": "PF-MICROSTAKE-NATIVE-AUTO-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/order_router.py",
+    "cashout_wiring.py",
+    "headless_main.py",
+    "mini_gui.py"
+   ],
+   "code": [
+    "core/order_router.py::OrderRouter._place_native_microstake",
+    "cashout_wiring.py::cabla_catena_cashout"
+   ],
+   "oracle": "CMD_EXECUTE_CASHOUT con hedge 0.50 => CASHOUT_SUCCESS con matched 0.50 via saga; senza esecutore => CASHOUT_FAILED MICROSTAKE_EXECUTOR_UNAVAILABLE e nessun ordine",
+   "tests": [
+    "tests/test_microstake_cashout_and_recovery.py::test_cashout_chain_executes_a_sub_minimum_hedge_through_native_microstake",
+    "tests/test_microstake_cashout_and_recovery.py::test_cashout_chain_without_native_executor_fails_closed_instead_of_sending_a_sub_minimum_hedge",
+    "tests/test_microstake_cashout_and_recovery.py::test_router_native_ambiguous_is_order_unknown_never_placed"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_cashout_and_recovery.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS"
+    }
+   ],
+   "findings": [
+    {
+     "id": "MS-NI-006",
+     "state": "OPEN",
+     "text": "customer_ref del cashout = source (non unico): il router genera un ref per la saga; da riconciliare sul percorso diretto LIVE (de-dup Betfair 60s)"
+    }
+   ],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "PF-EXEC-03: priorita' alla riduzione del rischio nelle chiusure protettive non ancora modellata (PLANNED)"
+   ]
+  },
+  {
+   "id": "PF-MS-07",
+   "text": "LIVE: senza un adapter Microstake per BetfairClient ogni importo sotto il minimo fallisce chiuso (nessun ordine, nessun bypass).",
+   "source": "#426 c.6210870965 punti 4-5",
+   "owner_decision": "PF-MICROSTAKE-NATIVE-AUTO-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#351"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/trading_engine.py"
+   ],
+   "code": [
+    "core/trading_engine.py::_default_native_microstake_executor"
+   ],
+   "oracle": "mode LIVE, stake 0.10 => FAILED MICROSTAKE_EXECUTOR_UNAVAILABLE, nessun ordine",
+   "tests": [
+    "tests/test_microstake_engine_native.py::test_live_mode_without_adapter_fails_closed_and_sends_nothing"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_engine_native.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "B/LIVE: NO-GO",
+   "limitations": [
+    "adapter LIVE: PLANNED, subordinato ai gate e ad autorizzazione separata"
+   ]
+  },
+  {
+   "id": "PF-BEX-01",
+   "text": "Miglior prezzo dinamico: BACK quota piu' alta eseguibile, LAY piu' bassa; aggiornamento solo della parte unmatched; limiti di inseguimento verificabili; AMBIGUOUS su esito incerto; compatibile con Microstake e Dutching; uscite protettive non ritardate.",
+   "source": "#426 c.6235560755 (PF-BEST-EXECUTION-DYNAMIC-01); PF-OD12-04 definitiva (#426 c.6235863600)",
+   "owner_decision": "PF-BEST-EXECUTION-DYNAMIC-01",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "core/microstake_safe.py",
+    "core/microstake_sim_port.py",
+    "core/trading_engine.py",
+    "controllers/dutching_controller.py"
+   ],
+   "code": [],
+   "oracle": "vedi decisione: 23 casi di test obbligatori (BACK/LAY migliorata, nessun miglioramento, matched/partial/unmatched, liquidita', book stale, sospeso, cancel fallita, replace nuovo betId, timeout/AMBIGUOUS, crash, restart, race cashout/STOP, Microstake, Dutching, Roserpina, simultanei, duplicati, esposizione, limiti)",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "default dei limiti di inseguimento: da proporre come decisioni aperte, mai inventati come definitivi",
+    "riconciliare con best-price DIRECT/TTL PR37/PR38 senza presumerne la copertura"
+   ]
+  },
+  {
+   "id": "PF-EXEC-01",
+   "text": "Cancellazione della sola parte unmatched con esito verificato e ripuntata del solo residuo alla nuova quota (via Microstake se serve); mai ripuntare il matched, mai duplicare, mai retry in AMBIGUOUS.",
+   "source": "#426 c.6235676826",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "core/microstake_sim_port.py",
+    "simulation_broker.py",
+    "core/trading_engine.py"
+   ],
+   "code": [],
+   "oracle": "partial match durante cancel: ripuntato solo il residuo reale; cancellazione non confermata: nessun nuovo ordine",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": []
+  },
+  {
+   "id": "PF-EXEC-02",
+   "text": "Dutching parziale: lettura degli abbinamenti di tutte le leg, ricalcolo, ribilanciamento automatico dei residui con miglior prezzo e Microstake, copertura sicura o sospensione con segnalazione; concluso solo dopo riconciliazione completa.",
+   "source": "#426 c.6235676826; PF-OD12-05",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "controllers/dutching_controller.py",
+    "core/trading_engine.py"
+   ],
+   "code": [],
+   "oracle": "una, due o piu' leg parziali: nessuna sovraesposizione, nessun duplicato, obiettivo mantenuto o copertura/sospensione esplicita",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": []
+  },
+  {
+   "id": "PF-EXEC-03",
+   "text": "Chiusura protettiva (stop-loss, cashout di protezione): priorita' alla riduzione del rischio con la liquidita' disponibile, nessun inseguimento che impedisca l'uscita; posizione chiusa solo a abbinamenti confermati; esposizione residua conservata e segnalata.",
+   "source": "#426 c.6235676826",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "cashout_executor.py",
+    "cashout_router.py",
+    "core/runtime_controller.py"
+   ],
+   "code": [],
+   "oracle": "stop-loss in mercato volatile: chiusura tentata subito ai prezzi eseguibili; mai dichiarata chiusa senza conferma",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": []
+  },
+  {
+   "id": "PF-EXEC-04",
+   "text": "Fondi insufficienti per lo stake richiesto: puntata bloccata con motivazione, nessun ridimensionamento, nessuna sostituzione, Microstake non usato per aggirare; distinguere insufficienza di fondi da limiti tecnici del provider.",
+   "source": "#426 c.6235676826; PF-OD12-02",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "IMPLEMENTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/trading_engine.py",
+    "core/money_management.py"
+   ],
+   "code": [
+    "core/trading_engine.py::_native_transient_cap",
+    "core/money_management.py::RoserpinaMoneyManagement.calculate"
+   ],
+   "oracle": "stub oltre i fondi disponibili bloccato (transient_exposure_cap); stake richiesto mai ridotto; codice di errore distinto fra fondi e limite provider",
+   "tests": [
+    "tests/test_microstake_engine_native.py::test_insufficient_available_funds_block_the_temporary_stub_before_any_place"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_engine_native.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS",
+     "note": "copre solo lo stub temporaneo: il blocco esplicito dello stake economico oltre i fondi e la distinzione dei codici di errore restano da fare"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "stake economico oltre i fondi riconciliati (impegnati + liability): test PLANNED",
+    "codici di errore fondi vs provider: PLANNED"
+   ]
+  },
+  {
+   "id": "PF-EXEC-05",
+   "text": "Mercato sospeso, feed inaffidabile, disconnessione: nessun nuovo ingresso, nessun riprezzamento, nessun retry; stato conservato; riconciliazione da fonti autorevoli; ripresa solo con condizioni valide; mai presumere un ordine cancellato per la connessione caduta.",
+   "source": "#426 c.6235676826",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "core/runtime_controller.py",
+    "core/trading_engine.py",
+    "services/betfair_service.py"
+   ],
+   "code": [],
+   "oracle": "sospensione/perdita feed/disconnessione durante ordine: nessun duplicato, stato AMBIGUOUS riconciliato, ripresa condizionata",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "la saga Microstake gia' tratta ogni eccezione del trasporto come AMBIGUOUS (PF-MS-02); il blocco degli ingressi su mercato sospeso/feed stale non e' ancora tracciato"
+   ]
+  },
+  {
+   "id": "PF-EXEC-06",
+   "text": "Riavvio: ripristino dello stato, riconciliazione di saldo e ordini, ricalcolo esposizioni, verifica mercati, strategie e STOP/RESUME; ripresa automatica solo se tutto coerente; nessun ordine duplicato; un riavvio non cancella un STOP precedente.",
+   "source": "#426 c.6235676826; PF-OD12-07",
+   "owner_decision": "PF-EXECUTION-SAFETY-DECISIONS-01",
+   "activity": "ACTIVE",
+   "status": "IMPLEMENTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/runtime_controller.py"
+   ],
+   "code": [
+    "core/runtime_controller.py::start (F018 + _recover_native_microstake)",
+    "core/runtime_controller.py::_rebuild_open_positions"
+   ],
+   "oracle": "riavvio con ordini aperti: posizioni ricostruite da DB + exchange, saghe pendenti completate, PAUSED se incompleto; riavvio dopo STOP: STOP conservato",
+   "tests": [
+    "tests/f026/test_f026_financial.py::test_RSR12_01_recovery_tables_survive_crash_and_restart",
+    "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_cashout_and_recovery.py tests/f026",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T17:40:00Z",
+     "result": "PASS",
+     "note": "F018/RSR-12/saghe coperti; STOP persistente dopo riavvio NON coperto"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "riavvio dopo STOP: test PLANNED"
+   ]
+  },
+  {
+   "id": "PF-OD12-04",
+   "text": "Quote: miglior prezzo cercato automaticamente; nessun limite universale al peggioramento; esecuzione a quota peggiorata solo se le condizioni della strategia/richiesta restano valide; condizioni non definite o non verificabili => blocco esplicito; stake richiesto invariato.",
+   "source": "#426 c.6235863600 (versione definitiva, prevale sulla formulazione iniziale di PF-OD12-04)",
+   "owner_decision": "PF-OWNER-DECISIONS-12-20261017",
+   "activity": "ACTIVE",
+   "status": "PLANNED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "core/microstake_safe.py",
+    "core/trading_engine.py",
+    "controllers/dutching_controller.py"
+   ],
+   "code": [],
+   "oracle": "BACK richiesto 2.00, eseguibile 1.90: eseguito se la richiesta ammette 1.90 (limite dichiarato), bloccato se il limite non e' definito; stake invariato",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "oggi il planner Microstake usa target_price come limite: il contratto 'condizioni della richiesta' (prezzo limite) va definito nel payload"
+   ]
+  },
+  {
+   "id": "PF-OD12-07",
+   "text": "STOP blocca nuovi ingressi e riprezzamenti ordinari, gestisce le posizioni aperte (cancel unmatched quando sicuro, protezione/chiusura) e persiste dopo il riavvio.",
+   "source": "#426 c.6235863600",
+   "owner_decision": "PF-OWNER-DECISIONS-12-20261017",
+   "activity": "ACTIVE",
+   "status": "NOT VERIFIED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [],
+   "component": [
+    "core/runtime_controller.py",
+    "core/shutdown_manager.py"
+   ],
+   "code": [],
+   "oracle": "STOP => nessun nuovo ordine; unmatched cancellati; dopo riavvio lo stato resta STOP",
+   "tests": [],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "emergency stop esistente (EMERGENCY_STOP_ACTIVE) copre il blocco ingressi; persistenza al riavvio e cancel unmatched non tracciati"
+   ]
+  },
+  {
+   "id": "PF-OD12-12",
+   "text": "SIM e LIVE condividono regole decisionali, Money Management e controlli di rischio; adapter separati; il simulatore riproduce esiti parziali, cancellazioni, replace, sospensioni, latenza e casi incerti senza abbinamenti garantiti.",
+   "source": "#426 c.6235863600",
+   "owner_decision": "PF-OWNER-DECISIONS-12-20261017",
+   "activity": "ACTIVE",
+   "status": "IMPLEMENTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "core/trading_engine.py",
+    "simulation_broker.py",
+    "core/microstake_safe.py"
+   ],
+   "code": [
+    "simulation_broker.py::SimulationBroker._match_order",
+    "simulation_broker.py::SimulationBroker.cancel_orders",
+    "simulation_broker.py::SimulationBroker.replace_orders"
+   ],
+   "oracle": "stesso core (planner/saga) per SIM e LIVE con solo l'adapter diverso; il broker SIM produce parziali, cancel parziale, replace con nuovo betId",
+   "tests": [
+    "tests/test_microstake_sim_port.py::test_red_size_reduction_keeps_partial_match_visible",
+    "tests/unit/test_simulation_broker_side_parity.py::test_paper_and_live_engine_give_the_same_answer_for_the_same_side"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q tests/test_microstake_sim_port.py tests/unit/test_simulation_broker_side_parity.py",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-17T18:10:00Z",
+     "result": "PASS",
+     "note": "latenza, sospensioni e casi incerti del simulatore NON coperti"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "latenza/sospensione/casi incerti realistici nel simulatore: PLANNED"
+   ]
+  },
+  {
+   "id": "PF-CONT-01",
+   "text": "Continuita' multi-agente: checkpoint durevoli e versionati con manifest SHA-256, puntatori CURRENT/TASK_STATE verificati, lease con scadenza e fencing letto dal remoto, patch del codice non committato, recover al checkpoint valido, divergenza di baseline, readback da clone pulito; procedure START/RESUME/HANDOFF/RECOVER.",
+   "source": "#461 c.6225689722; #506 c.6225690392",
+   "owner_decision": "PF-AGENT-CONTINUITY-01",
+   "activity": "ACTIVE",
+   "status": "TESTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "tools/agent_checkpoint/pfckpt.py",
+    "docs/agent_checkpoint_protocol.md"
+   ],
+   "code": [
+    "tools/agent_checkpoint/pfckpt.py::save",
+    "tools/agent_checkpoint/pfckpt.py::bootstrap",
+    "tools/agent_checkpoint/pfckpt.py::recover",
+    "tools/agent_checkpoint/pfckpt.py::restore_code_patch"
+   ],
+   "oracle": "lease altrui non scaduto => exit 6 senza scrittura; scaduto/rilasciato => subentro; puntatore incoerente => checkpoint invalido; patch catturata e ripristinata uguale in un clone pulito; recover non tocca il remoto",
+   "tests": [
+    "tests/agent_checkpoint/test_pfckpt.py::test_lease_held_by_another_agent_blocks_writes_until_expiry_then_takeover",
+    "tests/agent_checkpoint/test_pfckpt.py::test_stale_agent_with_expired_lease_cannot_overwrite_the_new_owner",
+    "tests/agent_checkpoint/test_pfckpt.py::test_tampered_pointer_makes_the_checkpoint_invalid",
+    "tests/agent_checkpoint/test_pfckpt.py::test_code_patch_is_captured_and_restored_in_a_fresh_environment",
+    "tests/agent_checkpoint/test_pfckpt.py::test_recover_materialises_the_last_valid_checkpoint_without_touching_the_remote",
+    "tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_in_clean_environment_without_history_or_local_files"
+   ],
+   "evidence": [
+    {
+     "sha": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
+     "command": "pytest -q -n 4 tests/agent_checkpoint",
+     "environment": "venv312, git reale offline (remoti bare), lavoro non committato sul tree 8ffb4f3",
+     "timestamp": "2026-10-17T18:30:00Z",
+     "result": "PASS",
+     "note": "40 passed; mutanti M1-M6 uccisi; checkpoint reale seq 14 d655d55 DURABLE con code_patch"
+    }
+   ],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506",
+   "limitations": [
+    "ripresa cross-provider (Codex/ChatGPT Work/Grok) non eseguita: NOT VERIFIED; sincronizzazione reale richiede verifica da un secondo agente"
+   ]
+  },
+  {
+   "id": "PF-TRACE-01",
+   "text": "Registro atomico di tracciabilita' con collegamenti bidirezionali decisione->requisito->issue->codice->test->evidenza->finding->gate, stati PLANNED..CERTIFIED, evidenze append-only e validatori automatici (requisiti senza test, test inesistenti, evidenze senza SHA, contraddizioni, sospesi contati PASS, certificazioni senza prove, duplicati, rimozioni).",
+   "source": "#461 c.6225689722",
+   "owner_decision": "PF-TRACEABILITY-ALL-01",
+   "activity": "ACTIVE",
+   "status": "IMPLEMENTED",
+   "issue": [
+    "#461",
+    "#506"
+   ],
+   "pr": [
+    "#512"
+   ],
+   "component": [
+    "tools/traceability/pf_trace.py",
+    "docs/traceability/requirements.json"
+   ],
+   "code": [
+    "tools/traceability/pf_trace.py::validate"
+   ],
+   "oracle": "ogni violazione elencata produce FAIL con messaggio; il registro corrente valida PASS",
+   "tests": [
+    "tests/traceability/test_pf_trace.py"
+   ],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "A #506 (A11/A12)",
+   "limitations": [
+    "copertura del registro: solo i requisiti del lavoro 17/10; le 60 schede #461 e i PF-C restano nei registri PF-DOC-4/D06 esistenti",
+    "evidenza PASS del validatore da registrare al primo commit che contiene registro e test (append-only)"
+   ]
+  }
+ ]
+}

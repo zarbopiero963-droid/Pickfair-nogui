@@ -698,10 +698,15 @@ memory, local files or private artifacts. Protocol and commands:
 [docs/agent_checkpoint_protocol.md](docs/agent_checkpoint_protocol.md)
 (`tools/agent_checkpoint/pfckpt.py`). Every agent, whatever its provider:
 
-- runs `pfckpt.py bootstrap`/`verify` before starting; a corrupt latest
+- runs `pfckpt.py bootstrap --agent <name>`/`verify` before starting
+  (`READY_READ_ONLY` = another agent holds the lease; `code_divergence` =
+  never finish a lotto with results from another code version); a corrupt latest
   checkpoint => stop and report `last_valid_checkpoint`, no silent rollback;
 - trusts a result only with evidence: status, code SHA and committed artifact;
-- saves with `pfckpt.py save` after every completed lotto;
+- saves with `pfckpt.py save --agent <name>` after every completed lotto (the
+  lease is read from the expected remote checkpoint: held by another agent and
+  not expired => no write; `--release` on handoff; `--code-repo` to carry
+  uncommitted work);
 - calls a checkpoint DURABLE only when `save` reports `DURABLE` (full integrity
   plus readback from a clean remote clone);
 - on a concurrency conflict reconciles explicitly: no force-push, no overwrite,
@@ -740,7 +745,14 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755); technical contract in
   insufficient funds block the bet, never resize it; PF-EXEC-05 suspended
   market / unreliable feed / disconnection: no new entries, no repricing,
   no blind retry, reconcile first; PF-EXEC-06 restart restores, reconciles,
-  keeps a prior STOP and resumes only when every check is coherent.
+  keeps a prior STOP and resumes only when every check is coherent;
+- applies PF-OWNER-DECISIONS-12-20261017 (#426 c.6235863600), PF-OD12-01..12,
+  with the definitive PF-OD12-04: best available price sought, no universal
+  limit on price worsening, execution at a worse price only within the
+  conditions of the original request/strategy, otherwise an explicit block;
+  only available, reconciled funds; signals validated before execution;
+  persistent STOP; exchange settlement authoritative; verifiable history;
+  SIM/LIVE decisional parity with a realistic simulator.
 
 ---
 

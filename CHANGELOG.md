@@ -18,6 +18,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   recovery all'avvio prima di F018 (PAUSED se pendente). `SimulationBroker.cancel_orders` supporta `sizeReduction`.
   Docs: `docs/microstake_native.md`.
 
+- **Continuità multi-agente (PF-AGENT-CONTINUITY-01):** `pfckpt` aggiunge `CURRENT.json`, `TASK_STATE.json`
+  (puntatori verificati contro STATE.json), `AGENT_LEASE.json` (lease con scadenza e fencing token letto dal
+  checkpoint remoto: `save --agent` obbligatorio, `LEASE_HELD` se tenuto da altri, `--release` per l'handoff), cattura
+  e ripristino della patch del codice non committato (`--code-repo`, `restore-code`), comando `recover` (ultimo
+  checkpoint valido, remoto intatto) e rilevazione della divergenza del branch di codice in `bootstrap`.
+
 ### Changed
 - **Money Management (rettifica owner 17/10/2026):** lo stake calcolato non viene più alzato in silenzio al
   `min_stake`: sotto il minimo configurato la decisione è rifiutata con `stake_sotto_min_stake` e lo stake richiesto

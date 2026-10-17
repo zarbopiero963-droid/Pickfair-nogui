@@ -86,6 +86,46 @@ Se l'ultimo checkpoint è corrotto: `LATEST_CHECKPOINT_CORRUPT` con `last_valid_
 catena che passa `verify`). **Nessun rollback automatico**: il remoto non viene toccato e decide l'owner o una
 riconciliazione esplicita.
 
+## 6-bis. Continuità multi-agente (PF-AGENT-CONTINUITY-01, #461 c.6225689722)
+
+Ogni agente (Claude Code, Codex, ChatGPT Work, Grok, futuri) è un implementatore intercambiabile: stesso ruolo, stesse
+procedure, nessuna dipendenza dalla cronologia della chat. Lo strumento aggiunge al checkpoint:
+
+| File | Contenuto | Verifica |
+| --- | --- | --- |
+| `CURRENT.json` | puntatore minimo: seq, SHA precedente, `code.{branch,sha}`, mandato, prossima azione atomica, verdetto | deve coincidere con STATE.json, altrimenti checkpoint non valido |
+| `TASK_STATE.json` | mandato, lotto corrente, lotti completati, prossima azione, blocchi, dipendenze, test mancanti, Gate A, PR #505 | idem |
+| `AGENT_LEASE.json` | `owner`, `fencing_token` (= seq del checkpoint che lo ha preso/rinnovato), `acquired_at`, `expires_at` | token = seq, timestamp validi |
+| `code_patch/` | `BASELINE.json` (head/tree del codice, file modificati e nuovi), `tracked.patch`, `untracked/<file>` | ogni file dichiarato presente nel commit |
+
+**Lease e fencing.** `save --agent <nome>` è obbligatorio: il lease si legge dal checkpoint **remoto atteso**
+(`--expected`), mai dal disco. Tenuto da un altro agente e non scaduto ⇒ `LEASE_HELD` (exit 6), nessuna scrittura.
+Scaduto o rilasciato (`--release`) ⇒ chiunque può subentrare; ogni salvataggio rinnova il lease del suo autore con
+`--ttl-min` (default 120). Un agente stale (base vecchia) è fermato prima dal controllo ottimistico
+(`CONCURRENT_UPDATE`), e sulla base nuova dal lease del nuovo proprietario. Un solo agente scrive per volta; gli altri
+leggono (`bootstrap` senza il proprio agente o con lease altrui ⇒ `READY_READ_ONLY`).
+
+**Patch del codice.** `save --code-repo <repo>` cattura il lavoro non committato (diff tracciato + file nuovi, ignorati
+esclusi) e lo registra in `STATE.code.patch`; `restore-code --code-repo <clone pulito su code.sha>` lo riapplica e
+verifica che lo stato risultante coincida con quello dichiarato (repo sporco o baseline diversa ⇒ rifiuto).
+
+**Divergenza di baseline.** `bootstrap --code-branch` confronta il head del branch di codice con `code.sha`:
+`ALIGNED` oppure `DIVERGED` con ahead/behind — un lotto non si completa con risultati di un'altra versione.
+
+**Procedure universali**
+- **START / RESUME**: `bootstrap --agent <nome> --code-branch <branch>` ⇒ `READY` (lease libero o proprio) con
+  `next_atomic_action`, autorizzazioni, blocchi, divergenza; `READY_READ_ONLY` ⇒ non scrivere;
+  `LATEST_CHECKPOINT_CORRUPT` ⇒ fermarsi e decidere (indica `last_valid_checkpoint`).
+- **HANDOFF**: ultimo `save --agent <nome> --release` con `next_atomic_action`, test eseguiti/mancanti, finding e,
+  se c'è lavoro non committato, `--code-repo`. Il subentrante fa START.
+- **RECOVER**: `recover --dest <dir>` materializza l'ultimo checkpoint valido della catena senza toccare il remoto;
+  la decisione di ripartire da lì è esplicita (nuovo checkpoint con nuova identità, mai rollback del branch).
+- **Crash / limite d'uso**: rieseguire `save` con lo stesso `--expected` e `--agent`: riprende da commit o push già
+  avvenuti; un lease scaduto permette a un altro agente di subentrare senza perdere nulla.
+
+Sincronizzazione reale: solo dopo pubblicazione sul branch condiviso autorizzato e ripresa verificata da un secondo
+ambiente/agente (`bootstrap` in un clone nuovo). Un archivio locale non è un handoff sincronizzato.
+
 ## 7. Incidente storico INC-b45f528
 
 Il checkpoint seq 7 (`b45f528`) elencava nel MANIFEST tre log mai committati
@@ -97,7 +137,7 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
 
 ## 8. Limiti dichiarati
 
-- Provato con git reale offline (repository bare locali) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+- Provato con git reale offline (repository bare locali: 39 test, inclusi lease/fencing, patch del codice, recover) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
   o Grok **non è stata provata**: `NOT VERIFIED`. Il protocollo non usa nulla di specifico del fornitore.
 - Il controllo dei segreti è per pattern: riduce il rischio, non lo azzera; i file `.py` sono esclusi dal pattern.
 - La concorrenza è ottimistica: due agenti possono lavorare in parallelo, ma solo uno pubblica per volta.
