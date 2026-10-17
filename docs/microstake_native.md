@@ -45,7 +45,8 @@ sono raggiunti solo dall'engine o dal router). Importi >= 2 EUR restano sul perc
    meno l'esposizione aperta). Nessuna fonte leggibile => BLOCKED (`transient_cap_unavailable`); uguale al limite
    consentito, oltre bloccato (owner #426 6141450045). Prova: `test_per_order_cap_of_one_euro_no_longer_blocks_...`,
    `test_insufficient_available_funds_block_...`, `test_total_exposure_headroom_caps_...`;
-3. **PLACE** dello stub da 2 EUR al prezzo passivo, riserva transitoria tenuta;
+3. **PLACE** dello stub da 2 EUR al prezzo passivo, riserva transitoria tenuta (rilasciata all'attivazione: dopo
+   la saga i fondi dell'ordine economico li contabilizza l'exchange; resta tenuta solo in AMBIGUOUS);
 4. **cancellazione parziale** `sizeReduction = 2 − importo` => residuo esatto = importo economico;
 5. **REPLACE** al prezzo target **solo se diverso** dallo stub (Betfair crea un **nuovo betId**: la saga persiste la
    nuova identità e smette di riferirsi alla vecchia). Senza controparte lo stub è già al target: identità invariata;
@@ -71,6 +72,10 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
   `SagaStoreError` (AMBIGUOUS se l'exchange è già stato toccato, altrimenti BLOCKED). Stessa scelta di persistenza
   di RSR-12 (`roserpina.recovery_tables_state`): nessuna modifica a `database_schema`.
 - Riserva transitoria **in-process** (lock); la riserva durevole cross-process è PR29 (#461), fuori scope.
+- Blocchi PRIMA di qualunque operazione exchange (`pre_send: True` nel risultato) diventano nell'engine un errore
+  pre-invio tipizzato: l'intento dedupe viene rilasciato e un nuovo tentativo a condizione passata non è un duplicato;
+  esiti dopo l'invio restano AMBIGUOUS/FAILED con l'intento consumato. Il broker SIM salva lo snapshot di reload
+  (`persist_snapshot`) dopo ogni operazione della saga.
 - Costruzione: `TradingEngine.native_microstake_executor()` crea l'esecutore una sola volta dal broker SIM
   riconosciuto per identità/classe (`_e_il_broker_di_simulazione`, `isinstance(SimulationBroker)`), mai da un client
   reale; headless e GUI non hanno bisogno di cablaggi aggiuntivi per il choke point, e passano lo stesso esecutore alla

@@ -2208,9 +2208,19 @@ class TradingEngine:
         execute = getattr(coordinator, "execute", None)
         if not callable(execute):
             raise _ErrorePrimaDellInvio("MICROSTAKE_EXECUTOR_UNAVAILABLE")
-        result = self._invia_marcando_l_intento(
-            ctx, mode, coordinator, lambda: execute(dict(payload))
-        )
+        def _invia() -> Any:
+            res = execute(dict(payload))
+            # Blocco PRIMA di qualunque operazione exchange (cap transitorio, book non
+            # verificabile, fondi): nulla e' partito, l'intento dedupe si rilascia e un
+            # nuovo tentativo a condizione passata non e' un duplicato. Riconosciuto
+            # per marker esplicito dell'esecutore, mai per testo (rilievo Codex #512).
+            if (isinstance(res, dict) and res.get("pre_send") is True
+                    and str(res.get("status") or "").upper() in {"FAILURE", "FAILED"}):
+                raise _ErrorePrimaDellInvio(
+                    f"MICROSTAKE_PRE_SEND_BLOCK:{res.get('error') or res.get('reason_code') or 'blocked'}")
+            return res
+
+        result = self._invia_marcando_l_intento(ctx, mode, coordinator, _invia)
         return True, result
 
     def native_microstake_executor(self) -> Any:

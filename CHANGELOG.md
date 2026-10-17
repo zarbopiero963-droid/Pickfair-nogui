@@ -24,6 +24,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   e ripristino della patch del codice non committato (`--code-repo`, `restore-code`), comando `recover` (ultimo
   checkpoint valido, remoto intatto) e rilevazione della divergenza del branch di codice in `bootstrap`.
 
+- **Riconciliazione delle issue aperte (PF-ISSUE-RECONCILIATION-01):** `docs/issue_reconciliation/` (csv/json/md):
+  60 issue aperte al 17/10/2026 classificate con motivazione ed evidenza, deduplicate per scheda #461.
+
+### Fixed
+- **Rilievi Codex su PR #512 (commit 8ffb4f3):** riserva transitoria del Microstake rilasciata all'attivazione; blocco
+  pre-invio del Microstake = errore pre-invio tipizzato (intento dedupe rilasciato, retry non duplicato); snapshot del
+  broker SIM persistito dopo ogni operazione della saga; ricostruzione F018: righe pendenti senza attribuzione =>
+  avvio non ok, chiavi dedupe dei tavoli gia' occupati riacquisite, betId annidato letto; RSR-12: tavolo surplus con
+  perdita ricreato al riavvio, write failure dello stato di recovery fail-closed.
+
 ### Changed
 - **Money Management (rettifica owner 17/10/2026):** lo stake calcolato non viene più alzato in silenzio al
   `min_stake`: sotto il minimo configurato la decisione è rifiutata con `stake_sotto_min_stake` e lo stake richiesto

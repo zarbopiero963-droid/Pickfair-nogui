@@ -3564,8 +3564,21 @@ class RuntimeController:
                 resp = json.loads(row.get("response_json") or "{}")
             except (TypeError, ValueError):
                 resp = {}
-            reports = (resp.get("instructionReports") or []) if isinstance(resp, dict) else []
-            bet_id = str((reports[0] if reports and isinstance(reports[0], dict) else {}).get("betId") or "")
+            # betId nelle forme note: top-level (broker SIM, Betfair grezzo) o annidato
+            # sotto result/raw (BetfairClient.place_bet). Prima il nested restava senza
+            # identita' e ogni ordine LIVE diventava incerto (rilievo Codex #512).
+            bet_id = ""
+            if isinstance(resp, dict):
+                for container in (resp, resp.get("result"), resp.get("raw")):
+                    if not isinstance(container, dict):
+                        continue
+                    direct = container.get("betId") or container.get("bet_id")
+                    reports = container.get("instructionReports") or []
+                    first = reports[0] if reports and isinstance(reports[0], dict) else {}
+                    found = first.get("betId") or first.get("bet_id") or direct
+                    if found not in (None, ""):
+                        bet_id = str(found)
+                        break
             item = {
                 "customer_ref": str(row.get("customer_ref") or ""),
                 "status": str(row.get("status") or ""),
@@ -3700,7 +3713,20 @@ class RuntimeController:
             result.update(ok=False, reason=f"ORDERS_READ_FAILED:{type(exc).__name__}")
             return result
         result["unattributed"] = unattributed
+        if unattributed:
+            # Righe pendenti senza mercato/event_key: possono essere esposizione viva che
+            # nessun tavolo riserva. Riconciliazione incompleta => nessun nuovo ingresso
+            # (rilievo Codex #512); i candidati attribuibili vengono comunque ricostruiti.
+            result.update(ok=False, reason=f"UNATTRIBUTED_PENDING_ORDERS:{len(unattributed)}")
         held = {str(t.get("current_event_key") or "") for t in self.table_manager.snapshot()}
+        # Tavolo gia' occupato per quell'evento (start() ripetuto nello stesso processo): la
+        # posizione non si ricostruisce due volte, ma la chiave anti-duplicato va riacquisita
+        # nel guard nuovo, altrimenti un secondo tavolo potrebbe accettare lo stesso evento.
+        result["held"] = []
+        for c in candidates:
+            if c["event_key"] in held:
+                self.duplication_guard.acquire(c["event_key"])
+                result["held"].append(c["customer_ref"])
         candidates = [c for c in candidates if c["event_key"] not in held]
         if not candidates:
             return result
@@ -3907,7 +3933,7 @@ class RuntimeController:
     def _active_recovery_count(self) -> int:
         """RSR-12 (decisione owner): tavoli con recovery attiva o pendente, con o senza ordini. Stato di
         recovery illeggibile al riavvio => capacita' considerata esaurita (fail-closed)."""
-        if getattr(self, "_recovery_state_unreadable", False):
+        if getattr(self, "_recovery_state_unreadable", False) or getattr(self, "_recovery_persist_failed", False):
             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
         return len(self.table_manager.recovery_state())
 
@@ -3915,6 +3941,7 @@ class RuntimeController:
         try:
             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
             self.db.save_settings({self._RECOVERY_KEY: json.dumps(state)})
+            self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
             return True
         except Exception as exc:
             logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
@@ -4301,7 +4328,13 @@ class RuntimeController:
             return
 
         self._release_settled_tables(payload, table_id=table_id, pnl=pnl)   # PF-ALL-F026 / F2
-        self._persist_recovery_tables()                                     # RSR-12
+        if not self._persist_recovery_tables():                             # RSR-12
+            # Stato di recovery NON durevole: dopo un crash la perdita aggiornata non
+            # tornerebbe. Fail-closed: capacita' di recovery considerata esaurita (nessun
+            # nuovo ingresso in recovery) finche' una scrittura riesce (rilievo Codex #512).
+            self._recovery_persist_failed = True
+            self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"event_key": event_key,
+                                                               "market_id": payload.get("market_id")})
 
         # Persistenza cronologia Risk Desk (Issue #274/293)
         try:

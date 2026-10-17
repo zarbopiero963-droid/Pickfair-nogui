@@ -317,8 +317,15 @@ class TableManager:
             for table_id, loss in (state or {}).items():
                 table = self._get(int(table_id))
                 loss = float(loss)
-                if table is None or loss <= 0.0:
+                if loss <= 0.0:
                     continue
+                if table is None:
+                    # Tavolo oltre table_count (config ridotta a bot acceso, `resize` lo
+                    # conservava con la sua perdita): al riavvio va ricreato, altrimenti
+                    # il debito sparisce e la capacita' di recovery e' sottostimata
+                    # (rilievo Codex #512).
+                    table = TableState(table_id=int(table_id))
+                    self._tables[int(table_id)] = table
                 table.loss_amount = loss
                 table.in_recovery = True
                 table.status = "RECOVERY"

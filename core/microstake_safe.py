@@ -480,10 +480,7 @@ class MicrostakeCoordinator:
         if order.price == req.target_price:
             # Stub passivo gia' al prezzo target (nessuna controparte da evitare):
             # il replace sarebbe un no-op che Betfair rifiuta. Identita' invariata.
-            self.store.save(req.customer_ref, phase=Phase.ACTIVE, bet_id=order.bet_id,
-                            reservation_held=True)
-            return self._result(Phase.ACTIVE, req=req, order=order,
-                                max_exposure=transient, held=True)
+            return self._activate(req, order, transient)
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except LostResponse as exc:
@@ -504,10 +501,17 @@ class MicrostakeCoordinator:
             self.exchange.release_reservation(req.customer_ref)
             return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
                                 order=order, max_exposure=transient)
+        return self._activate(req, order, transient)
+
+    def _activate(self, req: MicrostakeRequest, order: SimOrder, transient: Decimal) -> MicrostakeResult:
+        """Saga conclusa: l'ordine economico e' sull'exchange e i suoi fondi li contabilizza
+        l'exchange stesso. La riserva TRANSITORIA (stub da 2 EUR) va rilasciata, altrimenti ogni
+        microstake riuscito consumerebbe per sempre 2 EUR di cap (rilievo Codex PR #512)."""
         self.store.save(req.customer_ref, phase=Phase.ACTIVE, bet_id=order.bet_id,
-                        reservation_held=True)
+                        reservation_held=False)
+        self.exchange.release_reservation(req.customer_ref)
         return self._result(Phase.ACTIVE, req=req, order=order,
-                            max_exposure=transient, held=True)
+                            max_exposure=transient, held=False)
 
     def recover(self, customer_ref: str) -> MicrostakeResult:
         saved = self.store.load(customer_ref)
@@ -522,8 +526,9 @@ class MicrostakeCoordinator:
                                 max_exposure=transient, held=True)
         phase = Phase(saved["phase"])
         if phase is Phase.ACTIVE:
+            self.exchange.release_reservation(customer_ref)
             return self._result(phase, req=req, order=order,
-                                max_exposure=transient, held=True)
+                                max_exposure=transient, held=False)
         # Resume only through execute's idempotent reconciliation path.  An
         # accepted stub is never placed again.
         if order.matched > 0:
@@ -539,18 +544,14 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="unexpected_residual_size",
                                 order=order, max_exposure=transient, held=True)
         if order.price == req.target_price:
-            self.store.save(customer_ref, phase=Phase.ACTIVE, reservation_held=True)
-            return self._result(Phase.ACTIVE, req=req, order=order,
-                                max_exposure=transient, held=True)
+            return self._activate(req, order, transient)
         try:
             order = self.exchange.replace(order.bet_id, req.target_price)
         except Exception:
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
             return self._result(Phase.AMBIGUOUS, req=req, reason="recovery_replace_unknown",
                                 order=order, max_exposure=transient, held=True)
-        self.store.save(customer_ref, phase=Phase.ACTIVE, reservation_held=True)
-        return self._result(Phase.ACTIVE, req=req, order=order,
-                            max_exposure=transient, held=True)
+        return self._activate(req, order, transient)
 
     @staticmethod
     def _request_json(req: MicrostakeRequest) -> dict[str, Any]:
@@ -632,18 +633,29 @@ class NativeMicrostakeExecutor:
         }
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
+        log = getattr(self.coordinator.exchange, "operation_log", None)
+        before = len(log) if log is not None else None
+
+        def blocked(reason: str, *, transient: Decimal = D("0")) -> dict[str, Any]:
+            # pre_send=True SOLO se nessuna operazione exchange e' partita: l'engine
+            # puo' allora rilasciare l'intento dedupe (un nuovo tentativo dopo che la
+            # condizione transitoria e' passata non e' un duplicato). Rilievo Codex #512.
+            out = self._blocked(reason, transient=transient)
+            out["pre_send"] = before is not None and len(log) == before
+            return out
+
         try:
             req = self._request(payload)
             quote = self.quote_provider(dict(payload))
             if not isinstance(quote, dict):
-                return self._blocked("passive_stub_price_unverified")
+                return blocked("passive_stub_price_unverified")
             stub_raw = quote.get("passive_stub_price")
             best_raw = quote.get("best_counterparty_price")
             stub = None if stub_raw is None else D(str(stub_raw))
             best = None if best_raw is None else D(str(best_raw))
             cap = self._resolve_cap(payload)
             if cap is None:
-                return self._blocked("transient_cap_unavailable")
+                return blocked("transient_cap_unavailable")
             plan = self.planner.plan(
                 req,
                 passive_stub_price=stub,
@@ -651,11 +663,11 @@ class NativeMicrostakeExecutor:
                 transient_exposure_cap=cap,
             )
         except (KeyError, TypeError, ValueError, InvalidOperation) as exc:
-            return self._blocked(f"invalid_microstake_request:{type(exc).__name__}")
+            return blocked(f"invalid_microstake_request:{type(exc).__name__}")
         if plan.kind is ExecutionKind.BLOCKED:
-            return self._blocked(plan.reason, transient=plan.transient_exposure)
+            return blocked(plan.reason, transient=plan.transient_exposure)
         if plan.kind is not ExecutionKind.MICROSTAKE:
-            return self._blocked("native_route_not_microstake")
+            return blocked("native_route_not_microstake")
 
         result = self.coordinator.execute(req, stub_price=plan.api_price, transient_cap=cap)
         common = {
@@ -682,5 +694,5 @@ class NativeMicrostakeExecutor:
                 **common, "status": "AMBIGUOUS", "order_unknown": True,
                 "error": result.reason,
             }
-        return {**common, **self._blocked(result.reason or result.phase.value)}
+        return {**common, **blocked(result.reason or result.phase.value)}
 

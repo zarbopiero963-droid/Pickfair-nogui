@@ -1,0 +1,4 @@
+command: gh api --paginate "repos/zarbopiero963-droid/Pickfair-nogui/issues?state=open&per_page=100" | jq -s "[.[][] | select(.pull_request==null) | {number, title, labels: [.labels[].name], created_at, updated_at, comments}] | sort_by(.number)"
+timestamp_utc: 2026-10-17T14:50:19Z
+total_open_issues: 60
+note: pull requests excluded (select(.pull_request==null))

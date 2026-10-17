@@ -945,6 +945,24 @@ class SimulationBroker:
             "simulated": True,
         }
 
+    def persist_snapshot(self) -> bool:
+        """Salva lo snapshot `simulation_state` (la fonte di RELOAD del broker).
+
+        `_persist_order` scrive solo la cronologia per-bet: un processo che muore
+        dopo un `place_bet` ricostruirebbe il broker senza quell'ordine. La saga
+        Microstake lo chiama dopo ogni operazione (rilievo Codex PR #512).
+        """
+        if not (self.db and hasattr(self.db, "save_simulation_state")):
+            return False
+        try:
+            with self._lock:
+                snapshot = self.state.to_dict()
+            self.db.save_simulation_state("default", snapshot)
+            return True
+        except Exception:
+            logger.exception("Errore save_simulation_state (persist_snapshot)")
+            return False
+
     def best_counterparty_price(self, market_id: str, selection_id: int, side: str) -> Optional[float]:
         """Miglior prezzo della controparte sul book simulato, o None se assente.
 

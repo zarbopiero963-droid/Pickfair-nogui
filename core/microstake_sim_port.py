@@ -199,6 +199,12 @@ class SimulationExchangePort:
         with self._lock:
             self._reservations.pop(customer_ref, None)
 
+    def _snapshot(self) -> None:
+        """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash."""
+        persist = getattr(self.broker, "persist_snapshot", None)
+        if callable(persist):
+            persist()
+
     # -- operazioni exchange ---------------------------------------------------------------------------
     def place(self, *, market_id: str, selection_id: int, side: Side, size: Decimal, price: Decimal,
               customer_ref: str) -> SimOrder:
@@ -220,6 +226,7 @@ class SimulationExchangePort:
         self.operation_log.append(("PLACE", bet_id, str(size), str(price), customer_ref))
         if str(report.get("status")).upper() != "SUCCESS" or not bet_id:
             raise RuntimeError(f"PLACE_REJECTED:{report.get('orderStatus') or report.get('errorCode') or 'FAILURE'}")
+        self._snapshot()
         if self._take("LOST_PLACE_RESPONSE"):
             raise LostResponse("accepted but response lost")
         return self.order(bet_id)
@@ -236,6 +243,7 @@ class SimulationExchangePort:
         self.operation_log.append(("CANCEL", bet_id, str(reduction)))
         if str(report.get("status")).upper() != "SUCCESS":
             raise RuntimeError("INVALID_SIZE_REDUCTION")
+        self._snapshot()
         if self._take("LOST_CANCEL_RESPONSE"):
             raise LostResponse("cancel accepted but response lost")
         return self.order(bet_id)
@@ -254,6 +262,7 @@ class SimulationExchangePort:
         if str(report.get("status")).upper() != "SUCCESS" or not new_id or new_id == str(bet_id):
             raise RuntimeError("REPLACE_REJECTED")
         self.operation_log.append(("REPLACE", bet_id, str(new_price), new_id))
+        self._snapshot()
         if self._take("LOST_REPLACE_RESPONSE"):
             raise LostResponse("replace accepted but response lost")
         return self.order(new_id)
@@ -265,6 +274,7 @@ class SimulationExchangePort:
         self.operation_log.append(("CANCEL", bet_id, str(current.remaining)))
         if str(report.get("status")).upper() != "SUCCESS":
             raise RuntimeError("CANCEL_REJECTED")
+        self._snapshot()
         return self.order(bet_id)
 
 

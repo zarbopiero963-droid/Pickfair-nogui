@@ -162,16 +162,27 @@ def test_historical_extreme_stub_crosses_book_and_is_never_success(tmp_path, sid
     assert result.residual_exposure > 0
 
 
-def test_aggregate_transient_cap_blocks_second_table_before_place(tmp_path):
+def test_aggregate_transient_cap_blocks_second_table_while_the_first_is_still_in_flight(tmp_path):
+    """La riserva e' TRANSITORIA: resta finche' l'esito e' incerto (AMBIGUOUS) e blocca un secondo tavolo;
+    dopo ACTIVE viene rilasciata (i fondi dell'ordine economico li contabilizza l'exchange). Rilievo Codex #512:
+    prima restava per sempre e ogni microstake riuscito consumava 2 EUR di cap."""
     ex = StatefulExchangeSimulator(balance=D("100"))
+    ex.queue_fault(Fault.MATCH_ON_PLACE, D("0.50"))                         # stub abbinato: saga AMBIGUOUS, riserva tenuta
     c1, _, _ = coordinator(tmp_path, exchange=ex, max_transient_exposure=D("3"))
     first = c1.execute(request(stake="1.50", ref="table-1"), stub_price=D("3"))
-    assert first.phase is Phase.ACTIVE
+    assert first.phase is Phase.AMBIGUOUS and first.reservation_held
     c2 = MicrostakeCoordinator(ex, JsonSagaStore(tmp_path / "second.json"),
                                policy(max_transient_exposure=D("3")))
     second = c2.execute(request(stake="0.10", ref="table-2"), stub_price=D("3"))
     assert second.phase is Phase.BLOCKED
     assert len([op for op in ex.operation_log if op[0] == "PLACE"]) == 1
+    # saga conclusa: la riserva e' rilasciata e il tavolo successivo entra
+    ex2 = StatefulExchangeSimulator(balance=D("100"))
+    c3, _, _ = coordinator(tmp_path / "x", exchange=ex2, max_transient_exposure=D("3"))
+    done = c3.execute(request(stake="1.50", ref="table-3"), stub_price=D("3"))
+    assert done.phase is Phase.ACTIVE and not done.reservation_held
+    c4 = MicrostakeCoordinator(ex2, JsonSagaStore(tmp_path / "fourth.json"), policy(max_transient_exposure=D("3")))
+    assert c4.execute(request(stake="0.10", ref="table-4"), stub_price=D("3")).phase is Phase.ACTIVE
 
 
 def test_timeout_before_acceptance_releases_reservation_and_creates_no_order(tmp_path):
@@ -218,10 +229,25 @@ def test_concurrent_tables_reserve_atomically_and_never_exceed_cap(tmp_path):
         )
         return c.execute(request(stake="0.10", ref=f"table-{number}"), stub_price=D("3"))
 
+    peak = {"reserved": D("0")}
+    original = ex.reserve
+
+    def reserve(ref, exposure, cap):
+        ok = original(ref, exposure, cap)
+        with ex._state["lock"]:
+            peak["reserved"] = max(peak["reserved"], sum(ex._state["reservations"].values(), D("0")))
+        return ok
+
+    ex.reserve = reserve
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(run, (1, 2)))
-    assert sorted(r.phase.value for r in results) == ["ACTIVE", "BLOCKED"]
-    assert len([op for op in ex.operation_log if op[0] == "PLACE"]) == 1
+    # invariante: la somma delle riserve transitorie non supera MAI il cap; con la riserva rilasciata ad ACTIVE
+    # i due tavoli possono riuscire entrambi (in sequenza) o il secondo essere bloccato (in sovrapposizione)
+    assert peak["reserved"] <= D("2")
+    phases = sorted(r.phase.value for r in results)
+    assert phases in (["ACTIVE", "ACTIVE"], ["ACTIVE", "BLOCKED"]), phases
+    assert len([op for op in ex.operation_log if op[0] == "PLACE"]) == phases.count("ACTIVE")
+    assert ex._state["reservations"] == {}, "nessuna riserva sopravvive a una saga conclusa"
 
 
 def test_lost_cancel_response_reconciles_after_restart_without_second_place(tmp_path):
