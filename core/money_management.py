@@ -447,24 +447,23 @@ class RoserpinaMoneyManagement:
                     "min_stake": min_stake,
                 },
             )
-        # clamp tecnico verso l'alto al tetto del singolo ordine (invariato)
-        recommended = self._clamp(recommended, min_stake, max(max_single, min_stake))
-        # Rischio dell'ordine (#461 PR28): BACK = stake, LAY = liability
-        # stake*(quota-1). Prima tutti i cap confrontavano lo stake: una LAY 10
-        # a 21 (liability 200) passava il tetto singolo di 180. La LAY oltre il
-        # tetto si rifiuta (nessun ridimensionamento: la formula di sizing resta
-        # alla PR23); soglia esatta con tolleranza float.
+        # Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): lo stake calcolato non si
+        # ridimensiona MAI in silenzio al tetto del singolo ordine. Il cap resta un limite di
+        # rischio valido: oltre, rifiuto esplicito con lo stake RICHIESTO in chiaro (prima il BACK
+        # veniva ridotto al cap e approvato). Rischio dell'ordine (#461 PR28): BACK = stake,
+        # LAY = liability stake*(quota-1); soglia esatta con tolleranza float.
         exposure = validators.order_exposure(side, recommended, price)
 
         if validators.exceeds_cap(exposure, max_single):
             return MoneyManagementDecision(
                 approved=False,
-                recommended_stake=max_single,
+                recommended_stake=recommended,
                 desk_mode=desk_mode,
                 reason="supera_max_single_bet",
                 table_id=table_id,
                 metadata={
                     "recommended": recommended,
+                    "requested_stake": recommended,
                     "exposure": exposure,
                     "side": side,
                     "max_single": max_single,

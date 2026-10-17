@@ -332,10 +332,14 @@ def test_block_max_stake_abs_illeggibile_e_fail_closed(valore):
 
 
 def test_pass_max_stake_abs_valido_limita_esattamente():
+    """Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): il cap assoluto resta un
+    limite valido ma NON ridimensiona lo stake: oltre il cap il rifiuto e' esplicito e porta
+    lo stake richiesto (prima: approvato e ridotto esattamente a 20)."""
     decisione = _calcola(_mm(max_stake_abs=20.0))
 
-    assert decisione.approved is True
-    assert decisione.recommended_stake == pytest.approx(20.0)
+    assert decisione.approved is False and decisione.reason == "supera_max_single_bet"
+    assert decisione.recommended_stake == pytest.approx(30.0)
+    assert decisione.metadata["max_single"] == pytest.approx(20.0)
 
 
 def test_block_cap_recovery_booleano_e_config_corrotta():

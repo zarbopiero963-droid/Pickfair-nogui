@@ -153,3 +153,25 @@ def test_router_refuses_a_second_native_hedge_while_a_saga_on_the_same_position_
     assert [op for op in engine.microstake_executor.port.operation_log if op[0] == "PLACE"] == places_before
     other = router.place(_router_payload(0.50, side="BACK"))                    # lato diverso: posizione diversa
     assert other["error"] != "MICROSTAKE_PENDING_SAME_POSITION"
+
+
+# ---------------------------------------------------------------- Sol/Grok su 464f347: la riserva di una saga ESISTENTE non si rilascia
+def test_recover_failure_on_an_existing_saga_keeps_its_reservation():
+    engine, broker, _ = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    ex = engine.microstake_executor
+    ex.port.inject_fault("LOST_CANCEL_RESPONSE")
+    assert ex.execute(_payload("keep", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
+    assert list(ex.port._reservations) == ["keep"]
+    original_recover = ex.coordinator.recover
+
+    def failing_recover(ref):
+        raise RuntimeError("exchange unreachable during recover")
+
+    ex.coordinator.recover = failing_recover
+    with pytest.raises(RuntimeError):
+        ex.coordinator.execute(ex.coordinator._request_from_payload(_payload("keep", size=0.10, price=3.0))
+                               if hasattr(ex.coordinator, "_request_from_payload") else ex._request(_payload("keep", size=0.10, price=3.0)),
+                               stub_price=D("3.02"))
+    ex.coordinator.recover = original_recover
+    assert list(ex.port._reservations) == ["keep"], "riserva di una saga gia' inviata sciolta da un errore di recover"

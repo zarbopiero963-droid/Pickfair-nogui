@@ -438,15 +438,21 @@ class MicrostakeCoordinator:
 
         try:
             existing = self.store.load(req.customer_ref)
-            if existing:
-                return self.recover(req.customer_ref)
+        except Exception:
+            # Store illeggibile PRIMA di qualunque invio: la riserva transitoria appena presa
+            # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
+            self.exchange.release_reservation(req.customer_ref)
+            raise
+        if existing:
+            # Saga gia' avviata (invio precedente / AMBIGUOUS): la riserva copre esposizione REALE
+            # e resta anche se recover() fallisce (rilievi Sol/Grok #512 su 464f347).
+            return self.recover(req.customer_ref)
+        try:
             self.store.save(req.customer_ref, phase=Phase.PREPARED, reservation_held=True,
                             transient_exposure=transient, request=self._request_json(req),
                             stub_price=stub_price)
         except Exception:
-            # Store illeggibile/non scrivibile PRIMA di qualunque invio: la riserva transitoria
-            # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
-            self.exchange.release_reservation(req.customer_ref)
+            self.exchange.release_reservation(req.customer_ref)   # nuova saga, nulla e' partito
             raise
         order: Optional[SimOrder] = None
         try:

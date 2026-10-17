@@ -101,7 +101,8 @@
     "tests/test_pr512_recovery_fixes.py::test_pre_send_is_not_masked_by_a_concurrent_place_of_another_saga",
     "tests/test_pr512_review_cycle4.py::test_reservation_is_released_when_the_saga_store_fails_before_the_place",
     "tests/test_pr512_review_cycle4.py::test_cached_sim_executor_is_rebuilt_when_the_simulation_broker_changes",
-    "tests/test_pr512_review_cycle4.py::test_cached_sim_executor_is_never_reused_in_live_mode"
+    "tests/test_pr512_review_cycle4.py::test_cached_sim_executor_is_never_reused_in_live_mode",
+    "tests/test_pr512_review_cycle4.py::test_recover_failure_on_an_existing_saga_keeps_its_reservation"
    ],
    "evidence": [
     {
@@ -175,6 +176,11 @@
      "id": "CODEX-512-4304693616",
      "state": "FIXED",
      "note": "riserva rilasciata su store fallito pre-invio"
+    },
+    {
+     "id": "SOLGROK-512-464f347-reserve",
+     "state": "FIXED",
+     "note": "riserva di saga esistente conservata su recover fallito"
     }
    ],
    "reviewer": null,
@@ -970,6 +976,36 @@
    "limitations": [
     "copertura del registro: solo i requisiti del lavoro 17/10; le 60 schede #461 e i PF-C restano nei registri PF-DOC-4/D06 esistenti",
     "evidenza PASS del validatore da registrare al primo commit che contiene registro e test (append-only)"
+   ]
+  },
+  {
+   "id": "PF-OD2-01",
+   "text": "Stake calcolato sopra max_single_bet: rifiuto esplicito con lo stake richiesto, mai ridimensionamento silenzioso; il cap resta un limite di rischio valido.",
+   "source": "mandato owner PF-PR-RECOVERY-DECISIONS-02 (17/10/2026), decisione 2; #426 c.6242324827",
+   "owner_decision": "PF-PR-RECOVERY-DECISIONS-02 D2",
+   "activity": "ACTIVE",
+   "status": "IMPLEMENTED",
+   "issue": [
+    "#512",
+    "#426"
+   ],
+   "component": [
+    "core/money_management.py"
+   ],
+   "code": [
+    "core/money_management.py::RoserpinaMoneyManagement.calculate"
+   ],
+   "oracle": "BACK 3 EUR con cap 1 EUR => approved False, reason supera_max_single_bet, recommended_stake 3.0, metadata.max_single 1.0; stake == cap => approvato; LAY liability oltre cap => rifiuto",
+   "tests": [
+    "tests/core/test_money_management_decision2_20261017.py",
+    "tests/core/test_money_management_caps_and_malformed.py::test_recovery_stake_never_exceeds_single_bet_cap"
+   ],
+   "evidence": [],
+   "findings": [],
+   "reviewer": null,
+   "gate": "B",
+   "limitations": [
+    "campagna Roserpina C02 da rieseguire con il nuovo oracle (NOT VERIFIED)"
    ]
   }
  ]

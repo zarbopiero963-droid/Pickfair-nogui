@@ -83,7 +83,9 @@ PF-BEST-EXECUTION-DYNAMIC-01 (c.6235560755). Dettaglio tecnico in
 
 - il Money Management calcola e **richiede lo stake esatto**; nessun minimo
   artificiale, nessun arrotondamento verso l'alto, nessun cap fisso da 1 o 2 EUR;
-  sotto il minimo configurato rifiuto esplicito (`stake_sotto_min_stake`);
+  sotto il minimo configurato rifiuto esplicito (`stake_sotto_min_stake`); sopra il tetto del singolo ordine
+  (`max_single_bet`) rifiuto esplicito con lo stake richiesto, mai ridimensionamento silenzioso (decisione
+  owner 2, PF-PR-RECOVERY-DECISIONS-02 del 17/10/2026);
 - sotto il minimo exchange ogni percorso (Quick Bet, Dutching, Roserpina, hedge
   del cashout) passa dal **Microstake nativo**, senza flag; esecuzione esatta o
   errore esplicito, mai un importo diverso; LIVE senza adapter = fail-closed;

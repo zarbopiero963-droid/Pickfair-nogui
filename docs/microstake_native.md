@@ -13,6 +13,11 @@ l'alto, nessun cap fisso da 1 o 2 EUR. Grandezze tenute separate: stake richiest
 della procedura, esposizione matched/unmatched, liability LAY, fondi disponibili, controlli di rischio.
 `RoserpinaMoneyManagement.calculate` non alza più lo stake al minimo configurato: sotto `min_stake` rifiuta con
 `stake_sotto_min_stake` e lo stake richiesto in chiaro (`tests/core/test_money_management_rectification_20261017.py`).
+Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): sopra il tetto del singolo ordine (`max_single_bet`, BACK
+stake / LAY liability) lo stake calcolato **non viene più ridotto al cap**: rifiuto esplicito `supera_max_single_bet` con
+lo stake richiesto (`requested_stake`) e il cap nei metadati (`tests/core/test_money_management_decision2_20261017.py`).
+Conseguenza dichiarata: un passo di recovery Roserpina il cui stake supera il cap viene rifiutato invece di essere
+eseguito ridotto (prima: clamp e approvazione); il ciclo si ferma sul rifiuto del Money Management.
 
 Il Microstake non è una flag, un checkbox o un `MIN_STAKE`: è il percorso che il motore sceglie **da solo** quando
 l'importo economico richiesto è sotto il minimo del singolo ordine dell'exchange (Betfair: 2 EUR). L'utente indica

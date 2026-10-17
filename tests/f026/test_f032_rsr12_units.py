@@ -82,7 +82,9 @@ def test_f032_unknown_growth_never_expands():
 def test_f032_expansion_never_overrides_defense_or_caps():
     mm = _mm(max_single_bet_pct=2.0)                                   # cap singolo 2 su bankroll 100
     d = _calc(mm, expansion_growth_snapshot=50.0)
-    assert d.recommended_stake <= 2.0 + 1e-9
+    # Decisione owner 2 (17/10/2026): l'espansione non aggira il cap e il cap non ridimensiona:
+    # oltre il tetto singolo il Money Management rifiuta esplicitamente (prima: stake ridotto a 2).
+    assert d.approved is False and d.reason == "supera_max_single_bet" and d.recommended_stake > 2.0
     lock = mm.calculate(signal={"price": 3.0, "side": "BACK", "expansion_growth_snapshot": 50.0},
                         bankroll_current=70.0, equity_peak=100.0, current_total_exposure=0.0,
                         event_current_exposure=0.0, table=None)

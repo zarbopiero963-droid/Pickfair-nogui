@@ -24,6 +24,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   pendente (`MICROSTAKE_PENDING_SAME_POSITION`); valori non finiti nella ladder ⇒ liquidità ignota; perdita di
   recovery persistita non finita ⇒ stato illeggibile; `pfckpt` cattura i percorsi con spazi (`--porcelain -z`).
   Test: `tests/test_pr512_review_cycle4.py`.
+- **Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02):** `RoserpinaMoneyManagement.calculate` non ridimensiona più lo
+  stake al tetto del singolo ordine: sopra `max_single_bet` rifiuto esplicito `supera_max_single_bet` con lo stake
+  richiesto (anche per i passi di recovery). Riserva transitoria di una saga Microstake già avviata conservata anche se
+  `recover()` fallisce (rilievi Sol/Grok su 464f347). Test: `tests/core/test_money_management_decision2_20261017.py`.
 
 ### Added
 - **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e
