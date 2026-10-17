@@ -133,7 +133,7 @@ def test_save_commits_gitignored_artifacts(world):
 
 @pytest.mark.parametrize("case", ["missing", "altered", "wrong_hash", "incomplete_manifest", "bad_json",
                                   "unknown_code_sha", "wrong_seq", "wrong_previous", "bad_status", "pass_without_sha",
-                                  "declared_artifact_absent", "secret", "secret_py"])
+                                  "declared_artifact_absent", "secret", "secret_py", "secret_named_pfckpt"])
 def test_integrity_violations_are_rejected(world, case):
     a = agent(world, "a")
     head = next_state(a, world)
@@ -158,6 +158,9 @@ def test_integrity_violations_are_rejected(world, case):
     if case == "secret_py":
         # rilievo Codex #512: un sorgente Python catturato nel code_patch non e' esente dallo scan
         add_artifact(a, "local_credentials.py", 'APP_KEY = "abcdefghijklmnopqrstuvwxyz"\n')
+    if case == "secret_named_pfckpt":
+        # rilievo Sol #512: l'esenzione vale solo per tools/pfckpt.py, non per un artifact omonimo altrove
+        add_artifact(a, "pfckpt.py", 'APP_KEY = "abcdefghijklmnopqrstuvwxyz"\n')
     pfckpt.write_manifest(a, D)
     if case == "missing":
         os.remove(os.path.join(a, D, "results", "r.txt"))

@@ -51,6 +51,9 @@ DEFAULT_LEASE_MIN = 120
 SECRET_PATTERNS = [re.compile(p) for p in (
     r"(?i)(api[_-]?key|app[_-]?key|password|secret|session[_-]?token)\s*[:=]\s*['\"][^'\"\s]{12,}",
     r"-----BEGIN [A-Z ]*PRIVATE KEY-----", r"ghp_[A-Za-z0-9]{30,}", r"sk-[A-Za-z0-9]{30,}")]
+# L'unico file esente dallo scan: la copia dello scanner nel checkpoint, al suo percorso esatto (relativo alla
+# directory del checkpoint). Un file con lo stesso nome altrove (es. results/pfckpt.py) viene scansionato.
+SECRET_SCAN_EXEMPT = frozenset({"tools/pfckpt.py"})
 
 
 class CheckpointError(Exception):
@@ -207,9 +210,10 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         data = blob(repo, commit, files[f])
         if hashlib.sha256(data).hexdigest() != manifest[f]:
             problems.append(f"hash errato: {f}")
-        if os.path.basename(f) != "pfckpt.py":
-            # esente SOLO lo scanner stesso (contiene i pattern): ogni altro file, sorgenti Python del
-            # code_patch compresi, viene scansionato (rilievo Codex #512)
+        if f not in SECRET_SCAN_EXEMPT:
+            # esente SOLO lo scanner stesso al suo percorso autorizzato (contiene i pattern): ogni altro
+            # file, sorgenti Python del code_patch e un artifact chiamato pfckpt.py altrove compresi, viene
+            # scansionato (rilievi Codex e Sol #512)
             for pat in SECRET_PATTERNS:
                 if pat.search(data.decode(errors="ignore")):
                     problems.append(f"possibile segreto in {f}")
