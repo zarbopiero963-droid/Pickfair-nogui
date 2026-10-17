@@ -17,6 +17,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   dichiarato nel risultato (`snapshot_persisted`); `pre_send` calcolato per `customer_ref`; scan segreti del
   checkpoint esteso ai sorgenti Python (esente solo `pfckpt.py`); `pf_trace` verifica che ogni SHA di evidenza sia un
   commit reale (clone shallow ⇒ warning, `--strict` lo rende errore). Test: `tests/test_pr512_recovery_fixes.py`.
+- **PR #512 ciclo 4 (rilievi Codex su cad07e1/21aab95):** esecutore Microstake in cache legato al broker SIM e alla
+  modalità correnti (ricostruito dopo stop/start, mai l'adapter SIM in LIVE); fondi disponibili non leggibili o
+  incompleti ⇒ cap transitorio non disponibile; riserva transitoria rilasciata se lo store della saga fallisce prima
+  dell'invio; cashout AMBIGUOUS conserva il `matched` noto; nessun nuovo hedge nativo su una posizione con saga
+  pendente (`MICROSTAKE_PENDING_SAME_POSITION`); valori non finiti nella ladder ⇒ liquidità ignota; perdita di
+  recovery persistita non finita ⇒ stato illeggibile; `pfckpt` cattura i percorsi con spazi (`--porcelain -z`).
+  Test: `tests/test_pr512_review_cycle4.py`.
 
 ### Added
 - **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e

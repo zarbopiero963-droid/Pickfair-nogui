@@ -141,6 +141,22 @@ class OrderRouter:
                 ok=False, placed=False, order_unknown=False, status="FAILURE",
                 matched=0.0, bet_id=None, error="MICROSTAKE_EXECUTOR_UNAVAILABLE", raw=None,
             )
+        # Mitigazione fail-closed (rilievo Codex #512): il ref della saga e' generato per
+        # chiamata, quindi una saga AMBIGUOUS sulla stessa posizione non verrebbe ritrovata e
+        # un secondo hedge partirebbe. Finche' esiste una saga pendente su (mercato,
+        # selezione, lato) nessun nuovo hedge nativo: riconciliazione prima, mai un duplicato.
+        pending_fn = getattr(executor, "pending_same_position", None)
+        if callable(pending_fn):
+            try:
+                pending = list(pending_fn(payload["market_id"], payload["selection_id"], side.strip().upper()) or [])
+            except Exception:
+                pending = ["<store_unreadable>"]
+            if pending:
+                return self._result(
+                    ok=False, placed=False, order_unknown=False, status="FAILURE",
+                    matched=0.0, bet_id=None, error="MICROSTAKE_PENDING_SAME_POSITION",
+                    raw={"pending_refs": pending},
+                )
         base_ref = str(payload.get("customer_ref") or "cashout").strip() or "cashout"
         ref = f"{base_ref[:16]}-ms-{uuid.uuid4().hex[:12]}"
         native_payload = {
@@ -165,8 +181,16 @@ class OrderRouter:
         raw = dict(raw, microstake_ref=ref)
         status = str(raw.get("status") or "").upper()
         if raw.get("order_unknown") is True or status == "AMBIGUOUS":
+            # Il matched NOTO (stub abbinato, race match/cancel) resta visibile all'operatore
+            # (rilievo Codex #512): AMBIGUOUS non azzera un'esposizione gia' dichiarata.
+            try:
+                known = float(raw.get("matched") or 0.0)
+            except (TypeError, ValueError):
+                known = 0.0
+            if not math.isfinite(known) or known < 0.0:
+                known = 0.0
             return cls._result(ok=False, placed=False, order_unknown=True, status="AMBIGUOUS",
-                               matched=0.0, bet_id=None, error=raw.get("error"), raw=raw)
+                               matched=known, bet_id=None, error=raw.get("error"), raw=raw)
         matched, bet_id = cls._sum_reports(raw.get("instructionReports"))
         placed = status == "SUCCESS" and bet_id is not None
         return cls._result(

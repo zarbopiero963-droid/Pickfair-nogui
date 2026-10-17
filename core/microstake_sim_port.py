@@ -334,7 +334,21 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             if len(self.port.operation_log) > before:
                 return {"status": "AMBIGUOUS", "order_unknown": True, "microstake": True,
                         "error": f"saga_store_unreadable_after_exchange_call:{exc}"}
-            return self._blocked("saga_store_unreadable")
+            out = self._blocked("saga_store_unreadable")
+            out["pre_send"] = True          # nessuna operazione exchange: l'intento dedupe si rilascia
+            return out
+
+    def pending_same_position(self, market_id: Any, selection_id: Any, side: Any) -> List[str]:
+        """Ref delle saghe non concluse sulla stessa posizione (mercato, selezione, lato).
+        Store illeggibile => SagaStoreError (il chiamante tratta l'errore come 'pendente')."""
+        want = (str(market_id), str(selection_id), str(side or "").upper())
+        out: List[str] = []
+        for ref in self.store.pending_refs():
+            req = (self.store.load(ref) or {}).get("request") or {}
+            key = (str(req.get("market_id")), str(req.get("selection_id")), str(req.get("side") or "").upper())
+            if key == want:
+                out.append(ref)
+        return out
 
     def recover_pending(self) -> Dict[str, str]:
         """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita."""

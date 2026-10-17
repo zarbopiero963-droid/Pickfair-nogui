@@ -98,7 +98,10 @@
     "tests/test_pr512_recovery_fixes.py::test_residual_different_from_the_requested_stake_is_ambiguous_never_active",
     "tests/test_pr512_recovery_fixes.py::test_sim_snapshot_is_written_while_the_broker_lock_is_held",
     "tests/test_pr512_recovery_fixes.py::test_snapshot_failure_is_declared_in_the_executor_result",
-    "tests/test_pr512_recovery_fixes.py::test_pre_send_is_not_masked_by_a_concurrent_place_of_another_saga"
+    "tests/test_pr512_recovery_fixes.py::test_pre_send_is_not_masked_by_a_concurrent_place_of_another_saga",
+    "tests/test_pr512_review_cycle4.py::test_reservation_is_released_when_the_saga_store_fails_before_the_place",
+    "tests/test_pr512_review_cycle4.py::test_cached_sim_executor_is_rebuilt_when_the_simulation_broker_changes",
+    "tests/test_pr512_review_cycle4.py::test_cached_sim_executor_is_never_reused_in_live_mode"
    ],
    "evidence": [
     {
@@ -155,6 +158,16 @@
      "id": "GROK-512-6236399723",
      "state": "FIXED",
      "note": "snapshot sotto lock e dichiarato; pre_send per customer_ref"
+    },
+    {
+     "id": "CODEX-512-4304693618",
+     "state": "FIXED",
+     "note": "esecutore legato a broker/modalita' (P1)"
+    },
+    {
+     "id": "CODEX-512-4304693616",
+     "state": "FIXED",
+     "note": "riserva rilasciata su store fallito pre-invio"
     }
    ],
    "reviewer": null,
@@ -205,6 +218,11 @@
      "id": "OWN-Q-MAXSINGLE",
      "state": "OPEN",
      "text": "decisione owner aperta: stake calcolato sopra max_single_bet, oggi BACK ridimensionato al cap (RSR-02), LAY rifiutato"
+    },
+    {
+     "id": "CODEX-512-4304693619",
+     "state": "OPEN",
+     "note": "floor 0.10 EUR del coordinatore vs min_stake configurato: decisione owner (limite universale?)"
     }
    ],
    "reviewer": null,
@@ -239,7 +257,8 @@
     "tests/test_microstake_engine_native.py::test_temporary_exposure_equal_to_available_funds_is_allowed_above_is_blocked",
     "tests/test_microstake_engine_native.py::test_total_exposure_headroom_caps_the_temporary_stub",
     "tests/test_microstake_engine_native.py::test_unreadable_funds_and_no_headroom_source_block_fail_closed",
-    "tests/test_microstake_engine_native.py::test_lay_transient_liability_uses_stub_liability_not_economic_stake"
+    "tests/test_microstake_engine_native.py::test_lay_transient_liability_uses_stub_liability_not_economic_stake",
+    "tests/test_pr512_review_cycle4.py::test_unreadable_account_funds_make_the_transient_cap_unavailable"
    ],
    "evidence": [
     {
@@ -250,7 +269,13 @@
      "result": "PASS"
     }
    ],
-   "findings": [],
+   "findings": [
+    {
+     "id": "CODEX-512-4304759974",
+     "state": "FIXED",
+     "note": "fondi non leggibili => cap non disponibile"
+    }
+   ],
    "reviewer": null,
    "gate": "A #506",
    "limitations": [
@@ -359,7 +384,9 @@
    "tests": [
     "tests/test_microstake_cashout_and_recovery.py::test_cashout_chain_executes_a_sub_minimum_hedge_through_native_microstake",
     "tests/test_microstake_cashout_and_recovery.py::test_cashout_chain_without_native_executor_fails_closed_instead_of_sending_a_sub_minimum_hedge",
-    "tests/test_microstake_cashout_and_recovery.py::test_router_native_ambiguous_is_order_unknown_never_placed"
+    "tests/test_microstake_cashout_and_recovery.py::test_router_native_ambiguous_is_order_unknown_never_placed",
+    "tests/test_pr512_review_cycle4.py::test_router_refuses_a_second_native_hedge_while_a_saga_on_the_same_position_is_pending",
+    "tests/test_pr512_review_cycle4.py::test_ambiguous_native_cashout_keeps_the_known_matched_amount"
    ],
    "evidence": [
     {
@@ -375,6 +402,16 @@
      "id": "MS-NI-006",
      "state": "OPEN",
      "text": "customer_ref del cashout = source (non unico): il router genera un ref per la saga; da riconciliare sul percorso diretto LIVE (de-dup Betfair 60s)"
+    },
+    {
+     "id": "CODEX-512-4304693614",
+     "state": "OPEN",
+     "note": "ref stabile del cashout: design owner; mitigazione pending_same_position"
+    },
+    {
+     "id": "CODEX-512-4304759970",
+     "state": "FIXED",
+     "note": "matched conservato in AMBIGUOUS"
     }
    ],
    "reviewer": null,
@@ -628,7 +665,8 @@
     "tests/f026/test_f026_financial.py::test_RSR12_01_recovery_tables_survive_crash_and_restart",
     "tests/test_microstake_cashout_and_recovery.py::test_runtime_start_sequence_pauses_when_microstake_saga_stays_pending",
     "tests/test_pr512_recovery_fixes.py::test_resume_keeps_the_runtime_paused_while_a_microstake_saga_is_still_pending",
-    "tests/test_pr512_recovery_fixes.py::test_resume_becomes_active_only_when_both_recovery_paths_succeed"
+    "tests/test_pr512_recovery_fixes.py::test_resume_becomes_active_only_when_both_recovery_paths_succeed",
+    "tests/test_pr512_review_cycle4.py::test_runtime_treats_non_finite_recovery_state_as_unreadable"
    ],
    "evidence": [
     {
@@ -657,6 +695,11 @@
      "id": "CODEX-512-4303374299",
      "state": "FIXED",
      "note": "resume() ritenta la recovery Microstake"
+    },
+    {
+     "id": "CODEX-512-4304759979",
+     "state": "FIXED",
+     "note": "perdita di recovery non finita => illeggibile"
     }
    ],
    "reviewer": null,
@@ -798,7 +841,8 @@
     "tests/agent_checkpoint/test_pfckpt.py::test_code_patch_is_captured_and_restored_in_a_fresh_environment",
     "tests/agent_checkpoint/test_pfckpt.py::test_recover_materialises_the_last_valid_checkpoint_without_touching_the_remote",
     "tests/agent_checkpoint/test_pfckpt.py::test_bootstrap_in_clean_environment_without_history_or_local_files",
-    "tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[secret_py]"
+    "tests/agent_checkpoint/test_pfckpt.py::test_integrity_violations_are_rejected[secret_py]",
+    "tests/test_pr512_review_cycle4.py::test_untracked_paths_with_whitespace_are_captured_in_the_code_patch"
    ],
    "evidence": [
     {
@@ -822,6 +866,11 @@
      "id": "CODEX-512-4303374317",
      "state": "FIXED",
      "note": "scan segreti esteso ai .py"
+    },
+    {
+     "id": "CODEX-512-4304759984",
+     "state": "FIXED",
+     "note": "porcelain -z"
     }
    ],
    "reviewer": null,

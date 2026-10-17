@@ -42,7 +42,9 @@ sono raggiunti solo dall'engine o dal router). Importi >= 2 EUR restano sul perc
    dello stub (BACK: 2 EUR; LAY: `2 × (stub − 1)`) resta però un rischio reale per pochi istanti e deve stare dentro
    ciò che è davvero disponibile: minimo fra fondi disponibili dell'exchange (servizio Betfair del runtime o, senza
    runtime, il broker SIM) e headroom dell'esposizione totale configurata (`max_total_exposure` sul bankroll noto
-   meno l'esposizione aperta). Nessuna fonte leggibile => BLOCKED (`transient_cap_unavailable`); uguale al limite
+   meno l'esposizione aperta). I fondi disponibili sono una fonte **obbligatoria**: risposta assente, `ok=False` o
+   senza `available` ⇒ cap non disponibile, nessuno stub (l'headroom locale da solo non basta; ciclo 4 #512,
+   decisione owner 1 del 17/10). Nessuna fonte leggibile => BLOCKED (`transient_cap_unavailable`); uguale al limite
    consentito, oltre bloccato (owner #426 6141450045). Prova: `test_per_order_cap_of_one_euro_no_longer_blocks_...`,
    `test_insufficient_available_funds_block_...`, `test_total_exposure_headroom_caps_...`;
 3. **PLACE** dello stub da 2 EUR al prezzo passivo, riserva transitoria tenuta (rilasciata all'attivazione: dopo
@@ -90,6 +92,11 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
   reale; headless e GUI non hanno bisogno di cablaggi aggiuntivi per il choke point, e passano lo stesso esecutore alla
   catena del cashout (`cabla_catena_cashout(..., microstake_executor_provider=...)`).
 
+Esecutore e sessione: l'esecutore nativo in cache è valido solo per il broker SIM e la modalità correnti
+(`_bound_native_microstake_executor`): dopo uno stop/start (nuovo `SimulationBroker`) viene ricostruito; in LIVE
+l'adapter SIM non è mai riusato (None ⇒ `MICROSTAKE_EXECUTOR_UNAVAILABLE`). Uno store della saga illeggibile o non
+scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blocco pre-invio (ciclo 4 #512).
+
 ## 5. Recovery all'avvio (`RuntimeController.start`, prima di F018)
 
 `TradingEngine.recover_native_microstake_sagas()` riprende ogni saga non conclusa dalla sua identità persistita
@@ -112,7 +119,11 @@ ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE.
   PLACE → cancel parziale → replace **non è dimostrata** qui: NOT VERIFIED.
 - Riserva transitoria in-process (MS-NI-004 Codex): non è un'autorità finanziaria multi-processo.
 - `customer_ref` del cashout = `source` del comando (non unico): il router genera un ref proprio per la saga
-  (`raw["microstake_ref"]`); il cashout non ritenta mai un esito AMBIGUO. Finding separato da riconciliare (ref
+  (`raw["microstake_ref"]`); il cashout non ritenta mai un esito AMBIGUO. Mitigazione fail-closed (ciclo 4 #512):
+  finché esiste una saga pendente sulla stessa posizione (mercato, selezione, lato) il router rifiuta ogni nuovo
+  hedge nativo con `MICROSTAKE_PENDING_SAME_POSITION` (`pending_same_position`); store illeggibile ⇒ rifiuto. Un
+  esito AMBIGUOUS conserva il `matched` noto nel risultato del router. Identità stabile del ref: decisione di
+  design aperta (owner). Finding separato da riconciliare (ref
   non unico anche sul percorso diretto LIVE, de-dup Betfair a 60 s).
 - `SimulationBroker.place_bet` accetta uno stake booleano come 1.0 (preesistente, MS-NI-007).
 - Control API / MCP: assenti nella baseline, nessuna integrazione possibile qui.

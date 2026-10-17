@@ -317,6 +317,10 @@ class TableManager:
             for table_id, loss in (state or {}).items():
                 table = self._get(int(table_id))
                 loss = float(loss)
+                if not math.isfinite(loss):
+                    # JSON NaN/Infinity (rilievo Codex #512): debito ignoto => stato illeggibile,
+                    # il runtime blocca la capacita' di recovery (fail-closed)
+                    raise ValueError(f"perdita di recovery non finita per il tavolo {table_id}: {loss!r}")
                 if loss <= 0.0:
                     continue
                 if table is None:

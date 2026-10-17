@@ -303,7 +303,9 @@ def capture_code_patch(code_repo, worktree, d):
     tree = out(code_repo, "rev-parse", "HEAD^{tree}")
     tracked = git(code_repo, "diff", "--binary", "HEAD").stdout
     # porcelain non va strip-ato: il primo carattere di stato puo' essere uno spazio
-    status = [l for l in git(code_repo, "status", "--porcelain", "--untracked-files=all").stdout.decode().splitlines() if l.strip()]
+    # -z: percorsi NUL-terminati e mai quotati (rilievo Codex #512: `"space name.py"` quotato veniva
+    # saltato da isfile e il checkpoint risultava durevole senza quel file)
+    status = [l for l in git(code_repo, "status", "--porcelain", "-z", "--untracked-files=all").stdout.decode().split("\0") if l.strip()]
     modified = sorted(l[3:] for l in status if not l.startswith("??"))
     untracked = sorted(l[3:] for l in status if l.startswith("??") and "__pycache__" not in l and not l.endswith(".pyc"))
     files = []

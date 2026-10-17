@@ -2202,9 +2202,7 @@ class TradingEngine:
         # alias discordante e' un errore pre-invio (INVALID_SIDE), identico in
         # SIM e LIVE, e non diventa mai un esito del Microstake.
         payload = self._con_lato_valido(payload)
-        coordinator = self.microstake_executor
-        if coordinator is None:
-            coordinator = self._default_native_microstake_executor(mode)
+        coordinator = self._bound_native_microstake_executor(mode)
         execute = getattr(coordinator, "execute", None)
         if not callable(execute):
             raise _ErrorePrimaDellInvio("MICROSTAKE_EXECUTOR_UNAVAILABLE")
@@ -2229,8 +2227,6 @@ class TradingEngine:
         Usato anche fuori dal choke point (hedge del cashout via OrderRouter) cosi'
         l'intera applicazione ha UN solo esecutore e UNA sola saga persistita.
         """
-        if self.microstake_executor is not None:
-            return self.microstake_executor
         runtime = self.runtime_controller
         mode = ""
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):
@@ -2238,7 +2234,48 @@ class TradingEngine:
                 mode = str(runtime.get_effective_execution_mode() or "SIMULATION").upper()
             except Exception:
                 return None
+        return self._bound_native_microstake_executor(mode)
+
+    def _bound_native_microstake_executor(self, mode: str) -> Any:
+        """Esecutore valido per la modalita' e il broker CORRENTI (rilievo Codex #512, P1).
+
+        Un esecutore costruito sul broker SIM di una sessione precedente (stop/start crea
+        un nuovo `SimulationBroker`) viene ricostruito; in LIVE l'adapter SIM non viene
+        mai riusato (fail-closed: None => MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore
+        iniettato senza broker (test/adapter esterno) resta valido com'e'.
+        """
+        cached = self.microstake_executor
+        bound_broker = getattr(getattr(cached, "port", None), "broker", None)
+        if cached is not None and bound_broker is None:
+            return cached
+        if str(mode or "").upper() == "LIVE":
+            return None
+        if cached is not None:
+            if bound_broker is self._current_simulation_broker():
+                return cached
+            logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
+            self.microstake_executor = None
         return self._default_native_microstake_executor(mode)
+
+    def _current_simulation_broker(self) -> Any:
+        """Il broker SIM dimostrabile della sessione corrente, o None."""
+        broker = self.simulation_broker
+        if broker is None and callable(self.client_getter):
+            try:
+                candidate = self.client_getter()
+            except Exception:
+                candidate = None
+            if candidate is not None:
+                try:
+                    from simulation_broker import SimulationBroker
+                except Exception:
+                    SimulationBroker = ()  # type: ignore[assignment]
+                if (self._e_il_broker_di_simulazione(candidate)
+                        or isinstance(candidate, SimulationBroker)):
+                    broker = candidate
+        if broker is None or self._e_il_client_betfair_reale(broker):
+            return None
+        return broker
 
     def recover_native_microstake_sagas(self) -> Dict[str, Any]:
         """Riconcilia all'avvio le saghe Microstake non concluse (PF-MICROSTAKE-NATIVE-INTEGRATION-02, M5).
@@ -2282,21 +2319,8 @@ class TradingEngine:
         """
         if str(mode or "").upper() == "LIVE":
             return None
-        broker = self.simulation_broker
-        if broker is None and callable(self.client_getter):
-            try:
-                candidate = self.client_getter()
-            except Exception:
-                candidate = None
-            if candidate is not None:
-                try:
-                    from simulation_broker import SimulationBroker
-                except Exception:
-                    SimulationBroker = ()  # type: ignore[assignment]
-                if (self._e_il_broker_di_simulazione(candidate)
-                        or isinstance(candidate, SimulationBroker)):
-                    broker = candidate
-        if broker is None or self._e_il_client_betfair_reale(broker):
+        broker = self._current_simulation_broker()
+        if broker is None:
             return None
         try:
             from core.microstake_sim_port import build_native_microstake_executor
@@ -2341,16 +2365,21 @@ class TradingEngine:
                     funds = read()
                 except Exception:
                     return None
-        if isinstance(funds, dict) and funds.get("ok", True) is not False:
-            raw = funds.get("available")
-            if raw is not None and not isinstance(raw, bool):
-                try:
-                    available = float(raw)
-                except (TypeError, ValueError):
-                    return None
-                if not math.isfinite(available):
-                    return None
-                candidates.append(max(0.0, available))
+        # Fondi disponibili: fonte OBBLIGATORIA (rilievo Codex #512, decisione owner 1 del
+        # 17/10): risposta assente, non ok o senza `available` => cap non disponibile, nessuno
+        # stub; l'headroom locale da solo non dimostra che i fondi dell'exchange bastino.
+        if not isinstance(funds, dict) or funds.get("ok", True) is False:
+            return None
+        raw = funds.get("available")
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            available = float(raw)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(available):
+            return None
+        candidates.append(max(0.0, available))
         mm = getattr(rc, "mm", None)
         desk = getattr(rc, "risk_desk", None)
         tables = getattr(rc, "table_manager", None)

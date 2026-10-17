@@ -5,6 +5,7 @@ Lato ladder Betfair-standard, deciso dall'owner (#383): un BACK consuma ``availa
 dell'ordine, LAY se <=. Le ``size`` del book sono backer-stake, omogenee con lo stake dell'ordine.
 Funzioni pure: nessun I/O, nessuno stato. ``None`` = osservazione ignota (mai zero inventato).
 """
+import math
 from typing import Any, Optional
 
 
@@ -25,7 +26,7 @@ def sum_executable_liquidity(ladder: Any, side: Any, order_price: float) -> floa
             lvl_size = float((level or {}).get("size", 0.0) or 0.0)
         except (TypeError, ValueError, AttributeError):
             continue
-        if lvl_price <= 0.0 or lvl_size <= 0.0:
+        if lvl_price <= 0.0 or lvl_size <= 0.0 or not (math.isfinite(lvl_price) and math.isfinite(lvl_size)):
             continue
         if liquidity_crosses(side, order_price, lvl_price):
             total += lvl_size
@@ -59,6 +60,15 @@ def executable_liquidity(book: Any, selection_id: Any, side: Any, price: Any) ->
         if not isinstance(ladder, (list, tuple)):
             # assente o malformata (rilievo Codex #512): dato ignoto => il RiskGate nega (fail-closed)
             return None
+        for level in ladder:
+            # un valore non finito (Infinity/NaN) renderebbe la somma infinita: dato ignoto
+            if isinstance(level, dict):
+                try:
+                    p, s = float(level.get("price", 0.0) or 0.0), float(level.get("size", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    continue
+                if not (math.isfinite(p) and math.isfinite(s)):
+                    return None
         return sum_executable_liquidity(ladder, side, order_price)
     return None
 

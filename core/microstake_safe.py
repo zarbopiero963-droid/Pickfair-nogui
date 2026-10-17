@@ -436,12 +436,18 @@ class MicrostakeCoordinator:
             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
                                 max_exposure=transient)
 
-        existing = self.store.load(req.customer_ref)
-        if existing:
-            return self.recover(req.customer_ref)
-        self.store.save(req.customer_ref, phase=Phase.PREPARED, reservation_held=True,
-                        transient_exposure=transient, request=self._request_json(req),
-                        stub_price=stub_price)
+        try:
+            existing = self.store.load(req.customer_ref)
+            if existing:
+                return self.recover(req.customer_ref)
+            self.store.save(req.customer_ref, phase=Phase.PREPARED, reservation_held=True,
+                            transient_exposure=transient, request=self._request_json(req),
+                            stub_price=stub_price)
+        except Exception:
+            # Store illeggibile/non scrivibile PRIMA di qualunque invio: la riserva transitoria
+            # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
+            self.exchange.release_reservation(req.customer_ref)
+            raise
         order: Optional[SimOrder] = None
         try:
             order = self.exchange.place(
