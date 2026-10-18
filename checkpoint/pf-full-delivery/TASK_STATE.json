@@ -49,7 +49,7 @@
  ],
  "lotto_corrente": "#512 ciclo 8 pushato: attesa check settled, triage Sol/Grok/Codex, resolve FIXED con prova, verdetto; audit cap REVIEWED; PR 10 cicli pronta (6a152e8)",
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere check su 2c6aa09 (6 pending); triage Sol/Grok/Codex; resolve dei 10 thread Codex con prova; verdetto ciclo 8; ciclo 9 (438a0c6 + eventuali nuovi finding confermati) con stessa procedura; poi roadmap.",
+ "next_atomic_action": "Ciclo 9: esito triage Codex 2c6aa09 => fix confermati (RED->GREEN), regressione completa, riesame indipendente, push unico, risposte thread, verdetto; patch #505 riconciliazione in worktree (agente); poi roadmap.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [
