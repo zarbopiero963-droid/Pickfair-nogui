@@ -362,7 +362,15 @@ e va riportata qui.
 
 # PR28-d — controlli assoluti Roserpina
 
-La sezione Roserpina espone quattro campi monetari aggiuntivi: esposizione massima
-per ordine, mercato, evento e drawdown assoluto. I valori iniziali provengono
-dalla configurazione autorevole (1 €, 2 €, 2 €, 10 €); input vuoti o invalidi
-non rappresentano un opt-out e vengono rifiutati fail-closed dal runtime.
+La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
+(rettifica owner 18/10/2026: nessun cap monetario fisso di default):
+`Cap assoluto: Singolo ordine (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo mercato (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
+`Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
+mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
+limite non attivo (il salvataggio non azzera un valore gia' persistito, come
+per gli altri hard-stop); un valore presente deve essere un numero finito > 0,
+altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
+illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
+ordini con `<nome>_non_valido`.
