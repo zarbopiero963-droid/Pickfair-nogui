@@ -1,0 +1,14 @@
+    Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+
+ .guardrails/allowed_scope.json                     |   8 +-
+ CHANGELOG.md                                       |   8 ++
+ betfair_client.py                                  |  14 +-
+ core/microstake_safe.py                            |  14 +-
+ core/microstake_sim_port.py                        |   4 +
+ core/trading_engine.py                             |  30 +++--
+ docs/microstake_native.md                          |   3 +
+ services/betfair_service.py                        |  28 ++--
+ tests/test_pr512_review_cycle4.py                  |  16 +++
+ tests/test_pr512_review_cycle6.py                  | 144 +++++++++++++++++++++
+ .../test_betfair_service_list_current_orders.py    |  13 +-
+ 11 files changed, 250 insertions(+), 32 deletions(-)

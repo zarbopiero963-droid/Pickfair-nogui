@@ -1,0 +1,161 @@
+diff --git a/betfair_client.py b/betfair_client.py
+index dd98a8f..bc8d109 100644
+--- a/betfair_client.py
++++ b/betfair_client.py
+@@ -1906,7 +1906,19 @@ class BetfairClient:
+                 params,
+             )
+ 
+-            page_orders = result.get("currentOrders") or []
++            page_orders = result.get("currentOrders")
++            if page_orders is None:
++                page_orders = []
++            # Payload malformato (contenitore non-lista o riga non-dict): errore esplicito,
++            # mai una lista vuota/parziale che la ricostruzione all'avvio leggerebbe come
++            # "nessun ordine" chiudendo posizioni vive (rilievo Codex #512, decisione owner
++            # D-C del 18/10/2026).
++            if not isinstance(page_orders, list):
++                raise RuntimeError(
++                    f"CURRENT_ORDERS_MALFORMED: currentOrders is {type(page_orders).__name__}, not list"
++                )
++            if any(not isinstance(order, dict) for order in page_orders):
++                raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row in currentOrders")
+             all_orders.extend(page_orders)
+ 
+             # No more records → complete snapshot, return it.
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index ebc6a04..fa590f4 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -432,6 +432,8 @@ class MicrostakeCoordinator:
+             # dall'exchange, cioe' eseguito diverso da quello richiesto. Rifiuto esplicito PRIMA dell'invio.
+             return self._result(Phase.BLOCKED, req=req, reason="invalid_size_precision")
+         transient = order_exposure(req.side, p.exchange_stub_size, stub_price)
++        has_reservation = getattr(self.exchange, "has_reservation", None)
++        pre_existing = bool(has_reservation(req.customer_ref)) if callable(has_reservation) else False
+         if not self.exchange.reserve(req.customer_ref, transient, cap):
+             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
+                                 max_exposure=transient)
+@@ -441,7 +443,10 @@ class MicrostakeCoordinator:
+         except Exception:
+             # Store illeggibile PRIMA di qualunque invio: la riserva transitoria appena presa
+             # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
+-            self.exchange.release_reservation(req.customer_ref)
++            # Una riserva PREESISTENTE (retry di un ref con saga gia' inviata) copre esposizione
++            # reale e resta (rilievo Sol #512 su 5dd1b86).
++            if not pre_existing:
++                self.exchange.release_reservation(req.customer_ref)
+             raise
+         if existing:
+             # Saga gia' avviata (invio precedente / AMBIGUOUS): la riserva copre esposizione REALE
+diff --git a/core/microstake_sim_port.py b/core/microstake_sim_port.py
+index 7a4c0d2..803201f 100644
+--- a/core/microstake_sim_port.py
++++ b/core/microstake_sim_port.py
+@@ -203,6 +203,10 @@ class SimulationExchangePort:
+         with self._lock:
+             self._reservations.pop(customer_ref, None)
+ 
++    def has_reservation(self, customer_ref: str) -> bool:
++        with self._lock:
++            return customer_ref in self._reservations
++
+     def _snapshot(self) -> None:
+         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
+         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
+diff --git a/core/trading_engine.py b/core/trading_engine.py
+index 1131f4a..1845c69 100644
+--- a/core/trading_engine.py
++++ b/core/trading_engine.py
+@@ -233,6 +233,10 @@ class TradingEngine:
+         self._max_seen_cid_size: int = 50_000
+ 
+         self._lock = threading.Lock()
++        # Costruzione/rebinding dell'esecutore Microstake serializzati (rilievo Codex #512, P1):
++        # due prime chiamate concorrenti (Quick Bet + hedge del cashout) devono ottenere LO STESSO
++        # esecutore, quindi una sola mappa di riserve transitorie e un solo store della saga.
++        self._microstake_executor_lock = threading.RLock()
+         self._runtime_state = NOT_READY
+         self._health: Dict[str, Any] = {}
+ 
+@@ -2242,20 +2246,22 @@ class TradingEngine:
+         Un esecutore costruito sul broker SIM di una sessione precedente (stop/start crea
+         un nuovo `SimulationBroker`) viene ricostruito; in LIVE l'adapter SIM non viene
+         mai riusato (fail-closed: None => MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore
+-        iniettato senza broker (test/adapter esterno) resta valido com'e'.
++        iniettato senza broker (test/adapter esterno) resta valido com'e'. Costruzione
++        e rebinding sono serializzati da un lock dedicato: mai due esecutori.
+         """
+-        cached = self.microstake_executor
+-        bound_broker = getattr(getattr(cached, "port", None), "broker", None)
+-        if cached is not None and bound_broker is None:
+-            return cached
+-        if str(mode or "").upper() == "LIVE":
+-            return None
+-        if cached is not None:
+-            if bound_broker is self._current_simulation_broker():
++        with self._microstake_executor_lock:
++            cached = self.microstake_executor
++            bound_broker = getattr(getattr(cached, "port", None), "broker", None)
++            if cached is not None and bound_broker is None:
+                 return cached
+-            logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
+-            self.microstake_executor = None
+-        return self._default_native_microstake_executor(mode)
++            if str(mode or "").upper() == "LIVE":
++                return None
++            if cached is not None:
++                if bound_broker is self._current_simulation_broker():
++                    return cached
++                logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
++                self.microstake_executor = None
++            return self._default_native_microstake_executor(mode)
+ 
+     def _current_simulation_broker(self) -> Any:
+         """Il broker SIM dimostrabile della sessione corrente, o None."""
+diff --git a/services/betfair_service.py b/services/betfair_service.py
+index dc538e4..337fac5 100644
+--- a/services/betfair_service.py
++++ b/services/betfair_service.py
+@@ -695,11 +695,7 @@ class BetfairService:
+             if not broker:
+                 return []
+             orders = broker.get_current_orders(market_ids)
+-            return [
+-                self._normalize_startup_order(o)
+-                for o in (orders or [])
+-                if isinstance(o, dict)
+-            ]
++            return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
+ 
+         # LIVE — fail-closed.
+         if self._session_invalid:
+@@ -724,11 +720,23 @@ class BetfairService:
+                 logger.exception("Errore list_current_orders: %s", exc)
+             raise
+ 
+-        return [
+-            self._normalize_startup_order(o)
+-            for o in (orders or [])
+-            if isinstance(o, dict)
+-        ]
++        return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
++
++    @staticmethod
++    def _well_formed_current_orders(orders: Any) -> List[Dict[str, Any]]:
++        """Fail-closed sulla forma: ``None`` vale "nessun ordine", ma un contenitore che non e'
++        una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
++        silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
++        che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
++        decisione owner D-C del 18/10/2026)."""
++        if orders is None:
++            return []
++        if not isinstance(orders, list):
++            raise RuntimeError(f"CURRENT_ORDERS_MALFORMED: {type(orders).__name__} is not a list")
++        for order in orders:
++            if not isinstance(order, dict):
++                raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
++        return orders
+ 
+     @staticmethod
+     def _normalize_startup_order(order: Dict[str, Any]) -> Dict[str, Any]:

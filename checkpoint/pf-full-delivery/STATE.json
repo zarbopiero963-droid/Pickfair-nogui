@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 20,
- "updated_at": "2026-10-18T08:17:35.383436+00:00",
+ "seq": 21,
+ "updated_at": "2026-10-18T09:29:50.464618+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -17,7 +17,8 @@
   "PF-CROSS-AGENT-HANDOFF-A06-01 (attivo)",
   "PF-PR-RECOVERY-20261017 (attivo: produzione in sola lettura)",
   "PF-PR-RECOVERY-DECISIONS-02 (attivo: decisioni owner 1-5 approvate; nessun merge)",
-  "PF-MASTER-CERTIFICATION-351 / PF-351-INTEGRATED-CERTIFICATION-01 (attivo; 10 cicli autorizzati, da implementare)"
+  "PF-MASTER-CERTIFICATION-351 / PF-351-INTEGRATED-CERTIFICATION-01 (attivo; 10 cicli autorizzati, da implementare)",
+  "PF-DECISIONS-DA-DJ-20261018 (attivo): D-A=A1 deroga ciclo 6 #512; D-B PAUSED; D-C C1; D-D cashout per posizione; D-E minimo effettivo; D-F bet_id; D-G PF-QA-02 (#513); D-H #508 chiusa; D-I integrazione #505; D-J J1"
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
@@ -155,6 +156,11 @@
     "sha": "5ef61da",
     "task": "issue461-pr28-microstake-native-02",
     "what": "solo .guardrails/allowed_scope.json: registrati i due oracle (guard rosso su ad13383); codice identico ad ad13383"
+   },
+   {
+    "sha": "f62f0e3",
+    "task": "issue461-pr28-microstake-native-02",
+    "what": "ciclo 6 (deroga owner): riserva preesistente + fallback fail-closed, lock esecutore Microstake, CURRENT_ORDERS_MALFORMED (D-C), oracle service allineati"
    }
   ],
   "head_sha": "8ffb4f3",
@@ -309,6 +315,11 @@
    "id": "roserpina_c02_decision2",
    "sha": "5ef61da",
    "result": "PASS_SIM_NON_CERTIFICANTE (80 VIOLATION oracle base = impronta Microstake, 0 duplicati reali)"
+  },
+  {
+   "id": "regression_full",
+   "sha": "f62f0e3",
+   "result": "7784 passed, 0 failed"
   }
  ],
  "findings": {
@@ -333,7 +344,10 @@
    "Sol esenzione basename pfckpt (21aab95)",
    "Codex ciclo 4: 4304693618 (P1), 4304759974, 4304693616, 4304759970, 4304759964, 4304759979, 4304759984 + mitigazione 4304693614 (commit 4a47ab0)",
    "Decisione owner 2 (757869f)",
-   "Sol/Grok 464f347 riserva saga esistente (757869f)"
+   "Sol/Grok 464f347 riserva saga esistente (757869f)",
+   "Sol 5dd1b86 riserva preesistente (f62f0e3)",
+   "Codex r4304867227 lock esecutore (f62f0e3)",
+   "Codex r4304867229 payload malformato (f62f0e3, D-C)"
   ],
   "open": [
    "F004",
@@ -349,13 +363,11 @@
    "DECISIONE 2 non ancora implementata: _clamp verso l'alto a max_single in core/money_management.py",
    "Codex 4304693619: floor 0.10 EUR del coordinatore vs min_stake configurato (decisione owner)",
    "Codex 4304693614: identita' stabile del ref cashout (design owner; mitigazione pending_same_position attiva)",
-   "Sol 5dd1b86: retry stesso ref con store.load fallito scioglie la riserva preesistente (CURRENT_DEFECT; patch pronta in pending_patch_cycle6.diff; budget fix loop esaurito => NEEDS_MANUAL)",
    "P8: runtime ACTIVE dopo riavvio con ordini AMBIGUOUS in uncertain (design F018/F024 vs assunzione PAUSED): decisione owner",
-   "PF-QA-02 non formalizzato come issue (governance)",
-   "Codex r4304867227 (P1): costruzione concorrente esecutore Microstake (CURRENT_DEFECT; patch in pending_patch_cycle6.diff; NEEDS_MANUAL budget)",
-   "Codex r4304867229 (P1): payload currentOrders malformato filtrato a vuoto in betfair_client/betfair_service (GUARDRAIL_GAP preesistente, fuori files_allowed: decisione owner su scope)",
    "Codex r4304867217 (P2): secondo hedge cashout con saga ACTIVE unmatched (stesso tema identita' ref cashout r4304693614: decisione owner)",
-   "Codex r4304867219/r4304867223/r4304867226 (P2 tooling): pf_trace base ref, porcelain rename, derived files obbligatori in verify (PATCH_REQUIRED, ciclo successivo)"
+   "Codex r4304867219/r4304867223/r4304867226 (P2 tooling): pf_trace base ref, porcelain rename, derived files obbligatori in verify (PATCH_REQUIRED, ciclo successivo)",
+   "D-D/D-E/D-F: lotti seriali successivi su #512 (decisi, non ancora implementati)",
+   "D-B PAUSED con AMBIGUOUS: lotto successivo"
   ]
  },
  "gates": {
@@ -380,25 +392,10 @@
   }
  ],
  "owner_decisions_pending": [
-  "base drawdown (6.O2) e lockdown",
-  "10s vs 30s saldo LIVE",
-  "prelievi/depositi",
-  "ordine PR F001/F026 vs #505",
-  "collocazione Control API/MCP (pickfair-mcp- vuoto, F013) rispetto a #461",
-  "verdetto OD-01 per ID su #506 (poi chiusura #508 senza merge)",
-  "riconciliazione del default cap-ordine 1 EUR della #505 con la Decisione 1 (PR #505 protetta: owner)",
-  "autorizzazione del lotto Decisione 2 (max_single_bet) sulla #512",
-  "floor Microstake 0.10 EUR: sostituirlo con min_stake configurato (decisione 1) o dichiararlo limite exchange da collaudare",
-  "identita' stabile del ref del cashout nativo (chiave da usare)",
-  "deroga 1 ciclo fix loop per #512 (patch ciclo 6) oppure attesa PR estensione a 10 cicli",
-  "riavvio con AMBIGUOUS pendenti: ACTIVE con riserva incerta trattenuta (attuale) o PAUSED fino a riconciliazione (PF-EXEC-06)",
-  "formalizzazione PF-QA-02 (issue/specifica)",
-  "estensione scope #512 (o follow-up) per fail-closed su currentOrders malformato in betfair_client/betfair_service",
-  "identita' per posizione del cashout / blocco hedge con ordine vivo unmatched (contratto cashout)",
-  "D-J: oracle campagna C01/C01b/R2 a 'righe vive' (stub Microstake cancellati esclusi) oppure PASS_WITH_KNOWN motivato"
+  "nessuna: D-A..D-J decise il 18/10 (c.6247974757); D-I si applica all'integrazione #505x#512"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939, c.6247484716, c.6247543193). Se A1: spingere pending_patch_cycle6.diff sulla #512 (1 ciclo). Se A2/chiusura #512: aprire PR 10 cicli da results/fix_loop_10_cycles_prep/fix_loop_10_cycles.diff (merge owner). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere check settled e Sol/Grok su 5ef61da...f62f0e3; triage. Poi lotto D-B (runtime_controller: PAUSED fino a riconciliazione con AMBIGUOUS pendenti) con RED->GREEN e regressione; poi D-D, D-E, D-F. PR 10 cicli dopo #512. Nessun merge, #505/main intoccate.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -408,8 +405,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "23ddd6d882b2a515c9d76f57c051b7162d6fb883",
- "lotto_corrente": "PF-MASTER-CERTIFICATION-351: tutto il lavoro indipendente eseguito (ciclo 5, regressione, P8, C02, GUI, 10 cicli locale); in attesa decisioni owner D-A..D-J",
+ "previous_checkpoint_sha": "cd68a48a517e0167ed4e4cdb68a1fe92f3829bad",
+ "lotto_corrente": "PF-DECISIONS-DA-DJ: ciclo 6 spinto (f62f0e3); prossimo lotto seriale D-B (PAUSED con AMBIGUOUS pendenti)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -436,7 +433,9 @@
   "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)",
   "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)",
   "estensione 10 cicli preparata in locale con RED/GREEN (seq 20; PR non aperta)",
-  "screenshot GUI Xvfb su 5ef61da (seq 20)"
+  "screenshot GUI Xvfb su 5ef61da (seq 20)",
+  "ciclo 6 PR #512 f62f0e3 (seq 21)",
+  "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -477,13 +476,13 @@
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "seq 20 Claude Code: 10 cicli preparati + GUI; lease rilasciato",
+ "session_end": "seq 21 Claude Code: ciclo 6 spinto; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
+ "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
-  "verified_with": "git ls-remote",
+  "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+  "verified_with": "git push",
   "patch": null
  },
  "blocks": [
@@ -493,8 +492,8 @@
   "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 §4/§10)",
   "overlap-check rosso (tre PR aperte)",
   "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
-  "fix loop PR #512: 5 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0, 757869f): NEEDS_MANUAL per nuovi PATCH_REQUIRED",
-  "CI 5ef61da: tutto verde tranne overlap-check (3 PR aperte) e Merge readiness (18 thread aperti + UNSTABLE): attesi, dichiarati"
+  "CI 5ef61da: tutto verde tranne overlap-check (3 PR aperte) e Merge readiness (18 thread aperti + UNSTABLE): attesi, dichiarati",
+  "fix loop PR #512: 6 cicli (5 + deroga owner A1) usati; nuovi PATCH_REQUIRED da review => NEEDS_MANUAL salvo nuova deroga o PR 10 cicli"
  ],
  "owner_authorizations": {
   "live": false,
@@ -807,6 +806,34 @@
    "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
    "result": "tab Roserpina, SIM forzata, 1400x900, nessun peggioramento visibile",
    "artifact": "results/gui_xvfb_5ef61da/mini_gui_roserpina_5ef61da.png"
+  },
+  {
+   "id": "RED ciclo 6 su 5ef61da (D-C 13 failed, lock, fallback)",
+   "status": "FAIL",
+   "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
+   "result": "atteso RED",
+   "artifact": "results/pr512_cycle6_49f7ee8/red_cycle6_5ef61da.txt"
+  },
+  {
+   "id": "regression_full",
+   "status": "PASS",
+   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+   "result": "7784 passed, 14 skipped, 2 xfailed, 0 failed in 963s (tree e74e74ef identico a 49f7ee8)",
+   "artifact": "results/pr512_cycle6_49f7ee8/fullreg_f62f0e3_tail.txt"
+  },
+  {
+   "id": "riesame indipendente ciclo 6",
+   "status": "PASS",
+   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+   "result": "2 rilievi recepiti prima del push (oracle stantii, fallback fail-closed); nessun deadlock",
+   "artifact": "results/pr512_cycle6_49f7ee8/independent_review.md"
+  },
+  {
+   "id": "campagna C02 rigiudicata con oracle J1 (D-J)",
+   "status": "PASS",
+   "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
+   "result": "1152/1152 PASS, S01 88/88",
+   "artifact": "results/roserpina_c02_decision2_5ef61da/c02_d2_judge_J1.txt"
   }
  ],
  "tests_missing": [

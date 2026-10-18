@@ -1,0 +1,58 @@
+--- /tmp/tmp.4VnVn3GyZs/state/checkpoint/pf-full-delivery/results/roserpina_c02_decision2_5ef61da/oracle.py	2026-10-18 09:05:32.561270152 +0000
++++ /tmp/tmp.4VnVn3GyZs/state/checkpoint/pf-full-delivery/results/roserpina_c02_decision2_5ef61da/oracle_J1.py	2026-10-18 09:05:32.556226278 +0000
+@@ -114,15 +114,42 @@
+     session = d(S.get("roserpina.max_session_loss")) if S.get("roserpina.max_session_loss") is not None else None
+     tables = int(S["roserpina.table_count"])
+ 
+-    # ---- C01 nessun duplicato (registro exchange, tutte le fasi)
++    # ---- C01 nessun duplicato (registro exchange, tutte le fasi) — decisione owner D-J=J1 (18/10/2026):
++    # si contano le RIGHE VIVE. Uno stub del Microstake nativo (riga CANCELLED con matched 0, stesso
++    # customer_ref di una riga viva) e' l'impronta legittima della procedura stub+replace e viene
++    # tracciato in S01, non contato come duplicato.
++    def _is_stub(o):
++        return str(o.get("status")) == "CANCELLED" and d(o.get("matched_size") or 0) == 0
++    stubs = [o for o in entries if _is_stub(o)]
++    live_entries = [o for o in entries if not _is_stub(o)]
+     keys = {}
+-    for o in entries:
++    for o in live_entries:
+         k = (o["market_id"], int(o.get("selection_id") or 0), o["side"])
+         keys[k] = keys.get(k, 0) + 1
+     dups = {k: v for k, v in keys.items() if v > 1}
+     C.put("C01_no_duplicate_order", "VIOLATION" if dups else "PASS", dups)
+-    refs = [o.get("customer_ref") for o in entries]
++    refs = [o.get("customer_ref") for o in live_entries]
+     C.put("C01b_unique_customer_ref", "VIOLATION" if len(refs) != len(set(refs)) else "PASS")
++    # S01 tracciabilita' degli stub: una riga CANCELLED/0 e' uno STUB solo se esiste una riga viva con lo
++    # stesso customer_ref (stessa saga); le altre CANCELLED/0 sono ordini annullati davvero (cashout, TTL)
++    # e restano fuori dalle righe vive. Un ordine vivo sotto 2 EUR (Microstake) ha AL PIU' uno stub gemello:
++    # BACK = stub + replace (due righe), LAY = sizeReduction sulla stessa riga (nessuno stub). Due o piu'
++    # stub per lo stesso ordine = VIOLATION (procedura ripetuta).
++    live_refs = {o.get("customer_ref") for o in live_entries}
++    real_stubs = [o for o in stubs if o.get("customer_ref") in live_refs]
++    cancelled_only = [o for o in stubs if o.get("customer_ref") not in live_refs]
++    bad = []
++    for o in live_entries:
++        if d(o.get("size") or 0) < 2:
++            twins = [st for st in real_stubs if st.get("customer_ref") == o.get("customer_ref")
++                     and (st["market_id"], st["side"]) == (o["market_id"], o["side"])]
++            if len(twins) > 1:
++                bad.append((o.get("customer_ref"), len(twins)))
++    if real_stubs or any(d(o.get("size") or 0) < 2 for o in live_entries):
++        C.put("S01_microstake_stub_trace", "VIOLATION" if bad else "PASS",
++              f"stub={len(real_stubs)} vivi<2EUR={sum(1 for o in live_entries if d(o.get('size') or 0) < 2)} "
++              f"annullati_veri={len(cancelled_only)} anomalie={bad}")
++    entries = live_entries
+ 
+     # ---- per ordine d'ingresso: cap e gate al momento della decisione
+     outcome = {m: bool(w) for m, w in spec["outcomes"].items()}
+@@ -338,7 +365,8 @@
+               (p1.get("runtime") or {}).get("rebuild"))
+         resent = [s for s in spec["phases"][1] if s["op"] == "signal"]
+         for s in resent:
+-            pre = [x for x in border if x["market_id"] == s["m"] and str(x.get("customer_ref", "")).startswith("sig-")]
++            pre = [x for x in border if x["market_id"] == s["m"] and str(x.get("customer_ref", "")).startswith("sig-")
++                   and not _is_stub(x)]      # D-J=J1: gli stub Microstake non sono replay
+             C.put("R2_no_replay_after_restart", "VIOLATION" if len(pre) > 1 else "PASS", f"{s['m']}: {len(pre)}")
+     C.res["_stats"] = {"status": "NA", "detail": json.dumps({"entries": len(entries), "hedges": len(hedges),
+                                                                "placed_seen": placed_seen, "max_concurrent": max_concurrent})}

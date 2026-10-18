@@ -1,0 +1,3 @@
+FAILED tests/test_pr512_review_cycle6.py::test_service_propagates_malformed_current_orders_instead_of_filtering[value3-True]
+FAILED tests/test_pr512_review_cycle6.py::test_service_propagates_malformed_current_orders_instead_of_filtering[value3-False]
+13 failed, 3 passed in 5.23s
