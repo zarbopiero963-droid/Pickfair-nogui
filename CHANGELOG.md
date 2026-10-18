@@ -29,7 +29,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   recovery del tavolo; aggregazione per `bet_id` = lotto D-F, r4303297587). (b) Dossier dei 41 parametri: nessun
   clamp dello stake minimo, rifiuto esplicito (r4306544234). Test CI robusto al clone shallow; `pfckpt` rifiuta
   CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope
-  dichiarata).
+  dichiarata). Rollback microstake con stub abbinato anche in parte prima della cancellazione => AMBIGUOUS
+  `rollback_matched` con riserva tenuta, mai ROLLED_BACK/FAILED (riesame indipendente).
 - **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
   remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
   cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il

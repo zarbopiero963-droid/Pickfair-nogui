@@ -1125,3 +1125,44 @@ def test_c10_pending_saga_reservations_are_rehydrated_before_recovery(monkeypatc
     assert not ex.port.has_reservation("released")
     assert ex.port._reservations["held"] == Decimal("2.00")
     assert ex.port.reserve("nuovo", Decimal("9.00"), Decimal("10")) is False, "cap superato oltre lo stub pendente"
+
+
+
+@pytest.mark.parametrize("path", ["execute", "recover"])
+def test_c10_rollback_with_a_partial_match_is_ambiguous_never_rolled_back(tmp_path, path):
+    """Riesame indipendente ciclo 10: se lo stub si abbina in parte appena prima della cancellazione di rollback,
+    la saga NON e' ROLLED_BACK (l'engine la registrerebbe FAILED liberando tavolo e chiave su uno stake reale):
+    AMBIGUOUS con riserva tenuta, riconciliazione."""
+    from core.microstake_safe import (JsonSagaStore, MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest,
+                                      Phase, Side, StatefulExchangeSimulator)
+
+    class _Ex(StatefulExchangeSimulator):
+        def __init__(self):
+            super().__init__(balance=D("100"))
+            self.crash_cancel = path == "recover"
+
+        def replace(self, bet_id, new_price):
+            raise RuntimeError("REPLACE_REJECTED")
+
+        def cancel_all_remaining(self, bet_id):
+            if self.crash_cancel:
+                self.crash_cancel = False
+                raise RuntimeError("CANCEL_UNKNOWN")
+            o = self.order(bet_id)
+            o.matched = D("0.05")                       # abbinato in parte un istante prima del cancel
+            o.remaining = o.remaining - D("0.05")
+            return super().cancel_all_remaining(bet_id)
+
+    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
+                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
+    ex = _Ex()
+    store = JsonSagaStore(tmp_path / "s.json")
+    req = MicrostakeRequest(market_id="1.100", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
+                            target_price=D("2.00"), customer_ref="pm-1")
+    res = MicrostakeCoordinator(ex, store, policy).execute(req, stub_price=D("3.00"))
+    if path == "recover":
+        assert store.load("pm-1")["phase"] == "ROLLBACK_PENDING"
+        res = MicrostakeCoordinator(ex, JsonSagaStore(tmp_path / "s.json"), policy).recover("pm-1")
+    assert res.phase is Phase.AMBIGUOUS and res.reason == "rollback_matched", (res.phase, res.reason)
+    assert res.reservation_held is True and ex.has_reservation("pm-1")
+    assert JsonSagaStore(tmp_path / "s.json").load("pm-1")["phase"] == "AMBIGUOUS"

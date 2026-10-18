@@ -560,6 +560,14 @@ class MicrostakeCoordinator:
         riconciliata al riavvio: una fase terminale persistita PRIMA della retrocessione lascerebbe,
         in caso di crash, una saga conclusa fuori da `pending_refs` sopra uno stato ricaricato senza
         l'ordine (riesame indipendente del ciclo 8 #512 sul rilievo r4306954173)."""
+        if phase is Phase.ROLLED_BACK and order.matched > 0:
+            # Lo stub si e' abbinato (anche in parte) prima della cancellazione di rollback: esiste uno stake
+            # reale. ROLLED_BACK verrebbe registrato FAILED dall'engine, che libera tavolo e chiave: mai.
+            # AMBIGUOUS con riserva tenuta, riconciliazione (riesame indipendente ciclo 10 #512).
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, bet_id=order.bet_id, matched=order.matched,
+                            reservation_held=True, reason="rollback_matched")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_matched",
+                                order=order, max_exposure=transient, held=True)
         if self._reload_source_stale():
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS, bet_id=order.bet_id,
                             reservation_held=True, reason="snapshot_not_persisted")

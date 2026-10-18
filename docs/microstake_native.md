@@ -118,7 +118,9 @@ ROLLED_BACK al recover successivo senza una seconda cancellazione (riesame indip
 SIM non elenca più fra gli ordini correnti un ordine interamente cancellato, con rollback deciso la saga cerca l'ordine
 anche per bet id persistito e accetta solo una riga terminale senza residuo; un ordine ancora vivo non visto resta
 "non trovato" e la saga resta pendente (secondo riesame del ciclo 9). Una riga terminale con qualsiasi abbinato
-(SETTLED, LAPSED, VOIDED, CANCELLED parziale, EXECUTION_COMPLETE) resta AMBIGUOUS con riserva tenuta, mai ROLLED_BACK. Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
+(SETTLED, LAPSED, VOIDED, CANCELLED parziale, EXECUTION_COMPLETE) resta AMBIGUOUS con riserva tenuta, mai ROLLED_BACK;
+lo stesso vale se lo stub si abbina anche in parte appena prima della cancellazione di rollback (`rollback_matched`,
+ciclo 10): ROLLED_BACK diventerebbe FAILED nell'engine e libererebbe tavolo e chiave su uno stake reale. Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
 durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); una saga
 pendente nello store ma assente dai risultati dell'esecutore resta pendente (prima del recover le riserve transitorie
 delle saghe pendenti che le tengono sono ripristinate sulla porta, ciclo 10); ogni altro
