@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **PR #512 ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION, tre P1 Codex su f62f0e3):** (1) riga pendente senza
+  lato persistito => non attribuita, mai ricostruita come BACK (la liability di un LAY sarebbe sottostimata;
+  r4306544229); (2) `reset_cycle()` non azzera il broker SIM finche' un tavolo resta trattenuto (esito
+  `sim_reset_skipped`; r4306544236); (3) baseline di espansione piu' vecchia dell'ultimo reset di ciclo durevole
+  (marker `roserpina.cycle_reset_state` scritto nella stessa transazione dello stato tavoli RSR-12) rifiutata al
+  riavvio: nessuna espansione da una baseline mai ribasata (r4306544231). Riesame indipendente del ciclo: baseline e
+  marker dello stesso reset portano lo stesso istante (la baseline fissata da `reset_cycle`/auto-reset sopravvive al
+  riavvio), un marker illeggibile vale come reset ignoto e un `set_at_ts` non finito (NaN/inf) nella baseline non
+  scavalca mai il confronto (nessuna espansione, fail-closed). Test RED->GREEN in
+  `tests/test_pr512_codex_f62f0e3.py`; doc `docs/roserpina_bankroll_equity.md` (F032).
 - **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
   la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
   (rilascio solo di una riserva sicuramente nuova; Sol c.6242912622); (2) costruzione e rebinding dell'esecutore
