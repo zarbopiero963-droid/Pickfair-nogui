@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 19,
- "updated_at": "2026-10-18T08:10:11.544914+00:00",
+ "seq": 20,
+ "updated_at": "2026-10-18T08:17:35.383436+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -398,7 +398,7 @@
   "D-J: oracle campagna C01/C01b/R2 a 'righe vive' (stub Microstake cancellati esclusi) oppure PASS_WITH_KNOWN motivato"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939 + D-J su #510 c.6247479052). Indipendenti: screenshot GUI Xvfb (Xvfb da riavviare), bozza issue PF-QA-02 pronta (scratchpad), preparazione locale PR estensione 10 cicli (NON aperta finche' #512 e' aperta). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939, c.6247484716, c.6247543193). Se A1: spingere pending_patch_cycle6.diff sulla #512 (1 ciclo). Se A2/chiusura #512: aprire PR 10 cicli da results/fix_loop_10_cycles_prep/fix_loop_10_cycles.diff (merge owner). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -408,8 +408,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "42d5bf1ec8b12855e57e70c6517fe448fa6b80c2",
- "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 chiuso (5ef61da), regressione 7766 passed, P8 e campagna C02 eseguite (non certificanti), triage Codex completo; in attesa decisioni owner D-A..D-J",
+ "previous_checkpoint_sha": "23ddd6d882b2a515c9d76f57c051b7162d6fb883",
+ "lotto_corrente": "PF-MASTER-CERTIFICATION-351: tutto il lavoro indipendente eseguito (ciclo 5, regressione, P8, C02, GUI, 10 cicli locale); in attesa decisioni owner D-A..D-J",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -434,7 +434,9 @@
   "ciclo 5 PR #512 (757869f/5dd1b86): Decisione 2 + riserva saga esistente (seq 18)",
   "Fase A #351: audit, matrice, piano P1-P12 (#351 c.6242905583)",
   "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)",
-  "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)"
+  "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)",
+  "estensione 10 cicli preparata in locale con RED/GREEN (seq 20; PR non aperta)",
+  "screenshot GUI Xvfb su 5ef61da (seq 20)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -475,7 +477,7 @@
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "seq 19 Claude Code: campagna C02 + CI 5ef61da settled; lease rilasciato",
+ "session_end": "seq 20 Claude Code: 10 cicli preparati + GUI; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
  "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
  "code": {
@@ -784,6 +786,27 @@
    "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
    "result": "oracle base 1072 PASS / 80 VIOLATION (solo C01/C01b/R2); lettura complementare: 124/124 gruppi = impronta Microstake (stub cancellato + 1 riga viva, stesso ref), 0 duplicati reali; C02 cap 591/591; 1994 rifiuti supera_max_single_bet; 178 microstake eseguiti esattamente; SIM non certificante",
    "artifact": "results/roserpina_c02_decision2_5ef61da/REPORT.md"
+  },
+  {
+   "id": "RED estensione 10 cicli su main 028cee9",
+   "status": "FAIL",
+   "sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
+   "result": "7 failed / 2 passed — atteso RED (cap 5)",
+   "artifact": "results/fix_loop_10_cycles_prep/red_10cycles_028cee9.txt"
+  },
+  {
+   "id": "GREEN estensione 10 cicli (patch locale, non pubblicata): policy+controller+autonomy+guardrails",
+   "status": "PASS",
+   "sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
+   "result": "2319 passed, 7 skipped con fix_loop_10_cycles.diff applicata",
+   "artifact": "results/fix_loop_10_cycles_prep/fix_loop_10_cycles.diff"
+  },
+  {
+   "id": "screenshot reale mini GUI sotto Xvfb (gate di consegna 4)",
+   "status": "PASS",
+   "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee",
+   "result": "tab Roserpina, SIM forzata, 1400x900, nessun peggioramento visibile",
+   "artifact": "results/gui_xvfb_5ef61da/mini_gui_roserpina_5ef61da.png"
   }
  ],
  "tests_missing": [

@@ -1,0 +1,9 @@
+=========================== short test summary info ============================
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_owner_cap_is_ten_everywhere
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_cycles_one_through_ten_then_eleven_stops_before_patch
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_count_is_persistent_and_never_reset_by_reopen_or_reinitialize
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_owner_override_at_ten_enables_exactly_the_eleventh
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_old_override_written_for_the_five_cap_is_rejected
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_ledger_written_under_the_five_cap_stays_readable
+FAILED tests/scripts/test_pr_fix_loop_ten_cycles.py::test_normative_docs_state_the_ten_cycle_cap
+7 failed, 2 passed in 2.83s

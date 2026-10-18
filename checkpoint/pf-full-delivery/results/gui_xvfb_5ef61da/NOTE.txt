@@ -1,0 +1,1 @@
+Screenshot reale: mini_gui.MiniPickfairGUI(force_simulation=True) sotto Xvfb :99 1400x900, /usr/bin/python3.12 + customtkinter, head 5ef61da, HOME isolata, tab Roserpina, cattura `import -window root` dopo 7 s. Gate di consegna punto 4 (la PR tocca mini_gui.py). Nessun peggioramento visibile rispetto a roserpina_tab.png del 15/10.

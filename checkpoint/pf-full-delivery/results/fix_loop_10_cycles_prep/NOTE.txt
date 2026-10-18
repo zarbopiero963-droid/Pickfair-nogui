@@ -1,0 +1,4 @@
+Lotto preparato in locale da main@028cee9 (NON pubblicato: #512 aperta; file gate => merge owner).
+RED su main: 7 failed / 2 passed (red_10cycles_028cee9.txt). GREEN con la patch: tests/scripts/test_pr_fix_loop_ten_cycles.py + test_pr_fix_loop_policy + test_pr_autonomy_policy + test_pr_automation_controller + tests/guardrails: 2319 passed, 7 skipped.
+File: scripts/pr_fix_loop_policy.py (cap 10), tests parametrizzati sulla costante, AGENTS.md, CLAUDE.md, docs/auto_pr_flow_spec.md, docs/hard_verify_spec.md.
+Copre PF-MASTER §2: conteggio persistente, identita stabile, nessuna duplicazione, nessun reset, stop al decimo, compatibilita ledger cap 5, crash recovery, tracciabilita docs.

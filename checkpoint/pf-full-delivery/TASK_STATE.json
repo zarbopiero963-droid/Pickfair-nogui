@@ -39,11 +39,13 @@
   "ciclo 5 PR #512 (757869f/5dd1b86): Decisione 2 + riserva saga esistente (seq 18)",
   "Fase A #351: audit, matrice, piano P1-P12 (#351 c.6242905583)",
   "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)",
-  "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)"
+  "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)",
+  "estensione 10 cicli preparata in locale con RED/GREEN (seq 20; PR non aperta)",
+  "screenshot GUI Xvfb su 5ef61da (seq 20)"
  ],
- "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 chiuso (5ef61da), regressione 7766 passed, P8 e campagna C02 eseguite (non certificanti), triage Codex completo; in attesa decisioni owner D-A..D-J",
+ "lotto_corrente": "PF-MASTER-CERTIFICATION-351: tutto il lavoro indipendente eseguito (ciclo 5, regressione, P8, C02, GUI, 10 cicli locale); in attesa decisioni owner D-A..D-J",
  "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
- "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939 + D-J su #510 c.6247479052). Indipendenti: screenshot GUI Xvfb (Xvfb da riavviare), bozza issue PF-QA-02 pronta (scratchpad), preparazione locale PR estensione 10 cicli (NON aperta finche' #512 e' aperta). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939, c.6247484716, c.6247543193). Se A1: spingere pending_patch_cycle6.diff sulla #512 (1 ciclo). Se A2/chiusura #512: aprire PR 10 cicli da results/fix_loop_10_cycles_prep/fix_loop_10_cycles.diff (merge owner). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

@@ -6,8 +6,8 @@
   "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee"
  },
  "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
- "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939 + D-J su #510 c.6247479052). Indipendenti: screenshot GUI Xvfb (Xvfb da riavviare), bozza issue PF-QA-02 pronta (scratchpad), preparazione locale PR estensione 10 cicli (NON aperta finche' #512 e' aperta). Nessuna nuova PR, nessun merge, #505/main intoccate.",
- "previous_checkpoint_sha": "42d5bf1ec8b12855e57e70c6517fe448fa6b80c2",
+ "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939, c.6247484716, c.6247543193). Se A1: spingere pending_patch_cycle6.diff sulla #512 (1 ciclo). Se A2/chiusura #512: aprire PR 10 cicli da results/fix_loop_10_cycles_prep/fix_loop_10_cycles.diff (merge owner). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "previous_checkpoint_sha": "23ddd6d882b2a515c9d76f57c051b7162d6fb883",
  "schema": "pf-current/1",
- "seq": 19
+ "seq": 20
 }
