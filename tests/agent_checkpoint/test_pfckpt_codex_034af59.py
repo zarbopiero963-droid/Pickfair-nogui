@@ -30,6 +30,24 @@ def test_unresolvable_test_sha_invalidates_the_checkpoint(world, sha):
     assert any("t1" in p and "test sha unresolved" in p for p in err.detail["problems"]), err.detail["problems"]
 
 
+def test_declared_unpublished_tree_evidence_is_accepted_only_with_an_explicit_note(world):
+    """Ciclo 9 (#512): un'evidenza su un albero scratch mai pubblicato e' ammessa SOLO se dichiarata
+    (`unpublished_tree: true` + `sha_note`); senza dichiarazione lo SHA non risolvibile resta un errore."""
+    from test_pfckpt import raw_commit
+    a = agent(world, "a")
+    _checkpoint_with_tests(a, world, [{"id": "scratch", "status": "FAIL", "sha": "f63cf3a5ece48558fef9682ff126a6c437976186",
+                                       "unpublished_tree": True,
+                                       "sha_note": "albero scratch locale mai pubblicato, dichiarato"}])
+    raw_commit(a, "ckpt con albero scratch dichiarato")
+    assert pfckpt.verify(a, "HEAD", D)["seq"] == 2
+    b = agent(world, "b")
+    _checkpoint_with_tests(b, world, [{"id": "scratch", "status": "FAIL", "sha": "f63cf3a5ece48558fef9682ff126a6c437976186",
+                                       "unpublished_tree": True}])          # flag senza nota: non basta
+    raw_commit(b, "ckpt con albero scratch non motivato")
+    err = expect(2, pfckpt.verify, b, "HEAD", D)
+    assert any("scratch" in p and "test sha unresolved" in p for p in err.detail["problems"])
+
+
 def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
     a = agent(world, "a")
     _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},

@@ -241,7 +241,11 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
             # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
             # con la stessa lookup di code.sha (altrimenti un esito e' attribuibile a codice inesistente)
             tsha = str(t.get("sha", ""))
-            if git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
+            # Un'evidenza su un albero MAI pubblicato (esperimento scratch) e' ammessa solo se
+            # dichiarata esplicitamente (`unpublished_tree: true` + `sha_note`): resta verificabile
+            # come dichiarazione, mai inferita da uno SHA che semplicemente non si risolve.
+            declared_unpublished = t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip())
+            if not declared_unpublished and git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
                 problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
         art = t.get("artifact") if isinstance(t, dict) else None
         for a in ([art] if isinstance(art, str) else (art or [])):
@@ -407,6 +411,9 @@ def readback(remote_url, branch, d, code_branch=None):
             raise CheckpointError(4, "READBACK_CLONE_FAILED", stderr=p.stderr.decode(errors="replace")[-300:])
         if code_branch:
             git(tmp, "fetch", "-q", "origin", f"{code_branch}:refs/remotes/origin/{code_branch}", check=False)
+        # Gli SHA di `tests_executed` possono stare su qualunque branch pubblicato (ciclo 8 #512: la
+        # risoluzione e' obbligatoria): il readback scarica tutti i branch remoti, non solo quello di codice.
+        git(tmp, "fetch", "-q", "origin", "+refs/heads/*:refs/remotes/origin/*", check=False)
         try:
             return verify(tmp, "HEAD", d)
         except CheckpointError as exc:

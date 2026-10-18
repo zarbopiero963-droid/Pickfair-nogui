@@ -145,3 +145,11 @@ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` re
   pattern); ogni altro file del checkpoint, sorgenti Python del `code_patch` compresi, viene scansionato (rilievo
   Codex #512, PF-PR-RECOVERY-DECISIONS-02).
 - La concorrenza è ottimistica: due agenti possono lavorare in parallelo, ma solo uno pubblica per volta.
+
+### SHA dei test eseguiti (ciclo 8/9 #512)
+
+Ogni voce di `tests_executed` con esito `PASS`/`FAIL` porta uno `sha` che DEVE risolversi a un commit reale con la
+stessa lookup di `code.sha`; il readback di `save` scarica tutti i branch remoti (non solo quello di codice), cosi'
+un'evidenza pubblicata su un altro branch resta verificabile. Un'evidenza su un albero scratch mai pubblicato e'
+ammessa solo se dichiarata esplicitamente (`"unpublished_tree": true` piu' una `sha_note` motivata): la
+dichiarazione resta visibile nel checkpoint e non e' mai inferita da uno SHA che semplicemente non si risolve.
