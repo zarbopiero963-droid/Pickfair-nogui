@@ -21,7 +21,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   loggate. `max_drawdown_abs` configurato mantiene il LOCKDOWN; assente non
   produce alcun lockdown. Rimosso il loader con default numerico
   (`_required_absolute_cap_value`); i campi GUI partono vuoti con etichetta
-  «(€, vuoto = non attivo)».
+  «(€, vuoto = non attivo)». Salvare uno di questi quattro campi vuoto
+  disattiva anche un valore gia' persistito (scritto come vuoto, letto come
+  `None`, oscura la chiave legacy); gli hard-stop di perdita/esposizione
+  conservano la semantica «vuoto preserva il valore salvato» (PF-CAP-10b).
 - Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
   ambiguo o invalido viene rifiutato senza default BACK e senza invio.
 - P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;

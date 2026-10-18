@@ -443,10 +443,14 @@ class SettingsService:
             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
         if config.max_open_exposure is not None:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+        # PF-CAP-10b (decisione owner 18/10/2026): per i quattro cap monetari opzionali il
+        # campo vuoto (None) significa "limite NON attivo" anche per un valore gia' persistito:
+        # si scrive "" (che il loader legge come None) invece di saltare la chiave, cosi' il
+        # limite viene davvero disattivato e "" oscura anche la chiave legacy senza prefisso.
+        # Gli altri hard-stop qui sotto conservano la semantica documentata "vuoto preserva".
         for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
             value = getattr(config, field, None)
-            if value is not None:
-                payload[f"roserpina.{field}"] = value
+            payload[f"roserpina.{field}"] = "" if value is None else value
         if config.max_session_loss is not None:
             payload["roserpina.max_session_loss"] = config.max_session_loss
         if config.max_exposure_stop is not None:

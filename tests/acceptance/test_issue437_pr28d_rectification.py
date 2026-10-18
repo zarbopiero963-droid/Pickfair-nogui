@@ -233,7 +233,7 @@ def test_gui_initial_cap_fields_are_blank(monkeypatch):
         app.destroy()
 
 
-def test_user_set_valid_values_persist_and_survive_reload_and_blank_save(tmp_path):
+def test_user_set_valid_values_persist_and_survive_reload_and_blank_save_deactivates(tmp_path):
     db, service = _real_settings(tmp_path)
     cfg = RoserpinaConfig(
         max_order_exposure=1.5, max_market_exposure=2.5,
@@ -245,11 +245,13 @@ def test_user_set_valid_values_persist_and_survive_reload_and_blank_save(tmp_pat
     assert (reloaded.max_order_exposure, reloaded.max_market_exposure,
             reloaded.max_event_exposure_abs, reloaded.max_drawdown_abs) == (1.5, 2.5, 3.5, 12.5)
 
-    # Save con i campi vuoti (None) => i valori persistiti NON vengono azzerati.
+    # PF-CAP-10b (decisione owner 18/10, riesame E1-a): campo vuoto = limite NON attivo
+    # anche dopo il salvataggio. Il save con i quattro cap a None li disattiva davvero
+    # (prima il valore persistito sopravviveva e l'etichetta "vuoto = non attivo" mentiva).
     service.save_roserpina_config(RoserpinaConfig())
     again = service.load_roserpina_config()
     assert (again.max_order_exposure, again.max_market_exposure,
-            again.max_event_exposure_abs, again.max_drawdown_abs) == (1.5, 2.5, 3.5, 12.5)
+            again.max_event_exposure_abs, again.max_drawdown_abs) == (None, None, None, None)
 
 
 @pytest.mark.parametrize("field", _CAPS)
@@ -280,3 +282,57 @@ def test_text_persisted_value_loads_as_nan_not_none(tmp_path, field):
     db.save_settings({f"roserpina.{field}": "dieci euro"})
     value = getattr(service.load_roserpina_config(), field)
     assert value is not None and math.isnan(value)
+
+
+# --------------------------------------------------------------------------
+# PF-CAP-10b: campo GUI vuoto => il cap persistito viene DISATTIVATO al salvataggio
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("field", _CAPS)
+def test_blank_save_deactivates_a_previously_persisted_cap(tmp_path, field):
+    db, service = _real_settings(tmp_path)
+    service.save_roserpina_config(RoserpinaConfig(**{field: 1.0}))
+    assert getattr(service.load_roserpina_config(), field) == 1.0
+    service.save_roserpina_config(RoserpinaConfig(**{field: None}))      # campo vuoto in GUI
+    reloaded = SettingsService(Database(str(tmp_path / "rectification.db"))).load_roserpina_config()
+    assert getattr(reloaded, field) is None, "campo vuoto: il limite persistito deve risultare non attivo"
+
+
+@pytest.mark.parametrize("field", _CAPS)
+def test_blank_save_also_shadows_a_legacy_prefixless_key(tmp_path, field):
+    db, service = _real_settings(tmp_path)
+    db.save_settings({field: 1.0})                                       # chiave legacy senza prefisso
+    assert getattr(service.load_roserpina_config(), field) == 1.0
+    service.save_roserpina_config(RoserpinaConfig(**{field: None}))
+    assert getattr(service.load_roserpina_config(), field) is None
+
+
+def test_explicit_cap_is_rewritten_exactly_and_other_hard_stops_keep_preserve_semantics(tmp_path):
+    db, service = _real_settings(tmp_path)
+    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=1.0, max_daily_loss=50.0))
+    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=4.25, max_daily_loss=None))
+    cfg = service.load_roserpina_config()
+    assert cfg.max_order_exposure == 4.25
+    # gli hard-stop di perdita/esposizione (non cap monetari della rettifica) conservano la
+    # semantica documentata "vuoto preserva il persistito": un vuoto non rimuove una protezione.
+    assert cfg.max_daily_loss == 50.0
+
+
+def test_blank_save_of_order_cap_lets_the_mm_stake_through(tmp_path):
+    """Cap 1 € persistito: lo stake MM 3 € e' rifiutato; dopo il salvataggio con il campo
+    vuoto e il reload della config lo stesso segnale arriva al broker con 3.0 € esatti."""
+    c = _catena_reale(tmp_path, **{"roserpina.max_order_exposure": 1.0})
+    c.rc._on_signal_received(_signal())
+    assert _rifiuti(c)[0].startswith("max_order_exposure_exceeded:limit=1.0")
+    assert c.broker.state.orders == {}
+
+    c.rc.settings_service.save_roserpina_config(
+        RoserpinaConfig(**{f: getattr(c.rc.config, f) for f in ("target_profit_cycle_pct", "max_single_bet_pct",
+                                                               "max_total_exposure_pct", "max_event_exposure_pct")},
+                        max_order_exposure=None))
+    c.rc.reload_config()
+    c.rc.risk_desk.bankroll_current = 100.0
+    c.rc.risk_desk.equity_peak = 100.0
+    assert c.rc.config.max_order_exposure is None
+    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:00:05.000000+00:00"))
+    cmds = c.bus.payloads("CMD_QUICK_BET")
+    assert len(cmds) == 1 and cmds[0]["stake"] == pytest.approx(3.0)

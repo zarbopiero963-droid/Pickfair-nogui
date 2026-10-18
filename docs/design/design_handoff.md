@@ -369,8 +369,9 @@ La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
 `Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
 `Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
 mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
-limite non attivo (il salvataggio non azzera un valore gia' persistito, come
-per gli altri hard-stop); un valore presente deve essere un numero finito > 0,
+limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
+persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
+dove il vuoto preserva il valore salvato); un valore presente deve essere un numero finito > 0,
 altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
 illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
 ordini con `<nome>_non_valido`.
