@@ -1,0 +1,188 @@
+{'PASS': 1072, 'VIOLATION': 80}
+  A1_gross_matches_oracle                       {'PASS': 570}
+  A2_commission_once_4_5_on_positive_net        {'PASS': 570}
+  A3_conservation_total                         {'PASS': 1152}
+  A4_settlement_booked_by_bot                   {'PASS': 570}
+  A5_runtime_realized_equals_exchange_net       {'PASS': 570}
+  A6_stake_base_is_available                    {'PASS': 1152}
+  A7_no_leaked_table_after_settlement           {'PASS': 1152}
+  C01_no_duplicate_order                        {'PASS': 1072, 'VIOLATION': 80}
+  C01b_unique_customer_ref                      {'PASS': 1072, 'VIOLATION': 80}
+  C02_single_cap                                {'PASS': 591}
+  C03_max_win_hard                              {'PASS': 591}
+  C04_min_price                                 {'PASS': 591}
+  C05_total_exposure_cap                        {'PASS': 591}
+  C06_event_exposure_cap                        {'PASS': 591}
+  C07_max_open_exposure_abs                     {'PASS': 591}
+  C08_exposure_stop_before_submit               {'PASS': 303}
+  C09_tables_bound                              {'PASS': 591}
+  C10_daily_loss_stop                           {'PASS': 287}
+  C10b_session_loss_stop                        {'PASS': 293}
+  C11_no_entry_when_not_active                  {'PASS': 591}
+  C12_no_entry_after_risk_stop                  {'PASS': 591}
+  C14_liquidity_guard_single_entry              {'PASS': 56}
+  H0_harness                                    {'PASS': 1152}
+  H1_clean_stop                                 {'PASS': 1152}
+  R1_restart_rebuild_ok                         {'PASS': 192}
+  R2_no_replay_after_restart                    {'PASS': 191, 'VIOLATION': 1}
+S00050 loss 10 C01_no_duplicate_order {('1.000504', 11, 'BACK'): 2}
+S00050 loss 10 C01b_unique_customer_ref 
+S00053 adversarial 10 C01_no_duplicate_order {('1.000530', 11, 'BACK'): 2}
+S00053 adversarial 10 C01b_unique_customer_ref 
+S00061 win 10 C01_no_duplicate_order {('1.000613', 11, 'BACK'): 2}
+S00061 win 10 C01b_unique_customer_ref 
+S00062 loss 10 C01_no_duplicate_order {('1.000621', 11, 'BACK'): 2}
+S00062 loss 10 C01b_unique_customer_ref 
+S00065 adversarial 10 C01_no_duplicate_order {('1.000654', 11, 'BACK'): 2}
+S00065 adversarial 10 C01b_unique_customer_ref 
+S00073 win 10 C01_no_duplicate_order {('1.000735', 11, 'BACK'): 2}
+S00073 win 10 C01b_unique_customer_ref 
+S00074 loss 10 C01_no_duplicate_order {('1.000744', 11, 'BACK'): 2}
+S00074 loss 10 C01b_unique_customer_ref 
+S00088 longloss 10 C01_no_duplicate_order {('1.000883', 11, 'BACK'): 2}
+S00088 longloss 10 C01b_unique_customer_ref 
+S00090 cashout 10 C01_no_duplicate_order {('1.000901', 11, 'BACK'): 2}
+S00090 cashout 10 C01b_unique_customer_ref 
+S00111 alternate 10 C01_no_duplicate_order {('1.001114', 11, 'BACK'): 2, ('1.001115', 11, 'BACK'): 2}
+S00111 alternate 10 C01b_unique_customer_ref 
+S00123 alternate 10 C01_no_duplicate_order {('1.001230', 11, 'BACK'): 2}
+S00123 alternate 10 C01b_unique_customer_ref 
+S00135 alternate 10 C01_no_duplicate_order {('1.001351', 11, 'BACK'): 2}
+S00135 alternate 10 C01b_unique_customer_ref 
+S00137 adversarial 10 C01_no_duplicate_order {('1.001375', 11, 'BACK'): 2}
+S00137 adversarial 10 C01b_unique_customer_ref 
+S00145 win 50 C01_no_duplicate_order {('1.001450', 11, 'BACK'): 2}
+S00145 win 50 C01b_unique_customer_ref 
+S00146 loss 50 C01_no_duplicate_order {('1.001461', 11, 'BACK'): 2}
+S00146 loss 50 C01b_unique_customer_ref 
+S00148 longloss 50 C01_no_duplicate_order {('1.001480', 11, 'BACK'): 2}
+S00148 longloss 50 C01b_unique_customer_ref 
+S00150 cashout 50 C01_no_duplicate_order {('1.001502', 11, 'BACK'): 2}
+S00150 cashout 50 C01b_unique_customer_ref 
+S00152 loss 50 C01_no_duplicate_order {('1.001520', 11, 'BACK'): 2}
+S00152 loss 50 C01b_unique_customer_ref 
+S00161 adversarial 50 C01_no_duplicate_order {('1.001613', 11, 'BACK'): 2, ('1.001615', 11, 'BACK'): 2}
+S00161 adversarial 50 C01b_unique_customer_ref 
+S00162 cashout 50 C01_no_duplicate_order {('1.001620', 11, 'BACK'): 2}
+S00162 cashout 50 C01b_unique_customer_ref 
+S00165 alternate 50 C01_no_duplicate_order {('1.001650', 11, 'BACK'): 2, ('1.001651', 11, 'BACK'): 2, ('1.001652', 11, 'BACK'): 2}
+S00165 alternate 50 C01b_unique_customer_ref 
+S00170 loss 50 C01_no_duplicate_order {('1.001700', 11, 'BACK'): 2}
+S00170 loss 50 C01b_unique_customer_ref 
+S00171 alternate 50 C01_no_duplicate_order {('1.001712', 11, 'BACK'): 2}
+S00171 alternate 50 C01b_unique_customer_ref 
+S00172 longloss 50 C01_no_duplicate_order {('1.001722', 11, 'BACK'): 2}
+S00172 longloss 50 C01b_unique_customer_ref 
+S00173 adversarial 50 C01_no_duplicate_order {('1.001735', 11, 'BACK'): 2}
+S00173 adversarial 50 C01b_unique_customer_ref 
+S00175 win 50 C01_no_duplicate_order {('1.001750', 11, 'BACK'): 2}
+S00175 win 50 C01b_unique_customer_ref 
+S00178 longloss 50 C01_no_duplicate_order {('1.001780', 11, 'BACK'): 2}
+S00178 longloss 50 C01b_unique_customer_ref 
+S00181 win 50 C01_no_duplicate_order {('1.001810', 11, 'BACK'): 2, ('1.001811', 11, 'BACK'): 2}
+S00181 win 50 C01b_unique_customer_ref 
+S00183 alternate 50 C01_no_duplicate_order {('1.001833', 11, 'BACK'): 2, ('1.001834', 11, 'BACK'): 2}
+S00183 alternate 50 C01b_unique_customer_ref 
+S00184 longloss 50 C01_no_duplicate_order {('1.001840', 11, 'BACK'): 2}
+S00184 longloss 50 C01b_unique_customer_ref 
+S00186 cashout 50 C01_no_duplicate_order {('1.001860', 11, 'BACK'): 2}
+S00186 cashout 50 C01b_unique_customer_ref 
+S00187 win 50 C01_no_duplicate_order {('1.001870', 11, 'BACK'): 2, ('1.001871', 11, 'BACK'): 2, ('1.001873', 11, 'BACK'): 2}
+S00187 win 50 C01b_unique_customer_ref 
+S00188 loss 50 C01_no_duplicate_order {('1.001880', 11, 'BACK'): 2, ('1.001881', 11, 'BACK'): 2, ('1.001883', 11, 'BACK'): 2}
+S00188 loss 50 C01b_unique_customer_ref 
+S00190 longloss 50 C01_no_duplicate_order {('1.001902', 11, 'BACK'): 2, ('1.001905', 11, 'BACK'): 2}
+S00190 longloss 50 C01b_unique_customer_ref 
+S00191 adversarial 50 C01_no_duplicate_order {('1.001912', 11, 'BACK'): 2, ('1.001914', 11, 'BACK'): 2}
+S00191 adversarial 50 C01b_unique_customer_ref 
+S00191 adversarial 50 R2_no_replay_after_restart 1.001912: 2
+S00193 win 50 C01_no_duplicate_order {('1.001931', 11, 'BACK'): 2}
+S00193 win 50 C01b_unique_customer_ref 
+S00201 alternate 50 C01_no_duplicate_order {('1.002010', 11, 'BACK'): 2}
+S00201 alternate 50 C01b_unique_customer_ref 
+S00202 longloss 50 C01_no_duplicate_order {('1.002022', 11, 'BACK'): 2}
+S00202 longloss 50 C01b_unique_customer_ref 
+S00204 cashout 50 C01_no_duplicate_order {('1.002042', 11, 'BACK'): 2}
+S00204 cashout 50 C01b_unique_customer_ref 
+S00206 loss 50 C01_no_duplicate_order {('1.002060', 11, 'BACK'): 2, ('1.002062', 11, 'BACK'): 2, ('1.002063', 11, 'BACK'): 2}
+S00206 loss 50 C01b_unique_customer_ref 
+S00207 alternate 50 C01_no_duplicate_order {('1.002071', 11, 'BACK'): 2}
+S00207 alternate 50 C01b_unique_customer_ref 
+S00211 win 50 C01_no_duplicate_order {('1.002112', 11, 'BACK'): 2}
+S00211 win 50 C01b_unique_customer_ref 
+S00217 win 50 C01_no_duplicate_order {('1.002170', 11, 'BACK'): 2}
+S00217 win 50 C01b_unique_customer_ref 
+S00222 cashout 50 C01_no_duplicate_order {('1.002220', 11, 'BACK'): 2}
+S00222 cashout 50 C01b_unique_customer_ref 
+S00224 loss 50 C01_no_duplicate_order {('1.002240', 11, 'BACK'): 2}
+S00224 loss 50 C01b_unique_customer_ref 
+S00226 longloss 50 C01_no_duplicate_order {('1.002260', 11, 'BACK'): 2}
+S00226 longloss 50 C01b_unique_customer_ref 
+S00227 adversarial 50 C01_no_duplicate_order {('1.002270', 11, 'BACK'): 2}
+S00227 adversarial 50 C01b_unique_customer_ref 
+S00229 win 50 C01_no_duplicate_order {('1.002290', 11, 'BACK'): 2, ('1.002293', 11, 'BACK'): 2}
+S00229 win 50 C01b_unique_customer_ref 
+S00234 cashout 50 C01_no_duplicate_order {('1.002342', 11, 'BACK'): 2, ('1.002344', 11, 'BACK'): 2}
+S00234 cashout 50 C01b_unique_customer_ref 
+S00236 loss 50 C01_no_duplicate_order {('1.002361', 11, 'BACK'): 2, ('1.002363', 11, 'BACK'): 2}
+S00236 loss 50 C01b_unique_customer_ref 
+S00237 alternate 50 C01_no_duplicate_order {('1.002371', 11, 'BACK'): 2, ('1.002374', 11, 'BACK'): 2}
+S00237 alternate 50 C01b_unique_customer_ref 
+S00239 adversarial 50 C01_no_duplicate_order {('1.002393', 11, 'BACK'): 2, ('1.002395', 11, 'BACK'): 2}
+S00239 adversarial 50 C01b_unique_customer_ref 
+S00248 loss 50 C01_no_duplicate_order {('1.002481', 11, 'BACK'): 2}
+S00248 loss 50 C01b_unique_customer_ref 
+S00249 alternate 50 C01_no_duplicate_order {('1.002491', 11, 'BACK'): 2}
+S00249 alternate 50 C01b_unique_customer_ref 
+S00275 adversarial 50 C01_no_duplicate_order {('1.002755', 11, 'BACK'): 2}
+S00275 adversarial 50 C01b_unique_customer_ref 
+S00294 cashout 100 C01_no_duplicate_order {('1.002940', 11, 'BACK'): 2}
+S00294 cashout 100 C01b_unique_customer_ref 
+S00303 alternate 100 C01_no_duplicate_order {('1.003030', 11, 'BACK'): 2, ('1.003031', 11, 'BACK'): 2, ('1.003033', 11, 'BACK'): 2}
+S00303 alternate 100 C01b_unique_customer_ref 
+S00304 longloss 100 C01_no_duplicate_order {('1.003040', 11, 'BACK'): 2, ('1.003041', 11, 'BACK'): 2, ('1.003042', 11, 'BACK'): 2}
+S00304 longloss 100 C01b_unique_customer_ref 
+S00306 cashout 100 C01_no_duplicate_order {('1.003062', 11, 'BACK'): 2, ('1.003064', 11, 'BACK'): 2}
+S00306 cashout 100 C01b_unique_customer_ref 
+S00310 longloss 100 C01_no_duplicate_order {('1.003100', 11, 'BACK'): 2, ('1.003102', 11, 'BACK'): 2, ('1.003103', 11, 'BACK'): 2}
+S00310 longloss 100 C01b_unique_customer_ref 
+S00313 win 100 C01_no_duplicate_order {('1.003131', 11, 'BACK'): 2}
+S00313 win 100 C01b_unique_customer_ref 
+S00316 longloss 100 C01_no_duplicate_order {('1.003160', 11, 'BACK'): 2}
+S00316 longloss 100 C01b_unique_customer_ref 
+S00318 cashout 100 C01_no_duplicate_order {('1.003180', 11, 'BACK'): 2}
+S00318 cashout 100 C01b_unique_customer_ref 
+S00324 cashout 100 C01_no_duplicate_order {('1.003241', 11, 'BACK'): 2}
+S00324 cashout 100 C01b_unique_customer_ref 
+S00327 alternate 100 C01_no_duplicate_order {('1.003270', 11, 'BACK'): 2, ('1.003271', 11, 'BACK'): 2, ('1.003272', 11, 'BACK'): 2}
+S00327 alternate 100 C01b_unique_customer_ref 
+S00331 win 100 C01_no_duplicate_order {('1.003312', 11, 'BACK'): 2, ('1.003313', 11, 'BACK'): 2}
+S00331 win 100 C01b_unique_customer_ref 
+S00332 loss 100 C01_no_duplicate_order {('1.003321', 11, 'BACK'): 2, ('1.003323', 11, 'BACK'): 2}
+S00332 loss 100 C01b_unique_customer_ref 
+S00334 longloss 100 C01_no_duplicate_order {('1.003340', 11, 'BACK'): 2, ('1.003341', 11, 'BACK'): 2}
+S00334 longloss 100 C01b_unique_customer_ref 
+S00336 cashout 100 C01_no_duplicate_order {('1.003362', 11, 'BACK'): 2}
+S00336 cashout 100 C01b_unique_customer_ref 
+S00344 loss 100 C01_no_duplicate_order {('1.003440', 11, 'BACK'): 2}
+S00344 loss 100 C01b_unique_customer_ref 
+S00350 loss 100 C01_no_duplicate_order {('1.003501', 11, 'BACK'): 2}
+S00350 loss 100 C01b_unique_customer_ref 
+S00355 win 100 C01_no_duplicate_order {('1.003553', 11, 'BACK'): 2}
+S00355 win 100 C01b_unique_customer_ref 
+S00364 longloss 100 C01_no_duplicate_order {('1.003640', 11, 'BACK'): 2}
+S00364 longloss 100 C01b_unique_customer_ref 
+S00365 adversarial 100 C01_no_duplicate_order {('1.003650', 11, 'BACK'): 2}
+S00365 adversarial 100 C01b_unique_customer_ref 
+S00449 adversarial 250 C01_no_duplicate_order {('1.004490', 11, 'BACK'): 2, ('1.004494', 11, 'BACK'): 2, ('1.004495', 11, 'BACK'): 2}
+S00449 adversarial 250 C01b_unique_customer_ref 
+S00451 win 250 C01_no_duplicate_order {('1.004513', 11, 'BACK'): 2, ('1.004515', 11, 'BACK'): 2}
+S00451 win 250 C01b_unique_customer_ref 
+S00457 win 250 C01_no_duplicate_order {('1.004570', 11, 'BACK'): 2}
+S00457 win 250 C01b_unique_customer_ref 
+S00470 loss 250 C01_no_duplicate_order {('1.004700', 11, 'BACK'): 2, ('1.004701', 11, 'BACK'): 2, ('1.004702', 11, 'BACK'): 2}
+S00470 loss 250 C01b_unique_customer_ref 
+S00475 win 250 C01_no_duplicate_order {('1.004750', 11, 'BACK'): 2, ('1.004751', 11, 'BACK'): 2}
+S00475 win 250 C01b_unique_customer_ref 
+S00477 alternate 250 C01_no_duplicate_order {('1.004773', 11, 'BACK'): 2}
+S00477 alternate 250 C01b_unique_customer_ref 

@@ -6,8 +6,8 @@
   "sha": "5ef61da9a3a0b36f4e27ca299c02613501a678ee"
  },
  "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
- "next_atomic_action": "Attendere decisioni owner: deroga ciclo 6 #512 (o PR 10 cicli dopo chiusura #512), ACTIVE vs PAUSED con AMBIGUOUS, floor 0.10, ref cashout, OD-01, PF-QA-02. Attivita' indipendenti eseguibili: campagna Roserpina C02 con oracle Decisione 2 (NOT VERIFIED), screenshot GUI Xvfb, preparazione issue PF-QA-02 (bozza). Nessuna nuova PR, nessun merge, #505/main intoccate.",
- "previous_checkpoint_sha": "5f9ede62725b7ec0575a4a4f4c3a80996d82fc74",
+ "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939 + D-J su #510 c.6247479052). Indipendenti: screenshot GUI Xvfb (Xvfb da riavviare), bozza issue PF-QA-02 pronta (scratchpad), preparazione locale PR estensione 10 cicli (NON aperta finche' #512 e' aperta). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "previous_checkpoint_sha": "42d5bf1ec8b12855e57e70c6517fe448fa6b80c2",
  "schema": "pf-current/1",
- "seq": 18
+ "seq": 19
 }

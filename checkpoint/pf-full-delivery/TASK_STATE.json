@@ -6,7 +6,8 @@
   "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 \u00a74/\u00a710)",
   "overlap-check rosso (tre PR aperte)",
   "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
-  "fix loop PR #512: 5 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0, 757869f): NEEDS_MANUAL per nuovi PATCH_REQUIRED"
+  "fix loop PR #512: 5 cicli su 5 usati (339cd24, 5b4a589, 21aab95, 4a47ab0, 757869f): NEEDS_MANUAL per nuovi PATCH_REQUIRED",
+  "CI 5ef61da: tutto verde tranne overlap-check (3 PR aperte) e Merge readiness (18 thread aperti + UNSTABLE): attesi, dichiarati"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -37,11 +38,12 @@
   "ciclo 4 review PR #512 (4a47ab0, 464f347): 7 fix + 1 mitigazione, 2 NEEDS_MANUAL (seq 17)",
   "ciclo 5 PR #512 (757869f/5dd1b86): Decisione 2 + riserva saga esistente (seq 18)",
   "Fase A #351: audit, matrice, piano P1-P12 (#351 c.6242905583)",
-  "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)"
+  "P8 multi-tavolo 2/5/10 crash/recovery su app reale SIM (seq 18)",
+  "campagna Roserpina C02 con Decisione 2 su 5ef61da (seq 19)"
  ],
- "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 consegnato (5dd1b86 + oracle ad13383), Fase A #351 pubblicata, P8 multi-tavolo eseguito (non certificante), triage Codex 22:56 pubblicato",
+ "lotto_corrente": "PF-MASTER-CERTIFICATION-351: ciclo 5 chiuso (5ef61da), regressione 7766 passed, P8 e campagna C02 eseguite (non certificanti), triage Codex completo; in attesa decisioni owner D-A..D-J",
  "mandate_id": "PF-MASTER-CERTIFICATION-351 + PF-351-INTEGRATED-CERTIFICATION-01 (owner 17/10; sopra PF-PR-RECOVERY-DECISIONS-02)",
- "next_atomic_action": "Attendere decisioni owner: deroga ciclo 6 #512 (o PR 10 cicli dopo chiusura #512), ACTIVE vs PAUSED con AMBIGUOUS, floor 0.10, ref cashout, OD-01, PF-QA-02. Attivita' indipendenti eseguibili: campagna Roserpina C02 con oracle Decisione 2 (NOT VERIFIED), screenshot GUI Xvfb, preparazione issue PF-QA-02 (bozza). Nessuna nuova PR, nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere decisioni owner D-A..D-J (#426 c.6243156939 + D-J su #510 c.6247479052). Indipendenti: screenshot GUI Xvfb (Xvfb da riavviare), bozza issue PF-QA-02 pronta (scratchpad), preparazione locale PR estensione 10 cicli (NON aperta finche' #512 e' aperta). Nessuna nuova PR, nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [
