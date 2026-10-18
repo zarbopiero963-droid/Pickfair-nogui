@@ -392,6 +392,21 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         stato vecchio sotto una saga ACTIVE)."""
         out: Dict[str, str] = {}
         pending = self.store.pending_refs()
+        # Riserve transitorie ripristinate PRIMA di snapshot e recovery (rilievo Codex r4308704071): dopo un
+        # riavvio la porta parte senza riserve, ma ogni saga pendente che le tiene (`reservation_held`, assente
+        # = tenuta) copre uno stub che puo' essere sull'exchange; senza di esse un altro microstake supererebbe
+        # il cap. Il coordinatore le rilascia solo quando la saga diventa terminale.
+        for ref in pending:
+            saved = self.store.load(ref) or {}
+            if saved.get("reservation_held") is False:
+                continue
+            try:
+                exposure = Decimal(str(saved.get("transient_exposure")))
+            except (InvalidOperation, ValueError, TypeError):
+                exposure = None
+            if exposure is None or not exposure.is_finite() or exposure <= 0:
+                exposure = Decimal(str(getattr(self.coordinator.policy, "exchange_stub_size", "2.00")))
+            self.port.hold_reservation(ref, exposure)
         if pending and not self.port._snapshot():
             return {ref: Phase.AMBIGUOUS.value for ref in pending}
         for ref in pending:

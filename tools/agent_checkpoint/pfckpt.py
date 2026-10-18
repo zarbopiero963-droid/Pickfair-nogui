@@ -199,6 +199,10 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         state = json.loads(blob(repo, commit, files["STATE.json"]))
     except ValueError as exc:
         raise CheckpointError(2, "STATE_JSON_INVALID", error=str(exc)[:200], commit=commit)
+    if not isinstance(state, dict):
+        # JSON valido ma non oggetto: checkpoint invalido strutturato, mai un AttributeError che fermerebbe
+        # `last_valid_checkpoint`/`recover` (rilievo Codex r4308704074)
+        raise CheckpointError(2, "STATE_JSON_INVALID", error=f"non un oggetto: {type(state).__name__}", commit=commit)
     problems += validate_state(state)
     manifest = parse_manifest(blob(repo, commit, files[MANIFEST]).decode(errors="replace"))
     listed, present = set(manifest), set(files) - {MANIFEST}
@@ -227,7 +231,8 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
         pfiles = tree_files(repo, parent, d)
         if "STATE.json" in pfiles:
             try:
-                pseq = json.loads(blob(repo, parent, pfiles["STATE.json"])).get("seq")
+                pstate = json.loads(blob(repo, parent, pfiles["STATE.json"]))
+                pseq = pstate.get("seq") if isinstance(pstate, dict) else None
             except ValueError:
                 pseq = None
             if isinstance(pseq, int) and state.get("seq") != pseq + 1:

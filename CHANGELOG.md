@@ -10,6 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 10 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION, ultimo ciclo):** rilievi Codex su `b918a6d`.
+  (1) il reset trattiene OGNI tavolo con esito ignoto dal registro per tavolo, anche a mercato regolato (r4308704060);
+  (2) stato di recovery non persistito => nessun nuovo ingresso su ogni percorso (`recovery_state_not_persisted`, via
+  `_loss_block_reason`) con nuovo tentativo di scrittura a ogni ammissione, che scioglie il blocco appena il disco
+  torna (r4308704062); (3) all'avvio le riserve transitorie delle saghe pendenti (`reservation_held`, assente =
+  tenuta) sono ripristinate prima di snapshot e recovery, cosi' lo stub pendente occupa il cap (r4308704071);
+  (4) `pf_trace`: solo un'evidenza PASS copre un test dichiarato (r4308704068); (5) `pfckpt`: `STATE.json` JSON
+  valido ma non oggetto e' un checkpoint invalido strutturato (`STATE_JSON_INVALID`), saltato da
+  `last_valid_checkpoint` (r4308704074). Test RED->GREEN in `tests/test_pr512_codex_034af59.py`,
+  `tests/traceability/test_pf_trace_codex_034af59.py`, `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
 - **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
   remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
   cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il

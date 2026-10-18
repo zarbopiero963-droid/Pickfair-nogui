@@ -1259,7 +1259,19 @@ class RuntimeController:
 
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
-        return self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+        return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+                or self._recovery_persist_block_reason())
+
+    def _recovery_persist_block_reason(self) -> str:
+        """Stato di recovery non durevole (scrittura fallita dopo un reset o un settlement): nessun nuovo
+        ingresso, su ogni percorso, finche' una scrittura riesce (rilievo Codex r4308704062). Dopo un crash
+        il DB conterrebbe perdite vecchie e il dimensionamento della recovery sarebbe incoerente. Il nuovo
+        tentativo di scrittura e' fatto qui, cosi' il blocco si scioglie da solo appena il disco torna."""
+        if not getattr(self, "_recovery_persist_failed", False):
+            return ""
+        if getattr(self, "_recovery_state_unreadable", False) or not self._persist_recovery_tables():
+            return "recovery_state_not_persisted"
+        return ""
 
     def _publish_session_loss_breach(self) -> None:
         reason = self._session_loss_block_reason()
@@ -3904,6 +3916,12 @@ class RuntimeController:
         uncertain = dict(self._uncertain_reservations_map())
         settled = set(getattr(self, "_settled_market_ids", None) or ())
         keep_tables = {int(t) for t in uncertain.values() if t is not None}
+        # ogni tavolo con esito ignoto, non solo quello della vista event_key -> table_id (rilievo Codex
+        # r4308704060): un ordine AMBIGUOUS non libera mai il suo tavolo, nemmeno a mercato regolato
+        for key, tables in (getattr(self, "_uncertain_tables", None) or {}).items():
+            keep_tables.update(int(t) for t in tables if t is not None)
+            if tables:
+                uncertain.setdefault(key, None)
         keep_keys = set(uncertain)
         for table in self.table_manager.snapshot():
             event_key = str(table.get("current_event_key") or "")

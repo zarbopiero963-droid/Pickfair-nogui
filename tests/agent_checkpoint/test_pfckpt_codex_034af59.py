@@ -81,3 +81,20 @@ def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
     raw_commit(a, "ckpt con sha reali")
     rep = pfckpt.verify(a, "HEAD", D)
     assert rep["seq"] == 2
+
+
+
+@pytest.mark.parametrize("payload", ["[]", "\"testo\"", "42", "null"])
+def test_c10_non_object_state_is_a_structured_invalid_checkpoint(world, payload):
+    """Codex r4308704074 (P2): STATE.json JSON valido ma non oggetto => CheckpointError(2), mai un
+    AttributeError; `last_valid_checkpoint` salta il commit corrotto e trova il precedente."""
+    from test_pfckpt import raw_commit
+    a = agent(world, "a")
+    good = pfckpt.out(a, "rev-parse", "HEAD")
+    with open(os.path.join(a, D, "STATE.json"), "w") as fh:
+        fh.write(payload)
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, "ckpt con STATE non oggetto")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert err.reason == "STATE_JSON_INVALID", err.reason
+    assert pfckpt.last_valid_checkpoint(a, D) == good

@@ -163,6 +163,19 @@ def test_c9_review_filtered_command_with_explicit_tests_is_still_authoritative(t
     assert not _uncovered(warnings)
 
 
+def test_c10_only_pass_evidence_covers_a_declared_test(tmp_path):
+    """Codex r4308704068 (P2): un'evidenza BLOCKED che nomina il test A non lo copre; con una PASS che
+    nomina solo B, A resta senza evidenza (warning => FAIL in --strict)."""
+    sha = _repo(tmp_path)
+    data = _req(sha, "TESTED", ["BLOCKED", "PASS"], tests=["tests/test_x.py::test_a", "tests/test_x.py::test_b"])
+    ev = data["requirements"][0]["evidence"]
+    ev[0]["tests"] = ["tests/test_x.py::test_a"]
+    ev[1]["tests"] = ["tests/test_x.py::test_b"]
+    _, warnings = pf_trace.validate(data, str(tmp_path))
+    assert any("test_a" in w for w in _uncovered(warnings)), warnings
+    assert not any("test_b" in w for w in _uncovered(warnings)), warnings
+
+
 def test_real_registry_validates_strict():
     root = ROOT
     reg = os.path.join(root, "docs", "traceability", "requirements.json")

@@ -246,7 +246,8 @@ def validate(data, repo=".", previous=None):
             if evidence[:len(old)] != old:
                 errors.append(f"{rid}: evidenze precedenti rimosse o riscritte (append-only violato)")
         for t in tests:
-            if not any(evidence_covers(e, t) for e in evidence if isinstance(e, dict)) and status in {"TESTED", "VERIFIED", "CERTIFIED"}:
+            # solo un'evidenza PASS copre un test dichiarato (rilievo Codex r4308704068)
+            if not any(evidence_covers(e, t) for e in passes) and status in {"TESTED", "VERIFIED", "CERTIFIED"}:
                 warnings.append(f"{rid}: test {t} senza evidenza che lo esegua")
     if previous:
         gone = set(prev_ev) - set(ids)

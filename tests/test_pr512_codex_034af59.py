@@ -1060,3 +1060,68 @@ def test_c9_review_rollback_intent_blocks_replace_even_when_a_matched_check_inte
     before = len(ex.operation_log)
     Coordinator(ex, Store(path), policy).recover("rb-1")
     assert "REPLACE" not in [op[0] for op in ex.operation_log[before:]]
+
+
+
+# ------------------------------------------------------------------ ciclo 10 (rilievi Codex su b918a6d)
+def test_c10_reset_keeps_every_uncertain_table_of_an_event_even_on_a_settled_market(tmp_path):
+    """Codex r4308704060 (P1): con due ordini AMBIGUOUS sullo stesso evento su due tavoli, il reset li
+    trattiene ENTRAMBI anche se il mercato e' marcato regolato: un esito ignoto non libera mai il tavolo."""
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    occ = _c9_occupied(c)
+    assert len(occ) == 2, occ
+    (t1, key), (t2, _) = occ
+    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t1, "customer_ref": "A"})
+    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    market_id = str(c.rc.table_manager.get_table(int(t1)).market_id or "1.234")
+    c.rc._mark_market_settled(market_id)
+    c.rc.reset_cycle()
+    still = {tid for tid, _ in _c9_occupied(c)}
+    assert {t1, t2} <= still, ("tavolo con esito ignoto liberato dal reset", still)
+
+
+def test_c10_recovery_persist_failure_blocks_every_new_entry_until_a_write_succeeds(tmp_path):
+    """Codex r4308704062 (P1): stato di recovery non persistito => nessun nuovo ingresso (anche senza
+    recovery attiva e con tavoli liberi), finche' una scrittura riesce; il nuovo tentativo e' automatico."""
+    c = _c9_chain(tmp_path)
+    real_save = c.rc.db.save_settings
+    c.rc._recovery_persist_failed = True
+    c.rc.db.save_settings = lambda payload: (_ for _ in ()).throw(OSError("disk full"))
+    c.rc._on_signal_received(_c9_signal())
+    assert c.broker.state.orders == {}, "ordine piazzato con stato di recovery non durevole"
+    assert _c9_rejects(c) and _c9_rejects(c)[-1] == "recovery_state_not_persisted", _c9_rejects(c)
+    assert _c9_occupied(c) == [], "tavolo lasciato occupato dal rifiuto"
+    assert c.rc._risk_allows_auto_trade() == (False, "recovery_state_not_persisted")
+    c.rc.db.save_settings = real_save                                  # il disco torna disponibile
+    c.rc._on_signal_received(_c9_signal(received_at="2026-10-08T10:09:00.000000+00:00"))
+    assert c.rc._recovery_persist_failed is False and len(c.broker.state.orders) == 1, _c9_rejects(c)
+
+
+def test_c10_pending_saga_reservations_are_rehydrated_before_recovery(monkeypatch):
+    """Codex r4308704071 (P1): dopo un riavvio le riserve transitorie delle saghe pendenti
+    (reservation_held) vengono ripristinate PRIMA dello snapshot/recovery: anche se la recovery resta
+    pendente, lo stub da 2 EUR occupa il cap e un altro microstake non lo supera."""
+    from decimal import Decimal
+    from core.microstake_sim_port import DbSagaStore, build_native_microstake_executor
+    from simulation_broker import SimulationBroker
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_sim_port import _Db
+    db = _Db()
+    store = DbSagaStore(db)
+    req = {"market_id": "1.1", "selection_id": 7, "side": "BACK", "economic_stake": "0.10", "target_price": "2.00",
+           "customer_ref": "held"}
+    store.save("held", phase="AMBIGUOUS", reservation_held=True, transient_exposure="2.00", request=req)
+    store.save("released", phase="AMBIGUOUS", reservation_held=False, transient_exposure="2.00",
+               request=dict(req, customer_ref="released"))
+    ex = build_native_microstake_executor(SimulationBroker(starting_balance=100.0, db=_Db()), db,
+                                          lambda payload: Decimal("10"))
+    monkeypatch.setattr(ex.port, "_snapshot", lambda: False)           # fonte di reload non allineabile
+    out = ex.recover_pending()
+    assert out == {"held": "AMBIGUOUS", "released": "AMBIGUOUS"}, out
+    assert ex.port.has_reservation("held"), "riserva della saga pendente non ripristinata"
+    assert not ex.port.has_reservation("released")
+    assert ex.port._reservations["held"] == Decimal("2.00")
+    assert ex.port.reserve("nuovo", Decimal("9.00"), Decimal("10")) is False, "cap superato oltre lo stub pendente"

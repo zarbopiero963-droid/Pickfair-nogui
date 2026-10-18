@@ -120,7 +120,8 @@ anche per bet id persistito e accetta solo una riga terminale senza residuo; un 
 "non trovato" e la saga resta pendente (secondo riesame del ciclo 9). Una riga terminale con qualsiasi abbinato
 (SETTLED, LAPSED, VOIDED, CANCELLED parziale, EXECUTION_COMPLETE) resta AMBIGUOUS con riserva tenuta, mai ROLLED_BACK. Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
 durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); una saga
-pendente nello store ma assente dai risultati dell'esecutore resta pendente; ogni altro
+pendente nello store ma assente dai risultati dell'esecutore resta pendente (prima del recover le riserve transitorie
+delle saghe pendenti che le tengono sono ripristinate sulla porta, ciclo 10); ogni altro
 esito (AMBIGUOUS, FAILED, BLOCKED, ERROR) resta pendente. Se resta una saga pendente, lo store è illeggibile o manca
 l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
 e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
