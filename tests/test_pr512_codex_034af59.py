@@ -493,6 +493,19 @@ def test_c9_1_second_signal_for_an_open_event_after_ttl_expiry_places_no_second_
     assert c.rc.duplication_guard.is_duplicate(key), "chiave rilasciata/scaduta con la posizione ancora aperta"
 
 
+def test_c9_1_occupied_table_guard_follows_the_anti_duplication_setting(tmp_path):
+    """Il rifiuto `evento_gia_in_posizione` estende il dedupe oltre il TTL: con l'anti-duplicazione
+    disattivata dall'utente non cambia in silenzio il comportamento precedente (nessun rifiuto runtime;
+    la riconsegna dello stesso messaggio la ferma l'engine col customer_ref stabile)."""
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    assert len(c.broker.state.orders) == 1, _c9_rejects(c)
+    c.rc._on_signal_received(_c9_signal())                         # stesso messaggio riconsegnato
+    assert "evento_gia_in_posizione" not in _c9_rejects(c), _c9_rejects(c)
+    assert len(c.broker.state.orders) == 1, "la riconsegna dello stesso messaggio ha piazzato un secondo ordine"
+
+
 def test_c9_1_a_different_event_still_goes_through_after_ttl_expiry(tmp_path, monkeypatch):
     c = _c9_chain(tmp_path)
     c.rc._on_signal_received(_c9_signal())
@@ -881,7 +894,7 @@ def test_c9_review2_a_live_order_found_only_by_bet_id_is_not_taken_as_rolled_bac
     assert ex.operation_log[before:] == []
 
 
-def test_c9_review2_store_unreadable_after_recovery_reports_every_pending_ref():
+def test_c9_review2_store_unreadable_after_recovery_reports_every_pending_ref(monkeypatch):
     from core.microstake_sim_port import DbSagaStore, SagaStoreError
     engine, store = _engine_with_saga("v", "ROLLBACK_PENDING")
     calls = {"n": 0}
@@ -897,15 +910,12 @@ def test_c9_review2_store_unreadable_after_recovery_reports_every_pending_ref():
         def recover_pending(self):
             return {}
     engine.native_microstake_executor = lambda: _Exec()
-    DbSagaStore.pending_refs = flaky
-    try:
-        out = engine.recover_native_microstake_sagas()
-    finally:
-        DbSagaStore.pending_refs = real
+    monkeypatch.setattr(DbSagaStore, "pending_refs", flaky)
+    out = engine.recover_native_microstake_sagas()
     assert out["ok"] is False and out["status"] == "STORE_UNREADABLE" and out["pending"] == ["v"], out
 
 
-def test_c9_3_store_unreadable_after_recovery_is_fail_closed():
+def test_c9_3_store_unreadable_after_recovery_is_fail_closed(monkeypatch):
     from core.microstake_sim_port import DbSagaStore, SagaStoreError
     engine, store = _engine_with_saga("z", "ROLLBACK_PENDING")
     calls = {"n": 0}
@@ -922,13 +932,8 @@ def test_c9_3_store_unreadable_after_recovery_is_fail_closed():
             store.save("z", phase="ROLLED_BACK", reservation_held=False)
             return {"z": "ROLLED_BACK"}
     engine.native_microstake_executor = lambda: _Exec()
-    import core.microstake_sim_port as port_mod
-    old = port_mod.DbSagaStore.pending_refs
-    port_mod.DbSagaStore.pending_refs = flaky
-    try:
-        out = engine.recover_native_microstake_sagas()
-    finally:
-        port_mod.DbSagaStore.pending_refs = old
+    monkeypatch.setattr(DbSagaStore, "pending_refs", flaky)
+    out = engine.recover_native_microstake_sagas()
     assert out["ok"] is False and out["status"] == "STORE_UNREADABLE", out
 
 

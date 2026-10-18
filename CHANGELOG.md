@@ -40,8 +40,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Terzo riesame: fixture di `tests/test_pr512_review_cycle6.py` allineata a `acquire(..., pin=True)`; test sulle righe
   terminali con abbinato trovate per bet id (sempre AMBIGUOUS); `pf_trace` non deriva copertura da `|| true`,
   `PYTEST_ADDOPTS`, `-o addopts` e `--cache-show`.
-  Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale anche con
-  `anti_duplication_enabled=false`, perche' e' il vincolo «un segnale valido => un solo ordine», non il dedupe a TTL.
+  Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale con
+  `anti_duplication_enabled=true` (default), come estensione del dedupe oltre il TTL; con l'anti-duplicazione
+  disattivata dall'utente il comportamento resta quello precedente (la riconsegna dello stesso messaggio la ferma
+  l'engine col customer_ref stabile).
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
   (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
   `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:

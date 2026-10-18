@@ -3193,8 +3193,11 @@ class RuntimeController:
         # no. Un tavolo gia' occupato per questo evento e' una posizione aperta o incerta: nessun secondo
         # ordine (stesso invariante della ricostruzione F018 in `_rebuild_open_positions`). La chiave
         # resta acquisita e il tavolo trattenuto: nessun `_release_acquired_and_reject`, che libererebbe
-        # il tavolo della posizione viva.
-        if self.table_manager.find_by_event_key(event_key) is not None:
+        # il tavolo della posizione viva. Vale con l'anti-duplicazione ATTIVA (default): ne e' l'estensione
+        # oltre il TTL. Con l'anti-duplicazione disattivata dall'utente resta il comportamento precedente,
+        # mai un cambio silenzioso di un'impostazione (la riconsegna dello stesso messaggio la ferma l'engine
+        # col customer_ref stabile).
+        if self.config.anti_duplication_enabled and self.table_manager.find_by_event_key(event_key) is not None:
             self._reject_signal(signal, "evento_gia_in_posizione")
             return
 
