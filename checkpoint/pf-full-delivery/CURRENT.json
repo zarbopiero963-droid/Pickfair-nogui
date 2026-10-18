@@ -6,8 +6,8 @@
   "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere check su 2c6aa09; rispondere nei 10 thread Codex con i commit; triage review; resolve con prova; verdetto #512 + #426; se restano difetti confermati => ciclo 9 (deroga), altrimenti stop. Poi: patch isolate riconciliazione #505, roadmap.",
- "previous_checkpoint_sha": "9c3bfb74485879944d40902d706fb58792ea23dd",
+ "next_atomic_action": "Attendere check su 2c6aa09 (6 pending); triage Sol/Grok/Codex; resolve dei 10 thread Codex con prova; verdetto ciclo 8; ciclo 9 (438a0c6 + eventuali nuovi finding confermati) con stessa procedura; poi roadmap.",
+ "previous_checkpoint_sha": "6a908a4dbb45bfcc79e44405553032e1f6e64f9c",
  "schema": "pf-current/1",
- "seq": 29
+ "seq": 30
 }
