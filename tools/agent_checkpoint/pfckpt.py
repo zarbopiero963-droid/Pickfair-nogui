@@ -246,9 +246,12 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
             # come dichiarazione, mai inferita da uno SHA che semplicemente non si risolve.
             # Lo SHA dichiarato deve comunque essere un id di commit ben formato (riesame indipendente c9):
             # la dichiarazione esonera solo dalla risoluzione, mai dalla forma.
-            declared_unpublished = (t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip())
-                                    and re.fullmatch(r"[0-9a-f]{7,40}", tsha) is not None)
-            if not declared_unpublished and git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
+            # Vale per OGNI voce, dichiarata o no: un riferimento mobile (`HEAD`, `main`, `main~1`) si
+            # risolverebbe ma legherebbe l'esito a un commit diverso nel tempo (secondo riesame c9).
+            well_formed = re.fullmatch(r"[0-9a-f]{7,40}", tsha) is not None
+            declared_unpublished = (t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip()))
+            if not well_formed or (not declared_unpublished
+                                   and git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0):
                 problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
         art = t.get("artifact") if isinstance(t, dict) else None
         for a in ([art] if isinstance(art, str) else (art or [])):

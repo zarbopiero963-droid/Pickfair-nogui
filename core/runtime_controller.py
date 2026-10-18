@@ -4101,6 +4101,16 @@ class RuntimeController:
 
     def _restore_recovery_tables(self) -> bool:
         self._recovery_state_unreadable = False
+        if getattr(self, "_pending_cycle_reset", None) is not None:
+            # Lo stato si ricarica dal disco (START nello stesso processo): il reset mai persistito non
+            # vale piu', perche' perdite e baseline tornano quelle del ciclo VECCHIO. Applicarlo alla
+            # scrittura successiva metterebbe la baseline nuova accanto alle perdite vecchie (secondo
+            # riesame indipendente ciclo 9 #512). Abbandonato e dichiarato, mai silenzioso.
+            self._pending_cycle_reset = None
+            logger.error("RSR-12/F032: reset di ciclo mai persistito abbandonato al ricaricamento dello stato")
+            bus = getattr(self, "bus", None)
+            if bus is not None:
+                bus.publish("CYCLE_RESET_ABANDONED", {"reason": "state_reloaded_before_reset_was_persisted"})
         try:
             raw = (self.db.get_settings() or {}).get(self._RECOVERY_KEY)
             state = json.loads(raw) if raw not in (None, "") else {}

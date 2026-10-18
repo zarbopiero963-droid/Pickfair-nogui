@@ -154,4 +154,6 @@ un'evidenza pubblicata su un altro branch resta verificabile. Un'evidenza su un 
 ammessa solo se dichiarata esplicitamente (`"unpublished_tree": true` piu' una `sha_note` motivata): la
 dichiarazione resta visibile nel checkpoint e non e' mai inferita da uno SHA che semplicemente non si risolve. La
 dichiarazione esonera solo dalla risoluzione, mai dalla forma: lo `sha` resta un id di commit esadecimale minuscolo
-di 7-40 caratteri, altrimenti `test sha unresolved` (riesame indipendente del ciclo 9).
+di 7-40 caratteri, altrimenti `test sha unresolved` (riesame indipendente del ciclo 9). La forma vale per OGNI voce,
+dichiarata o no: un riferimento mobile (`HEAD`, `main`, `HEAD~1`) si risolverebbe a commit diversi nel tempo ed e'
+rifiutato (secondo riesame del ciclo 9).

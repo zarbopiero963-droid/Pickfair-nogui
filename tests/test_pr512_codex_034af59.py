@@ -697,6 +697,35 @@ def test_c9_review_unpersisted_reset_travels_with_the_next_recovery_write(tmp_pa
     assert writes == [[rc._RECOVERY_KEY]], writes
 
 
+def test_c9_review2_unpersisted_reset_is_abandoned_when_state_is_reloaded_in_process(tmp_path):
+    """Secondo riesame c9 (P2): reset non persistito, poi STOP/START nello stesso processo (lo stato si
+    ricarica dal disco: perdite e baseline del ciclo vecchio) => il reset in sospeso e' abbandonato e
+    dichiarato; la scrittura successiva NON mette la baseline nuova accanto alle perdite vecchie."""
+    rc = _c9_reset_controller(tmp_path, fail_on=None)
+    real_save = rc.db.save_settings
+    calls = {"n": 0}
+
+    def fail_first(payload):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk full")
+        return real_save(payload)
+    rc.db.save_settings = fail_first
+    assert rc.reset_cycle()["persisted"] is False and rc._pending_cycle_reset is not None
+    rc._load_expansion_baseline()                    # come start() nello stesso processo
+    rc._restore_recovery_tables()
+    assert rc._pending_cycle_reset is None
+    assert _events(rc, "CYCLE_RESET_ABANDONED") == [{"reason": "state_reloaded_before_reset_was_persisted"}]
+    assert rc.table_manager.recovery_state() == {1: pytest.approx(3.0)}
+    writes = []
+    rc.db.save_settings = lambda payload: (writes.append(sorted(payload)), real_save(payload))[1]
+    assert rc._persist_recovery_tables() is True
+    assert writes == [[rc._RECOVERY_KEY]], writes
+    again = _c9_restart(tmp_path)
+    assert again.table_manager.recovery_state() == {1: pytest.approx(3.0)}
+    assert again._expansion_baseline == pytest.approx(100.0), "baseline nuova accanto alle perdite vecchie"
+
+
 def test_c9_2_first_start_stays_a_single_baseline_write_without_marker(tmp_path):
     from test_f032_rsr12_units import _rc
     rc = _rc(tmp_path / "s.db")
@@ -765,6 +794,79 @@ def test_c9_review_saga_pending_in_store_but_missing_from_results_stays_pending(
     engine.native_microstake_executor = lambda: _Exec()
     out = engine.recover_native_microstake_sagas()
     assert out["ok"] is False and out["pending"] == ["w"], out
+
+
+def test_c9_review2_rollback_on_the_real_sim_port_terminates_after_a_stale_snapshot():
+    """Secondo riesame c9 (P2): sul broker SIM reale un ordine interamente cancellato sparisce dagli ordini
+    correnti; il rollback deciso si chiude comunque ROLLED_BACK leggendo la riga terminale per bet id."""
+    from core.microstake_safe import MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest, Phase, Side
+    from core.microstake_sim_port import DbSagaStore, SimulationExchangePort
+    from simulation_broker import SimulationBroker
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_sim_port import _Db
+    broker = SimulationBroker(starting_balance=100.0, db=_Db())
+    port = SimulationExchangePort(broker)
+    store = DbSagaStore(_Db())
+    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
+                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
+    coord = MicrostakeCoordinator(port, store, policy)
+    req = MicrostakeRequest(market_id="1.1", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
+                            target_price=D("1.00"), customer_ref="rb-real")      # 1.00 => replace rifiutato
+    real_cancel_all = port.cancel_all_remaining
+
+    def cancel_then_stale(bet_id):
+        out = real_cancel_all(bet_id)
+        port.last_snapshot_persisted = False
+        return out
+    port.cancel_all_remaining = cancel_then_stale
+    r0 = coord.execute(req, stub_price=D("3.00"))
+    assert r0.phase is Phase.AMBIGUOUS and r0.reason == "snapshot_not_persisted", (r0.phase, r0.reason)
+    assert port.find_by_ref("rb-real") is None                  # la riga cancellata non e' piu' corrente
+    port.cancel_all_remaining = real_cancel_all
+    assert port._snapshot() is True
+    before = len(port.operation_log)
+    res = coord.recover("rb-real")
+    assert res.phase is Phase.ROLLED_BACK and res.reservation_held is False, (res.phase, res.reason)
+    assert [op[0] for op in port.operation_log[before:]] == [], "nessuna seconda cancellazione, nessun replace"
+    assert store.load("rb-real")["phase"] == "ROLLED_BACK"
+
+
+def test_c9_review2_a_live_order_found_only_by_bet_id_is_not_taken_as_rolled_back(tmp_path):
+    """BLOCK: la lettura per bet id accetta solo una riga terminale senza residuo; un ordine ancora vivo
+    che find_by_ref non vede lascia la saga pendente, mai chiusa."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.find_by_ref = lambda ref: None
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res.phase is Phase.AMBIGUOUS and res.reason == "reconciliation_incomplete"
+    assert Store(path).load("rb-1")["phase"] == "ROLLBACK_PENDING" and ex.has_reservation("rb-1")
+    assert ex.operation_log[before:] == []
+
+
+def test_c9_review2_store_unreadable_after_recovery_reports_every_pending_ref():
+    from core.microstake_sim_port import DbSagaStore, SagaStoreError
+    engine, store = _engine_with_saga("v", "ROLLBACK_PENDING")
+    calls = {"n": 0}
+    real = DbSagaStore.pending_refs
+
+    def flaky(self):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise SagaStoreError("illeggibile")
+        return real(self)
+
+    class _Exec:
+        def recover_pending(self):
+            return {}
+    engine.native_microstake_executor = lambda: _Exec()
+    DbSagaStore.pending_refs = flaky
+    try:
+        out = engine.recover_native_microstake_sagas()
+    finally:
+        DbSagaStore.pending_refs = real
+    assert out["ok"] is False and out["status"] == "STORE_UNREADABLE" and out["pending"] == ["v"], out
 
 
 def test_c9_3_store_unreadable_after_recovery_is_fail_closed():

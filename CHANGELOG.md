@@ -30,6 +30,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   argomenti delle opzioni non sono bersagli, i comandi che filtrano i test (-k, -m, --deselect, --ignore, --lf,
   --collect-only) o che non invocano pytest non coprono nulla senza `tests` esplicito; (e) `unpublished_tree` esige
   comunque uno SHA ben formato; (f) una saga pendente nello store ma assente dai risultati del recover resta pendente.
+  Secondo riesame indipendente (prima del push): un reset non persistito e' abbandonato e dichiarato
+  (`CYCLE_RESET_ABANDONED`) quando lo stato si ricarica dal disco (START nello stesso processo), mai applicato alle
+  perdite del ciclo vecchio; sul broker SIM reale, dove l'ordine cancellato sparisce dagli ordini correnti, il rollback
+  deciso si chiude leggendo per bet id la riga terminale senza residuo (un ordine ancora vivo resta pendente);
+  `pf_trace` riconosce i filtri nei gruppi di opzioni corte (`-qk`, `-vm`), le opzioni che non eseguono test
+  (`--setup-plan`, `--fixtures`, ...) e `pytest` solo in posizione di comando; ogni SHA di test del checkpoint deve
+  essere esadecimale (mai `HEAD`/`main`); con store illeggibile dopo il recover si riportano tutti i ref pendenti.
   Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale anche con
   `anti_duplication_enabled=false`, perche' e' il vincolo «un segnale valido => un solo ordine», non il dedupe a TTL.
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**

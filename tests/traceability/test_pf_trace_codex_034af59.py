@@ -122,6 +122,13 @@ def test_explicit_tests_field_is_authoritative(tmp_path):
     "pytest -q tests/test_y.py (vedi anche tests/test_x.py)",          # commento tra parentesi
     "pytest --collect-only tests/test_x.py",                           # raccolta, nessuna esecuzione
     "pytest --lf tests/",
+    "pytest -qk not_ok tests/test_x.py",                              # gruppo di opzioni corte con k
+    "pytest -vm slow tests/test_x.py",                                # gruppo di opzioni corte con m
+    "pytest --setup-plan tests/test_x.py",                            # nessun test eseguito
+    "pytest --fixtures tests/test_x.py",
+    "pytest --setup-only tests/test_x.py",
+    "echo pytest tests/",                                             # pytest come testo, non esecuzione
+    "echo run; echo pytest tests/test_x.py",
 ])
 def test_c9_review_filtered_or_non_executing_commands_do_not_cover_the_test(tmp_path, command):
     """Riesame indipendente c9 (P2): un comando che esclude o filtra il test, o che nomina il path solo come
@@ -136,6 +143,8 @@ def test_c9_review_filtered_or_non_executing_commands_do_not_cover_the_test(tmp_
     "python3 -m pytest -q -p no:cacheprovider tests/test_x.py (3 passed)",
     "pytest -q tests/test_y.py; pytest -q tests/test_x.py",
     "venv312/bin/pytest --tb short tests/test_x.py::test_ok",
+    "PYTHONPATH=x /usr/bin/python3.12 -m pytest -q tests/test_x.py",
+    "pytest -qx tests/test_x.py",
 ])
 def test_c9_review_option_values_are_skipped_but_real_targets_still_cover(tmp_path, command):
     sha = _repo(tmp_path)

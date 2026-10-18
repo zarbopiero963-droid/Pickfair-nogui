@@ -60,6 +60,18 @@ def test_c9_review_declared_unpublished_tree_still_needs_a_well_formed_sha(world
     assert any("scratch" in p and "test sha unresolved" in p for p in err.detail["problems"])
 
 
+@pytest.mark.parametrize("moving_ref", ["HEAD", "main", "HEAD~1"])
+def test_c9_review2_a_moving_ref_is_never_accepted_as_test_sha(world, moving_ref):
+    """Secondo riesame c9: anche una voce NON dichiarata deve portare uno SHA, mai un riferimento mobile
+    che si risolve oggi a un commit e domani a un altro."""
+    from test_pfckpt import raw_commit
+    a = agent(world, "a")
+    _checkpoint_with_tests(a, world, [{"id": "mobile", "status": "PASS", "sha": moving_ref}])
+    raw_commit(a, "ckpt con riferimento mobile")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert any("mobile" in p and "test sha unresolved" in p for p in err.detail["problems"])
+
+
 def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
     a = agent(world, "a")
     _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},

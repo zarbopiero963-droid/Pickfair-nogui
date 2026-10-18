@@ -41,7 +41,12 @@ _PYTEST_VALUE_OPTS = frozenset({
 _PYTEST_FILTER_OPTS = frozenset({
     "-k", "-m", "--deselect", "--ignore", "--ignore-glob", "--lf", "--last-failed", "--ff", "--failed-first",
     "--sw", "--stepwise", "--co", "--collect-only", "--sw-skip", "--stepwise-skip",
+    # opzioni che terminano senza eseguire alcun test (exit 0)
+    "--setup-plan", "--setup-only", "--fixtures", "--fixtures-per-test", "--markers", "--version", "-V",
+    "--help", "-h",
 })
+# Comandi dopo i quali un `pytest` e' solo testo, non un'esecuzione.
+_NON_EXEC_COMMANDS = frozenset({"echo", "printf", "cat", "grep", "true", "false", "#", ":"})
 
 
 def _pytest_targets(command):
@@ -56,6 +61,14 @@ def _pytest_targets(command):
         idx = next((i for i, t in enumerate(tokens) if t == "pytest" or t.endswith("/pytest")), None)
         if idx is None:
             continue
+        # `pytest` deve stare in posizione di comando: primo token (dopo eventuali VAR=...), oppure
+        # `python -m pytest`. `echo pytest tests/` non e' un'esecuzione (secondo riesame c9).
+        head = [t for t in tokens[:idx] if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t)]
+        is_module = len(head) >= 2 and head[-1] == "-m" and re.search(r"python[0-9.]*$", head[-2] or "")
+        if head and not (is_module and len(head) == 2):
+            continue
+        if any(t in _NON_EXEC_COMMANDS for t in head):
+            continue
         skip_value = False
         for arg in tokens[idx + 1:]:
             if skip_value:
@@ -63,7 +76,8 @@ def _pytest_targets(command):
                 continue
             if arg.startswith("-"):
                 name = arg.split("=", 1)[0]
-                if name in _PYTEST_FILTER_OPTS or re.match(r"^-[km].", arg):
+                # anche un gruppo di opzioni corte (`-qk expr`, `-vm slow`) che contiene k o m filtra
+                if name in _PYTEST_FILTER_OPTS or re.match(r"^-[A-Za-z]*[km]", arg) and not arg.startswith("--"):
                     return None
                 if "=" not in arg and name in _PYTEST_VALUE_OPTS:
                     skip_value = True

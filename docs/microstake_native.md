@@ -114,7 +114,10 @@ fase persistita resta ROLLBACK_PENDING, così il recover successivo ritenta solo
 8 e 9, rilievi Codex su 034af59 e Sol). La decisione di rollback è registrata anche come flag durevole
 `rollback_intent`, che nessun salvataggio intermedio cancella: un recover che non trova l'ordine lascia la fase
 ROLLBACK_PENDING (non AMBIGUOUS generico), e un residuo già cancellato con snapshot SIM non persistito si chiude
-ROLLED_BACK al recover successivo senza una seconda cancellazione (riesame indipendente del ciclo 9). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
+ROLLED_BACK al recover successivo senza una seconda cancellazione (riesame indipendente del ciclo 9). Poiché il broker
+SIM non elenca più fra gli ordini correnti un ordine interamente cancellato, con rollback deciso la saga cerca l'ordine
+anche per bet id persistito e accetta solo una riga terminale senza residuo; un ordine ancora vivo non visto resta
+"non trovato" e la saga resta pendente (secondo riesame del ciclo 9). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
 durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); una saga
 pendente nello store ma assente dai risultati dell'esecutore resta pendente; ogni altro
 esito (AMBIGUOUS, FAILED, BLOCKED, ERROR) resta pendente. Se resta una saga pendente, lo store è illeggibile o manca

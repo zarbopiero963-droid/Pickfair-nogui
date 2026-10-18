@@ -2318,7 +2318,7 @@ class TradingEngine:
             after = set(store.pending_refs())
         except SagaStoreError as exc:
             return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc),
-                    "pending": sorted(results), "results": results}
+                    "pending": sorted(set(pending) | set(results)), "results": results}
         still = sorted({ref for ref, phase in results.items()
                         if phase not in ("ACTIVE", "ROLLED_BACK") or ref in after}
                        | (after - set(results)))   # pendente nello store ma non ripreso: resta pendente (c9)

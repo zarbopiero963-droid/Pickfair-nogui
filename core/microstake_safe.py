@@ -583,6 +583,17 @@ class MicrostakeCoordinator:
         transient = D(saved.get("transient_exposure", "0"))
         rollback_intent = saved.get("rollback_intent") is True or saved.get("phase") == Phase.ROLLBACK_PENDING.value
         order = self.exchange.find_by_ref(customer_ref)
+        if order is None and rollback_intent and saved.get("bet_id"):
+            # Rollback gia' deciso: un ordine interamente cancellato puo' sparire dagli ordini correnti
+            # (broker SIM reale). Si cerca per bet id persistito, ma si accetta SOLO una riga terminale
+            # senza residuo: un ordine ancora vivo resta "non trovato" e la saga resta pendente
+            # (secondo riesame indipendente ciclo 9 #512).
+            try:
+                by_id = self.exchange.order(str(saved["bet_id"]))
+            except Exception:
+                by_id = None
+            if by_id is not None and by_id.remaining == 0:
+                order = by_id
         if order is None:
             # Ordine non (ancora) visibile: riconciliazione incompleta. Un rollback gia' deciso resta
             # ROLLBACK_PENDING, mai declassato ad AMBIGUOUS generico (riesame indipendente ciclo 9 #512:
