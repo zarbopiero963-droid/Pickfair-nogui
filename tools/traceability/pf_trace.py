@@ -128,8 +128,11 @@ def validate(data, repo=".", previous=None):
                 errors.append(f"{rid}: {status} senza test")
             if not passes:
                 errors.append(f"{rid}: {status} senza evidenza PASS")
-            if latest and latest.get("result") == "FAIL":
-                errors.append(f"{rid}: {status} ma l'ultima evidenza e' FAIL (contraddizione)")
+            if latest and latest.get("result") != "PASS":
+                # rilievo Codex #512 su 034af59: conta l'ULTIMA evidenza applicabile, che deve essere PASS;
+                # un BLOCKED / NOT RUN / NOT VERIFIED successivo a un PASS invalida lo stato come un FAIL
+                errors.append(f"{rid}: {status} ma l'ultima evidenza e' {latest.get('result')} "
+                              "(contraddizione: l'ultima evidenza deve essere PASS)")
         if status in {"VERIFIED", "CERTIFIED"} and not r.get("reviewer"):
             errors.append(f"{rid}: {status} senza revisore")
         if status == "CERTIFIED" and (not r.get("gate") or not passes):
