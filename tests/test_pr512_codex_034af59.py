@@ -280,8 +280,27 @@ def test_f4_rollback_pending_with_failed_cancel_stays_ambiguous_with_reservation
     ex.cancel_all_mode = "fail"
     res = Coordinator(ex, Store(path), policy).recover("rb-1")
     assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "rollback_unknown"
-    assert Store(path).load("rb-1")["phase"] == "AMBIGUOUS" and ex.has_reservation("rb-1")
+    # rilievo Sol (ciclo 8): l'intento di rollback resta persistito, non viene sostituito da AMBIGUOUS
+    assert Store(path).load("rb-1")["phase"] == "ROLLBACK_PENDING" and ex.has_reservation("rb-1")
     assert not any(op[0] == "REPLACE" for op in ex.operation_log)
+
+
+def test_f4_rollback_intent_survives_a_failed_cancel_and_the_next_recover_only_cancels(tmp_path):
+    """Sol, range del ciclo 8: dopo una cancellazione fallita il recover successivo deve ritentare SOLO la
+    cancellazione del residuo (ROLLED_BACK), mai rientrare nel percorso riduzione/replace che riattiverebbe
+    l'ordine che la saga aveva deciso di annullare."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.cancel_all_mode = "fail"
+    assert Coordinator(ex, Store(path), policy).recover("rb-1").phase is Phase.AMBIGUOUS
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res.phase is Phase.ROLLED_BACK and res.reservation_held is False, res
+    new_ops = [op[0] for op in ex.operation_log[before:]]
+    assert new_ops == ["CANCEL"], new_ops
+    assert ex.order(res.bet_id).remaining == D("0") and not ex.has_reservation("rb-1")
+    assert Store(path).load("rb-1")["phase"] == "ROLLED_BACK"
 
 
 # ------------------------------------------------------------------ 5. reset con persistenza fallita

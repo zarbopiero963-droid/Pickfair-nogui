@@ -535,7 +535,9 @@ class MicrostakeCoordinator:
             try:
                 order = self.exchange.cancel_all_remaining(order.bet_id)
             except Exception:
-                self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)
+                # L'intento di rollback resta persistito (ROLLBACK_PENDING, rilievo Sol ciclo 8): il
+                # prossimo recover ritenta SOLO la cancellazione, mai il percorso riduzione/replace.
+                self.store.save(req.customer_ref, phase=Phase.ROLLBACK_PENDING, reason="rollback_unknown")
                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
                                     order=order, max_exposure=transient, held=True)
             return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
@@ -594,11 +596,13 @@ class MicrostakeCoordinator:
         if phase is Phase.ROLLBACK_PENDING:
             # Rollback gia' deciso prima del crash (replace rifiutato): si completa SOLO la
             # cancellazione del residuo, mai un nuovo replace che riattiverebbe la saga
-            # (rilievo Codex #512 su 034af59). Cancellazione fallita => AMBIGUOUS, riserva tenuta.
+            # (rilievo Codex #512 su 034af59). Cancellazione fallita => risultato AMBIGUOUS con riserva
+            # tenuta, ma la fase persistita RESTA ROLLBACK_PENDING (rilievo Sol ciclo 8): l'intento di
+            # rollback non si perde e il recover successivo ritenta solo la cancellazione.
             try:
                 order = self.exchange.cancel_all_remaining(order.bet_id)
             except Exception:
-                self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
+                self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, reason="rollback_unknown")
                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
                                     order=order, max_exposure=transient, held=True)
             return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
