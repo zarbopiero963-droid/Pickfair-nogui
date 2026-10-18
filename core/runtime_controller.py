@@ -2669,13 +2669,16 @@ class RuntimeController:
         # STESSO istante: la baseline fissata da questo reset non e' "precedente" al reset stesso.
         reset_ts = time.time()
         self._start_expansion_cycle("reset_cycle", set_at_ts=reset_ts)
-        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+        persisted = self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+        if not persisted:
+            self._declare_recovery_persist_failure("reset_cycle")
         status = self.get_status()
         self.bus.publish("RUNTIME_CYCLE_RESET", status)
         return {
             "reset": True,
             "status": status,
             "sim_reset_skipped": retained if self.simulation_mode else [],
+            "persisted": persisted,
         }
 
     # =========================================================
@@ -3999,6 +4002,14 @@ class RuntimeController:
             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
         return len(self.table_manager.recovery_state())
 
+    def _declare_recovery_persist_failure(self, source: str) -> None:
+        """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le
+        perdite perdonate in memoria tornerebbero dal DB. Fail-closed come nel settlement: capacita' di
+        recovery esaurita finche' una scrittura riesce, evento dichiarato, mai silenzioso."""
+        self._recovery_persist_failed = True
+        logger.error("RSR-12: stato dei tavoli di recovery non persistito dopo %s: capacita' bloccata", source)
+        self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
+
     def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
         try:
             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
@@ -4049,7 +4060,8 @@ class RuntimeController:
         self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
                                                          "exposure": account.get("committed")}
                                     if account.get("ok") else None, set_at_ts=reset_ts)   # F032: nuovo ciclo
-        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+        if not self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts):   # RSR-12 + marker reset (F032)
+            self._declare_recovery_persist_failure("auto_reset")
         self.bus.publish(
             "ROSERPINA_AUTO_RESET",
             {

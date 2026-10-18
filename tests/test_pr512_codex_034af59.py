@@ -238,3 +238,58 @@ def test_f4_rollback_pending_with_failed_cancel_stays_ambiguous_with_reservation
     assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "rollback_unknown"
     assert Store(path).load("rb-1")["phase"] == "AMBIGUOUS" and ex.has_reservation("rb-1")
     assert not any(op[0] == "REPLACE" for op in ex.operation_log)
+
+
+# ------------------------------------------------------------------ 5. reset con persistenza fallita
+def _reset_controller(tmp_path, *, fail_persist):
+    from test_f032_rsr12_units import _lose, _rc
+    rc = _rc(tmp_path / "w.db", funds={"available": 100.0, "exposure": 0.0})
+    rc.simulation_mode = False
+    rc._daily_loss_state_lock = threading.Lock()
+    rc._daily_loss_monitor_state = {"realized_pnl_day_baseline": 0.0, "realized_pnl": 0.0}
+    rc._session_pnl_baseline = None
+    rc.get_status = lambda: {}
+    rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0})
+    _lose(rc, 1, "A", 3.0)                                   # perdita 3.0 persistita sul tavolo 1
+    assert rc._active_recovery_count() == 1
+    if fail_persist:
+        real_save = rc.db.save_settings
+
+        def failing(payload):
+            if rc._RECOVERY_KEY in payload:
+                raise OSError("disk full")
+            return real_save(payload)
+        rc.db.save_settings = failing
+    return rc
+
+
+def _events(rc, name):
+    return [p for e, p in rc.bus.events if e == name]
+
+
+def test_f5_reset_cycle_persist_failure_is_declared_and_fail_closed(tmp_path):
+    rc = _reset_controller(tmp_path, fail_persist=True)
+    out = rc.reset_cycle()
+    assert out["reset"] is True and out["persisted"] is False, out
+    assert rc._recovery_persist_failed is True
+    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "reset_cycle"}]
+    assert rc._active_recovery_count() == rc.config.max_recovery_tables, "capacita' di recovery non esaurita"
+
+
+def test_f5_reset_cycle_persist_success_is_declared(tmp_path):
+    rc = _reset_controller(tmp_path, fail_persist=False)
+    out = rc.reset_cycle()
+    assert out["persisted"] is True and rc._recovery_persist_failed is False
+    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [] and rc._active_recovery_count() == 0
+
+
+def test_f5_auto_reset_persist_failure_is_declared_and_fail_closed(tmp_path):
+    rc = _reset_controller(tmp_path, fail_persist=True)
+    rc._account_snapshot = {"ok": True, "cash_equity": 80.0, "available": 80.0, "committed": 0.0}
+    rc._cash_equity_peak = 100.0
+    rc.config.auto_reset_drawdown_pct = 15.0
+    assert rc._maybe_auto_reset(20.0) is True
+    assert rc._recovery_persist_failed is True
+    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "auto_reset"}]
+    assert len(_events(rc, "ROSERPINA_AUTO_RESET")) == 1
+    assert rc._active_recovery_count() == rc.config.max_recovery_tables

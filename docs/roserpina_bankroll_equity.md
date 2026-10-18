@@ -99,6 +99,10 @@ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
 recuperare per tavolo) è salvato a ogni settlement e reset (`roserpina.recovery_tables_state`) e ripristinato al
 riavvio prima della ricostruzione F018. Un tavolo esce dal conteggio solo a perdita recuperata o con un reset
 autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery.
+Scrittura fallita (settlement, `reset_cycle`, auto-reset): capacità di recovery considerata esaurita finché una
+scrittura riesce, evento `RECOVERY_STATE_PERSIST_FAILED` pubblicato (`source` per i reset) e `persisted: false` nel
+risultato di `reset_cycle` — mai un reset "riuscito" in memoria che un crash farebbe tornare indietro (ciclo 8,
+rilievo Codex su 034af59).
 
 ## F029 — tavoli in recovery
 
