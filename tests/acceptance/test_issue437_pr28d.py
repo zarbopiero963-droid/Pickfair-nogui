@@ -239,19 +239,28 @@ def test_telegram_event_id_alias_reaches_runtime_event_cap(tmp_path):
     "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
     "max_drawdown_abs",
 ])
-def test_blank_persisted_absolute_cap_stays_configured_and_fails_closed(field):
+def test_blank_persisted_absolute_cap_is_not_active_but_unreadable_fails_closed(field):
+    """Rettifica owner 18/10/2026: i cap assoluti sono opzionali.
+
+    Vuoto/assente => None (non attivo, nessun default numerico); presente ma
+    illeggibile => NaN, che il runtime nega come `<nome>_non_valido`."""
     key = f"roserpina.{field}"
 
     class _Db:
+        def __init__(self, raw):
+            self._raw = raw
+
         def get_settings(self):
-            return {key: ""}
+            return {key: self._raw}
 
         def get_all_settings(self):
             return self.get_settings()
 
-    value = getattr(SettingsService(_Db()).load_roserpina_config(), field)
-    assert validators.finite_number(value) is None
-    assert value is not None
+    assert getattr(SettingsService(_Db("")).load_roserpina_config(), field) is None
+
+    unreadable = getattr(SettingsService(_Db("dieci euro")).load_roserpina_config(), field)
+    assert unreadable is not None
+    assert validators.finite_number(unreadable) is None
 
 
 def test_auto_trade_admission_uses_same_serial_lock_as_signal_orders():
