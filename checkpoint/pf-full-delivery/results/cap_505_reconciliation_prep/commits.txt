@@ -1,3 +1,6 @@
+022ee9d PF-CAP-10b/F3: messaggio di salvataggio bloccato veritiero (nessuna funzione di ricarica: solo riavvio)
+0cd2ff0 PF-CAP-10b/F1: salvataggio Roserpina bloccato se il caricamento iniziale e' fallito
+3369482 PF-CAP-10b: campo GUI vuoto disattiva davvero un cap monetario opzionale persistito
 6eb8e43 PF-CAP-11: docs cap assoluti opzionali (CHANGELOG, design handoff)
 cb6388e PF-CAP-10: adatta il test PR28-d sul cap persistito vuoto alla semantica opzionale
 550bc16 PF-CAP-01..04 + PF-CAP-10: cap assoluti Roserpina opzionali, nessun default numerico

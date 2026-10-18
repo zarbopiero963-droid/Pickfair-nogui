@@ -1,8 +1,8 @@
 diff --git a/CHANGELOG.md b/CHANGELOG.md
-index 70006be..0575b4e 100644
+index 70006be..9229a23 100644
 --- a/CHANGELOG.md
 +++ b/CHANGELOG.md
-@@ -8,11 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+@@ -8,11 +8,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
  
  ## [Unreleased]
  
@@ -24,7 +24,10 @@ index 70006be..0575b4e 100644
 +  loggate. `max_drawdown_abs` configurato mantiene il LOCKDOWN; assente non
 +  produce alcun lockdown. Rimosso il loader con default numerico
 +  (`_required_absolute_cap_value`); i campi GUI partono vuoti con etichetta
-+  «(€, vuoto = non attivo)».
++  «(€, vuoto = non attivo)». Salvare uno di questi quattro campi vuoto
++  disattiva anche un valore gia' persistito (scritto come vuoto, letto come
++  `None`, oscura la chiave legacy); gli hard-stop di perdita/esposizione
++  conservano la semantica «vuoto preserva il valore salvato» (PF-CAP-10b).
  - Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
    ambiguo o invalido viene rifiutato senza default BACK e senza invio.
  - P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
@@ -47,10 +50,10 @@ index 601d5fe..e2900a0 100644
      max_market_exposure: Optional[float] = None
      max_event_exposure_abs: Optional[float] = None
 diff --git a/docs/design/design_handoff.md b/docs/design/design_handoff.md
-index 5797e21..bcfd668 100644
+index 5797e21..3a01075 100644
 --- a/docs/design/design_handoff.md
 +++ b/docs/design/design_handoff.md
-@@ -362,7 +362,15 @@ e va riportata qui.
+@@ -362,7 +362,19 @@ e va riportata qui.
  
  # PR28-d — controlli assoluti Roserpina
  
@@ -65,13 +68,17 @@ index 5797e21..bcfd668 100644
 +`Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
 +`Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
 +mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
-+limite non attivo (il salvataggio non azzera un valore gia' persistito, come
-+per gli altri hard-stop); un valore presente deve essere un numero finito > 0,
++limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
++persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
++dove il vuoto preserva il valore salvato). Se il caricamento iniziale della configurazione
++Roserpina fallisce, il salvataggio del tab Roserpina e' bloccato con un errore esplicito («Configurazione
++Roserpina non caricata: salvataggio bloccato…»), cosi' i valori iniziali della GUI non sovrascrivono mai i
++limiti salvati; un valore presente deve essere un numero finito > 0,
 +altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
 +illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
 +ordini con `<nome>_non_valido`.
 diff --git a/mini_gui.py b/mini_gui.py
-index 8c65bf7..3a9e92b 100644
+index 8c65bf7..a6dfd71 100644
 --- a/mini_gui.py
 +++ b/mini_gui.py
 @@ -701,10 +701,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
@@ -106,8 +113,74 @@ index 8c65bf7..3a9e92b 100644
          self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
          self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
          self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
+@@ -1592,6 +1594,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         except Exception:
+             pass
+ 
++        # PF-CAP-10b/F1 (riesame indipendente): i campi Roserpina riflettono il persistito solo se il
++        # caricamento e' riuscito. Altrimenti un salvataggio scriverebbe i valori iniziali della GUI
++        # (cap opzionali vuoti => disattivati) sopra la configurazione scelta dall'utente: il save viene
++        # rifiutato con errore esplicito finche' un caricamento non riesce.
++        self._roserpina_loaded_ok = not hasattr(self.settings_service, "load_roserpina_config")
+         try:
+             if hasattr(self.settings_service, "load_roserpina_config"):
+                 rs = self.settings_service.load_roserpina_config()
+@@ -1638,8 +1645,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+                 risk_profile = getattr(rs, "risk_profile", None)
+                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
+                 self.rs_risk_profile_var.set(str(risk_profile_value))
++                self._roserpina_loaded_ok = True
+         except Exception:
+-            pass
++            _LOGGER.exception("Caricamento configurazione Roserpina fallito: salvataggio Roserpina bloccato")
++            self._roserpina_loaded_ok = False
+ 
+         try:
+             if hasattr(self.settings_service, "load_simulation_config"):
+@@ -1839,9 +1848,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+     def _parse_hard_stop(raw, label, *, is_pct=False):
+         """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
+ 
+-        - vuoto => None: il save preserva il valore persistito (non azzera un
+-          limite di sicurezza gia' configurato) e il gate LIVE resta bloccante
+-          se il campo non e' impostato;
++        - vuoto => None. Per gli hard-stop di perdita/esposizione il save
++          preserva il valore persistito (non azzera un limite di sicurezza gia'
++          configurato) e il gate LIVE resta bloccante se il campo non e'
++          impostato; per i quattro cap monetari opzionali (ordine, mercato,
++          evento, drawdown assoluto) il vuoto DISATTIVA il limite (PF-CAP-10b,
++          decisione owner 18/10/2026);
+         - valore presente: DEVE essere numerico, finito e > 0 (per la % anche
+           <= 100), coerente con `_validate_live_hard_stop_config` del deploy
+           gate (core/runtime_controller). Altrimenti solleva ValueError: il
+@@ -1965,6 +1977,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         return val
+ 
+     def _save_roserpina_settings(self):
++        if getattr(self, "_roserpina_loaded_ok", True) is False:
++            # Caricamento fallito: i campi non rappresentano il persistito. Salvare ora
++            # sovrascriverebbe (e per i cap opzionali disattiverebbe) i limiti dell'utente.
++            self._safe_show_error(
++                "Errore salvataggio Roserpina",
++                "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
++                "i limiti salvati. Riavvia l'applicazione.",
++            )
++            return
+         try:
+             from core.system_state import RoserpinaConfig, RiskProfile
+ 
+@@ -2060,7 +2081,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             except Exception as exc:
+                 reload_error = exc
+         # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
+-        # lasciato vuoto (semantica preserve) torna a mostrare il limite
++        # lasciato vuoto (semantica preserve, non per i quattro cap monetari
++        # opzionali che il vuoto disattiva) torna a mostrare il limite
+         # conservato, evitando una divergenza UI/stato (un limite attivo ma
+         # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
+         # altri tab ne' la logica force-simulation di _load_initial_settings.
 diff --git a/services/setting_service.py b/services/setting_service.py
-index 18de001..13d6077 100644
+index 18de001..48dbb31 100644
 --- a/services/setting_service.py
 +++ b/services/setting_service.py
 @@ -1,6 +1,7 @@
@@ -163,7 +236,24 @@ index 18de001..13d6077 100644
              max_session_loss=self._optional_hard_stop_value(
                  data,
                  "roserpina.max_session_loss",
-@@ -439,10 +463,26 @@ class SettingsService:
+@@ -419,10 +443,14 @@ class SettingsService:
+             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
+         if config.max_open_exposure is not None:
+             payload["roserpina.max_open_exposure"] = config.max_open_exposure
++        # PF-CAP-10b (decisione owner 18/10/2026): per i quattro cap monetari opzionali il
++        # campo vuoto (None) significa "limite NON attivo" anche per un valore gia' persistito:
++        # si scrive "" (che il loader legge come None) invece di saltare la chiave, cosi' il
++        # limite viene davvero disattivato e "" oscura anche la chiave legacy senza prefisso.
++        # Gli altri hard-stop qui sotto conservano la semantica documentata "vuoto preserva".
+         for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
+             value = getattr(config, field, None)
+-            if value is not None:
+-                payload[f"roserpina.{field}"] = value
++            payload[f"roserpina.{field}"] = "" if value is None else value
+         if config.max_session_loss is not None:
+             payload["roserpina.max_session_loss"] = config.max_session_loss
+         if config.max_exposure_stop is not None:
+@@ -439,10 +467,26 @@ class SettingsService:
          *,
          fallback_key: str | None = None,
      ) -> float | None:
@@ -190,7 +280,7 @@ index 18de001..13d6077 100644
          else:
              return None
  
-@@ -452,23 +492,9 @@ class SettingsService:
+@@ -452,23 +496,9 @@ class SettingsService:
          if isinstance(value, str) and value.strip() == "":
              return None
  
@@ -255,10 +345,10 @@ index 5d45118..d659f15 100644
  def test_auto_trade_admission_uses_same_serial_lock_as_signal_orders():
 diff --git a/tests/acceptance/test_issue437_pr28d_rectification.py b/tests/acceptance/test_issue437_pr28d_rectification.py
 new file mode 100644
-index 0000000..55028e1
+index 0000000..91ae153
 --- /dev/null
 +++ b/tests/acceptance/test_issue437_pr28d_rectification.py
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,338 @@
 +"""PR28-d, rettifica owner 18/10/2026: nessun cap monetario fisso di default.
 +
 +I quattro limiti assoluti in euro (`max_order_exposure`, `max_market_exposure`,
@@ -494,7 +584,7 @@ index 0000000..55028e1
 +        app.destroy()
 +
 +
-+def test_user_set_valid_values_persist_and_survive_reload_and_blank_save(tmp_path):
++def test_user_set_valid_values_persist_and_survive_reload_and_blank_save_deactivates(tmp_path):
 +    db, service = _real_settings(tmp_path)
 +    cfg = RoserpinaConfig(
 +        max_order_exposure=1.5, max_market_exposure=2.5,
@@ -506,11 +596,13 @@ index 0000000..55028e1
 +    assert (reloaded.max_order_exposure, reloaded.max_market_exposure,
 +            reloaded.max_event_exposure_abs, reloaded.max_drawdown_abs) == (1.5, 2.5, 3.5, 12.5)
 +
-+    # Save con i campi vuoti (None) => i valori persistiti NON vengono azzerati.
++    # PF-CAP-10b (decisione owner 18/10, riesame E1-a): campo vuoto = limite NON attivo
++    # anche dopo il salvataggio. Il save con i quattro cap a None li disattiva davvero
++    # (prima il valore persistito sopravviveva e l'etichetta "vuoto = non attivo" mentiva).
 +    service.save_roserpina_config(RoserpinaConfig())
 +    again = service.load_roserpina_config()
 +    assert (again.max_order_exposure, again.max_market_exposure,
-+            again.max_event_exposure_abs, again.max_drawdown_abs) == (1.5, 2.5, 3.5, 12.5)
++            again.max_event_exposure_abs, again.max_drawdown_abs) == (None, None, None, None)
 +
 +
 +@pytest.mark.parametrize("field", _CAPS)
@@ -541,3 +633,160 @@ index 0000000..55028e1
 +    db.save_settings({f"roserpina.{field}": "dieci euro"})
 +    value = getattr(service.load_roserpina_config(), field)
 +    assert value is not None and math.isnan(value)
++
++
++# --------------------------------------------------------------------------
++# PF-CAP-10b: campo GUI vuoto => il cap persistito viene DISATTIVATO al salvataggio
++# --------------------------------------------------------------------------
++@pytest.mark.parametrize("field", _CAPS)
++def test_blank_save_deactivates_a_previously_persisted_cap(tmp_path, field):
++    db, service = _real_settings(tmp_path)
++    service.save_roserpina_config(RoserpinaConfig(**{field: 1.0}))
++    assert getattr(service.load_roserpina_config(), field) == 1.0
++    service.save_roserpina_config(RoserpinaConfig(**{field: None}))      # campo vuoto in GUI
++    reloaded = SettingsService(Database(str(tmp_path / "rectification.db"))).load_roserpina_config()
++    assert getattr(reloaded, field) is None, "campo vuoto: il limite persistito deve risultare non attivo"
++
++
++@pytest.mark.parametrize("field", _CAPS)
++def test_blank_save_also_shadows_a_legacy_prefixless_key(tmp_path, field):
++    db, service = _real_settings(tmp_path)
++    db.save_settings({field: 1.0})                                       # chiave legacy senza prefisso
++    assert getattr(service.load_roserpina_config(), field) == 1.0
++    service.save_roserpina_config(RoserpinaConfig(**{field: None}))
++    assert getattr(service.load_roserpina_config(), field) is None
++
++
++def test_explicit_cap_is_rewritten_exactly_and_other_hard_stops_keep_preserve_semantics(tmp_path):
++    db, service = _real_settings(tmp_path)
++    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=1.0, max_daily_loss=50.0))
++    service.save_roserpina_config(RoserpinaConfig(max_order_exposure=4.25, max_daily_loss=None))
++    cfg = service.load_roserpina_config()
++    assert cfg.max_order_exposure == 4.25
++    # gli hard-stop di perdita/esposizione (non cap monetari della rettifica) conservano la
++    # semantica documentata "vuoto preserva il persistito": un vuoto non rimuove una protezione.
++    assert cfg.max_daily_loss == 50.0
++
++
++def test_blank_save_of_order_cap_lets_the_mm_stake_through(tmp_path):
++    """Cap 1 € persistito: lo stake MM 3 € e' rifiutato; dopo il salvataggio con il campo
++    vuoto e il reload della config lo stesso segnale arriva al broker con 3.0 € esatti."""
++    c = _catena_reale(tmp_path, **{"roserpina.max_order_exposure": 1.0})
++    c.rc._on_signal_received(_signal())
++    assert _rifiuti(c)[0].startswith("max_order_exposure_exceeded:limit=1.0")
++    assert c.broker.state.orders == {}
++
++    c.rc.settings_service.save_roserpina_config(
++        RoserpinaConfig(**{f: getattr(c.rc.config, f) for f in ("target_profit_cycle_pct", "max_single_bet_pct",
++                                                               "max_total_exposure_pct", "max_event_exposure_pct")},
++                        max_order_exposure=None))
++    c.rc.reload_config()
++    c.rc.risk_desk.bankroll_current = 100.0
++    c.rc.risk_desk.equity_peak = 100.0
++    assert c.rc.config.max_order_exposure is None
++    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:00:05.000000+00:00"))
++    cmds = c.bus.payloads("CMD_QUICK_BET")
++    assert len(cmds) == 1 and cmds[0]["stake"] == pytest.approx(3.0)
+diff --git a/tests/integration/test_mini_gui_optional_caps_save.py b/tests/integration/test_mini_gui_optional_caps_save.py
+new file mode 100644
+index 0000000..71706ca
+--- /dev/null
++++ b/tests/integration/test_mini_gui_optional_caps_save.py
+@@ -0,0 +1,97 @@
++"""PF-CAP-10b (rettifica owner 18/10/2026) — ciclo GUI reale sui quattro cap monetari opzionali.
++
++GUI test_mode con SettingsService e Database REALI: campo vuoto salvato => cap disattivato e campo
++riallineato; gli hard-stop di perdita conservano "vuoto preserva"; un valore persistito illeggibile
++blocca il salvataggio; caricamento iniziale fallito => salvataggio bloccato con errore esplicito,
++nessun limite dell'utente sovrascritto (riesame indipendente F1)."""
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from test_mini_gui_integration import _install_mini_gui_fakes  # noqa: E402
++
++from database import Database  # noqa: E402
++from services.settings_service import SettingsService as RealSettingsService  # noqa: E402
++
++
++def _app(monkeypatch, tmp_path, svc_cls=RealSettingsService, preset=None):
++    mini_gui = _install_mini_gui_fakes(monkeypatch, settings_service=svc_cls)
++    path = str(tmp_path / "gui.db")
++    if preset:
++        Database(path).save_settings(preset)
++    monkeypatch.setattr(mini_gui, "Database", lambda *a, **k: Database(path))
++    errors = []
++    app = mini_gui.MiniPickfairGUI(test_mode=True)
++    app._safe_show_error = lambda title, msg: errors.append((title, msg))
++    app._safe_show_info = lambda *a, **k: None
++    return app, path, errors
++
++
++def _load(path):
++    return RealSettingsService(Database(path)).load_roserpina_config()
++
++
++def test_blank_cap_field_saved_from_the_gui_deactivates_the_persisted_cap(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={
++        "roserpina.max_order_exposure": "1.0", "roserpina.max_daily_loss": "50"})
++    try:
++        assert app.rs_max_order_exposure_var.get() == "1.0"
++        app.rs_max_order_exposure_var.set("")
++        app.rs_max_daily_loss_var.set("")
++        app._save_roserpina_settings()
++        assert errors == []
++        cfg = _load(path)
++        assert cfg.max_order_exposure is None                 # disattivato
++        assert cfg.max_daily_loss == 50.0                     # hard-stop di perdita: vuoto preserva
++        assert app.rs_max_order_exposure_var.get() == ""
++        assert app.rs_max_daily_loss_var.get() == "50.0"
++    finally:
++        app.destroy()
++
++
++def test_untouched_cap_survives_a_save_of_another_field(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={"roserpina.max_market_exposure": "2.5"})
++    try:
++        app.rs_commission_var.set("5.0")
++        app._save_roserpina_settings()
++        assert errors == []
++        assert _load(path).max_market_exposure == 2.5
++    finally:
++        app.destroy()
++
++
++def test_unreadable_persisted_cap_blocks_the_save_and_is_not_cleared(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={"roserpina.max_order_exposure": "dieci"})
++    try:
++        app._save_roserpina_settings()
++        assert errors, "valore illeggibile: il salvataggio deve fallire in modo esplicito"
++        assert Database(path).get_settings()["roserpina.max_order_exposure"] == "dieci"
++    finally:
++        app.destroy()
++
++
++class _FlakyLoadSettingsService(RealSettingsService):
++    calls = 0
++
++    def load_roserpina_config(self):
++        type(self).calls += 1
++        if type(self).calls == 1:
++            raise RuntimeError("database is locked")
++        return super().load_roserpina_config()
++
++
++def test_failed_initial_load_blocks_the_save_and_keeps_every_user_limit(monkeypatch, tmp_path):
++    _FlakyLoadSettingsService.calls = 0
++    preset = {"roserpina.max_order_exposure": "1.0", "roserpina.max_drawdown_abs": "20",
++              "roserpina.max_daily_loss": "50", "roserpina.max_single_bet_pct": "12.0"}
++    app, path, errors = _app(monkeypatch, tmp_path, svc_cls=_FlakyLoadSettingsService, preset=preset)
++    try:
++        assert app.rs_max_order_exposure_var.get() == ""        # caricamento fallito: campi non affidabili
++        app._save_roserpina_settings()
++        assert errors and "non caricata" in errors[-1][1], errors
++        cfg = _load(path)
++        assert (cfg.max_order_exposure, cfg.max_drawdown_abs, cfg.max_daily_loss) == (1.0, 20.0, 50.0)
++        assert cfg.max_single_bet_pct == 12.0                   # nessun valore iniziale GUI scritto sopra
++    finally:
++        app.destroy()

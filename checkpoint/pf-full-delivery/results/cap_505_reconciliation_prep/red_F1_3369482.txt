@@ -1,0 +1,5 @@
+_____ test_failed_initial_load_blocks_the_save_and_keeps_every_user_limit ______
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-424/test_failed_initial_load_block0')
+    def test_failed_initial_load_blocks_the_save_and_keeps_every_user_limit(monkeypatch, tmp_path):
+FAILED tests/integration/test_mini_gui_optional_caps_save.py::test_failed_initial_load_blocks_the_save_and_keeps_every_user_limit
+1 failed, 3 passed in 0.68s

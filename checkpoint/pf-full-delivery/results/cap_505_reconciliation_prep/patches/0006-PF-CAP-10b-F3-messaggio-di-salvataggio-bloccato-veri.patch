@@ -1,0 +1,32 @@
+From 022ee9d619f04de65ea38166705dc499adbbdcac Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 19:14:18 +0000
+Subject: [PATCH 6/6] PF-CAP-10b/F3: messaggio di salvataggio bloccato
+ veritiero (nessuna funzione di ricarica: solo riavvio)
+
+Riesame indipendente di 0cd2ff0 (F3, solo testo): _load_initial_settings e'
+chiamato solo all'avvio, non esiste un comando di ricarica; il messaggio ora
+indica solo il riavvio.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ mini_gui.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mini_gui.py b/mini_gui.py
+index 0bf9507..a6dfd71 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -1983,7 +1983,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             self._safe_show_error(
+                 "Errore salvataggio Roserpina",
+                 "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
+-                "i limiti salvati. Riavvia l'applicazione o ricarica le impostazioni.",
++                "i limiti salvati. Riavvia l'applicazione.",
+             )
+             return
+         try:
+-- 
+2.43.0
+

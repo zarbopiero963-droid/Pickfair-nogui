@@ -1,0 +1,224 @@
+From 0cd2ff0113d99d49bd109c8fdf92ea01aa51386d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 19:11:32 +0000
+Subject: [PATCH 5/6] PF-CAP-10b/F1: salvataggio Roserpina bloccato se il
+ caricamento iniziale e' fallito
+
+Riesame indipendente di 3369482 (F1, ERRORE 2): se load_roserpina_config
+falliva all'avvio della GUI, i campi restavano ai valori iniziali (cap
+opzionali vuoti) e un salvataggio successivo li scriveva sopra la
+configurazione dell'utente, disattivando in silenzio i cap scelti (e
+sovrascrivendo le percentuali con i default GUI, gia' prima di 3369482).
+
+_load_initial_settings registra l'esito (_roserpina_loaded_ok);
+_save_roserpina_settings rifiuta con errore esplicito se il caricamento non
+e' riuscito, nessun valore scritto. Corretti i due commenti GUI che
+attribuivano la semantica "vuoto preserva" anche ai quattro cap opzionali.
+
+Test RED->GREEN: tests/integration/test_mini_gui_optional_caps_save.py
+(GUI test_mode con SettingsService e Database reali; 1 failed su 3369482,
+4 passed dopo): campo vuoto disattiva il cap, cap non toccato sopravvive,
+valore illeggibile blocca il save, caricamento fallito blocca il save e
+lascia intatti tutti i limiti. Doc: design_handoff.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ docs/design/design_handoff.md                 |  5 +-
+ mini_gui.py                                   | 30 +++++-
+ .../test_mini_gui_optional_caps_save.py       | 97 +++++++++++++++++++
+ 3 files changed, 126 insertions(+), 6 deletions(-)
+ create mode 100644 tests/integration/test_mini_gui_optional_caps_save.py
+
+diff --git a/docs/design/design_handoff.md b/docs/design/design_handoff.md
+index 7590d89..3a01075 100644
+--- a/docs/design/design_handoff.md
++++ b/docs/design/design_handoff.md
+@@ -371,7 +371,10 @@ La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
+ mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
+ limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
+ persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
+-dove il vuoto preserva il valore salvato); un valore presente deve essere un numero finito > 0,
++dove il vuoto preserva il valore salvato). Se il caricamento iniziale della configurazione
++Roserpina fallisce, il salvataggio del tab Roserpina e' bloccato con un errore esplicito («Configurazione
++Roserpina non caricata: salvataggio bloccato…»), cosi' i valori iniziali della GUI non sovrascrivono mai i
++limiti salvati; un valore presente deve essere un numero finito > 0,
+ altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
+ illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
+ ordini con `<nome>_non_valido`.
+diff --git a/mini_gui.py b/mini_gui.py
+index 3a9e92b..0bf9507 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -1594,6 +1594,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         except Exception:
+             pass
+ 
++        # PF-CAP-10b/F1 (riesame indipendente): i campi Roserpina riflettono il persistito solo se il
++        # caricamento e' riuscito. Altrimenti un salvataggio scriverebbe i valori iniziali della GUI
++        # (cap opzionali vuoti => disattivati) sopra la configurazione scelta dall'utente: il save viene
++        # rifiutato con errore esplicito finche' un caricamento non riesce.
++        self._roserpina_loaded_ok = not hasattr(self.settings_service, "load_roserpina_config")
+         try:
+             if hasattr(self.settings_service, "load_roserpina_config"):
+                 rs = self.settings_service.load_roserpina_config()
+@@ -1640,8 +1645,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+                 risk_profile = getattr(rs, "risk_profile", None)
+                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
+                 self.rs_risk_profile_var.set(str(risk_profile_value))
++                self._roserpina_loaded_ok = True
+         except Exception:
+-            pass
++            _LOGGER.exception("Caricamento configurazione Roserpina fallito: salvataggio Roserpina bloccato")
++            self._roserpina_loaded_ok = False
+ 
+         try:
+             if hasattr(self.settings_service, "load_simulation_config"):
+@@ -1841,9 +1848,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+     def _parse_hard_stop(raw, label, *, is_pct=False):
+         """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
+ 
+-        - vuoto => None: il save preserva il valore persistito (non azzera un
+-          limite di sicurezza gia' configurato) e il gate LIVE resta bloccante
+-          se il campo non e' impostato;
++        - vuoto => None. Per gli hard-stop di perdita/esposizione il save
++          preserva il valore persistito (non azzera un limite di sicurezza gia'
++          configurato) e il gate LIVE resta bloccante se il campo non e'
++          impostato; per i quattro cap monetari opzionali (ordine, mercato,
++          evento, drawdown assoluto) il vuoto DISATTIVA il limite (PF-CAP-10b,
++          decisione owner 18/10/2026);
+         - valore presente: DEVE essere numerico, finito e > 0 (per la % anche
+           <= 100), coerente con `_validate_live_hard_stop_config` del deploy
+           gate (core/runtime_controller). Altrimenti solleva ValueError: il
+@@ -1967,6 +1977,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         return val
+ 
+     def _save_roserpina_settings(self):
++        if getattr(self, "_roserpina_loaded_ok", True) is False:
++            # Caricamento fallito: i campi non rappresentano il persistito. Salvare ora
++            # sovrascriverebbe (e per i cap opzionali disattiverebbe) i limiti dell'utente.
++            self._safe_show_error(
++                "Errore salvataggio Roserpina",
++                "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
++                "i limiti salvati. Riavvia l'applicazione o ricarica le impostazioni.",
++            )
++            return
+         try:
+             from core.system_state import RoserpinaConfig, RiskProfile
+ 
+@@ -2062,7 +2081,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             except Exception as exc:
+                 reload_error = exc
+         # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
+-        # lasciato vuoto (semantica preserve) torna a mostrare il limite
++        # lasciato vuoto (semantica preserve, non per i quattro cap monetari
++        # opzionali che il vuoto disattiva) torna a mostrare il limite
+         # conservato, evitando una divergenza UI/stato (un limite attivo ma
+         # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
+         # altri tab ne' la logica force-simulation di _load_initial_settings.
+diff --git a/tests/integration/test_mini_gui_optional_caps_save.py b/tests/integration/test_mini_gui_optional_caps_save.py
+new file mode 100644
+index 0000000..71706ca
+--- /dev/null
++++ b/tests/integration/test_mini_gui_optional_caps_save.py
+@@ -0,0 +1,97 @@
++"""PF-CAP-10b (rettifica owner 18/10/2026) — ciclo GUI reale sui quattro cap monetari opzionali.
++
++GUI test_mode con SettingsService e Database REALI: campo vuoto salvato => cap disattivato e campo
++riallineato; gli hard-stop di perdita conservano "vuoto preserva"; un valore persistito illeggibile
++blocca il salvataggio; caricamento iniziale fallito => salvataggio bloccato con errore esplicito,
++nessun limite dell'utente sovrascritto (riesame indipendente F1)."""
++import os
++import sys
++
++sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
++
++from test_mini_gui_integration import _install_mini_gui_fakes  # noqa: E402
++
++from database import Database  # noqa: E402
++from services.settings_service import SettingsService as RealSettingsService  # noqa: E402
++
++
++def _app(monkeypatch, tmp_path, svc_cls=RealSettingsService, preset=None):
++    mini_gui = _install_mini_gui_fakes(monkeypatch, settings_service=svc_cls)
++    path = str(tmp_path / "gui.db")
++    if preset:
++        Database(path).save_settings(preset)
++    monkeypatch.setattr(mini_gui, "Database", lambda *a, **k: Database(path))
++    errors = []
++    app = mini_gui.MiniPickfairGUI(test_mode=True)
++    app._safe_show_error = lambda title, msg: errors.append((title, msg))
++    app._safe_show_info = lambda *a, **k: None
++    return app, path, errors
++
++
++def _load(path):
++    return RealSettingsService(Database(path)).load_roserpina_config()
++
++
++def test_blank_cap_field_saved_from_the_gui_deactivates_the_persisted_cap(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={
++        "roserpina.max_order_exposure": "1.0", "roserpina.max_daily_loss": "50"})
++    try:
++        assert app.rs_max_order_exposure_var.get() == "1.0"
++        app.rs_max_order_exposure_var.set("")
++        app.rs_max_daily_loss_var.set("")
++        app._save_roserpina_settings()
++        assert errors == []
++        cfg = _load(path)
++        assert cfg.max_order_exposure is None                 # disattivato
++        assert cfg.max_daily_loss == 50.0                     # hard-stop di perdita: vuoto preserva
++        assert app.rs_max_order_exposure_var.get() == ""
++        assert app.rs_max_daily_loss_var.get() == "50.0"
++    finally:
++        app.destroy()
++
++
++def test_untouched_cap_survives_a_save_of_another_field(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={"roserpina.max_market_exposure": "2.5"})
++    try:
++        app.rs_commission_var.set("5.0")
++        app._save_roserpina_settings()
++        assert errors == []
++        assert _load(path).max_market_exposure == 2.5
++    finally:
++        app.destroy()
++
++
++def test_unreadable_persisted_cap_blocks_the_save_and_is_not_cleared(monkeypatch, tmp_path):
++    app, path, errors = _app(monkeypatch, tmp_path, preset={"roserpina.max_order_exposure": "dieci"})
++    try:
++        app._save_roserpina_settings()
++        assert errors, "valore illeggibile: il salvataggio deve fallire in modo esplicito"
++        assert Database(path).get_settings()["roserpina.max_order_exposure"] == "dieci"
++    finally:
++        app.destroy()
++
++
++class _FlakyLoadSettingsService(RealSettingsService):
++    calls = 0
++
++    def load_roserpina_config(self):
++        type(self).calls += 1
++        if type(self).calls == 1:
++            raise RuntimeError("database is locked")
++        return super().load_roserpina_config()
++
++
++def test_failed_initial_load_blocks_the_save_and_keeps_every_user_limit(monkeypatch, tmp_path):
++    _FlakyLoadSettingsService.calls = 0
++    preset = {"roserpina.max_order_exposure": "1.0", "roserpina.max_drawdown_abs": "20",
++              "roserpina.max_daily_loss": "50", "roserpina.max_single_bet_pct": "12.0"}
++    app, path, errors = _app(monkeypatch, tmp_path, svc_cls=_FlakyLoadSettingsService, preset=preset)
++    try:
++        assert app.rs_max_order_exposure_var.get() == ""        # caricamento fallito: campi non affidabili
++        app._save_roserpina_settings()
++        assert errors and "non caricata" in errors[-1][1], errors
++        cfg = _load(path)
++        assert (cfg.max_order_exposure, cfg.max_drawdown_abs, cfg.max_daily_loss) == (1.0, 20.0, 50.0)
++        assert cfg.max_single_bet_pct == 12.0                   # nessun valore iniziale GUI scritto sopra
++    finally:
++        app.destroy()
+-- 
+2.43.0
+

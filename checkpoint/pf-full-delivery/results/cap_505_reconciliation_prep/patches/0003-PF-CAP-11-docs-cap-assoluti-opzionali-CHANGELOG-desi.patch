@@ -1,7 +1,7 @@
 From 6eb8e43bd9a944eb649d46fe1fdeb8eb54b2ef7f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 18 Oct 2026 14:15:40 +0000
-Subject: [PATCH 3/3] PF-CAP-11: docs cap assoluti opzionali (CHANGELOG, design
+Subject: [PATCH 3/6] PF-CAP-11: docs cap assoluti opzionali (CHANGELOG, design
  handoff)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,7 @@
 From cb6388e181c6110a47caf1192a66390c7e78a58f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 18 Oct 2026 14:15:40 +0000
-Subject: [PATCH 2/3] PF-CAP-10: adatta il test PR28-d sul cap persistito vuoto
+Subject: [PATCH 2/6] PF-CAP-10: adatta il test PR28-d sul cap persistito vuoto
  alla semantica opzionale
 
 test_blank_persisted_absolute_cap_stays_configured_and_fails_closed

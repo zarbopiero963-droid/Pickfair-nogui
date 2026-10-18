@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 33,
- "updated_at": "2026-10-18T18:57:20Z",
+ "seq": 34,
+ "updated_at": "2026-10-18T19:45:00Z",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "1) wt_cap505: RED->GREEN blank-save disattiva cap persistito, commit PF-CAP-10b, suite, riesame; 2) wt_c9: committare #1/#2 con RED->GREEN, fix #3/#4, cherry-pick, regressione, riesame, push unico ciclo 9.",
+ "next_atomic_action": "1) attendere regressione completa su 54ee05a e riesame del delta; 2) correggere eventuali rilievi confermati; 3) push unico del ciclo 9 su ccr-bcc81683-ud0hgc; 4) CI/Sol/Grok/Codex settled, risposte 'Fatto in commit' ai thread r4306954189, r4306954197, r4307328207, r4307328199, r4307328204, r4307328211 e al punto Sol c.6250774086, resolve con prova; 5) verdetto #512 e #426; 6) ciclo 10 solo se restano difetti confermati.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,7 +470,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "f1de77543d1b0f98e0ae2bb98642ae2f5247042e",
+ "previous_checkpoint_sha": "b7a8c1c8932de1d5fb19df98778abc6474390da8",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -536,7 +536,7 @@
  },
  "verified_vs_declared": "verified=True solo per test eseguiti in questa sessione sullo SHA indicato; il resto e' dichiarato",
  "gate_a_506": "NON PASS",
- "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
+ "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "live": "NO-GO",
  "dependencies": {
   "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata",
@@ -934,6 +934,14 @@
    "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
    "result": "N=2 ACTIVE (0 AMBIGUOUS), N=5 PAUSED dopo entrambi i riavvii (1 AMBIGUOUS), 0 duplicati; SIM non certificante",
    "artifact": "results/p8_multitable_lots_66036f8/SUMMARY.json"
+  },
+  {
+   "id": "ciclo 9 #7 rilievi riesame indipendente (RED->GREEN)",
+   "status": "PASS",
+   "sha": "54ee05a",
+   "unpublished_tree": true,
+   "sha_note": "commit locale sul branch ccr-bcc81683-ud0hgc non ancora pubblicato (push unico a fine ciclo)",
+   "result": "RED: 3+2+2+13+3+1 failed sul codice precedente; GREEN: tests/test_pr512_codex_034af59.py + tests/agent_checkpoint 121 passed, tests/traceability 60 passed; pf_trace validate --strict PASS"
   }
  ],
  "tests_missing": [
@@ -979,7 +987,7 @@
   "PF-PR-RECOVERY-DECISIONS-02": "mandato owner in chat 17/10 (decisioni 1-5); rapporto lotto su #506"
  },
  "cycles_pr512": {
-  "used": 8,
+  "used": 9,
   "cap": 5,
   "ceiling_with_owner_grants": 10,
   "deroghe": [
@@ -1005,13 +1013,21 @@
    "authorization": "#512 c.6250353538 (cicli 8-10) — ciclo 9 solo se restano difetti confermati dopo check/review del ciclo 8"
   },
   "cycle_9": {
-   "status": "IN_CORSO (locale)",
-   "commits_on_checkout": [
-    "438a0c6 readback pfckpt",
-    "916fda4 intento rollback (Sol)"
+   "status": "IN CORSO, non pubblicato",
+   "local_head": "54ee05a",
+   "commits": [
+    "438a0c6",
+    "916fda4",
+    "fd8ef30",
+    "a0d0673",
+    "f0d397b",
+    "54ee05a"
    ],
-   "worktree": "scratchpad/wt_c9 (base 916fda4): WIP non committato per fix Codex #1 dedupe/occupazione evento e #2 transizione reset atomica (core/duplication_guard.py, core/runtime_controller.py, tests/test_pr512_codex_034af59.py)",
-   "todo": "verificare RED/GREEN di #1/#2, committare; fix #3 ROLLED_BACK, #4 pf_trace; CHANGELOG/docs; cherry-pick; regressione; riesame; push unico"
+   "independent_review_1": "su f0d397b: 1 P1 (rollback_intent perso su recover senza ordine), 4 P2 (snapshot stantio su rollback, chiave fissata dopo F028, reset non persistito separabile, pf_trace aggirabile), 3 minori: tutti corretti in 54ee05a con RED->GREEN",
+   "independent_review_2": "in corso sul delta f0d397b..54ee05a",
+   "regression": "in corso su 54ee05a (quella su f0d397b interrotta perche' superata)",
+   "scope": "files == diff completo (82 file), verificato",
+   "push": "NON eseguito: unico push dopo regressione verde e riesame pulito"
   }
  },
  "threads_pr512": {
@@ -1019,7 +1035,7 @@
   "open": 21,
   "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
  },
- "verdict_pr512": "ciclo 8 concluso (#512 c. verdetto 2c6aa09); PR non pronta; ciclo 9 in corso",
+ "verdict_pr512": "ciclo 9 in preparazione locale (54ee05a); PR non pronta",
  "owner_rectification_20261018": {
   "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",

@@ -6,8 +6,8 @@
   "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "1) wt_cap505: RED->GREEN blank-save disattiva cap persistito, commit PF-CAP-10b, suite, riesame; 2) wt_c9: committare #1/#2 con RED->GREEN, fix #3/#4, cherry-pick, regressione, riesame, push unico ciclo 9.",
- "previous_checkpoint_sha": "f1de77543d1b0f98e0ae2bb98642ae2f5247042e",
+ "next_atomic_action": "1) attendere regressione completa su 54ee05a e riesame del delta; 2) correggere eventuali rilievi confermati; 3) push unico del ciclo 9 su ccr-bcc81683-ud0hgc; 4) CI/Sol/Grok/Codex settled, risposte 'Fatto in commit' ai thread r4306954189, r4306954197, r4307328207, r4307328199, r4307328204, r4307328211 e al punto Sol c.6250774086, resolve con prova; 5) verdetto #512 e #426; 6) ciclo 10 solo se restano difetti confermati.",
+ "previous_checkpoint_sha": "b7a8c1c8932de1d5fb19df98778abc6474390da8",
  "schema": "pf-current/1",
- "seq": 33
+ "seq": 34
 }
