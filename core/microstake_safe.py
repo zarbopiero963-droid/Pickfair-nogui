@@ -538,22 +538,36 @@ class MicrostakeCoordinator:
                 self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)
                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
                                     order=order, max_exposure=transient, held=True)
-            self.store.save(req.customer_ref, phase=Phase.ROLLED_BACK,
-                            reservation_held=False)
-            self.exchange.release_reservation(req.customer_ref)
-            return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
-                                order=order, max_exposure=transient)
+            return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
+                                               reason="replace_failed")
         return self._activate(req, order, transient)
+
+    def _reload_source_stale(self) -> bool:
+        """True se l'ULTIMO snapshot della fonte di reload dell'exchange (broker SIM) non e' stato
+        persistito: un adapter senza il concetto (LIVE, simulatore di unita') non e' mai stantio."""
+        return getattr(self.exchange, "last_snapshot_persisted", True) is False
+
+    def _terminal_or_ambiguous(self, customer_ref: str, req: MicrostakeRequest, phase: Phase, order: SimOrder,
+                               transient: Decimal, *, reason: str = "") -> MicrostakeResult:
+        """Chiude la saga in una fase TERMINALE (ACTIVE / ROLLED_BACK) solo se la fonte di reload e'
+        allineata all'exchange. Altrimenti la saga resta AMBIGUOUS con riserva tenuta e viene
+        riconciliata al riavvio: una fase terminale persistita PRIMA della retrocessione lascerebbe,
+        in caso di crash, una saga conclusa fuori da `pending_refs` sopra uno stato ricaricato senza
+        l'ordine (riesame indipendente del ciclo 8 #512 sul rilievo r4306954173)."""
+        if self._reload_source_stale():
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, bet_id=order.bet_id,
+                            reservation_held=True, reason="snapshot_not_persisted")
+            return self._result(Phase.AMBIGUOUS, req=req, reason="snapshot_not_persisted",
+                                order=order, max_exposure=transient, held=True)
+        self.store.save(customer_ref, phase=phase, bet_id=order.bet_id, reservation_held=False)
+        self.exchange.release_reservation(customer_ref)
+        return self._result(phase, req=req, reason=reason, order=order, max_exposure=transient, held=False)
 
     def _activate(self, req: MicrostakeRequest, order: SimOrder, transient: Decimal) -> MicrostakeResult:
         """Saga conclusa: l'ordine economico e' sull'exchange e i suoi fondi li contabilizza
         l'exchange stesso. La riserva TRANSITORIA (stub da 2 EUR) va rilasciata, altrimenti ogni
         microstake riuscito consumerebbe per sempre 2 EUR di cap (rilievo Codex PR #512)."""
-        self.store.save(req.customer_ref, phase=Phase.ACTIVE, bet_id=order.bet_id,
-                        reservation_held=False)
-        self.exchange.release_reservation(req.customer_ref)
-        return self._result(Phase.ACTIVE, req=req, order=order,
-                            max_exposure=transient, held=False)
+        return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ACTIVE, order, transient)
 
     def recover(self, customer_ref: str) -> MicrostakeResult:
         saved = self.store.load(customer_ref)
@@ -587,10 +601,8 @@ class MicrostakeCoordinator:
                 self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
                                     order=order, max_exposure=transient, held=True)
-            self.store.save(customer_ref, phase=Phase.ROLLED_BACK, reservation_held=False)
-            self.exchange.release_reservation(customer_ref)
-            return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
-                                order=order, max_exposure=transient)
+            return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
+                                               reason="replace_failed")
         # Complete a known accepted, fully-unmatched stub.
         reduction = self.policy.exchange_stub_size - req.economic_stake
         if order.remaining == self.policy.exchange_stub_size:

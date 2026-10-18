@@ -119,6 +119,50 @@ def test_f2_intermediate_snapshot_failure_recovered_by_the_final_one_stays_activ
     assert res["snapshot_persisted"] is False and engine.microstake_executor.port.snapshot_failures == 1
 
 
+class _Crash2(BaseException):
+    pass
+
+
+def test_f2_coordinator_never_persists_active_while_the_reload_source_is_stale(monkeypatch):
+    """Riesame indipendente del ciclo 8: la retrocessione ad AMBIGUOUS avveniva nell'esecutore DOPO che il
+    coordinatore aveva gia' persistito ACTIVE e rilasciato la riserva. Un crash in quella finestra lasciava
+    una saga conclusa fuori da pending_refs sopra una fonte di reload senza l'ordine. Ora il coordinatore
+    persiste AMBIGUOUS (riserva tenuta) quando l'ultimo snapshot non e' stato persistito."""
+    from core.microstake_sim_port import NativeSimMicrostakeExecutor
+    engine, broker, payload = _native_engine()
+    ex = engine.microstake_executor
+    broker.persist_snapshot = lambda: False
+
+    def crash(self, payload, out):
+        raise _Crash2()
+    monkeypatch.setattr(NativeSimMicrostakeExecutor, "_demote_unpersisted_active", crash)
+    try:
+        ex.execute(payload("win", size=0.10, price=3.0))
+    except _Crash2:
+        pass
+    saga = ex.store.load("win")
+    assert saga["phase"] == "AMBIGUOUS" and saga["reservation_held"] is True, saga
+    assert "win" in ex.store.pending_refs() and ex.port.has_reservation("win")
+
+
+def test_f2_rolled_back_with_unpersisted_snapshot_stays_ambiguous_with_reservation(tmp_path):
+    """Stessa famiglia: anche ROLLED_BACK e' terminale (escluso da pending_refs). Con la fonte di reload
+    stantia la saga resta AMBIGUOUS con riserva tenuta, invece di chiudersi sopra uno stato che al riavvio
+    ricaricherebbe lo stub ancora aperto."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.cancel_all_mode = "ok"
+    ex.last_snapshot_persisted = False
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "snapshot_not_persisted"
+    saved = Store(path).load("rb-1")
+    assert saved["phase"] == "AMBIGUOUS" and saved["reservation_held"] is True and ex.has_reservation("rb-1")
+    ex.last_snapshot_persisted = True
+    res2 = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res2.phase in (Phase.ROLLED_BACK, Phase.AMBIGUOUS)
+    assert not any(op[0] == "REPLACE" for op in ex.operation_log)
+
+
 def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
     engine, broker, payload = _native_engine()
     ex = engine.microstake_executor

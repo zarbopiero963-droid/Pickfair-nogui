@@ -1034,7 +1034,8 @@ class DutchingController:
         # osservazione (liquidity_warning_only=False), BLOCCA il submit PRIMA di
         # ogni side-effect (duplication acquire), come il book% gate. In modalita'
         # avviso (default opt-in) segnala soltanto (liquidity_warning/shortfall nel
-        # risultato). FAIL-OPEN su dato mancante (cache fredda => nessun blocco).
+        # risultato). Book assente (cache fredda) => nessuna osservazione; liquidita'
+        # IGNOTA di una gamba con il guard armato => blocco LIQUIDITY_UNKNOWN (ciclo 8 #512).
         liquidity = self._evaluate_liquidity_guard(config, payload, results)
         if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
             # Segnale di blocco AUTOREVOLE: ok=False. NON si aggiunge
