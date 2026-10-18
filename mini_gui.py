@@ -1983,7 +1983,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             self._safe_show_error(
                 "Errore salvataggio Roserpina",
                 "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
-                "i limiti salvati. Riavvia l'applicazione o ricarica le impostazioni.",
+                "i limiti salvati. Riavvia l'applicazione.",
             )
             return
         try:
