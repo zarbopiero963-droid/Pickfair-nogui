@@ -569,6 +569,20 @@ class MicrostakeCoordinator:
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciled_matched_stub",
                                 order=order, max_exposure=transient, held=True)
+        if phase is Phase.ROLLBACK_PENDING:
+            # Rollback gia' deciso prima del crash (replace rifiutato): si completa SOLO la
+            # cancellazione del residuo, mai un nuovo replace che riattiverebbe la saga
+            # (rilievo Codex #512 su 034af59). Cancellazione fallita => AMBIGUOUS, riserva tenuta.
+            try:
+                order = self.exchange.cancel_all_remaining(order.bet_id)
+            except Exception:
+                self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
+                return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
+                                    order=order, max_exposure=transient, held=True)
+            self.store.save(customer_ref, phase=Phase.ROLLED_BACK, reservation_held=False)
+            self.exchange.release_reservation(customer_ref)
+            return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
+                                order=order, max_exposure=transient)
         # Complete a known accepted, fully-unmatched stub.
         reduction = self.policy.exchange_stub_size - req.economic_stake
         if order.remaining == self.policy.exchange_stub_size:

@@ -108,7 +108,9 @@ scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blo
 ## 5. Recovery all'avvio (`RuntimeController.start`, prima di F018)
 
 `TradingEngine.recover_native_microstake_sagas()` riprende ogni saga non conclusa dalla sua identità persistita
-(solo riduzione/replace mancanti, **mai un nuovo PLACE**). Se resta una saga pendente, lo store è illeggibile o manca
+(solo riduzione/replace mancanti, **mai un nuovo PLACE**; una saga salvata **ROLLBACK_PENDING** completa solo la
+cancellazione del residuo → ROLLED_BACK, AMBIGUOUS se la cancellazione fallisce, mai un replace — ciclo 8, rilievo
+Codex su 034af59). Se resta una saga pendente, lo store è illeggibile o manca
 l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
 e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe

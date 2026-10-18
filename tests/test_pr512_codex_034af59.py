@@ -172,3 +172,69 @@ def test_f3_evaluate_guard_blocks_on_unknown_liquidity_only_when_armed():
     assert armed["warning"] is True and armed["shortfall"][0]["reason"] == "LIQUIDITY_UNKNOWN"
     observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
     assert observe == {"warning": False, "shortfall": []}
+
+
+# ------------------------------------------------------------------ 4. ROLLBACK_PENDING al riavvio
+class _Crash(BaseException):
+    """Crash di processo (non Exception: nessun handler della saga lo intercetta)."""
+
+
+def _rollback_world(tmp_path):
+    from core.microstake_safe import (JsonSagaStore, MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest,
+                                      Side, StatefulExchangeSimulator)
+
+    class _Exchange(StatefulExchangeSimulator):
+        def __init__(self):
+            super().__init__(balance=D("100"))
+            self.reject_replace_once = True
+            self.cancel_all_mode = "crash"      # crash | fail | ok
+
+        def replace(self, bet_id, new_price):
+            if self.reject_replace_once:
+                self.reject_replace_once = False
+                raise RuntimeError("REPLACE_REJECTED")
+            return super().replace(bet_id, new_price)
+
+        def cancel_all_remaining(self, bet_id):
+            if self.cancel_all_mode == "crash":
+                raise _Crash()
+            if self.cancel_all_mode == "fail":
+                raise RuntimeError("CANCEL_REJECTED")
+            return super().cancel_all_remaining(bet_id)
+
+    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
+                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
+    ex = _Exchange()
+    path = tmp_path / "saga.json"
+    req = MicrostakeRequest(market_id="1.100", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
+                            target_price=D("2.00"), customer_ref="rb-1")
+    with pytest.raises(_Crash):
+        MicrostakeCoordinator(ex, JsonSagaStore(path), policy).execute(req, stub_price=D("3.00"))
+    assert JsonSagaStore(path).load("rb-1")["phase"] == "ROLLBACK_PENDING"
+    assert ex.has_reservation("rb-1")
+    return ex, path, policy, MicrostakeCoordinator, JsonSagaStore
+
+
+def test_f4_rollback_pending_is_cancelled_at_restart_never_replaced(tmp_path):
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res.phase is Phase.ROLLED_BACK and res.reservation_held is False, res
+    new_ops = ex.operation_log[before:]
+    assert [op[0] for op in new_ops] == ["CANCEL"] and new_ops[0][2] == "0.10", new_ops   # il residuo, non lo stub
+    assert ex.order(res.bet_id).remaining == D("0")
+    saved = Store(path).load("rb-1")
+    assert saved["phase"] == "ROLLED_BACK" and saved["reservation_held"] is False
+    assert not ex.has_reservation("rb-1")
+
+
+def test_f4_rollback_pending_with_failed_cancel_stays_ambiguous_with_reservation(tmp_path):
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.cancel_all_mode = "fail"
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "rollback_unknown"
+    assert Store(path).load("rb-1")["phase"] == "AMBIGUOUS" and ex.has_reservation("rb-1")
+    assert not any(op[0] == "REPLACE" for op in ex.operation_log)
