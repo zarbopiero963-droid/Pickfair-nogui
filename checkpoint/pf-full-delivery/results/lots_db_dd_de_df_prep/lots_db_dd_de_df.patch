@@ -1,0 +1,1271 @@
+From fdc650adb4acc3285629da7128a3c98d2912a858 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 09:45:45 +0000
+Subject: [PATCH 1/2] [TASK: pf-decisions-db-dd-de-df] lotti D-B/D-D/D-E/D-F
+ (PF-DECISIONS-DA-DJ-20261018) + hardening check+reserve
+
+Preparazione locale sul head f62f0e3 della #512 (NON pubblicata: una PR per repository, 6 cicli usati).
+- D-B: riserve incerte al riavvio => PAUSED (RECONCILIATION_REQUIRED:UNCERTAIN_POSITIONS:n), resume() rifiuta
+  finche' non sciolte; RuntimeController._post_rebuild_reconciliation.
+- D-D: CashoutExecutor, un solo cashout attivo per posizione fino a riconciliazione (registro hedge,
+  RUNTIME_CLOSE_POSITION, provider ordini correnti, fail-closed senza provider); wiring.
+- D-E: minimo configurato (min_stake della config Roserpina del runtime) verificato a ogni richiesta nel
+  Microstake nativo; minimo non valido/illeggibile => blocco pre-invio; nessuna modifica silenziosa.
+- D-F: settlement LIVE per-bet aggregato per mercato: tavolo rilasciato con l'ultima gamba e il netto.
+- Hardening: check+reserve atomici per ref nel coordinatore (Sol c.6248273030, teorico).
+Test RED->GREEN: tests/test_pf_decisions_de_df_dd.py (20), tests/f026/test_f018_rebuild_units.py (+4).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ CHANGELOG.md                          |  16 ++
+ cashout_executor.py                   | 100 ++++++++-
+ cashout_wiring.py                     |   6 +-
+ core/microstake_safe.py               |  49 ++++-
+ core/microstake_sim_port.py           |  12 +-
+ core/runtime_controller.py            |  78 ++++++-
+ core/trading_engine.py                |  23 ++-
+ docs/cashout_overview.md              |   9 +
+ docs/microstake_native.md             |   4 +
+ docs/roserpina_bankroll_equity.md     |   9 +-
+ tests/f026/test_f018_rebuild_units.py |  49 +++++
+ tests/test_pf_decisions_de_df_dd.py   | 284 ++++++++++++++++++++++++++
+ tests/unit/test_cashout_wiring.py     |   5 +-
+ 13 files changed, 615 insertions(+), 29 deletions(-)
+ create mode 100644 tests/test_pf_decisions_de_df_dd.py
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3c1a804..dc6fb7e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### Changed
++- **Decisioni owner D-D / D-E / D-F (PF-DECISIONS-DA-DJ-20261018):** D-D `CashoutExecutor` tiene UN solo cashout
++  attivo per posizione (mercato, selezione, lato) fino a riconciliazione: AMBIGUOUS o hedge piazzato ancora vivo
++  sull'exchange => `CASHOUT_FAILED` REJECTED (`cashout_pending_reconciliation` / `cashout_order_still_live:<betId>`),
++  liberazione al settlement del mercato (`RUNTIME_CLOSE_POSITION`), all'esecuzione integrale o quando l'exchange non
++  riporta piu' l'ordine; senza provider degli ordini correnti fail-closed. D-E il Microstake nativo usa il minimo
++  CONFIGURATO (`min_stake` della config Roserpina del runtime) verificato a ogni richiesta, non il floor 0,10 EUR:
++  minimo non valido/illeggibile => blocco pre-invio (`minimum_stake_invalid` / `minimum_stake_unavailable`), mai una
++  modifica silenziosa dello stake. D-F in LIVE il tavolo del mercato si rilascia solo con l'ULTIMA bet regolata e il
++  netto aggregato per `bet_id` (`_accumulate_market_settlement`), mai alla prima gamba. Hardening: check+reserve
++  atomici per ref nel coordinatore Microstake (Sol c.6248273030, teorico).
++- **Decisione owner D-B (PF-DECISIONS-DA-DJ-20261018, PF-EXEC-06):** al riavvio, una riserva INCERTA ancora
++  trattenuta (AMBIGUOUS/INFLIGHT, SUBMITTED senza identita' certa) tiene il runtime in PAUSED
++  (`RECONCILIATION_REQUIRED:UNCERTAIN_POSITIONS:n`) finche' un esito certo non la scioglie; `resume()` rifiuta con lo
++  stesso motivo. Prima: ACTIVE con la riserva trattenuta sul suo tavolo (P8 #510). `RuntimeController._post_rebuild_reconciliation`.
++
+ ### Fixed
+ - **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
+   la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
+diff --git a/cashout_executor.py b/cashout_executor.py
+index b9801fc..ca3fc21 100644
+--- a/cashout_executor.py
++++ b/cashout_executor.py
+@@ -41,6 +41,7 @@ from __future__ import annotations
+ 
+ import logging
+ import math
++import threading
+ from typing import Any, Dict, Optional
+ 
+ from core.trading_constants import (
+@@ -57,14 +58,92 @@ class CashoutExecutor:
+ 
+     _VALID_SIDES = {"BACK", "LAY"}
+ 
+-    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None) -> None:
++    def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
++                 current_orders_provider: Optional[Any] = None) -> None:
+         self.bus = bus
+         self.order_router = order_router
+         self.safety_layer = safety_layer
++        # Decisione owner D-D (PF-DECISIONS-DA-DJ-20261018): UN solo cashout attivo per posizione
++        # (mercato, selezione, lato) fino a riconciliazione. Registro in-process degli hedge non
++        # ancora riconciliati; `current_orders_provider(market_id)` -> ordini correnti dell'exchange
++        # per verificare se un hedge piazzato e' ancora vivo. Senza provider: fail-closed.
++        self.current_orders_provider = current_orders_provider
++        self._active_hedges: Dict[tuple, Dict[str, Any]] = {}
++        self._hedge_lock = threading.Lock()
+ 
+     def wire(self) -> None:
+-        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus."""
++        """Sottoscrive il consumer di ``CMD_EXECUTE_CASHOUT`` al bus (e la riconciliazione D-D)."""
+         self.bus.subscribe(CMD_EXECUTE_CASHOUT, self.on_cmd_execute_cashout)
++        self.bus.subscribe("RUNTIME_CLOSE_POSITION", self.on_market_reconciled)
++
++    # =========================================================
++    # D-D: un solo cashout attivo per posizione fino a riconciliazione
++    # =========================================================
++    @staticmethod
++    def _position_key(payload: Dict[str, Any]) -> tuple:
++        return (str(payload.get("market_id", "")), str(payload.get("selection_id", "")),
++                str(payload.get("side", "")).upper())
++
++    def _hedge_block_reason(self, key: tuple) -> Optional[str]:
++        """Motivo del rifiuto se la posizione ha gia' un cashout non riconciliato, altrimenti None.
++
++        AMBIGUOUS => bloccata finche' il mercato non e' regolato (``on_market_reconciled``) o la
++        posizione non e' riconciliata esplicitamente; hedge piazzato ma non eseguito per intero =>
++        bloccata finche' l'exchange lo riporta ancora fra gli ordini correnti; provider assente o
++        illeggibile => bloccata (fail-closed: un dato mancante non vale «nessun ordine»).
++        """
++        entry = self._active_hedges.get(key)
++        if entry is None:
++            return None
++        state = entry.get("state")
++        if state in ("PENDING", "AMBIGUOUS"):
++            return "cashout_pending_reconciliation"
++        bet_id = str(entry.get("bet_id") or "")
++        provider = self.current_orders_provider
++        if not callable(provider):
++            return f"cashout_order_still_live:{bet_id or 'unknown'}"
++        try:
++            current = provider(key[0]) or []
++            live_ids = {str(o.get("bet_id") or o.get("betId") or "") for o in current if isinstance(o, dict)}
++        except Exception:  # noqa: BLE001 - exchange illeggibile => nessun nuovo hedge
++            return f"cashout_order_still_live:{bet_id or 'unknown'}"
++        if bet_id and bet_id in live_ids:
++            return f"cashout_order_still_live:{bet_id}"
++        self._active_hedges.pop(key, None)       # riconciliato dall'exchange: non piu' fra i correnti
++        return None
++
++    def _record_hedge_outcome(self, key: tuple, result: Dict[str, Any], payload: Dict[str, Any]) -> None:
++        matched = self._as_float(result.get("matched"))
++        stake = self._as_float(payload.get("stake"))
++        with self._hedge_lock:
++            if result.get("order_unknown"):
++                self._active_hedges[key] = {"state": "AMBIGUOUS", "bet_id": result.get("bet_id")}
++            elif result.get("placed") and matched + 1e-9 < stake:
++                self._active_hedges[key] = {"state": "LIVE", "bet_id": result.get("bet_id"), "matched": matched}
++            else:
++                self._active_hedges.pop(key, None)   # eseguito per intero, oppure mai piazzato
++
++    def on_market_reconciled(self, payload: Any) -> None:
++        """Settlement confermato del mercato (``RUNTIME_CLOSE_POSITION``): le posizioni di quel mercato
++        sono riconciliate, gli hedge registrati si sciolgono."""
++        if not isinstance(payload, dict):
++            return
++        market_id = str(payload.get("market_id") or "")
++        if not market_id:
++            return
++        with self._hedge_lock:
++            for key in [k for k in self._active_hedges if k[0] == market_id]:
++                self._active_hedges.pop(key, None)
++
++    def reconcile_position(self, market_id: Any, selection_id: Any, side: Any) -> bool:
++        """Riconciliazione esplicita (operatore/runtime) di una posizione: libera il registro."""
++        key = (str(market_id), str(selection_id), str(side or "").upper())
++        with self._hedge_lock:
++            return self._active_hedges.pop(key, None) is not None
++
++    def active_hedges(self) -> Dict[tuple, Dict[str, Any]]:
++        with self._hedge_lock:
++            return {k: dict(v) for k, v in self._active_hedges.items()}
+ 
+     def on_cmd_execute_cashout(self, payload: Dict[str, Any]) -> None:
+         """Esegue un singolo comando di cashout, fail-closed end-to-end."""
+@@ -98,13 +177,24 @@ class CashoutExecutor:
+         # Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (la
+         # finestra della chiamata di rete) → flag sim errato (Codex P2).
+         sim = self._is_simulation()
++        key = self._position_key(payload)
++        with self._hedge_lock:
++            block = self._hedge_block_reason(key)
++            if block is None:
++                self._active_hedges[key] = {"state": "PENDING"}
++        if block is not None:
++            self._fail(block, status="REJECTED", payload=payload)
++            return
+         try:
+             result = self.order_router.place(place_payload)
+-        except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
++        except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed: la posizione resta bloccata
++            with self._hedge_lock:
++                self._active_hedges[key] = {"state": "AMBIGUOUS", "bet_id": None}
+             self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
+             return
+-
+-        self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
++        result = result if isinstance(result, dict) else {}
++        self._record_hedge_outcome(key, result, payload)
++        self._handle_result(result, payload, sim)
+ 
+     @classmethod
+     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:
+diff --git a/cashout_wiring.py b/cashout_wiring.py
+index 9e6493b..212ecaf 100644
+--- a/cashout_wiring.py
++++ b/cashout_wiring.py
+@@ -80,7 +80,11 @@ def cabla_catena_cashout(
+     # lotto M4): sotto il minimo exchange il router non chiama il broker diretto.
+     # Senza provider (es. harness di test senza engine) resta fail-closed.
+     order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
+-    cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer())
++    # D-D: un solo cashout attivo per posizione; gli ordini correnti del mercato li legge il
++    # servizio attivo (SIM o LIVE) al momento del controllo, mai un default.
++    cashout_executor = CashoutExecutor(
++        bus, order_router, safety_layer=SafetyLayer(),
++        current_orders_provider=lambda market_id: betfair_service.list_current_orders([market_id]))
+     cashout_executor.wire()
+ 
+     cashout_request_bridge = CashoutRequestBridge(bus)
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index 369b293..783e4e9 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -402,6 +402,7 @@ class MicrostakeCoordinator:
+         self.exchange = exchange
+         self.store = store
+         self.policy = policy
++        self._reservation_lock = threading.Lock()   # check+reserve atomici per ref (hardening ciclo 6)
+ 
+     def _result(self, phase: Phase, *, req: MicrostakeRequest,
+                 reason: str = "", order: Optional[SimOrder] = None,
+@@ -417,9 +418,21 @@ class MicrostakeCoordinator:
+         )
+ 
+     def execute(self, req: MicrostakeRequest, *, stub_price: Decimal,
+-                transient_cap: Optional[Decimal] = None) -> MicrostakeResult:
++                transient_cap: Optional[Decimal] = None,
++                minimum_economic_stake: Optional[Decimal] = None) -> MicrostakeResult:
+         p = self.policy
+         cap = p.max_transient_exposure if transient_cap is None else transient_cap
++        # Decisione owner D-E (PF-DECISIONS-DA-DJ-20261018): il minimo e' quello CONFIGURATO e
++        # verificato a ogni richiesta, non un floor universale cablato; un minimo non valido
++        # blocca PRIMA di qualunque operazione exchange, mai una modifica silenziosa dello stake.
++        floor = p.minimum_economic_stake
++        if minimum_economic_stake is not None:
++            try:
++                floor = D(str(minimum_economic_stake))
++            except (InvalidOperation, ValueError, TypeError):
++                return self._result(Phase.BLOCKED, req=req, reason="minimum_stake_invalid")
++            if not floor.is_finite() or floor <= 0 or floor >= p.exchange_stub_size:
++                return self._result(Phase.BLOCKED, req=req, reason="minimum_stake_invalid")
+         if not p.simulation_only:
+             return self._result(Phase.BLOCKED, req=req, reason="adapter_mode_not_allowed")
+         try:
+@@ -429,7 +442,7 @@ class MicrostakeCoordinator:
+                 raise ValueError
+         except (AttributeError, InvalidOperation, ValueError):
+             return self._result(Phase.BLOCKED, req=req, reason="invalid_numeric_input")
+-        if not (p.minimum_economic_stake <= req.economic_stake < p.exchange_stub_size):
++        if not (floor <= req.economic_stake < p.exchange_stub_size):
+             return self._result(Phase.BLOCKED, req=req, reason="outside_microstake_range")
+         if req.economic_stake != req.economic_stake.quantize(D("0.01")):
+             # Rilievo Codex #512: un importo non rappresentabile in centesimi verrebbe arrotondato
+@@ -437,11 +450,16 @@ class MicrostakeCoordinator:
+             return self._result(Phase.BLOCKED, req=req, reason="invalid_size_precision")
+         transient = order_exposure(req.side, p.exchange_stub_size, stub_price)
+         has_reservation = getattr(self.exchange, "has_reservation", None)
+-        # Adapter senza `has_reservation` => fail-closed: la riserva si considera PREESISTENTE e non
+-        # viene mai sciolta su store illeggibile (riesame indipendente ciclo 6: il default False
+-        # avrebbe fatto ereditare il difetto Sol a un futuro adapter che non implementa il metodo).
+-        pre_existing = bool(has_reservation(req.customer_ref)) if callable(has_reservation) else True
+-        if not self.exchange.reserve(req.customer_ref, transient, cap):
++        # Check + reserve ATOMICI per il coordinatore (Sol c.6248273030, hardening): due execute
++        # concorrenti sullo stesso ref non possono entrambe vedere "riserva nuova"; la seconda la
++        # vede preesistente e non la scioglie mai su store illeggibile.
++        with self._reservation_lock:
++            # Adapter senza `has_reservation` => fail-closed: la riserva si considera PREESISTENTE e non
++            # viene mai sciolta su store illeggibile (riesame indipendente ciclo 6: il default False
++            # avrebbe fatto ereditare il difetto Sol a un futuro adapter che non implementa il metodo).
++            pre_existing = bool(has_reservation(req.customer_ref)) if callable(has_reservation) else True
++            reserved = self.exchange.reserve(req.customer_ref, transient, cap)
++        if not reserved:
+             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
+                                 max_exposure=transient)
+ 
+@@ -618,11 +636,18 @@ class NativeMicrostakeExecutor:
+         quote_provider: Any,
+         transient_exposure_cap: Decimal,
+         exchange_minimum: Decimal = D("2.00"),
++        minimum_stake_provider: Any = None,
+     ) -> None:
+         if not callable(quote_provider):
+             raise TypeError("quote_provider must be callable")
+         self.coordinator = coordinator
+         self.quote_provider = quote_provider
++        # Decisione owner D-E: minimo configurato letto a ogni richiesta (callable(payload) ->
++        # numero | None). None/assente => floor di policy; provider che fallisce o valore non
++        # numerico => blocco pre-invio `minimum_stake_unavailable` (mai un default inventato).
++        if minimum_stake_provider is not None and not callable(minimum_stake_provider):
++            raise TypeError("minimum_stake_provider must be callable or None")
++        self.minimum_stake_provider = minimum_stake_provider
+         # Cap dell'esposizione transitoria: valore fisso oppure provider
+         # callable(payload) -> Decimal | None, letto dai limiti owner a ogni
+         # richiesta. None => BLOCKED: un cap che non si legge non e' un cap.
+@@ -704,8 +729,16 @@ class NativeMicrostakeExecutor:
+             return blocked(plan.reason, transient=plan.transient_exposure)
+         if plan.kind is not ExecutionKind.MICROSTAKE:
+             return blocked("native_route_not_microstake")
++        minimum = None
++        if self.minimum_stake_provider is not None:
++            try:
++                raw_minimum = self.minimum_stake_provider(dict(payload))
++                minimum = None if raw_minimum is None else D(str(raw_minimum))
++            except Exception:  # noqa: BLE001 - config illeggibile = minimo non verificabile => blocco
++                return blocked("minimum_stake_unavailable")
+ 
+-        result = self.coordinator.execute(req, stub_price=plan.api_price, transient_cap=cap)
++        result = self.coordinator.execute(req, stub_price=plan.api_price, transient_cap=cap,
++                                          minimum_economic_stake=minimum)
+         common = {
+             "microstake": True,
+             "phase": result.phase.value,
+diff --git a/core/microstake_sim_port.py b/core/microstake_sim_port.py
+index 803201f..3d8acc1 100644
+--- a/core/microstake_sim_port.py
++++ b/core/microstake_sim_port.py
+@@ -319,11 +319,12 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+     """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED."""
+ 
+     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
+-                 transient_exposure_cap: Any) -> None:
++                 transient_exposure_cap: Any, minimum_stake_provider: Any = None) -> None:
+         self.port = port
+         self.store = store
+         coordinator = MicrostakeCoordinator(port, store, MicrostakePolicy())
+-        super().__init__(coordinator, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap)
++        super().__init__(coordinator, quote_provider=quote_provider, transient_exposure_cap=transient_exposure_cap,
++                         minimum_stake_provider=minimum_stake_provider)
+ 
+     def execute(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+         before = len(self.port.operation_log)
+@@ -365,8 +366,9 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+         return out
+ 
+ 
+-def build_native_microstake_executor(broker: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any]
+-                                     ) -> NativeSimMicrostakeExecutor:
++def build_native_microstake_executor(broker: Any, db: Any, transient_cap_provider: Callable[[Dict[str, Any]], Any],
++                                     minimum_stake_provider: Any = None) -> NativeSimMicrostakeExecutor:
+     port = SimulationExchangePort(broker)
+     return NativeSimMicrostakeExecutor(port, DbSagaStore(db), quote_provider=SimulationQuoteProvider(broker),
+-                                       transient_exposure_cap=transient_cap_provider)
++                                       transient_exposure_cap=transient_cap_provider,
++                                       minimum_stake_provider=minimum_stake_provider)
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 0784ede..9f94bce 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -767,6 +767,11 @@ class RuntimeController:
+             if bet_id.isdigit() and market_id:
+                 bet_to_market[bet_id] = market_id
+         bot_bet_ids = sorted(bet_to_market)
++        # D-F: ledger per mercato usato dal rilascio tavoli (ultima gamba, netto aggregato)
++        by_market: dict[str, set[str]] = {}
++        for bet_id, market_id in bet_to_market.items():
++            by_market.setdefault(market_id, set()).add(bet_id)
++        self._bot_bets_by_market = by_market
+         if not bot_bet_ids:
+             return
+ 
+@@ -2529,12 +2534,12 @@ class RuntimeController:
+                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
+                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
+         self._last_position_rebuild = dict(rebuild)
+-        self._reconciliation_required = not rebuild["ok"]
++        self._reconciliation_required, reconciliation_reason = self._post_rebuild_reconciliation(rebuild)
+         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
+         if self._reconciliation_required:
+             self.mode = RuntimeMode.PAUSED
+-            self.last_error = f"RECONCILIATION_REQUIRED:{rebuild['reason']}"
+-            logger.error("Avvio in PAUSED: riconciliazione posizioni incompleta (%s)", rebuild["reason"])
++            self.last_error = f"RECONCILIATION_REQUIRED:{reconciliation_reason}"
++            logger.error("Avvio in PAUSED: riconciliazione posizioni incompleta (%s)", reconciliation_reason)
+         else:
+             self.mode = RuntimeMode.ACTIVE
+             self.last_error = ""
+@@ -2633,8 +2638,9 @@ class RuntimeController:
+                         "microstake": microstake, "status": self._safe_status_snapshot()}
+             rebuild = self._rebuild_open_positions()
+             self._last_position_rebuild = dict(rebuild)
+-            if not rebuild["ok"]:
+-                return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
++            required, reason = self._post_rebuild_reconciliation(rebuild)
++            if required:
++                return {"resumed": False, "reason": f"reconciliation_required:{reason}",
+                         "status": self._safe_status_snapshot()}
+             self._reconciliation_required = False
+ 
+@@ -3536,6 +3542,22 @@ class RuntimeController:
+             except Exception:
+                 logger.exception("Errore rilascio tavolo table_id=%s", table_id)
+ 
++    def _post_rebuild_reconciliation(self, rebuild: dict) -> tuple:
++        """Decisione owner D-B (PF-DECISIONS-DA-DJ-20261018, PF-EXEC-06 «ripresa solo se tutto coerente»).
++
++        Ritorna ``(riconciliazione_richiesta, motivo)``. Oltre a una ricostruzione non riuscita
++        (``ok=False``: exchange illeggibile, righe non attribuibili, nessun tavolo), anche una
++        riserva INCERTA ancora trattenuta (AMBIGUOUS/INFLIGHT, SUBMITTED senza identita' certa)
++        tiene il runtime in PAUSED: nessun nuovo ingresso finche' un esito certo (settlement,
++        FAILED confermato) non scioglie la riserva. Prima: ACTIVE con la riserva trattenuta.
++        """
++        if not rebuild.get("ok", False):
++            return True, str(rebuild.get("reason") or "")
++        pending = self._uncertain_reservations_map()
++        if pending:
++            return True, f"UNCERTAIN_POSITIONS:{len(pending)}"
++        return False, ""
++
+     def _uncertain_reservations_map(self) -> dict:
+         """event_key -> table_id delle riserve con esito AMBIGUOUS (PF-ALL-F024)."""
+         current = getattr(self, "_uncertain_reservations", None)
+@@ -3800,6 +3822,18 @@ class RuntimeController:
+         market_id = str((payload or {}).get("market_id") or "").strip()
+         if not market_id:
+             return
++        # Decisione owner D-F (PF-DECISIONS-DA-DJ-20261018, Codex r4303297587): in LIVE il settlement
++        # arriva PER BET (listClearedOrders); con piu' bet del bot sullo stesso mercato il tavolo si
++        # rilascia solo con l'ULTIMA gamba e con il netto aggregato, mai alla prima (+10 e -20
++        # regolate separatamente non devono liberare il tavolo "in utile"). Le bet attese sono
++        # quelle del ledger del bot lette dal poller (`_bot_bets_by_market`); un settlement SIM o
++        # un mercato con una sola bet rilascia come prima.
++        total_pnl, remaining = self._accumulate_market_settlement(market_id, payload, pnl)
++        if remaining:
++            logger.info("Settlement %s: gamba regolata, %d bet ancora da regolare (%s): tavolo trattenuto, netto parziale %.2f",
++                        market_id, len(remaining), ",".join(remaining), total_pnl)
++            return
++        pnl = total_pnl
+         uncertain_keys = set(self._uncertain_reservations_map())
+         matches = [t for t in self.table_manager.snapshot()
+                    if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
+@@ -3812,6 +3846,40 @@ class RuntimeController:
+                 market_id, len(matches), len(matches) - len(certain),
+             )
+ 
++    def _accumulate_market_settlement(self, market_id: str, payload: dict, pnl: float) -> tuple:
++        """D-F: somma le gambe regolate del mercato e ritorna ``(netto_accumulato, bet_rimanenti)``.
++
++        Le bet rimanenti sono quelle del bot sul mercato (ledger letto dal poller cleared) senza
++        checkpoint di emissione, esclusa la gamba corrente (il suo checkpoint viene scritto dopo la
++        consegna). Senza ledger per il mercato (SIM, mercato a bet singola) non resta nulla.
++        Limite dichiarato: l'accumulatore e' in memoria; dopo un crash fra due gambe la
++        contabilita' del motore PnL resta completa (checkpoint per bet) ma il netto attribuito al
++        tavolo riparte dalle gambe successive.
++        """
++        acc = getattr(self, "_market_settlement_pnl", None)
++        if acc is None:
++            acc = {}
++            self._market_settlement_pnl = acc
++        acc[market_id] = float(acc.get(market_id, 0.0)) + float(pnl)
++        current_key = str((payload or {}).get("event_key") or "")
++        emitted = getattr(self, "_settlement_emitted_keys", set()) or set()
++        bets = (getattr(self, "_bot_bets_by_market", None) or {}).get(market_id) or set()
++        remaining = sorted(b for b in bets
++                           if f"cleared:{market_id}:{b}" not in emitted and f"cleared:{market_id}:{b}" != current_key)
++        if remaining:
++            return acc[market_id], remaining
++        return acc.pop(market_id), []
++
++    def _pending_market_settlements(self) -> dict:
++        """Osservabilita' D-F: mercati con gambe regolate in attesa delle altre."""
++        out = {}
++        emitted = getattr(self, "_settlement_emitted_keys", set()) or set()
++        for market_id, total in (getattr(self, "_market_settlement_pnl", None) or {}).items():
++            bets = (getattr(self, "_bot_bets_by_market", None) or {}).get(market_id) or set()
++            out[market_id] = {"accumulated_pnl": float(total),
++                              "remaining_bets": sorted(b for b in bets if f"cleared:{market_id}:{b}" not in emitted)}
++        return out
++
+     def _reset_reservations_keeping_uncertain(self) -> None:
+         """Reset di tavoli e chiavi duplicati che NON libera capitale ancora impegnato.
+ 
+diff --git a/core/trading_engine.py b/core/trading_engine.py
+index 1845c69..136abe7 100644
+--- a/core/trading_engine.py
++++ b/core/trading_engine.py
+@@ -2331,12 +2331,33 @@ class TradingEngine:
+         try:
+             from core.microstake_sim_port import build_native_microstake_executor
+             self.microstake_executor = build_native_microstake_executor(
+-                broker, self.db, self._native_transient_cap)
++                broker, self.db, self._native_transient_cap, self._native_minimum_stake)
+         except Exception:
+             logger.exception("Microstake nativo: esecutore SIM non costruibile (fail-closed)")
+             return None
+         return self.microstake_executor
+ 
++    def _native_minimum_stake(self, payload: Dict[str, Any]) -> Optional[float]:
++        """Minimo CONFIGURATO per il Microstake nativo (decisione owner D-E, 18/10/2026).
++
++        Letto a ogni richiesta dalla config Roserpina del runtime (`min_stake`, la stessa
++        sorgente del Money Management e del RiskGate). Senza runtime/config (test, adapter
++        esterno) => None = floor di policy del coordinatore, comportamento invariato. Una
++        config presente ma illeggibile/non numerica solleva: il coordinatore blocca pre-invio
++        (`minimum_stake_unavailable`), nessun default inventato, nessuna modifica dello stake.
++        """
++        runtime = self.runtime_controller
++        config = getattr(runtime, "config", None) if runtime is not None else None
++        if config is None:
++            return None
++        raw = getattr(config, "min_stake", None)
++        if raw is None:
++            return None
++        value = float(raw)
++        if not math.isfinite(value):
++            raise ValueError("min_stake non finito")
++        return value
++
+     def _native_transient_cap(self, payload: Dict[str, Any]) -> Optional[float]:
+         """Cap dell'esposizione TEMPORANEA dello stub Microstake (PF-MICROSTAKE-OWNER-RECTIFICATION-20261017).
+ 
+diff --git a/docs/cashout_overview.md b/docs/cashout_overview.md
+index 8fd8327..198f650 100644
+--- a/docs/cashout_overview.md
++++ b/docs/cashout_overview.md
+@@ -177,6 +177,15 @@ eventi (il `PnLEngine` sarebbe rimasto vuoto in produzione — vedi PR #298 chiu
+ - **Il runtime pubblica solo `REQ_EXECUTE_CASHOUT`**, mai `CMD_*` diretto.
+ - **Dedup** per identità posizione nel bridge: un price-drift o metadata diversi
+   non generano un secondo hedge per la stessa posizione.
++- **Un solo cashout attivo per posizione fino a riconciliazione** (decisione
++  owner D-D, 18/10/2026): `CashoutExecutor` registra l'hedge per (mercato,
++  selezione, lato); finché il precedente è AMBIGUOUS, oppure è piazzato ma
++  l'exchange lo riporta ancora fra gli ordini correnti, un nuovo cashout sulla
++  stessa posizione è rifiutato (`cashout_pending_reconciliation`,
++  `cashout_order_still_live:<betId>`). Si libera al settlement del mercato
++  (`RUNTIME_CLOSE_POSITION`), all'esecuzione integrale, quando l'exchange non
++  riporta più l'ordine, o con `reconcile_position`. Senza provider degli ordini
++  correnti: fail-closed.
+ - **Validazione**: `selection_id>0` (bool rifiutati), `side` esplicito, stake>0.
+ - **Commissione 4.5%** enforced; **nessun retry automatico** lato esecuzione.
+ 
+diff --git a/docs/microstake_native.md b/docs/microstake_native.md
+index 1a1f90f..bc4efa8 100644
+--- a/docs/microstake_native.md
++++ b/docs/microstake_native.md
+@@ -92,6 +92,10 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
+   pre-invio tipizzato: l'intento dedupe viene rilasciato e un nuovo tentativo a condizione passata non è un duplicato;
+   esiti dopo l'invio restano AMBIGUOUS/FAILED con l'intento consumato. Il broker SIM salva lo snapshot di reload
+   (`persist_snapshot`) dopo ogni operazione della saga.
++- Minimo (decisione owner D-E, 18/10/2026): il coordinatore non applica un floor universale; il minimo e' quello
++  CONFIGURATO (`min_stake` della config Roserpina letto dal runtime a ogni richiesta, stessa sorgente di Money
++  Management e RiskGate). Minimo non valido (<= 0, non finito, >= stub) => `minimum_stake_invalid`; config
++  illeggibile => `minimum_stake_unavailable` (pre-invio). Senza runtime/config resta il floor di policy.
+ - Costruzione: `TradingEngine.native_microstake_executor()` crea l'esecutore una sola volta dal broker SIM
+   (costruzione e rebinding serializzati da `_microstake_executor_lock`: due prime chiamate concorrenti,
+   Quick Bet + hedge del cashout, ottengono LO STESSO esecutore, una sola mappa di riserve e un solo store;
+diff --git a/docs/roserpina_bankroll_equity.md b/docs/roserpina_bankroll_equity.md
+index 6d2e2a7..54918a6 100644
+--- a/docs/roserpina_bankroll_equity.md
++++ b/docs/roserpina_bankroll_equity.md
+@@ -108,11 +108,14 @@ posizioni sullo stesso tavolo, tavolo non più rilasciabile al settlement della
+ |---|---|---|
+ | `SUBMITTED` con betId | betId presente | posizione viva: tavolo (preferito `table_id`), esposizione (LAY = liability), chiave anti-duplicato |
+ | `SUBMITTED` con betId | assente | chiusa (regolata o annullata): nessun tavolo; il P&L arriva dal settlement |
+-| `SUBMITTED` senza betId | mercato con ordini | riserva **incerta** |
+-| `AMBIGUOUS` / `INFLIGHT` | qualsiasi | riserva **incerta** |
++| `SUBMITTED` senza betId | mercato con ordini | riserva **incerta**; avvio in **PAUSED** (`RECONCILIATION_REQUIRED:UNCERTAIN_POSITIONS:n`) |
++| `AMBIGUOUS` / `INFLIGHT` | qualsiasi | riserva **incerta**; avvio in **PAUSED** (`RECONCILIATION_REQUIRED:UNCERTAIN_POSITIONS:n`) |
+ | qualsiasi | **illeggibile** | riserva incerta; avvio in **PAUSED** (`RECONCILIATION_REQUIRED`) |
+ 
+ - Posizioni senza tavolo libero ⇒ PAUSED.
+-- `resume()` ritenta la riconciliazione e rifiuta finché non è completa.
++- Decisione owner D-B (18/10/2026, PF-EXEC-06): con riserve incerte ancora trattenute il runtime resta in
++  PAUSED finché un esito certo (settlement, FAILED confermato) non le scioglie; prima restava ACTIVE con
++  la riserva trattenuta sul suo tavolo. `_post_rebuild_reconciliation` decide per `start()` e `resume()`.
++- `resume()` ritenta la riconciliazione e rifiuta finché non è completa (riserve incerte comprese).
+ - Le righe senza `market_id` o `event_key` sono riportate in `unattributed`, mai indovinate.
+ - Il risultato è pubblicato come `STARTUP_POSITIONS_REBUILT`.
+diff --git a/tests/f026/test_f018_rebuild_units.py b/tests/f026/test_f018_rebuild_units.py
+index 5a345b4..00527be 100644
+--- a/tests/f026/test_f018_rebuild_units.py
++++ b/tests/f026/test_f018_rebuild_units.py
+@@ -141,3 +141,52 @@ def test_resume_retries_reconciliation_and_refuses_while_incomplete():
+     out = rc.resume()
+     assert out["resumed"] is False and out["reason"].startswith("reconciliation_required")
+     assert rc.mode is RuntimeMode.PAUSED
++
++
++# ---------------------------------------------------------------- decisione owner D-B (PF-DECISIONS-DA-DJ-20261018):
++# riavvio con riserve INCERTE (AMBIGUOUS/INFLIGHT, o SUBMITTED senza identita' certa) => PAUSED fino a
++# riconciliazione (PF-EXEC-06 «ripresa solo se tutto coerente»), non ACTIVE con la riserva trattenuta.
++def test_rebuild_with_uncertain_reservation_requires_reconciliation_before_active():
++    rc = _rc([_row("r1", "AMBIGUOUS", "1.1", 1, "K1"), _row("r2", "SUBMITTED", "1.2", 2, "K2", bet_id="77")],
++             _Exchange([{"betId": "77", "marketId": "1.2"}]))
++    rebuild = rc._rebuild_open_positions()
++    assert rebuild["ok"] and rebuild["uncertain"] == ["r1"] and rebuild["rebuilt"] == ["r2"]
++    required, reason = rc._post_rebuild_reconciliation(rebuild)
++    assert required is True and reason == "UNCERTAIN_POSITIONS:1"
++
++
++def test_rebuild_with_only_certain_positions_does_not_require_reconciliation():
++    rc = _rc([_row("r2", "SUBMITTED", "1.2", 2, "K2", bet_id="77")], _Exchange([{"betId": "77", "marketId": "1.2"}]))
++    rebuild = rc._rebuild_open_positions()
++    assert rc._post_rebuild_reconciliation(rebuild) == (False, "")
++
++
++def test_resume_refuses_while_an_uncertain_reservation_is_still_held():
++    rc = _rc([_row("r1", "AMBIGUOUS", "1.1", 1, "K1")], _Exchange([]))
++    rc.mode = RuntimeMode.PAUSED
++    rc._reconciliation_required = True
++    rc._monitor_daily_loss_breach = lambda **k: {"breached": False}
++    rc._loss_block_reason = lambda: ""
++    rc._safe_status_snapshot = lambda: {}
++    rc._recover_native_microstake = lambda: {"ok": True, "status": "none", "pending": []}
++    out = rc.resume()
++    assert out["resumed"] is False and out["reason"] == "reconciliation_required:UNCERTAIN_POSITIONS:1"
++    assert rc.mode is RuntimeMode.PAUSED and rc._reconciliation_required is True
++
++
++def test_resume_succeeds_once_the_uncertain_reservation_is_resolved():
++    rc = _rc([_row("r1", "AMBIGUOUS", "1.1", 1, "K1")], _Exchange([]))
++    rc.mode = RuntimeMode.PAUSED
++    rc._reconciliation_required = True
++    rc._monitor_daily_loss_breach = lambda **k: {"breached": False}
++    rc._loss_block_reason = lambda: ""
++    rc._safe_status_snapshot = lambda: {}
++    rc._recover_native_microstake = lambda: {"ok": True, "status": "none", "pending": []}
++    rc.get_status = lambda: {}
++    rc.bus = type("B", (), {"publish": lambda self, *a, **k: None})()
++    assert rc.resume()["resumed"] is False
++    # esito certo arrivato (settlement/FAILED): la riga non e' piu' pendente e la riserva incerta e' sciolta
++    rc.db.rows = []
++    rc._uncertain_reservations_map().clear()
++    out = rc.resume()
++    assert out["resumed"] is True and rc.mode is RuntimeMode.ACTIVE and rc._reconciliation_required is False
+diff --git a/tests/test_pf_decisions_de_df_dd.py b/tests/test_pf_decisions_de_df_dd.py
+new file mode 100644
+index 0000000..86a5450
+--- /dev/null
++++ b/tests/test_pf_decisions_de_df_dd.py
+@@ -0,0 +1,284 @@
++"""Decisioni owner PF-DECISIONS-DA-DJ-20261018: D-E (minimo effettivo verificato), D-F (settlement aggregato per
++bet_id), D-D (un solo cashout attivo per posizione fino a riconciliazione). RED sul head f62f0e3 (ciclo 6 #512).
++"""
++from decimal import Decimal as D
++from types import SimpleNamespace
++
++import pytest
++
++from core.microstake_safe import MicrostakeCoordinator, MicrostakeRequest, Side, StatefulExchangeSimulator
++from core.microstake_sim_port import build_native_microstake_executor
++from simulation_broker import SimulationBroker
++from test_microstake_engine_native import _engine, _orders, _payload, _runtime
++from test_microstake_sim_port import _Db
++
++
++# ---------------------------------------------------------------- D-E: il floor 0,10 EUR del coordinatore non e'
++# un limite universale: vale il minimo CONFIGURATO, verificato a ogni richiesta; se non e' leggibile => blocco
++# pre-invio (nessuna modifica silenziosa dello stake, nessun default inventato).
++class _MemStore:
++    def __init__(self):
++        self.rows = {}
++
++    def load(self, ref):
++        return self.rows.get(ref)
++
++    def save(self, ref, **values):
++        self.rows[ref] = {**self.rows.get(ref, {}), **values}
++
++    def pending_refs(self):
++        return []
++
++
++def _req(stake, ref="r1"):
++    return MicrostakeRequest(market_id="1.1", selection_id=7, side=Side.BACK, economic_stake=D(str(stake)),
++                             target_price=D("2.0"), customer_ref=ref)
++
++
++def test_configured_minimum_below_the_old_floor_is_honoured_exactly():
++    exchange = StatefulExchangeSimulator()
++    c = MicrostakeCoordinator(exchange=exchange, store=_MemStore())
++    res = c.execute(_req("0.05"), stub_price=D("2.02"), transient_cap=D("10"), minimum_economic_stake=D("0.05"))
++    assert res.phase.value == "ACTIVE", res
++    assert res.matched_size + res.final_unmatched_size == D("0.05")
++
++
++def test_stake_below_the_configured_minimum_is_refused_not_rounded():
++    c = MicrostakeCoordinator(exchange=StatefulExchangeSimulator(), store=_MemStore())
++    res = c.execute(_req("0.04"), stub_price=D("2.02"), transient_cap=D("10"), minimum_economic_stake=D("0.05"))
++    assert res.phase.value == "BLOCKED" and res.reason == "outside_microstake_range"
++
++
++@pytest.mark.parametrize("bad", [D("0"), D("-0.01"), D("NaN"), D("2.00"), D("2.50")])
++def test_invalid_configured_minimum_blocks_before_any_exchange_operation(bad):
++    exchange = StatefulExchangeSimulator()
++    c = MicrostakeCoordinator(exchange=exchange, store=_MemStore())
++    res = c.execute(_req("0.50"), stub_price=D("2.02"), transient_cap=D("10"), minimum_economic_stake=bad)
++    assert res.phase.value == "BLOCKED" and res.reason == "minimum_stake_invalid"
++    assert not exchange._state["orders"], "operazione exchange partita con minimo non valido"
++
++
++def test_executor_reads_the_configured_minimum_from_the_provider_each_call():
++    broker = SimulationBroker(starting_balance=100.0)
++    seen = []
++
++    def provider(payload):
++        seen.append(payload["customer_ref"])
++        return 0.05
++
++    ex = build_native_microstake_executor(broker, _Db(), lambda p: 10.0, minimum_stake_provider=provider)
++    out = ex.execute({"market_id": "1.1", "selection_id": 7, "bet_type": "BACK", "price": 2.0, "stake": 0.05, "customer_ref": "c1"})
++    assert out["status"] == "SUCCESS", out
++    assert seen == ["c1"]
++
++
++def test_executor_blocks_pre_send_when_the_configured_minimum_is_unreadable():
++    broker = SimulationBroker(starting_balance=100.0)
++
++    def provider(payload):
++        raise RuntimeError("config illeggibile")
++
++    ex = build_native_microstake_executor(broker, _Db(), lambda p: 10.0, minimum_stake_provider=provider)
++    out = ex.execute({"market_id": "1.1", "selection_id": 7, "bet_type": "BACK", "price": 2.0, "stake": 0.50, "customer_ref": "c2"})
++    assert out["status"] == "FAILURE" and out["error"] == "minimum_stake_unavailable" and out["pre_send"] is True
++    assert not _orders(broker)
++
++
++def test_engine_passes_the_runtime_configured_minimum_to_the_native_executor():
++    engine, broker, _ = _engine()
++    engine.runtime_controller.config = SimpleNamespace(min_stake=0.05)
++    res = engine.submit_quick_bet(_payload("m", size=0.05, price=3.0))
++    assert res["ok"] is True, res
++    sizes = [float(o.get("sizeMatched", 0) or 0) + float(o.get("sizeRemaining", 0) or 0) for o in _orders(broker)]
++    assert any(abs(sz - 0.05) < 1e-9 for sz in sizes), _orders(broker)
++
++
++# ---------------------------------------------------------------- D-F: settlement LIVE per-bet (listClearedOrders):
++# il tavolo del mercato si rilascia solo quando TUTTE le bet del bot su quel mercato sono state regolate, con il
++# netto finale aggregato, mai alla prima gamba (Codex r4303297587).
++from core.runtime_controller import RuntimeController
++
++
++class _Tables:
++    def __init__(self, market_id, event_key="K1", table_id=1):
++        self.rows = [{"table_id": table_id, "market_id": market_id, "current_event_key": event_key}]
++        self.released = []
++
++    def snapshot(self):
++        return [dict(r) for r in self.rows]
++
++    def release(self, table_id, *, pnl):
++        self.released.append((table_id, pnl))
++        self.rows = [r for r in self.rows if r["table_id"] != table_id]
++
++
++def _rc_df(market_id, bets):
++    rc = RuntimeController.__new__(RuntimeController)
++    rc.table_manager = _Tables(market_id)
++    rc._uncertain_reservations = {}
++    rc._settlement_emitted_keys = set()
++    rc._bot_bets_by_market = {market_id: set(bets)}
++    rc._settled_market_ids = set()
++    rc._mark_market_settled = lambda m: rc._settled_market_ids.add(str(m))
++    return rc
++
++
++def test_table_is_released_only_after_the_last_cleared_leg_with_the_net_pnl():
++    rc = _rc_df("1.9", {"b1", "b2"})
++    rc._release_settled_tables({"market_id": "1.9", "event_key": "cleared:1.9:b1"}, table_id=None, pnl=10.0)
++    assert rc.table_manager.released == [], "tavolo rilasciato alla prima gamba (+10) con -20 ancora da regolare"
++    rc._settlement_emitted_keys.add("cleared:1.9:b1")
++    rc._release_settled_tables({"market_id": "1.9", "event_key": "cleared:1.9:b2"}, table_id=None, pnl=-20.0)
++    assert rc.table_manager.released == [(1, -10.0)]
++
++
++def test_single_leg_market_and_sim_settlement_release_as_before():
++    rc = _rc_df("1.9", {"b1"})
++    rc._release_settled_tables({"market_id": "1.9", "event_key": "cleared:1.9:b1"}, table_id=None, pnl=-3.0)
++    assert rc.table_manager.released == [(1, -3.0)]
++    sim = _rc_df("1.8", set())
++    sim._bot_bets_by_market = {}
++    sim._release_settled_tables({"market_id": "1.8", "event_key": "sim:1.8:s1"}, table_id=None, pnl=4.0)
++    assert sim.table_manager.released == [(1, 4.0)]
++
++
++def test_pending_legs_are_visible_and_never_release_a_table_early():
++    rc = _rc_df("1.9", {"b1", "b2", "b3"})
++    rc._release_settled_tables({"market_id": "1.9", "event_key": "cleared:1.9:b2"}, table_id=None, pnl=5.0)
++    rc._settlement_emitted_keys.add("cleared:1.9:b2")        # checkpoint scritto dal poller dopo la consegna
++    assert rc._pending_market_settlements() == {"1.9": {"accumulated_pnl": 5.0, "remaining_bets": ["b1", "b3"]}}
++    assert rc.table_manager.released == []
++
++
++# ---------------------------------------------------------------- D-D: un solo cashout ATTIVO per posizione (mercato,
++# selezione, lato) fino a riconciliazione: AMBIGUOUS => nessun nuovo hedge finche' il mercato non e' regolato o la
++# posizione riconciliata; ordine piazzato ma ancora vivo sull'exchange => nessun nuovo hedge; senza provider degli
++# ordini correnti => fail-closed. Un cashout eseguito per intero o fallito prima dell'invio libera la posizione.
++from cashout_executor import CASHOUT_FAILED, CASHOUT_SUCCESS, CashoutExecutor
++from tests.unit.test_cashout_executor import _FakeBus, _FakeRouter, _cmd_payload
++
++
++def _result(*, placed, matched, bet_id="CB1", unknown=False, error=None):
++    return {"ok": placed and matched > 0, "placed": placed, "order_unknown": unknown, "status": "AMBIGUOUS" if unknown else ("SUCCESS" if placed else "FAILURE"),
++            "matched": matched, "bet_id": bet_id if placed else None, "error": error}
++
++
++def _fire(executor, bus, router, result, **over):
++    router._result = result
++    executor.on_cmd_execute_cashout(_cmd_payload(**over))
++    return bus.published[-1]
++
++
++def test_second_cashout_is_refused_while_the_first_is_ambiguous():
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router, current_orders_provider=lambda market_id: [])
++    topic, _ = _fire(ex, bus, router, _result(placed=False, matched=0.0, unknown=True))
++    assert topic == CASHOUT_FAILED and bus.published[-1][1]["status"] == "AMBIGUOUS"
++    topic, payload = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_FAILED and payload["reason"] == "cashout_pending_reconciliation" and len(router.calls) == 1
++
++
++def test_second_cashout_is_refused_while_the_first_hedge_is_still_live_on_the_exchange():
++    live = [{"betId": "CB1", "marketId": "1.222"}]
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router, current_orders_provider=lambda market_id: list(live))
++    _fire(ex, bus, router, _result(placed=True, matched=0.0))                     # UNMATCHED, ordine vivo
++    topic, payload = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_FAILED and payload["reason"] == "cashout_order_still_live:CB1" and len(router.calls) == 1
++    live.clear()                                                                # annullato/regolato sull'exchange
++    topic, _ = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_SUCCESS and len(router.calls) == 2
++
++
++def test_fully_executed_or_rejected_cashout_frees_the_position():
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router, current_orders_provider=lambda market_id: [])
++    _fire(ex, bus, router, _result(placed=True, matched=4.0))                     # eseguito per intero
++    _fire(ex, bus, router, _result(placed=False, matched=0.0, error="BET_REJECTED"))
++    topic, _ = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_SUCCESS and len(router.calls) == 3
++
++
++def test_without_current_orders_provider_a_live_hedge_blocks_fail_closed():
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router)
++    _fire(ex, bus, router, _result(placed=True, matched=1.0))                     # parziale: residuo vivo
++    topic, payload = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_FAILED and payload["reason"].startswith("cashout_order_still_live") and len(router.calls) == 1
++
++
++def test_market_settlement_reconciles_an_ambiguous_cashout():
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router, current_orders_provider=lambda market_id: [])
++    ex.wire()
++    _fire(ex, bus, router, _result(placed=False, matched=0.0, unknown=True))
++    handlers = dict(bus.subscriptions)
++    handlers["RUNTIME_CLOSE_POSITION"]({"market_id": "1.222"})
++    topic, _ = _fire(ex, bus, router, _result(placed=True, matched=4.0))
++    assert topic == CASHOUT_SUCCESS and len(router.calls) == 2
++
++
++def test_other_positions_are_not_blocked():
++    bus, router = _FakeBus(), _FakeRouter()
++    ex = CashoutExecutor(bus, router, current_orders_provider=lambda market_id: [])
++    _fire(ex, bus, router, _result(placed=False, matched=0.0, unknown=True))
++    topic, _ = _fire(ex, bus, router, _result(placed=True, matched=4.0), selection_id=56)
++    assert topic == CASHOUT_SUCCESS and len(router.calls) == 2
++
++
++# ---------------------------------------------------------------- hardening (Sol c.6248273030, THEORETICAL): check+reserve
++# atomici per ref nel coordinatore: due execute concorrenti sullo stesso ref non possono entrambe vedere
++# «riserva nuova» e, su store illeggibile, sciogliere la riserva dell'altra.
++def test_concurrent_execute_on_the_same_ref_never_releases_the_shared_reservation():
++    """Deterministico: `has_reservation` trattiene il primo chiamante finche' anche il secondo non e' dentro
++    (barriera). Senza check+reserve atomici entrambi leggono "nessuna riserva"; il secondo, su store illeggibile,
++    scioglie la riserva del primo mentre questo sta per inviare. Con il lock del coordinatore il secondo non puo'
++    entrare finche' il primo non ha riservato (la barriera scade) e vede la riserva preesistente."""
++    import threading
++    gate = threading.Barrier(2, timeout=0.5)
++    a_may_continue = threading.Event()
++    lock = threading.Lock()
++    calls = []
++
++    class _Exchange(StatefulExchangeSimulator):
++        def has_reservation(self, customer_ref):
++            value = super().has_reservation(customer_ref)   # lettura PRIMA della barriera: valore stantio
++            try:
++                gate.wait()
++            except threading.BrokenBarrierError:
++                pass
++            return value
++
++    class _Store(_MemStore):
++        def load(self, ref):
++            with lock:
++                calls.append(threading.current_thread().name)
++                first = len(calls) == 1
++            if first:
++                a_may_continue.wait(timeout=5)    # la saga nuova resta "in volo" mentre l'altra fallisce
++                return None
++            raise RuntimeError("store illeggibile")
++
++    exchange = _Exchange()
++    c = MicrostakeCoordinator(exchange=exchange, store=_Store())
++    outcomes = {}
++
++    def run(name):
++        try:
++            outcomes[name] = c.execute(_req("0.50", ref="same"), stub_price=D("2.02"), transient_cap=D("10")).phase.value
++        except RuntimeError:
++            outcomes[name] = "store_error"
++
++    threads = [threading.Thread(target=run, args=(n,), name=n) for n in ("A", "B")]
++    for t in threads:
++        t.start()
++    deadline = threading.Event()
++    for _ in range(100):                          # attende che il secondo chiamante abbia fallito load
++        if len(calls) == 2 and any(v == "store_error" for v in outcomes.values()):
++            break
++        deadline.wait(0.05)
++    assert len(calls) == 2 and any(v == "store_error" for v in outcomes.values()), (calls, outcomes)
++    assert exchange.has_reservation("same"), "riserva condivisa sciolta dal thread concorrente sullo stesso ref"
++    a_may_continue.set()
++    for t in threads:
++        t.join(timeout=10)
+diff --git a/tests/unit/test_cashout_wiring.py b/tests/unit/test_cashout_wiring.py
+index ee516d3..5ce5a65 100644
+--- a/tests/unit/test_cashout_wiring.py
++++ b/tests/unit/test_cashout_wiring.py
+@@ -79,7 +79,10 @@ def test_catena_con_safety_layer_e_un_consumer_per_topic(bus):
+     assert [cb.__self__ for cb in subs[REQ_EXECUTE_CASHOUT]] == [catena.cashout_request_bridge]
+     assert [cb.__self__ for cb in subs[CMD_EXECUTE_CASHOUT]] == [catena.cashout_executor]
+     assert [cb.__self__ for cb in subs[CASHOUT_FAILED]] == [catena.cashout_residual_handler]
+-    assert set(subs) == {REQ_EXECUTE_CASHOUT, CMD_EXECUTE_CASHOUT, CASHOUT_FAILED}
++    # D-D (owner 18/10/2026): l'executor ascolta anche il settlement del mercato per riconciliare
++    # gli hedge registrati (un solo cashout attivo per posizione).
++    assert [cb.__self__ for cb in subs["RUNTIME_CLOSE_POSITION"]] == [catena.cashout_executor]
++    assert set(subs) == {REQ_EXECUTE_CASHOUT, CMD_EXECUTE_CASHOUT, CASHOUT_FAILED, "RUNTIME_CLOSE_POSITION"}
+ 
+ 
+ def test_cablaggio_inerte_nessun_evento_nessun_accesso_ai_servizi(bus):
+-- 
+2.43.0
+
+
+From 6c3ff650cb7323cdda45b69216be91eb1b326b95 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 09:50:47 +0000
+Subject: [PATCH 2/2] [TASK: pf-decisions-db-dd-de-df] rilievi Codex su
+ f62f0e3: lato mancante, reset SIM con tavoli trattenuti, baseline stantia,
+ book malformato, dossier
+
+- r4306544229 (P1): riga pendente senza bet_type/side => unattributed (mai BACK inventato).
+- r4306544236 (P1): reset_cycle non chiama reset_simulation finche' un tavolo e' trattenuto; esito sim_reset_skipped.
+- r4306544231 (P1): marker durevole del reset di ciclo (stessa transazione dello stato tavoli RSR-12);
+  _load_expansion_baseline rifiuta una baseline precedente all'ultimo reset durevole.
+- r4306544221 (P2): eccezione del quote provider => blocco pre-invio passive_stub_price_unverified.
+- r4306544234 (P2): dossier RSR: rifiuto sotto min_stake, nessun clamp.
+Test RED->GREEN: tests/test_pr512_codex_f62f0e3.py (7).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ CHANGELOG.md                          |   7 ++
+ core/microstake_safe.py               |   7 +-
+ core/runtime_controller.py            |  64 +++++++++++---
+ docs/roserpina41_parameter_dossier.md |   2 +-
+ tests/test_pr512_codex_f62f0e3.py     | 115 ++++++++++++++++++++++++++
+ 5 files changed, 181 insertions(+), 14 deletions(-)
+ create mode 100644 tests/test_pr512_codex_f62f0e3.py
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index dc6fb7e..673c2d7 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -25,6 +25,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+   stesso motivo. Prima: ACTIVE con la riserva trattenuta sul suo tavolo (P8 #510). `RuntimeController._post_rebuild_reconciliation`.
+ 
+ ### Fixed
++- **Rilievi Codex su f62f0e3 (#512, lotto di follow-up):** riga pendente senza lato persistito => non attribuita
++  (mai ricostruita come BACK: la liability di un LAY sarebbe sottostimata; r4306544229); `reset_cycle()` non azzera
++  il broker SIM finche' un tavolo resta trattenuto (`sim_reset_skipped`; r4306544236); baseline di espansione piu'
++  vecchia dell'ultimo reset di ciclo durevole (marker `roserpina.cycle_reset_state` scritto nella stessa transazione
++  dello stato tavoli) rifiutata al riavvio: nessuna espansione da una baseline mai ribasata (r4306544231); quote
++  provider che solleva (book SIM malformato) => blocco PRE-INVIO `passive_stub_price_unverified`, intento
++  rilasciabile (r4306544221); dossier RSR allineato al rifiuto sotto `min_stake` (r4306544234).
+ - **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
+   la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
+   (rilascio solo di una riserva sicuramente nuova; Sol c.6242912622); (2) costruzione e rebinding dell'esecutore
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index 783e4e9..508b085 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -707,7 +707,12 @@ class NativeMicrostakeExecutor:
+ 
+         try:
+             req = self._request(payload)
+-            quote = self.quote_provider(dict(payload))
++            try:
++                quote = self.quote_provider(dict(payload))
++            except Exception:  # noqa: BLE001 - book illeggibile/malformato: nessuna operazione exchange
++                # Rilievo Codex #512 (r4306544221): un'eccezione del quote provider deve essere un
++                # blocco PRE-INVIO dichiarato (intento rilasciabile), non un errore che consuma l'intento.
++                quote = None
+             if not isinstance(quote, dict):
+                 return blocked("passive_stub_price_unverified")
+             stub_raw = quote.get("passive_stub_price")
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 9f94bce..ed588e4 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2656,19 +2656,29 @@ class RuntimeController:
+         self._reset_reservations_keeping_uncertain()       # PF-ALL-F024
+         self._reset_recovery_cycle_keeping_losses()
+ 
++        # Rilievo Codex #512 (r4306544236): un tavolo trattenuto (posizione viva/incerta non
++        # regolata) corrisponde a un ordine/posizione nel ledger del broker SIM; azzerarlo
++        # lascerebbe un'esposizione riservata che non potra' mai regolarsi. Reset SIM solo
++        # senza tavoli trattenuti; altrimenti dichiarato, mai silenzioso.
++        retained = sorted(int(t["table_id"]) for t in self.table_manager.snapshot()
++                          if str(t.get("current_event_key") or ""))
+         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
+-            try:
+-                self.betfair_service.reset_simulation()
+-            except Exception:
+-                logger.exception("Errore reset_simulation")
++            if retained:
++                logger.warning("reset_cycle: broker SIM NON azzerato, %d tavoli trattenuti %s", len(retained), retained)
++            else:
++                try:
++                    self.betfair_service.reset_simulation()
++                except Exception:
++                    logger.exception("Errore reset_simulation")
+ 
+         self._start_expansion_cycle("reset_cycle")   # F032: nuovo ciclo, dopo l'eventuale reset SIM
+-        self._persist_recovery_tables()              # RSR-12
++        self._persist_recovery_tables(cycle_reset=True)   # RSR-12 + marker durevole del reset (F032)
+         status = self.get_status()
+         self.bus.publish("RUNTIME_CYCLE_RESET", status)
+         return {
+             "reset": True,
+             "status": status,
++            "sim_reset_skipped": retained if self.simulation_mode else [],
+         }
+ 
+     # =========================================================
+@@ -3617,14 +3627,16 @@ class RuntimeController:
+                 "selection_id": p.get("selection_id"),
+                 "event_key": str(p.get("event_key") or ""),
+                 "table_id": p.get("table_id"),
+-                "side": str(p.get("bet_type") or p.get("side") or "BACK").upper(),
++                "side": str(p.get("bet_type") or p.get("side") or "").upper(),
+                 "stake": p.get("stake"),
+                 "price": p.get("price"),
+                 "bet_id": bet_id,
+                 "meta": {k: p.get(k) for k in ("event_name", "market_name", "runner_name", "bet_type",
+                                                "price", "simulation_mode")},
+             }
+-            if not item["market_id"] or not item["event_key"]:
++            # Rilievo Codex #512 (r4306544229): un lato assente/non valido NON si inventa (BACK
++            # sottostimerebbe la liability di un LAY): la riga resta non attribuita, riconciliazione.
++            if not item["market_id"] or not item["event_key"] or item["side"] not in ("BACK", "LAY"):
+                 unattributed.append(item["customer_ref"])
+                 continue
+             candidates.append(item)
+@@ -3963,7 +3975,8 @@ class RuntimeController:
+                 funds = None
+         account = self._account_from_funds(funds)
+         baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
+-        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat()}
++        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
++                 "set_at_ts": time.time()}
+         try:
+             self.db.save_settings({self._EXPANSION_KEY: json.dumps(state)})
+         except Exception as exc:
+@@ -3984,13 +3997,35 @@ class RuntimeController:
+         if raw in (None, ""):
+             return False
+         try:
+-            value = validators.finite_number(json.loads(raw).get("baseline"))
++            parsed = json.loads(raw)
++            value = validators.finite_number(parsed.get("baseline"))
++            set_at_ts = float(parsed.get("set_at_ts") or 0.0)
+         except Exception:
+             logger.warning("F032: stato della baseline corrotto: nessuna espansione")
+             return True
++        # Rilievo Codex #512 (r4306544231): una baseline piu' VECCHIA dell'ultimo reset di ciclo
++        # durevole e' stantia (la sua scrittura era fallita): nessuna espansione finche' una
++        # transizione esplicita non la fissa di nuovo.
++        reset_ts = self._last_durable_cycle_reset_ts()
++        if reset_ts is not None and set_at_ts < reset_ts:
++            logger.warning("F032: baseline (%.0f) precedente all'ultimo reset durevole (%.0f): nessuna espansione",
++                           set_at_ts, reset_ts)
++            self._expansion_baseline = None
++            return True
+         self._expansion_baseline = value if value is not None and value > 0.0 else None
+         return True
+ 
++    _CYCLE_RESET_KEY = "roserpina.cycle_reset_state"
++
++    def _last_durable_cycle_reset_ts(self) -> Optional[float]:
++        try:
++            raw = (self.db.get_settings() or {}).get(self._CYCLE_RESET_KEY)
++            if raw in (None, ""):
++                return None
++            return float(json.loads(raw).get("at_ts"))
++        except Exception:
++            return None
++
+     def _expansion_growth_pct(self) -> Optional[float]:
+         """Crescita % dell'equita' di cassa regolata sulla baseline del ciclo; None se incerta."""
+         baseline = getattr(self, "_expansion_baseline", None)
+@@ -4014,10 +4049,15 @@ class RuntimeController:
+             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+         return len(self.table_manager.recovery_state())
+ 
+-    def _persist_recovery_tables(self) -> bool:
++    def _persist_recovery_tables(self, *, cycle_reset: bool = False) -> bool:
+         try:
+             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+-            self.db.save_settings({self._RECOVERY_KEY: json.dumps(state)})
++            payload = {self._RECOVERY_KEY: json.dumps(state)}
++            if cycle_reset:
++                # marker durevole del reset di ciclo, nella STESSA transazione dello stato tavoli
++                # (F032 / rilievo Codex r4306544231)
++                payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": time.time()})
++            self.db.save_settings(payload)
+             self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
+             return True
+         except Exception as exc:
+@@ -4057,7 +4097,7 @@ class RuntimeController:
+         self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
+                                                          "exposure": account.get("committed")}
+                                     if account.get("ok") else None)      # F032: nuovo ciclo
+-        self._persist_recovery_tables()                                  # RSR-12
++        self._persist_recovery_tables(cycle_reset=True)                  # RSR-12 + marker reset (F032)
+         self.bus.publish(
+             "ROSERPINA_AUTO_RESET",
+             {
+diff --git a/docs/roserpina41_parameter_dossier.md b/docs/roserpina41_parameter_dossier.md
+index 4e742a4..c2be5ec 100644
+--- a/docs/roserpina41_parameter_dossier.md
++++ b/docs/roserpina41_parameter_dossier.md
+@@ -61,7 +61,7 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
+ ## Interazioni verificate
+ 
+ - Profilo × target × difesa: lo stake è il prodotto di base, moltiplicatore di profilo e moltiplicatore del desk (`test_rsr30_*`, `test_rsr06_rsr10_*`).
+-- Stake minimo × cap: il clamp alza lo stake al minimo, poi il cap singolo rifiuta se lo supera (CL16, campagna capitali di frontiera).
++- Stake minimo × cap: sotto `min_stake` il Money Management RIFIUTA (`stake_sotto_min_stake`, nessun clamp verso l'alto: decisione owner 17/10/2026); sopra il cap singolo rifiuta (`supera_max_single_bet`, decisione owner 2). CL16 rieseguito con i nuovi oracle (campagna capitali di frontiera).
+ - Max win × solo avviso: il flag vale solo nel precheck dutching; il RiskGate blocca sempre (H-14).
+ - Liquidity guard × solo avviso × dato assente: dato assente nega sempre, il solo-avviso vale solo per mercati sottili osservati (F030).
+ - Stop di esposizione × candidato: il candidato si rifiuta senza RISK_STOP; l'esposizione reale al limite fa scattare lo stop.
+diff --git a/tests/test_pr512_codex_f62f0e3.py b/tests/test_pr512_codex_f62f0e3.py
+new file mode 100644
+index 0000000..da71ddd
+--- /dev/null
++++ b/tests/test_pr512_codex_f62f0e3.py
+@@ -0,0 +1,115 @@
++"""Rilievi Codex sul head f62f0e3 della PR #512 (r4306544221/229/231/236), preparati nel lotto di follow-up
++(budget fix loop esaurito sulla #512). RED sul head, GREEN con la patch.
++"""
++import json
++import threading
++from types import SimpleNamespace
++
++import pytest
++
++from core.runtime_controller import RuntimeController
++from core.system_state import RuntimeMode
++from tests.f026.test_f018_rebuild_units import _Exchange, _rc, _row
++from tests.f026.test_f032_rsr12_units import _rc as _rc32
++
++
++# ---------------------------------------------------------------- r4306544229 (P1): riga pendente senza lato persistito
++def test_pending_row_without_side_is_unattributed_never_rebuilt_as_back():
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side="", bet_id="77")], _Exchange([{"betId": "77", "marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["unattributed"] == ["r1"] and res["ok"] is False
++    assert rc.table_manager.total_exposure() == 0.0, "lato inventato (BACK) con esposizione sottostimata"
++
++
++@pytest.mark.parametrize("side", ["back", "Lay"])
++def test_pending_row_with_a_valid_side_in_any_case_is_still_rebuilt(side):
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side=side, bet_id="77")], _Exchange([{"betId": "77", "marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["rebuilt"] == ["r1"]
++
++
++# ---------------------------------------------------------------- r4306544236 (P1): reset_cycle non azzera il broker SIM
++# finche' un tavolo resta trattenuto (posizione viva/incerta non regolata)
++class _SimService:
++    def __init__(self):
++        self.resets = 0
++
++    def get_account_funds(self):
++        return {"ok": True, "available": 100.0, "exposure": 0.0}
++
++    def reset_simulation(self):
++        self.resets += 1
++        return {"ok": True}
++
++
++def _rc_reset(tmp_path, with_position):
++    rc = _rc32(tmp_path / "r.db")
++    rc.simulation_mode = True
++    rc.betfair_service = _SimService()
++    rc._daily_loss_state_lock = threading.Lock()
++    rc._daily_loss_monitor_state = {"realized_pnl_day_baseline": 0.0, "realized_pnl": 0.0}
++    rc._session_pnl_baseline = None
++    rc.get_status = lambda: {}
++    if with_position:
++        rc.table_manager.activate(table_id=1, event_key="K1", exposure=5.0, market_id="1.1", selection_id=7, meta={})
++        rc.duplication_guard.acquire("K1")
++    return rc
++
++
++def test_reset_cycle_keeps_the_sim_broker_state_while_a_table_is_retained(tmp_path):
++    rc = _rc_reset(tmp_path, with_position=True)
++    out = rc.reset_cycle()
++    assert out["reset"] is True
++    assert rc.betfair_service.resets == 0, "broker SIM azzerato con una posizione ancora riservata sul tavolo"
++    assert out.get("sim_reset_skipped") == [1]
++
++
++def test_reset_cycle_resets_the_sim_broker_when_no_table_is_retained(tmp_path):
++    rc = _rc_reset(tmp_path, with_position=False)
++    out = rc.reset_cycle()
++    assert rc.betfair_service.resets == 1 and out.get("sim_reset_skipped") == []
++
++
++# ---------------------------------------------------------------- r4306544231 (P1): baseline di espansione stantia dopo
++# un reset la cui scrittura e' fallita: al riavvio non deve tornare autorevole
++def test_stale_expansion_baseline_is_rejected_after_a_durable_cycle_reset(tmp_path):
++    rc = _rc32(tmp_path / "b.db")
++    assert rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0}) is True
++    real_save = rc.db.save_settings
++
++    def failing_for_baseline(data):
++        if rc._EXPANSION_KEY in data:
++            raise RuntimeError("disco pieno")
++        return real_save(data)
++
++    rc.db.save_settings = failing_for_baseline
++    assert rc._start_expansion_cycle("reset_cycle", funds={"available": 130.0, "exposure": 0.0}) is False
++    assert rc._persist_recovery_tables(cycle_reset=True) is True       # il reset e' durevole, la baseline no
++    again = _rc32(tmp_path / "b.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline is None, "baseline del ciclo precedente tornata autorevole dopo il riavvio"
++
++
++def test_baseline_newer_than_the_last_reset_survives_restart(tmp_path):
++    rc = _rc32(tmp_path / "c.db")
++    rc._persist_recovery_tables(cycle_reset=True)
++    assert rc._start_expansion_cycle("reset_cycle", funds={"available": 100.0, "exposure": 0.0}) is True
++    again = _rc32(tmp_path / "c.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline == pytest.approx(100.0)
++
++
++# ---------------------------------------------------------------- r4306544221 (P2): book SIM malformato => blocco
++# PRE-INVIO esplicito (intento rilasciabile), non un'eccezione che consuma l'intento
++def test_quote_provider_failure_is_a_pre_send_block():
++    from decimal import Decimal as D
++    from core.microstake_safe import MicrostakeCoordinator, NativeMicrostakeExecutor, StatefulExchangeSimulator
++    from tests.test_pf_decisions_de_df_dd import _MemStore
++
++    def broken_quote(payload):
++        raise AttributeError("'list' object has no attribute 'get'")
++
++    ex = NativeMicrostakeExecutor(MicrostakeCoordinator(StatefulExchangeSimulator(), _MemStore()),
++                                  quote_provider=broken_quote, transient_exposure_cap=D("10"))
++    out = ex.execute({"market_id": "1.1", "selection_id": 7, "bet_type": "BACK", "price": 2.0, "stake": 0.5, "customer_ref": "q1"})
++    assert out["status"] == "FAILURE" and out["error"] == "passive_stub_price_unverified" and out["pre_send"] is True
+-- 
+2.43.0
+

@@ -6,8 +6,8 @@
   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc"
  },
  "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
- "next_atomic_action": "Attendere check settled e Sol/Grok su 5ef61da...f62f0e3; triage. Poi lotto D-B (runtime_controller: PAUSED fino a riconciliazione con AMBIGUOUS pendenti) con RED->GREEN e regressione; poi D-D, D-E, D-F. PR 10 cicli dopo #512. Nessun merge, #505/main intoccate.",
- "previous_checkpoint_sha": "cd68a48a517e0167ed4e4cdb68a1fe92f3829bad",
+ "next_atomic_action": "Attendere O1/O2 dell'owner su #512. O1: applicare al checkout #512 i soli fix Codex P1 (+hardening, doc) dal branch lots, regressione, riesame indipendente, push unico. O2/merge: aprire PR 10 cicli dal main aggiornato (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df. Regressione lotti su 6c3ff65 in corso. Nessun merge, #505/main intoccate.",
+ "previous_checkpoint_sha": "b2e5c323c39af0d5dd3a1e46f9d434e23a167f40",
  "schema": "pf-current/1",
- "seq": 21
+ "seq": 22
 }

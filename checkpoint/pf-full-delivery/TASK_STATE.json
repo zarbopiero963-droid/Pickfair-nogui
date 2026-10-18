@@ -43,11 +43,12 @@
   "estensione 10 cicli preparata in locale con RED/GREEN (seq 20; PR non aperta)",
   "screenshot GUI Xvfb su 5ef61da (seq 20)",
   "ciclo 6 PR #512 f62f0e3 (seq 21)",
-  "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)"
+  "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
+  "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)"
  ],
- "lotto_corrente": "PF-DECISIONS-DA-DJ: ciclo 6 spinto (f62f0e3); prossimo lotto seriale D-B (PAUSED con AMBIGUOUS pendenti)",
+ "lotto_corrente": "PF-DECISIONS-DA-DJ: ciclo 6 spinto e verificato (f62f0e3); lotti D-B/D-D/D-E/D-F + fix Codex pronti in locale (6c3ff65); attesa decisione owner O1/O2",
  "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
- "next_atomic_action": "Attendere check settled e Sol/Grok su 5ef61da...f62f0e3; triage. Poi lotto D-B (runtime_controller: PAUSED fino a riconciliazione con AMBIGUOUS pendenti) con RED->GREEN e regressione; poi D-D, D-E, D-F. PR 10 cicli dopo #512. Nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere O1/O2 dell'owner su #512. O1: applicare al checkout #512 i soli fix Codex P1 (+hardening, doc) dal branch lots, regressione, riesame indipendente, push unico. O2/merge: aprire PR 10 cicli dal main aggiornato (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df. Regressione lotti su 6c3ff65 in corso. Nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

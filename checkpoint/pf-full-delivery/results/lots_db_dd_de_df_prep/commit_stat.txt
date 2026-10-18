@@ -1,0 +1,14 @@
+ CHANGELOG.md                          |  16 ++
+ cashout_executor.py                   | 100 +++++++++++-
+ cashout_wiring.py                     |   6 +-
+ core/microstake_safe.py               |  49 +++++-
+ core/microstake_sim_port.py           |  12 +-
+ core/runtime_controller.py            |  78 +++++++++-
+ core/trading_engine.py                |  23 ++-
+ docs/cashout_overview.md              |   9 ++
+ docs/microstake_native.md             |   4 +
+ docs/roserpina_bankroll_equity.md     |   9 +-
+ tests/f026/test_f018_rebuild_units.py |  49 ++++++
+ tests/test_pf_decisions_de_df_dd.py   | 284 ++++++++++++++++++++++++++++++++++
+ tests/unit/test_cashout_wiring.py     |   5 +-
+ 13 files changed, 615 insertions(+), 29 deletions(-)
