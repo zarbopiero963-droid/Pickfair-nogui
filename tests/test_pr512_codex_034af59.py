@@ -127,3 +127,48 @@ def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
     ops = list(ex.port.operation_log)
     assert ex.recover_pending() == {"snap-x": "AMBIGUOUS"}
     assert ex.store.load("snap-x")["phase"] == "AMBIGUOUS" and ex.port.operation_log == ops
+
+
+# ------------------------------------------------------------------ 3. liquidita' ignota in modalita' blocco
+def _dutching_leg_shortfall(ladder, *, warning_only):
+    from controllers.dutching_controller import DutchingController
+    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": ladder}}]}
+    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
+    return DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=warning_only)
+
+
+@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
+def test_f3_unknown_liquidity_in_block_mode_is_a_shortfall(ladder):
+    sf = _dutching_leg_shortfall(ladder, warning_only=False)
+    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN" and sf["available"] is None, sf
+    assert sf["selectionId"] == 11 and sf["required"] == 10.0
+
+
+def test_f3_selection_missing_from_the_book_is_unknown_in_block_mode():
+    from controllers.dutching_controller import DutchingController
+    book = {"runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0, "size": 50}]}}]}
+    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
+    sf = DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=False)
+    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN"
+
+
+@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
+def test_f3_unknown_liquidity_in_warning_only_mode_stays_unobserved(ladder):
+    assert _dutching_leg_shortfall(ladder, warning_only=True) is None
+
+
+def test_f3_known_sufficient_liquidity_is_never_a_shortfall_in_block_mode():
+    assert _dutching_leg_shortfall([{"price": 2.0, "size": 50.0}], warning_only=False) is None
+
+
+def test_f3_evaluate_guard_blocks_on_unknown_liquidity_only_when_armed():
+    from types import SimpleNamespace
+    from controllers.dutching_controller import DutchingController
+    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": "rotto"}}]}
+    ctl = DutchingController.__new__(DutchingController)
+    ctl._market_book = lambda market_id: book
+    results = [{"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}]
+    armed = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=False), {"market_id": "1.1"}, results)
+    assert armed["warning"] is True and armed["shortfall"][0]["reason"] == "LIQUIDITY_UNKNOWN"
+    observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
+    assert observe == {"warning": False, "shortfall": []}

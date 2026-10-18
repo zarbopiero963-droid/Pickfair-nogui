@@ -541,12 +541,17 @@ class DutchingController:
         return liquidity.executable_liquidity(book, selection_id, side, price)
 
     @classmethod
-    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs):
-        """Shortfall di liquidita' per una gamba, o None se ok/ignota.
+    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs, *, warning_only=True):
+        """Shortfall di liquidita' per una gamba, o None se ok (o ignota in sola osservazione).
 
         required = stake * multiplier: la size da matchare sul lato opposto e' lo
         STAKE (le size del book sono backer-stake), NON la liability. Confronto
         omogeneo (size vs size).
+        Liquidita' IGNOTA (ladder malformata, selezione assente dal book): in
+        modalita' blocco (`warning_only=False`) e' uno shortfall esplicito
+        `LIQUIDITY_UNKNOWN` con `available=None` (fail-closed: un dato mancante
+        non vale "liquidita' sufficiente"; rilievo Codex #512 su 034af59); in sola
+        osservazione resta nessuna osservazione, come prima.
         """
         try:
             selection_id = int(item.get("selectionId"))
@@ -561,9 +566,17 @@ class DutchingController:
         except (TypeError, ValueError):
             price = 1.0
         available = cls._available_liquidity(book, selection_id, side, price)
-        if available is None:
-            return None  # dato mancante => nessuna osservazione
         required = float(stake) * float(multiplier)
+        if available is None:
+            if warning_only:
+                return None  # dato mancante => nessuna osservazione (sola osservazione)
+            return {
+                "selectionId": selection_id,
+                "available": None,
+                "required": round(float(required), 2),
+                "min_absolute": round(float(min_abs), 2),
+                "reason": "LIQUIDITY_UNKNOWN",
+            }
         if available < min_abs or available < required:
             return {
                 "selectionId": selection_id,
@@ -593,10 +606,11 @@ class DutchingController:
         book = self._market_book((payload or {}).get("market_id"))
         if book is None:
             return out  # nessun book in cache => nessuna osservazione (fail-open)
+        warning_only = self._liquidity_warning_only(config)
         shortfall = [
             leg
             for leg in (
-                self._leg_liquidity_shortfall(book, item, multiplier, min_abs)
+                self._leg_liquidity_shortfall(book, item, multiplier, min_abs, warning_only=warning_only)
                 for item in (results or [])
             )
             if leg is not None
