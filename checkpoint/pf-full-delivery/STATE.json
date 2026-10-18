@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 27,
- "updated_at": "2026-10-18T13:16:31Z",
+ "seq": 28,
+ "updated_at": "2026-10-18T13:21:58Z",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -442,7 +442,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Completare le 10 patch nel worktree (RED->GREEN per rilievo), cherry-pick sul checkout #512, registrare i nuovi file di test nello scope, regressione completa, riesame indipendente, push unico ciclo 8, triage nuovi finding, verdetto; in parallelo chiudere l'audit cap (registro conflitti + cross-reference).",
+ "next_atomic_action": "Ciclo 8 #512: completare patch, cherry-pick, scope, regressione, riesame, push unico, triage, verdetto. In parallelo: esito revisione audit cap => correzioni registro; patch isolate riconciliazione #505 su branch locale (PF-CAP-01..04,10,11), RED->GREEN, senza toccare la PR protetta.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -452,8 +452,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "dcf94c8d6e2a1e68185d1f7d5d91d6640c86e765",
- "lotto_corrente": "#512 ciclo 8 (patch 10 rilievi Codex in worktree locale) + audit cap monetari read-only (agente) + PR 10 cicli pronta (6a152e8)",
+ "previous_checkpoint_sha": "cf9aedd04b482a24ff81e8cc6944377a34128533",
+ "lotto_corrente": "#512 ciclo 8 (patch 10 rilievi Codex, worktree locale, 4+/10) + revisione indipendente audit cap + PR 10 cicli pronta (6a152e8)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -985,5 +985,17 @@
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",
   "status": "AUDIT IN CORSO (read-only), nessuna modifica di codice",
   "superseded": "decisioni precedenti incompatibili sui cap preimpostati => SUPERSEDED (da elencare nel registro conflitti)"
+ },
+ "cap_audit_20261018": {
+  "status": "AUDIT COMPLETED",
+  "artifacts": "results/cap_audit_20261018/ (analisi_impatti_cap.md, registro_conflitti_cap.json, pr505_618884e.diff, MANIFEST.sha256)",
+  "register_github": "#426 c.6250405396 (canonico); cross-ref #505 c.6250406580, #512 c.6250407584, #506 c.6250408721, #461 c.6250409725, #453 c.6250410915, #513 c.6250412196, #351 c.6250413342",
+  "conflicts": "PF-CAP-01..12 (A: 01-04 #505 default 1/2/2/10, 08 Telegram auto_stake 1 EUR; A/B ambigui: 05 max_stake_abs, 06 max_win; A basso: 07 min_stake; C lacuna: 09 gate fondi percorso diretto NOT VERIFIED; C semantica: 10; doc: 11; B keep: 12 decisione 2)",
+  "superseded": [
+   "#505 c.6242327543 piano (solo default) => c.6249984179",
+   "requirements.json OWN-Q-MAXSINGLE => PF-OD2-01"
+  ],
+  "owner_questions_open": "Q1-Q9 (raccomandazioni nel registro)",
+  "next": "revisione indipendente ERRORE1/ERRORE2 (agente in corso); patch isolate riconciliazione #505 (branch locale) dopo revisione; nessuna modifica a #505/main/#512"
  }
 }
