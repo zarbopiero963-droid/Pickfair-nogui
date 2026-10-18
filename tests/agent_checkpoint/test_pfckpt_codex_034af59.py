@@ -48,6 +48,18 @@ def test_declared_unpublished_tree_evidence_is_accepted_only_with_an_explicit_no
     assert any("scratch" in p and "test sha unresolved" in p for p in err.detail["problems"])
 
 
+@pytest.mark.parametrize("bad_sha", ["", "non-uno-sha", "F63CF3A", "f63cf3", "zz63cf3a5ece"])
+def test_c9_review_declared_unpublished_tree_still_needs_a_well_formed_sha(world, bad_sha):
+    """Riesame indipendente c9: la dichiarazione esonera dalla RISOLUZIONE dello SHA, mai dalla sua forma."""
+    from test_pfckpt import raw_commit
+    a = agent(world, "a")
+    _checkpoint_with_tests(a, world, [{"id": "scratch", "status": "FAIL", "sha": bad_sha, "unpublished_tree": True,
+                                       "sha_note": "albero scratch locale mai pubblicato, dichiarato"}])
+    raw_commit(a, "ckpt con sha malformato")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert any("scratch" in p and "test sha unresolved" in p for p in err.detail["problems"])
+
+
 def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
     a = agent(world, "a")
     _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},

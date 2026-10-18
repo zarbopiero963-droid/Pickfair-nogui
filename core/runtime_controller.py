@@ -3682,7 +3682,8 @@ class RuntimeController:
         Solo righe SUBMITTED con betId: un esito incerto (AMBIGUOUS/INFLIGHT, riserve incerte) non e'
         mai considerato annullato. Rilascio idempotente (``force_unlock_if_event``): la perdita di
         recovery del tavolo resta. La chiave anti-duplicato resta acquisita: un segnale riconsegnato
-        non viene rigiocato. Dopo un riavvio la stessa conclusione la trae F018 (ordine assente).
+        non viene rigiocato per il TTL; se era fissata al riavvio (F018) torna a scadere normalmente
+        (`unpin`, riesame indipendente c9). Dopo un riavvio la stessa conclusione la trae F018 (ordine assente).
         """
         if not self._settlement_reconciliation_allowed():
             return []
@@ -3709,6 +3710,9 @@ class RuntimeController:
                 continue
             table = held[c["event_key"]]
             if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"]):
+                # La chiave resta (dedupe del segnale per il TTL) ma non e' piu' una posizione viva:
+                # se era fissata al riavvio torna a scadere normalmente (riesame indipendente c9).
+                self.duplication_guard.unpin(c["event_key"])
                 released.append(c["customer_ref"])
                 self.bus.publish("UNMATCHED_ORDER_RELEASED", {
                     "customer_ref": c["customer_ref"], "bet_id": c["bet_id"], "market_id": c["market_id"],
@@ -4049,13 +4053,27 @@ class RuntimeController:
         reset e, se dato, lo stato della baseline F032 (``expansion_state`` da `_expansion_cycle_state`), in
         UNA SOLA transazione (`Database.save_settings`): baseline del nuovo ciclo, marker e perdite perdonate
         o si persistono insieme o non si persistono affatto (rilievo Codex #512 ciclo 9, r4307328199).
-        Fallimento con ``expansion_state`` => nessuna baseline in memoria (nessuna espansione)."""
+        Fallimento con ``expansion_state`` => nessuna baseline in memoria (nessuna espansione).
+
+        Un reset di ciclo NON persistito resta in sospeso in memoria (`_pending_cycle_reset`) e viaggia con
+        OGNI scrittura successiva dello stato tavoli finche' una riesce (riesame indipendente ciclo 9 #512):
+        altrimenti il settlement seguente scriverebbe le perdite gia' perdonate dal nuovo ciclo accanto alla
+        baseline e al marker del ciclo VECCHIO."""
+        pending = getattr(self, "_pending_cycle_reset", None)
+        if not cycle_reset and pending is not None:
+            cycle_reset = True
+            reset_ts = pending.get("reset_ts")
+            expansion_state = pending.get("expansion_state")
+        if cycle_reset and reset_ts is None:
+            reset_ts = time.time()
         if getattr(self, "_recovery_state_unreadable", False):
             # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
             # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
             logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
             if expansion_state is not None:
                 self._expansion_baseline = None
+            if cycle_reset:
+                self._pending_cycle_reset = {"reset_ts": reset_ts, "expansion_state": expansion_state}
             return False
         try:
             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
@@ -4063,12 +4081,12 @@ class RuntimeController:
             if cycle_reset:
                 # marker durevole del reset di ciclo, nella STESSA transazione dello stato tavoli
                 # (F032 / rilievo Codex r4306544231); `reset_ts` e' l'istante condiviso con la baseline
-                at_ts = float(reset_ts) if reset_ts is not None else time.time()
-                payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": at_ts})
+                payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": float(reset_ts)})
             if expansion_state is not None:
                 payload[self._EXPANSION_KEY] = json.dumps(expansion_state)
             self.db.save_settings(payload)
             self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
+            self._pending_cycle_reset = None                                # reset (se c'era) ora durevole
             if expansion_state is not None:
                 self._expansion_baseline = expansion_state.get("baseline")
             return True
@@ -4077,6 +4095,8 @@ class RuntimeController:
             if expansion_state is not None:
                 logger.error("F032: baseline del ciclo non persistita: nessuna espansione")
                 self._expansion_baseline = None
+            if cycle_reset:
+                self._pending_cycle_reset = {"reset_ts": reset_ts, "expansion_state": expansion_state}
             return False
 
     def _restore_recovery_tables(self) -> bool:

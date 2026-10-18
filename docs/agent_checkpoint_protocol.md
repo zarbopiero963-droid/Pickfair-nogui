@@ -152,4 +152,6 @@ Ogni voce di `tests_executed` con esito `PASS`/`FAIL` porta uno `sha` che DEVE r
 stessa lookup di `code.sha`; il readback di `save` scarica tutti i branch remoti (non solo quello di codice), cosi'
 un'evidenza pubblicata su un altro branch resta verificabile. Un'evidenza su un albero scratch mai pubblicato e'
 ammessa solo se dichiarata esplicitamente (`"unpublished_tree": true` piu' una `sha_note` motivata): la
-dichiarazione resta visibile nel checkpoint e non e' mai inferita da uno SHA che semplicemente non si risolve.
+dichiarazione resta visibile nel checkpoint e non e' mai inferita da uno SHA che semplicemente non si risolve. La
+dichiarazione esonera solo dalla risoluzione, mai dalla forma: lo `sha` resta un id di commit esadecimale minuscolo
+di 7-40 caratteri, altrimenti `test sha unresolved` (riesame indipendente del ciclo 9).

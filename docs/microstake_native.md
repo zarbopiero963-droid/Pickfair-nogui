@@ -111,8 +111,12 @@ scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blo
 (solo riduzione/replace mancanti, **mai un nuovo PLACE**; una saga salvata **ROLLBACK_PENDING** completa solo la
 cancellazione del residuo → ROLLED_BACK; se la cancellazione fallisce il risultato è AMBIGUOUS con riserva tenuta ma la
 fase persistita resta ROLLBACK_PENDING, così il recover successivo ritenta solo la cancellazione, mai un replace — cicli
-8 e 9, rilievi Codex su 034af59 e Sol). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
-durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); ogni altro
+8 e 9, rilievi Codex su 034af59 e Sol). La decisione di rollback è registrata anche come flag durevole
+`rollback_intent`, che nessun salvataggio intermedio cancella: un recover che non trova l'ordine lascia la fase
+ROLLBACK_PENDING (non AMBIGUOUS generico), e un residuo già cancellato con snapshot SIM non persistito si chiude
+ROLLED_BACK al recover successivo senza una seconda cancellazione (riesame indipendente del ciclo 9). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
+durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); una saga
+pendente nello store ma assente dai risultati dell'esecutore resta pendente; ogni altro
 esito (AMBIGUOUS, FAILED, BLOCKED, ERROR) resta pendente. Se resta una saga pendente, lo store è illeggibile o manca
 l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
 e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.

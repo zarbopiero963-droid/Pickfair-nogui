@@ -108,6 +108,48 @@ def test_explicit_tests_field_is_authoritative(tmp_path):
     assert _uncovered(ko), "un campo tests esplicito che non nomina il test non lo copre (anche se il comando si')"
 
 
+@pytest.mark.parametrize("command", [
+    "pytest -q --deselect tests/test_x.py::test_ok tests/test_y.py",   # node-id DESELEZIONATO
+    "pytest -q --ignore tests/test_x.py tests/",                      # file ignorato
+    "pytest -q --ignore=tests/test_x.py tests/",
+    "pytest tests/test_x.py -k not_ok",                               # filtro per nome
+    "pytest tests/test_x.py -knot_ok",
+    "pytest tests/test_x.py -m slow",                                 # filtro per marker
+    "pytest -q --rootdir tests",                                      # argomento di un'opzione, non un bersaglio
+    "pytest -q -p tests/test_x.py",
+    "echo tests/",                                                    # nessuna esecuzione di pytest
+    "echo tests/test_x.py; pytest -q tests/test_y.py",
+    "pytest -q tests/test_y.py (vedi anche tests/test_x.py)",          # commento tra parentesi
+    "pytest --collect-only tests/test_x.py",                           # raccolta, nessuna esecuzione
+    "pytest --lf tests/",
+])
+def test_c9_review_filtered_or_non_executing_commands_do_not_cover_the_test(tmp_path, command):
+    """Riesame indipendente c9 (P2): un comando che esclude o filtra il test, o che nomina il path solo come
+    argomento di un'opzione o fuori da pytest, non lo copre senza un campo `tests` esplicito."""
+    sha = _repo(tmp_path)
+    _, warnings = pf_trace.validate(_req_cmd(sha, command), str(tmp_path))
+    assert _uncovered(warnings), command
+
+
+@pytest.mark.parametrize("command", [
+    "pytest -q -n 4 tests",                                          # valore di -n saltato, bersaglio letto
+    "python3 -m pytest -q -p no:cacheprovider tests/test_x.py (3 passed)",
+    "pytest -q tests/test_y.py; pytest -q tests/test_x.py",
+    "venv312/bin/pytest --tb short tests/test_x.py::test_ok",
+])
+def test_c9_review_option_values_are_skipped_but_real_targets_still_cover(tmp_path, command):
+    sha = _repo(tmp_path)
+    _, warnings = pf_trace.validate(_req_cmd(sha, command), str(tmp_path))
+    assert not _uncovered(warnings), (command, warnings)
+
+
+def test_c9_review_filtered_command_with_explicit_tests_is_still_authoritative(tmp_path):
+    sha = _repo(tmp_path)
+    _, warnings = pf_trace.validate(
+        _req_cmd(sha, "pytest tests/test_x.py -k ok", tests_field=["tests/test_x.py::test_ok"]), str(tmp_path))
+    assert not _uncovered(warnings)
+
+
 def test_real_registry_validates_strict():
     root = ROOT
     reg = os.path.join(root, "docs", "traceability", "requirements.json")

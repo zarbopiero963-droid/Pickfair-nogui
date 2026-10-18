@@ -530,7 +530,11 @@ class MicrostakeCoordinator:
             return self._result(Phase.AMBIGUOUS, req=req, reason="replace_outcome_unknown",
                                 order=order, max_exposure=transient, held=True)
         except Exception as exc:
-            self.store.save(req.customer_ref, phase=Phase.ROLLBACK_PENDING, reason=str(exc))
+            # `rollback_intent` e' DUREVOLE (riesame indipendente ciclo 9 #512): nessun salvataggio
+            # intermedio successivo (AMBIGUOUS per ordine non trovato, snapshot non persistito) puo'
+            # cancellarlo, quindi nessun recover futuro riprende il percorso riduzione/replace.
+            self.store.save(req.customer_ref, phase=Phase.ROLLBACK_PENDING, rollback_intent=True,
+                            reason=str(exc))
             # Identity comes only from the persisted bet id; never scan by price.
             try:
                 order = self.exchange.cancel_all_remaining(order.bet_id)
@@ -577,9 +581,15 @@ class MicrostakeCoordinator:
             raise KeyError(customer_ref)
         req = self._request_from_json(saved["request"])
         transient = D(saved.get("transient_exposure", "0"))
+        rollback_intent = saved.get("rollback_intent") is True or saved.get("phase") == Phase.ROLLBACK_PENDING.value
         order = self.exchange.find_by_ref(customer_ref)
         if order is None:
-            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, reservation_held=True)
+            # Ordine non (ancora) visibile: riconciliazione incompleta. Un rollback gia' deciso resta
+            # ROLLBACK_PENDING, mai declassato ad AMBIGUOUS generico (riesame indipendente ciclo 9 #512:
+            # il recover successivo avrebbe ridotto e riprezzato l'ordine che si era deciso di cancellare).
+            self.store.save(customer_ref,
+                            phase=Phase.ROLLBACK_PENDING if rollback_intent else Phase.AMBIGUOUS,
+                            reservation_held=True)
             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciliation_incomplete",
                                 max_exposure=transient, held=True)
         phase = Phase(saved["phase"])
@@ -593,14 +603,17 @@ class MicrostakeCoordinator:
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciled_matched_stub",
                                 order=order, max_exposure=transient, held=True)
-        if phase is Phase.ROLLBACK_PENDING:
+        if rollback_intent:
             # Rollback gia' deciso prima del crash (replace rifiutato): si completa SOLO la
             # cancellazione del residuo, mai un nuovo replace che riattiverebbe la saga
             # (rilievo Codex #512 su 034af59). Cancellazione fallita => risultato AMBIGUOUS con riserva
             # tenuta, ma la fase persistita RESTA ROLLBACK_PENDING (rilievo Sol ciclo 8): l'intento di
             # rollback non si perde e il recover successivo ritenta solo la cancellazione.
+            # Residuo gia' cancellato (es. cancellazione riuscita ma snapshot non persistito al giro
+            # precedente): nulla da cancellare, si chiude soltanto la saga, senza ripetere la chiamata.
             try:
-                order = self.exchange.cancel_all_remaining(order.bet_id)
+                if order.remaining > 0:
+                    order = self.exchange.cancel_all_remaining(order.bet_id)
             except Exception:
                 self.store.save(customer_ref, phase=Phase.ROLLBACK_PENDING, reason="rollback_unknown")
                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",

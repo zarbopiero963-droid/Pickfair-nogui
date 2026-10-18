@@ -244,7 +244,10 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
             # Un'evidenza su un albero MAI pubblicato (esperimento scratch) e' ammessa solo se
             # dichiarata esplicitamente (`unpublished_tree: true` + `sha_note`): resta verificabile
             # come dichiarazione, mai inferita da uno SHA che semplicemente non si risolve.
-            declared_unpublished = t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip())
+            # Lo SHA dichiarato deve comunque essere un id di commit ben formato (riesame indipendente c9):
+            # la dichiarazione esonera solo dalla risoluzione, mai dalla forma.
+            declared_unpublished = (t.get("unpublished_tree") is True and bool(str(t.get("sha_note", "")).strip())
+                                    and re.fullmatch(r"[0-9a-f]{7,40}", tsha) is not None)
             if not declared_unpublished and git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
                 problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
         art = t.get("artifact") if isinstance(t, dict) else None

@@ -30,13 +30,57 @@ SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 TEST_RE = re.compile(r"^(?P<file>[\w./-]+\.py)(::(?P<name>[\w\[\]\-., =]+))?$")
 
 
+# Opzioni di pytest che consumano il token successivo come valore (mai un test eseguito).
+_PYTEST_VALUE_OPTS = frozenset({
+    "-k", "-m", "-n", "-p", "-c", "-o", "-W", "-r", "--deselect", "--ignore", "--ignore-glob", "--rootdir",
+    "--confcutdir", "--basetemp", "--tb", "--maxfail", "--durations", "--junitxml", "--log-level", "--cov",
+    "--dist", "--import-mode", "--override-ini", "--config-file",
+})
+# Opzioni che escludono o filtrano test senza dire quali sono girati: con queste il comando non basta,
+# serve la lista esplicita `tests` (riesame indipendente del ciclo 9 #512).
+_PYTEST_FILTER_OPTS = frozenset({
+    "-k", "-m", "--deselect", "--ignore", "--ignore-glob", "--lf", "--last-failed", "--ff", "--failed-first",
+    "--sw", "--stepwise", "--co", "--collect-only", "--sw-skip", "--stepwise-skip",
+})
+
+
+def _pytest_targets(command):
+    """Bersagli posizionali passati a pytest nel comando; None se il comando li filtra (-k, -m,
+    --deselect, --ignore, --lf, ...) e quindi non dice da solo quali test sono girati. Si leggono solo i
+    segmenti che invocano davvero pytest (`echo tests/` non e' un'esecuzione) e mai gli argomenti di
+    un'opzione (`--rootdir tests` non e' un bersaglio); il testo tra parentesi e' un commento."""
+    targets = []
+    for segment in re.split(r";|&&|\|\||\||\s\+\s|\(", str(command or "")):
+        tokens = [t.strip().strip("'\"") for t in segment.split()]
+        tokens = [t for t in tokens if t]
+        idx = next((i for i, t in enumerate(tokens) if t == "pytest" or t.endswith("/pytest")), None)
+        if idx is None:
+            continue
+        skip_value = False
+        for arg in tokens[idx + 1:]:
+            if skip_value:
+                skip_value = False
+                continue
+            if arg.startswith("-"):
+                name = arg.split("=", 1)[0]
+                if name in _PYTEST_FILTER_OPTS or re.match(r"^-[km].", arg):
+                    return None
+                if "=" not in arg and name in _PYTEST_VALUE_OPTS:
+                    skip_value = True
+                continue
+            targets.append(arg)
+    return targets
+
+
 def evidence_covers(evidence, test_ref):
     """True se l'evidenza e' legata in modo verificabile al test dichiarato (rilievo Codex #512 ciclo 9).
 
-    Associazione esplicita (`tests` non vuoto) oppure derivata dal `command` dell'evidenza: il comando
-    nomina il node-id esatto, il file del test o una directory che lo contiene. Mai implicita: un'evidenza
-    senza `tests` e con un comando che non nomina il test NON lo copre (prima il fallback `[t]` faceva
-    coprire ogni test dichiarato a qualunque PASS)."""
+    Associazione esplicita (`tests` non vuoto) oppure derivata dal `command` dell'evidenza: un'invocazione
+    di pytest che nomina come bersaglio il node-id esatto, il file del test o una directory che lo contiene.
+    Mai implicita: un'evidenza senza `tests` e con un comando che non nomina il test NON lo copre (prima il
+    fallback `[t]` faceva coprire ogni test dichiarato a qualunque PASS). Un comando che filtra i test
+    (-k, -m, --deselect, --ignore, ...) non copre nulla senza `tests` esplicito, e gli argomenti delle
+    opzioni non sono bersagli (riesame indipendente del ciclo 9)."""
     ref = str(test_ref or "").strip()
     if not ref:
         return False
@@ -44,10 +88,10 @@ def evidence_covers(evidence, test_ref):
     explicit = evidence.get("tests")
     if isinstance(explicit, list) and explicit:
         return any(str(x).strip() in (ref, test_file) for x in explicit)
-    for token in re.split(r"[\s;,()]+", str(evidence.get("command") or "")):
-        token = token.strip().strip("'\"")
-        if not token or token.startswith("-"):
-            continue
+    targets = _pytest_targets(evidence.get("command"))
+    if not targets:
+        return False
+    for token in targets:
         if token == ref or token == test_file:
             return True
         if "::" in token or token.endswith(".py"):

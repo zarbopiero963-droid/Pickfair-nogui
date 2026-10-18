@@ -21,6 +21,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   reale mancante per `tests/test_pr512_codex_findings.py` (PF-MS-01/02/05, append-only). Test RED->GREEN in
   `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
   `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
+  Riesame indipendente del ciclo 9 (prima del push): (a) l'intento di rollback della saga e' un flag durevole
+  `rollback_intent`, che un recover senza ordine visibile non declassa ad AMBIGUOUS (prima il recover successivo
+  riduceva e riprezzava l'ordine da cancellare); un residuo gia' cancellato con snapshot SIM non persistito si chiude
+  ROLLED_BACK al giro dopo, senza seconda cancellazione; (b) `DuplicationGuard.unpin`: una chiave fissata al riavvio
+  torna alla scadenza per TTL quando F028 libera il tavolo (prima bloccava l'evento fino al riavvio); (c) un reset di
+  ciclo non persistito resta in sospeso e viaggia con la scrittura successiva dello stato tavoli; (d) `pf_trace`: gli
+  argomenti delle opzioni non sono bersagli, i comandi che filtrano i test (-k, -m, --deselect, --ignore, --lf,
+  --collect-only) o che non invocano pytest non coprono nulla senza `tests` esplicito; (e) `unpublished_tree` esige
+  comunque uno SHA ben formato; (f) una saga pendente nello store ma assente dai risultati del recover resta pendente.
+  Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale anche con
+  `anti_duplication_enabled=false`, perche' e' il vincolo «un segnale valido => un solo ordine», non il dedupe a TTL.
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
   (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
   `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:

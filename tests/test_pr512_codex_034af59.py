@@ -12,6 +12,7 @@
 10. `RoserpinaMoneyManagement._desk_mode`: crescita ignota => NORMAL anche con soglia 0.
 """
 import json
+import types
 import os
 import sys
 import threading
@@ -541,6 +542,42 @@ def test_c9_1_rebuilt_open_position_key_does_not_expire_by_ttl(monkeypatch):
     assert rc.duplication_guard.is_duplicate("K1"), "chiave della posizione ricostruita scaduta per TTL"
 
 
+
+def test_c9_review_pinned_rebuilt_key_expires_normally_after_f028_release(monkeypatch):
+    """Riesame indipendente c9 (P2): posizione ricostruita (chiave fissata) e poi liberata da F028 =>
+    la chiave torna a scadere per TTL; prima del TTL resta duplicato (BLOCK), dopo il TTL non piu'."""
+    from core import duplication_guard as dg_mod
+    from tests.f026.test_f018_rebuild_units import _Exchange, _rc, _row
+    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side="BACK", bet_id="77")],
+             _Exchange([{"betId": "77", "marketId": "1.1"}]))
+    assert rc._rebuild_open_positions()["rebuilt"] == ["r1"]
+    rc._final_unmatched_bets = lambda markets, bets: set(bets)       # stato finale confermato: mai abbinato
+    rc._settlement_reconciliation_allowed = lambda: True
+    rc.bus = types.SimpleNamespace(publish=lambda *a, **k: None)
+    assert rc._release_final_unmatched_orders() == ["r1"]
+    assert rc.table_manager.find_by_event_key("K1") is None
+    assert rc.duplication_guard.is_duplicate("K1"), "la chiave deve restare per il TTL dopo il rilascio"
+    base = dg_mod.time.monotonic()
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: base + rc.duplication_guard.ttl + 1)
+    assert not rc.duplication_guard.is_duplicate("K1"), "chiave fissata sopravvive alla posizione liberata"
+
+
+def test_c9_review_unpin_restarts_ttl_from_now_and_ignores_unpinned_keys(monkeypatch):
+    from core import duplication_guard as dg_mod
+    from core.duplication_guard import DuplicationGuard
+    g = DuplicationGuard(ttl_seconds=10)
+    t = [1000.0]
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: t[0])
+    assert g.acquire("P", pin=True) and g.acquire("N")
+    t[0] = 1100.0                                  # ben oltre il TTL: N scade, P no
+    assert not g.is_duplicate("N") and g.is_duplicate("P")
+    g.unpin("P"); g.unpin("assente"); g.unpin("")
+    t[0] = 1105.0
+    assert g.is_duplicate("P"), "il TTL riparte dallo sblocco, non dall'acquisizione"
+    t[0] = 1111.0
+    assert not g.is_duplicate("P")
+
+
 # ------------------------------------------------------------------ c9 #2 (r4307328199, P1): baseline di espansione e
 # stato di recovery + marker del reset scritti in DUE transazioni: se la seconda fallisce, dopo un crash la nuova
 # baseline e' accettata (nessun marker) mentre tornano le perdite del ciclo precedente
@@ -622,6 +659,44 @@ def test_c9_2_auto_reset_success_is_one_write(tmp_path):
     assert again._expansion_baseline == pytest.approx(80.0) and again.table_manager.recovery_state() == {}
 
 
+@pytest.mark.parametrize("trigger", ["reset_cycle", "auto_reset"])
+def test_c9_review_unpersisted_reset_travels_with_the_next_recovery_write(tmp_path, trigger):
+    """Riesame indipendente c9 (P2): reset non persistito, poi il settlement successivo riscrive lo stato
+    tavoli => baseline e marker del reset vanno nella STESSA scrittura, mai le perdite perdonate accanto alla
+    baseline vecchia."""
+    rc = _c9_reset_controller(tmp_path, fail_on=None)
+    real_save = rc.db.save_settings
+    calls = {"n": 0}
+
+    def fail_first(payload):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise OSError("disk full")
+        return real_save(payload)
+    rc.db.save_settings = fail_first
+    if trigger == "reset_cycle":
+        assert rc.reset_cycle()["persisted"] is False
+        expected = 130.0
+    else:
+        rc._account_snapshot = {"ok": True, "cash_equity": 80.0, "available": 80.0, "committed": 0.0}
+        rc._cash_equity_peak = 100.0
+        rc.config.auto_reset_drawdown_pct = 15.0
+        assert rc._maybe_auto_reset(20.0) is True
+        expected = 80.0
+    assert rc._expansion_baseline is None
+    writes = []
+    rc.db.save_settings = lambda payload: (writes.append(sorted(payload)), real_save(payload))[1]
+    assert rc._persist_recovery_tables() is True                    # p.es. il settlement successivo
+    assert writes == [sorted([rc._EXPANSION_KEY, rc._RECOVERY_KEY, rc._CYCLE_RESET_KEY])], writes
+    assert rc._expansion_baseline == pytest.approx(expected) and rc._recovery_persist_failed is False
+    again = _c9_restart(tmp_path)
+    assert again.table_manager.recovery_state() == {}
+    assert again._expansion_baseline == pytest.approx(expected), "perdite perdonate accanto alla baseline vecchia"
+    writes.clear()
+    assert rc._persist_recovery_tables() is True                    # BLOCK: il reset non si ripete
+    assert writes == [[rc._RECOVERY_KEY]], writes
+
+
 def test_c9_2_first_start_stays_a_single_baseline_write_without_marker(tmp_path):
     from test_f032_rsr12_units import _rc
     rc = _rc(tmp_path / "s.db")
@@ -679,6 +754,19 @@ def test_c9_3_a_terminal_result_that_the_store_still_lists_as_pending_stays_pend
     assert out["ok"] is False and out["pending"] == ["y"], out
 
 
+def test_c9_review_saga_pending_in_store_but_missing_from_results_stays_pending():
+    """Riesame indipendente c9 (minore): una saga che lo store elenca come pendente ma che l'esecutore non
+    ha ripreso (assente dai risultati) resta pendente; un esito vuoto non vale come riconciliazione."""
+    engine, store = _engine_with_saga("w", "ROLLBACK_PENDING")
+
+    class _Exec:
+        def recover_pending(self):
+            return {}
+    engine.native_microstake_executor = lambda: _Exec()
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["w"], out
+
+
 def test_c9_3_store_unreadable_after_recovery_is_fail_closed():
     from core.microstake_sim_port import DbSagaStore, SagaStoreError
     engine, store = _engine_with_saga("z", "ROLLBACK_PENDING")
@@ -704,3 +792,57 @@ def test_c9_3_store_unreadable_after_recovery_is_fail_closed():
     finally:
         port_mod.DbSagaStore.pending_refs = old
     assert out["ok"] is False and out["status"] == "STORE_UNREADABLE", out
+
+
+# --- Ciclo 9 #512, riesame indipendente: intento di rollback durevole ---------------------------
+
+def test_c9_review_rollback_intent_survives_a_recover_that_cannot_find_the_order(tmp_path):
+    """P1: un recover che non trova l'ordine non declassa ROLLBACK_PENDING ad AMBIGUOUS; il recover
+    successivo cancella soltanto il residuo, mai riduzione/replace al prezzo target."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    real = ex.find_by_ref
+    ex.find_by_ref = lambda ref: None
+    r1 = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert r1.phase is Phase.AMBIGUOUS and r1.reservation_held is True
+    assert Store(path).load("rb-1")["phase"] == "ROLLBACK_PENDING"
+    assert Store(path).load("rb-1")["rollback_intent"] is True
+    ex.find_by_ref = real
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    r2 = Coordinator(ex, Store(path), policy).recover("rb-1")
+    ops = [op[0] for op in ex.operation_log[before:]]
+    assert "REPLACE" not in ops, ops
+    assert ops == ["CANCEL"], ops
+    assert r2.phase is Phase.ROLLED_BACK and r2.reservation_held is False
+
+
+def test_c9_review_rollback_with_stale_snapshot_terminates_once_the_source_is_aligned(tmp_path):
+    """P2: cancellazione riuscita ma snapshot non persistito => AMBIGUOUS; al recover successivo, con
+    fonte allineata, la saga si chiude ROLLED_BACK senza una seconda cancellazione e senza replace."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    ex.cancel_all_mode = "ok"
+    ex.last_snapshot_persisted = False
+    r1 = Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert r1.phase is Phase.AMBIGUOUS and r1.reason == "snapshot_not_persisted"
+    assert ex.has_reservation("rb-1")
+    ex.last_snapshot_persisted = True
+    before = len(ex.operation_log)
+    r2 = Coordinator(ex, Store(path), policy).recover("rb-1")
+    ops = [op[0] for op in ex.operation_log[before:]]
+    assert r2.phase is Phase.ROLLED_BACK and r2.reservation_held is False, (r2.phase, r2.reason)
+    assert ops == [], ops
+    assert not ex.has_reservation("rb-1")
+    assert Store(path).load("rb-1")["phase"] == "ROLLED_BACK"
+
+
+def test_c9_review_rollback_intent_blocks_replace_even_when_a_matched_check_intervenes(tmp_path):
+    """BLOCK: il flag e' scritto con la prima decisione di rollback e sopravvive a ogni salvataggio
+    intermedio (merge dello store)."""
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    Store(path).save("rb-1", phase="AMBIGUOUS", reason="altro")
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    Coordinator(ex, Store(path), policy).recover("rb-1")
+    assert "REPLACE" not in [op[0] for op in ex.operation_log[before:]]

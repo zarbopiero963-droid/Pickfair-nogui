@@ -174,6 +174,20 @@ class DuplicationGuard:
             self._registered_at.pop(key, None)
             self._pinned.discard(key)
 
+    def unpin(self, event_key: str) -> None:
+        """La posizione viva rappresentata dalla chiave e' stata chiusa ma la chiave resta (es. F028:
+        ordine mai abbinato con stato finale confermato): torna alla scadenza NORMALE per TTL,
+        conteggiata da adesso. Senza questo una chiave fissata al riavvio bloccherebbe per sempre
+        i segnali validi successivi sullo stesso evento (riesame indipendente ciclo 9 #512)."""
+        key = str(event_key or "").strip()
+        if not key:
+            return
+        with self._lock:
+            if key in self._pinned:
+                self._pinned.discard(key)
+                if key in self._active:
+                    self._active[key] = time.monotonic()
+
     # =========================================================
     # CLEANUP TTL
     # =========================================================
