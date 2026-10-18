@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import ssl
@@ -16,6 +17,8 @@ from core.system_state import (
     RoserpinaConfig,
     TelegramRuntimeConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsService:
@@ -324,10 +327,31 @@ class SettingsService:
                 "roserpina.max_open_exposure",
                 fallback_key="max_open_exposure",
             ),
-            max_order_exposure=self._required_absolute_cap_value(data, "roserpina.max_order_exposure", 1.0),
-            max_market_exposure=self._required_absolute_cap_value(data, "roserpina.max_market_exposure", 2.0),
-            max_event_exposure_abs=self._required_absolute_cap_value(data, "roserpina.max_event_exposure_abs", 2.0),
-            max_drawdown_abs=self._required_absolute_cap_value(data, "roserpina.max_drawdown_abs", 10.0),
+            # Rettifica owner 18/10/2026 (PF-CAP-01..04, PF-CAP-10): cap assoluti
+            # in euro OPZIONALI. Assente/None/"" => None = non attivo, mai un
+            # numero di default; presente ma invalido => NaN => il runtime nega
+            # ogni nuovo ordine (`<nome>_non_valido`); chiave legacy senza
+            # prefisso letta e loggata.
+            max_order_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_order_exposure",
+                fallback_key="max_order_exposure",
+            ),
+            max_market_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_market_exposure",
+                fallback_key="max_market_exposure",
+            ),
+            max_event_exposure_abs=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_event_exposure_abs",
+                fallback_key="max_event_exposure_abs",
+            ),
+            max_drawdown_abs=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_drawdown_abs",
+                fallback_key="max_drawdown_abs",
+            ),
             max_session_loss=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_session_loss",
@@ -439,10 +463,26 @@ class SettingsService:
         *,
         fallback_key: str | None = None,
     ) -> float | None:
+        """Limite opzionale in euro/percentuale (hard-stop, cap assoluti).
+
+        Semantica unica (rettifica owner 18/10/2026, PF-CAP-10):
+        - chiave assente, None o stringa vuota => None = NON attivo (nessun
+          default numerico, mai);
+        - valore presente ma illeggibile (testo, bool) => NaN: il consumer
+          runtime lo tratta come configurato-ma-invalido e nega i nuovi
+          ordini (`<nome>_non_valido`); 0/negativo arrivano come numero e
+          vengono respinti dallo stesso consumer. Mai interpretato come "off";
+        - chiave legacy senza prefisso `roserpina.` letta e loggata.
+        """
         if key in data:
             value = data.get(key)
         elif fallback_key and fallback_key in data:
             value = data.get(fallback_key)
+            logger.info(
+                "Impostazione legacy senza prefisso letta: %r (migrare a %r)",
+                fallback_key,
+                key,
+            )
         else:
             return None
 
@@ -452,23 +492,9 @@ class SettingsService:
         if isinstance(value, str) and value.strip() == "":
             return None
 
-        try:
-            return float(value)
-        except Exception:
+        if isinstance(value, bool):
             return float("nan")
 
-    @staticmethod
-    def _required_absolute_cap_value(
-        data: Dict[str, Any], key: str, default: float
-    ) -> float:
-        """Carica un cap owner obbligatorio senza trasformare il vuoto in opt-out."""
-        if key not in data:
-            return float(default)
-        value = data.get(key)
-        if isinstance(value, bool) or value is None:
-            return float("nan")
-        if isinstance(value, str) and value.strip() == "":
-            return float("nan")
         try:
             return float(value)
         except Exception:
