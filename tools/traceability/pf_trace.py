@@ -4,7 +4,9 @@
 Registro: `docs/traceability/requirements.json` (lista di record). Ogni record collega decisione owner → requisito →
 issue → codice → test → evidenza → finding → gate. Stati: PLANNED, IMPLEMENTED, TESTED, VERIFIED, CERTIFIED, BLOCKED,
 NOT VERIFIED. Le evidenze sono append-only: il validatore confronta con la versione committata (`git show HEAD:…`) e
-rifiuta ogni rimozione o riscrittura di un'evidenza precedente.
+rifiuta ogni rimozione o riscrittura di un'evidenza precedente. Un test dichiarato in un record TESTED/VERIFIED/CERTIFIED
+e' coperto solo da un'evidenza che lo nomina (campo `tests` esplicito, oppure node-id, file o directory nel `command`):
+mai per implicito (PR #512 ciclo 9); test non coperto => warning, FAIL con `--strict`.
 
 Comandi: `validate [--registry PATH] [--repo PATH] [--strict]`, `report` (markdown). Solo stdlib.
 """
@@ -26,6 +28,34 @@ REQUIRED = ("id", "text", "source", "owner_decision", "activity", "status", "iss
             "tests", "evidence", "findings", "reviewer", "gate", "limitations")
 SHA_RE = re.compile(r"^[0-9a-f]{7,40}$")
 TEST_RE = re.compile(r"^(?P<file>[\w./-]+\.py)(::(?P<name>[\w\[\]\-., =]+))?$")
+
+
+def evidence_covers(evidence, test_ref):
+    """True se l'evidenza e' legata in modo verificabile al test dichiarato (rilievo Codex #512 ciclo 9).
+
+    Associazione esplicita (`tests` non vuoto) oppure derivata dal `command` dell'evidenza: il comando
+    nomina il node-id esatto, il file del test o una directory che lo contiene. Mai implicita: un'evidenza
+    senza `tests` e con un comando che non nomina il test NON lo copre (prima il fallback `[t]` faceva
+    coprire ogni test dichiarato a qualunque PASS)."""
+    ref = str(test_ref or "").strip()
+    if not ref:
+        return False
+    test_file = ref.split("::", 1)[0]
+    explicit = evidence.get("tests")
+    if isinstance(explicit, list) and explicit:
+        return any(str(x).strip() in (ref, test_file) for x in explicit)
+    for token in re.split(r"[\s;,()]+", str(evidence.get("command") or "")):
+        token = token.strip().strip("'\"")
+        if not token or token.startswith("-"):
+            continue
+        if token == ref or token == test_file:
+            return True
+        if "::" in token or token.endswith(".py"):
+            continue                       # node-id o file di un ALTRO test
+        prefix = token.rstrip("/") + "/"
+        if prefix.startswith("tests/") and test_file.startswith(prefix):
+            return True                    # directory che contiene il test
+    return False
 
 
 def load(path):
@@ -153,7 +183,7 @@ def validate(data, repo=".", previous=None):
             if evidence[:len(old)] != old:
                 errors.append(f"{rid}: evidenze precedenti rimosse o riscritte (append-only violato)")
         for t in tests:
-            if not any(t in (e.get("tests") or [t]) for e in evidence if isinstance(e, dict)) and status in {"TESTED", "VERIFIED", "CERTIFIED"}:
+            if not any(evidence_covers(e, t) for e in evidence if isinstance(e, dict)) and status in {"TESTED", "VERIFIED", "CERTIFIED"}:
                 warnings.append(f"{rid}: test {t} senza evidenza che lo esegua")
     if previous:
         gone = set(prev_ev) - set(ids)

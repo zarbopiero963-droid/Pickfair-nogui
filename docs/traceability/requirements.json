@@ -43,6 +43,16 @@
      "result": "PASS",
      "artifact": "checkpoint seq13 results/pr512_commit_8ffb4f3.txt",
      "note": "212 passed mirati nel checkout reale"
+    },
+    {
+     "sha": "a0d0673d41c43f82dd793ee57b27dca9d5bfe94e",
+     "command": "venv312/bin/python -m pytest -q -p no:cacheprovider tests/test_pr512_codex_findings.py (11 passed)",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-18T19:12:43Z",
+     "result": "PASS",
+     "tests": [
+      "tests/test_pr512_codex_findings.py"
+     ]
     }
    ],
    "findings": [
@@ -141,6 +151,16 @@
      "environment": "Python 3.12.3 venv312, Linux 6.18, netguard",
      "timestamp": "2026-10-17T23:11:29Z",
      "result": "PASS"
+    },
+    {
+     "sha": "a0d0673d41c43f82dd793ee57b27dca9d5bfe94e",
+     "command": "venv312/bin/python -m pytest -q -p no:cacheprovider tests/test_pr512_codex_findings.py (11 passed)",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-18T19:12:43Z",
+     "result": "PASS",
+     "tests": [
+      "tests/test_pr512_codex_findings.py"
+     ]
     }
    ],
    "findings": [
@@ -349,6 +369,16 @@
      "environment": "venv312, netguard, offline",
      "timestamp": "2026-10-17T17:40:00Z",
      "result": "PASS"
+    },
+    {
+     "sha": "a0d0673d41c43f82dd793ee57b27dca9d5bfe94e",
+     "command": "venv312/bin/python -m pytest -q -p no:cacheprovider tests/test_pr512_codex_findings.py (11 passed)",
+     "environment": "venv312, netguard, offline",
+     "timestamp": "2026-10-18T19:12:43Z",
+     "result": "PASS",
+     "tests": [
+      "tests/test_pr512_codex_findings.py"
+     ]
     }
    ],
    "findings": [

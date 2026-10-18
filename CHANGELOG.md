@@ -10,6 +10,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
+  remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
+  cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il
+  recover successivo ritenta solo la cancellazione (mai replace); (3) nessun secondo ordine su un evento con tavolo gia'
+  occupato (`evento_gia_in_posizione`) e chiavi anti-duplicato trattenute/ricostruite esenti dal TTL (Codex r4307328207,
+  difetto preesistente su main ristretto); (4) baseline F032, stato di recovery e marker del reset in una sola
+  transazione (r4307328199); (5) saga ROLLED_BACK riconciliata all'avvio, non pendente (r4307328204); (6) `pf_trace`:
+  un test dichiarato e' coperto solo da un'evidenza che lo nomina, mai per implicito (r4307328211); aggiunta l'evidenza
+  reale mancante per `tests/test_pr512_codex_findings.py` (PF-MS-01/02/05, append-only). Test RED->GREEN in
+  `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
+  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
   (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
   `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:
