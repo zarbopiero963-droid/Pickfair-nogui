@@ -136,7 +136,12 @@ class RoserpinaMoneyManagement:
             # rispetto alla baseline persistente del ciclo, calcolata dal runtime. Ignota (None) => nessuna
             # espansione: mai stake aumentato su dati incerti.
             growth = validators.finite_number(expansion_growth_pct)
-            growth_pct = growth if growth is not None else 0.0
+            if growth is None:
+                # Crescita IGNOTA => NORMAL prima di qualunque confronto con la soglia: con
+                # expansion_profit_pct <= 0 il vecchio "0.0 >= soglia" espandeva su dati incerti
+                # (rilievo Codex #512 su 034af59).
+                return DeskMode.NORMAL
+            growth_pct = growth
         elif bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
             # Chiamanti senza baseline del ciclo (es. dutching): calcolo storico #320.
             growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0

@@ -353,3 +353,26 @@ def test_f7_microstake_safe_docstring_declares_its_real_role():
     doc = ms.__doc__ or ""
     assert "no import or call site" not in doc, "la docstring nega un uso che esiste (core/microstake_sim_port.py)"
     assert "microstake_sim_port" in doc and "TradingEngine" in doc
+
+
+# ------------------------------------------------------------------ 10. crescita ignota => mai espansione
+@pytest.mark.parametrize("threshold", [0.0, -1.0, 5.0])
+def test_f10_unknown_growth_never_expands_whatever_the_threshold(threshold):
+    from core.system_state import DeskMode
+    from test_f032_rsr12_units import _calc, _mm
+    d = _calc(_mm(expansion_profit_pct=threshold), expansion_growth_snapshot=None)
+    assert d.desk_mode is DeskMode.NORMAL, (threshold, d.desk_mode)
+    assert d.recommended_stake == pytest.approx(2.0)          # nessun moltiplicatore di espansione
+
+
+@pytest.mark.parametrize("growth", [float("nan"), float("inf"), "abc"])
+def test_f10_non_finite_growth_is_unknown_and_never_expands(growth):
+    from core.system_state import DeskMode
+    from test_f032_rsr12_units import _calc, _mm
+    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=growth).desk_mode is DeskMode.NORMAL
+
+
+def test_f10_known_growth_at_zero_threshold_still_expands():
+    from core.system_state import DeskMode
+    from test_f032_rsr12_units import _calc, _mm
+    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=0.0).desk_mode is DeskMode.EXPANSION

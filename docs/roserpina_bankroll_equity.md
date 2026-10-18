@@ -90,7 +90,8 @@ senza `set_at_ts` = 0.0: valida solo finché non esiste alcun marker). In SIM `r
 trattenuto (esito `sim_reset_skipped` con gli id dei tavoli; r4306544236). È distinta dal saldo, dal disponibile e dal picco
 del drawdown (invariato). Profitti netti di commissione (fondi dell'exchange), nessun profitto virtuale: i fondi
 impegnati in posizioni aperte contano come capitale, non come guadagno. Snapshot non valido, riserva incerta o
-baseline assente ⇒ crescita ignota ⇒ nessuna espansione. Lo stake espanso resta soggetto a cap, RiskGate, STOP e
+baseline assente ⇒ crescita ignota ⇒ nessuna espansione (NORMAL prima di qualunque confronto con la soglia,
+anche con `expansion_profit_pct` ≤ 0 — ciclo 8, rilievo Codex su 034af59). Lo stake espanso resta soggetto a cap, RiskGate, STOP e
 LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
 
 ## RSR-12 — tavoli di recovery persistenti (decisione owner)
