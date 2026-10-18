@@ -20,6 +20,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   valido ma non oggetto e' un checkpoint invalido strutturato (`STATE_JSON_INVALID`), saltato da
   `last_valid_checkpoint` (r4308704074). Test RED->GREEN in `tests/test_pr512_codex_034af59.py`,
   `tests/traceability/test_pf_trace_codex_034af59.py`, `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
+  Verifica indipendente dei thread rinviati (decisione owner opzione 2): due non separabili corretti qui. (a)
+  Settlement per bet senza `table_id`: il tavolo si libera per mercato solo se la posizione e' a selezione singola con
+  UN solo ordine del bot sul mercato/evento (`_single_bet_position`); Dutching, hedge o DB illeggibile => nessun
+  rilascio, tavolo trattenuto, mercato marcato regolato (prima il P&L della prima gamba diventava la perdita di
+  recovery del tavolo; aggregazione per `bet_id` = lotto D-F, r4303297587). (b) Dossier dei 41 parametri: nessun
+  clamp dello stake minimo, rifiuto esplicito (r4306544234). Test CI robusto al clone shallow; `pfckpt` rifiuta
+  CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope
+  dichiarata).
 - **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
   remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
   cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il

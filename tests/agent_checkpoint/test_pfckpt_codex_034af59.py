@@ -98,3 +98,18 @@ def test_c10_non_object_state_is_a_structured_invalid_checkpoint(world, payload)
     err = expect(2, pfckpt.verify, a, "HEAD", D)
     assert err.reason == "STATE_JSON_INVALID", err.reason
     assert pfckpt.last_valid_checkpoint(a, D) == good
+
+
+
+@pytest.mark.parametrize("name", [pfckpt.CURRENT, pfckpt.TASK_STATE])
+def test_c10_non_object_derived_pointer_is_a_structured_invalid_checkpoint(world, name):
+    """Riesame indipendente ciclo 10 (N2): CURRENT/TASK_STATE JSON valido ma non oggetto => checkpoint
+    invalido strutturato (CHECKPOINT_INVALID), mai un AttributeError."""
+    from test_pfckpt import raw_commit
+    a = agent(world, "a")
+    with open(os.path.join(a, D, name), "w") as fh:
+        fh.write("[]")
+    pfckpt.write_manifest(a, D)
+    raw_commit(a, f"ckpt con {name} non oggetto")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert any(name in p and "non e' un oggetto" in p for p in err.detail["problems"]), err.detail

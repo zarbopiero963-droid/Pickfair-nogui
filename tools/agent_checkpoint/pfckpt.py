@@ -160,6 +160,10 @@ def derived_task_state(state):
 def validate_derived(state, current, task_state):
     """I puntatori derivati devono coincidere con STATE.json: un puntatore diverso e' un checkpoint incoerente."""
     problems = []
+    if current is not None and not isinstance(current, dict):
+        return [f"{CURRENT} non e' un oggetto JSON"]
+    if task_state is not None and not isinstance(task_state, dict):
+        return [f"{TASK_STATE} non e' un oggetto JSON"]
     if current is not None:
         expected = derived_current(state, current.get("checkpoint_commit"))
         for k, v in expected.items():

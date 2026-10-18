@@ -3898,13 +3898,46 @@ class RuntimeController:
         matches = [t for t in self.table_manager.snapshot()
                    if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
         certain = [t for t in matches if str(t.get("current_event_key")) not in uncertain_keys]
-        if len(certain) == 1 and len(matches) == 1:
+        if len(certain) == 1 and len(matches) == 1 and self._single_bet_position(certain[0]):
             self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
+        elif len(certain) == 1 and len(matches) == 1:
+            # Settlement per bet di una posizione con PIU' gambe sullo stesso mercato (Dutching, hedge di
+            # cashout): il P&L di una gamba non e' il netto del tavolo. Nessun rilascio per mercato
+            # (fail-closed): il tavolo resta trattenuto, il mercato e' marcato regolato (auto-reset/F026).
+            # L'aggregazione per bet_id e' il lotto D-F (verifica indipendente ciclo 10, r4303297587).
+            logger.warning("Settlement %s senza table_id su una posizione multi-gamba: nessun rilascio "
+                           "per mercato (P&L della singola gamba non attribuibile al tavolo)", market_id)
         elif matches:
             logger.warning(
                 "Settlement %s senza table_id: %d tavoli sul mercato (%d incerti), nessun rilascio automatico",
                 market_id, len(matches), len(matches) - len(certain),
             )
+
+    def _single_bet_position(self, table: dict) -> bool:
+        """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo
+        stesso mercato/evento: solo allora il P&L di un settlement per bet e' il netto del tavolo. Batch
+        Dutching (nessuna selezione), piu' ordini (es. hedge di cashout) o DB illeggibile => False."""
+        if table.get("selection_id") in (None, ""):
+            return False
+        market_id = str(table.get("market_id") or "")
+        event_key = str(table.get("current_event_key") or "")
+        try:
+            rows = self.db._execute("SELECT payload_json FROM orders", fetch=True, commit=False) or []
+        except Exception:
+            logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
+            return False
+        count = 0
+        for raw in rows:
+            try:
+                p = json.loads(dict(raw).get("payload_json") or "{}")
+            except (TypeError, ValueError, AttributeError):
+                return False                            # riga illeggibile: attribuzione non dimostrabile
+            if not isinstance(p, dict):
+                return False
+            if str(p.get("market_id") or "") == market_id and (
+                    not event_key or str(p.get("event_key") or "") == event_key):
+                count += 1
+        return count == 1
 
     def _reset_reservations_keeping_uncertain(self) -> None:
         """Reset di tavoli e chiavi duplicati che NON libera capitale ancora impegnato.

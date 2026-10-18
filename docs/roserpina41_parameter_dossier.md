@@ -61,7 +61,7 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
 ## Interazioni verificate
 
 - Profilo × target × difesa: lo stake è il prodotto di base, moltiplicatore di profilo e moltiplicatore del desk (`test_rsr30_*`, `test_rsr06_rsr10_*`).
-- Stake minimo × cap: il clamp alza lo stake al minimo, poi il cap singolo rifiuta se lo supera (CL16, campagna capitali di frontiera).
+- Stake minimo × cap: nessun clamp. Sotto `min_stake` lo stake richiesto è rifiutato (`stake_sotto_min_stake`), sopra il cap del singolo ordine è rifiutato (`supera_max_single_bet`), mai alzato o ridimensionato in silenzio (decisioni owner 17/10/2026; CL16, campagna capitali di frontiera; r4306544234).
 - Max win × solo avviso: il flag vale solo nel precheck dutching; il RiskGate blocca sempre (H-14).
 - Liquidity guard × solo avviso × dato assente: dato assente nega sempre, il solo-avviso vale solo per mercati sottili osservati (F030).
 - Stop di esposizione × candidato: il candidato si rifiuta senza RISK_STOP; l'esposizione reale al limite fa scattare lo stop.

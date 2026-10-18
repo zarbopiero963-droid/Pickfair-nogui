@@ -6,6 +6,7 @@
 - F2: al settlement senza table_id si libera il tavolo del mercato solo se univoco e certo.
 """
 import math
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -161,8 +162,24 @@ def _tables(rc):
     return {t["table_id"]: t for t in rc.table_manager.snapshot()}
 
 
+class _OrdersDb:
+    """Ordini del bot persistiti (payload_json), per l'attribuzione del settlement per mercato."""
+
+    def __init__(self, payloads=(), fail=False):
+        self.payloads = [dict(p) for p in payloads]
+        self.fail = fail
+
+    def _execute(self, sql, *args, **kwargs):
+        if self.fail:
+            raise RuntimeError("db down")
+        if "FROM orders" in sql:
+            return [{"payload_json": json.dumps(p)} for p in self.payloads]
+        return []
+
+
 def test_settlement_without_table_id_releases_the_unique_table_of_the_market():
     rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
     _activate(rc, 1, "EV-A", "1.10")
     _activate(rc, 2, "EV-B", "1.20")
     rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
@@ -170,6 +187,35 @@ def test_settlement_without_table_id_releases_the_unique_table_of_the_market():
     assert t[1]["current_event_key"] == "" and t[1]["current_exposure"] == 0.0
     assert t[1]["status"] == "RECOVERY" and t[1]["loss_amount"] == 10.0, "P&L del tavolo come col table_id"
     assert t[2]["current_event_key"] == "EV-B"
+
+
+@pytest.mark.parametrize("db", [
+    _OrdersDb([{"market_id": "1.10", "event_key": "EV-A"}, {"market_id": "1.10", "event_key": "EV-A"}]),  # 2 gambe
+    _OrdersDb([]),                                                        # nessun ordine del bot attribuibile
+    _OrdersDb(fail=True),                                                 # DB illeggibile
+])
+def test_settlement_without_table_id_never_releases_a_multi_leg_or_unproven_position(db):
+    """Verifica indipendente ciclo 10 (r4303297587, non separabile): un settlement per BET senza table_id
+    non libera il tavolo per mercato se la posizione ha piu' gambe (Dutching, hedge) o se l'unicita'
+    dell'ordine non e' dimostrabile: il P&L di una gamba non e' il netto del tavolo (fail-closed)."""
+    rc = _rc()
+    rc.db = db
+    _activate(rc, 1, "EV-A", "1.10", exp=12.0)
+    for pnl in (10.0, -6.0, -6.0):                                     # tre gambe, netto -2
+        rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=pnl)
+    t = _tables(rc)[1]
+    assert t["current_event_key"] == "EV-A" and t["current_exposure"] == 12.0, t
+    assert t["loss_amount"] == 0.0 and t["status"] != "RECOVERY", "perdita di una sola gamba attribuita al tavolo"
+    assert "1.10" in rc._settled_market_ids                            # mercato marcato regolato comunque
+
+
+def test_settlement_without_table_id_never_releases_a_dutching_batch_table():
+    rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.30", "event_key": "DUTCH"}])
+    rc.duplication_guard.acquire("DUTCH")
+    rc.table_manager.activate(table_id=1, event_key="DUTCH", exposure=12.0, market_id="1.30", selection_id=None)
+    rc._release_settled_tables({"market_id": "1.30"}, table_id=None, pnl=-6.0)
+    assert _tables(rc)[1]["current_event_key"] == "DUTCH" and _tables(rc)[1]["loss_amount"] == 0.0
 
 
 def test_settlement_without_table_id_keeps_uncertain_reservation():
