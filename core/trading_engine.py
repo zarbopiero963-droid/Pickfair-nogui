@@ -2311,7 +2311,16 @@ class TradingEngine:
         if not callable(recover):
             return {"ok": False, "status": "NO_EXECUTOR", "pending": pending, "results": {}}
         results = recover()
-        still = sorted(ref for ref, phase in results.items() if phase != "ACTIVE")
+        # Rilievo Codex #512 ciclo 9 (r4307328204): ROLLED_BACK e' terminale (rollback completato) e non va
+        # trattato come pendente. Doppia condizione: esito riconciliato dall'esecutore E ref non piu' pendente
+        # nello store durevole (riletto); ogni altro esito (AMBIGUOUS, FAILED, BLOCKED, ERROR:*) resta pendente.
+        try:
+            after = set(store.pending_refs())
+        except SagaStoreError as exc:
+            return {"ok": False, "status": "STORE_UNREADABLE", "error": str(exc),
+                    "pending": sorted(results), "results": results}
+        still = sorted(ref for ref, phase in results.items()
+                       if phase not in ("ACTIVE", "ROLLED_BACK") or ref in after)
         return {"ok": not still, "status": "RECOVERED" if not still else "PENDING",
                 "pending": still, "results": results}
 

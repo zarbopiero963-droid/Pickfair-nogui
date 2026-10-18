@@ -109,8 +109,11 @@ scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blo
 
 `TradingEngine.recover_native_microstake_sagas()` riprende ogni saga non conclusa dalla sua identità persistita
 (solo riduzione/replace mancanti, **mai un nuovo PLACE**; una saga salvata **ROLLBACK_PENDING** completa solo la
-cancellazione del residuo → ROLLED_BACK, AMBIGUOUS se la cancellazione fallisce, mai un replace — ciclo 8, rilievo
-Codex su 034af59). Se resta una saga pendente, lo store è illeggibile o manca
+cancellazione del residuo → ROLLED_BACK; se la cancellazione fallisce il risultato è AMBIGUOUS con riserva tenuta ma la
+fase persistita resta ROLLBACK_PENDING, così il recover successivo ritenta solo la cancellazione, mai un replace — cicli
+8 e 9, rilievi Codex su 034af59 e Sol). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
+durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); ogni altro
+esito (AMBIGUOUS, FAILED, BLOCKED, ERROR) resta pendente. Se resta una saga pendente, lo store è illeggibile o manca
 l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
 e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
 `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe

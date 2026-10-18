@@ -628,3 +628,79 @@ def test_c9_2_first_start_stays_a_single_baseline_write_without_marker(tmp_path)
     assert rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0}) is True
     settings = rc.db.get_settings()
     assert rc._EXPANSION_KEY in settings and rc._CYCLE_RESET_KEY not in settings and rc._RECOVERY_KEY not in settings
+
+
+# ------------------------------------------------------------------ c9_3 (Codex r4307328204): ROLLED_BACK riconciliato
+def _engine_with_saga(ref, phase):
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine
+    from core.microstake_sim_port import DbSagaStore
+    engine, broker, db = _engine()
+    store = DbSagaStore(db)
+    store.save(ref, phase=phase, request={"market_id": "1.100", "selection_id": 7, "side": "BACK"})
+    assert store.pending_refs() == [ref]
+    return engine, store
+
+
+def test_c9_3_completed_rollback_is_reconciled_not_pending_at_startup():
+    engine, store = _engine_with_saga("rb", "ROLLBACK_PENDING")
+
+    class _Exec:
+        def recover_pending(self):
+            store.save("rb", phase="ROLLED_BACK", reservation_held=False)   # come il coordinatore reale
+            return {"rb": "ROLLED_BACK"}
+    engine.native_microstake_executor = lambda: _Exec()
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is True and out["pending"] == [] and out["status"] == "RECOVERED", out
+
+
+@pytest.mark.parametrize("phase", ["AMBIGUOUS", "FAILED", "BLOCKED", "ERROR:boom", "ROLLBACK_PENDING"])
+def test_c9_3_non_reconciled_results_stay_pending(phase):
+    engine, store = _engine_with_saga("x", "ROLLBACK_PENDING")
+
+    class _Exec:
+        def recover_pending(self):
+            return {"x": phase}
+    engine.native_microstake_executor = lambda: _Exec()
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["x"], out
+
+
+def test_c9_3_a_terminal_result_that_the_store_still_lists_as_pending_stays_pending():
+    """Doppia condizione: un esito terminale riportato dall'esecutore non basta se lo store (fonte
+    durevole) elenca ancora il ref come pendente."""
+    engine, store = _engine_with_saga("y", "ROLLBACK_PENDING")
+
+    class _Exec:
+        def recover_pending(self):
+            return {"y": "ROLLED_BACK"}                                      # fase NON persistita
+    engine.native_microstake_executor = lambda: _Exec()
+    out = engine.recover_native_microstake_sagas()
+    assert out["ok"] is False and out["pending"] == ["y"], out
+
+
+def test_c9_3_store_unreadable_after_recovery_is_fail_closed():
+    from core.microstake_sim_port import DbSagaStore, SagaStoreError
+    engine, store = _engine_with_saga("z", "ROLLBACK_PENDING")
+    calls = {"n": 0}
+    real = DbSagaStore.pending_refs
+
+    def flaky(self):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise SagaStoreError("disco")
+        return real(self)
+
+    class _Exec:
+        def recover_pending(self):
+            store.save("z", phase="ROLLED_BACK", reservation_held=False)
+            return {"z": "ROLLED_BACK"}
+    engine.native_microstake_executor = lambda: _Exec()
+    import core.microstake_sim_port as port_mod
+    old = port_mod.DbSagaStore.pending_refs
+    port_mod.DbSagaStore.pending_refs = flaky
+    try:
+        out = engine.recover_native_microstake_sagas()
+    finally:
+        port_mod.DbSagaStore.pending_refs = old
+    assert out["ok"] is False and out["status"] == "STORE_UNREADABLE", out
