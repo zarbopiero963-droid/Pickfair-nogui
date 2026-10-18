@@ -1,0 +1,11 @@
+commit 034af594a5bce4a121c87ec6aa57f959a1ab0208 (HEAD.txt: 034af594a5bce4a121c87ec6aa57f959a1ab0208)
+cmd: PYTHONPATH=netguard DISPLAY=:99 venv312/python -m pytest -q -p no:cacheprovider tests
+1 failed, 7803 passed, 14 skipped, 2 xfailed, 9667 warnings, 8 subtests passed in 1010.08s (0:16:50)
+exit=1
+pytest.log sha256: 19fa64a1b65160ca5be9b250cdca9fcf18e2c3e3367ee24b88be6bb2a1257b77
+rosso ambientale: _tkinter.TclError couldn't connect to display :99 (Xvfb caduto, lock stantio /tmp/.X99-lock)
+rerun modulo a display attivo:
+..................                                                       [100%]
+18 passed, 22 warnings in 4.05s
+regressione precedente stesso ciclo (a8dbbd2, prima dei fix da riesame): 7791 passed, 14 skipped, 2 xfailed, 9560 warnings, 8 subtests passed in 967.76s (0:16:07)
+log completo non incluso (falso positivo scan segreti: fixture 'demo-saved-password'); sha256 e riepilogo sopra, copia locale scratchpad/fullreg_034af59/pytest.log

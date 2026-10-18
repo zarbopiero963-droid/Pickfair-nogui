@@ -1,0 +1,8 @@
+FAILED tests/test_pr512_codex_f62f0e3.py::test_baseline_fixed_by_a_real_reset_cycle_survives_restart
+FAILED tests/test_pr512_codex_f62f0e3.py::test_baseline_fixed_by_a_real_auto_reset_survives_restart
+FAILED tests/test_pr512_codex_f62f0e3.py::test_baseline_newer_than_the_last_reset_survives_restart
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_cycle_reset_marker_disables_expansion[{"at_ts": "garbage"}]
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_cycle_reset_marker_disables_expansion[{"at_ts": null}]
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_cycle_reset_marker_disables_expansion[not json]
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_cycle_reset_marker_disables_expansion[{"at_ts": "NaN"}]
+7 failed, 6 passed, 114 warnings in 3.58s

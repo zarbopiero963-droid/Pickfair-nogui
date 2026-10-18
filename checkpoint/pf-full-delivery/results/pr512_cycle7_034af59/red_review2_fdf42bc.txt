@@ -1,0 +1,3 @@
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_baseline_timestamp_never_outranks_a_durable_reset[Infinity]
+FAILED tests/test_pr512_codex_f62f0e3.py::test_corrupt_baseline_timestamp_never_outranks_a_durable_reset[inf]
+3 failed, 4 passed, 13 deselected, 56 warnings in 0.35s

@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc"
+  "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208"
  },
- "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
- "next_atomic_action": "Attendere O1/O2 dell'owner su #512 (c.6248443891). O1: cherry-pick dei soli fix Codex P1 (+hardening, dossier) dal branch lots sul checkout #512, regressione, riesame indipendente, push unico. O2/merge #512: PR 10 cicli dal main (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df (rebase su main). Nessun merge, #505/main intoccate.",
- "previous_checkpoint_sha": "b6c63781edaa6b14d13d3269a988435b2283f8ab",
+ "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
+ "next_atomic_action": "Attendere i check su 034af59; triage Sol/Grok/Codex; resolve dei thread FIXED (24 + 3 P1) con prova; verdetto #512 (READY_FOR_OWNER_MANUAL_MERGE se tutto verde; file-policy nel diff); registrare deroga e mandato su #426; poi preparare la PR 10 cicli dal main (apertura solo a #512 merged/closed: una PR agente per repository).",
+ "previous_checkpoint_sha": "f7933afbb8220b098efb8bc4a4dbf9847a2e4648",
  "schema": "pf-current/1",
- "seq": 23
+ "seq": 24
 }

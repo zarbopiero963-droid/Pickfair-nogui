@@ -1,0 +1,31 @@
+034af594a5bce4a121c87ec6aa57f959a1ab0208
+Claude <noreply@anthropic.com>
+[TASK: issue461-pr28-microstake-native-02] ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION): tre P1 Codex su f62f0e3
+P1-1 (r4306544229): una riga pendente senza lato (bet_type/side assente o
+non BACK/LAY) non viene piu' ricostruita come BACK per default: finisce
+fra gli ordini non attribuibili (fail-closed, nessuna posizione inventata).
+
+P1-2 (r4306544236): reset_cycle in SIM non azzera piu' il broker simulato
+mentre un tavolo trattiene una posizione aperta: il reset del simulatore e'
+saltato con avviso e riportato in `sim_reset_skipped`; i tavoli di recovery
+vengono persistiti con il marker durevole di reset ciclo.
+
+P1-3 (r4306544231): la baseline di espansione porta `set_at_ts` e al
+riavvio viene scartata se e' anteriore all'ultimo reset ciclo durevole
+(`roserpina.cycle_reset_state`), scritto nella stessa transazione
+save_settings dei tavoli di recovery (auto-reset incluso).
+
+Test RED->GREEN: tests/test_pr512_codex_f62f0e3.py (5 failed / 2 passed su
+f62f0e3, 7 passed dopo la patch). Scope: registrato il nuovo file di test
+(78 file == diff), estensione dichiarata nella description della task key.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+
+
+ .guardrails/allowed_scope.json    |   5 +-
+ CHANGELOG.md                      |  10 +++
+ core/runtime_controller.py        |  90 ++++++++++++++++++----
+ docs/roserpina_bankroll_equity.md |   9 ++-
+ tests/test_pr512_codex_f62f0e3.py | 155 ++++++++++++++++++++++++++++++++++++++
+ 5 files changed, 251 insertions(+), 18 deletions(-)

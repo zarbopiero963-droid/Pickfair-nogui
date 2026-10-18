@@ -1,0 +1,392 @@
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index c978a20..2456560 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2230,6 +2230,7 @@
+         "tests/test_microstake_native_integration.py",
+         "tests/test_microstake_safe_recovery.py",
+         "tests/test_microstake_sim_port.py",
++        "tests/test_pr512_codex_f62f0e3.py",
+         "tests/test_pr512_codex_findings.py",
+         "tests/test_pr512_recovery_fixes.py",
+         "tests/test_pr512_review_cycle4.py",
+@@ -2240,9 +2241,9 @@
+         "tools/agent_checkpoint/pfckpt.py",
+         "tools/traceability/pf_trace.py"
+       ],
+-      "max_files": 77,
++      "max_files": 78,
+       "allow_tests": true,
+-      "description": "PR operativa del branch ccr-bcc81683-ud0hgc (mandato owner 17/10/2026, OWNER EXECUTIVE MANDATE). Consolida sullo stesso branch: F001/F023/F024 (issue461-pr26-0-f001-executor-outcome), F026v2/F2/F018/F029/F027/F028/F030/F031/F032/RSR-12 (issue461-pr28-f026v2-f2-f018-positions), F011/F025 (issue461-pr26-0-f011-f025-betid), checkpoint multi-agente pf-checkpoint/3 (PF-UNIVERSAL-CHECKPOINT-V1) e il Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e PF-MICROSTAKE-OWNER-RECTIFICATION-20261017): adapter SimulationBroker (sizeReduction, replace nuovo betId), saga persistita nel DB, cap dell'esposizione temporanea su fondi/headroom, routing nativo in TradingEngine e OrderRouter (cashout), recovery all'avvio, Money Management senza arrotondamento al minimo. I file = diff completo main...head (invariante guard). AGENTS.md/CLAUDE.md/docs: governance => merge manuale owner. Le task key create su questo branch (issue461-pr26-0-f001-executor-outcome, issue461-pr28-f026v2-f2-f018-positions, issue461-pr26-0-f011-f025-betid) non sono mai state su main e sono consolidate in questa unica chiave; nessuna entry preesistente su main e' toccata. ESTENSIONE DICHIARATA (mandato owner 17/10, FASE 2-3): continuita' multi-agente (pfckpt v2: lease/fencing, CURRENT/TASK_STATE, patch codice, recover) e tracciabilita' atomica (tools/traceability, docs/traceability, tests/traceability); decisioni owner PF-BEST-EXECUTION-DYNAMIC-01, PF-EXECUTION-SAFETY-DECISIONS-01, PF-OWNER-DECISIONS-12 in AGENTS.md/CLAUDE.md. ESTENSIONE DICHIARATA (17/10, FASE 4 + fix review): docs/issue_reconciliation (PF-ISSUE-RECONCILIATION-01), tests/test_pr512_codex_findings.py e correzioni ai rilievi Codex su 8ffb4f3. ESTENSIONE DICHIARATA (17/10, PF-PR-RECOVERY-DECISIONS-02): tests/test_pr512_recovery_fixes.py e correzioni ai sei finding triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) su resume(), precisione/residuo Microstake, liquidita', snapshot SIM, scan segreti checkpoint, SHA evidenze. ESTENSIONE DICHIARATA (17/10, ciclo 4): tests/test_pr512_review_cycle4.py e correzioni ai rilievi Codex su cad07e1/21aab95 (esecutore legato a broker/modalita', fondi obbligatori, riserva su store fallito, cashout matched/pending, ladder non finita, recovery loss non finita, porcelain -z). ESTENSIONE DICHIARATA (17/10, ciclo 5): Decisione owner 2 (stake sopra max_single_bet = rifiuto esplicito) in core/money_management.py con tests/core/test_money_management_decision2_20261017.py; riserva di saga esistente conservata su recover fallito (Sol/Grok 464f347). Estensione dichiarata (ciclo 5 / Decisione owner 2): oracle in tests/acceptance/test_issue437_pr27.py e tests/integration/test_money_management_live_sim_parity.py allineati al rifiuto esplicito sopra max_single_bet. ESTENSIONE DICHIARATA (18/10, ciclo 6 in deroga owner PF-DECISIONS-DA-DJ-20261018 D-A=A1): tests/test_pr512_review_cycle6.py; riserva preesistente conservata su store.load fallito (Sol c.6242912622); lock dedicato sulla costruzione dell'esecutore Microstake (Codex r4304867227); decisione D-C=C1: betfair_client.py e services/betfair_service.py (payload currentOrders malformato => errore esplicito, mai lista vuota; Codex r4304867229). Oracle allineati a D-C in tests/unit/test_betfair_service_list_current_orders.py; fallback fail-closed di has_reservation (riesame indipendente ciclo 6)."
++      "description": "PR operativa del branch ccr-bcc81683-ud0hgc (mandato owner 17/10/2026, OWNER EXECUTIVE MANDATE). Consolida sullo stesso branch: F001/F023/F024 (issue461-pr26-0-f001-executor-outcome), F026v2/F2/F018/F029/F027/F028/F030/F031/F032/RSR-12 (issue461-pr28-f026v2-f2-f018-positions), F011/F025 (issue461-pr26-0-f011-f025-betid), checkpoint multi-agente pf-checkpoint/3 (PF-UNIVERSAL-CHECKPOINT-V1) e il Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e PF-MICROSTAKE-OWNER-RECTIFICATION-20261017): adapter SimulationBroker (sizeReduction, replace nuovo betId), saga persistita nel DB, cap dell'esposizione temporanea su fondi/headroom, routing nativo in TradingEngine e OrderRouter (cashout), recovery all'avvio, Money Management senza arrotondamento al minimo. I file = diff completo main...head (invariante guard). AGENTS.md/CLAUDE.md/docs: governance => merge manuale owner. Le task key create su questo branch (issue461-pr26-0-f001-executor-outcome, issue461-pr28-f026v2-f2-f018-positions, issue461-pr26-0-f011-f025-betid) non sono mai state su main e sono consolidate in questa unica chiave; nessuna entry preesistente su main e' toccata. ESTENSIONE DICHIARATA (mandato owner 17/10, FASE 2-3): continuita' multi-agente (pfckpt v2: lease/fencing, CURRENT/TASK_STATE, patch codice, recover) e tracciabilita' atomica (tools/traceability, docs/traceability, tests/traceability); decisioni owner PF-BEST-EXECUTION-DYNAMIC-01, PF-EXECUTION-SAFETY-DECISIONS-01, PF-OWNER-DECISIONS-12 in AGENTS.md/CLAUDE.md. ESTENSIONE DICHIARATA (17/10, FASE 4 + fix review): docs/issue_reconciliation (PF-ISSUE-RECONCILIATION-01), tests/test_pr512_codex_findings.py e correzioni ai rilievi Codex su 8ffb4f3. ESTENSIONE DICHIARATA (17/10, PF-PR-RECOVERY-DECISIONS-02): tests/test_pr512_recovery_fixes.py e correzioni ai sei finding triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) su resume(), precisione/residuo Microstake, liquidita', snapshot SIM, scan segreti checkpoint, SHA evidenze. ESTENSIONE DICHIARATA (17/10, ciclo 4): tests/test_pr512_review_cycle4.py e correzioni ai rilievi Codex su cad07e1/21aab95 (esecutore legato a broker/modalita', fondi obbligatori, riserva su store fallito, cashout matched/pending, ladder non finita, recovery loss non finita, porcelain -z). ESTENSIONE DICHIARATA (17/10, ciclo 5): Decisione owner 2 (stake sopra max_single_bet = rifiuto esplicito) in core/money_management.py con tests/core/test_money_management_decision2_20261017.py; riserva di saga esistente conservata su recover fallito (Sol/Grok 464f347). Estensione dichiarata (ciclo 5 / Decisione owner 2): oracle in tests/acceptance/test_issue437_pr27.py e tests/integration/test_money_management_live_sim_parity.py allineati al rifiuto esplicito sopra max_single_bet. ESTENSIONE DICHIARATA (18/10, ciclo 6 in deroga owner PF-DECISIONS-DA-DJ-20261018 D-A=A1): tests/test_pr512_review_cycle6.py; riserva preesistente conservata su store.load fallito (Sol c.6242912622); lock dedicato sulla costruzione dell'esecutore Microstake (Codex r4304867227); decisione D-C=C1: betfair_client.py e services/betfair_service.py (payload currentOrders malformato => errore esplicito, mai lista vuota; Codex r4304867229). Oracle allineati a D-C in tests/unit/test_betfair_service_list_current_orders.py; fallback fail-closed di has_reservation (riesame indipendente ciclo 6). ESTENSIONE DICHIARATA (18/10, ciclo 7 in deroga owner PF-PR512-CYCLE7-AUTHORIZATION): tests/test_pr512_codex_f62f0e3.py; tre P1 Codex su f62f0e3 in core/runtime_controller.py (lato mancante non attribuito, reset SIM solo senza tavoli trattenuti, baseline stantia rifiutata dopo reset durevole)."
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 3c1a804..0d9efa1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ ## [Unreleased]
+ 
+ ### Fixed
++- **PR #512 ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION, tre P1 Codex su f62f0e3):** (1) riga pendente senza
++  lato persistito => non attribuita, mai ricostruita come BACK (la liability di un LAY sarebbe sottostimata;
++  r4306544229); (2) `reset_cycle()` non azzera il broker SIM finche' un tavolo resta trattenuto (esito
++  `sim_reset_skipped`; r4306544236); (3) baseline di espansione piu' vecchia dell'ultimo reset di ciclo durevole
++  (marker `roserpina.cycle_reset_state` scritto nella stessa transazione dello stato tavoli RSR-12) rifiutata al
++  riavvio: nessuna espansione da una baseline mai ribasata (r4306544231). Riesame indipendente del ciclo: baseline e
++  marker dello stesso reset portano lo stesso istante (la baseline fissata da `reset_cycle`/auto-reset sopravvive al
++  riavvio), un marker illeggibile vale come reset ignoto e un `set_at_ts` non finito (NaN/inf) nella baseline non
++  scavalca mai il confronto (nessuna espansione, fail-closed). Test RED->GREEN in
++  `tests/test_pr512_codex_f62f0e3.py`; doc `docs/roserpina_bankroll_equity.md` (F032).
+ - **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
+   la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
+   (rilascio solo di una riserva sicuramente nuova; Sol c.6242912622); (2) costruzione e rebinding dell'esecutore
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 0784ede..0cbb37e 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2650,19 +2650,32 @@ class RuntimeController:
+         self._reset_reservations_keeping_uncertain()       # PF-ALL-F024
+         self._reset_recovery_cycle_keeping_losses()
+ 
++        # Rilievo Codex #512 (r4306544236): un tavolo trattenuto (posizione viva/incerta non
++        # regolata) corrisponde a un ordine/posizione nel ledger del broker SIM; azzerarlo
++        # lascerebbe un'esposizione riservata che non potra' mai regolarsi. Reset SIM solo
++        # senza tavoli trattenuti; altrimenti dichiarato, mai silenzioso.
++        retained = sorted(int(t["table_id"]) for t in self.table_manager.snapshot()
++                          if str(t.get("current_event_key") or ""))
+         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
+-            try:
+-                self.betfair_service.reset_simulation()
+-            except Exception:
+-                logger.exception("Errore reset_simulation")
++            if retained:
++                logger.warning("reset_cycle: broker SIM NON azzerato, %d tavoli trattenuti %s", len(retained), retained)
++            else:
++                try:
++                    self.betfair_service.reset_simulation()
++                except Exception:
++                    logger.exception("Errore reset_simulation")
+ 
+-        self._start_expansion_cycle("reset_cycle")   # F032: nuovo ciclo, dopo l'eventuale reset SIM
+-        self._persist_recovery_tables()              # RSR-12
++        # F032: nuovo ciclo, dopo l'eventuale reset SIM. Baseline e marker durevole del reset portano lo
++        # STESSO istante: la baseline fissata da questo reset non e' "precedente" al reset stesso.
++        reset_ts = time.time()
++        self._start_expansion_cycle("reset_cycle", set_at_ts=reset_ts)
++        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+         status = self.get_status()
+         self.bus.publish("RUNTIME_CYCLE_RESET", status)
+         return {
+             "reset": True,
+             "status": status,
++            "sim_reset_skipped": retained if self.simulation_mode else [],
+         }
+ 
+     # =========================================================
+@@ -3595,14 +3608,16 @@ class RuntimeController:
+                 "selection_id": p.get("selection_id"),
+                 "event_key": str(p.get("event_key") or ""),
+                 "table_id": p.get("table_id"),
+-                "side": str(p.get("bet_type") or p.get("side") or "BACK").upper(),
++                "side": str(p.get("bet_type") or p.get("side") or "").upper(),
+                 "stake": p.get("stake"),
+                 "price": p.get("price"),
+                 "bet_id": bet_id,
+                 "meta": {k: p.get(k) for k in ("event_name", "market_name", "runner_name", "bet_type",
+                                                "price", "simulation_mode")},
+             }
+-            if not item["market_id"] or not item["event_key"]:
++            # Rilievo Codex #512 (r4306544229): un lato assente/non valido NON si inventa (BACK
++            # sottostimerebbe la liability di un LAY): la riga resta non attribuita, riconciliazione.
++            if not item["market_id"] or not item["event_key"] or item["side"] not in ("BACK", "LAY"):
+                 unattributed.append(item["customer_ref"])
+                 continue
+             candidates.append(item)
+@@ -3882,7 +3897,7 @@ class RuntimeController:
+     _EXPANSION_KEY = "roserpina.expansion_baseline_state"
+     _RECOVERY_KEY = "roserpina.recovery_tables_state"
+ 
+-    def _start_expansion_cycle(self, reason: str, funds: Any = None) -> bool:
++    def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
+         """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
+         nessun profitto virtuale) all'inizio di un ciclo autorizzato. Si fissa solo su transizioni esplicite
+         (primo avvio senza baseline, auto-reset, reset del ciclo) e si persiste. Dati non validi o
+@@ -3895,7 +3910,8 @@ class RuntimeController:
+                 funds = None
+         account = self._account_from_funds(funds)
+         baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
+-        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat()}
++        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
++                 "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+         try:
+             self.db.save_settings({self._EXPANSION_KEY: json.dumps(state)})
+         except Exception as exc:
+@@ -3916,13 +3932,50 @@ class RuntimeController:
+         if raw in (None, ""):
+             return False
+         try:
+-            value = validators.finite_number(json.loads(raw).get("baseline"))
++            parsed = json.loads(raw)
++            value = validators.finite_number(parsed.get("baseline"))
++            # `set_at_ts` assente = baseline legacy (0.0: stantia non appena esiste un marker di reset);
++            # presente ma non finito (NaN/inf/testo) = corrotto, mai "piu' recente" per default
++            set_at_ts = 0.0 if "set_at_ts" not in parsed else validators.finite_number(parsed.get("set_at_ts"))
++            if set_at_ts is None:
++                raise ValueError("set_at_ts non finito")
+         except Exception:
+             logger.warning("F032: stato della baseline corrotto: nessuna espansione")
+             return True
++        # Rilievo Codex #512 (r4306544231): una baseline piu' VECCHIA dell'ultimo reset di ciclo
++        # durevole e' stantia (la sua scrittura era fallita): nessuna espansione finche' una
++        # transizione esplicita non la fissa di nuovo. Baseline e marker scritti dallo stesso reset
++        # portano lo stesso istante (uguale => valida). Marker illeggibile => reset ignoto => stantia.
++        reset_ts = self._last_durable_cycle_reset_ts()
++        if reset_ts is not None and set_at_ts < reset_ts:
++            logger.warning("F032: baseline (%.0f) precedente all'ultimo reset durevole (%s): nessuna espansione",
++                           set_at_ts, "illeggibile" if reset_ts == float("inf") else "%.0f" % reset_ts)
++            self._expansion_baseline = None
++            return True
+         self._expansion_baseline = value if value is not None and value > 0.0 else None
+         return True
+ 
++    _CYCLE_RESET_KEY = "roserpina.cycle_reset_state"
++
++    def _last_durable_cycle_reset_ts(self) -> Optional[float]:
++        """Istante dell'ultimo reset di ciclo durevole; None se mai registrato. Marker presente ma
++        illeggibile/non finito => +inf (fail-closed: ogni baseline persistita e' considerata stantia)."""
++        try:
++            raw = (self.db.get_settings() or {}).get(self._CYCLE_RESET_KEY)
++        except Exception as exc:
++            logger.warning("F032: marker del reset di ciclo illeggibile (%s): nessuna espansione", exc)
++            return float("inf")
++        if raw in (None, ""):
++            return None
++        try:
++            at_ts = validators.finite_number(json.loads(raw).get("at_ts"))
++        except Exception:
++            at_ts = None
++        if at_ts is None:
++            logger.warning("F032: marker del reset di ciclo corrotto: nessuna espansione")
++            return float("inf")
++        return float(at_ts)
++
+     def _expansion_growth_pct(self) -> Optional[float]:
+         """Crescita % dell'equita' di cassa regolata sulla baseline del ciclo; None se incerta."""
+         baseline = getattr(self, "_expansion_baseline", None)
+@@ -3946,10 +3999,16 @@ class RuntimeController:
+             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+         return len(self.table_manager.recovery_state())
+ 
+-    def _persist_recovery_tables(self) -> bool:
++    def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
+         try:
+             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+-            self.db.save_settings({self._RECOVERY_KEY: json.dumps(state)})
++            payload = {self._RECOVERY_KEY: json.dumps(state)}
++            if cycle_reset:
++                # marker durevole del reset di ciclo, nella STESSA transazione dello stato tavoli
++                # (F032 / rilievo Codex r4306544231); `reset_ts` e' l'istante condiviso con la baseline
++                at_ts = float(reset_ts) if reset_ts is not None else time.time()
++                payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": at_ts})
++            self.db.save_settings(payload)
+             self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
+             return True
+         except Exception as exc:
+@@ -3986,10 +4045,11 @@ class RuntimeController:
+         account = getattr(self, "_account_snapshot", None) or {}
+         if account.get("ok"):
+             self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
++        reset_ts = time.time()                                           # stesso istante per baseline e marker
+         self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
+                                                          "exposure": account.get("committed")}
+-                                    if account.get("ok") else None)      # F032: nuovo ciclo
+-        self._persist_recovery_tables()                                  # RSR-12
++                                    if account.get("ok") else None, set_at_ts=reset_ts)   # F032: nuovo ciclo
++        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+         self.bus.publish(
+             "ROSERPINA_AUTO_RESET",
+             {
+diff --git a/docs/roserpina_bankroll_equity.md b/docs/roserpina_bankroll_equity.md
+index 6d2e2a7..55b7be9 100644
+--- a/docs/roserpina_bankroll_equity.md
++++ b/docs/roserpina_bankroll_equity.md
+@@ -80,7 +80,14 @@ abbinata viva. `SimulationBroker.get_current_orders` ora lo riporta come EXECUTI
+ 
+ La soglia `expansion_profit_pct` si confronta con la crescita dell'**equità di cassa regolata** rispetto a una baseline
+ persistente del ciclo (`roserpina.expansion_baseline_state`), fissata solo da transizioni esplicite: primo avvio
+-senza baseline, auto-reset, `reset_cycle`. Sopravvive al riavvio. È distinta dal saldo, dal disponibile e dal picco
++senza baseline, auto-reset, `reset_cycle`. Sopravvive al riavvio, con una regola di freschezza (PR #512 ciclo 7,
++rilievo Codex r4306544231): ogni reset di ciclo scrive il marker durevole `roserpina.cycle_reset_state`
++(`{"at_ts": …}`) nella stessa transazione dello stato tavoli RSR-12, con lo **stesso istante** `set_at_ts` della
++baseline fissata da quel reset; al riavvio una baseline con `set_at_ts` anteriore al marker (la sua scrittura era
++fallita), un marker presente ma illeggibile, impostazioni illeggibili o un `set_at_ts` non finito (NaN/inf/testo)
++⇒ baseline scartata ⇒ nessuna espansione finché una transizione esplicita non la fissa di nuovo (baseline legacy
++senza `set_at_ts` = 0.0: valida solo finché non esiste alcun marker). In SIM `reset_cycle()` non azzera il broker simulato finché un tavolo resta
++trattenuto (esito `sim_reset_skipped` con gli id dei tavoli; r4306544236). È distinta dal saldo, dal disponibile e dal picco
+ del drawdown (invariato). Profitti netti di commissione (fondi dell'exchange), nessun profitto virtuale: i fondi
+ impegnati in posizioni aperte contano come capitale, non come guadagno. Snapshot non valido, riserva incerta o
+ baseline assente ⇒ crescita ignota ⇒ nessuna espansione. Lo stake espanso resta soggetto a cap, RiskGate, STOP e
+diff --git a/tests/test_pr512_codex_f62f0e3.py b/tests/test_pr512_codex_f62f0e3.py
+new file mode 100644
+index 0000000..58b407b
+--- /dev/null
++++ b/tests/test_pr512_codex_f62f0e3.py
+@@ -0,0 +1,155 @@
++"""PR #512, ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION): i tre P1 Codex confermati sul head f62f0e3
++(r4306544229 lato mancante, r4306544236 reset SIM con tavoli trattenuti, r4306544231 baseline stantia).
++RED sul head f62f0e3, GREEN con la patch."""
++import threading
++
++import pytest
++
++from tests.f026.test_f018_rebuild_units import _Exchange, _rc, _row
++from tests.f026.test_f032_rsr12_units import _rc as _rc32
++
++
++# ---------------------------------------------------------------- r4306544229 (P1): riga pendente senza lato persistito
++def test_pending_row_without_side_is_unattributed_never_rebuilt_as_back():
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side="", bet_id="77")], _Exchange([{"betId": "77", "marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["unattributed"] == ["r1"] and res["ok"] is False
++    assert rc.table_manager.total_exposure() == 0.0, "lato inventato (BACK) con esposizione sottostimata"
++
++
++@pytest.mark.parametrize("side", ["back", "Lay"])
++def test_pending_row_with_a_valid_side_in_any_case_is_still_rebuilt(side):
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side=side, bet_id="77")], _Exchange([{"betId": "77", "marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["rebuilt"] == ["r1"]
++
++
++# ---------------------------------------------------------------- r4306544236 (P1): reset_cycle non azzera il broker SIM
++# finche' un tavolo resta trattenuto (posizione viva/incerta non regolata)
++class _SimService:
++    def __init__(self):
++        self.resets = 0
++
++    def get_account_funds(self):
++        return {"ok": True, "available": 100.0, "exposure": 0.0}
++
++    def reset_simulation(self):
++        self.resets += 1
++        return {"ok": True}
++
++
++def _rc_reset(tmp_path, with_position):
++    rc = _rc32(tmp_path / "r.db")
++    rc.simulation_mode = True
++    rc.betfair_service = _SimService()
++    rc._daily_loss_state_lock = threading.Lock()
++    rc._daily_loss_monitor_state = {"realized_pnl_day_baseline": 0.0, "realized_pnl": 0.0}
++    rc._session_pnl_baseline = None
++    rc.get_status = lambda: {}
++    if with_position:
++        rc.table_manager.activate(table_id=1, event_key="K1", exposure=5.0, market_id="1.1", selection_id=7, meta={})
++        rc.duplication_guard.acquire("K1")
++    return rc
++
++
++def test_reset_cycle_keeps_the_sim_broker_state_while_a_table_is_retained(tmp_path):
++    rc = _rc_reset(tmp_path, with_position=True)
++    out = rc.reset_cycle()
++    assert out["reset"] is True
++    assert rc.betfair_service.resets == 0, "broker SIM azzerato con una posizione ancora riservata sul tavolo"
++    assert out.get("sim_reset_skipped") == [1]
++
++
++def test_reset_cycle_resets_the_sim_broker_when_no_table_is_retained(tmp_path):
++    rc = _rc_reset(tmp_path, with_position=False)
++    out = rc.reset_cycle()
++    assert rc.betfair_service.resets == 1 and out.get("sim_reset_skipped") == []
++
++
++# ---------------------------------------------------------------- r4306544231 (P1): baseline di espansione stantia dopo
++# un reset la cui scrittura e' fallita: al riavvio non deve tornare autorevole
++def test_stale_expansion_baseline_is_rejected_after_a_durable_cycle_reset(tmp_path):
++    rc = _rc32(tmp_path / "b.db")
++    assert rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0}) is True
++    real_save = rc.db.save_settings
++
++    def failing_for_baseline(data):
++        if rc._EXPANSION_KEY in data:
++            raise RuntimeError("disco pieno")
++        return real_save(data)
++
++    rc.db.save_settings = failing_for_baseline
++    assert rc._start_expansion_cycle("reset_cycle", funds={"available": 130.0, "exposure": 0.0}) is False
++    assert rc._persist_recovery_tables(cycle_reset=True) is True       # il reset e' durevole, la baseline no
++    again = _rc32(tmp_path / "b.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline is None, "baseline del ciclo precedente tornata autorevole dopo il riavvio"
++
++
++def test_baseline_fixed_by_a_real_reset_cycle_survives_restart(tmp_path):
++    """Riesame indipendente del ciclo 7: la sequenza REALE di reset_cycle() (baseline poi marker) non deve
++    scartare al riavvio la baseline fissata dal reset stesso (stesso istante per baseline e marker)."""
++    rc = _rc_reset(tmp_path, with_position=False)
++    assert rc.reset_cycle()["reset"] is True
++    again = _rc32(tmp_path / "r.db")
++    assert again._load_expansion_baseline() is True
++    assert again._expansion_baseline == pytest.approx(100.0), "baseline fissata dal reset scartata al riavvio"
++
++
++def test_baseline_fixed_by_a_real_auto_reset_survives_restart(tmp_path):
++    rc = _rc_reset(tmp_path, with_position=False)
++    rc.simulation_mode = False
++    rc._record_account_snapshot({"available": 100.0, "exposure": 0.0}, source="t")
++    rc.config.auto_reset_drawdown_pct = 10.0
++    rc._record_account_snapshot({"available": 80.0, "exposure": 0.0}, source="t")
++    assert rc._maybe_auto_reset(20.0) is True
++    again = _rc32(tmp_path / "r.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline == pytest.approx(80.0)
++
++
++def test_baseline_newer_than_the_last_reset_survives_restart(tmp_path):
++    rc = _rc32(tmp_path / "c.db")
++    rc._persist_recovery_tables(cycle_reset=True, reset_ts=1000.0)
++    assert rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0}, set_at_ts=1001.0) is True
++    again = _rc32(tmp_path / "c.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline == pytest.approx(100.0)
++
++
++@pytest.mark.parametrize("marker", ['{"at_ts": "garbage"}', '{"at_ts": null}', 'not json', '{"at_ts": "NaN"}'])
++def test_corrupt_cycle_reset_marker_disables_expansion(tmp_path, marker):
++    """Marker del reset illeggibile => ultimo reset ignoto => la baseline persistita non e' autorevole."""
++    import json
++    rc = _rc32(tmp_path / "d.db")
++    assert rc._start_expansion_cycle("first_start", funds={"available": 50.0, "exposure": 0.0}) is True
++    rc.db.save_settings({rc._CYCLE_RESET_KEY: marker})
++    again = _rc32(tmp_path / "d.db")
++    assert again._load_expansion_baseline() is True
++    assert again._expansion_baseline is None, "baseline accettata con marker di reset corrotto (fail-open)"
++    assert json.loads(again.db.get_settings()[again._EXPANSION_KEY])["baseline"] == pytest.approx(50.0)
++
++
++@pytest.mark.parametrize("set_at_ts", ["NaN", "Infinity", "inf", "garbage", None, True])
++def test_corrupt_baseline_timestamp_never_outranks_a_durable_reset(tmp_path, set_at_ts):
++    """Seconda lettura indipendente del ciclo 7: `set_at_ts` non finito (NaN/inf/testo/null/bool) nella baseline
++    persistita non deve scavalcare il confronto con il marker di reset (NaN < x e inf < x sono falsi)."""
++    import json
++    rc = _rc32(tmp_path / "e.db")
++    rc.db.save_settings({rc._EXPANSION_KEY: json.dumps({"baseline": 50.0, "set_at_ts": set_at_ts}),
++                         rc._CYCLE_RESET_KEY: json.dumps({"at_ts": 5000.0})})
++    again = _rc32(tmp_path / "e.db")
++    assert again._load_expansion_baseline() is True
++    assert again._expansion_baseline is None, "baseline con set_at_ts corrotto accettata dopo un reset durevole"
++
++
++def test_legacy_baseline_without_timestamp_is_accepted_only_until_a_reset_exists(tmp_path):
++    import json
++    rc = _rc32(tmp_path / "f.db")
++    rc.db.save_settings({rc._EXPANSION_KEY: json.dumps({"baseline": 50.0, "reason": "first_start"})})
++    rc._load_expansion_baseline()
++    assert rc._expansion_baseline == pytest.approx(50.0)
++    rc.db.save_settings({rc._CYCLE_RESET_KEY: json.dumps({"at_ts": 5000.0})})
++    again = _rc32(tmp_path / "f.db")
++    again._load_expansion_baseline()
++    assert again._expansion_baseline is None
