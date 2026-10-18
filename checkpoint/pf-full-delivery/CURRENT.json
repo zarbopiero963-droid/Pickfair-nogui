@@ -6,8 +6,8 @@
   "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208"
  },
  "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
- "next_atomic_action": "Attendere i check su 034af59; triage Sol/Grok/Codex; resolve dei thread FIXED (24 + 3 P1) con prova; verdetto #512 (READY_FOR_OWNER_MANUAL_MERGE se tutto verde; file-policy nel diff); registrare deroga e mandato su #426; poi preparare la PR 10 cicli dal main (apertura solo a #512 merged/closed: una PR agente per repository).",
- "previous_checkpoint_sha": "f7933afbb8220b098efb8bc4a4dbf9847a2e4648",
+ "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
+ "previous_checkpoint_sha": "7ce674f2e7ac98341dd46965ddd97edde532f291",
  "schema": "pf-current/1",
- "seq": 24
+ "seq": 25
 }

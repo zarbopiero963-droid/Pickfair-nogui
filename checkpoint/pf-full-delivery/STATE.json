@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 24,
- "updated_at": "2026-10-18T12:00:10Z",
+ "seq": 25,
+ "updated_at": "2026-10-18T12:19:09Z",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -351,6 +351,11 @@
   {
    "id": "riesame indipendente ciclo 7",
    "result": "due letture (a8dbbd2, fdf42bc): P1 ordine baseline/marker + P2 marker corrotto + test invertito + docs => corretti; P2 set_at_ts non finito => corretto; NIT preesistente (esito False di _persist_recovery_tables nei reset) => GUARDRAIL_GAP follow-up"
+  },
+  {
+   "id": "triage Codex 034af59 (10 rilievi)",
+   "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208",
+   "result": "1 CURRENT_DEFECT (money_management r4306954203), 8 GUARDRAIL_GAP, 1 DOC; test throwaway 10 passed; run reale app per r4306954193"
   }
  ],
  "findings": {
@@ -402,7 +407,9 @@
    "Codex f62f0e3: r4306544221 (GUARDRAIL_GAP), r4306544234 (doc), r4306544223 (tooling): nel lotto locale / follow-up tooling",
    "Sol f62f0e3 c.6248273030: THEORETICAL (stesso ref mai concorrente), hardening nel lotto locale",
    "D-B/D-D/D-E/D-F implementati nel lotto locale, non pubblicati (una PR per repo, budget 6/6)",
-   "GUARDRAIL_GAP preesistente (riesame 2 ciclo 7): esito False di _persist_recovery_tables ignorato in reset_cycle/_maybe_auto_reset (non alza _recovery_persist_failed) — follow-up, fuori #512"
+   "GUARDRAIL_GAP preesistente (riesame 2 ciclo 7): esito False di _persist_recovery_tables ignorato in reset_cycle/_maybe_auto_reset (non alza _recovery_persist_failed) — follow-up, fuori #512",
+   "Codex 034af59 r4306954203 CURRENT_DEFECT: expansion_growth None + expansion_profit_pct=0 => EXPANSION (introdotto) — BLOCCANTE, patch preparata, nessun ciclo disponibile",
+   "Codex 034af59 GUARDRAIL_GAP: r4306954168 betId assente, r4306954173 snapshot SIM, r4306954183 ladder malformata Dutching, r4306954189 ROLLBACK_PENDING replace, r4306954178 persist reset, r4306954193 recovery illeggibile, r4306954201 pf_trace, r4306954197 pfckpt; DOC r4306954205"
   ]
  },
  "gates": {
@@ -430,7 +437,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere i check su 034af59; triage Sol/Grok/Codex; resolve dei thread FIXED (24 + 3 P1) con prova; verdetto #512 (READY_FOR_OWNER_MANUAL_MERGE se tutto verde; file-policy nel diff); registrare deroga e mandato su #426; poi preparare la PR 10 cicli dal main (apertura solo a #512 merged/closed: una PR agente per repository).",
+ "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -440,8 +447,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "f7933afbb8220b098efb8bc4a4dbf9847a2e4648",
- "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 ciclo 7 pushato (034af59); in attesa check settled + review Sol/Grok/Codex; poi resolve FIXED con prova, verdetto, #426; nessun 8° ciclo senza policy 10 cicli",
+ "previous_checkpoint_sha": "7ce674f2e7ac98341dd46965ddd97edde532f291",
+ "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 in NEEDS_MANUAL (decisione A/B/C owner); in locale: patch dei 10 rilievi Codex 034af59 (worktree, nessun push) + PR 10 cicli pronta",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -952,5 +959,11 @@
    "ciclo 7: PF-PR512-CYCLE7-AUTHORIZATION (O1)"
   ],
   "eighth_cycle": "NON autorizzato senza nuova deroga o policy 10 cicli integrata"
- }
+ },
+ "threads_pr512": {
+  "resolved_with_proof": 25,
+  "open": 21,
+  "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
+ },
+ "verdict_pr512": "NEEDS_MANUAL / fix_loop_budget_exhausted (7 cicli) con CURRENT_DEFECT aperto; decisione owner richiesta: A deroga ciclo 8 | B PR 10 cicli con deroga serialita' | C chiusura #512 (#512 c.6249823409, #426 c.6249825590)"
 }

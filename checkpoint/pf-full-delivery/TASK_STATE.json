@@ -47,9 +47,9 @@
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
  ],
- "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 ciclo 7 pushato (034af59); in attesa check settled + review Sol/Grok/Codex; poi resolve FIXED con prova, verdetto, #426; nessun 8\u00b0 ciclo senza policy 10 cicli",
+ "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 in NEEDS_MANUAL (decisione A/B/C owner); in locale: patch dei 10 rilievi Codex 034af59 (worktree, nessun push) + PR 10 cicli pronta",
  "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
- "next_atomic_action": "Attendere i check su 034af59; triage Sol/Grok/Codex; resolve dei thread FIXED (24 + 3 P1) con prova; verdetto #512 (READY_FOR_OWNER_MANUAL_MERGE se tutto verde; file-policy nel diff); registrare deroga e mandato su #426; poi preparare la PR 10 cicli dal main (apertura solo a #512 merged/closed: una PR agente per repository).",
+ "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

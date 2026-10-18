@@ -1,0 +1,282 @@
+{
+ "fixed": [
+  {
+   "thread": "PRRT_kwDORumVCM6thnPi",
+   "first": "4303297564",
+   "path": "core/runtime_controller.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnPl",
+   "first": "4303297571",
+   "path": "core/microstake_safe.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnPn",
+   "first": "4303297575",
+   "path": "core/runtime_controller.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnPp",
+   "first": "4303297576",
+   "path": "core/trading_engine.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnPs",
+   "first": "4303297582",
+   "path": "core/runtime_controller.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnPz",
+   "first": "4303297596",
+   "path": "core/microstake_sim_port.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnP3",
+   "first": "4303297600",
+   "path": "core/runtime_controller.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thnP4",
+   "first": "4303297609",
+   "path": "core/table_manager.py",
+   "commit": "339cd24"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thyl7",
+   "first": "4303374299",
+   "path": "core/runtime_controller.py",
+   "commit": "5b4a589"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thymG",
+   "first": "4303374312",
+   "path": "simulation_broker.py",
+   "commit": "5b4a589"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thymL",
+   "first": "4303374317",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "commit": "5b4a589"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thymS",
+   "first": "4303374326",
+   "path": "tools/traceability/pf_trace.py",
+   "commit": "5b4a589"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thymT",
+   "first": "4303374328",
+   "path": "core/liquidity.py",
+   "commit": "5b4a589"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tk4Xv",
+   "first": "4304693616",
+   "path": "core/microstake_safe.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tk4Xw",
+   "first": "4304693618",
+   "path": "core/trading_engine.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlCc3",
+   "first": "4304759964",
+   "path": "core/liquidity.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlCc8",
+   "first": "4304759970",
+   "path": "core/order_router.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlCc-",
+   "first": "4304759974",
+   "path": "core/trading_engine.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlCdA",
+   "first": "4304759979",
+   "path": "core/table_manager.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlCdD",
+   "first": "4304759984",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "commit": "4a47ab0"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSll",
+   "first": "4304867227",
+   "path": "core/trading_engine.py",
+   "commit": "f62f0e3"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSlm",
+   "first": "4304867229",
+   "path": "core/runtime_controller.py",
+   "commit": "f62f0e3"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsX",
+   "first": "4306544229",
+   "path": "core/runtime_controller.py",
+   "commit": "034af59"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsZ",
+   "first": "4306544231",
+   "path": "core/runtime_controller.py",
+   "commit": "034af59"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsd",
+   "first": "4306544236",
+   "path": "core/runtime_controller.py",
+   "commit": "034af59"
+  }
+ ],
+ "keep": [
+  {
+   "thread": "PRRT_kwDORumVCM6thnPu",
+   "first": "4303297587",
+   "path": "core/runtime_controller.py",
+   "last": "Decisione owner registrata (PF-DECISIONS-DA-DJ-202"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6thymA",
+   "first": "4303374306",
+   "path": "core/runtime_controller.py",
+   "last": "Triage sul head 339cd24: **GUARDRAIL_GAP preesiste"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tk4Xu",
+   "first": "4304693614",
+   "path": "core/order_router.py",
+   "last": "Confermato (CURRENT_DEFECT di design, gi\u00e0 dichiara"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tk4Xx",
+   "first": "4304693619",
+   "path": "core/microstake_safe.py",
+   "last": "Decisione owner registrata (PF-DECISIONS-DA-DJ-202"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSlb",
+   "first": "4304867217",
+   "path": "core/order_router.py",
+   "last": "Decisione owner registrata (PF-DECISIONS-DA-DJ-202"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSld",
+   "first": "4304867219",
+   "path": "tools/traceability/pf_trace.py",
+   "last": "Patch preparata nel lotto tooling di follow-up (br"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSlh",
+   "first": "4304867223",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "last": "Patch preparata nel lotto tooling di follow-up: pa"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tlSlj",
+   "first": "4304867226",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "last": "Patch preparata nel lotto tooling di follow-up: `v"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsR",
+   "first": "4306544221",
+   "path": "simulation_broker.py",
+   "last": "Triage sul head `f62f0e3`: **GUARDRAIL_GAP (fail-c"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsT",
+   "first": "4306544223",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "last": "Triage: **CURRENT_DEFECT (tooling del checkpoint, "
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tpSsb",
+   "first": "4306544234",
+   "path": "docs/roserpina41_parameter_dossier.md",
+   "last": "Confermato (doc stantia: il dossier descriveva anc"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPO",
+   "first": "4306954168",
+   "path": "services/betfair_service.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPR",
+   "first": "4306954173",
+   "path": "core/microstake_sim_port.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPW",
+   "first": "4306954178",
+   "path": "core/runtime_controller.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPa",
+   "first": "4306954183",
+   "path": "core/liquidity.py",
+   "last": "**<sub><sub>![P2 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPe",
+   "first": "4306954189",
+   "path": "core/microstake_safe.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPi",
+   "first": "4306954193",
+   "path": "core/runtime_controller.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPl",
+   "first": "4306954197",
+   "path": "tools/agent_checkpoint/pfckpt.py",
+   "last": "**<sub><sub>![P2 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPo",
+   "first": "4306954201",
+   "path": "tools/traceability/pf_trace.py",
+   "last": "**<sub><sub>![P2 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPq",
+   "first": "4306954203",
+   "path": "core/money_management.py",
+   "last": "**<sub><sub>![P1 Badge](https://img.shields.io/bad"
+  },
+  {
+   "thread": "PRRT_kwDORumVCM6tqRPr",
+   "first": "4306954205",
+   "path": "core/microstake_safe.py",
+   "last": "**<sub><sub>![P2 Badge](https://img.shields.io/bad"
+  }
+ ]
+}
