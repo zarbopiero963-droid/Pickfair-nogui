@@ -1594,6 +1594,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
 
+        # PF-CAP-10b/F1 (riesame indipendente): i campi Roserpina riflettono il persistito solo se il
+        # caricamento e' riuscito. Altrimenti un salvataggio scriverebbe i valori iniziali della GUI
+        # (cap opzionali vuoti => disattivati) sopra la configurazione scelta dall'utente: il save viene
+        # rifiutato con errore esplicito finche' un caricamento non riesce.
+        self._roserpina_loaded_ok = not hasattr(self.settings_service, "load_roserpina_config")
         try:
             if hasattr(self.settings_service, "load_roserpina_config"):
                 rs = self.settings_service.load_roserpina_config()
@@ -1640,8 +1645,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 risk_profile = getattr(rs, "risk_profile", None)
                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
                 self.rs_risk_profile_var.set(str(risk_profile_value))
+                self._roserpina_loaded_ok = True
         except Exception:
-            pass
+            _LOGGER.exception("Caricamento configurazione Roserpina fallito: salvataggio Roserpina bloccato")
+            self._roserpina_loaded_ok = False
 
         try:
             if hasattr(self.settings_service, "load_simulation_config"):
@@ -1841,9 +1848,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _parse_hard_stop(raw, label, *, is_pct=False):
         """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
 
-        - vuoto => None: il save preserva il valore persistito (non azzera un
-          limite di sicurezza gia' configurato) e il gate LIVE resta bloccante
-          se il campo non e' impostato;
+        - vuoto => None. Per gli hard-stop di perdita/esposizione il save
+          preserva il valore persistito (non azzera un limite di sicurezza gia'
+          configurato) e il gate LIVE resta bloccante se il campo non e'
+          impostato; per i quattro cap monetari opzionali (ordine, mercato,
+          evento, drawdown assoluto) il vuoto DISATTIVA il limite (PF-CAP-10b,
+          decisione owner 18/10/2026);
         - valore presente: DEVE essere numerico, finito e > 0 (per la % anche
           <= 100), coerente con `_validate_live_hard_stop_config` del deploy
           gate (core/runtime_controller). Altrimenti solleva ValueError: il
@@ -1967,6 +1977,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         return val
 
     def _save_roserpina_settings(self):
+        if getattr(self, "_roserpina_loaded_ok", True) is False:
+            # Caricamento fallito: i campi non rappresentano il persistito. Salvare ora
+            # sovrascriverebbe (e per i cap opzionali disattiverebbe) i limiti dell'utente.
+            self._safe_show_error(
+                "Errore salvataggio Roserpina",
+                "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
+                "i limiti salvati. Riavvia l'applicazione o ricarica le impostazioni.",
+            )
+            return
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
 
@@ -2062,7 +2081,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             except Exception as exc:
                 reload_error = exc
         # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
-        # lasciato vuoto (semantica preserve) torna a mostrare il limite
+        # lasciato vuoto (semantica preserve, non per i quattro cap monetari
+        # opzionali che il vuoto disattiva) torna a mostrare il limite
         # conservato, evitando una divergenza UI/stato (un limite attivo ma
         # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
         # altri tab ne' la logica force-simulation di _load_initial_settings.

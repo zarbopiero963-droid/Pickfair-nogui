@@ -371,7 +371,10 @@ La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
 mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
 limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
 persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
-dove il vuoto preserva il valore salvato); un valore presente deve essere un numero finito > 0,
+dove il vuoto preserva il valore salvato). Se il caricamento iniziale della configurazione
+Roserpina fallisce, il salvataggio del tab Roserpina e' bloccato con un errore esplicito («Configurazione
+Roserpina non caricata: salvataggio bloccato…»), cosi' i valori iniziali della GUI non sovrascrivono mai i
+limiti salvati; un valore presente deve essere un numero finito > 0,
 altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
 illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
 ordini con `<nome>_non_valido`.
