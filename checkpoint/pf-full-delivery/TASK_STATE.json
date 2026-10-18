@@ -49,7 +49,7 @@
  ],
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere CI/Sol/Grok/Codex settled su b918a6d; rispondere 'Fatto in commit' ai thread r4306954189, r4306954197, r4307328207, r4307328199, r4307328204, r4307328211 e al punto Sol c.6250774086; resolve con prova; verdetto #512 (READY FOR OWNER MERGE o BLOCKED) su #512 e #426; ciclo 10 solo per difetti bloccanti confermati; poi #505.",
+ "next_atomic_action": "CI/Sol/Grok/Codex settled su 9ab753a; risposte nei thread (Fatto in commit / DEFERRED_BY_POLICY -> #516..#520) e resolve con prova; verdetto #512 READY FOR OWNER MERGE o BLOCKED; poi #505.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
