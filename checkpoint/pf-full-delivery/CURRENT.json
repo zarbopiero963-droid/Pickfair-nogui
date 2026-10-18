@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208"
+  "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Ciclo 8 #512: completare patch, cherry-pick, scope, regressione, riesame, push unico, triage, verdetto. In parallelo: esito revisione audit cap => correzioni registro; patch isolate riconciliazione #505 su branch locale (PF-CAP-01..04,10,11), RED->GREEN, senza toccare la PR protetta.",
- "previous_checkpoint_sha": "cf9aedd04b482a24ff81e8cc6944377a34128533",
+ "next_atomic_action": "Attendere check su 2c6aa09; rispondere nei 10 thread Codex con i commit; triage review; resolve con prova; verdetto #512 + #426; se restano difetti confermati => ciclo 9 (deroga), altrimenti stop. Poi: patch isolate riconciliazione #505, roadmap.",
+ "previous_checkpoint_sha": "9c3bfb74485879944d40902d706fb58792ea23dd",
  "schema": "pf-current/1",
- "seq": 28
+ "seq": 29
 }

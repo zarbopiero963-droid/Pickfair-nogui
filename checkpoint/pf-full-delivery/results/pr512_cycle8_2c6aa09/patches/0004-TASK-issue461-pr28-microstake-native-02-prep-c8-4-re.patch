@@ -1,0 +1,138 @@
+From 39870de90864b8132c4713c12a802ec304a1faac Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:12:06 +0000
+Subject: [PATCH 04/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #4:
+ recover() su ROLLBACK_PENDING cancella il residuo (ROLLED_BACK), mai replace
+
+Rilievo Codex su 034af59: una saga salvata ROLLBACK_PENDING (replace rifiutato, crash prima
+di cancel_all_remaining) veniva ripresa da recover() come stub da completare e riattivata
+con un nuovo replace. Ora: ROLLBACK_PENDING => cancel_all_remaining => ROLLED_BACK con
+riserva rilasciata; cancellazione fallita => AMBIGUOUS (rollback_unknown), riserva tenuta.
+Il controllo "stub abbinato => AMBIGUOUS" resta prioritario (nessun allargamento).
+Test: tests/test_pr512_codex_034af59.py (f4, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ core/microstake_safe.py           | 14 +++++++
+ docs/microstake_native.md         |  4 +-
+ tests/test_pr512_codex_034af59.py | 66 +++++++++++++++++++++++++++++++
+ 3 files changed, 83 insertions(+), 1 deletion(-)
+
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index 369b293..63e2e80 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -569,6 +569,20 @@ class MicrostakeCoordinator:
+             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
+             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciled_matched_stub",
+                                 order=order, max_exposure=transient, held=True)
++        if phase is Phase.ROLLBACK_PENDING:
++            # Rollback gia' deciso prima del crash (replace rifiutato): si completa SOLO la
++            # cancellazione del residuo, mai un nuovo replace che riattiverebbe la saga
++            # (rilievo Codex #512 su 034af59). Cancellazione fallita => AMBIGUOUS, riserva tenuta.
++            try:
++                order = self.exchange.cancel_all_remaining(order.bet_id)
++            except Exception:
++                self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
++                return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
++                                    order=order, max_exposure=transient, held=True)
++            self.store.save(customer_ref, phase=Phase.ROLLED_BACK, reservation_held=False)
++            self.exchange.release_reservation(customer_ref)
++            return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
++                                order=order, max_exposure=transient)
+         # Complete a known accepted, fully-unmatched stub.
+         reduction = self.policy.exchange_stub_size - req.economic_stake
+         if order.remaining == self.policy.exchange_stub_size:
+diff --git a/docs/microstake_native.md b/docs/microstake_native.md
+index f2521b1..0daee57 100644
+--- a/docs/microstake_native.md
++++ b/docs/microstake_native.md
+@@ -108,7 +108,9 @@ scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blo
+ ## 5. Recovery all'avvio (`RuntimeController.start`, prima di F018)
+ 
+ `TradingEngine.recover_native_microstake_sagas()` riprende ogni saga non conclusa dalla sua identità persistita
+-(solo riduzione/replace mancanti, **mai un nuovo PLACE**). Se resta una saga pendente, lo store è illeggibile o manca
++(solo riduzione/replace mancanti, **mai un nuovo PLACE**; una saga salvata **ROLLBACK_PENDING** completa solo la
++cancellazione del residuo → ROLLED_BACK, AMBIGUOUS se la cancellazione fallisce, mai un replace — ciclo 8, rilievo
++Codex su 034af59). Se resta una saga pendente, lo store è illeggibile o manca
+ l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
+ e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
+ `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index eba3125..166b55a 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -172,3 +172,69 @@ def test_f3_evaluate_guard_blocks_on_unknown_liquidity_only_when_armed():
+     assert armed["warning"] is True and armed["shortfall"][0]["reason"] == "LIQUIDITY_UNKNOWN"
+     observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
+     assert observe == {"warning": False, "shortfall": []}
++
++
++# ------------------------------------------------------------------ 4. ROLLBACK_PENDING al riavvio
++class _Crash(BaseException):
++    """Crash di processo (non Exception: nessun handler della saga lo intercetta)."""
++
++
++def _rollback_world(tmp_path):
++    from core.microstake_safe import (JsonSagaStore, MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest,
++                                      Side, StatefulExchangeSimulator)
++
++    class _Exchange(StatefulExchangeSimulator):
++        def __init__(self):
++            super().__init__(balance=D("100"))
++            self.reject_replace_once = True
++            self.cancel_all_mode = "crash"      # crash | fail | ok
++
++        def replace(self, bet_id, new_price):
++            if self.reject_replace_once:
++                self.reject_replace_once = False
++                raise RuntimeError("REPLACE_REJECTED")
++            return super().replace(bet_id, new_price)
++
++        def cancel_all_remaining(self, bet_id):
++            if self.cancel_all_mode == "crash":
++                raise _Crash()
++            if self.cancel_all_mode == "fail":
++                raise RuntimeError("CANCEL_REJECTED")
++            return super().cancel_all_remaining(bet_id)
++
++    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
++                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
++    ex = _Exchange()
++    path = tmp_path / "saga.json"
++    req = MicrostakeRequest(market_id="1.100", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
++                            target_price=D("2.00"), customer_ref="rb-1")
++    with pytest.raises(_Crash):
++        MicrostakeCoordinator(ex, JsonSagaStore(path), policy).execute(req, stub_price=D("3.00"))
++    assert JsonSagaStore(path).load("rb-1")["phase"] == "ROLLBACK_PENDING"
++    assert ex.has_reservation("rb-1")
++    return ex, path, policy, MicrostakeCoordinator, JsonSagaStore
++
++
++def test_f4_rollback_pending_is_cancelled_at_restart_never_replaced(tmp_path):
++    from core.microstake_safe import Phase
++    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
++    ex.cancel_all_mode = "ok"
++    before = len(ex.operation_log)
++    res = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res.phase is Phase.ROLLED_BACK and res.reservation_held is False, res
++    new_ops = ex.operation_log[before:]
++    assert [op[0] for op in new_ops] == ["CANCEL"] and new_ops[0][2] == "0.10", new_ops   # il residuo, non lo stub
++    assert ex.order(res.bet_id).remaining == D("0")
++    saved = Store(path).load("rb-1")
++    assert saved["phase"] == "ROLLED_BACK" and saved["reservation_held"] is False
++    assert not ex.has_reservation("rb-1")
++
++
++def test_f4_rollback_pending_with_failed_cancel_stays_ambiguous_with_reservation(tmp_path):
++    from core.microstake_safe import Phase
++    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
++    ex.cancel_all_mode = "fail"
++    res = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "rollback_unknown"
++    assert Store(path).load("rb-1")["phase"] == "AMBIGUOUS" and ex.has_reservation("rb-1")
++    assert not any(op[0] == "REPLACE" for op in ex.operation_log)
+-- 
+2.43.0
+

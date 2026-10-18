@@ -1,0 +1,3 @@
+FAILED tests/test_pr512_codex_034af59.py::test_f2_coordinator_never_persists_active_while_the_reload_source_is_stale
+FAILED tests/test_pr512_codex_034af59.py::test_f2_rolled_back_with_unpersisted_snapshot_stays_ambiguous_with_reservation
+2 failed, 37 deselected, 3 warnings in 1.66s

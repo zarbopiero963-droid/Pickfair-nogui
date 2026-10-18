@@ -1,0 +1,63 @@
+From ad3209fd8719958ba533eb546cc7e6d9f500e64a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:22:47 +0000
+Subject: [PATCH 07/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #7:
+ docstring di core/microstake_safe.py veritiera (solo documentazione)
+
+Rilievo Codex su 034af59: la docstring dichiarava "no import or call site in the production
+execution path", ma core/microstake_sim_port.py lo importa e TradingEngine lo raggiunge per
+ogni invio runtime SIM sotto il minimo exchange. Nessuna modifica di codice.
+Test guard: tests/test_pr512_codex_034af59.py (f7, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ core/microstake_safe.py           | 18 +++++++++++++-----
+ tests/test_pr512_codex_034af59.py |  8 ++++++++
+ 2 files changed, 21 insertions(+), 5 deletions(-)
+
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index 63e2e80..11821b0 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -1,8 +1,16 @@
+-"""Isolated, simulation-only Microstake recovery prototype.
+-
+-This module deliberately has no import or call site in the production execution
+-path.  It reconstructs the historical PLACE -> size reduction -> REPLACE saga
+-behind an explicit safety policy and a stateful exchange simulator.
++"""Microstake saga: policy, coordinator and native executor (simulation-only).
++
++Ruolo reale (rilievo Codex #512 su 034af59, la vecchia docstring lo negava): questo modulo
++E' nel percorso di esecuzione SIM. `core/microstake_sim_port.py` importa `MicrostakeCoordinator`,
++`MicrostakePolicy`, `NativeMicrostakeExecutor`, `Phase`, `Side`, `SimOrder`, `LostResponse`
++e li collega al `SimulationBroker` di produzione; `TradingEngine` (`core/trading_engine.py`,
++`_default_native_microstake_executor` / `build_native_microstake_executor`) lo raggiunge per
++ogni invio runtime sotto il minimo exchange in SIMULATION. In LIVE non esiste adapter: l'engine
++resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`) e `MicrostakePolicy.simulation_only`
++blocca ogni altro uso.
++
++Ricostruisce la saga PLACE -> riduzione di size -> REPLACE dietro una policy esplicita;
++`StatefulExchangeSimulator` e `JsonSagaStore` restano l'exchange e lo store dei test offline.
+ """
+ 
+ from __future__ import annotations
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index 8a7f790..80dbc42 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -345,3 +345,11 @@ def test_f6_start_with_unreadable_recovery_state_goes_paused_and_keeps_the_store
+     assert second["rebuild"]["ok"] is False and second["rebuild"]["reason"] == "RECOVERY_STATE_UNREADABLE", second["rebuild"]
+     assert not any(o["market_id"] == "1.602" and o["status"] == "SUBMITTED" for o in second["snaps"][-1]["orders"])
+     assert Database(dbs[0]).get_settings().get("roserpina.recovery_tables_state") == "{rotto"
++
++
++# ------------------------------------------------------------------ 7. docstring veritiero di microstake_safe
++def test_f7_microstake_safe_docstring_declares_its_real_role():
++    import core.microstake_safe as ms
++    doc = ms.__doc__ or ""
++    assert "no import or call site" not in doc, "la docstring nega un uso che esiste (core/microstake_sim_port.py)"
++    assert "microstake_sim_port" in doc and "TradingEngine" in doc
+-- 
+2.43.0
+

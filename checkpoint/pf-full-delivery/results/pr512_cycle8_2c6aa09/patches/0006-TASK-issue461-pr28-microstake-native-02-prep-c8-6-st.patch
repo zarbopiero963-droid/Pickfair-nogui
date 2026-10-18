@@ -1,0 +1,151 @@
+From 9828c27f111e0ef82d986288f22c42c93198e999 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:21:56 +0000
+Subject: [PATCH 06/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #6:
+ stato di recovery illeggibile al riavvio => PAUSED, mai sovrascritto
+
+Rilievo Codex su 034af59: start() ignorava il False di _restore_recovery_tables (runtime
+ACTIVE con perdite da recuperare sconosciute) e il primo settlement/reset sovrascriveva lo
+stato illeggibile con quello in memoria. Ora _gate_rebuild_on_recovery_state forza la
+ricostruzione F018 a ok=False con reason RECOVERY_STATE_UNREADABLE (=> PAUSED, stesso
+percorso di EXCHANGE_ORDERS_UNAVAILABLE), resume() applica lo stesso gate, e
+_persist_recovery_tables rifiuta la scrittura (False, log) finche' il flag e' alzato.
+Test: tests/test_pr512_codex_034af59.py (f6: unit + harness F026 reale, RED prima).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ core/runtime_controller.py        | 18 ++++++++++-
+ docs/roserpina_bankroll_equity.md |  5 ++-
+ tests/test_pr512_codex_034af59.py | 52 +++++++++++++++++++++++++++++++
+ 3 files changed, 73 insertions(+), 2 deletions(-)
+
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 3235bd4..d1396e3 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2528,6 +2528,7 @@ class RuntimeController:
+             rebuild = dict(rebuild, ok=False, reason=(
+                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
+                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
++        rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
+         self._last_position_rebuild = dict(rebuild)
+         self._reconciliation_required = not rebuild["ok"]
+         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
+@@ -2631,7 +2632,7 @@ class RuntimeController:
+                         "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
+                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
+                         "microstake": microstake, "status": self._safe_status_snapshot()}
+-            rebuild = self._rebuild_open_positions()
++            rebuild = self._gate_rebuild_on_recovery_state(self._rebuild_open_positions())
+             self._last_position_rebuild = dict(rebuild)
+             if not rebuild["ok"]:
+                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
+@@ -4002,6 +4003,16 @@ class RuntimeController:
+             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+         return len(self.table_manager.recovery_state())
+ 
++    def _gate_rebuild_on_recovery_state(self, rebuild: dict) -> dict:
++        """RSR-12 illeggibile al riavvio = riconciliazione incompleta (rilievo Codex #512 su 034af59): le
++        perdite da recuperare non sono note, quindi nessun nuovo ingresso. Stesso percorso di
++        EXCHANGE_ORDERS_UNAVAILABLE (F018): ok=False => PAUSED; resume() non lo scavalca (serve un
++        riavvio con stato leggibile, mai una sovrascrittura)."""
++        if not getattr(self, "_recovery_state_unreadable", False):
++            return rebuild
++        return dict(rebuild, ok=False, recovery_state_unreadable=True,
++                    reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
++
+     def _declare_recovery_persist_failure(self, source: str) -> None:
+         """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le
+         perdite perdonate in memoria tornerebbero dal DB. Fail-closed come nel settlement: capacita' di
+@@ -4011,6 +4022,11 @@ class RuntimeController:
+         self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
+ 
+     def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
++        if getattr(self, "_recovery_state_unreadable", False):
++            # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
++            # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
++            logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
++            return False
+         try:
+             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+             payload = {self._RECOVERY_KEY: json.dumps(state)}
+diff --git a/docs/roserpina_bankroll_equity.md b/docs/roserpina_bankroll_equity.md
+index f501f7f..8468e06 100644
+--- a/docs/roserpina_bankroll_equity.md
++++ b/docs/roserpina_bankroll_equity.md
+@@ -98,7 +98,10 @@ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
+ `max_recovery_tables` conta i tavoli con recovery attiva o pendente anche senza ordini aperti. Lo stato (perdita da
+ recuperare per tavolo) è salvato a ogni settlement e reset (`roserpina.recovery_tables_state`) e ripristinato al
+ riavvio prima della ricostruzione F018. Un tavolo esce dal conteggio solo a perdita recuperata o con un reset
+-autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery.
++autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery **e l'avvio**: `start()` tratta
++`_restore_recovery_tables()` fallita come ricostruzione incompleta (`RECONCILIATION_REQUIRED:RECOVERY_STATE_UNREADABLE`,
++runtime in PAUSED, stesso percorso di `EXCHANGE_ORDERS_UNAVAILABLE`), `resume()` non lo scavalca e
++`_persist_recovery_tables` rifiuta di sovrascrivere lo stato illeggibile (serve un riavvio con stato leggibile).
+ Scrittura fallita (settlement, `reset_cycle`, auto-reset): capacità di recovery considerata esaurita finché una
+ scrittura riesce, evento `RECOVERY_STATE_PERSIST_FAILED` pubblicato (`source` per i reset) e `persisted: false` nel
+ risultato di `reset_cycle` — mai un reset "riuscito" in memoria che un crash farebbe tornare indietro (ciclo 8,
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index 7c6f24d..8a7f790 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -293,3 +293,55 @@ def test_f5_auto_reset_persist_failure_is_declared_and_fail_closed(tmp_path):
+     assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "auto_reset"}]
+     assert len(_events(rc, "ROSERPINA_AUTO_RESET")) == 1
+     assert rc._active_recovery_count() == rc.config.max_recovery_tables
++
++
++# ------------------------------------------------------------------ 6. stato di recovery illeggibile al riavvio
++def test_f6_persist_refuses_to_overwrite_an_unreadable_recovery_state(tmp_path):
++    from test_f032_rsr12_units import _rc
++    rc = _rc(tmp_path / "u.db")
++    rc.db.save_settings({rc._RECOVERY_KEY: "{rotto"})
++    assert rc._restore_recovery_tables() is False and rc._recovery_state_unreadable is True
++    assert rc._persist_recovery_tables() is False, "stato illeggibile sovrascritto"
++    assert rc._persist_recovery_tables(cycle_reset=True, reset_ts=1.0) is False
++    assert rc.db.get_settings().get(rc._RECOVERY_KEY) == "{rotto"
++    assert rc._active_recovery_count() == rc.config.max_recovery_tables
++
++
++def test_f6_resume_does_not_bypass_an_unreadable_recovery_state():
++    from types import SimpleNamespace
++    from core.runtime_controller import RuntimeController, RuntimeMode
++    rc = RuntimeController.__new__(RuntimeController)
++    rc.mode = RuntimeMode.PAUSED
++    rc.bus = SimpleNamespace(publish=lambda *a, **k: None)
++    rc._reconciliation_required = True
++    rc._recovery_state_unreadable = True
++    rc._monitor_daily_loss_breach = lambda **k: {"breached": False}
++    rc._loss_block_reason = lambda: ""
++    rc._recover_native_microstake = lambda: {"ok": True, "status": "RECONCILED", "pending": []}
++    rc._rebuild_open_positions = lambda: {"ok": True, "reason": "", "rebuilt": [], "uncertain": [], "held": []}
++    rc.get_status = lambda: {"mode": rc.mode.value}
++    rc._safe_status_snapshot = lambda: {"mode": rc.mode.value}
++    out = rc.resume()
++    assert out["resumed"] is False and "RECOVERY_STATE_UNREADABLE" in out["reason"], out
++    assert rc.mode is RuntimeMode.PAUSED and rc._reconciliation_required is True
++
++
++def test_f6_start_with_unreadable_recovery_state_goes_paused_and_keeps_the_stored_state():
++    """Percorso reale (harness F026 in sottoprocesso): run 1 lascia un tavolo in recovery; lo stato persistito
++    viene corrotto; run 2 deve partire PAUSED (RECOVERY_STATE_UNREADABLE), non ammettere il segnale e non
++    sovrascrivere lo stato illeggibile."""
++    import glob
++    import tempfile
++    from database import Database
++    from test_f026_financial import run
++    home = tempfile.mkdtemp(prefix="f6_")
++    first = run([{"op": "signal", "m": "1.601", "price": 2.0}, {"op": "settle", "m": "1.601", "win": False}], home=home)
++    assert any(float(t["loss"] or 0) > 0 for t in first["snaps"][-1]["tables"]), "precondizione: tavolo in recovery"
++    dbs = glob.glob(os.path.join(home, "**", "*.db"), recursive=True)
++    assert len(dbs) == 1, dbs
++    Database(dbs[0]).save_settings({"roserpina.recovery_tables_state": "{rotto"})
++    second = run([{"op": "signal", "m": "1.602", "price": 2.0}], home=home)
++    assert second["mode_after_start"] == "PAUSED", second["mode_after_start"]
++    assert second["rebuild"]["ok"] is False and second["rebuild"]["reason"] == "RECOVERY_STATE_UNREADABLE", second["rebuild"]
++    assert not any(o["market_id"] == "1.602" and o["status"] == "SUBMITTED" for o in second["snaps"][-1]["orders"])
++    assert Database(dbs[0]).get_settings().get("roserpina.recovery_tables_state") == "{rotto"
+-- 
+2.43.0
+

@@ -1,0 +1,101 @@
+================================================================================
+PR GUARD REPORT
+================================================================================
+ℹ️ Changed files: 82
+ - .guardrails/allowed_scope.json
+ - AGENTS.md
+ - CHANGELOG.md
+ - CLAUDE.md
+ - betfair_client.py
+ - cashout_wiring.py
+ - controllers/dutching_controller.py
+ - core/duplication_guard.py
+ - core/liquidity.py
+ - core/microstake_safe.py
+ - core/microstake_sim_port.py
+ - core/money_management.py
+ - core/order_router.py
+ - core/risk_gate.py
+ - core/runtime_controller.py
+ - core/table_manager.py
+ - core/trading_constants.py
+ - core/trading_engine.py
+ - database.py
+ - docs/agent_checkpoint_protocol.md
+ - docs/design/design_handoff.md
+ - docs/issue_reconciliation/PF-ISSUE-RECONCILIATION-01.csv
+ - docs/issue_reconciliation/PF-ISSUE-RECONCILIATION-01.json
+ - docs/issue_reconciliation/PF-ISSUE-RECONCILIATION-01.md
+ - docs/issue_reconciliation/snapshot.meta.txt
+ - docs/microstake_native.md
+ - docs/roserpina41_parameter_dossier.md
+ - docs/roserpina_bankroll_equity.md
+ - docs/traceability/requirements.json
+ - docs/trading_engine_executor_contract.md
+ - guardrails/public_api_snapshot.json
+ - headless_main.py
+ - mini_gui.py
+ - ops/config_console.md
+ - services/betfair_service.py
+ - simulation_broker.py
+ - tests/acceptance/test_issue437_pr27.py
+ - tests/acceptance/test_issue437_pr28c.py
+ - tests/agent_checkpoint/test_pfckpt.py
+ - tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+ - tests/core/test_min_stake_single_source.py
+ - tests/core/test_money_management_caps_and_malformed.py
+ - tests/core/test_money_management_decision2_20261017.py
+ - tests/core/test_money_management_rectification_20261017.py
+ - tests/f001/child_autoreset.py
+ - tests/f001/child_crash.py
+ - tests/f001/child_runtime.py
+ - tests/f001/test_b_red_f001.py
+ - tests/f001/test_f001_autoreset_integration.py
+ - tests/f001/test_f001_release_and_wait_units.py
+ - tests/f026/child_f026.py
+ - tests/f026/test_f018_rebuild_units.py
+ - tests/f026/test_f026_financial.py
+ - tests/f026/test_f026_units.py
+ - tests/f026/test_f027_units.py
+ - tests/f026/test_f028_units.py
+ - tests/f026/test_f030_units.py
+ - tests/f026/test_f032_rsr12_units.py
+ - tests/f029/test_f029_recovery_table_occupied.py
+ - tests/guardrails/test_no_bypass_paths.py
+ - tests/integration/test_dutching_liquidity_guard.py
+ - tests/integration/test_issue461_pr26a_customer_ref_provenance.py
+ - tests/integration/test_money_management_live_sim_parity.py
+ - tests/recovery/test_recovery_invariants.py
+ - tests/roserpina41/test_rsr_targeted.py
+ - tests/test_microstake_cashout_and_recovery.py
+ - tests/test_microstake_engine_native.py
+ - tests/test_microstake_native_integration.py
+ - tests/test_microstake_safe_recovery.py
+ - tests/test_microstake_sim_port.py
+ - tests/test_pr512_codex_034af59.py
+ - tests/test_pr512_codex_f62f0e3.py
+ - tests/test_pr512_codex_findings.py
+ - tests/test_pr512_recovery_fixes.py
+ - tests/test_pr512_review_cycle4.py
+ - tests/test_pr512_review_cycle6.py
+ - tests/traceability/test_pf_trace.py
+ - tests/traceability/test_pf_trace_codex_034af59.py
+ - tests/unit/test_betfair_service_list_current_orders.py
+ - tests/unit/test_simulation_broker_side_parity.py
+ - tools/agent_checkpoint/pfckpt.py
+ - tools/traceability/pf_trace.py
+
+ℹ️ Critical files touched:
+ - core/money_management.py
+ - core/runtime_controller.py
+ - core/trading_engine.py
+ - database.py
+ - simulation_broker.py
+
+ℹ️ TASK source found (pr_title): issue461-pr28-microstake-native-02
+
+ℹ️ Scope invariant: `files` di 'issue461-pr28-microstake-native-02' coincide col diff (82 file)
+ℹ️ Registro: modificata solo la entry del task corrente
+⚠️ PR changes 82 files. Consider splitting if this was intended to be a focused PR.
+
+✅ PR guard completed

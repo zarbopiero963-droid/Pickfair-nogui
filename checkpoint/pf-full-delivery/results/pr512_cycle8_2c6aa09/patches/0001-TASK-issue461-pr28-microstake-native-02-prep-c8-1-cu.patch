@@ -1,0 +1,133 @@
+From d8cb2a474e5edec43207c38151b9714ac3ed4715 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 12:26:53 +0000
+Subject: [PATCH 01/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #1:
+ currentOrders senza betId/marketId => CURRENT_ORDERS_MALFORMED (F018 in
+ PAUSED, mai 'chiusa')
+
+Rilievo Codex su 034af59: _well_formed_current_orders accettava righe senza identita' e
+_rebuild_open_positions leggeva un ordine SUBMITTED assente da live_bets come chiuso.
+Ora ogni riga richiede betId/bet_id E marketId/market_id non vuoti; altrimenti stesso
+errore CURRENT_ORDERS_MALFORMED => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED.
+Test: tests/test_pr512_codex_034af59.py (f1, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ services/betfair_service.py       | 10 ++++-
+ tests/test_pr512_codex_034af59.py | 75 +++++++++++++++++++++++++++++++
+ 2 files changed, 84 insertions(+), 1 deletion(-)
+ create mode 100644 tests/test_pr512_codex_034af59.py
+
+diff --git a/services/betfair_service.py b/services/betfair_service.py
+index 337fac5..ac82f14 100644
+--- a/services/betfair_service.py
++++ b/services/betfair_service.py
+@@ -728,7 +728,11 @@ class BetfairService:
+         una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
+         silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
+         che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
+-        decisione owner D-C del 18/10/2026)."""
++        decisione owner D-C del 18/10/2026).
++        Ogni riga deve inoltre portare un'identita' non vuota (``betId``/``bet_id`` E
++        ``marketId``/``market_id``): una riga senza betId non puo' confermare nessuna posizione
++        persistita e F018 la leggerebbe come "ordine assente => chiuso" (rilievo Codex #512 su
++        034af59). Payload senza identita' => stesso errore => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED."""
+         if orders is None:
+             return []
+         if not isinstance(orders, list):
+@@ -736,6 +740,10 @@ class BetfairService:
+         for order in orders:
+             if not isinstance(order, dict):
+                 raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
++            bet_id = str(order.get("betId") or order.get("bet_id") or "").strip()
++            market_id = str(order.get("marketId") or order.get("market_id") or "").strip()
++            if not bet_id or not market_id:
++                raise RuntimeError("CURRENT_ORDERS_MALFORMED: row without betId/marketId")
+         return orders
+ 
+     @staticmethod
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+new file mode 100644
+index 0000000..cbac80b
+--- /dev/null
++++ b/tests/test_pr512_codex_034af59.py
+@@ -0,0 +1,75 @@
++"""PR #512 — rilievi Codex sul head 034af59 (ciclo 8). Un test per rilievo, scritto PRIMA della patch
++(RED sul codice precedente), codice reale del progetto, deterministico e offline.
++
++1. `BetfairService._well_formed_current_orders`: riga senza `betId`/`marketId` => CURRENT_ORDERS_MALFORMED
++   (la ricostruzione F018 la leggeva come "posizione chiusa").
++2. `NativeSimMicrostakeExecutor`: snapshot finale del broker non persistito => saga AMBIGUOUS, mai ACTIVE/SUCCESS.
++3. `DutchingController._leg_liquidity_shortfall`: liquidita' ignota in modalita' blocco => shortfall LIQUIDITY_UNKNOWN.
++4. `MicrostakeCoordinator.recover`: ROLLBACK_PENDING => cancel_all_remaining -> ROLLED_BACK, mai replace.
++5. `reset_cycle`/`_maybe_auto_reset`: persistenza fallita => `_recovery_persist_failed`, evento, `persisted: False`.
++6. `start()`: stato di recovery illeggibile => PAUSED (RECOVERY_STATE_UNREADABLE) e nessuna sovrascrittura.
++7. docstring di `core/microstake_safe.py` veritiero.
++10. `RoserpinaMoneyManagement._desk_mode`: crescita ignota => NORMAL anche con soglia 0.
++"""
++import json
++import os
++import sys
++import threading
++from decimal import Decimal as D
++
++import pytest
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
++
++from services.betfair_service import BetfairService  # noqa: E402
++
++
++# ------------------------------------------------------------------ 1. currentOrders senza identita'
++class _OrdersBroker:
++    def __init__(self, orders):
++        self._orders = orders
++
++    def get_current_orders(self, market_ids=None):
++        return self._orders
++
++
++@pytest.mark.parametrize("row", [
++    {"marketId": "1.1"},                       # senza betId
++    {"betId": "B1"},                           # senza marketId
++    {"betId": "", "marketId": "1.1"},          # betId vuoto
++    {"betId": "B1", "marketId": "  "},         # marketId vuoto
++    {"betId": None, "marketId": "1.1"},
++])
++def test_f1_current_order_row_without_identity_is_malformed(row):
++    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
++        BetfairService._well_formed_current_orders([{"betId": "B0", "marketId": "1.0"}, row])
++
++
++def test_f1_rows_with_identity_pass_in_both_spellings():
++    rows = [{"betId": "B1", "marketId": "1.1"}, {"bet_id": "B2", "market_id": "1.2"}]
++    assert BetfairService._well_formed_current_orders(rows) == rows
++
++
++def test_f1_sim_facade_raises_on_row_without_bet_id_instead_of_closing_positions():
++    svc = BetfairService.__new__(BetfairService)
++    svc.simulation_mode = True
++    svc.get_client = lambda: _OrdersBroker([{"marketId": "1.1"}])
++    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
++        svc.list_current_orders()
++
++
++def test_f1_rebuild_goes_paused_on_row_without_bet_id():
++    """Il percorso reale: F018 con una riga senza betId deve dare EXCHANGE_ORDERS_UNAVAILABLE, non 'closed'."""
++    from test_f018_rebuild_units import _Exchange, _rc, _row
++
++    class _Facade(_Exchange):
++        def list_current_orders(self, market_ids=None):
++            self.calls += 1
++            return [BetfairService._normalize_startup_order(o)
++                    for o in BetfairService._well_formed_current_orders(list(self.current))]
++
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", bet_id="B1")], _Facade([{"marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["ok"] is False and res["reason"].startswith("EXCHANGE_ORDERS_UNAVAILABLE"), res
++    assert res["closed"] == []
+-- 
+2.43.0
+

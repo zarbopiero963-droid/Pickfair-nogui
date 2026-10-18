@@ -1,0 +1,313 @@
+From 7faf7fa577f97d5a6665bdc6c9ca68e379a9fadf Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:09:35 +0000
+Subject: [PATCH 02/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #2:
+ snapshot finale SIM non persistito => saga AMBIGUOUS (riserva tenuta), mai
+ SUCCESS/ACTIVE
+
+Rilievo Codex su 034af59: NativeSimMicrostakeExecutor dichiarava snapshot_persisted=False
+ma lasciava la saga ACTIVE; al riavvio il broker ricaricava uno stato precedente all'ultima
+operazione e recover() su ACTIVE non riconciliava. Ora: port.last_snapshot_persisted;
+ACTIVE con ultimo snapshot fallito => store AMBIGUOUS + reservation_held, riserva in-process
+ripristinata (hold_reservation), risultato AMBIGUOUS/order_unknown senza instructionReports.
+recover_pending() ritenta lo snapshot e non promuove nulla finche' fallisce.
+Fixture adattate (broker SIM senza DB = senza fonte di reload, configurazione che la
+produzione non raggiunge: DbSagaStore richiede lo stesso DB): _engine()/_DB con
+save_simulation_state, _engine_real_db e new_broker con db; il test
+test_snapshot_failure_is_declared_in_the_executor_result codificava il vecchio ACTIVE.
+Test: tests/test_pr512_codex_034af59.py (f2, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ core/microstake_sim_port.py            | 49 ++++++++++++++++++++---
+ docs/microstake_native.md              |  6 ++-
+ tests/test_microstake_engine_native.py | 13 +++++--
+ tests/test_pr512_codex_034af59.py      | 54 ++++++++++++++++++++++++++
+ tests/test_pr512_codex_findings.py     |  2 +-
+ tests/test_pr512_recovery_fixes.py     |  3 +-
+ tests/test_pr512_review_cycle4.py      |  4 +-
+ 7 files changed, 117 insertions(+), 14 deletions(-)
+
+diff --git a/core/microstake_sim_port.py b/core/microstake_sim_port.py
+index 803201f..ae2acb4 100644
+--- a/core/microstake_sim_port.py
++++ b/core/microstake_sim_port.py
+@@ -26,6 +26,7 @@ from core.microstake_safe import (
+     MicrostakeCoordinator,
+     MicrostakePolicy,
+     NativeMicrostakeExecutor,
++    Phase,
+     Side,
+     SimOrder,
+ )
+@@ -142,6 +143,7 @@ class SimulationExchangePort:
+         self.broker = broker
+         self.operation_log: List[tuple] = []
+         self.snapshot_failures = 0
++        self.last_snapshot_persisted = True     # esito dell'ULTIMO snapshot (rilievo Codex #512 su 034af59)
+         self._faults: List[str] = []
+         self._lock = threading.RLock()
+         self._reservations: Dict[str, Decimal] = {}
+@@ -207,14 +209,24 @@ class SimulationExchangePort:
+         with self._lock:
+             return customer_ref in self._reservations
+ 
+-    def _snapshot(self) -> None:
++    def hold_reservation(self, customer_ref: str, exposure: Decimal) -> None:
++        """Ripristina una riserva senza verifica del cap: copre esposizione GIA' sull'exchange (saga retrocessa
++        ad AMBIGUOUS dopo uno snapshot finale non persistito). Un cap superato blocca i microstake successivi,
++        mai quello gia' inviato."""
++        with self._lock:
++            self._reservations[customer_ref] = exposure
++
++    def _snapshot(self) -> bool:
+         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
+         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
+-        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS."""
++        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS.
++        Ritorna l'esito, memorizzato anche in `last_snapshot_persisted`."""
+         persist = getattr(self.broker, "persist_snapshot", None)
+-        if callable(persist) and persist() is False:
++        self.last_snapshot_persisted = not (callable(persist) and persist() is False)
++        if not self.last_snapshot_persisted:
+             self.snapshot_failures += 1
+             logger.warning("Microstake: snapshot del broker SIM non persistito (fallimenti=%s)", self.snapshot_failures)
++        return self.last_snapshot_persisted
+ 
+     # -- operazioni exchange ---------------------------------------------------------------------------
+     def place(self, *, market_id: str, selection_id: int, side: Side, size: Decimal, price: Decimal,
+@@ -316,7 +328,10 @@ class SimulationQuoteProvider:
+ 
+ # ---------------------------------------------------------------------------- esecutore nativo per l'engine
+ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+-    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED."""
++    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED.
++    Snapshot FINALE del broker non persistito => la saga NON e' ACTIVE: al riavvio il broker ricaricherebbe uno
++    stato precedente all'ultima operazione (stub intero o vecchio betId) e `recover()` su ACTIVE non lo
++    riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
+ 
+     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
+                  transient_exposure_cap: Any) -> None:
+@@ -333,6 +348,9 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+             if len(self.port.operation_log) > before:
+                 # dichiarato, mai silenzioso: la fonte di reload del broker e' aggiornata oppure no
+                 out["snapshot_persisted"] = self.port.snapshot_failures == snapshot_failures_before
++                if out.get("status") == "SUCCESS" and out.get("phase") == Phase.ACTIVE.value \
++                        and not self.port.last_snapshot_persisted:
++                    out = self._demote_unpersisted_active(payload, out)
+             return out
+         except SagaStoreError as exc:
+             if len(self.port.operation_log) > before:
+@@ -342,6 +360,19 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+             out["pre_send"] = True          # nessuna operazione exchange: l'intento dedupe si rilascia
+             return out
+ 
++    def _demote_unpersisted_active(self, payload: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
++        """ACTIVE con snapshot finale non persistito => AMBIGUOUS persistito, riserva ripristinata, risultato
++        AMBIGUOUS (`order_unknown`, mai `instructionReports`): riconciliazione, mai retry."""
++        ref = str(payload.get("customer_ref"))
++        saga = self.store.load(ref) or {}
++        self.port.hold_reservation(ref, _dec(saga.get("transient_exposure", "0")))
++        self.store.save(ref, phase=Phase.AMBIGUOUS, reservation_held=True, reason="snapshot_not_persisted")
++        logger.error("Microstake %s: snapshot finale del broker SIM non persistito, saga AMBIGUOUS (riconciliazione)", ref)
++        demoted = {k: v for k, v in out.items() if k != "instructionReports"}
++        demoted.update(status="AMBIGUOUS", phase=Phase.AMBIGUOUS.value, reservation_held=True, order_unknown=True,
++                       error="snapshot_not_persisted")
++        return demoted
++
+     def pending_same_position(self, market_id: Any, selection_id: Any, side: Any) -> List[str]:
+         """Ref delle saghe non concluse sulla stessa posizione (mercato, selezione, lato).
+         Store illeggibile => SagaStoreError (il chiamante tratta l'errore come 'pendente')."""
+@@ -355,9 +386,15 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+         return out
+ 
+     def recover_pending(self) -> Dict[str, str]:
+-        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita."""
++        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
++        Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
++        memoria, nessuna saga viene promossa (restano AMBIGUOUS/pendenti; un crash successivo ricaricherebbe uno
++        stato vecchio sotto una saga ACTIVE)."""
+         out: Dict[str, str] = {}
+-        for ref in self.store.pending_refs():
++        pending = self.store.pending_refs()
++        if pending and not self.port._snapshot():
++            return {ref: Phase.AMBIGUOUS.value for ref in pending}
++        for ref in pending:
+             try:
+                 out[ref] = self.coordinator.recover(ref).phase.value
+             except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
+diff --git a/docs/microstake_native.md b/docs/microstake_native.md
+index 1a1f90f..f2521b1 100644
+--- a/docs/microstake_native.md
++++ b/docs/microstake_native.md
+@@ -118,7 +118,11 @@ Snapshot del broker SIM: dopo ogni operazione della saga l'adapter chiama `Simul
+ (scrittura **sotto il lock** del broker, così due saghe concorrenti non pubblicano uno snapshot più vecchio dopo uno
+ più nuovo). Un fallimento non è silenzioso: contato in `port.snapshot_failures` e dichiarato nel risultato
+ dell'esecutore (`snapshot_persisted: false`); la saga persistita resta l'autorità e un riavvio senza stub
+-ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE.
++ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE. Se a non persistersi è lo snapshot **finale** della saga
++(ciclo 8, rilievo Codex su 034af59), la saga NON diventa ACTIVE: viene persistita **AMBIGUOUS** con riserva
++tenuta (`reason: snapshot_not_persisted`), il risultato è `AMBIGUOUS`/`order_unknown` (nessun
++`instructionReports`) e `recover()` la riconcilia dalla sua identità. `recover_pending()` ritenta prima lo
++snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (restano AMBIGUOUS).
+ 
+ ## 6. Limiti dichiarati (non PASS)
+ 
+diff --git a/tests/test_microstake_engine_native.py b/tests/test_microstake_engine_native.py
+index 6d647dc..164a800 100644
+--- a/tests/test_microstake_engine_native.py
++++ b/tests/test_microstake_engine_native.py
+@@ -35,10 +35,16 @@ class _DB:
+     def __init__(self):
+         self.rows = {}
+         self.settings = {}
++        self.simulation_state = None
+ 
+     def is_ready(self):
+         return True
+ 
++    def save_simulation_state(self, key, state):
++        # fonte di reload del broker SIM: senza, ogni snapshot e' "non persistito" e la saga
++        # resta AMBIGUOUS (rilievo Codex #512 su 034af59); la produzione passa sempre il DB al broker
++        self.simulation_state = dict(state)
++
+     def insert_order(self, payload):
+         key = len(self.rows) + 1
+         self.rows[key] = dict(payload)
+@@ -93,8 +99,8 @@ def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, avai
+ 
+ 
+ def _engine(db=None, **rt):
+-    broker = SimulationBroker(starting_balance=100.0)
+     db = db or _DB()
++    broker = SimulationBroker(starting_balance=100.0, db=db)
+     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
+     engine.simulation_broker = broker
+     engine.runtime_controller = _runtime(broker, **rt)
+@@ -196,8 +202,9 @@ def test_without_runtime_the_sim_broker_funds_are_the_cap_source():
+     engine = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker, executor=_Inline())
+     res = engine.submit_quick_bet(_payload("norc", size=0.10, price=2.0))
+     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"]) and _orders(broker) == []
+-    broker2 = SimulationBroker(starting_balance=100.0)
+-    engine2 = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker2, executor=_Inline())
++    db2 = _DB()
++    broker2 = SimulationBroker(starting_balance=100.0, db=db2)
++    engine2 = TradingEngine(bus=_Bus(), db=db2, client_getter=lambda: broker2, executor=_Inline())
+     assert engine2.submit_quick_bet(_payload("norc2", size=0.10, price=2.0))["ok"] is True
+ 
+ 
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index cbac80b..6ba04f1 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -73,3 +73,57 @@ def test_f1_rebuild_goes_paused_on_row_without_bet_id():
+     res = rc._rebuild_open_positions()
+     assert res["ok"] is False and res["reason"].startswith("EXCHANGE_ORDERS_UNAVAILABLE"), res
+     assert res["closed"] == []
++
++
++# ------------------------------------------------------------------ 2. snapshot finale non persistito
++def _native_engine():
++    sys.path.insert(0, os.path.join(ROOT, "tests"))
++    from test_microstake_engine_native import _engine, _payload
++    engine, broker, _ = _engine()
++    engine._default_native_microstake_executor("SIMULATION")
++    return engine, broker, _payload
++
++
++def test_f2_failed_final_snapshot_leaves_the_saga_ambiguous_with_reservation_held():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    res = ex.execute(payload("snap", size=0.10, price=3.0))
++    assert res["status"] == "AMBIGUOUS" and res["order_unknown"] is True, res
++    assert res["phase"] == "AMBIGUOUS" and res["reservation_held"] is True and res["snapshot_persisted"] is False
++    assert "instructionReports" not in res
++    saga = ex.store.load("snap")
++    assert saga["phase"] == "AMBIGUOUS" and saga["reservation_held"] is True, saga
++    assert "snap" in ex.store.pending_refs(), "la saga deve restare da riconciliare al riavvio"
++    assert ex.port.has_reservation("snap")
++
++
++def test_f2_failed_final_snapshot_is_reconciled_by_recover_without_a_new_place():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    ex.execute(payload("snap-r", size=0.10, price=3.0))
++    broker.persist_snapshot = lambda: True
++    out = ex.recover_pending()
++    assert out == {"snap-r": "ACTIVE"}, out
++    assert [op[0] for op in ex.port.operation_log] == ["PLACE", "CANCEL"]
++    assert ex.store.load("snap-r")["reservation_held"] is False and not ex.port.has_reservation("snap-r")
++
++
++def test_f2_intermediate_snapshot_failure_recovered_by_the_final_one_stays_active():
++    engine, broker, payload = _native_engine()
++    calls = []
++    broker.persist_snapshot = lambda: (calls.append(1), len(calls) > 1)[1]   # fallisce solo dopo il PLACE
++    res = engine.microstake_executor.execute(payload("snap-ok", size=0.10, price=3.0))
++    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE", res
++    assert res["snapshot_persisted"] is False and engine.microstake_executor.port.snapshot_failures == 1
++
++
++def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    ex.execute(payload("snap-x", size=0.10, price=3.0))
++    ops = list(ex.port.operation_log)
++    assert ex.recover_pending() == {"snap-x": "AMBIGUOUS"}
++    assert ex.store.load("snap-x")["phase"] == "AMBIGUOUS" and ex.port.operation_log == ops
+diff --git a/tests/test_pr512_codex_findings.py b/tests/test_pr512_codex_findings.py
+index 5d9b30e..f9421cb 100644
+--- a/tests/test_pr512_codex_findings.py
++++ b/tests/test_pr512_codex_findings.py
+@@ -28,7 +28,7 @@ from test_microstake_sim_port import _Db as _SagaDb
+ 
+ def _engine_real_db(**rt):
+     db = Database(os.path.join(tempfile.mkdtemp(prefix="pr512_"), "p.db"))
+-    broker = SimulationBroker(starting_balance=100.0)
++    broker = SimulationBroker(starting_balance=100.0, db=db)      # fonte di reload: come in produzione
+     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
+     engine.simulation_broker = broker
+     engine.runtime_controller = _runtime(broker, **rt)
+diff --git a/tests/test_pr512_recovery_fixes.py b/tests/test_pr512_recovery_fixes.py
+index 26c8d11..fbc403a 100644
+--- a/tests/test_pr512_recovery_fixes.py
++++ b/tests/test_pr512_recovery_fixes.py
+@@ -189,7 +189,8 @@ def test_snapshot_failure_is_declared_in_the_executor_result():
+     port = engine.microstake_executor.port
+     broker.persist_snapshot = lambda: False
+     res = engine.microstake_executor.execute(_payload("snap", size=0.10, price=3.0))
+-    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE" and res["snapshot_persisted"] is False, res
++    # ciclo 8 (Codex su 034af59): snapshot FINALE non persistito => mai SUCCESS/ACTIVE, saga AMBIGUOUS
++    assert res["status"] == "AMBIGUOUS" and res["phase"] == "AMBIGUOUS" and res["snapshot_persisted"] is False, res
+     assert port.snapshot_failures >= 1
+ 
+ 
+diff --git a/tests/test_pr512_review_cycle4.py b/tests/test_pr512_review_cycle4.py
+index 05c3441..0fd42e4 100644
+--- a/tests/test_pr512_review_cycle4.py
++++ b/tests/test_pr512_review_cycle4.py
+@@ -25,7 +25,7 @@ from core.runtime_controller import RuntimeController
+ from core.table_manager import TableManager
+ from simulation_broker import SimulationBroker
+ from test_microstake_cashout_and_recovery import _Service, _router_payload
+-from test_microstake_engine_native import _engine, _orders, _payload, _runtime
++from test_microstake_engine_native import _DB, _engine, _orders, _payload, _runtime
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ sys.path.insert(0, os.path.join(ROOT, "tools", "agent_checkpoint"))
+@@ -37,7 +37,7 @@ def test_cached_sim_executor_is_rebuilt_when_the_simulation_broker_changes():
+     engine, old_broker, _ = _engine()
+     assert engine.submit_quick_bet(_payload("a", size=0.10, price=3.0))["ok"] is True
+     stale = engine.microstake_executor
+-    new_broker = SimulationBroker(starting_balance=100.0)                     # stop/start: broker nuovo
++    new_broker = SimulationBroker(starting_balance=100.0, db=_DB())          # stop/start: broker nuovo
+     engine.simulation_broker = new_broker
+     engine.client_getter = lambda: new_broker
+     engine.runtime_controller = _runtime(new_broker)
+-- 
+2.43.0
+

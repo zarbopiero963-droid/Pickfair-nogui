@@ -1,0 +1,8 @@
+commit 2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f
+cmd: PYTHONPATH=netguard DISPLAY=:99 venv312/python -m pytest -q -p no:cacheprovider tests
+1 failed, 7863 passed, 14 skipped, 2 xfailed, 9737 warnings, 8 subtests passed in 969.96s (0:16:09)
+exit=1
+pytest.log sha256: 78e21e6ca63ab8db38bc6d6024897db79a171e7ecd779845ed9349d8c3ca6fe8
+rosso ambientale: tests/acceptance/test_issue461_pr04_quater.py::test_gui_save_reopen_file_pickers_and_live_boundary[True] _tkinter.TclError couldn't connect to display :99 (Xvfb caduto durante la suite; stesso difetto ambientale del ciclo 7)
+rerun modulo a display attivo: 18 passed, 22 warnings in 4.85s
+log completo non incluso (scan segreti del checkpoint: fixture 'demo-saved-password'); copia locale scratchpad/fullreg_2c6aa09/pytest.log

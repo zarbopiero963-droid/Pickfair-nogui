@@ -1,0 +1,4 @@
+..
+CAP09 final funds: {'available': 0.0, 'exposure': 100.0, 'total': 100.0, 'simulated': True} orders: [{'market_id': '1.701', 'status': 'SUBMITTED', 'reason': None, 'stake': 150.0, 'price': 2.0, 'side': 'BACK', 'matched': 100.0}] events: ['CMD_QUICK_BET', 'QUICK_BET_ROUTED']
+.
+3 passed in 4.06s

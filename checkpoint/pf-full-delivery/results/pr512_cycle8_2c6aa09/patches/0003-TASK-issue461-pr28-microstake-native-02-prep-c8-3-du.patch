@@ -1,0 +1,165 @@
+From 2082fe7369bb5a6aab4668ded6264cbba18d3e7e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:10:57 +0000
+Subject: [PATCH 03/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #3:
+ dutching, liquidita' ignota in modalita' blocco => shortfall
+ LIQUIDITY_UNKNOWN
+
+Rilievo Codex su 034af59: _leg_liquidity_shortfall ritornava None su liquidita' ignota
+(ladder malformata, selezione assente) anche con il guard armato, quindi il blocco non
+scattava. Ora il helper riceve warning_only: in modalita' blocco emette
+{"reason": "LIQUIDITY_UNKNOWN", "available": None, ...} e il precheck blocca; in sola
+osservazione nessuna osservazione, come prima. Book assente dalla cache resta fail-open
+(invariato). Test adattato: test_fail_open_when_selection_absent_block_mode codificava il
+fail-open su selezione assente in modalita' blocco (sostituito da due test espliciti).
+Test: tests/test_pr512_codex_034af59.py (f3, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ controllers/dutching_controller.py            | 24 +++++++---
+ .../test_dutching_liquidity_guard.py          | 15 ++++++-
+ tests/test_pr512_codex_034af59.py             | 45 +++++++++++++++++++
+ 3 files changed, 77 insertions(+), 7 deletions(-)
+
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index d6fd158..0e71511 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -541,12 +541,17 @@ class DutchingController:
+         return liquidity.executable_liquidity(book, selection_id, side, price)
+ 
+     @classmethod
+-    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs):
+-        """Shortfall di liquidita' per una gamba, o None se ok/ignota.
++    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs, *, warning_only=True):
++        """Shortfall di liquidita' per una gamba, o None se ok (o ignota in sola osservazione).
+ 
+         required = stake * multiplier: la size da matchare sul lato opposto e' lo
+         STAKE (le size del book sono backer-stake), NON la liability. Confronto
+         omogeneo (size vs size).
++        Liquidita' IGNOTA (ladder malformata, selezione assente dal book): in
++        modalita' blocco (`warning_only=False`) e' uno shortfall esplicito
++        `LIQUIDITY_UNKNOWN` con `available=None` (fail-closed: un dato mancante
++        non vale "liquidita' sufficiente"; rilievo Codex #512 su 034af59); in sola
++        osservazione resta nessuna osservazione, come prima.
+         """
+         try:
+             selection_id = int(item.get("selectionId"))
+@@ -561,9 +566,17 @@ class DutchingController:
+         except (TypeError, ValueError):
+             price = 1.0
+         available = cls._available_liquidity(book, selection_id, side, price)
+-        if available is None:
+-            return None  # dato mancante => nessuna osservazione
+         required = float(stake) * float(multiplier)
++        if available is None:
++            if warning_only:
++                return None  # dato mancante => nessuna osservazione (sola osservazione)
++            return {
++                "selectionId": selection_id,
++                "available": None,
++                "required": round(float(required), 2),
++                "min_absolute": round(float(min_abs), 2),
++                "reason": "LIQUIDITY_UNKNOWN",
++            }
+         if available < min_abs or available < required:
+             return {
+                 "selectionId": selection_id,
+@@ -593,10 +606,11 @@ class DutchingController:
+         book = self._market_book((payload or {}).get("market_id"))
+         if book is None:
+             return out  # nessun book in cache => nessuna osservazione (fail-open)
++        warning_only = self._liquidity_warning_only(config)
+         shortfall = [
+             leg
+             for leg in (
+-                self._leg_liquidity_shortfall(book, item, multiplier, min_abs)
++                self._leg_liquidity_shortfall(book, item, multiplier, min_abs, warning_only=warning_only)
+                 for item in (results or [])
+             )
+             if leg is not None
+diff --git a/tests/integration/test_dutching_liquidity_guard.py b/tests/integration/test_dutching_liquidity_guard.py
+index 68c36af..ae005a9 100644
+--- a/tests/integration/test_dutching_liquidity_guard.py
++++ b/tests/integration/test_dutching_liquidity_guard.py
+@@ -274,10 +274,21 @@ def test_fail_open_when_book_missing_block_mode(monkeypatch):
+     assert res.get("liquidity_warning") is False
+ 
+ 
+-def test_fail_open_when_selection_absent_block_mode(monkeypatch):
++def test_unknown_liquidity_when_selection_absent_blocks_in_block_mode(monkeypatch):
++    """Ciclo 8 (Codex su 034af59): selezione assente dal book = liquidita' IGNOTA. Con il guard armato
++    (warning_only=False) un dato mancante non vale "sufficiente": blocco esplicito LIQUIDITY_UNKNOWN.
++    (Sostituisce test_fail_open_when_selection_absent_block_mode, che codificava il fail-open.)"""
+     _patch_calc(monkeypatch)
+     res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)), config=_cfg(warning_only=False))).precheck(_payload())
+-    assert res["ok"] is True
++    assert res["ok"] is False
++    assert res["liquidity_shortfall"] and all(leg["reason"] == "LIQUIDITY_UNKNOWN" and leg["available"] is None
++                                              for leg in res["liquidity_shortfall"])
++
++
++def test_unknown_liquidity_when_selection_absent_stays_unobserved_in_warning_mode(monkeypatch):
++    _patch_calc(monkeypatch)
++    res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)), config=_cfg(warning_only=True))).precheck(_payload())
++    assert res["ok"] is True and res.get("liquidity_warning") is False
+ 
+ 
+ def test_guard_disabled_no_block(monkeypatch):
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index 6ba04f1..eba3125 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -127,3 +127,48 @@ def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
+     ops = list(ex.port.operation_log)
+     assert ex.recover_pending() == {"snap-x": "AMBIGUOUS"}
+     assert ex.store.load("snap-x")["phase"] == "AMBIGUOUS" and ex.port.operation_log == ops
++
++
++# ------------------------------------------------------------------ 3. liquidita' ignota in modalita' blocco
++def _dutching_leg_shortfall(ladder, *, warning_only):
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": ladder}}]}
++    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
++    return DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=warning_only)
++
++
++@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
++def test_f3_unknown_liquidity_in_block_mode_is_a_shortfall(ladder):
++    sf = _dutching_leg_shortfall(ladder, warning_only=False)
++    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN" and sf["available"] is None, sf
++    assert sf["selectionId"] == 11 and sf["required"] == 10.0
++
++
++def test_f3_selection_missing_from_the_book_is_unknown_in_block_mode():
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0, "size": 50}]}}]}
++    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
++    sf = DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=False)
++    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN"
++
++
++@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
++def test_f3_unknown_liquidity_in_warning_only_mode_stays_unobserved(ladder):
++    assert _dutching_leg_shortfall(ladder, warning_only=True) is None
++
++
++def test_f3_known_sufficient_liquidity_is_never_a_shortfall_in_block_mode():
++    assert _dutching_leg_shortfall([{"price": 2.0, "size": 50.0}], warning_only=False) is None
++
++
++def test_f3_evaluate_guard_blocks_on_unknown_liquidity_only_when_armed():
++    from types import SimpleNamespace
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": "rotto"}}]}
++    ctl = DutchingController.__new__(DutchingController)
++    ctl._market_book = lambda market_id: book
++    results = [{"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}]
++    armed = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=False), {"market_id": "1.1"}, results)
++    assert armed["warning"] is True and armed["shortfall"][0]["reason"] == "LIQUIDITY_UNKNOWN"
++    observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
++    assert observe == {"warning": False, "shortfall": []}
+-- 
+2.43.0
+

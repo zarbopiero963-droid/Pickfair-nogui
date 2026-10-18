@@ -1,0 +1,12 @@
+2c6aa09 [TASK: issue461-pr28-microstake-native-02] ciclo 8 #11: fase terminale della saga persistita solo con fonte di reload allineata (riesame indipendente)
+aa5aeaf [TASK: issue461-pr28-microstake-native-02] ciclo 8 (deroga owner cicli 8-10): scope, registra i tre nuovi file di test dei rilievi Codex 034af59
+032616d [TASK: issue461-pr28-microstake-native-02] prep c8 #10: crescita ignota => NORMAL prima del confronto con la soglia; CHANGELOG ciclo 8
+fae98e1 [TASK: issue461-pr28-microstake-native-02] prep c8 #9: pfckpt.verify risolve ogni tests_executed[].sha come code.sha
+2910347 [TASK: issue461-pr28-microstake-native-02] prep c8 #8: pf_trace, l'ULTIMA evidenza di TESTED/VERIFIED/CERTIFIED deve essere PASS
+0d218be [TASK: issue461-pr28-microstake-native-02] prep c8 #7: docstring di core/microstake_safe.py veritiera (solo documentazione)
+b1b6e32 [TASK: issue461-pr28-microstake-native-02] prep c8 #6: stato di recovery illeggibile al riavvio => PAUSED, mai sovrascritto
+9fe9edf [TASK: issue461-pr28-microstake-native-02] prep c8 #5: reset_cycle/auto-reset con persistenza fallita => fail-closed dichiarato
+ef597d7 [TASK: issue461-pr28-microstake-native-02] prep c8 #4: recover() su ROLLBACK_PENDING cancella il residuo (ROLLED_BACK), mai replace
+fd02487 [TASK: issue461-pr28-microstake-native-02] prep c8 #3: dutching, liquidita' ignota in modalita' blocco => shortfall LIQUIDITY_UNKNOWN
+97a5ce7 [TASK: issue461-pr28-microstake-native-02] prep c8 #2: snapshot finale SIM non persistito => saga AMBIGUOUS (riserva tenuta), mai SUCCESS/ACTIVE
+560c2d2 [TASK: issue461-pr28-microstake-native-02] prep c8 #1: currentOrders senza betId/marketId => CURRENT_ORDERS_MALFORMED (F018 in PAUSED, mai 'chiusa')

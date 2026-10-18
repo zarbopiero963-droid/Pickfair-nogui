@@ -1,0 +1,1243 @@
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index 2456560..6cd9958 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2201,6 +2201,7 @@
+         "tests/acceptance/test_issue437_pr27.py",
+         "tests/acceptance/test_issue437_pr28c.py",
+         "tests/agent_checkpoint/test_pfckpt.py",
++        "tests/agent_checkpoint/test_pfckpt_codex_034af59.py",
+         "tests/core/test_min_stake_single_source.py",
+         "tests/core/test_money_management_caps_and_malformed.py",
+         "tests/core/test_money_management_decision2_20261017.py",
+@@ -2221,6 +2222,7 @@
+         "tests/f026/test_f032_rsr12_units.py",
+         "tests/f029/test_f029_recovery_table_occupied.py",
+         "tests/guardrails/test_no_bypass_paths.py",
++        "tests/integration/test_dutching_liquidity_guard.py",
+         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+         "tests/integration/test_money_management_live_sim_parity.py",
+         "tests/recovery/test_recovery_invariants.py",
+@@ -2230,20 +2232,22 @@
+         "tests/test_microstake_native_integration.py",
+         "tests/test_microstake_safe_recovery.py",
+         "tests/test_microstake_sim_port.py",
++        "tests/test_pr512_codex_034af59.py",
+         "tests/test_pr512_codex_f62f0e3.py",
+         "tests/test_pr512_codex_findings.py",
+         "tests/test_pr512_recovery_fixes.py",
+         "tests/test_pr512_review_cycle4.py",
+         "tests/test_pr512_review_cycle6.py",
+         "tests/traceability/test_pf_trace.py",
++        "tests/traceability/test_pf_trace_codex_034af59.py",
+         "tests/unit/test_betfair_service_list_current_orders.py",
+         "tests/unit/test_simulation_broker_side_parity.py",
+         "tools/agent_checkpoint/pfckpt.py",
+         "tools/traceability/pf_trace.py"
+       ],
+-      "max_files": 78,
++      "max_files": 82,
+       "allow_tests": true,
+-      "description": "PR operativa del branch ccr-bcc81683-ud0hgc (mandato owner 17/10/2026, OWNER EXECUTIVE MANDATE). Consolida sullo stesso branch: F001/F023/F024 (issue461-pr26-0-f001-executor-outcome), F026v2/F2/F018/F029/F027/F028/F030/F031/F032/RSR-12 (issue461-pr28-f026v2-f2-f018-positions), F011/F025 (issue461-pr26-0-f011-f025-betid), checkpoint multi-agente pf-checkpoint/3 (PF-UNIVERSAL-CHECKPOINT-V1) e il Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e PF-MICROSTAKE-OWNER-RECTIFICATION-20261017): adapter SimulationBroker (sizeReduction, replace nuovo betId), saga persistita nel DB, cap dell'esposizione temporanea su fondi/headroom, routing nativo in TradingEngine e OrderRouter (cashout), recovery all'avvio, Money Management senza arrotondamento al minimo. I file = diff completo main...head (invariante guard). AGENTS.md/CLAUDE.md/docs: governance => merge manuale owner. Le task key create su questo branch (issue461-pr26-0-f001-executor-outcome, issue461-pr28-f026v2-f2-f018-positions, issue461-pr26-0-f011-f025-betid) non sono mai state su main e sono consolidate in questa unica chiave; nessuna entry preesistente su main e' toccata. ESTENSIONE DICHIARATA (mandato owner 17/10, FASE 2-3): continuita' multi-agente (pfckpt v2: lease/fencing, CURRENT/TASK_STATE, patch codice, recover) e tracciabilita' atomica (tools/traceability, docs/traceability, tests/traceability); decisioni owner PF-BEST-EXECUTION-DYNAMIC-01, PF-EXECUTION-SAFETY-DECISIONS-01, PF-OWNER-DECISIONS-12 in AGENTS.md/CLAUDE.md. ESTENSIONE DICHIARATA (17/10, FASE 4 + fix review): docs/issue_reconciliation (PF-ISSUE-RECONCILIATION-01), tests/test_pr512_codex_findings.py e correzioni ai rilievi Codex su 8ffb4f3. ESTENSIONE DICHIARATA (17/10, PF-PR-RECOVERY-DECISIONS-02): tests/test_pr512_recovery_fixes.py e correzioni ai sei finding triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) su resume(), precisione/residuo Microstake, liquidita', snapshot SIM, scan segreti checkpoint, SHA evidenze. ESTENSIONE DICHIARATA (17/10, ciclo 4): tests/test_pr512_review_cycle4.py e correzioni ai rilievi Codex su cad07e1/21aab95 (esecutore legato a broker/modalita', fondi obbligatori, riserva su store fallito, cashout matched/pending, ladder non finita, recovery loss non finita, porcelain -z). ESTENSIONE DICHIARATA (17/10, ciclo 5): Decisione owner 2 (stake sopra max_single_bet = rifiuto esplicito) in core/money_management.py con tests/core/test_money_management_decision2_20261017.py; riserva di saga esistente conservata su recover fallito (Sol/Grok 464f347). Estensione dichiarata (ciclo 5 / Decisione owner 2): oracle in tests/acceptance/test_issue437_pr27.py e tests/integration/test_money_management_live_sim_parity.py allineati al rifiuto esplicito sopra max_single_bet. ESTENSIONE DICHIARATA (18/10, ciclo 6 in deroga owner PF-DECISIONS-DA-DJ-20261018 D-A=A1): tests/test_pr512_review_cycle6.py; riserva preesistente conservata su store.load fallito (Sol c.6242912622); lock dedicato sulla costruzione dell'esecutore Microstake (Codex r4304867227); decisione D-C=C1: betfair_client.py e services/betfair_service.py (payload currentOrders malformato => errore esplicito, mai lista vuota; Codex r4304867229). Oracle allineati a D-C in tests/unit/test_betfair_service_list_current_orders.py; fallback fail-closed di has_reservation (riesame indipendente ciclo 6). ESTENSIONE DICHIARATA (18/10, ciclo 7 in deroga owner PF-PR512-CYCLE7-AUTHORIZATION): tests/test_pr512_codex_f62f0e3.py; tre P1 Codex su f62f0e3 in core/runtime_controller.py (lato mancante non attribuito, reset SIM solo senza tavoli trattenuti, baseline stantia rifiutata dopo reset durevole)."
++      "description": "PR operativa del branch ccr-bcc81683-ud0hgc (mandato owner 17/10/2026, OWNER EXECUTIVE MANDATE). Consolida sullo stesso branch: F001/F023/F024 (issue461-pr26-0-f001-executor-outcome), F026v2/F2/F018/F029/F027/F028/F030/F031/F032/RSR-12 (issue461-pr28-f026v2-f2-f018-positions), F011/F025 (issue461-pr26-0-f011-f025-betid), checkpoint multi-agente pf-checkpoint/3 (PF-UNIVERSAL-CHECKPOINT-V1) e il Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e PF-MICROSTAKE-OWNER-RECTIFICATION-20261017): adapter SimulationBroker (sizeReduction, replace nuovo betId), saga persistita nel DB, cap dell'esposizione temporanea su fondi/headroom, routing nativo in TradingEngine e OrderRouter (cashout), recovery all'avvio, Money Management senza arrotondamento al minimo. I file = diff completo main...head (invariante guard). AGENTS.md/CLAUDE.md/docs: governance => merge manuale owner. Le task key create su questo branch (issue461-pr26-0-f001-executor-outcome, issue461-pr28-f026v2-f2-f018-positions, issue461-pr26-0-f011-f025-betid) non sono mai state su main e sono consolidate in questa unica chiave; nessuna entry preesistente su main e' toccata. ESTENSIONE DICHIARATA (mandato owner 17/10, FASE 2-3): continuita' multi-agente (pfckpt v2: lease/fencing, CURRENT/TASK_STATE, patch codice, recover) e tracciabilita' atomica (tools/traceability, docs/traceability, tests/traceability); decisioni owner PF-BEST-EXECUTION-DYNAMIC-01, PF-EXECUTION-SAFETY-DECISIONS-01, PF-OWNER-DECISIONS-12 in AGENTS.md/CLAUDE.md. ESTENSIONE DICHIARATA (17/10, FASE 4 + fix review): docs/issue_reconciliation (PF-ISSUE-RECONCILIATION-01), tests/test_pr512_codex_findings.py e correzioni ai rilievi Codex su 8ffb4f3. ESTENSIONE DICHIARATA (17/10, PF-PR-RECOVERY-DECISIONS-02): tests/test_pr512_recovery_fixes.py e correzioni ai sei finding triagiati (Codex 4303374299/312/317/326/328, Grok snapshot/pre_send) su resume(), precisione/residuo Microstake, liquidita', snapshot SIM, scan segreti checkpoint, SHA evidenze. ESTENSIONE DICHIARATA (17/10, ciclo 4): tests/test_pr512_review_cycle4.py e correzioni ai rilievi Codex su cad07e1/21aab95 (esecutore legato a broker/modalita', fondi obbligatori, riserva su store fallito, cashout matched/pending, ladder non finita, recovery loss non finita, porcelain -z). ESTENSIONE DICHIARATA (17/10, ciclo 5): Decisione owner 2 (stake sopra max_single_bet = rifiuto esplicito) in core/money_management.py con tests/core/test_money_management_decision2_20261017.py; riserva di saga esistente conservata su recover fallito (Sol/Grok 464f347). Estensione dichiarata (ciclo 5 / Decisione owner 2): oracle in tests/acceptance/test_issue437_pr27.py e tests/integration/test_money_management_live_sim_parity.py allineati al rifiuto esplicito sopra max_single_bet. ESTENSIONE DICHIARATA (18/10, ciclo 6 in deroga owner PF-DECISIONS-DA-DJ-20261018 D-A=A1): tests/test_pr512_review_cycle6.py; riserva preesistente conservata su store.load fallito (Sol c.6242912622); lock dedicato sulla costruzione dell'esecutore Microstake (Codex r4304867227); decisione D-C=C1: betfair_client.py e services/betfair_service.py (payload currentOrders malformato => errore esplicito, mai lista vuota; Codex r4304867229). Oracle allineati a D-C in tests/unit/test_betfair_service_list_current_orders.py; fallback fail-closed di has_reservation (riesame indipendente ciclo 6). ESTENSIONE DICHIARATA (18/10, ciclo 7 in deroga owner PF-PR512-CYCLE7-AUTHORIZATION): tests/test_pr512_codex_f62f0e3.py; tre P1 Codex su f62f0e3 in core/runtime_controller.py (lato mancante non attribuito, reset SIM solo senza tavoli trattenuti, baseline stantia rifiutata dopo reset durevole). ESTENSIONE DICHIARATA (18/10, ciclo 8, deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION #512 c.6250353538): dieci rilievi Codex su 034af59 (1 CURRENT_DEFECT money_management r4306954203, 8 GUARDRAIL_GAP, 1 DOC) corretti uno per commit con test RED->GREEN; nuovi file tests/test_pr512_codex_034af59.py, tests/traceability/test_pf_trace_codex_034af59.py, tests/agent_checkpoint/test_pfckpt_codex_034af59.py; nessuna policy finanziaria alterata, nessun cap monetario introdotto."
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0d9efa1..40c33bd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ ## [Unreleased]
+ 
+ ### Fixed
++
++- **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
++  (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
++  `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:
++  snapshot finale del broker SIM non persistito ⇒ saga AMBIGUOUS con riserva tenuta, mai SUCCESS/ACTIVE,
++  `recover_pending()` ritenta lo snapshot prima di promuovere; (3) `controllers/dutching_controller.py`:
++  liquidità ignota con guard armato ⇒ shortfall `LIQUIDITY_UNKNOWN` (blocco); (4) `core/microstake_safe.py`:
++  `recover()` su ROLLBACK_PENDING cancella il residuo (ROLLED_BACK / AMBIGUOUS), mai replace;
++  (5) `core/runtime_controller.py`: `reset_cycle`/auto-reset con persistenza fallita ⇒
++  `_recovery_persist_failed`, evento `RECOVERY_STATE_PERSIST_FAILED`, `persisted: false`; (6) stato di
++  recovery illeggibile al riavvio ⇒ PAUSED (`RECOVERY_STATE_UNREADABLE`), `resume()` non lo scavalca,
++  nessuna sovrascrittura; (7) docstring di `core/microstake_safe.py` veritiera; (8) `pf_trace`: l'ultima
++  evidenza deve essere PASS; (9) `pfckpt.verify`: ogni `tests_executed[].sha` risolto come `code.sha`;
++  (10) `core/money_management.py`: crescita ignota ⇒ NORMAL anche con soglia ≤ 0. Test:
++  `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
++  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py` (tutti RED prima della patch).
+ - **PR #512 ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION, tre P1 Codex su f62f0e3):** (1) riga pendente senza
+   lato persistito => non attribuita, mai ricostruita come BACK (la liability di un LAY sarebbe sottostimata;
+   r4306544229); (2) `reset_cycle()` non azzera il broker SIM finche' un tavolo resta trattenuto (esito
+diff --git a/controllers/dutching_controller.py b/controllers/dutching_controller.py
+index d6fd158..3963509 100644
+--- a/controllers/dutching_controller.py
++++ b/controllers/dutching_controller.py
+@@ -541,12 +541,17 @@ class DutchingController:
+         return liquidity.executable_liquidity(book, selection_id, side, price)
+ 
+     @classmethod
+-    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs):
+-        """Shortfall di liquidita' per una gamba, o None se ok/ignota.
++    def _leg_liquidity_shortfall(cls, book, item, multiplier, min_abs, *, warning_only=True):
++        """Shortfall di liquidita' per una gamba, o None se ok (o ignota in sola osservazione).
+ 
+         required = stake * multiplier: la size da matchare sul lato opposto e' lo
+         STAKE (le size del book sono backer-stake), NON la liability. Confronto
+         omogeneo (size vs size).
++        Liquidita' IGNOTA (ladder malformata, selezione assente dal book): in
++        modalita' blocco (`warning_only=False`) e' uno shortfall esplicito
++        `LIQUIDITY_UNKNOWN` con `available=None` (fail-closed: un dato mancante
++        non vale "liquidita' sufficiente"; rilievo Codex #512 su 034af59); in sola
++        osservazione resta nessuna osservazione, come prima.
+         """
+         try:
+             selection_id = int(item.get("selectionId"))
+@@ -561,9 +566,17 @@ class DutchingController:
+         except (TypeError, ValueError):
+             price = 1.0
+         available = cls._available_liquidity(book, selection_id, side, price)
+-        if available is None:
+-            return None  # dato mancante => nessuna osservazione
+         required = float(stake) * float(multiplier)
++        if available is None:
++            if warning_only:
++                return None  # dato mancante => nessuna osservazione (sola osservazione)
++            return {
++                "selectionId": selection_id,
++                "available": None,
++                "required": round(float(required), 2),
++                "min_absolute": round(float(min_abs), 2),
++                "reason": "LIQUIDITY_UNKNOWN",
++            }
+         if available < min_abs or available < required:
+             return {
+                 "selectionId": selection_id,
+@@ -593,10 +606,11 @@ class DutchingController:
+         book = self._market_book((payload or {}).get("market_id"))
+         if book is None:
+             return out  # nessun book in cache => nessuna osservazione (fail-open)
++        warning_only = self._liquidity_warning_only(config)
+         shortfall = [
+             leg
+             for leg in (
+-                self._leg_liquidity_shortfall(book, item, multiplier, min_abs)
++                self._leg_liquidity_shortfall(book, item, multiplier, min_abs, warning_only=warning_only)
+                 for item in (results or [])
+             )
+             if leg is not None
+@@ -1020,7 +1034,8 @@ class DutchingController:
+         # osservazione (liquidity_warning_only=False), BLOCCA il submit PRIMA di
+         # ogni side-effect (duplication acquire), come il book% gate. In modalita'
+         # avviso (default opt-in) segnala soltanto (liquidity_warning/shortfall nel
+-        # risultato). FAIL-OPEN su dato mancante (cache fredda => nessun blocco).
++        # risultato). Book assente (cache fredda) => nessuna osservazione; liquidita'
++        # IGNOTA di una gamba con il guard armato => blocco LIQUIDITY_UNKNOWN (ciclo 8 #512).
+         liquidity = self._evaluate_liquidity_guard(config, payload, results)
+         if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
+             # Segnale di blocco AUTOREVOLE: ok=False. NON si aggiunge
+diff --git a/core/microstake_safe.py b/core/microstake_safe.py
+index 369b293..609ad07 100644
+--- a/core/microstake_safe.py
++++ b/core/microstake_safe.py
+@@ -1,8 +1,16 @@
+-"""Isolated, simulation-only Microstake recovery prototype.
+-
+-This module deliberately has no import or call site in the production execution
+-path.  It reconstructs the historical PLACE -> size reduction -> REPLACE saga
+-behind an explicit safety policy and a stateful exchange simulator.
++"""Microstake saga: policy, coordinator and native executor (simulation-only).
++
++Ruolo reale (rilievo Codex #512 su 034af59, la vecchia docstring lo negava): questo modulo
++E' nel percorso di esecuzione SIM. `core/microstake_sim_port.py` importa `MicrostakeCoordinator`,
++`MicrostakePolicy`, `NativeMicrostakeExecutor`, `Phase`, `Side`, `SimOrder`, `LostResponse`
++e li collega al `SimulationBroker` di produzione; `TradingEngine` (`core/trading_engine.py`,
++`_default_native_microstake_executor` / `build_native_microstake_executor`) lo raggiunge per
++ogni invio runtime sotto il minimo exchange in SIMULATION. In LIVE non esiste adapter: l'engine
++resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`) e `MicrostakePolicy.simulation_only`
++blocca ogni altro uso.
++
++Ricostruisce la saga PLACE -> riduzione di size -> REPLACE dietro una policy esplicita;
++`StatefulExchangeSimulator` e `JsonSagaStore` restano l'exchange e lo store dei test offline.
+ """
+ 
+ from __future__ import annotations
+@@ -530,22 +538,36 @@ class MicrostakeCoordinator:
+                 self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS)
+                 return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
+                                     order=order, max_exposure=transient, held=True)
+-            self.store.save(req.customer_ref, phase=Phase.ROLLED_BACK,
+-                            reservation_held=False)
+-            self.exchange.release_reservation(req.customer_ref)
+-            return self._result(Phase.ROLLED_BACK, req=req, reason="replace_failed",
+-                                order=order, max_exposure=transient)
++            return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ROLLED_BACK, order, transient,
++                                               reason="replace_failed")
+         return self._activate(req, order, transient)
+ 
++    def _reload_source_stale(self) -> bool:
++        """True se l'ULTIMO snapshot della fonte di reload dell'exchange (broker SIM) non e' stato
++        persistito: un adapter senza il concetto (LIVE, simulatore di unita') non e' mai stantio."""
++        return getattr(self.exchange, "last_snapshot_persisted", True) is False
++
++    def _terminal_or_ambiguous(self, customer_ref: str, req: MicrostakeRequest, phase: Phase, order: SimOrder,
++                               transient: Decimal, *, reason: str = "") -> MicrostakeResult:
++        """Chiude la saga in una fase TERMINALE (ACTIVE / ROLLED_BACK) solo se la fonte di reload e'
++        allineata all'exchange. Altrimenti la saga resta AMBIGUOUS con riserva tenuta e viene
++        riconciliata al riavvio: una fase terminale persistita PRIMA della retrocessione lascerebbe,
++        in caso di crash, una saga conclusa fuori da `pending_refs` sopra uno stato ricaricato senza
++        l'ordine (riesame indipendente del ciclo 8 #512 sul rilievo r4306954173)."""
++        if self._reload_source_stale():
++            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, bet_id=order.bet_id,
++                            reservation_held=True, reason="snapshot_not_persisted")
++            return self._result(Phase.AMBIGUOUS, req=req, reason="snapshot_not_persisted",
++                                order=order, max_exposure=transient, held=True)
++        self.store.save(customer_ref, phase=phase, bet_id=order.bet_id, reservation_held=False)
++        self.exchange.release_reservation(customer_ref)
++        return self._result(phase, req=req, reason=reason, order=order, max_exposure=transient, held=False)
++
+     def _activate(self, req: MicrostakeRequest, order: SimOrder, transient: Decimal) -> MicrostakeResult:
+         """Saga conclusa: l'ordine economico e' sull'exchange e i suoi fondi li contabilizza
+         l'exchange stesso. La riserva TRANSITORIA (stub da 2 EUR) va rilasciata, altrimenti ogni
+         microstake riuscito consumerebbe per sempre 2 EUR di cap (rilievo Codex PR #512)."""
+-        self.store.save(req.customer_ref, phase=Phase.ACTIVE, bet_id=order.bet_id,
+-                        reservation_held=False)
+-        self.exchange.release_reservation(req.customer_ref)
+-        return self._result(Phase.ACTIVE, req=req, order=order,
+-                            max_exposure=transient, held=False)
++        return self._terminal_or_ambiguous(req.customer_ref, req, Phase.ACTIVE, order, transient)
+ 
+     def recover(self, customer_ref: str) -> MicrostakeResult:
+         saved = self.store.load(customer_ref)
+@@ -569,6 +591,18 @@ class MicrostakeCoordinator:
+             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
+             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciled_matched_stub",
+                                 order=order, max_exposure=transient, held=True)
++        if phase is Phase.ROLLBACK_PENDING:
++            # Rollback gia' deciso prima del crash (replace rifiutato): si completa SOLO la
++            # cancellazione del residuo, mai un nuovo replace che riattiverebbe la saga
++            # (rilievo Codex #512 su 034af59). Cancellazione fallita => AMBIGUOUS, riserva tenuta.
++            try:
++                order = self.exchange.cancel_all_remaining(order.bet_id)
++            except Exception:
++                self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
++                return self._result(Phase.AMBIGUOUS, req=req, reason="rollback_unknown",
++                                    order=order, max_exposure=transient, held=True)
++            return self._terminal_or_ambiguous(customer_ref, req, Phase.ROLLED_BACK, order, transient,
++                                               reason="replace_failed")
+         # Complete a known accepted, fully-unmatched stub.
+         reduction = self.policy.exchange_stub_size - req.economic_stake
+         if order.remaining == self.policy.exchange_stub_size:
+diff --git a/core/microstake_sim_port.py b/core/microstake_sim_port.py
+index 803201f..ae2acb4 100644
+--- a/core/microstake_sim_port.py
++++ b/core/microstake_sim_port.py
+@@ -26,6 +26,7 @@ from core.microstake_safe import (
+     MicrostakeCoordinator,
+     MicrostakePolicy,
+     NativeMicrostakeExecutor,
++    Phase,
+     Side,
+     SimOrder,
+ )
+@@ -142,6 +143,7 @@ class SimulationExchangePort:
+         self.broker = broker
+         self.operation_log: List[tuple] = []
+         self.snapshot_failures = 0
++        self.last_snapshot_persisted = True     # esito dell'ULTIMO snapshot (rilievo Codex #512 su 034af59)
+         self._faults: List[str] = []
+         self._lock = threading.RLock()
+         self._reservations: Dict[str, Decimal] = {}
+@@ -207,14 +209,24 @@ class SimulationExchangePort:
+         with self._lock:
+             return customer_ref in self._reservations
+ 
+-    def _snapshot(self) -> None:
++    def hold_reservation(self, customer_ref: str, exposure: Decimal) -> None:
++        """Ripristina una riserva senza verifica del cap: copre esposizione GIA' sull'exchange (saga retrocessa
++        ad AMBIGUOUS dopo uno snapshot finale non persistito). Un cap superato blocca i microstake successivi,
++        mai quello gia' inviato."""
++        with self._lock:
++            self._reservations[customer_ref] = exposure
++
++    def _snapshot(self) -> bool:
+         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
+         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
+-        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS."""
++        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS.
++        Ritorna l'esito, memorizzato anche in `last_snapshot_persisted`."""
+         persist = getattr(self.broker, "persist_snapshot", None)
+-        if callable(persist) and persist() is False:
++        self.last_snapshot_persisted = not (callable(persist) and persist() is False)
++        if not self.last_snapshot_persisted:
+             self.snapshot_failures += 1
+             logger.warning("Microstake: snapshot del broker SIM non persistito (fallimenti=%s)", self.snapshot_failures)
++        return self.last_snapshot_persisted
+ 
+     # -- operazioni exchange ---------------------------------------------------------------------------
+     def place(self, *, market_id: str, selection_id: int, side: Side, size: Decimal, price: Decimal,
+@@ -316,7 +328,10 @@ class SimulationQuoteProvider:
+ 
+ # ---------------------------------------------------------------------------- esecutore nativo per l'engine
+ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+-    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED."""
++    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED.
++    Snapshot FINALE del broker non persistito => la saga NON e' ACTIVE: al riavvio il broker ricaricherebbe uno
++    stato precedente all'ultima operazione (stub intero o vecchio betId) e `recover()` su ACTIVE non lo
++    riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
+ 
+     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
+                  transient_exposure_cap: Any) -> None:
+@@ -333,6 +348,9 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+             if len(self.port.operation_log) > before:
+                 # dichiarato, mai silenzioso: la fonte di reload del broker e' aggiornata oppure no
+                 out["snapshot_persisted"] = self.port.snapshot_failures == snapshot_failures_before
++                if out.get("status") == "SUCCESS" and out.get("phase") == Phase.ACTIVE.value \
++                        and not self.port.last_snapshot_persisted:
++                    out = self._demote_unpersisted_active(payload, out)
+             return out
+         except SagaStoreError as exc:
+             if len(self.port.operation_log) > before:
+@@ -342,6 +360,19 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+             out["pre_send"] = True          # nessuna operazione exchange: l'intento dedupe si rilascia
+             return out
+ 
++    def _demote_unpersisted_active(self, payload: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
++        """ACTIVE con snapshot finale non persistito => AMBIGUOUS persistito, riserva ripristinata, risultato
++        AMBIGUOUS (`order_unknown`, mai `instructionReports`): riconciliazione, mai retry."""
++        ref = str(payload.get("customer_ref"))
++        saga = self.store.load(ref) or {}
++        self.port.hold_reservation(ref, _dec(saga.get("transient_exposure", "0")))
++        self.store.save(ref, phase=Phase.AMBIGUOUS, reservation_held=True, reason="snapshot_not_persisted")
++        logger.error("Microstake %s: snapshot finale del broker SIM non persistito, saga AMBIGUOUS (riconciliazione)", ref)
++        demoted = {k: v for k, v in out.items() if k != "instructionReports"}
++        demoted.update(status="AMBIGUOUS", phase=Phase.AMBIGUOUS.value, reservation_held=True, order_unknown=True,
++                       error="snapshot_not_persisted")
++        return demoted
++
+     def pending_same_position(self, market_id: Any, selection_id: Any, side: Any) -> List[str]:
+         """Ref delle saghe non concluse sulla stessa posizione (mercato, selezione, lato).
+         Store illeggibile => SagaStoreError (il chiamante tratta l'errore come 'pendente')."""
+@@ -355,9 +386,15 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
+         return out
+ 
+     def recover_pending(self) -> Dict[str, str]:
+-        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita."""
++        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
++        Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
++        memoria, nessuna saga viene promossa (restano AMBIGUOUS/pendenti; un crash successivo ricaricherebbe uno
++        stato vecchio sotto una saga ACTIVE)."""
+         out: Dict[str, str] = {}
+-        for ref in self.store.pending_refs():
++        pending = self.store.pending_refs()
++        if pending and not self.port._snapshot():
++            return {ref: Phase.AMBIGUOUS.value for ref in pending}
++        for ref in pending:
+             try:
+                 out[ref] = self.coordinator.recover(ref).phase.value
+             except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto
+diff --git a/core/money_management.py b/core/money_management.py
+index 4d85953..5c65adb 100644
+--- a/core/money_management.py
++++ b/core/money_management.py
+@@ -136,7 +136,12 @@ class RoserpinaMoneyManagement:
+             # rispetto alla baseline persistente del ciclo, calcolata dal runtime. Ignota (None) => nessuna
+             # espansione: mai stake aumentato su dati incerti.
+             growth = validators.finite_number(expansion_growth_pct)
+-            growth_pct = growth if growth is not None else 0.0
++            if growth is None:
++                # Crescita IGNOTA => NORMAL prima di qualunque confronto con la soglia: con
++                # expansion_profit_pct <= 0 il vecchio "0.0 >= soglia" espandeva su dati incerti
++                # (rilievo Codex #512 su 034af59).
++                return DeskMode.NORMAL
++            growth_pct = growth
+         elif bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
+             # Chiamanti senza baseline del ciclo (es. dutching): calcolo storico #320.
+             growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 0cbb37e..d1396e3 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2528,6 +2528,7 @@ class RuntimeController:
+             rebuild = dict(rebuild, ok=False, reason=(
+                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
+                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
++        rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
+         self._last_position_rebuild = dict(rebuild)
+         self._reconciliation_required = not rebuild["ok"]
+         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
+@@ -2631,7 +2632,7 @@ class RuntimeController:
+                         "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
+                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
+                         "microstake": microstake, "status": self._safe_status_snapshot()}
+-            rebuild = self._rebuild_open_positions()
++            rebuild = self._gate_rebuild_on_recovery_state(self._rebuild_open_positions())
+             self._last_position_rebuild = dict(rebuild)
+             if not rebuild["ok"]:
+                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
+@@ -2669,13 +2670,16 @@ class RuntimeController:
+         # STESSO istante: la baseline fissata da questo reset non e' "precedente" al reset stesso.
+         reset_ts = time.time()
+         self._start_expansion_cycle("reset_cycle", set_at_ts=reset_ts)
+-        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
++        persisted = self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
++        if not persisted:
++            self._declare_recovery_persist_failure("reset_cycle")
+         status = self.get_status()
+         self.bus.publish("RUNTIME_CYCLE_RESET", status)
+         return {
+             "reset": True,
+             "status": status,
+             "sim_reset_skipped": retained if self.simulation_mode else [],
++            "persisted": persisted,
+         }
+ 
+     # =========================================================
+@@ -3999,7 +4003,30 @@ class RuntimeController:
+             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+         return len(self.table_manager.recovery_state())
+ 
++    def _gate_rebuild_on_recovery_state(self, rebuild: dict) -> dict:
++        """RSR-12 illeggibile al riavvio = riconciliazione incompleta (rilievo Codex #512 su 034af59): le
++        perdite da recuperare non sono note, quindi nessun nuovo ingresso. Stesso percorso di
++        EXCHANGE_ORDERS_UNAVAILABLE (F018): ok=False => PAUSED; resume() non lo scavalca (serve un
++        riavvio con stato leggibile, mai una sovrascrittura)."""
++        if not getattr(self, "_recovery_state_unreadable", False):
++            return rebuild
++        return dict(rebuild, ok=False, recovery_state_unreadable=True,
++                    reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
++
++    def _declare_recovery_persist_failure(self, source: str) -> None:
++        """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le
++        perdite perdonate in memoria tornerebbero dal DB. Fail-closed come nel settlement: capacita' di
++        recovery esaurita finche' una scrittura riesce, evento dichiarato, mai silenzioso."""
++        self._recovery_persist_failed = True
++        logger.error("RSR-12: stato dei tavoli di recovery non persistito dopo %s: capacita' bloccata", source)
++        self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
++
+     def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
++        if getattr(self, "_recovery_state_unreadable", False):
++            # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
++            # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
++            logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
++            return False
+         try:
+             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+             payload = {self._RECOVERY_KEY: json.dumps(state)}
+@@ -4049,7 +4076,8 @@ class RuntimeController:
+         self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
+                                                          "exposure": account.get("committed")}
+                                     if account.get("ok") else None, set_at_ts=reset_ts)   # F032: nuovo ciclo
+-        self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
++        if not self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts):   # RSR-12 + marker reset (F032)
++            self._declare_recovery_persist_failure("auto_reset")
+         self.bus.publish(
+             "ROSERPINA_AUTO_RESET",
+             {
+diff --git a/docs/agent_checkpoint_protocol.md b/docs/agent_checkpoint_protocol.md
+index 7e66bd4..cab7f13 100644
+--- a/docs/agent_checkpoint_protocol.md
++++ b/docs/agent_checkpoint_protocol.md
+@@ -31,7 +31,9 @@ che deve esistere nel repository), `lotto_corrente`, `lotti_completati`, `next_a
+ `pr_505`, `certification_verdict` (`PASS` / `PARTIAL` / `NO-GO` / `BLOCKED` / `NOT VERIFIED`).
+ 
+ Ogni voce di `tests_executed` ha `status` ∈ `PASS` / `FAIL` / `BLOCKED` / `NOT VERIFIED` / `MISSING`. `PASS` e `FAIL`
+-richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale. Se
++richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale, e
++`verify` lo risolve con la stessa lookup di `code.sha` (`git cat-file -e <sha>^{commit}`; irrisolto ⇒ problema
++`test sha unresolved`, checkpoint invalido — ciclo 8, rilievo Codex su 034af59). Se
+ una voce dichiara `artifact`, il file deve essere nel commit.
+ 
+ ## 3. Verifica (`verify`)
+diff --git a/docs/microstake_native.md b/docs/microstake_native.md
+index 1a1f90f..0daee57 100644
+--- a/docs/microstake_native.md
++++ b/docs/microstake_native.md
+@@ -108,7 +108,9 @@ scrivibile **prima** dell'invio rilascia la riserva transitoria e conta come blo
+ ## 5. Recovery all'avvio (`RuntimeController.start`, prima di F018)
+ 
+ `TradingEngine.recover_native_microstake_sagas()` riprende ogni saga non conclusa dalla sua identità persistita
+-(solo riduzione/replace mancanti, **mai un nuovo PLACE**). Se resta una saga pendente, lo store è illeggibile o manca
++(solo riduzione/replace mancanti, **mai un nuovo PLACE**; una saga salvata **ROLLBACK_PENDING** completa solo la
++cancellazione del residuo → ROLLED_BACK, AMBIGUOUS se la cancellazione fallisce, mai un replace — ciclo 8, rilievo
++Codex su 034af59). Se resta una saga pendente, lo store è illeggibile o manca
+ l'esecutore (LIVE), la ricostruzione F018 è marcata non ok (`RECONCILIATION_REQUIRED:MICROSTAKE_SAGA_PENDING:...`)
+ e il runtime parte in **PAUSED**: nessun nuovo ingresso finché uno stub da 2 EUR può essere ancora sull'exchange.
+ `resume()` ritenta **entrambe** le riconciliazioni (saghe Microstake e F018) e diventa ACTIVE solo se entrambe
+@@ -118,7 +120,11 @@ Snapshot del broker SIM: dopo ogni operazione della saga l'adapter chiama `Simul
+ (scrittura **sotto il lock** del broker, così due saghe concorrenti non pubblicano uno snapshot più vecchio dopo uno
+ più nuovo). Un fallimento non è silenzioso: contato in `port.snapshot_failures` e dichiarato nel risultato
+ dell'esecutore (`snapshot_persisted: false`); la saga persistita resta l'autorità e un riavvio senza stub
+-ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE.
++ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE. Se a non persistersi è lo snapshot **finale** della saga
++(ciclo 8, rilievo Codex su 034af59), la saga NON diventa ACTIVE: viene persistita **AMBIGUOUS** con riserva
++tenuta (`reason: snapshot_not_persisted`), il risultato è `AMBIGUOUS`/`order_unknown` (nessun
++`instructionReports`) e `recover()` la riconcilia dalla sua identità. `recover_pending()` ritenta prima lo
++snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (restano AMBIGUOUS).
+ 
+ ## 6. Limiti dichiarati (non PASS)
+ 
+diff --git a/docs/roserpina41_parameter_dossier.md b/docs/roserpina41_parameter_dossier.md
+index 4e742a4..ba278e3 100644
+--- a/docs/roserpina41_parameter_dossier.md
++++ b/docs/roserpina41_parameter_dossier.md
+@@ -40,7 +40,7 @@ Verdetti: PASS = effetto attivato e osservato da test eseguiti; FAIL = difetto d
+ | RSR-31 | Allow Recovery | `roserpina.allow_recovery` | True | core/money_management.py:calculate:355; core/runtime_controller.py:_on_signal_received:3095-3106; core/table_manager.py:allocate:100-109; controllers/dutching_c | recovery ammessa o no; lo stake insegue la perdita del tavolo | test_rsr31_*; tests/f029 | PASS |
+ | RSR-32 | Anti Duplication Enabled | `roserpina.anti_duplication_enabled` | True | core/runtime_controller.py:_on_signal_received:3087; core/runtime_controller.py:_release_acquired_and_reject:3311; controllers/dutching_controller.py:precheck:1 | anti-duplicato del segnale | tests/f026 (riconsegne), campagna C01/R2 | PASS |
+ | RSR-33 | Liquidity Guard attivo | `roserpina.liquidity_guard_enabled` | True | controllers/dutching_controller.py:_evaluate_liquidity_guard:643; core/risk_gate.py | liquidity guard attivo | test_F030_06; tests/integration/test_dutching_liquidity_guard.py | PASS |
+-| RSR-34 | Liquidity: solo avviso | `roserpina.liquidity_warning_only` | True | controllers/dutching_controller.py:306,634,1074; core/risk_gate.py | liquidità solo avviso (dato assente blocca sempre) | test_F030_02, test_F030_05 | PASS |
++| RSR-34 | Liquidity: solo avviso | `roserpina.liquidity_warning_only` | True | controllers/dutching_controller.py:306,634,1074; core/risk_gate.py | liquidità solo avviso; con il guard armato (`False`) una gamba con liquidità ignota blocca (`LIQUIDITY_UNKNOWN`), il book assente resta non osservato | test_F030_02, test_F030_05 | PASS |
+ | RSR-35 | Max Win: solo avviso | `roserpina.max_win_warning_only` | True | controllers/dutching_controller.py:_max_win_warning_only:407-415; core/risk_gate.py:110 | max win solo avviso nel precheck dutching; ordine sempre bloccato | tests/integration/test_dutching_max_win_guard.py; tests/core/test_risk_gate.py | PASS |
+ | RSR-36 | Auto-green delay enabled | `roserpina.auto_green_delay_enabled` | False | core/runtime_controller.py:_auto_green_delay_seconds:2790 | grace auto-green attiva | tests/unit/test_auto_green_delay_trigger.py | PASS |
+ | RSR-37 | Profit epsilon enabled | `roserpina.profit_epsilon_enabled` | True | controllers/dutching_controller.py:_profit_epsilon_enabled:358-367, | avviso varianza profitto attivo | tests/integration/test_dutching_profit_epsilon_guard.py | PASS |
+diff --git a/docs/roserpina_bankroll_equity.md b/docs/roserpina_bankroll_equity.md
+index 55b7be9..320a256 100644
+--- a/docs/roserpina_bankroll_equity.md
++++ b/docs/roserpina_bankroll_equity.md
+@@ -90,7 +90,8 @@ senza `set_at_ts` = 0.0: valida solo finché non esiste alcun marker). In SIM `r
+ trattenuto (esito `sim_reset_skipped` con gli id dei tavoli; r4306544236). È distinta dal saldo, dal disponibile e dal picco
+ del drawdown (invariato). Profitti netti di commissione (fondi dell'exchange), nessun profitto virtuale: i fondi
+ impegnati in posizioni aperte contano come capitale, non come guadagno. Snapshot non valido, riserva incerta o
+-baseline assente ⇒ crescita ignota ⇒ nessuna espansione. Lo stake espanso resta soggetto a cap, RiskGate, STOP e
++baseline assente ⇒ crescita ignota ⇒ nessuna espansione (NORMAL prima di qualunque confronto con la soglia,
++anche con `expansion_profit_pct` ≤ 0 — ciclo 8, rilievo Codex su 034af59). Lo stake espanso resta soggetto a cap, RiskGate, STOP e
+ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
+ 
+ ## RSR-12 — tavoli di recovery persistenti (decisione owner)
+@@ -98,7 +99,14 @@ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
+ `max_recovery_tables` conta i tavoli con recovery attiva o pendente anche senza ordini aperti. Lo stato (perdita da
+ recuperare per tavolo) è salvato a ogni settlement e reset (`roserpina.recovery_tables_state`) e ripristinato al
+ riavvio prima della ricostruzione F018. Un tavolo esce dal conteggio solo a perdita recuperata o con un reset
+-autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery.
++autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery **e l'avvio**: `start()` tratta
++`_restore_recovery_tables()` fallita come ricostruzione incompleta (`RECONCILIATION_REQUIRED:RECOVERY_STATE_UNREADABLE`,
++runtime in PAUSED, stesso percorso di `EXCHANGE_ORDERS_UNAVAILABLE`), `resume()` non lo scavalca e
++`_persist_recovery_tables` rifiuta di sovrascrivere lo stato illeggibile (serve un riavvio con stato leggibile).
++Scrittura fallita (settlement, `reset_cycle`, auto-reset): capacità di recovery considerata esaurita finché una
++scrittura riesce, evento `RECOVERY_STATE_PERSIST_FAILED` pubblicato (`source` per i reset) e `persisted: false` nel
++risultato di `reset_cycle` — mai un reset "riuscito" in memoria che un crash farebbe tornare indietro (ciclo 8,
++rilievo Codex su 034af59).
+ 
+ ## F029 — tavoli in recovery
+ 
+diff --git a/services/betfair_service.py b/services/betfair_service.py
+index 337fac5..ac82f14 100644
+--- a/services/betfair_service.py
++++ b/services/betfair_service.py
+@@ -728,7 +728,11 @@ class BetfairService:
+         una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
+         silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
+         che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
+-        decisione owner D-C del 18/10/2026)."""
++        decisione owner D-C del 18/10/2026).
++        Ogni riga deve inoltre portare un'identita' non vuota (``betId``/``bet_id`` E
++        ``marketId``/``market_id``): una riga senza betId non puo' confermare nessuna posizione
++        persistita e F018 la leggerebbe come "ordine assente => chiuso" (rilievo Codex #512 su
++        034af59). Payload senza identita' => stesso errore => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED."""
+         if orders is None:
+             return []
+         if not isinstance(orders, list):
+@@ -736,6 +740,10 @@ class BetfairService:
+         for order in orders:
+             if not isinstance(order, dict):
+                 raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
++            bet_id = str(order.get("betId") or order.get("bet_id") or "").strip()
++            market_id = str(order.get("marketId") or order.get("market_id") or "").strip()
++            if not bet_id or not market_id:
++                raise RuntimeError("CURRENT_ORDERS_MALFORMED: row without betId/marketId")
+         return orders
+ 
+     @staticmethod
+diff --git a/tests/agent_checkpoint/test_pfckpt_codex_034af59.py b/tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+new file mode 100644
+index 0000000..0474011
+--- /dev/null
++++ b/tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+@@ -0,0 +1,41 @@
++"""PR #512 ciclo 8 — rilievo Codex su 034af59 (pfckpt.verify): ogni `tests_executed[].sha` con status PASS/FAIL deve
++risolversi a un commit reale (stessa lookup di `code.sha`, `git cat-file -e <sha>^{commit}`), altrimenti il
++checkpoint e' invalido ("test sha unresolved"). Git reale, nessun mock."""
++import json
++import os
++import sys
++
++import pytest
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++sys.path.insert(0, HERE)
++sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "agent_checkpoint"))
++import pfckpt  # noqa: E402
++from test_pfckpt import D, agent, expect, next_state, world  # noqa: E402,F401
++
++
++def _checkpoint_with_tests(a, world, tests):
++    exp = next_state(a, world, tests_executed=tests)
++    pfckpt.write_manifest(a, D)
++    return exp
++
++
++@pytest.mark.parametrize("sha", ["deadbeefcafe", "0" * 40, "abcdef1"])
++def test_unresolvable_test_sha_invalidates_the_checkpoint(world, sha):
++    a = agent(world, "a")
++    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": sha}])
++    from test_pfckpt import raw_commit
++    raw_commit(a, "ckpt con sha di test inventato")
++    err = expect(2, pfckpt.verify, a, "HEAD", D)
++    assert any("t1" in p and "test sha unresolved" in p for p in err.detail["problems"]), err.detail["problems"]
++
++
++def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
++    a = agent(world, "a")
++    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},
++                                      {"id": "t2", "status": "FAIL", "sha": world["code"][:12]},
++                                      {"id": "t3", "status": "BLOCKED"}])
++    from test_pfckpt import raw_commit
++    raw_commit(a, "ckpt con sha reali")
++    rep = pfckpt.verify(a, "HEAD", D)
++    assert rep["seq"] == 2
+diff --git a/tests/integration/test_dutching_liquidity_guard.py b/tests/integration/test_dutching_liquidity_guard.py
+index 68c36af..ae005a9 100644
+--- a/tests/integration/test_dutching_liquidity_guard.py
++++ b/tests/integration/test_dutching_liquidity_guard.py
+@@ -274,10 +274,21 @@ def test_fail_open_when_book_missing_block_mode(monkeypatch):
+     assert res.get("liquidity_warning") is False
+ 
+ 
+-def test_fail_open_when_selection_absent_block_mode(monkeypatch):
++def test_unknown_liquidity_when_selection_absent_blocks_in_block_mode(monkeypatch):
++    """Ciclo 8 (Codex su 034af59): selezione assente dal book = liquidita' IGNOTA. Con il guard armato
++    (warning_only=False) un dato mancante non vale "sufficiente": blocco esplicito LIQUIDITY_UNKNOWN.
++    (Sostituisce test_fail_open_when_selection_absent_block_mode, che codificava il fail-open.)"""
+     _patch_calc(monkeypatch)
+     res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)), config=_cfg(warning_only=False))).precheck(_payload())
+-    assert res["ok"] is True
++    assert res["ok"] is False
++    assert res["liquidity_shortfall"] and all(leg["reason"] == "LIQUIDITY_UNKNOWN" and leg["available"] is None
++                                              for leg in res["liquidity_shortfall"])
++
++
++def test_unknown_liquidity_when_selection_absent_stays_unobserved_in_warning_mode(monkeypatch):
++    _patch_calc(monkeypatch)
++    res = _controller(_Runtime(book=_book(10.0, selection_ids=(999,)), config=_cfg(warning_only=True))).precheck(_payload())
++    assert res["ok"] is True and res.get("liquidity_warning") is False
+ 
+ 
+ def test_guard_disabled_no_block(monkeypatch):
+diff --git a/tests/test_microstake_engine_native.py b/tests/test_microstake_engine_native.py
+index 6d647dc..164a800 100644
+--- a/tests/test_microstake_engine_native.py
++++ b/tests/test_microstake_engine_native.py
+@@ -35,10 +35,16 @@ class _DB:
+     def __init__(self):
+         self.rows = {}
+         self.settings = {}
++        self.simulation_state = None
+ 
+     def is_ready(self):
+         return True
+ 
++    def save_simulation_state(self, key, state):
++        # fonte di reload del broker SIM: senza, ogni snapshot e' "non persistito" e la saga
++        # resta AMBIGUOUS (rilievo Codex #512 su 034af59); la produzione passa sempre il DB al broker
++        self.simulation_state = dict(state)
++
+     def insert_order(self, payload):
+         key = len(self.rows) + 1
+         self.rows[key] = dict(payload)
+@@ -93,8 +99,8 @@ def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, avai
+ 
+ 
+ def _engine(db=None, **rt):
+-    broker = SimulationBroker(starting_balance=100.0)
+     db = db or _DB()
++    broker = SimulationBroker(starting_balance=100.0, db=db)
+     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
+     engine.simulation_broker = broker
+     engine.runtime_controller = _runtime(broker, **rt)
+@@ -196,8 +202,9 @@ def test_without_runtime_the_sim_broker_funds_are_the_cap_source():
+     engine = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker, executor=_Inline())
+     res = engine.submit_quick_bet(_payload("norc", size=0.10, price=2.0))
+     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"]) and _orders(broker) == []
+-    broker2 = SimulationBroker(starting_balance=100.0)
+-    engine2 = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker2, executor=_Inline())
++    db2 = _DB()
++    broker2 = SimulationBroker(starting_balance=100.0, db=db2)
++    engine2 = TradingEngine(bus=_Bus(), db=db2, client_getter=lambda: broker2, executor=_Inline())
+     assert engine2.submit_quick_bet(_payload("norc2", size=0.10, price=2.0))["ok"] is True
+ 
+ 
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+new file mode 100644
+index 0000000..a10e38c
+--- /dev/null
++++ b/tests/test_pr512_codex_034af59.py
+@@ -0,0 +1,422 @@
++"""PR #512 — rilievi Codex sul head 034af59 (ciclo 8). Un test per rilievo, scritto PRIMA della patch
++(RED sul codice precedente), codice reale del progetto, deterministico e offline.
++
++1. `BetfairService._well_formed_current_orders`: riga senza `betId`/`marketId` => CURRENT_ORDERS_MALFORMED
++   (la ricostruzione F018 la leggeva come "posizione chiusa").
++2. `NativeSimMicrostakeExecutor`: snapshot finale del broker non persistito => saga AMBIGUOUS, mai ACTIVE/SUCCESS.
++3. `DutchingController._leg_liquidity_shortfall`: liquidita' ignota in modalita' blocco => shortfall LIQUIDITY_UNKNOWN.
++4. `MicrostakeCoordinator.recover`: ROLLBACK_PENDING => cancel_all_remaining -> ROLLED_BACK, mai replace.
++5. `reset_cycle`/`_maybe_auto_reset`: persistenza fallita => `_recovery_persist_failed`, evento, `persisted: False`.
++6. `start()`: stato di recovery illeggibile => PAUSED (RECOVERY_STATE_UNREADABLE) e nessuna sovrascrittura.
++7. docstring di `core/microstake_safe.py` veritiero.
++10. `RoserpinaMoneyManagement._desk_mode`: crescita ignota => NORMAL anche con soglia 0.
++"""
++import json
++import os
++import sys
++import threading
++from decimal import Decimal as D
++
++import pytest
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
++
++from services.betfair_service import BetfairService  # noqa: E402
++
++
++# ------------------------------------------------------------------ 1. currentOrders senza identita'
++class _OrdersBroker:
++    def __init__(self, orders):
++        self._orders = orders
++
++    def get_current_orders(self, market_ids=None):
++        return self._orders
++
++
++@pytest.mark.parametrize("row", [
++    {"marketId": "1.1"},                       # senza betId
++    {"betId": "B1"},                           # senza marketId
++    {"betId": "", "marketId": "1.1"},          # betId vuoto
++    {"betId": "B1", "marketId": "  "},         # marketId vuoto
++    {"betId": None, "marketId": "1.1"},
++])
++def test_f1_current_order_row_without_identity_is_malformed(row):
++    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
++        BetfairService._well_formed_current_orders([{"betId": "B0", "marketId": "1.0"}, row])
++
++
++def test_f1_rows_with_identity_pass_in_both_spellings():
++    rows = [{"betId": "B1", "marketId": "1.1"}, {"bet_id": "B2", "market_id": "1.2"}]
++    assert BetfairService._well_formed_current_orders(rows) == rows
++
++
++def test_f1_sim_facade_raises_on_row_without_bet_id_instead_of_closing_positions():
++    svc = BetfairService.__new__(BetfairService)
++    svc.simulation_mode = True
++    svc.get_client = lambda: _OrdersBroker([{"marketId": "1.1"}])
++    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
++        svc.list_current_orders()
++
++
++def test_f1_rebuild_goes_paused_on_row_without_bet_id():
++    """Il percorso reale: F018 con una riga senza betId deve dare EXCHANGE_ORDERS_UNAVAILABLE, non 'closed'."""
++    from test_f018_rebuild_units import _Exchange, _rc, _row
++
++    class _Facade(_Exchange):
++        def list_current_orders(self, market_ids=None):
++            self.calls += 1
++            return [BetfairService._normalize_startup_order(o)
++                    for o in BetfairService._well_formed_current_orders(list(self.current))]
++
++    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", bet_id="B1")], _Facade([{"marketId": "1.1"}]))
++    res = rc._rebuild_open_positions()
++    assert res["ok"] is False and res["reason"].startswith("EXCHANGE_ORDERS_UNAVAILABLE"), res
++    assert res["closed"] == []
++
++
++# ------------------------------------------------------------------ 2. snapshot finale non persistito
++def _native_engine():
++    sys.path.insert(0, os.path.join(ROOT, "tests"))
++    from test_microstake_engine_native import _engine, _payload
++    engine, broker, _ = _engine()
++    engine._default_native_microstake_executor("SIMULATION")
++    return engine, broker, _payload
++
++
++def test_f2_failed_final_snapshot_leaves_the_saga_ambiguous_with_reservation_held():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    res = ex.execute(payload("snap", size=0.10, price=3.0))
++    assert res["status"] == "AMBIGUOUS" and res["order_unknown"] is True, res
++    assert res["phase"] == "AMBIGUOUS" and res["reservation_held"] is True and res["snapshot_persisted"] is False
++    assert "instructionReports" not in res
++    saga = ex.store.load("snap")
++    assert saga["phase"] == "AMBIGUOUS" and saga["reservation_held"] is True, saga
++    assert "snap" in ex.store.pending_refs(), "la saga deve restare da riconciliare al riavvio"
++    assert ex.port.has_reservation("snap")
++
++
++def test_f2_failed_final_snapshot_is_reconciled_by_recover_without_a_new_place():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    ex.execute(payload("snap-r", size=0.10, price=3.0))
++    broker.persist_snapshot = lambda: True
++    out = ex.recover_pending()
++    assert out == {"snap-r": "ACTIVE"}, out
++    assert [op[0] for op in ex.port.operation_log] == ["PLACE", "CANCEL"]
++    assert ex.store.load("snap-r")["reservation_held"] is False and not ex.port.has_reservation("snap-r")
++
++
++def test_f2_intermediate_snapshot_failure_recovered_by_the_final_one_stays_active():
++    engine, broker, payload = _native_engine()
++    calls = []
++    broker.persist_snapshot = lambda: (calls.append(1), len(calls) > 1)[1]   # fallisce solo dopo il PLACE
++    res = engine.microstake_executor.execute(payload("snap-ok", size=0.10, price=3.0))
++    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE", res
++    assert res["snapshot_persisted"] is False and engine.microstake_executor.port.snapshot_failures == 1
++
++
++class _Crash2(BaseException):
++    pass
++
++
++def test_f2_coordinator_never_persists_active_while_the_reload_source_is_stale(monkeypatch):
++    """Riesame indipendente del ciclo 8: la retrocessione ad AMBIGUOUS avveniva nell'esecutore DOPO che il
++    coordinatore aveva gia' persistito ACTIVE e rilasciato la riserva. Un crash in quella finestra lasciava
++    una saga conclusa fuori da pending_refs sopra una fonte di reload senza l'ordine. Ora il coordinatore
++    persiste AMBIGUOUS (riserva tenuta) quando l'ultimo snapshot non e' stato persistito."""
++    from core.microstake_sim_port import NativeSimMicrostakeExecutor
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++
++    def crash(self, payload, out):
++        raise _Crash2()
++    monkeypatch.setattr(NativeSimMicrostakeExecutor, "_demote_unpersisted_active", crash)
++    try:
++        ex.execute(payload("win", size=0.10, price=3.0))
++    except _Crash2:
++        pass
++    saga = ex.store.load("win")
++    assert saga["phase"] == "AMBIGUOUS" and saga["reservation_held"] is True, saga
++    assert "win" in ex.store.pending_refs() and ex.port.has_reservation("win")
++
++
++def test_f2_rolled_back_with_unpersisted_snapshot_stays_ambiguous_with_reservation(tmp_path):
++    """Stessa famiglia: anche ROLLED_BACK e' terminale (escluso da pending_refs). Con la fonte di reload
++    stantia la saga resta AMBIGUOUS con riserva tenuta, invece di chiudersi sopra uno stato che al riavvio
++    ricaricherebbe lo stub ancora aperto."""
++    from core.microstake_safe import Phase
++    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
++    ex.cancel_all_mode = "ok"
++    ex.last_snapshot_persisted = False
++    res = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "snapshot_not_persisted"
++    saved = Store(path).load("rb-1")
++    assert saved["phase"] == "AMBIGUOUS" and saved["reservation_held"] is True and ex.has_reservation("rb-1")
++    ex.last_snapshot_persisted = True
++    res2 = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res2.phase in (Phase.ROLLED_BACK, Phase.AMBIGUOUS)
++    assert not any(op[0] == "REPLACE" for op in ex.operation_log)
++
++
++def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
++    engine, broker, payload = _native_engine()
++    ex = engine.microstake_executor
++    broker.persist_snapshot = lambda: False
++    ex.execute(payload("snap-x", size=0.10, price=3.0))
++    ops = list(ex.port.operation_log)
++    assert ex.recover_pending() == {"snap-x": "AMBIGUOUS"}
++    assert ex.store.load("snap-x")["phase"] == "AMBIGUOUS" and ex.port.operation_log == ops
++
++
++# ------------------------------------------------------------------ 3. liquidita' ignota in modalita' blocco
++def _dutching_leg_shortfall(ladder, *, warning_only):
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": ladder}}]}
++    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
++    return DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=warning_only)
++
++
++@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
++def test_f3_unknown_liquidity_in_block_mode_is_a_shortfall(ladder):
++    sf = _dutching_leg_shortfall(ladder, warning_only=False)
++    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN" and sf["available"] is None, sf
++    assert sf["selectionId"] == 11 and sf["required"] == 10.0
++
++
++def test_f3_selection_missing_from_the_book_is_unknown_in_block_mode():
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 99, "ex": {"availableToBack": [{"price": 2.0, "size": 50}]}}]}
++    item = {"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}
++    sf = DutchingController._leg_liquidity_shortfall(book, item, 1.0, 1.0, warning_only=False)
++    assert sf is not None and sf["reason"] == "LIQUIDITY_UNKNOWN"
++
++
++@pytest.mark.parametrize("ladder", [{"price": 2.0, "size": 50}, "abc", 7])
++def test_f3_unknown_liquidity_in_warning_only_mode_stays_unobserved(ladder):
++    assert _dutching_leg_shortfall(ladder, warning_only=True) is None
++
++
++def test_f3_known_sufficient_liquidity_is_never_a_shortfall_in_block_mode():
++    assert _dutching_leg_shortfall([{"price": 2.0, "size": 50.0}], warning_only=False) is None
++
++
++def test_f3_evaluate_guard_blocks_on_unknown_liquidity_only_when_armed():
++    from types import SimpleNamespace
++    from controllers.dutching_controller import DutchingController
++    book = {"runners": [{"selectionId": 11, "ex": {"availableToBack": "rotto"}}]}
++    ctl = DutchingController.__new__(DutchingController)
++    ctl._market_book = lambda market_id: book
++    results = [{"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0}]
++    armed = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=False), {"market_id": "1.1"}, results)
++    assert armed["warning"] is True and armed["shortfall"][0]["reason"] == "LIQUIDITY_UNKNOWN"
++    observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
++    assert observe == {"warning": False, "shortfall": []}
++
++
++# ------------------------------------------------------------------ 4. ROLLBACK_PENDING al riavvio
++class _Crash(BaseException):
++    """Crash di processo (non Exception: nessun handler della saga lo intercetta)."""
++
++
++def _rollback_world(tmp_path):
++    from core.microstake_safe import (JsonSagaStore, MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest,
++                                      Side, StatefulExchangeSimulator)
++
++    class _Exchange(StatefulExchangeSimulator):
++        def __init__(self):
++            super().__init__(balance=D("100"))
++            self.reject_replace_once = True
++            self.cancel_all_mode = "crash"      # crash | fail | ok
++
++        def replace(self, bet_id, new_price):
++            if self.reject_replace_once:
++                self.reject_replace_once = False
++                raise RuntimeError("REPLACE_REJECTED")
++            return super().replace(bet_id, new_price)
++
++        def cancel_all_remaining(self, bet_id):
++            if self.cancel_all_mode == "crash":
++                raise _Crash()
++            if self.cancel_all_mode == "fail":
++                raise RuntimeError("CANCEL_REJECTED")
++            return super().cancel_all_remaining(bet_id)
++
++    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
++                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
++    ex = _Exchange()
++    path = tmp_path / "saga.json"
++    req = MicrostakeRequest(market_id="1.100", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
++                            target_price=D("2.00"), customer_ref="rb-1")
++    with pytest.raises(_Crash):
++        MicrostakeCoordinator(ex, JsonSagaStore(path), policy).execute(req, stub_price=D("3.00"))
++    assert JsonSagaStore(path).load("rb-1")["phase"] == "ROLLBACK_PENDING"
++    assert ex.has_reservation("rb-1")
++    return ex, path, policy, MicrostakeCoordinator, JsonSagaStore
++
++
++def test_f4_rollback_pending_is_cancelled_at_restart_never_replaced(tmp_path):
++    from core.microstake_safe import Phase
++    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
++    ex.cancel_all_mode = "ok"
++    before = len(ex.operation_log)
++    res = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res.phase is Phase.ROLLED_BACK and res.reservation_held is False, res
++    new_ops = ex.operation_log[before:]
++    assert [op[0] for op in new_ops] == ["CANCEL"] and new_ops[0][2] == "0.10", new_ops   # il residuo, non lo stub
++    assert ex.order(res.bet_id).remaining == D("0")
++    saved = Store(path).load("rb-1")
++    assert saved["phase"] == "ROLLED_BACK" and saved["reservation_held"] is False
++    assert not ex.has_reservation("rb-1")
++
++
++def test_f4_rollback_pending_with_failed_cancel_stays_ambiguous_with_reservation(tmp_path):
++    from core.microstake_safe import Phase
++    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
++    ex.cancel_all_mode = "fail"
++    res = Coordinator(ex, Store(path), policy).recover("rb-1")
++    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True and res.reason == "rollback_unknown"
++    assert Store(path).load("rb-1")["phase"] == "AMBIGUOUS" and ex.has_reservation("rb-1")
++    assert not any(op[0] == "REPLACE" for op in ex.operation_log)
++
++
++# ------------------------------------------------------------------ 5. reset con persistenza fallita
++def _reset_controller(tmp_path, *, fail_persist):
++    from test_f032_rsr12_units import _lose, _rc
++    rc = _rc(tmp_path / "w.db", funds={"available": 100.0, "exposure": 0.0})
++    rc.simulation_mode = False
++    rc._daily_loss_state_lock = threading.Lock()
++    rc._daily_loss_monitor_state = {"realized_pnl_day_baseline": 0.0, "realized_pnl": 0.0}
++    rc._session_pnl_baseline = None
++    rc.get_status = lambda: {}
++    rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0})
++    _lose(rc, 1, "A", 3.0)                                   # perdita 3.0 persistita sul tavolo 1
++    assert rc._active_recovery_count() == 1
++    if fail_persist:
++        real_save = rc.db.save_settings
++
++        def failing(payload):
++            if rc._RECOVERY_KEY in payload:
++                raise OSError("disk full")
++            return real_save(payload)
++        rc.db.save_settings = failing
++    return rc
++
++
++def _events(rc, name):
++    return [p for e, p in rc.bus.events if e == name]
++
++
++def test_f5_reset_cycle_persist_failure_is_declared_and_fail_closed(tmp_path):
++    rc = _reset_controller(tmp_path, fail_persist=True)
++    out = rc.reset_cycle()
++    assert out["reset"] is True and out["persisted"] is False, out
++    assert rc._recovery_persist_failed is True
++    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "reset_cycle"}]
++    assert rc._active_recovery_count() == rc.config.max_recovery_tables, "capacita' di recovery non esaurita"
++
++
++def test_f5_reset_cycle_persist_success_is_declared(tmp_path):
++    rc = _reset_controller(tmp_path, fail_persist=False)
++    out = rc.reset_cycle()
++    assert out["persisted"] is True and rc._recovery_persist_failed is False
++    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [] and rc._active_recovery_count() == 0
++
++
++def test_f5_auto_reset_persist_failure_is_declared_and_fail_closed(tmp_path):
++    rc = _reset_controller(tmp_path, fail_persist=True)
++    rc._account_snapshot = {"ok": True, "cash_equity": 80.0, "available": 80.0, "committed": 0.0}
++    rc._cash_equity_peak = 100.0
++    rc.config.auto_reset_drawdown_pct = 15.0
++    assert rc._maybe_auto_reset(20.0) is True
++    assert rc._recovery_persist_failed is True
++    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "auto_reset"}]
++    assert len(_events(rc, "ROSERPINA_AUTO_RESET")) == 1
++    assert rc._active_recovery_count() == rc.config.max_recovery_tables
++
++
++# ------------------------------------------------------------------ 6. stato di recovery illeggibile al riavvio
++def test_f6_persist_refuses_to_overwrite_an_unreadable_recovery_state(tmp_path):
++    from test_f032_rsr12_units import _rc
++    rc = _rc(tmp_path / "u.db")
++    rc.db.save_settings({rc._RECOVERY_KEY: "{rotto"})
++    assert rc._restore_recovery_tables() is False and rc._recovery_state_unreadable is True
++    assert rc._persist_recovery_tables() is False, "stato illeggibile sovrascritto"
++    assert rc._persist_recovery_tables(cycle_reset=True, reset_ts=1.0) is False
++    assert rc.db.get_settings().get(rc._RECOVERY_KEY) == "{rotto"
++    assert rc._active_recovery_count() == rc.config.max_recovery_tables
++
++
++def test_f6_resume_does_not_bypass_an_unreadable_recovery_state():
++    from types import SimpleNamespace
++    from core.runtime_controller import RuntimeController, RuntimeMode
++    rc = RuntimeController.__new__(RuntimeController)
++    rc.mode = RuntimeMode.PAUSED
++    rc.bus = SimpleNamespace(publish=lambda *a, **k: None)
++    rc._reconciliation_required = True
++    rc._recovery_state_unreadable = True
++    rc._monitor_daily_loss_breach = lambda **k: {"breached": False}
++    rc._loss_block_reason = lambda: ""
++    rc._recover_native_microstake = lambda: {"ok": True, "status": "RECONCILED", "pending": []}
++    rc._rebuild_open_positions = lambda: {"ok": True, "reason": "", "rebuilt": [], "uncertain": [], "held": []}
++    rc.get_status = lambda: {"mode": rc.mode.value}
++    rc._safe_status_snapshot = lambda: {"mode": rc.mode.value}
++    out = rc.resume()
++    assert out["resumed"] is False and "RECOVERY_STATE_UNREADABLE" in out["reason"], out
++    assert rc.mode is RuntimeMode.PAUSED and rc._reconciliation_required is True
++
++
++def test_f6_start_with_unreadable_recovery_state_goes_paused_and_keeps_the_stored_state():
++    """Percorso reale (harness F026 in sottoprocesso): run 1 lascia un tavolo in recovery; lo stato persistito
++    viene corrotto; run 2 deve partire PAUSED (RECOVERY_STATE_UNREADABLE), non ammettere il segnale e non
++    sovrascrivere lo stato illeggibile."""
++    import glob
++    import tempfile
++    from database import Database
++    from test_f026_financial import run
++    home = tempfile.mkdtemp(prefix="f6_")
++    first = run([{"op": "signal", "m": "1.601", "price": 2.0}, {"op": "settle", "m": "1.601", "win": False}], home=home)
++    assert any(float(t["loss"] or 0) > 0 for t in first["snaps"][-1]["tables"]), "precondizione: tavolo in recovery"
++    dbs = glob.glob(os.path.join(home, "**", "*.db"), recursive=True)
++    assert len(dbs) == 1, dbs
++    Database(dbs[0]).save_settings({"roserpina.recovery_tables_state": "{rotto"})
++    second = run([{"op": "signal", "m": "1.602", "price": 2.0}], home=home)
++    assert second["mode_after_start"] == "PAUSED", second["mode_after_start"]
++    assert second["rebuild"]["ok"] is False and second["rebuild"]["reason"] == "RECOVERY_STATE_UNREADABLE", second["rebuild"]
++    assert not any(o["market_id"] == "1.602" and o["status"] == "SUBMITTED" for o in second["snaps"][-1]["orders"])
++    assert Database(dbs[0]).get_settings().get("roserpina.recovery_tables_state") == "{rotto"
++
++
++# ------------------------------------------------------------------ 7. docstring veritiero di microstake_safe
++def test_f7_microstake_safe_docstring_declares_its_real_role():
++    import core.microstake_safe as ms
++    doc = ms.__doc__ or ""
++    assert "no import or call site" not in doc, "la docstring nega un uso che esiste (core/microstake_sim_port.py)"
++    assert "microstake_sim_port" in doc and "TradingEngine" in doc
++
++
++# ------------------------------------------------------------------ 10. crescita ignota => mai espansione
++@pytest.mark.parametrize("threshold", [0.0, -1.0, 5.0])
++def test_f10_unknown_growth_never_expands_whatever_the_threshold(threshold):
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    d = _calc(_mm(expansion_profit_pct=threshold), expansion_growth_snapshot=None)
++    assert d.desk_mode is DeskMode.NORMAL, (threshold, d.desk_mode)
++    assert d.recommended_stake == pytest.approx(2.0)          # nessun moltiplicatore di espansione
++
++
++@pytest.mark.parametrize("growth", [float("nan"), float("inf"), "abc"])
++def test_f10_non_finite_growth_is_unknown_and_never_expands(growth):
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=growth).desk_mode is DeskMode.NORMAL
++
++
++def test_f10_known_growth_at_zero_threshold_still_expands():
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=0.0).desk_mode is DeskMode.EXPANSION
+diff --git a/tests/test_pr512_codex_findings.py b/tests/test_pr512_codex_findings.py
+index 5d9b30e..f9421cb 100644
+--- a/tests/test_pr512_codex_findings.py
++++ b/tests/test_pr512_codex_findings.py
+@@ -28,7 +28,7 @@ from test_microstake_sim_port import _Db as _SagaDb
+ 
+ def _engine_real_db(**rt):
+     db = Database(os.path.join(tempfile.mkdtemp(prefix="pr512_"), "p.db"))
+-    broker = SimulationBroker(starting_balance=100.0)
++    broker = SimulationBroker(starting_balance=100.0, db=db)      # fonte di reload: come in produzione
+     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
+     engine.simulation_broker = broker
+     engine.runtime_controller = _runtime(broker, **rt)
+diff --git a/tests/test_pr512_recovery_fixes.py b/tests/test_pr512_recovery_fixes.py
+index 26c8d11..fbc403a 100644
+--- a/tests/test_pr512_recovery_fixes.py
++++ b/tests/test_pr512_recovery_fixes.py
+@@ -189,7 +189,8 @@ def test_snapshot_failure_is_declared_in_the_executor_result():
+     port = engine.microstake_executor.port
+     broker.persist_snapshot = lambda: False
+     res = engine.microstake_executor.execute(_payload("snap", size=0.10, price=3.0))
+-    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE" and res["snapshot_persisted"] is False, res
++    # ciclo 8 (Codex su 034af59): snapshot FINALE non persistito => mai SUCCESS/ACTIVE, saga AMBIGUOUS
++    assert res["status"] == "AMBIGUOUS" and res["phase"] == "AMBIGUOUS" and res["snapshot_persisted"] is False, res
+     assert port.snapshot_failures >= 1
+ 
+ 
+diff --git a/tests/test_pr512_review_cycle4.py b/tests/test_pr512_review_cycle4.py
+index 05c3441..0fd42e4 100644
+--- a/tests/test_pr512_review_cycle4.py
++++ b/tests/test_pr512_review_cycle4.py
+@@ -25,7 +25,7 @@ from core.runtime_controller import RuntimeController
+ from core.table_manager import TableManager
+ from simulation_broker import SimulationBroker
+ from test_microstake_cashout_and_recovery import _Service, _router_payload
+-from test_microstake_engine_native import _engine, _orders, _payload, _runtime
++from test_microstake_engine_native import _DB, _engine, _orders, _payload, _runtime
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ sys.path.insert(0, os.path.join(ROOT, "tools", "agent_checkpoint"))
+@@ -37,7 +37,7 @@ def test_cached_sim_executor_is_rebuilt_when_the_simulation_broker_changes():
+     engine, old_broker, _ = _engine()
+     assert engine.submit_quick_bet(_payload("a", size=0.10, price=3.0))["ok"] is True
+     stale = engine.microstake_executor
+-    new_broker = SimulationBroker(starting_balance=100.0)                     # stop/start: broker nuovo
++    new_broker = SimulationBroker(starting_balance=100.0, db=_DB())          # stop/start: broker nuovo
+     engine.simulation_broker = new_broker
+     engine.client_getter = lambda: new_broker
+     engine.runtime_controller = _runtime(new_broker)
+diff --git a/tests/traceability/test_pf_trace_codex_034af59.py b/tests/traceability/test_pf_trace_codex_034af59.py
+new file mode 100644
+index 0000000..59a9247
+--- /dev/null
++++ b/tests/traceability/test_pf_trace_codex_034af59.py
+@@ -0,0 +1,56 @@
++"""PR #512 ciclo 8 — rilievo Codex su 034af59 (pf_trace): per TESTED/VERIFIED/CERTIFIED conta l'ULTIMA evidenza
++applicabile, che deve essere PASS. Un BLOCKED / NOT RUN / NOT VERIFIED successivo a un PASS invalida lo stato,
++come gia' faceva un FAIL. Git reale su tmp_path, nessun mock."""
++import os
++import subprocess
++import sys
++
++import pytest
++
++ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++sys.path.insert(0, os.path.join(ROOT, "tools", "traceability"))
++import pf_trace  # noqa: E402
++
++
++def _repo(tmp_path):
++    (tmp_path / "tests").mkdir()
++    (tmp_path / "tests" / "test_x.py").write_text("def test_ok():\n    assert True\n")
++    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
++    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
++    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, env=env)
++    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "c"], check=True, env=env)
++    return subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "--short=7", "HEAD"],
++                          capture_output=True, text=True, check=True).stdout.strip()
++
++
++def _req(sha, status, results, **over):
++    ev = [{"sha": sha, "command": "pytest", "environment": "venv", "timestamp": f"2026-10-17T00:00:0{i}Z", "result": r}
++          for i, r in enumerate(results)]
++    req = {"id": "R-1", "text": "t", "source": "s", "owner_decision": "D", "activity": "ACTIVE", "status": status,
++           "issue": ["#1"], "component": ["x.py"], "code": ["x.py::f"], "oracle": "o",
++           "tests": ["tests/test_x.py::test_ok"], "evidence": ev, "findings": [], "reviewer": "rev", "gate": "A",
++           "limitations": []}
++    req.update(over)
++    return {"schema": "pf-traceability/1", "requirements": [req]}
++
++
++@pytest.mark.parametrize("status", ["TESTED", "VERIFIED", "CERTIFIED"])
++@pytest.mark.parametrize("later", ["BLOCKED", "NOT RUN", "NOT VERIFIED", "FAIL"])
++def test_latest_non_pass_evidence_invalidates_a_tested_status(tmp_path, status, later):
++    sha = _repo(tmp_path)
++    errors, _ = pf_trace.validate(_req(sha, status, ["PASS", later]), str(tmp_path))
++    assert any("ultima evidenza" in e for e in errors), (status, later, errors)
++
++
++@pytest.mark.parametrize("status", ["TESTED", "VERIFIED", "CERTIFIED"])
++def test_pass_after_a_non_pass_is_valid(tmp_path, status):
++    sha = _repo(tmp_path)
++    # (senza FAIL: una FAIL senza finding tracciato e' gia' un errore distinto per VERIFIED/CERTIFIED)
++    errors, _ = pf_trace.validate(_req(sha, status, ["BLOCKED", "NOT RUN", "PASS"]), str(tmp_path))
++    assert errors == [], errors
++
++
++def test_blocked_status_may_end_with_a_blocked_evidence(tmp_path):
++    sha = _repo(tmp_path)
++    errors, _ = pf_trace.validate(_req(sha, "BLOCKED", ["PASS", "BLOCKED"]), str(tmp_path))
++    assert errors == [], errors
+diff --git a/tools/agent_checkpoint/pfckpt.py b/tools/agent_checkpoint/pfckpt.py
+index 954180c..b95615e 100644
+--- a/tools/agent_checkpoint/pfckpt.py
++++ b/tools/agent_checkpoint/pfckpt.py
+@@ -237,6 +237,12 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
+     if code_sha and git(lookup, "cat-file", "-e", f"{code_sha}^{{commit}}", check=False).returncode != 0:
+         problems.append(f"SHA del codice inesistente nel repository: {code_sha}")
+     for t in state.get("tests_executed") or []:
++        if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL"):
++            # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
++            # con la stessa lookup di code.sha (altrimenti un esito e' attribuibile a codice inesistente)
++            tsha = str(t.get("sha", ""))
++            if git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
++                problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
+         art = t.get("artifact") if isinstance(t, dict) else None
+         for a in ([art] if isinstance(art, str) else (art or [])):
+             if a not in files:
+diff --git a/tools/traceability/pf_trace.py b/tools/traceability/pf_trace.py
+index b833149..9e1ff1f 100644
+--- a/tools/traceability/pf_trace.py
++++ b/tools/traceability/pf_trace.py
+@@ -128,8 +128,11 @@ def validate(data, repo=".", previous=None):
+                 errors.append(f"{rid}: {status} senza test")
+             if not passes:
+                 errors.append(f"{rid}: {status} senza evidenza PASS")
+-            if latest and latest.get("result") == "FAIL":
+-                errors.append(f"{rid}: {status} ma l'ultima evidenza e' FAIL (contraddizione)")
++            if latest and latest.get("result") != "PASS":
++                # rilievo Codex #512 su 034af59: conta l'ULTIMA evidenza applicabile, che deve essere PASS;
++                # un BLOCKED / NOT RUN / NOT VERIFIED successivo a un PASS invalida lo stato come un FAIL
++                errors.append(f"{rid}: {status} ma l'ultima evidenza e' {latest.get('result')} "
++                              "(contraddizione: l'ultima evidenza deve essere PASS)")
+         if status in {"VERIFIED", "CERTIFIED"} and not r.get("reviewer"):
+             errors.append(f"{rid}: {status} senza revisore")
+         if status == "CERTIFIED" and (not r.get("gate") or not passes):

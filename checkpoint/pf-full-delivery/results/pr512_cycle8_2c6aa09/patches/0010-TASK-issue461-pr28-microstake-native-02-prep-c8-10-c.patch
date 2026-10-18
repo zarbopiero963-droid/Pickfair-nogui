@@ -1,0 +1,115 @@
+From 8b77404ec4a8b70c23520da73319319c2ffac96d Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:25:27 +0000
+Subject: [PATCH 10/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #10:
+ crescita ignota => NORMAL prima del confronto con la soglia; CHANGELOG ciclo
+ 8
+
+Rilievo Codex su 034af59: con expansion_growth_given e crescita None il money management
+usava 0.0 e con expansion_profit_pct <= 0 espandeva lo stake su dati incerti. Ora crescita
+ignota (None, NaN, inf, non numerica) => DeskMode.NORMAL prima di qualunque confronto.
+CHANGELOG: voce unica per le 10 patch preparate (in attesa di deroga ciclo 8).
+Test: tests/test_pr512_codex_034af59.py (f10, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ CHANGELOG.md                      | 16 ++++++++++++++++
+ core/money_management.py          |  7 ++++++-
+ docs/roserpina_bankroll_equity.md |  3 ++-
+ tests/test_pr512_codex_034af59.py | 23 +++++++++++++++++++++++
+ 4 files changed, 47 insertions(+), 2 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0d9efa1..40c33bd 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -9,6 +9,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ ## [Unreleased]
+ 
+ ### Fixed
++
++- **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
++  (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
++  `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:
++  snapshot finale del broker SIM non persistito ⇒ saga AMBIGUOUS con riserva tenuta, mai SUCCESS/ACTIVE,
++  `recover_pending()` ritenta lo snapshot prima di promuovere; (3) `controllers/dutching_controller.py`:
++  liquidità ignota con guard armato ⇒ shortfall `LIQUIDITY_UNKNOWN` (blocco); (4) `core/microstake_safe.py`:
++  `recover()` su ROLLBACK_PENDING cancella il residuo (ROLLED_BACK / AMBIGUOUS), mai replace;
++  (5) `core/runtime_controller.py`: `reset_cycle`/auto-reset con persistenza fallita ⇒
++  `_recovery_persist_failed`, evento `RECOVERY_STATE_PERSIST_FAILED`, `persisted: false`; (6) stato di
++  recovery illeggibile al riavvio ⇒ PAUSED (`RECOVERY_STATE_UNREADABLE`), `resume()` non lo scavalca,
++  nessuna sovrascrittura; (7) docstring di `core/microstake_safe.py` veritiera; (8) `pf_trace`: l'ultima
++  evidenza deve essere PASS; (9) `pfckpt.verify`: ogni `tests_executed[].sha` risolto come `code.sha`;
++  (10) `core/money_management.py`: crescita ignota ⇒ NORMAL anche con soglia ≤ 0. Test:
++  `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
++  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py` (tutti RED prima della patch).
+ - **PR #512 ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION, tre P1 Codex su f62f0e3):** (1) riga pendente senza
+   lato persistito => non attribuita, mai ricostruita come BACK (la liability di un LAY sarebbe sottostimata;
+   r4306544229); (2) `reset_cycle()` non azzera il broker SIM finche' un tavolo resta trattenuto (esito
+diff --git a/core/money_management.py b/core/money_management.py
+index 4d85953..5c65adb 100644
+--- a/core/money_management.py
++++ b/core/money_management.py
+@@ -136,7 +136,12 @@ class RoserpinaMoneyManagement:
+             # rispetto alla baseline persistente del ciclo, calcolata dal runtime. Ignota (None) => nessuna
+             # espansione: mai stake aumentato su dati incerti.
+             growth = validators.finite_number(expansion_growth_pct)
+-            growth_pct = growth if growth is not None else 0.0
++            if growth is None:
++                # Crescita IGNOTA => NORMAL prima di qualunque confronto con la soglia: con
++                # expansion_profit_pct <= 0 il vecchio "0.0 >= soglia" espandeva su dati incerti
++                # (rilievo Codex #512 su 034af59).
++                return DeskMode.NORMAL
++            growth_pct = growth
+         elif bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
+             # Chiamanti senza baseline del ciclo (es. dutching): calcolo storico #320.
+             growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0
+diff --git a/docs/roserpina_bankroll_equity.md b/docs/roserpina_bankroll_equity.md
+index 8468e06..320a256 100644
+--- a/docs/roserpina_bankroll_equity.md
++++ b/docs/roserpina_bankroll_equity.md
+@@ -90,7 +90,8 @@ senza `set_at_ts` = 0.0: valida solo finché non esiste alcun marker). In SIM `r
+ trattenuto (esito `sim_reset_skipped` con gli id dei tavoli; r4306544236). È distinta dal saldo, dal disponibile e dal picco
+ del drawdown (invariato). Profitti netti di commissione (fondi dell'exchange), nessun profitto virtuale: i fondi
+ impegnati in posizioni aperte contano come capitale, non come guadagno. Snapshot non valido, riserva incerta o
+-baseline assente ⇒ crescita ignota ⇒ nessuna espansione. Lo stake espanso resta soggetto a cap, RiskGate, STOP e
++baseline assente ⇒ crescita ignota ⇒ nessuna espansione (NORMAL prima di qualunque confronto con la soglia,
++anche con `expansion_profit_pct` ≤ 0 — ciclo 8, rilievo Codex su 034af59). Lo stake espanso resta soggetto a cap, RiskGate, STOP e
+ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
+ 
+ ## RSR-12 — tavoli di recovery persistenti (decisione owner)
+diff --git a/tests/test_pr512_codex_034af59.py b/tests/test_pr512_codex_034af59.py
+index 80dbc42..681a781 100644
+--- a/tests/test_pr512_codex_034af59.py
++++ b/tests/test_pr512_codex_034af59.py
+@@ -353,3 +353,26 @@ def test_f7_microstake_safe_docstring_declares_its_real_role():
+     doc = ms.__doc__ or ""
+     assert "no import or call site" not in doc, "la docstring nega un uso che esiste (core/microstake_sim_port.py)"
+     assert "microstake_sim_port" in doc and "TradingEngine" in doc
++
++
++# ------------------------------------------------------------------ 10. crescita ignota => mai espansione
++@pytest.mark.parametrize("threshold", [0.0, -1.0, 5.0])
++def test_f10_unknown_growth_never_expands_whatever_the_threshold(threshold):
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    d = _calc(_mm(expansion_profit_pct=threshold), expansion_growth_snapshot=None)
++    assert d.desk_mode is DeskMode.NORMAL, (threshold, d.desk_mode)
++    assert d.recommended_stake == pytest.approx(2.0)          # nessun moltiplicatore di espansione
++
++
++@pytest.mark.parametrize("growth", [float("nan"), float("inf"), "abc"])
++def test_f10_non_finite_growth_is_unknown_and_never_expands(growth):
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=growth).desk_mode is DeskMode.NORMAL
++
++
++def test_f10_known_growth_at_zero_threshold_still_expands():
++    from core.system_state import DeskMode
++    from test_f032_rsr12_units import _calc, _mm
++    assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=0.0).desk_mode is DeskMode.EXPANSION
+-- 
+2.43.0
+

@@ -1,0 +1,103 @@
+From 69f73cb25dcfb4cbbe01a503350e779e449d56c4 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 13:25:26 +0000
+Subject: [PATCH 09/10] [TASK: issue461-pr28-microstake-native-02] prep c8 #9:
+ pfckpt.verify risolve ogni tests_executed[].sha come code.sha
+
+Rilievo Codex su 034af59: lo SHA di un test PASS/FAIL era solo validato nella forma; uno
+SHA inventato passava verify(). Ora ogni sha PASS/FAIL e' risolto con `git cat-file -e
+<sha>^{commit}` nella stessa lookup di code.sha (code_repo o repo); irrisolto => problema
+"test sha unresolved" => CHECKPOINT_INVALID. Nessun test esistente adattato.
+Test: tests/agent_checkpoint/test_pfckpt_codex_034af59.py (git reale, RED prima della patch).
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ docs/agent_checkpoint_protocol.md             |  4 +-
+ .../test_pfckpt_codex_034af59.py              | 41 +++++++++++++++++++
+ tools/agent_checkpoint/pfckpt.py              |  6 +++
+ 3 files changed, 50 insertions(+), 1 deletion(-)
+ create mode 100644 tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+
+diff --git a/docs/agent_checkpoint_protocol.md b/docs/agent_checkpoint_protocol.md
+index 7e66bd4..cab7f13 100644
+--- a/docs/agent_checkpoint_protocol.md
++++ b/docs/agent_checkpoint_protocol.md
+@@ -31,7 +31,9 @@ che deve esistere nel repository), `lotto_corrente`, `lotti_completati`, `next_a
+ `pr_505`, `certification_verdict` (`PASS` / `PARTIAL` / `NO-GO` / `BLOCKED` / `NOT VERIFIED`).
+ 
+ Ogni voce di `tests_executed` ha `status` ∈ `PASS` / `FAIL` / `BLOCKED` / `NOT VERIFIED` / `MISSING`. `PASS` e `FAIL`
+-richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale. Se
++richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale, e
++`verify` lo risolve con la stessa lookup di `code.sha` (`git cat-file -e <sha>^{commit}`; irrisolto ⇒ problema
++`test sha unresolved`, checkpoint invalido — ciclo 8, rilievo Codex su 034af59). Se
+ una voce dichiara `artifact`, il file deve essere nel commit.
+ 
+ ## 3. Verifica (`verify`)
+diff --git a/tests/agent_checkpoint/test_pfckpt_codex_034af59.py b/tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+new file mode 100644
+index 0000000..0474011
+--- /dev/null
++++ b/tests/agent_checkpoint/test_pfckpt_codex_034af59.py
+@@ -0,0 +1,41 @@
++"""PR #512 ciclo 8 — rilievo Codex su 034af59 (pfckpt.verify): ogni `tests_executed[].sha` con status PASS/FAIL deve
++risolversi a un commit reale (stessa lookup di `code.sha`, `git cat-file -e <sha>^{commit}`), altrimenti il
++checkpoint e' invalido ("test sha unresolved"). Git reale, nessun mock."""
++import json
++import os
++import sys
++
++import pytest
++
++HERE = os.path.dirname(os.path.abspath(__file__))
++sys.path.insert(0, HERE)
++sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "agent_checkpoint"))
++import pfckpt  # noqa: E402
++from test_pfckpt import D, agent, expect, next_state, world  # noqa: E402,F401
++
++
++def _checkpoint_with_tests(a, world, tests):
++    exp = next_state(a, world, tests_executed=tests)
++    pfckpt.write_manifest(a, D)
++    return exp
++
++
++@pytest.mark.parametrize("sha", ["deadbeefcafe", "0" * 40, "abcdef1"])
++def test_unresolvable_test_sha_invalidates_the_checkpoint(world, sha):
++    a = agent(world, "a")
++    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": sha}])
++    from test_pfckpt import raw_commit
++    raw_commit(a, "ckpt con sha di test inventato")
++    err = expect(2, pfckpt.verify, a, "HEAD", D)
++    assert any("t1" in p and "test sha unresolved" in p for p in err.detail["problems"]), err.detail["problems"]
++
++
++def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
++    a = agent(world, "a")
++    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},
++                                      {"id": "t2", "status": "FAIL", "sha": world["code"][:12]},
++                                      {"id": "t3", "status": "BLOCKED"}])
++    from test_pfckpt import raw_commit
++    raw_commit(a, "ckpt con sha reali")
++    rep = pfckpt.verify(a, "HEAD", D)
++    assert rep["seq"] == 2
+diff --git a/tools/agent_checkpoint/pfckpt.py b/tools/agent_checkpoint/pfckpt.py
+index 954180c..b95615e 100644
+--- a/tools/agent_checkpoint/pfckpt.py
++++ b/tools/agent_checkpoint/pfckpt.py
+@@ -237,6 +237,12 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
+     if code_sha and git(lookup, "cat-file", "-e", f"{code_sha}^{{commit}}", check=False).returncode != 0:
+         problems.append(f"SHA del codice inesistente nel repository: {code_sha}")
+     for t in state.get("tests_executed") or []:
++        if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL"):
++            # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
++            # con la stessa lookup di code.sha (altrimenti un esito e' attribuibile a codice inesistente)
++            tsha = str(t.get("sha", ""))
++            if git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
++                problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
+         art = t.get("artifact") if isinstance(t, dict) else None
+         for a in ([art] if isinstance(art, str) else (art or [])):
+             if a not in files:
+-- 
+2.43.0
+
