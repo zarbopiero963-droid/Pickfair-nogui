@@ -47,9 +47,9 @@
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
  ],
- "lotto_corrente": "Audit cap monetari (read-only, agente) + patch locali 10 rilievi Codex 034af59 (worktree wt_c8, commit d8cb2a4 = #1) + PR 10 cicli pronta (6a152e8, regressione 7263 passed); #512 NEEDS_MANUAL in attesa decisione A/B/C",
+ "lotto_corrente": "#512 ciclo 8 (patch 10 rilievi Codex in worktree locale) + audit cap monetari read-only (agente) + PR 10 cicli pronta (6a152e8)",
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Completare audit cap (analisi_impatti_cap.md + registro_conflitti_cap.json), revisione indipendente ERRORE1/ERRORE2, pubblicare registro canonico su #426 e cross-reference su #505/#512/#506/#461/#453/#513/#351; completare le 10 patch locali; attendere decisione owner A/B/C per #512; nessun merge, nessuna modifica a #505/main.",
+ "next_atomic_action": "Completare le 10 patch nel worktree (RED->GREEN per rilievo), cherry-pick sul checkout #512, registrare i nuovi file di test nello scope, regressione completa, riesame indipendente, push unico ciclo 8, triage nuovi finding, verdetto; in parallelo chiudere l'audit cap (registro conflitti + cross-reference).",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

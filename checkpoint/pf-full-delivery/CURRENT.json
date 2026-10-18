@@ -6,8 +6,8 @@
   "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Completare audit cap (analisi_impatti_cap.md + registro_conflitti_cap.json), revisione indipendente ERRORE1/ERRORE2, pubblicare registro canonico su #426 e cross-reference su #505/#512/#506/#461/#453/#513/#351; completare le 10 patch locali; attendere decisione owner A/B/C per #512; nessun merge, nessuna modifica a #505/main.",
- "previous_checkpoint_sha": "3929c8efdd75875d1288e966f4cfea1dbc22cb88",
+ "next_atomic_action": "Completare le 10 patch nel worktree (RED->GREEN per rilievo), cherry-pick sul checkout #512, registrare i nuovi file di test nello scope, regressione completa, riesame indipendente, push unico ciclo 8, triage nuovi finding, verdetto; in parallelo chiudere l'audit cap (registro conflitti + cross-reference).",
+ "previous_checkpoint_sha": "dcf94c8d6e2a1e68185d1f7d5d91d6640c86e765",
  "schema": "pf-current/1",
- "seq": 26
+ "seq": 27
 }
