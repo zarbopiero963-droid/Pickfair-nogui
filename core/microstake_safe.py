@@ -1,8 +1,16 @@
-"""Isolated, simulation-only Microstake recovery prototype.
+"""Microstake saga: policy, coordinator and native executor (simulation-only).
 
-This module deliberately has no import or call site in the production execution
-path.  It reconstructs the historical PLACE -> size reduction -> REPLACE saga
-behind an explicit safety policy and a stateful exchange simulator.
+Ruolo reale (rilievo Codex #512 su 034af59, la vecchia docstring lo negava): questo modulo
+E' nel percorso di esecuzione SIM. `core/microstake_sim_port.py` importa `MicrostakeCoordinator`,
+`MicrostakePolicy`, `NativeMicrostakeExecutor`, `Phase`, `Side`, `SimOrder`, `LostResponse`
+e li collega al `SimulationBroker` di produzione; `TradingEngine` (`core/trading_engine.py`,
+`_default_native_microstake_executor` / `build_native_microstake_executor`) lo raggiunge per
+ogni invio runtime sotto il minimo exchange in SIMULATION. In LIVE non esiste adapter: l'engine
+resta fail-closed (`MICROSTAKE_EXECUTOR_UNAVAILABLE`) e `MicrostakePolicy.simulation_only`
+blocca ogni altro uso.
+
+Ricostruisce la saga PLACE -> riduzione di size -> REPLACE dietro una policy esplicita;
+`StatefulExchangeSimulator` e `JsonSagaStore` restano l'exchange e lo store dei test offline.
 """
 
 from __future__ import annotations

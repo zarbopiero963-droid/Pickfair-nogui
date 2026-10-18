@@ -345,3 +345,11 @@ def test_f6_start_with_unreadable_recovery_state_goes_paused_and_keeps_the_store
     assert second["rebuild"]["ok"] is False and second["rebuild"]["reason"] == "RECOVERY_STATE_UNREADABLE", second["rebuild"]
     assert not any(o["market_id"] == "1.602" and o["status"] == "SUBMITTED" for o in second["snaps"][-1]["orders"])
     assert Database(dbs[0]).get_settings().get("roserpina.recovery_tables_state") == "{rotto"
+
+
+# ------------------------------------------------------------------ 7. docstring veritiero di microstake_safe
+def test_f7_microstake_safe_docstring_declares_its_real_role():
+    import core.microstake_safe as ms
+    doc = ms.__doc__ or ""
+    assert "no import or call site" not in doc, "la docstring nega un uso che esiste (core/microstake_sim_port.py)"
+    assert "microstake_sim_port" in doc and "TradingEngine" in doc
