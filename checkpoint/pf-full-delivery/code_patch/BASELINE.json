@@ -1,17 +1,8 @@
 {
- "captured_at": "2026-10-17T15:40:31+00:00",
- "files": [
-  "code_patch/tracked.patch"
- ],
- "head": "8ffb4f319e0c66a6bdbbe79c0cc1b01b499cc204",
- "modified": [
-  "AGENTS.md",
-  "CHANGELOG.md",
-  "CLAUDE.md",
-  "docs/agent_checkpoint_protocol.md",
-  "tests/agent_checkpoint/test_pfckpt.py",
-  "tools/agent_checkpoint/pfckpt.py"
- ],
- "tree": "84d5be744c8779e196f7885e6a2572488b30e4e5",
+ "captured_at": "2026-10-18T22:43:54+00:00",
+ "files": [],
+ "head": "48e99edcf92c56afd6c56d69f920e17527937222",
+ "modified": [],
+ "tree": "52964ac18ea32effa7f8a91f77c7e2f167b2566a",
  "untracked": []
 }

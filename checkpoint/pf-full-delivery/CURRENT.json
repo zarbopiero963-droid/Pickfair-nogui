@@ -6,8 +6,8 @@
   "sha": "9ab753aebc086cb05bfa4641f574db7de56f1772"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "CI/Sol/Grok/Codex settled su 9ab753a; risposte nei thread (Fatto in commit / DEFERRED_BY_POLICY -> #516..#520) e resolve con prova; verdetto #512 READY FOR OWNER MERGE o BLOCKED; poi #505.",
- "previous_checkpoint_sha": "5e29935887e124c2015224c47fde6e3a4377d406",
+ "next_atomic_action": "Attendere decisione owner sul ciclo 11 della #512. Se autorizzato: regressione completa su 48e99ed, riesame indipendente, push unico, CI/Sol/Grok/Codex, resolve thread con prova, verdetto. Nessuna PR nuova; #505 resta PATCH PREPARED.",
+ "previous_checkpoint_sha": "176e5cb3d25b6d5dcc14cf8ac2da21c5e401900e",
  "schema": "pf-current/1",
- "seq": 36
+ "seq": 37
 }
