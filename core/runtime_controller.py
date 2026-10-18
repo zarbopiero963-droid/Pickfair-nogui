@@ -3932,6 +3932,7 @@ class RuntimeController:
             logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
             return False
         count = 0
+        owns_it = False
         for raw in rows:
             row = dict(raw)
             if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
@@ -3942,10 +3943,13 @@ class RuntimeController:
                 return False                            # riga illeggibile: attribuzione non dimostrabile
             if not isinstance(p, dict):
                 return False
-            if str(p.get("market_id") or "") == market_id and (
-                    not event_key or str(p.get("event_key") or "") == event_key):
+            # Ogni ordine del bot sullo STESSO MERCATO conta, qualunque sia la sua selezione/evento (Grok su
+            # 9ab753a): il settlement per bet senza table_id non dice di quale scommessa e', quindi il P&L e'
+            # attribuibile al tavolo solo se sul mercato esiste un solo ordine possibile, ed e' il suo.
+            if str(p.get("market_id") or "") == market_id:
                 count += 1
-        return count == 1
+                owns_it = not event_key or str(p.get("event_key") or "") == event_key
+        return count == 1 and owns_it
 
     def _reset_reservations_keeping_uncertain(self) -> None:
         """Reset di tavoli e chiavi duplicati che NON libera capitale ancora impegnato.

@@ -29,6 +29,7 @@ from core.microstake_safe import (
     Phase,
     Side,
     SimOrder,
+    order_exposure,
 )
 
 logger = logging.getLogger(__name__)
@@ -385,6 +386,21 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
                 out.append(ref)
         return out
 
+    def _recomputed_stub_exposure(self, saved: Dict[str, Any]) -> Decimal:
+        """Esposizione dello stub ricalcolata da lato e prezzo persistiti; ignota => Decimal('Infinity')."""
+        try:
+            side = Side(str(((saved.get("request") or {}).get("side")) or "").upper())
+            price = Decimal(str(saved.get("stub_price")))
+            stub = Decimal(str(getattr(self.coordinator.policy, "exchange_stub_size", "2.00")))
+            if not price.is_finite() or price <= 1:
+                raise ValueError
+            value = order_exposure(side, stub, price)
+            if value.is_finite() and value > 0:
+                return value
+        except (InvalidOperation, ValueError, TypeError, KeyError):
+            pass
+        return Decimal("Infinity")
+
     def recover_pending(self) -> Dict[str, str]:
         """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
         Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
@@ -405,7 +421,10 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             except (InvalidOperation, ValueError, TypeError):
                 exposure = None
             if exposure is None or not exposure.is_finite() or exposure <= 0:
-                exposure = Decimal(str(getattr(self.coordinator.policy, "exchange_stub_size", "2.00")))
+                # Importo transitorio ignoto (store corrotto): mai il solo stub, la liability di uno stub LAY puo'
+                # superarlo (Grok su 9ab753a). Si ricalcola dal lato e dal prezzo dello stub persistiti; se anche
+                # quelli mancano, riserva illimitata: nessun altro microstake finche' la saga non e' riconciliata.
+                exposure = self._recomputed_stub_exposure(saved)
             self.port.hold_reservation(ref, exposure)
         if pending and not self.port._snapshot():
             return {ref: Phase.AMBIGUOUS.value for ref in pending}

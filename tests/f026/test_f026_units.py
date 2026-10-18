@@ -234,6 +234,26 @@ def test_settlement_without_table_id_counts_every_possibly_placed_order(live_sta
     assert _tables(rc)[1]["current_event_key"] == "EV-A"
 
 
+def test_settlement_without_table_id_never_attributes_another_selection_bet_to_the_table():
+    """Grok su 9ab753a (confermato su Database sqlite reale): il settlement per bet di una posizione precedente
+    su un'altra selezione dello stesso mercato non libera il tavolo della posizione corrente con quel P&L."""
+    rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-OTHER", "selection_id": 9},
+                       {"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
+    _activate(rc, 1, "EV-A", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = _tables(rc)[1]
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, t
+
+
+def test_settlement_without_table_id_never_releases_a_table_whose_order_is_not_the_markets_only_one():
+    rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-OTHER"}])           # unico ordine, ma non suo
+    _activate(rc, 1, "EV-A", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    assert _tables(rc)[1]["current_event_key"] == "EV-A"
+
+
 def test_settlement_without_table_id_never_releases_a_dutching_batch_table():
     rc = _rc()
     rc.db = _OrdersDb([{"market_id": "1.30", "event_key": "DUTCH"}])

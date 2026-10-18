@@ -1166,3 +1166,32 @@ def test_c10_rollback_with_a_partial_match_is_ambiguous_never_rolled_back(tmp_pa
     assert res.phase is Phase.AMBIGUOUS and res.reason == "rollback_matched", (res.phase, res.reason)
     assert res.reservation_held is True and ex.has_reservation("pm-1")
     assert JsonSagaStore(tmp_path / "s.json").load("pm-1")["phase"] == "AMBIGUOUS"
+
+
+
+@pytest.mark.parametrize("bad", [None, "", "nan", "-1", "0", "abc"])
+@pytest.mark.parametrize("stub_price,expected", [("6.00", "10.00"), (None, "Infinity"), ("abc", "Infinity")])
+def test_c10_unknown_transient_exposure_never_holds_less_than_the_stub_liability(monkeypatch, bad, stub_price, expected):
+    """Grok su 9ab753a: importo transitorio della saga ignoto => mai il solo stub da 2 EUR. Si ricalcola la
+    liability dello stub (LAY 2 EUR a 6.00 = 10 EUR); senza prezzo, riserva illimitata (fail-closed)."""
+    from decimal import Decimal
+    from core.microstake_sim_port import DbSagaStore, build_native_microstake_executor
+    from simulation_broker import SimulationBroker
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_sim_port import _Db
+    db = _Db()
+    store = DbSagaStore(db)
+    req = {"market_id": "1.1", "selection_id": 7, "side": "LAY", "economic_stake": "0.10", "target_price": "6.00",
+           "customer_ref": "lay"}
+    values = {"phase": "AMBIGUOUS", "reservation_held": True, "request": req}
+    if bad is not None:
+        values["transient_exposure"] = bad
+    if stub_price is not None:
+        values["stub_price"] = stub_price
+    store.save("lay", **values)
+    ex = build_native_microstake_executor(SimulationBroker(starting_balance=100.0, db=_Db()), db,
+                                          lambda payload: Decimal("10"))
+    monkeypatch.setattr(ex.port, "_snapshot", lambda: False)
+    ex.recover_pending()
+    assert ex.port._reservations["lay"] == Decimal(expected), ex.port._reservations
+    assert ex.port.reserve("altro", Decimal("0.50"), Decimal("10")) is False, "cap superato oltre lo stub ignoto"
