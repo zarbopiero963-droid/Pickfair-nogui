@@ -175,3 +175,19 @@ def test_recover_failure_on_an_existing_saga_keeps_its_reservation():
                                stub_price=D("3.02"))
     ex.coordinator.recover = original_recover
     assert list(ex.port._reservations) == ["keep"], "riserva di una saga gia' inviata sciolta da un errore di recover"
+
+
+# ---------------------------------------------------------------- Sol su 5dd1b86: retry con saga esistente e store illeggibile
+def test_store_load_failure_on_a_retry_keeps_the_pre_existing_reservation():
+    engine, broker, _ = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    ex = engine.microstake_executor
+    ex.port.inject_fault("LOST_CANCEL_RESPONSE")
+    assert ex.execute(_payload("again", size=0.10, price=3.0))["status"] == "AMBIGUOUS"
+    assert list(ex.port._reservations) == ["again"]
+    original_load = ex.store.load
+    ex.store.load = lambda ref: (_ for _ in ()).throw(SagaStoreError("SAGA_STORE_CORRUPT:disk"))
+    res = ex.execute(_payload("again", size=0.10, price=3.0))               # retry dello stesso ref
+    ex.store.load = original_load
+    assert res["status"] in ("FAILURE", "AMBIGUOUS")
+    assert list(ex.port._reservations) == ["again"], "riserva preesistente sciolta da uno store illeggibile"

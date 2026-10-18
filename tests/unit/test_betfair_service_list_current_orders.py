@@ -6,7 +6,9 @@ Verifies the ghost-order detection facade:
 - LIVE is fail-closed: a known-invalid session or a missing live client RAISES
   (never a silent empty list that ghost detection would read as "no orders")
 - a SESSION_EXPIRED during the live fetch routes bounded recovery and re-raises
-- a successful live fetch returns the order dicts (non-dicts filtered out)
+- a successful live fetch returns the order dicts; a malformed payload (non-list container or
+  non-dict row) RAISES CURRENT_ORDERS_MALFORMED instead of being silently filtered (owner decision
+  D-C, 18/10/2026, Codex #512): startup reconstruction must never read it as "no orders"
 """
 
 import pytest
@@ -74,14 +76,13 @@ def test_simulation_without_broker_returns_empty_list():
 
 
 @pytest.mark.unit
-def test_simulation_filters_non_dict_entries():
+def test_simulation_raises_on_non_dict_entries():
     svc = _make_service()
     svc.simulation_mode = True
     svc.simulation_broker = _OrdersBroker(orders=[{"betId": "1"}, None, "x"])
 
-    out = svc.list_current_orders()
-    assert len(out) == 1
-    assert out[0]["betId"] == "1" and out[0]["bet_id"] == "1"
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
+        svc.list_current_orders()
 
 
 @pytest.mark.unit
@@ -113,7 +114,7 @@ def test_live_success_returns_order_dicts():
     svc = _make_service()
     svc.simulation_mode = False
     svc._session_invalid = False
-    orders = [{"betId": "1", "marketId": "1.100"}, None]
+    orders = [{"betId": "1", "marketId": "1.100"}]
     svc.client = _OrdersBroker(orders=orders)
 
     out = svc.list_current_orders()

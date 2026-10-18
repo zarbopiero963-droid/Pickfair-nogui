@@ -297,6 +297,10 @@ class StatefulExchangeSimulator:
         with self._state["lock"]:
             self._state["reservations"].pop(customer_ref, None)
 
+    def has_reservation(self, customer_ref: str) -> bool:
+        with self._state["lock"]:
+            return customer_ref in self._state["reservations"]
+
     def _take(self, *faults: Fault):
         for i, item in enumerate(self._state["faults"]):
             if item[0] in faults:
@@ -432,6 +436,11 @@ class MicrostakeCoordinator:
             # dall'exchange, cioe' eseguito diverso da quello richiesto. Rifiuto esplicito PRIMA dell'invio.
             return self._result(Phase.BLOCKED, req=req, reason="invalid_size_precision")
         transient = order_exposure(req.side, p.exchange_stub_size, stub_price)
+        has_reservation = getattr(self.exchange, "has_reservation", None)
+        # Adapter senza `has_reservation` => fail-closed: la riserva si considera PREESISTENTE e non
+        # viene mai sciolta su store illeggibile (riesame indipendente ciclo 6: il default False
+        # avrebbe fatto ereditare il difetto Sol a un futuro adapter che non implementa il metodo).
+        pre_existing = bool(has_reservation(req.customer_ref)) if callable(has_reservation) else True
         if not self.exchange.reserve(req.customer_ref, transient, cap):
             return self._result(Phase.BLOCKED, req=req, reason="transient_exposure_cap",
                                 max_exposure=transient)
@@ -441,7 +450,10 @@ class MicrostakeCoordinator:
         except Exception:
             # Store illeggibile PRIMA di qualunque invio: la riserva transitoria appena presa
             # non deve restare appesa fino al riavvio (rilievo Codex #512). Nulla e' partito.
-            self.exchange.release_reservation(req.customer_ref)
+            # Una riserva PREESISTENTE (retry di un ref con saga gia' inviata) copre esposizione
+            # reale e resta (rilievo Sol #512 su 5dd1b86).
+            if not pre_existing:
+                self.exchange.release_reservation(req.customer_ref)
             raise
         if existing:
             # Saga gia' avviata (invio precedente / AMBIGUOUS): la riserva copre esposizione REALE

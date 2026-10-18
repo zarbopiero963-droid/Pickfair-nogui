@@ -203,6 +203,10 @@ class SimulationExchangePort:
         with self._lock:
             self._reservations.pop(customer_ref, None)
 
+    def has_reservation(self, customer_ref: str) -> bool:
+        with self._lock:
+            return customer_ref in self._reservations
+
     def _snapshot(self) -> None:
         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato

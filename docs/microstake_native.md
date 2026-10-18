@@ -93,6 +93,9 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
   esiti dopo l'invio restano AMBIGUOUS/FAILED con l'intento consumato. Il broker SIM salva lo snapshot di reload
   (`persist_snapshot`) dopo ogni operazione della saga.
 - Costruzione: `TradingEngine.native_microstake_executor()` crea l'esecutore una sola volta dal broker SIM
+  (costruzione e rebinding serializzati da `_microstake_executor_lock`: due prime chiamate concorrenti,
+  Quick Bet + hedge del cashout, ottengono LO STESSO esecutore, una sola mappa di riserve e un solo store;
+  rilievo Codex #512 r4304867227, ciclo 6)
   riconosciuto per identità/classe (`_e_il_broker_di_simulazione`, `isinstance(SimulationBroker)`), mai da un client
   reale; headless e GUI non hanno bisogno di cablaggi aggiuntivi per il choke point, e passano lo stesso esecutore alla
   catena del cashout (`cabla_catena_cashout(..., microstake_executor_provider=...)`).

@@ -695,11 +695,7 @@ class BetfairService:
             if not broker:
                 return []
             orders = broker.get_current_orders(market_ids)
-            return [
-                self._normalize_startup_order(o)
-                for o in (orders or [])
-                if isinstance(o, dict)
-            ]
+            return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
 
         # LIVE — fail-closed.
         if self._session_invalid:
@@ -724,11 +720,23 @@ class BetfairService:
                 logger.exception("Errore list_current_orders: %s", exc)
             raise
 
-        return [
-            self._normalize_startup_order(o)
-            for o in (orders or [])
-            if isinstance(o, dict)
-        ]
+        return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
+
+    @staticmethod
+    def _well_formed_current_orders(orders: Any) -> List[Dict[str, Any]]:
+        """Fail-closed sulla forma: ``None`` vale "nessun ordine", ma un contenitore che non e'
+        una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
+        silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
+        che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
+        decisione owner D-C del 18/10/2026)."""
+        if orders is None:
+            return []
+        if not isinstance(orders, list):
+            raise RuntimeError(f"CURRENT_ORDERS_MALFORMED: {type(orders).__name__} is not a list")
+        for order in orders:
+            if not isinstance(order, dict):
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
+        return orders
 
     @staticmethod
     def _normalize_startup_order(order: Dict[str, Any]) -> Dict[str, Any]:

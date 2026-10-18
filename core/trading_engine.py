@@ -233,6 +233,10 @@ class TradingEngine:
         self._max_seen_cid_size: int = 50_000
 
         self._lock = threading.Lock()
+        # Costruzione/rebinding dell'esecutore Microstake serializzati (rilievo Codex #512, P1):
+        # due prime chiamate concorrenti (Quick Bet + hedge del cashout) devono ottenere LO STESSO
+        # esecutore, quindi una sola mappa di riserve transitorie e un solo store della saga.
+        self._microstake_executor_lock = threading.RLock()
         self._runtime_state = NOT_READY
         self._health: Dict[str, Any] = {}
 
@@ -2242,20 +2246,22 @@ class TradingEngine:
         Un esecutore costruito sul broker SIM di una sessione precedente (stop/start crea
         un nuovo `SimulationBroker`) viene ricostruito; in LIVE l'adapter SIM non viene
         mai riusato (fail-closed: None => MICROSTAKE_EXECUTOR_UNAVAILABLE). Un esecutore
-        iniettato senza broker (test/adapter esterno) resta valido com'e'.
+        iniettato senza broker (test/adapter esterno) resta valido com'e'. Costruzione
+        e rebinding sono serializzati da un lock dedicato: mai due esecutori.
         """
-        cached = self.microstake_executor
-        bound_broker = getattr(getattr(cached, "port", None), "broker", None)
-        if cached is not None and bound_broker is None:
-            return cached
-        if str(mode or "").upper() == "LIVE":
-            return None
-        if cached is not None:
-            if bound_broker is self._current_simulation_broker():
+        with self._microstake_executor_lock:
+            cached = self.microstake_executor
+            bound_broker = getattr(getattr(cached, "port", None), "broker", None)
+            if cached is not None and bound_broker is None:
                 return cached
-            logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
-            self.microstake_executor = None
-        return self._default_native_microstake_executor(mode)
+            if str(mode or "").upper() == "LIVE":
+                return None
+            if cached is not None:
+                if bound_broker is self._current_simulation_broker():
+                    return cached
+                logger.warning("Microstake nativo: broker di simulazione cambiato, esecutore ricostruito")
+                self.microstake_executor = None
+            return self._default_native_microstake_executor(mode)
 
     def _current_simulation_broker(self) -> Any:
         """Il broker SIM dimostrabile della sessione corrente, o None."""

@@ -9,6 +9,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ## [Unreleased]
 
 ### Fixed
+- **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
+  la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
+  (rilascio solo di una riserva sicuramente nuova; Sol c.6242912622); (2) costruzione e rebinding dell'esecutore
+  Microstake serializzati da un lock dedicato in `TradingEngine` (due chiamate concorrenti => un solo esecutore,
+  una sola mappa di riserve, un solo store; Codex r4304867227); (3) decisione D-C: `BetfairClient.get_current_orders`
+  e `BetfairService.list_current_orders` sollevano `CURRENT_ORDERS_MALFORMED` su contenitore non-lista o riga non-dict
+  invece di filtrare a vuoto, cosi' la ricostruzione all'avvio finisce in `EXCHANGE_ORDERS_UNAVAILABLE` e non chiude
+  posizioni SUBMITTED vive (Codex r4304867229). Test RED→GREEN in `tests/test_pr512_review_cycle6.py`.
 - **PF-PR-RECOVERY-DECISIONS-02 (owner 17/10, lotto unico sui sei finding triagiati di PR #512):** `resume()` ritenta
   anche la recovery delle saghe Microstake (non solo F018) e resta PAUSED finché entrambe non riescono; stake con più
   di due decimali rifiutato prima dell'invio (`invalid_size_precision`) e residuo del broker diverso dallo stake
