@@ -618,7 +618,10 @@ class MicrostakeCoordinator:
                                 max_exposure=transient, held=False)
         # Resume only through execute's idempotent reconciliation path.  An
         # accepted stub is never placed again.
-        if order.matched > 0:
+        # Con rollback deciso il residuo si cancella PRIMA di classificare l'abbinato: un abbinamento parziale
+        # avvenuto prima del recover non deve lasciare il resto dello stub eseguibile (rilievo Codex r4309039350).
+        # La parte abbinata resta poi AMBIGUOUS `rollback_matched` con riserva tenuta (_terminal_or_ambiguous).
+        if order.matched > 0 and not rollback_intent:
             self.store.save(customer_ref, phase=Phase.AMBIGUOUS)
             return self._result(Phase.AMBIGUOUS, req=req, reason="reconciled_matched_stub",
                                 order=order, max_exposure=transient, held=True)

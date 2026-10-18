@@ -596,7 +596,8 @@ class DutchingController:
         filtrato per prezzo eseguibile. `guard_enabled=False` esplicito disattiva
         del tutto (nessuna osservazione ne' blocco). Il book e' recuperato UNA sola
         volta (solo cache, nessun I/O) e riusato per le gambe; book assente =>
-        fail-open (nessuno shortfall, quindi nessun blocco).
+        in sola osservazione nessuno shortfall, con il guard in blocco shortfall
+        `LIQUIDITY_UNKNOWN` per ogni gamba (fail-closed, rilievo Codex r4309039358).
         """
         out: Dict[str, Any] = {"warning": False, "shortfall": []}
         if not bool(getattr(config, "liquidity_guard_enabled", True)):
@@ -604,9 +605,28 @@ class DutchingController:
         multiplier = self._book_threshold(config, "liquidity_multiplier", trading_config.LIQUIDITY_MULTIPLIER)
         min_abs = self._min_liquidity_absolute(config)
         book = self._market_book((payload or {}).get("market_id"))
-        if book is None:
-            return out  # nessun book in cache => nessuna osservazione (fail-open)
         warning_only = self._liquidity_warning_only(config)
+        if book is None:
+            if warning_only:
+                return out  # sola osservazione: nessun book in cache => nessuna osservazione
+            # Guard armato in blocco: un book assente e' liquidita' IGNOTA per ogni gamba, mai "sufficiente"
+            # (rilievo Codex r4309039358; stesso contratto del percorso singolo LIQUIDITY_BOOK_UNAVAILABLE).
+            unknown = []
+            for item in (results or []):
+                try:
+                    selection_id = int(item.get("selectionId"))
+                    stake = float(item.get("stake", 0.0) or 0.0)
+                except (TypeError, ValueError, AttributeError):
+                    continue
+                if stake <= 0.0:
+                    continue
+                unknown.append({"selectionId": selection_id, "available": None,
+                                "required": round(float(stake) * float(multiplier), 2),
+                                "min_absolute": round(float(min_abs), 2), "reason": "LIQUIDITY_UNKNOWN"})
+            if unknown:
+                out["warning"] = True
+                out["shortfall"] = unknown
+            return out
         shortfall = [
             leg
             for leg in (

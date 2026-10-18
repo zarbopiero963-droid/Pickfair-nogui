@@ -35,7 +35,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   senza `table_id`: conta ogni ordine del bot sullo stesso mercato, qualunque selezione; il tavolo si libera solo se
   l'unico ordine del mercato e' il suo (prima il P&L di un'altra selezione poteva diventare la perdita di recovery del
   tavolo, confermato su sqlite reale). (2) Recovery delle riserve microstake: importo transitorio ignoto => liability
-  dello stub ricalcolata da lato e prezzo persistiti, o riserva illimitata; mai il solo stub da 2 EUR.
+  dello stub ricalcolata da lato e prezzo persistiti, o riserva illimitata; mai il solo stub da 2 EUR. Rilievi Codex su `9ab753a`
+  confermati dalla verifica indipendente: (3) rollback deciso con stub gia' abbinato in parte => il recover cancella
+  comunque il residuo, poi AMBIGUOUS `rollback_matched` (r4309039350); (4) F028 libera il tavolo dell'ORDINE
+  (`table_id` persistito con verifica dell'evento), mai quello di un altro ordine vivo sullo stesso evento; senza
+  `table_id` e con piu' tavoli nessun rilascio (r4309039372); (5) Dutching: book assente con guard in blocco =>
+  `LIQUIDITY_UNKNOWN` per ogni gamba (r4309039358). Trasferiti: r4309039345 -> #521, r4309039363 -> #516,
+  r4309039377 -> #518.
 - **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
   remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
   cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il

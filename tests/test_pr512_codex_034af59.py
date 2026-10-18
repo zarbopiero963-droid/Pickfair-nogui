@@ -1195,3 +1195,82 @@ def test_c10_unknown_transient_exposure_never_holds_less_than_the_stub_liability
     ex.recover_pending()
     assert ex.port._reservations["lay"] == Decimal(expected), ex.port._reservations
     assert ex.port.reserve("altro", Decimal("0.50"), Decimal("10")) is False, "cap superato oltre lo stub ignoto"
+
+
+
+# ------------------------------------------------------------------ ciclo 11 (preparato): rilievi Codex su 9ab753a
+def test_c11_missing_dutching_book_is_unknown_liquidity_when_the_guard_blocks():
+    """Codex r4309039358: book Dutching assente con guard armato in blocco => LIQUIDITY_UNKNOWN per ogni gamba
+    (mai "liquidita' sufficiente"); in sola osservazione nessuna osservazione, come prima."""
+    from types import SimpleNamespace
+    from controllers.dutching_controller import DutchingController
+    ctl = DutchingController.__new__(DutchingController)
+    ctl._market_book = lambda market_id: None
+    results = [{"selectionId": 11, "stake": 10.0, "side": "BACK", "price": 2.0},
+               {"selectionId": 12, "stake": 5.0, "side": "BACK", "price": 3.0}]
+    armed = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=False), {"market_id": "1.1"}, results)
+    assert armed["warning"] is True and [l["reason"] for l in armed["shortfall"]] == ["LIQUIDITY_UNKNOWN"] * 2, armed
+    observe = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_warning_only=True), {"market_id": "1.1"}, results)
+    assert observe == {"warning": False, "shortfall": []}
+    off = ctl._evaluate_liquidity_guard(SimpleNamespace(liquidity_guard_enabled=False, liquidity_warning_only=False),
+                                        {"market_id": "1.1"}, results)
+    assert off == {"warning": False, "shortfall": []}
+
+
+def test_c11_rollback_intent_cancels_the_remainder_even_after_a_partial_match(tmp_path):
+    """Codex r4309039350: rollback deciso e stub abbinato in parte PRIMA del recover => il recover cancella comunque
+    il residuo (mai lasciato eseguibile) e poi resta AMBIGUOUS `rollback_matched` con riserva tenuta."""
+    from core.microstake_safe import Phase
+    ex, path, policy, Coordinator, Store = _rollback_world(tmp_path)
+    bet = Store(path).load("rb-1")["bet_id"]
+    o = ex.order(bet)
+    o.matched = D("0.05")
+    o.remaining = o.remaining - D("0.05")
+    ex.cancel_all_mode = "ok"
+    before = len(ex.operation_log)
+    res = Coordinator(ex, Store(path), policy).recover("rb-1")
+    ops = [op[0] for op in ex.operation_log[before:]]
+    assert ops == ["CANCEL"], ops
+    assert ex.order(bet).remaining == D("0")
+    assert res.phase is Phase.AMBIGUOUS and res.reason == "rollback_matched" and ex.has_reservation("rb-1")
+    again = Coordinator(ex, Store(path), policy).recover("rb-1")                  # idempotente, nessun replace
+    assert again.phase is Phase.AMBIGUOUS and "REPLACE" not in [op[0] for op in ex.operation_log[before:]]
+
+
+def test_c11_f028_releases_the_finalized_orders_own_table_never_the_live_one(tmp_path):
+    """Codex r4309039372: anti-duplicazione disattivata, due ordini certi sullo stesso evento su due tavoli; solo A
+    e' confermato annullato/decaduto => si libera il tavolo di A, mai quello di B ancora vivo."""
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    occ = dict(_c9_occupied(c))
+    assert len(occ) == 2, occ
+    t_a, t_b = sorted(occ)
+    key = occ[t_a]
+    cand = [{"customer_ref": "A", "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
+             "table_id": t_a},
+            {"customer_ref": "B", "status": "SUBMITTED", "bet_id": "BB", "market_id": "1.234", "event_key": key,
+             "table_id": t_b}]
+    c.rc._open_order_candidates = lambda: (cand, [])
+    c.rc._final_unmatched_bets = lambda markets, bets: {"BA"}
+    c.rc._settlement_reconciliation_allowed = lambda: True
+    assert c.rc._release_final_unmatched_orders() == ["A"]
+    still = {tid for tid, _ in _c9_occupied(c)}
+    assert t_b in still and t_a not in still, ("tavolo dell'ordine vivo liberato", still)
+
+
+def test_c11_f028_without_table_id_and_two_tables_releases_nothing(tmp_path):
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    occ = dict(_c9_occupied(c))
+    key = next(iter(occ.values()))
+    cand = [{"customer_ref": "A", "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
+             "table_id": None}]
+    c.rc._open_order_candidates = lambda: (cand, [])
+    c.rc._final_unmatched_bets = lambda markets, bets: {"BA"}
+    c.rc._settlement_reconciliation_allowed = lambda: True
+    assert c.rc._release_final_unmatched_orders() == []
+    assert len(_c9_occupied(c)) == 2

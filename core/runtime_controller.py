@@ -3748,8 +3748,12 @@ class RuntimeController:
         if not self._settlement_reconciliation_allowed():
             return []
         uncertain = set(self._uncertain_reservations_map())
-        held = {str(t.get("current_event_key") or ""): t for t in self.table_manager.snapshot()
-                if str(t.get("current_event_key") or "") and str(t.get("current_event_key")) not in uncertain}
+        tables_by_key: dict = {}
+        for t in self.table_manager.snapshot():
+            key = str(t.get("current_event_key") or "")
+            if key and key not in uncertain:
+                tables_by_key.setdefault(key, []).append(t)
+        held = {key: ts[0] for key, ts in tables_by_key.items()}
         if not held:
             return []
         try:
@@ -3768,7 +3772,22 @@ class RuntimeController:
         for c in eligible:
             if c["bet_id"] not in final:
                 continue
-            table = held[c["event_key"]]
+            # Il tavolo e' quello dell'ORDINE (table_id persistito, con verifica dell'evento), mai uno qualsiasi
+            # con lo stesso evento: con anti-duplicazione disattivata due ordini dello stesso evento stanno su
+            # tavoli diversi e si libererebbe la riserva dell'ordine ancora vivo (rilievo Codex r4309039372).
+            # table_id assente e piu' tavoli sull'evento => nessun rilascio (fail-closed).
+            candidates_tables = tables_by_key.get(c["event_key"]) or []
+            try:
+                own_id = int(c["table_id"]) if c.get("table_id") is not None else None
+            except (TypeError, ValueError):
+                own_id = None
+            if own_id is not None:
+                table = next((t for t in candidates_tables if int(t["table_id"]) == own_id), None)
+            else:
+                table = candidates_tables[0] if len(candidates_tables) == 1 else None
+            if table is None:
+                logger.warning("F028: tavolo dell'ordine %s non attribuibile: nessun rilascio", c["customer_ref"])
+                continue
             if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"]):
                 # La chiave resta (dedupe del segnale per il TTL) ma non e' piu' una posizione viva:
                 # se era fissata al riavvio torna a scadere normalmente (riesame indipendente c9).
