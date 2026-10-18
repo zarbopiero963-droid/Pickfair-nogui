@@ -173,7 +173,8 @@ class _OrdersDb:
         if self.fail:
             raise RuntimeError("db down")
         if "FROM orders" in sql:
-            return [{"payload_json": json.dumps(p)} for p in self.payloads]
+            return [{"payload_json": json.dumps({k: v for k, v in p.items() if k != "_status"}),
+                     "status": p.get("_status", "SUBMITTED")} for p in self.payloads]
         return []
 
 
@@ -207,6 +208,30 @@ def test_settlement_without_table_id_never_releases_a_multi_leg_or_unproven_posi
     assert t["current_event_key"] == "EV-A" and t["current_exposure"] == 12.0, t
     assert t["loss_amount"] == 0.0 and t["status"] != "RECOVERY", "perdita di una sola gamba attribuita al tavolo"
     assert "1.10" in rc._settled_market_ids                            # mercato marcato regolato comunque
+
+
+@pytest.mark.parametrize("never_placed", ["FAILED", "DENIED", "DUPLICATE_BLOCKED"])
+def test_settlement_without_table_id_ignores_orders_that_were_never_placed(never_placed):
+    """Riesame ciclo 10 (F1): un tentativo precedente mai piazzato (FAILED/DENIED/DUPLICATE_BLOCKED) sulla stessa
+    posizione non e' una seconda gamba: la puntata singola reale libera il tavolo col proprio P&L."""
+    rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "_status": never_placed},
+                       {"market_id": "1.10", "event_key": "EV-A", "_status": "SUBMITTED"}])
+    _activate(rc, 1, "EV-A", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = _tables(rc)[1]
+    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0, t
+
+
+@pytest.mark.parametrize("live_status", ["SUBMITTED", "AMBIGUOUS", "INFLIGHT", "COMPLETED", "ACCEPTED_FOR_PROCESSING"])
+def test_settlement_without_table_id_counts_every_possibly_placed_order(live_status):
+    """BLOCK: ogni stato che puo' corrispondere a un ordine sull'exchange resta una gamba (fail-closed)."""
+    rc = _rc()
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "_status": live_status},
+                       {"market_id": "1.10", "event_key": "EV-A", "_status": "SUBMITTED"}])
+    _activate(rc, 1, "EV-A", "1.10")
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    assert _tables(rc)[1]["current_event_key"] == "EV-A"
 
 
 def test_settlement_without_table_id_never_releases_a_dutching_batch_table():

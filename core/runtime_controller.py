@@ -3901,8 +3901,8 @@ class RuntimeController:
         if len(certain) == 1 and len(matches) == 1 and self._single_bet_position(certain[0]):
             self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
         elif len(certain) == 1 and len(matches) == 1:
-            # Settlement per bet di una posizione con PIU' gambe sullo stesso mercato (Dutching, hedge di
-            # cashout): il P&L di una gamba non e' il netto del tavolo. Nessun rilascio per mercato
+            # Settlement per bet di una posizione con PIU' gambe persistite sullo stesso mercato (Dutching,
+            # piu' ordini del bot): il P&L di una gamba non e' il netto del tavolo. Nessun rilascio per mercato
             # (fail-closed): il tavolo resta trattenuto, il mercato e' marcato regolato (auto-reset/F026).
             # L'aggregazione per bet_id e' il lotto D-F (verifica indipendente ciclo 10, r4303297587).
             logger.warning("Settlement %s senza table_id su una posizione multi-gamba: nessun rilascio "
@@ -3915,21 +3915,29 @@ class RuntimeController:
 
     def _single_bet_position(self, table: dict) -> bool:
         """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo
-        stesso mercato/evento: solo allora il P&L di un settlement per bet e' il netto del tavolo. Batch
-        Dutching (nessuna selezione), piu' ordini (es. hedge di cashout) o DB illeggibile => False."""
+        stesso mercato/evento che possa essere stato piazzato: solo allora il P&L di un settlement per bet e'
+        il netto del tavolo. Batch Dutching (nessuna selezione), piu' ordini persistiti o DB illeggibile =>
+        False. Non contano i tentativi certamente mai piazzati (FAILED / DENIED / DUPLICATE_BLOCKED); ogni
+        altro stato conta (fail-closed). Limite noto, invariato rispetto a main: un hedge di cashout passa da
+        OrderRouter senza riga in `orders` e quindi non e' visto qui (lotti D-D/D-F)."""
         if table.get("selection_id") in (None, ""):
             return False
         market_id = str(table.get("market_id") or "")
         event_key = str(table.get("current_event_key") or "")
         try:
-            rows = self.db._execute("SELECT payload_json FROM orders", fetch=True, commit=False) or []
+            rows = self.db._execute(
+                "SELECT payload_json, status FROM orders WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
+                fetch=True, commit=False) or []
         except Exception:
             logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
             return False
         count = 0
         for raw in rows:
+            row = dict(raw)
+            if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
+                continue
             try:
-                p = json.loads(dict(raw).get("payload_json") or "{}")
+                p = json.loads(row.get("payload_json") or "{}")
             except (TypeError, ValueError, AttributeError):
                 return False                            # riga illeggibile: attribuzione non dimostrabile
             if not isinstance(p, dict):

@@ -22,8 +22,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `tests/traceability/test_pf_trace_codex_034af59.py`, `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
   Verifica indipendente dei thread rinviati (decisione owner opzione 2): due non separabili corretti qui. (a)
   Settlement per bet senza `table_id`: il tavolo si libera per mercato solo se la posizione e' a selezione singola con
-  UN solo ordine del bot sul mercato/evento (`_single_bet_position`); Dutching, hedge o DB illeggibile => nessun
-  rilascio, tavolo trattenuto, mercato marcato regolato (prima il P&L della prima gamba diventava la perdita di
+  UN solo ordine del bot sul mercato/evento che possa essere stato piazzato (`_single_bet_position`; esclusi solo
+  FAILED/DENIED/DUPLICATE_BLOCKED); Dutching, piu' ordini persistiti o DB illeggibile => nessun rilascio, tavolo
+  trattenuto, mercato marcato regolato. Limite noto invariato rispetto a main: un hedge di cashout passa da
+  OrderRouter senza riga in `orders` e non e' visto (lotti D-D/D-F) (prima il P&L della prima gamba diventava la perdita di
   recovery del tavolo; aggregazione per `bet_id` = lotto D-F, r4303297587). (b) Dossier dei 41 parametri: nessun
   clamp dello stake minimo, rifiuto esplicito (r4306544234). Test CI robusto al clone shallow; `pfckpt` rifiuta
   CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope
