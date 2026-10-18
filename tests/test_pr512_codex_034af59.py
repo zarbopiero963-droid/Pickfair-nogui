@@ -506,6 +506,40 @@ def test_c9_1_occupied_table_guard_follows_the_anti_duplication_setting(tmp_path
     assert len(c.broker.state.orders) == 1, "la riconsegna dello stesso messaggio ha piazzato un secondo ordine"
 
 
+@pytest.mark.parametrize("state", ["uncertain", "recovered"])
+def test_c9_1_disabled_anti_duplication_never_disables_the_mandatory_position_guards(tmp_path, state):
+    """Mandato owner (chiusura #512): disattivare l'anti-duplicazione funzionale non disattiva mai le
+    protezioni obbligatorie. Su un evento con posizione AMBIGUOUS (esito incerto) o ricostruita al riavvio
+    (F018, chiave fissata), un nuovo segnale e' rifiutato anche con anti_duplication_enabled=False."""
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    assert len(c.broker.state.orders) == 1, _c9_rejects(c)
+    key = c.rc.duplication_guard.build_event_key(_c9_signal())
+    table = c.rc.table_manager.find_by_event_key(key)
+    assert table is not None
+    if state == "uncertain":
+        c.rc._uncertain_reservations_map()[key] = int(table.table_id)      # esito AMBIGUOUS (PF-ALL-F024)
+    else:
+        c.rc.duplication_guard.acquire(key, pin=True)                     # come la ricostruzione F018
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    assert _c9_rejects(c) == ["evento_gia_in_posizione"], _c9_rejects(c)
+    assert len(c.broker.state.orders) == 1, "secondo ordine su una posizione incerta/ricostruita"
+    assert c.rc.table_manager.find_by_event_key(key) is not None, "tavolo della posizione liberato dal rifiuto"
+
+
+def test_c9_1_is_pinned_tracks_only_live_pinned_keys():
+    from core.duplication_guard import DuplicationGuard
+    g = DuplicationGuard(ttl_seconds=60)
+    assert g.acquire("N") and not g.is_pinned("N") and not g.is_pinned("") and not g.is_pinned("assente")
+    assert g.acquire("P", pin=True) and g.is_pinned("P")
+    g.unpin("P")
+    assert not g.is_pinned("P")
+    g.acquire("Q", pin=True)
+    g.release("Q")
+    assert not g.is_pinned("Q")
+
+
 def test_c9_1_a_different_event_still_goes_through_after_ttl_expiry(tmp_path, monkeypatch):
     c = _c9_chain(tmp_path)
     c.rc._on_signal_received(_c9_signal())

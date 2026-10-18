@@ -174,6 +174,13 @@ class DuplicationGuard:
             self._registered_at.pop(key, None)
             self._pinned.discard(key)
 
+    def is_pinned(self, event_key: str) -> bool:
+        """True se la chiave rappresenta una posizione viva fissata (ricostruita al riavvio o trattenuta
+        dal reset): protezione obbligatoria, indipendente dall'anti-duplicazione funzionale."""
+        key = str(event_key or "").strip()
+        with self._lock:
+            return bool(key) and key in self._pinned and key in self._active
+
     def unpin(self, event_key: str) -> None:
         """La posizione viva rappresentata dalla chiave e' stata chiusa ma la chiave resta (es. F028:
         ordine mai abbinato con stato finale confermato): torna alla scadenza NORMALE per TTL,

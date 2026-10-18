@@ -41,9 +41,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   terminali con abbinato trovate per bet id (sempre AMBIGUOUS); `pf_trace` non deriva copertura da `|| true`,
   `PYTEST_ADDOPTS`, `-o addopts` e `--cache-show`.
   Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale con
-  `anti_duplication_enabled=true` (default), come estensione del dedupe oltre il TTL; con l'anti-duplicazione
-  disattivata dall'utente il comportamento resta quello precedente (la riconsegna dello stesso messaggio la ferma
-  l'engine col customer_ref stabile).
+  `anti_duplication_enabled=true` (default), come estensione del dedupe oltre il TTL. Con l'anti-duplicazione
+  disattivata dall'utente restano OBBLIGATORI il rifiuto su una posizione con esito incerto (AMBIGUOUS) o ricostruita
+  al riavvio / trattenuta dal reset (`DuplicationGuard.is_pinned`) e il dedupe dell'engine per customer_ref sulla
+  riconsegna dello stesso messaggio (mandato owner di chiusura #512); un nuovo segnale su una posizione regolare e
+  nota segue il comportamento precedente.
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
   (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
   `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:
