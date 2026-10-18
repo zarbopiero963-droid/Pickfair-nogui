@@ -180,4 +180,11 @@ def test_real_registry_validates_strict():
     root = ROOT
     reg = os.path.join(root, "docs", "traceability", "requirements.json")
     errors, warnings = pf_trace.validate(pf_trace.load(reg), root)
+    # In un clone shallow (CI) gli SHA storici delle evidenze possono non essere presenti: `pf_trace` li
+    # segnala come warning SHALLOW_MISSING per costruzione. Solo quelli sono tollerati, e solo se il clone
+    # e' davvero shallow; errori e ogni altro warning restano vietati. In un clone completo: zero warning.
+    shallow = subprocess.run(["git", "-C", root, "rev-parse", "--is-shallow-repository"],
+                             capture_output=True, text=True).stdout.strip() == "true"
+    if shallow:
+        warnings = [w for w in warnings if not w.endswith("non verificabile in un clone shallow")]
     assert errors == [] and warnings == [], (errors, warnings)
