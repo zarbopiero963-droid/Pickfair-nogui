@@ -1,3 +1,4 @@
+66036f8 [TASK: pf-decisions-db-dd-de-df] tooling: pf_trace --base, porcelain -z a coppie, symlink/modo, lease obbligatorio in verify
 6c3ff65 [TASK: pf-decisions-db-dd-de-df] rilievi Codex su f62f0e3: lato mancante, reset SIM con tavoli trattenuti, baseline stantia, book malformato, dossier
 fdc650a [TASK: pf-decisions-db-dd-de-df] lotti D-B/D-D/D-E/D-F (PF-DECISIONS-DA-DJ-20261018) + hardening check+reserve
 f62f0e3 [TASK: issue461-pr28-microstake-native-02] ciclo 6 (deroga owner D-A=A1): riserva preesistente, lock esecutore, payload currentOrders fail-closed

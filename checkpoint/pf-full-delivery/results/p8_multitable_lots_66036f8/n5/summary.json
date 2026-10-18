@@ -1,0 +1,75 @@
+{
+ "n": 5,
+ "verdict": "PASS",
+ "findings": [],
+ "mode_after_restart": "PAUSED",
+ "orders_after_restart": [
+  [
+   "1.901",
+   "BACK",
+   "SUBMITTED",
+   3.0
+  ],
+  [
+   "1.902",
+   "LAY",
+   "SUBMITTED",
+   0.0
+  ],
+  [
+   "1.903",
+   "BACK",
+   "SUBMITTED",
+   0.0
+  ],
+  [
+   "1.904",
+   "LAY",
+   "AMBIGUOUS",
+   null
+  ],
+  [
+   "1.905",
+   "BACK",
+   "SUBMITTED",
+   3.0
+  ]
+ ],
+ "tables_after_restart": [
+  [
+   1,
+   "1.901",
+   "ACTIVE",
+   3.0
+  ],
+  [
+   2,
+   "1.902",
+   "ACTIVE",
+   3.0
+  ],
+  [
+   3,
+   "1.903",
+   "ACTIVE",
+   3.0
+  ],
+  [
+   4,
+   "1.904",
+   "ACTIVE",
+   3.0
+  ],
+  [
+   5,
+   "1.905",
+   "ACTIVE",
+   3.0
+  ]
+ ],
+ "exposure": {
+  "tables": 15.0,
+  "exchange": 3.03
+ },
+ "elapsed_s": 23.3
+}

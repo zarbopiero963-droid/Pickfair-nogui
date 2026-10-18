@@ -1,7 +1,7 @@
 From fdc650adb4acc3285629da7128a3c98d2912a858 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 18 Oct 2026 09:45:45 +0000
-Subject: [PATCH 1/2] [TASK: pf-decisions-db-dd-de-df] lotti D-B/D-D/D-E/D-F
+Subject: [PATCH 1/3] [TASK: pf-decisions-db-dd-de-df] lotti D-B/D-D/D-E/D-F
  (PF-DECISIONS-DA-DJ-20261018) + hardening check+reserve
 
 Preparazione locale sul head f62f0e3 della #512 (NON pubblicata: una PR per repository, 6 cicli usati).
@@ -941,7 +941,7 @@ index ee516d3..5ce5a65 100644
 From 6c3ff650cb7323cdda45b69216be91eb1b326b95 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sun, 18 Oct 2026 09:50:47 +0000
-Subject: [PATCH 2/2] [TASK: pf-decisions-db-dd-de-df] rilievi Codex su
+Subject: [PATCH 2/3] [TASK: pf-decisions-db-dd-de-df] rilievi Codex su
  f62f0e3: lato mancante, reset SIM con tavoli trattenuti, baseline stantia,
  book malformato, dossier
 
@@ -1266,6 +1266,338 @@ index 0000000..da71ddd
 +                                  quote_provider=broken_quote, transient_exposure_cap=D("10"))
 +    out = ex.execute({"market_id": "1.1", "selection_id": 7, "bet_type": "BACK", "price": 2.0, "stake": 0.5, "customer_ref": "q1"})
 +    assert out["status"] == "FAILURE" and out["error"] == "passive_stub_price_unverified" and out["pre_send"] is True
+-- 
+2.43.0
+
+
+From 66036f8b0e23b9c87166cd752bafdc9f06ac68d2 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 09:56:22 +0000
+Subject: [PATCH 3/3] [TASK: pf-decisions-db-dd-de-df] tooling: pf_trace
+ --base, porcelain -z a coppie, symlink/modo, lease obbligatorio in verify
+
+Rilievi Codex #512 r4304867219/r4304867223/r4304867226/r4306544223 (tooling, non runtime trading).
+Test RED->GREEN: tests/agent_checkpoint/test_pfckpt_tooling_followup.py (4), tests/traceability/test_pf_trace.py (+1);
+suite checkpoint+tracciabilita' 64 passed.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ CHANGELOG.md                                  |  4 ++
+ docs/agent_checkpoint_protocol.md             |  8 ++-
+ .../test_pfckpt_tooling_followup.py           | 66 +++++++++++++++++++
+ tests/traceability/test_pf_trace.py           | 17 +++++
+ tools/agent_checkpoint/pfckpt.py              | 64 ++++++++++++++++--
+ tools/traceability/pf_trace.py                | 13 ++--
+ 6 files changed, 160 insertions(+), 12 deletions(-)
+ create mode 100644 tests/agent_checkpoint/test_pfckpt_tooling_followup.py
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 673c2d7..e7f4b8d 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -25,6 +25,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+   stesso motivo. Prima: ACTIVE con la riserva trattenuta sul suo tavolo (P8 #510). `RuntimeController._post_rebuild_reconciliation`.
+ 
+ ### Fixed
++- **Tooling checkpoint/tracciabilita' (rilievi Codex #512 r4304867219/223/226, r4306544223, lotto di follow-up):**
++  `pf_trace validate --base <ref>` per il confronto append-only con una revisione esplicita; `pfckpt` parsa
++  `--porcelain -z` a coppie per le rinomine (cattura e `restore-code`), conserva symlink e bit di esecuzione dei file
++  non tracciati, e `verify` richiede puntatori e lease dallo schema v2 (`FILE_REQUIRED_MISSING`, mai «FREE»).
+ - **Rilievi Codex su f62f0e3 (#512, lotto di follow-up):** riga pendente senza lato persistito => non attribuita
+   (mai ricostruita come BACK: la liability di un LAY sarebbe sottostimata; r4306544229); `reset_cycle()` non azzera
+   il broker SIM finche' un tavolo resta trattenuto (`sim_reset_skipped`; r4306544236); baseline di espansione piu'
+diff --git a/docs/agent_checkpoint_protocol.md b/docs/agent_checkpoint_protocol.md
+index 7e66bd4..a6a49e1 100644
+--- a/docs/agent_checkpoint_protocol.md
++++ b/docs/agent_checkpoint_protocol.md
+@@ -96,7 +96,7 @@ procedure, nessuna dipendenza dalla cronologia della chat. Lo strumento aggiunge
+ | `CURRENT.json` | puntatore minimo: seq, SHA precedente, `code.{branch,sha}`, mandato, prossima azione atomica, verdetto | deve coincidere con STATE.json, altrimenti checkpoint non valido |
+ | `TASK_STATE.json` | mandato, lotto corrente, lotti completati, prossima azione, blocchi, dipendenze, test mancanti, Gate A, PR #505 | idem |
+ | `AGENT_LEASE.json` | `owner`, `fencing_token` (= seq del checkpoint che lo ha preso/rinnovato), `acquired_at`, `expires_at` | token = seq, timestamp validi |
+-| `code_patch/` | `BASELINE.json` (head/tree del codice, file modificati e nuovi), `tracked.patch`, `untracked/<file>` | ogni file dichiarato presente nel commit |
++| `code_patch/` | `BASELINE.json` (head/tree del codice, file modificati e nuovi; `untracked_links` target dei symlink, `untracked_modes` bit di esecuzione), `tracked.patch`, `untracked/<file>` | ogni file dichiarato presente nel commit; una rinomina staged registra ENTRAMBI i percorsi (`porcelain -z`, record R/C a coppie); un symlink non tracciato viene ripristinato come symlink, mai copiato (rilievi Codex #512) |
+ 
+ **Lease e fencing.** `save --agent <nome>` è obbligatorio: il lease si legge dal checkpoint **remoto atteso**
+ (`--expected`), mai dal disco. Tenuto da un altro agente e non scaduto ⇒ `LEASE_HELD` (exit 6), nessuna scrittura.
+@@ -135,6 +135,12 @@ Causa: `.gitignore` (`*.log`) + manifest calcolato dal disco + `git add` senza `
+ identici al manifest e committati nel checkpoint seq 8 (`1297f7f`); `b45f528` resta nella storia invariato.
+ `pfckpt.py verify` su `b45f528` rileva il difetto (prova in `results/incident_b45f528_verify.json`).
+ 
++## 7-bis. Schema con lease: file obbligatori
++
++Dal seq 14 (pfckpt v2), o da qualunque checkpoint il cui padre porta già `AGENT_LEASE.json`, `verify` richiede
++`CURRENT.json`, `TASK_STATE.json` e `AGENT_LEASE.json`: un checkpoint senza lease NON è «FREE», è invalido
++(`FILE_REQUIRED_MISSING`; rilievo Codex #512 r4304867226). Lo schema non regredisce.
++
+ ## 8. Limiti dichiarati
+ 
+ - Provato con git reale offline (repository bare locali: 39 test, inclusi lease/fencing, patch del codice, recover) e su GitHub per Claude Code. L'esecuzione da ChatGPT Work
+diff --git a/tests/agent_checkpoint/test_pfckpt_tooling_followup.py b/tests/agent_checkpoint/test_pfckpt_tooling_followup.py
+new file mode 100644
+index 0000000..f6e2332
+--- /dev/null
++++ b/tests/agent_checkpoint/test_pfckpt_tooling_followup.py
+@@ -0,0 +1,66 @@
++"""Rilievi Codex tooling su #512 (r4304867223 rename porcelain, r4306544223 symlink/modo, r4304867226 file derivati
++obbligatori in verify) — lotto tooling di follow-up. RED sul head f62f0e3."""
++import json
++import os
++import stat
++import subprocess
++
++import pytest
++
++from tests.agent_checkpoint.test_pfckpt import BR, CODE_BR, D, _cfg, agent, expect, next_state, pfckpt, raw_commit, sh, world  # noqa: F401
++
++
++def _clone(world, name):
++    path = str(world["tmp"] / name)
++    subprocess.run(["git", "clone", "-q", "--no-local", "--branch", CODE_BR, world["url"], path], check=True); _cfg(path)
++    return path
++
++
++def _roundtrip(world, prepare):
++    code = _clone(world, "code"); prepare(code)
++    a = agent(world, "a"); exp = next_state(a, world)
++    assert pfckpt.save(a, BR, "origin", exp, "ckpt", D, agent="claude", code_repo=code)["status"] == "DURABLE"
++    fresh = _clone(world, "fresh")
++    return a, pfckpt.restore_code_patch(a, "HEAD", D, fresh), fresh
++
++
++def test_staged_rename_is_captured_as_a_pair_and_restored(world):
++    def prepare(code):
++        sh(code, "mv", "app.py", "main.py")
++    a, out, fresh = _roundtrip(world, prepare)
++    meta = pfckpt.tree_json(a, "HEAD", D, "code_patch/BASELINE.json")
++    assert sorted(meta["modified"]) == ["app.py", "main.py"], meta["modified"]
++    assert out["status"] == "CODE_RESTORED"
++    assert os.path.exists(os.path.join(fresh, "main.py")) and not os.path.exists(os.path.join(fresh, "app.py"))
++
++
++def test_untracked_symlink_is_restored_as_a_symlink_not_as_a_copy(world):
++    def prepare(code):
++        os.symlink("app.py", os.path.join(code, "link.py"))
++    a, out, fresh = _roundtrip(world, prepare)
++    assert out["status"] == "CODE_RESTORED"
++    restored = os.path.join(fresh, "link.py")
++    assert os.path.islink(restored) and os.readlink(restored) == "app.py", "symlink ripristinato come file regolare"
++
++
++def test_untracked_executable_keeps_its_mode(world):
++    def prepare(code):
++        p = os.path.join(code, "run.sh"); open(p, "w").write("#!/bin/sh\necho ok\n"); os.chmod(p, 0o755)
++    a, out, fresh = _roundtrip(world, prepare)
++    assert out["status"] == "CODE_RESTORED"
++    assert os.stat(os.path.join(fresh, "run.sh")).st_mode & stat.S_IXUSR, "bit di esecuzione perso nel ripristino"
++
++
++def test_verify_requires_pointers_and_lease_for_checkpoints_with_lease_schema(world):
++    a = agent(world, "a"); exp = next_state(a, world)
++    assert pfckpt.save(a, BR, "origin", exp, "ckpt", D, agent="claude")["status"] == "DURABLE"
++    st = json.load(open(os.path.join(a, D, "STATE.json")))
++    assert st["seq"] >= 2
++    # checkpoint "a mano": lease rimosso e manifest rigenerato => deve essere INVALIDO, non FREE
++    st["seq"] += 1; st["previous_checkpoint_sha"] = sh(a, "rev-parse", "HEAD")
++    json.dump(st, open(os.path.join(a, D, "STATE.json"), "w"))
++    os.remove(os.path.join(a, D, pfckpt.LEASE))
++    pfckpt.write_manifest(a, D)
++    bad = raw_commit(a, "senza lease")
++    err = expect(2, pfckpt.verify, a, bad, D)
++    assert "FILE_REQUIRED_MISSING" in str(err) or "AGENT_LEASE.json" in str(err)
+diff --git a/tests/traceability/test_pf_trace.py b/tests/traceability/test_pf_trace.py
+index 4539372..08e80e5 100644
+--- a/tests/traceability/test_pf_trace.py
++++ b/tests/traceability/test_pf_trace.py
+@@ -102,3 +102,20 @@ def test_cli_exit_codes(tmp_path, capsys):
+     assert pf_trace.main(["validate", "--registry", str(reg), "--repo", str(tmp_path)]) == 1
+     assert pf_trace.main(["report", "--registry", str(reg)]) == 0
+     assert "R-1" in capsys.readouterr().out
++
++
++def test_validate_compares_with_an_explicit_base_revision(tmp_path, capsys):
++    """Rilievo Codex #512 r4304867219: su un albero pulito `HEAD:` e' un auto-confronto; `--base` permette di
++    confrontare con la revisione precedente/merge-base e vedere un'evidenza rimossa da un commit."""
++    good = _good(tmp_path)
++    reg = tmp_path / "docs" / "traceability"; reg.mkdir(parents=True)
++    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t")
++    (reg / "requirements.json").write_text(json.dumps(good))
++    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, env=env)
++    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "v1"], check=True, env=env)
++    bad = copy.deepcopy(good); bad["requirements"][0]["evidence"] = []          # evidenza rimossa e committata
++    (reg / "requirements.json").write_text(json.dumps(bad))
++    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, env=env)
++    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "v2 rimozione"], check=True, env=env)
++    assert pf_trace.main(["validate", "--repo", str(tmp_path), "--base", "HEAD~1"]) == 1
++    assert "append-only" in capsys.readouterr().out
+diff --git a/tools/agent_checkpoint/pfckpt.py b/tools/agent_checkpoint/pfckpt.py
+index 954180c..321a76d 100644
+--- a/tools/agent_checkpoint/pfckpt.py
++++ b/tools/agent_checkpoint/pfckpt.py
+@@ -46,6 +46,7 @@ MANIFEST = "MANIFEST.sha256"
+ CURRENT = "CURRENT.json"
+ TASK_STATE = "TASK_STATE.json"
+ LEASE = "AGENT_LEASE.json"
++LEASE_SCHEMA_SEQ = 14          # primo seq con CURRENT/TASK_STATE/AGENT_LEASE (pfckpt v2)
+ CODE_PATCH_DIR = "code_patch"
+ DEFAULT_LEASE_MIN = 120
+ SECRET_PATTERNS = [re.compile(p) for p in (
+@@ -220,6 +221,15 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
+                     break
+     parents = out(repo, "rev-list", "--parents", "-n", "1", commit).split()[1:]
+     prev = state.get("previous_checkpoint_sha")
++    # PF-AGENT-CONTINUITY-01 (rilievo Codex #512 r4304867226): dallo schema con lease (seq >= 14, o un
++    # checkpoint padre che gia' lo porta) puntatori e lease sono OBBLIGATORI: un checkpoint senza lease
++    # non e' "FREE", e' invalido (lo schema non regredisce).
++    parent_files = tree_files(repo, parents[0], d) if parents else {}
++    schema_with_lease = (isinstance(state.get("seq"), int) and state["seq"] >= LEASE_SCHEMA_SEQ) or LEASE in parent_files
++    if schema_with_lease:
++        for req in (CURRENT, TASK_STATE, LEASE):
++            if req not in files:
++                raise CheckpointError(2, "FILE_REQUIRED_MISSING", file=req, commit=commit)
+     if parents:
+         parent = parents[0]
+         if not prev or not parent.startswith(str(prev)):
+@@ -305,24 +315,31 @@ def capture_code_patch(code_repo, worktree, d):
+     # porcelain non va strip-ato: il primo carattere di stato puo' essere uno spazio
+     # -z: percorsi NUL-terminati e mai quotati (rilievo Codex #512: `"space name.py"` quotato veniva
+     # saltato da isfile e il checkpoint risultava durevole senza quel file)
+-    status = [l for l in git(code_repo, "status", "--porcelain", "-z", "--untracked-files=all").stdout.decode().split("\0") if l.strip()]
+-    modified = sorted(l[3:] for l in status if not l.startswith("??"))
+-    untracked = sorted(l[3:] for l in status if l.startswith("??") and "__pycache__" not in l and not l.endswith(".pyc"))
++    modified, untracked = porcelain_paths(git(code_repo, "status", "--porcelain", "-z", "--untracked-files=all").stdout.decode())
+     files = []
+     if tracked:
+         with open(os.path.join(root, "tracked.patch"), "wb") as fh:
+             fh.write(tracked)
+         files.append(f"{CODE_PATCH_DIR}/tracked.patch")
++    # Rilievo Codex #512 (r4306544223): tipo e modo dei file non tracciati vanno conservati. Un symlink
++    # viene registrato come tale (target), mai copiato seguendo il link; il bit di esecuzione e' salvato.
++    links, modes = {}, {}
+     for rel in untracked:
+         src = os.path.join(code_repo, rel)
++        if os.path.islink(src):
++            links[rel] = os.readlink(src)
++            continue
+         if not os.path.isfile(src):
+             continue
+         dst = os.path.join(root, "untracked", rel)
+         os.makedirs(os.path.dirname(dst), exist_ok=True)
+         shutil.copyfile(src, dst)
++        mode = os.stat(src).st_mode & 0o777
++        if mode & 0o111:
++            modes[rel] = oct(mode)
+         files.append(f"{CODE_PATCH_DIR}/untracked/{rel}")
+     meta = {"head": head, "tree": tree, "captured_at": iso(utcnow()), "modified": modified, "untracked": untracked,
+-            "files": files}
++            "untracked_links": links, "untracked_modes": modes, "files": files}
+     with open(os.path.join(root, "BASELINE.json"), "w") as fh:
+         json.dump(meta, fh, indent=1, sort_keys=True)
+     files.append(f"{CODE_PATCH_DIR}/BASELINE.json")
+@@ -330,6 +347,30 @@ def capture_code_patch(code_repo, worktree, d):
+     return meta
+ 
+ 
++def porcelain_paths(raw):
++    """Parsa `git status --porcelain -z --untracked-files=all`: record `XY<sp>path`; per R/C segue un secondo
++    record col percorso di origine (rilievo Codex #512 r4304867223: non e' una voce autonoma). Ritorna
++    (modificati, non tracciati) con ENTRAMBI i percorsi di una rinomina fra i modificati; __pycache__/.pyc esclusi."""
++    entries = raw.split("\0")
++    modified, untracked = set(), set()
++    i = 0
++    while i < len(entries):
++        rec = entries[i]
++        i += 1
++        if not rec.strip():
++            continue
++        xy, path = rec[:2], rec[3:]
++        if xy == "??":
++            if "__pycache__" not in path and not path.endswith(".pyc"):
++                untracked.add(path)
++            continue
++        modified.add(path)
++        if ("R" in xy or "C" in xy) and i < len(entries) and entries[i]:
++            modified.add(entries[i])
++            i += 1
++    return sorted(modified), sorted(untracked)
++
++
+ def restore_code_patch(ckpt_repo, ref, d, code_repo):
+     """Applica al repo di codice (che DEVE essere pulito e sullo SHA di baseline) la patch catturata nel checkpoint."""
+     meta = tree_json(ckpt_repo, ref, d, f"{CODE_PATCH_DIR}/BASELINE.json")
+@@ -344,15 +385,24 @@ def restore_code_patch(ckpt_repo, ref, d, code_repo):
+         patch = blob(ckpt_repo, ref, files[f"{CODE_PATCH_DIR}/tracked.patch"])
+         git(code_repo, "apply", "--binary", "--index", "-", input_bytes=patch)
+         git(code_repo, "reset", "-q")
++    links = meta.get("untracked_links") or {}
++    modes = meta.get("untracked_modes") or {}
+     for rel in meta.get("untracked") or []:
++        dst = os.path.join(code_repo, rel)
++        os.makedirs(os.path.dirname(dst), exist_ok=True)
++        if rel in links:
++            os.symlink(links[rel], dst)                       # stesso tipo: symlink, non copia del target
++            continue
+         key = f"{CODE_PATCH_DIR}/untracked/{rel}"
+         if key not in files:
+             raise CheckpointError(2, "CODE_PATCH_FILE_MISSING", file=key)
+-        dst = os.path.join(code_repo, rel)
+-        os.makedirs(os.path.dirname(dst), exist_ok=True)
+         with open(dst, "wb") as fh:
+             fh.write(blob(ckpt_repo, ref, files[key]))
+-    status = sorted(l[3:] for l in git(code_repo, "status", "--porcelain", "--untracked-files=all").stdout.decode().splitlines() if l.strip())
++        if rel in modes:
++            os.chmod(dst, int(str(modes[rel]), 8))
++    restored_modified, restored_untracked = porcelain_paths(
++        git(code_repo, "status", "--porcelain", "-z", "--untracked-files=all").stdout.decode())
++    status = sorted(set(restored_modified) | set(restored_untracked))
+     expected = sorted(set(meta.get("modified") or []) | set(meta.get("untracked") or []))
+     if status != expected:
+         raise CheckpointError(4, "CODE_PATCH_RESTORE_MISMATCH", restored=status, expected=expected)
+diff --git a/tools/traceability/pf_trace.py b/tools/traceability/pf_trace.py
+index b833149..6d22067 100644
+--- a/tools/traceability/pf_trace.py
++++ b/tools/traceability/pf_trace.py
+@@ -3,7 +3,8 @@
+ 
+ Registro: `docs/traceability/requirements.json` (lista di record). Ogni record collega decisione owner → requisito →
+ issue → codice → test → evidenza → finding → gate. Stati: PLANNED, IMPLEMENTED, TESTED, VERIFIED, CERTIFIED, BLOCKED,
+-NOT VERIFIED. Le evidenze sono append-only: il validatore confronta con la versione committata (`git show HEAD:…`) e
++NOT VERIFIED. Le evidenze sono append-only: il validatore confronta con la versione committata (`git show <base>:…`,
++`--base` default HEAD; su un albero gia' committato usare il parent/merge-base, rilievo Codex #512) e
+ rifiuta ogni rimozione o riscrittura di un'evidenza precedente.
+ 
+ Comandi: `validate [--registry PATH] [--repo PATH] [--strict]`, `report` (markdown). Solo stdlib.
+@@ -36,8 +37,11 @@ def load(path):
+     return data
+ 
+ 
+-def committed(path, repo):
+-    p = subprocess.run(["git", "-C", repo, "show", f"HEAD:{path}"], capture_output=True)
++def committed(path, repo, ref="HEAD"):
++    """Registro alla revisione `ref` (default HEAD: gate pre-commit albero di lavoro vs HEAD). Su un albero gia'
++    committato passare `--base <parent|merge-base>` (rilievo Codex #512 r4304867219), altrimenti il confronto
++    append-only e' un auto-confronto."""
++    p = subprocess.run(["git", "-C", repo, "show", f"{ref}:{path}"], capture_output=True)
+     if p.returncode != 0:
+         return None
+     try:
+@@ -177,6 +181,7 @@ def main(argv=None):
+     sub = ap.add_subparsers(dest="cmd", required=True)
+     v = sub.add_parser("validate"); v.add_argument("--registry", default=DEFAULT_REGISTRY); v.add_argument("--repo", default=".")
+     v.add_argument("--strict", action="store_true", help="anche i warning sono errori")
++    v.add_argument("--base", default="HEAD", help="revisione del registro precedente per il confronto append-only (default HEAD)")
+     r = sub.add_parser("report"); r.add_argument("--registry", default=DEFAULT_REGISTRY)
+     a = ap.parse_args(argv)
+     try:
+@@ -186,7 +191,7 @@ def main(argv=None):
+         return 2
+     if a.cmd == "report":
+         print(report(data)); return 0
+-    errors, warnings = validate(data, a.repo, committed(a.registry, a.repo))
++    errors, warnings = validate(data, a.repo, committed(a.registry, a.repo, a.base))
+     status = "PASS" if not errors and not (a.strict and warnings) else "FAIL"
+     print(json.dumps({"status": status, "requirements": len(data["requirements"]), "errors": errors, "warnings": warnings},
+                      ensure_ascii=False, indent=1))
 -- 
 2.43.0
 

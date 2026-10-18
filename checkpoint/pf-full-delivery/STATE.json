@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 22,
- "updated_at": "2026-10-18T09:52:04.824323+00:00",
+ "seq": 23,
+ "updated_at": "2026-10-18T10:08:07.309739+00:00",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -397,7 +397,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere O1/O2 dell'owner su #512. O1: applicare al checkout #512 i soli fix Codex P1 (+hardening, doc) dal branch lots, regressione, riesame indipendente, push unico. O2/merge: aprire PR 10 cicli dal main aggiornato (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df. Regressione lotti su 6c3ff65 in corso. Nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere O1/O2 dell'owner su #512 (c.6248443891). O1: cherry-pick dei soli fix Codex P1 (+hardening, dossier) dal branch lots sul checkout #512, regressione, riesame indipendente, push unico. O2/merge #512: PR 10 cicli dal main (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df (rebase su main). Nessun merge, #505/main intoccate.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -407,8 +407,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "b2e5c323c39af0d5dd3a1e46f9d434e23a167f40",
- "lotto_corrente": "PF-DECISIONS-DA-DJ: ciclo 6 spinto e verificato (f62f0e3); lotti D-B/D-D/D-E/D-F + fix Codex pronti in locale (6c3ff65); attesa decisione owner O1/O2",
+ "previous_checkpoint_sha": "b6c63781edaa6b14d13d3269a988435b2283f8ab",
+ "lotto_corrente": "PF-DECISIONS-DA-DJ: tutto il lavoro autorizzato eseguito; #512 in attesa O1/O2 owner; lotti pronti in locale (66036f8)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -438,7 +438,8 @@
   "screenshot GUI Xvfb su 5ef61da (seq 20)",
   "ciclo 6 PR #512 f62f0e3 (seq 21)",
   "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
-  "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)"
+  "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
+  "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -479,7 +480,7 @@
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
   "next_roadmap": "Gate A specifico #505 (G2) dopo Gate A globale; Dutching/MCP non anticipati: dipendono da #505 (cap assoluti) e da Control API (F013/PF-API)"
  },
- "session_end": "seq 22 Claude Code: lotti pronti, Codex f62f0e3 triagiato; lease rilasciato",
+ "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
  "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
  "code": {
@@ -844,6 +845,27 @@
    "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
    "result": "27 test nuovi (tests/test_pf_decisions_de_df_dd.py 20, tests/test_pr512_codex_f62f0e3.py 7) + 4 in f018; suite mirate 234 passed; regressione completa su 6c3ff65 in corso",
    "artifact": "results/lots_db_dd_de_df_prep/lots_db_dd_de_df.patch"
+  },
+  {
+   "id": "regressione completa lotto locale 6c3ff65 (D-B/D-D/D-E/D-F + fix Codex)",
+   "status": "PASS",
+   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+   "result": "7816 passed, 14 skipped, 2 xfailed, 0 failed in 968s sul branch locale lots/pf-decisions-db-dd-de-df@6c3ff65 (tree di base f62f0e3)",
+   "artifact": "results/lots_db_dd_de_df_prep/fullreg_6c3ff65_tail.txt"
+  },
+  {
+   "id": "lotto tooling 66036f8 (pf_trace --base, porcelain -z, symlink/modo, lease obbligatorio)",
+   "status": "PASS",
+   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+   "result": "RED 5 failed -> GREEN; suite checkpoint+tracciabilita' 64 passed",
+   "artifact": "results/lots_db_dd_de_df_prep/lots_db_dd_de_df.patch"
+  },
+  {
+   "id": "P8 multi-tavolo sul lotto D-B (66036f8), N=2/5",
+   "status": "PASS",
+   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc",
+   "result": "N=2 ACTIVE (0 AMBIGUOUS), N=5 PAUSED dopo entrambi i riavvii (1 AMBIGUOUS), 0 duplicati; SIM non certificante",
+   "artifact": "results/p8_multitable_lots_66036f8/SUMMARY.json"
   }
  ],
  "tests_missing": [

@@ -6,8 +6,8 @@
   "sha": "f62f0e31cedba72b4585c433a4f9ce47e3841cfc"
  },
  "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
- "next_atomic_action": "Attendere O1/O2 dell'owner su #512. O1: applicare al checkout #512 i soli fix Codex P1 (+hardening, doc) dal branch lots, regressione, riesame indipendente, push unico. O2/merge: aprire PR 10 cicli dal main aggiornato (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df. Regressione lotti su 6c3ff65 in corso. Nessun merge, #505/main intoccate.",
- "previous_checkpoint_sha": "b2e5c323c39af0d5dd3a1e46f9d434e23a167f40",
+ "next_atomic_action": "Attendere O1/O2 dell'owner su #512 (c.6248443891). O1: cherry-pick dei soli fix Codex P1 (+hardening, dossier) dal branch lots sul checkout #512, regressione, riesame indipendente, push unico. O2/merge #512: PR 10 cicli dal main (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df (rebase su main). Nessun merge, #505/main intoccate.",
+ "previous_checkpoint_sha": "b6c63781edaa6b14d13d3269a988435b2283f8ab",
  "schema": "pf-current/1",
- "seq": 22
+ "seq": 23
 }

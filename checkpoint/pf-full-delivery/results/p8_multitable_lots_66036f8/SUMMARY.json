@@ -1,0 +1,29 @@
+{
+ "schema": "p8-multitable/2",
+ "decision": "D-B PAUSED con riserve incerte (PF-DECISIONS-DA-DJ-20261018)",
+ "rows": [
+  {
+   "n": 2,
+   "tree_sha": "66036f8b0e23b9c87166cd752bafdc9f06ac68d2",
+   "mode_after_restart": "ACTIVE",
+   "mode_after_second_restart": "ACTIVE",
+   "ambiguous": 0,
+   "orders": 2,
+   "tables": 2,
+   "verdict": "PASS",
+   "findings": []
+  },
+  {
+   "n": 5,
+   "tree_sha": "66036f8b0e23b9c87166cd752bafdc9f06ac68d2",
+   "mode_after_restart": "PAUSED",
+   "mode_after_second_restart": "PAUSED",
+   "ambiguous": 1,
+   "orders": 5,
+   "tables": 5,
+   "verdict": "PASS",
+   "findings": []
+  }
+ ],
+ "assessment": "N=2 nessun AMBIGUOUS => ACTIVE; N=5 un AMBIGUOUS => PAUSED (RECONCILIATION_REQUIRED:UNCERTAIN_POSITIONS) dopo entrambi i riavvii; oracle del driver (PAUSED se AMBIGUOUS) ora soddisfatto; SIM non certificante"
+}

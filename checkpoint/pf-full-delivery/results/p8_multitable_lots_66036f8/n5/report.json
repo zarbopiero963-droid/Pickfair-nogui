@@ -1,0 +1,407 @@
+{
+ "n": 5,
+ "tree": "/tmp/claude-0/-home-user/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/wt_lots",
+ "sha": "66036f8b0e23b9c87166cd752bafdc9f06ac68d2",
+ "elapsed_s": 23.3,
+ "home": "/tmp/p8_5_6q020uhz",
+ "run1": {
+  "mode": "ACTIVE",
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.903",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.904",
+    "status": "AMBIGUOUS",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": null
+   },
+   {
+    "market_id": "1.905",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   },
+   {
+    "table_id": 3,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.903",
+    "event_key": "1.903:11:BACK:f026"
+   },
+   {
+    "table_id": 4,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.904",
+    "event_key": "1.904:11:LAY:f026"
+   },
+   {
+    "table_id": 5,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.905",
+    "event_key": "1.905:11:BACK:f026"
+   }
+  ],
+  "funds": {
+   "available": 96.9106,
+   "exposure": 3.03,
+   "total": 99.9406,
+   "simulated": true
+  },
+  "events": [
+   {
+    "t": 0.381,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.901",
+    "table_id": 1,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 1.881,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.902",
+    "table_id": 2,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 3.384,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.903",
+    "table_id": 3,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 4.886,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.904",
+    "table_id": 4,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 4.894,
+    "e": "QUICK_BET_AMBIGUOUS",
+    "market_id": "1.904",
+    "table_id": 4,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 6.386,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.905",
+    "table_id": 5,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 9.888,
+    "e": "CASHOUT_SUCCESS",
+    "market_id": "1.901",
+    "table_id": null,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   }
+  ]
+ },
+ "run2_restart": {
+  "mode": "PAUSED",
+  "start": "{'started': True, 'betfair': {'connected': True, 'session': {'session_token': 'SIM-2b83724a28334ea1', 'expiry': '', 'connected': True, 'simulated': True}, 'simulated': True, 'starting_balance': 100.0,",
+  "rebuild": {
+   "ok": true,
+   "reason": "",
+   "rebuilt": [
+    "sig-7cb72d93ddeed99f94a730d5f559",
+    "sig-393dc90ab9820d6a776f1f2e722a",
+    "sig-3b0c520d12ce6434d6083e4b374a",
+    "sig-afda20f29abe478a5aa749852d69"
+   ],
+   "uncertain": [
+    "sig-ff6a832317bf9c4a06e87b342b98"
+   ],
+   "closed": [],
+   "unattributed": [],
+   "held": []
+  },
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.903",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.904",
+    "status": "AMBIGUOUS",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": null
+   },
+   {
+    "market_id": "1.905",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   },
+   {
+    "table_id": 3,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.903",
+    "event_key": "1.903:11:BACK:f026"
+   },
+   {
+    "table_id": 4,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.904",
+    "event_key": "1.904:11:LAY:f026"
+   },
+   {
+    "table_id": 5,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.905",
+    "event_key": "1.905:11:BACK:f026"
+   }
+  ],
+  "funds": {
+   "available": 96.9106,
+   "exposure": 3.03,
+   "total": 99.9406,
+   "simulated": true
+  },
+  "bankroll": 96.9106
+ },
+ "run4_restart2": {
+  "mode": "PAUSED",
+  "rebuild": {
+   "ok": true,
+   "reason": "",
+   "rebuilt": [
+    "sig-7cb72d93ddeed99f94a730d5f559",
+    "sig-393dc90ab9820d6a776f1f2e722a",
+    "sig-3b0c520d12ce6434d6083e4b374a",
+    "sig-afda20f29abe478a5aa749852d69"
+   ],
+   "uncertain": [
+    "sig-ff6a832317bf9c4a06e87b342b98"
+   ],
+   "closed": [],
+   "unattributed": [],
+   "held": []
+  },
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.903",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 0.0
+   },
+   {
+    "market_id": "1.904",
+    "status": "AMBIGUOUS",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": null
+   },
+   {
+    "market_id": "1.905",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   },
+   {
+    "table_id": 3,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.903",
+    "event_key": "1.903:11:BACK:f026"
+   },
+   {
+    "table_id": 4,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.904",
+    "event_key": "1.904:11:LAY:f026"
+   },
+   {
+    "table_id": 5,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.905",
+    "event_key": "1.905:11:BACK:f026"
+   }
+  ]
+ },
+ "exposure_tables_vs_exchange": {
+  "tables": 15.0,
+  "exchange": 3.03
+ },
+ "findings": [],
+ "verdict": "PASS"
+}

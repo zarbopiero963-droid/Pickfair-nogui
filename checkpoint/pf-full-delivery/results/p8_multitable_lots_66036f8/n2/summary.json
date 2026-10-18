@@ -1,0 +1,39 @@
+{
+ "n": 2,
+ "verdict": "PASS",
+ "findings": [],
+ "mode_after_restart": "ACTIVE",
+ "orders_after_restart": [
+  [
+   "1.901",
+   "BACK",
+   "SUBMITTED",
+   3.0
+  ],
+  [
+   "1.902",
+   "LAY",
+   "SUBMITTED",
+   0.0
+  ]
+ ],
+ "tables_after_restart": [
+  [
+   1,
+   "1.901",
+   "ACTIVE",
+   3.0
+  ],
+  [
+   2,
+   "1.902",
+   "ACTIVE",
+   3.0
+  ]
+ ],
+ "exposure": {
+  "tables": 6.0,
+  "exchange": 0.03
+ },
+ "elapsed_s": 19.2
+}

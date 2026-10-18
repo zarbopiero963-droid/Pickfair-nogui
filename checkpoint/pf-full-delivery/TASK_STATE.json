@@ -44,11 +44,12 @@
   "screenshot GUI Xvfb su 5ef61da (seq 20)",
   "ciclo 6 PR #512 f62f0e3 (seq 21)",
   "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
-  "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)"
+  "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
+  "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
  ],
- "lotto_corrente": "PF-DECISIONS-DA-DJ: ciclo 6 spinto e verificato (f62f0e3); lotti D-B/D-D/D-E/D-F + fix Codex pronti in locale (6c3ff65); attesa decisione owner O1/O2",
+ "lotto_corrente": "PF-DECISIONS-DA-DJ: tutto il lavoro autorizzato eseguito; #512 in attesa O1/O2 owner; lotti pronti in locale (66036f8)",
  "mandate_id": "PF-DECISIONS-DA-DJ-20261018 (owner 18/10) sopra PF-MASTER-CERTIFICATION-351",
- "next_atomic_action": "Attendere O1/O2 dell'owner su #512. O1: applicare al checkout #512 i soli fix Codex P1 (+hardening, doc) dal branch lots, regressione, riesame indipendente, push unico. O2/merge: aprire PR 10 cicli dal main aggiornato (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df. Regressione lotti su 6c3ff65 in corso. Nessun merge, #505/main intoccate.",
+ "next_atomic_action": "Attendere O1/O2 dell'owner su #512 (c.6248443891). O1: cherry-pick dei soli fix Codex P1 (+hardening, dossier) dal branch lots sul checkout #512, regressione, riesame indipendente, push unico. O2/merge #512: PR 10 cicli dal main (merge owner), poi PR follow-up da lots/pf-decisions-db-dd-de-df (rebase su main). Nessun merge, #505/main intoccate.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [

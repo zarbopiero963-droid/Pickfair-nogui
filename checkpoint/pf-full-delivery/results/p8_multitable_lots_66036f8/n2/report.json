@@ -1,0 +1,206 @@
+{
+ "n": 2,
+ "tree": "/tmp/claude-0/-home-user/72973979-7da3-59f6-82b8-954d718e6349/scratchpad/wt_lots",
+ "sha": "66036f8b0e23b9c87166cd752bafdc9f06ac68d2",
+ "elapsed_s": 19.2,
+ "home": "/tmp/p8_2_3pqevo_3",
+ "run1": {
+  "mode": "ACTIVE",
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   }
+  ],
+  "funds": {
+   "available": 99.9106,
+   "exposure": 0.03,
+   "total": 99.9406,
+   "simulated": true
+  },
+  "events": [
+   {
+    "t": 0.619,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.901",
+    "table_id": 1,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 2.112,
+    "e": "QUICK_BET_ROUTED",
+    "market_id": "1.902",
+    "table_id": 2,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   },
+   {
+    "t": 5.611,
+    "e": "CASHOUT_SUCCESS",
+    "market_id": "1.901",
+    "table_id": null,
+    "reason": null,
+    "pnl": null,
+    "bankroll_after": null,
+    "drawdown_pct": null
+   }
+  ]
+ },
+ "run2_restart": {
+  "mode": "ACTIVE",
+  "start": "{'started': True, 'betfair': {'connected': True, 'session': {'session_token': 'SIM-f45e5b354b3b4a8b', 'expiry': '', 'connected': True, 'simulated': True}, 'simulated': True, 'starting_balance': 100.0,",
+  "rebuild": {
+   "ok": true,
+   "reason": "",
+   "rebuilt": [
+    "sig-7cb72d93ddeed99f94a730d5f559",
+    "sig-393dc90ab9820d6a776f1f2e722a"
+   ],
+   "uncertain": [],
+   "closed": [],
+   "unattributed": [],
+   "held": []
+  },
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   }
+  ],
+  "funds": {
+   "available": 99.9106,
+   "exposure": 0.03,
+   "total": 99.9406,
+   "simulated": true
+  },
+  "bankroll": 99.9106
+ },
+ "run4_restart2": {
+  "mode": "ACTIVE",
+  "rebuild": {
+   "ok": true,
+   "reason": "",
+   "rebuilt": [
+    "sig-7cb72d93ddeed99f94a730d5f559",
+    "sig-393dc90ab9820d6a776f1f2e722a"
+   ],
+   "uncertain": [],
+   "closed": [],
+   "unattributed": [],
+   "held": []
+  },
+  "orders": [
+   {
+    "market_id": "1.901",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "BACK",
+    "matched": 3.0
+   },
+   {
+    "market_id": "1.902",
+    "status": "SUBMITTED",
+    "reason": null,
+    "stake": 3.0,
+    "price": 2.0,
+    "side": "LAY",
+    "matched": 0.0
+   }
+  ],
+  "tables": [
+   {
+    "table_id": 1,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.901",
+    "event_key": "1.901:11:BACK:f026"
+   },
+   {
+    "table_id": 2,
+    "status": "ACTIVE",
+    "exposure": 3.0,
+    "loss": 0.0,
+    "market_id": "1.902",
+    "event_key": "1.902:11:LAY:f026"
+   }
+  ]
+ },
+ "exposure_tables_vs_exchange": {
+  "tables": 6.0,
+  "exchange": 0.03
+ },
+ "findings": [],
+ "verdict": "PASS"
+}
