@@ -117,7 +117,8 @@ ROLLBACK_PENDING (non AMBIGUOUS generico), e un residuo già cancellato con snap
 ROLLED_BACK al recover successivo senza una seconda cancellazione (riesame indipendente del ciclo 9). Poiché il broker
 SIM non elenca più fra gli ordini correnti un ordine interamente cancellato, con rollback deciso la saga cerca l'ordine
 anche per bet id persistito e accetta solo una riga terminale senza residuo; un ordine ancora vivo non visto resta
-"non trovato" e la saga resta pendente (secondo riesame del ciclo 9). Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
+"non trovato" e la saga resta pendente (secondo riesame del ciclo 9). Una riga terminale con qualsiasi abbinato
+(SETTLED, LAPSED, VOIDED, CANCELLED parziale, EXECUTION_COMPLETE) resta AMBIGUOUS con riserva tenuta, mai ROLLED_BACK. Una saga è riconciliata solo se l'esito è ACTIVE o ROLLED_BACK **e** lo store
 durevole, riletto dopo il recover, non la elenca più come pendente (ciclo 9, rilievo Codex su 2c6aa09); una saga
 pendente nello store ma assente dai risultati dell'esecutore resta pendente; ogni altro
 esito (AMBIGUOUS, FAILED, BLOCKED, ERROR) resta pendente. Se resta una saga pendente, lo store è illeggibile o manca

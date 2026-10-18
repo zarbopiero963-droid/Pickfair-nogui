@@ -43,7 +43,7 @@ _PYTEST_FILTER_OPTS = frozenset({
     "--sw", "--stepwise", "--co", "--collect-only", "--sw-skip", "--stepwise-skip",
     # opzioni che terminano senza eseguire alcun test (exit 0)
     "--setup-plan", "--setup-only", "--fixtures", "--fixtures-per-test", "--markers", "--version", "-V",
-    "--help", "-h",
+    "--help", "-h", "--cache-show", "--cache-clear",
 })
 # Comandi dopo i quali un `pytest` e' solo testo, non un'esecuzione.
 _NON_EXEC_COMMANDS = frozenset({"echo", "printf", "cat", "grep", "true", "false", "#", ":"})
@@ -54,8 +54,13 @@ def _pytest_targets(command):
     --deselect, --ignore, --lf, ...) e quindi non dice da solo quali test sono girati. Si leggono solo i
     segmenti che invocano davvero pytest (`echo tests/` non e' un'esecuzione) e mai gli argomenti di
     un'opzione (`--rootdir tests` non e' un bersaglio); il testo tra parentesi e' un commento."""
+    text = str(command or "")
+    # Un esito mascherato (`|| true`) o opzioni iniettate (`PYTEST_ADDOPTS=`, `-o addopts=`) non dicono
+    # da soli quali test sono girati: serve la lista esplicita `tests` (terzo riesame c9).
+    if "||" in text or "PYTEST_ADDOPTS" in text or re.search(r"addopts", text):
+        return None
     targets = []
-    for segment in re.split(r";|&&|\|\||\||\s\+\s|\(", str(command or "")):
+    for segment in re.split(r";|&&|\|\||\||\s\+\s|\(", text):
         tokens = [t.strip().strip("'\"") for t in segment.split()]
         tokens = [t for t in tokens if t]
         idx = next((i for i, t in enumerate(tokens) if t == "pytest" or t.endswith("/pytest")), None)

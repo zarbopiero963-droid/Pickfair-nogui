@@ -831,6 +831,42 @@ def test_c9_review2_rollback_on_the_real_sim_port_terminates_after_a_stale_snaps
     assert store.load("rb-real")["phase"] == "ROLLED_BACK"
 
 
+@pytest.mark.parametrize("status,matched", [("SETTLED", 2.0), ("LAPSED", 0.5), ("VOIDED", 1.0),
+                                            ("CANCELLED", 0.5), ("EXECUTION_COMPLETE", 2.0)])
+def test_c9_review3_terminal_row_with_any_match_found_by_bet_id_stays_ambiguous(status, matched):
+    """Terzo riesame c9: una riga terminale trovata per bet id con QUALSIASI abbinato non chiude mai la saga
+    ROLLED_BACK: AMBIGUOUS, riserva tenuta, riconciliazione."""
+    from core.microstake_safe import MicrostakeCoordinator, MicrostakePolicy, MicrostakeRequest, Phase, Side
+    from core.microstake_sim_port import DbSagaStore, SimulationExchangePort
+    from simulation_broker import SimulationBroker
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_sim_port import _Db
+    broker = SimulationBroker(starting_balance=100.0, db=_Db())
+    port = SimulationExchangePort(broker)
+    store = DbSagaStore(_Db())
+    policy = MicrostakePolicy(simulation_only=True, minimum_economic_stake=D("0.10"), exchange_stub_size=D("2.00"),
+                              max_transient_exposure=D("10.00"), commission_rate=D("0.045"))
+    coord = MicrostakeCoordinator(port, store, policy)
+    req = MicrostakeRequest(market_id="1.1", selection_id=7, side=Side.BACK, economic_stake=D("0.10"),
+                            target_price=D("1.00"), customer_ref="rb")
+    real = port.cancel_all_remaining
+
+    def stale(bet_id):
+        out = real(bet_id)
+        port.last_snapshot_persisted = False
+        return out
+    port.cancel_all_remaining = stale
+    assert coord.execute(req, stub_price=D("3.00")).reason == "snapshot_not_persisted"
+    port.cancel_all_remaining = real
+    o = broker.state.orders[store.load("rb")["bet_id"]]
+    o.matched_size = matched
+    o.status = status
+    assert port._snapshot() is True
+    res = coord.recover("rb")
+    assert res.phase is Phase.AMBIGUOUS and res.reservation_held is True, (status, res.phase, res.reason)
+    assert store.load("rb")["phase"] != "ROLLED_BACK"
+
+
 def test_c9_review2_a_live_order_found_only_by_bet_id_is_not_taken_as_rolled_back(tmp_path):
     """BLOCK: la lettura per bet id accetta solo una riga terminale senza residuo; un ordine ancora vivo
     che find_by_ref non vede lascia la saga pendente, mai chiusa."""

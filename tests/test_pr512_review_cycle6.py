@@ -107,7 +107,7 @@ def test_runtime_rebuild_treats_malformed_exchange_payload_as_unavailable():
     svc = SimpleNamespace(list_current_orders=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("CURRENT_ORDERS_MALFORMED: x")))
     rc.betfair_service = svc
     calls = []
-    rc.duplication_guard = SimpleNamespace(acquire=lambda k: calls.append(k))
+    rc.duplication_guard = SimpleNamespace(acquire=lambda k, **kw: calls.append(k))   # pin=True dal ciclo 9
     rc.table_manager = SimpleNamespace(snapshot=lambda: [{"table_id": 1, "current_event_key": ""}], activate=lambda **kw: calls.append(kw))
     rc._uncertain_reservations_map = lambda: {}
     rc._open_order_candidates = lambda: ([{"customer_ref": "r1", "status": "SUBMITTED", "bet_id": "", "market_id": "1.1", "selection_id": 7,

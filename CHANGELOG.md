@@ -37,6 +37,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `pf_trace` riconosce i filtri nei gruppi di opzioni corte (`-qk`, `-vm`), le opzioni che non eseguono test
   (`--setup-plan`, `--fixtures`, ...) e `pytest` solo in posizione di comando; ogni SHA di test del checkpoint deve
   essere esadecimale (mai `HEAD`/`main`); con store illeggibile dopo il recover si riportano tutti i ref pendenti.
+  Terzo riesame: fixture di `tests/test_pr512_review_cycle6.py` allineata a `acquire(..., pin=True)`; test sulle righe
+  terminali con abbinato trovate per bet id (sempre AMBIGUOUS); `pf_trace` non deriva copertura da `|| true`,
+  `PYTEST_ADDOPTS`, `-o addopts` e `--cache-show`.
   Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale anche con
   `anti_duplication_enabled=false`, perche' e' il vincolo «un segnale valido => un solo ordine», non il dedupe a TTL.
 - **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**

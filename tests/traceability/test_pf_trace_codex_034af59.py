@@ -129,6 +129,10 @@ def test_explicit_tests_field_is_authoritative(tmp_path):
     "pytest --setup-only tests/test_x.py",
     "echo pytest tests/",                                             # pytest come testo, non esecuzione
     "echo run; echo pytest tests/test_x.py",
+    "pytest --cache-show tests/test_x.py",                            # terzo riesame c9
+    "PYTEST_ADDOPTS=--co pytest tests/test_x.py",
+    "pytest -o addopts=--co tests/test_x.py",
+    "pytest -q tests/test_x.py || true",                              # esito mascherato
 ])
 def test_c9_review_filtered_or_non_executing_commands_do_not_cover_the_test(tmp_path, command):
     """Riesame indipendente c9 (P2): un comando che esclude o filtra il test, o che nomina il path solo come
