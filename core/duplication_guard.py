@@ -29,6 +29,14 @@ class DuplicationGuard:
         # metadata debug
         self._registered_at: Dict[str, str] = {}
 
+        # chiavi "appuntate": trattenute da un reset (esito incerto, PF-ALL-F024) o
+        # acquisite dalla ricostruzione F018 di una posizione viva CON tavolo.
+        # Rappresentano una posizione aperta, non un segnale recente: esenti dalla
+        # scadenza TTL (rilievo Codex #512 ciclo 9, r4307328207); liberate solo da
+        # release() (chiusura della posizione) o clear(). Il seed di avvio senza
+        # tavolo (`register_startup_order`) NON e' appuntato.
+        self._pinned: set = set()
+
         self.ttl = int(ttl_seconds)
 
     # =========================================================
@@ -66,10 +74,13 @@ class DuplicationGuard:
     # =========================================================
     # ATOMIC CHECK + REGISTER
     # =========================================================
-    def acquire(self, event_key: str) -> bool:
+    def acquire(self, event_key: str, *, pin: bool = False) -> bool:
         """
         True → puoi eseguire ordine
         False → duplicato
+
+        ``pin=True``: la chiave rappresenta una posizione viva (seed al riavvio) e
+        non scade per TTL; vale anche se la chiave era gia' attiva.
         """
         key = str(event_key or "").strip()
         if not key:
@@ -81,10 +92,14 @@ class DuplicationGuard:
             self._cleanup_locked(now)
 
             if key in self._active:
+                if pin:
+                    self._pinned.add(key)
                 return False
 
             self._active[key] = now
             self._registered_at[key] = datetime.utcnow().isoformat()
+            if pin:
+                self._pinned.add(key)
 
             return True
 
@@ -98,6 +113,10 @@ class DuplicationGuard:
         event_key = str(order.get("event_key") or "").strip()
         if not event_key:
             event_key = self.build_event_key(order)
+        # Seed di avvio (ordine trovato sull'exchange, senza tavolo): NON appuntato. Scade con il TTL
+        # come ogni chiave (contratto documentato): l'ordine vivo e' gestito dalla reconciliation e,
+        # se ha un tavolo, dal controllo di occupazione dell'evento in `_on_signal_received`; un seed
+        # eterno bloccherebbe per sempre la selezione di un ordine poi annullato o scaduto.
         return self.acquire(event_key)
 
     # =========================================================
@@ -153,6 +172,7 @@ class DuplicationGuard:
         with self._lock:
             self._active.pop(key, None)
             self._registered_at.pop(key, None)
+            self._pinned.discard(key)
 
     # =========================================================
     # CLEANUP TTL
@@ -163,7 +183,7 @@ class DuplicationGuard:
 
         expired = [
             k for k, ts in self._active.items()
-            if (now - ts) > self.ttl
+            if (now - ts) > self.ttl and k not in self._pinned
         ]
 
         for k in expired:
@@ -203,6 +223,7 @@ class DuplicationGuard:
             if not keep:
                 self._active.clear()
                 self._registered_at.clear()
+                self._pinned.clear()
                 return
             for key in list(self._active):
                 if key not in keep:
@@ -210,3 +231,5 @@ class DuplicationGuard:
             for key in list(self._registered_at):
                 if key not in keep:
                     self._registered_at.pop(key, None)
+            # le chiavi trattenute sono posizioni aperte/incerte: non scadono per TTL (ciclo 9)
+            self._pinned = {k for k in keep if k in self._active}

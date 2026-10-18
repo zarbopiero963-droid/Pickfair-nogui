@@ -2668,9 +2668,12 @@ class RuntimeController:
 
         # F032: nuovo ciclo, dopo l'eventuale reset SIM. Baseline e marker durevole del reset portano lo
         # STESSO istante: la baseline fissata da questo reset non e' "precedente" al reset stesso.
+        # Baseline, marker e stato di recovery in UNA transazione (rilievo Codex #512 ciclo 9, r4307328199):
+        # mai una baseline nuova accettata al riavvio accanto alle perdite del ciclo precedente.
         reset_ts = time.time()
-        self._start_expansion_cycle("reset_cycle", set_at_ts=reset_ts)
-        persisted = self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts)   # RSR-12 + marker reset (F032)
+        expansion_state = self._expansion_cycle_state("reset_cycle", set_at_ts=reset_ts)
+        persisted = self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts,
+                                                  expansion_state=expansion_state)   # RSR-12 + marker + baseline F032
         if not persisted:
             self._declare_recovery_persist_failure("reset_cycle")
         status = self.get_status()
@@ -3184,6 +3187,15 @@ class RuntimeController:
 
         if self.config.anti_duplication_enabled and not self.duplication_guard.acquire(event_key):
             self._reject_signal(signal, "duplicato_bloccato")
+            return
+
+        # Rilievo Codex #512 ciclo 9 (r4307328207): la chiave anti-duplicato scade per TTL, la posizione
+        # no. Un tavolo gia' occupato per questo evento e' una posizione aperta o incerta: nessun secondo
+        # ordine (stesso invariante della ricostruzione F018 in `_rebuild_open_positions`). La chiave
+        # resta acquisita e il tavolo trattenuto: nessun `_release_acquired_and_reject`, che libererebbe
+        # il tavolo della posizione viva.
+        if self.table_manager.find_by_event_key(event_key) is not None:
+            self._reject_signal(signal, "evento_gia_in_posizione")
             return
 
         # Enforcement A3: Limite Tavoli Recovery (#320)
@@ -3753,7 +3765,7 @@ class RuntimeController:
         result["held"] = []
         for c in candidates:
             if c["event_key"] in held:
-                self.duplication_guard.acquire(c["event_key"])
+                self.duplication_guard.acquire(c["event_key"], pin=True)   # posizione viva: mai scaduta per TTL (c9)
                 result["held"].append(c["customer_ref"])
         candidates = [c for c in candidates if c["event_key"] not in held]
         if not candidates:
@@ -3791,7 +3803,7 @@ class RuntimeController:
             exposure = validators.order_exposure_or_inf(c["side"], c["stake"], c["price"])
             self.table_manager.activate(table_id=table_id, event_key=c["event_key"], exposure=float(exposure),
                                         market_id=c["market_id"], selection_id=c["selection_id"], meta=c["meta"])
-            self.duplication_guard.acquire(c["event_key"])
+            self.duplication_guard.acquire(c["event_key"], pin=True)       # posizione viva: mai scaduta per TTL (c9)
             if is_uncertain:
                 uncertain[c["event_key"]] = table_id
                 result["uncertain"].append(c["customer_ref"])
@@ -3901,11 +3913,11 @@ class RuntimeController:
     _EXPANSION_KEY = "roserpina.expansion_baseline_state"
     _RECOVERY_KEY = "roserpina.recovery_tables_state"
 
-    def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
-        """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
-        nessun profitto virtuale) all'inizio di un ciclo autorizzato. Si fissa solo su transizioni esplicite
-        (primo avvio senza baseline, auto-reset, reset del ciclo) e si persiste. Dati non validi o
-        persistenza fallita => nessuna baseline => nessuna espansione."""
+    def _expansion_cycle_state(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> dict:
+        """Stato della baseline di un nuovo ciclo (F032), SENZA persisterlo ne' applicarlo: il chiamante lo
+        scrive da solo (`_start_expansion_cycle`) o nella stessa transazione dello stato di recovery e del
+        marker del reset (`_persist_recovery_tables(expansion_state=...)`, rilievo Codex #512 ciclo 9,
+        r4307328199). `baseline` None = dati del conto non validi => nessuna espansione."""
         if funds is None:
             try:
                 funds = self.betfair_service.get_account_funds()
@@ -3914,8 +3926,18 @@ class RuntimeController:
                 funds = None
         account = self._account_from_funds(funds)
         baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
-        state = {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
-                 "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+        return {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
+                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+
+    def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
+        """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
+        nessun profitto virtuale) all'inizio di un ciclo autorizzato. Si fissa solo su transizioni esplicite
+        (primo avvio senza baseline, auto-reset, reset del ciclo) e si persiste. Dati non validi o
+        persistenza fallita => nessuna baseline => nessuna espansione.
+        Scrittura singola, senza marker: e' il percorso del primo avvio. I reset di ciclo passano da
+        `_persist_recovery_tables(cycle_reset=True, expansion_state=...)` (una sola transazione, ciclo 9)."""
+        state = self._expansion_cycle_state(reason, funds, set_at_ts=set_at_ts)
+        baseline = state["baseline"]
         try:
             self.db.save_settings({self._EXPANSION_KEY: json.dumps(state)})
         except Exception as exc:
@@ -4021,11 +4043,19 @@ class RuntimeController:
         logger.error("RSR-12: stato dei tavoli di recovery non persistito dopo %s: capacita' bloccata", source)
         self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
 
-    def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
+    def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None,
+                                 expansion_state: Optional[dict] = None) -> bool:
+        """Persiste lo stato dei tavoli di recovery (RSR-12); con ``cycle_reset`` anche il marker durevole del
+        reset e, se dato, lo stato della baseline F032 (``expansion_state`` da `_expansion_cycle_state`), in
+        UNA SOLA transazione (`Database.save_settings`): baseline del nuovo ciclo, marker e perdite perdonate
+        o si persistono insieme o non si persistono affatto (rilievo Codex #512 ciclo 9, r4307328199).
+        Fallimento con ``expansion_state`` => nessuna baseline in memoria (nessuna espansione)."""
         if getattr(self, "_recovery_state_unreadable", False):
             # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
             # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
             logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
+            if expansion_state is not None:
+                self._expansion_baseline = None
             return False
         try:
             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
@@ -4035,11 +4065,18 @@ class RuntimeController:
                 # (F032 / rilievo Codex r4306544231); `reset_ts` e' l'istante condiviso con la baseline
                 at_ts = float(reset_ts) if reset_ts is not None else time.time()
                 payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": at_ts})
+            if expansion_state is not None:
+                payload[self._EXPANSION_KEY] = json.dumps(expansion_state)
             self.db.save_settings(payload)
             self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
+            if expansion_state is not None:
+                self._expansion_baseline = expansion_state.get("baseline")
             return True
         except Exception as exc:
             logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
+            if expansion_state is not None:
+                logger.error("F032: baseline del ciclo non persistita: nessuna espansione")
+                self._expansion_baseline = None
             return False
 
     def _restore_recovery_tables(self) -> bool:
@@ -4073,10 +4110,11 @@ class RuntimeController:
         if account.get("ok"):
             self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
         reset_ts = time.time()                                           # stesso istante per baseline e marker
-        self._start_expansion_cycle("auto_reset", funds={"available": account.get("available"),
-                                                         "exposure": account.get("committed")}
-                                    if account.get("ok") else None, set_at_ts=reset_ts)   # F032: nuovo ciclo
-        if not self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts):   # RSR-12 + marker reset (F032)
+        expansion_state = self._expansion_cycle_state(                   # F032: nuovo ciclo
+            "auto_reset", funds={"available": account.get("available"), "exposure": account.get("committed")}
+            if account.get("ok") else None, set_at_ts=reset_ts)
+        # RSR-12 + marker reset + baseline in UNA transazione (rilievo Codex #512 ciclo 9, r4307328199)
+        if not self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts, expansion_state=expansion_state):
             self._declare_recovery_persist_failure("auto_reset")
         self.bus.publish(
             "ROSERPINA_AUTO_RESET",

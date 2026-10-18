@@ -439,3 +439,192 @@ def test_f10_known_growth_at_zero_threshold_still_expands():
     from core.system_state import DeskMode
     from test_f032_rsr12_units import _calc, _mm
     assert _calc(_mm(expansion_profit_pct=0.0), expansion_growth_snapshot=0.0).desk_mode is DeskMode.EXPANSION
+
+
+# ================================================================== Codex su 2c6aa09 / ciclo 9
+# ------------------------------------------------------------------ c9 #1 (r4307328207, P1): secondo segnale per lo
+# stesso evento dopo la scadenza TTL della chiave anti-duplicato, con la prima posizione ancora aperta
+def _c9_chain(tmp_path):
+    from tests.acceptance.test_issue437_pr27 import _catena
+    return _catena(tmp_path)
+
+
+def _c9_rejects(c):
+    from tests.acceptance.test_issue437_pr27 import _rifiuti
+    return _rifiuti(c)
+
+
+def _c9_signal(**over):
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
+    return _signal(**over)
+
+
+def _c9_occupied(c):
+    return [(t["table_id"], t["current_event_key"]) for t in c.rc.table_manager.snapshot() if t.get("current_event_key")]
+
+
+def _c9_expire_ttl(monkeypatch, guard):
+    from core import duplication_guard as dg_mod
+    base = dg_mod.time.monotonic()
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: base + guard.ttl + 1)
+
+
+@pytest.mark.parametrize("retain_by_reset", [False, True])
+def test_c9_1_second_signal_for_an_open_event_after_ttl_expiry_places_no_second_order(tmp_path, monkeypatch, retain_by_reset):
+    c = _c9_chain(tmp_path)
+    c.rc._on_signal_received(_c9_signal())
+    assert len(c.broker.state.orders) == 1, _c9_rejects(c)
+    key = c.rc.duplication_guard.build_event_key(_c9_signal())
+    if retain_by_reset:
+        c.rc._uncertain_reservations_map()[key] = 1          # esito incerto (AMBIGUOUS): il reset lo trattiene
+        c.rc.reset_cycle()
+        assert c.rc.duplication_guard.is_duplicate(key) and c.rc.table_manager.find_by_event_key(key) is not None
+    _c9_expire_ttl(monkeypatch, c.rc.duplication_guard)
+    assert c.rc.table_manager.find_by_event_key(key) is not None      # la posizione e' ancora sul tavolo
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    # strato 2 (chiave trattenuta dal reset: appuntata, mai scaduta) => `duplicato_bloccato`;
+    # strato 1 (chiave ordinaria scaduta, tavolo ancora occupato) => `evento_gia_in_posizione`
+    expected = "duplicato_bloccato" if retain_by_reset else "evento_gia_in_posizione"
+    assert _c9_rejects(c) == [expected], _c9_rejects(c)
+    assert len(c.broker.state.orders) == 1, "secondo ordine piazzato per lo stesso evento con la prima posizione aperta"
+    assert len(_c9_occupied(c)) == 1 and _c9_occupied(c)[0][1] == key
+    assert c.rc.table_manager.find_by_event_key(key) is not None, "tavolo occupato liberato dal rifiuto"
+    assert c.rc.duplication_guard.is_duplicate(key), "chiave rilasciata/scaduta con la posizione ancora aperta"
+
+
+def test_c9_1_a_different_event_still_goes_through_after_ttl_expiry(tmp_path, monkeypatch):
+    c = _c9_chain(tmp_path)
+    c.rc._on_signal_received(_c9_signal())
+    assert len(c.broker.state.orders) == 1, _c9_rejects(c)
+    _c9_expire_ttl(monkeypatch, c.rc.duplication_guard)
+    c.rc._on_signal_received(_c9_signal(market_id="1.999", selection_id=12))
+    assert len(c.broker.state.orders) == 2, _c9_rejects(c)
+    assert "evento_gia_in_posizione" not in _c9_rejects(c)
+    assert len(_c9_occupied(c)) == 2
+
+
+def test_c9_1_retained_keys_never_expire_by_ttl_but_startup_seeds_still_do(monkeypatch):
+    """Strato 2: una chiave trattenuta dal reset (esito incerto) non scade in silenzio; `release` la libera.
+    Il seed di avvio senza tavolo (`register_startup_order`) conserva il contratto documentato e scade con il
+    TTL (tests/unit/test_duplication_guard_ttl_and_seed.py): un seed eterno bloccherebbe per sempre la
+    selezione di un ordine poi annullato; la posizione con tavolo e' protetta dallo strato 1."""
+    from core import duplication_guard as dg_mod
+    g = dg_mod.DuplicationGuard(ttl_seconds=120)
+    assert g.acquire("K-live") and g.acquire("K-free") and g.acquire("K-seed-ref")
+    g.clear(keep_keys={"K-live"})
+    assert g.register_startup_order({"event_key": "K-seed"}) is True
+    assert g.acquire("K-plain")
+    base = dg_mod.time.monotonic()
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: base + g.ttl + 1)
+    assert g.is_duplicate("K-live"), "chiave trattenuta dal reset scaduta per TTL"
+    assert not g.is_duplicate("K-seed"), "il seed di avvio senza tavolo deve scadere come ogni chiave"
+    assert not g.is_duplicate("K-plain"), "chiave ordinaria non piu' soggetta al TTL (over-blocking)"
+    assert not g.is_duplicate("K-free")
+    g.release("K-live")
+    assert not g.is_duplicate("K-live") and g.acquire("K-live")        # dopo il rilascio e' di nuovo ordinaria
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: base + 2 * g.ttl + 2)
+    assert not g.is_duplicate("K-live")
+    g.acquire("K-again")
+    g.clear(keep_keys={"K-again"})
+    g.clear()
+    assert not g.is_duplicate("K-again"), "clear() senza chiavi trattenute libera anche le chiavi appuntate"
+
+
+def test_c9_1_rebuilt_open_position_key_does_not_expire_by_ttl(monkeypatch):
+    from core import duplication_guard as dg_mod
+    from tests.f026.test_f018_rebuild_units import _Exchange, _rc, _row
+    rc = _rc([_row("r1", "SUBMITTED", "1.1", 1, "K1", side="BACK", bet_id="77")],
+             _Exchange([{"betId": "77", "marketId": "1.1"}]))
+    assert rc._rebuild_open_positions()["rebuilt"] == ["r1"]
+    base = dg_mod.time.monotonic()
+    monkeypatch.setattr(dg_mod.time, "monotonic", lambda: base + rc.duplication_guard.ttl + 1)
+    assert rc.duplication_guard.is_duplicate("K1"), "chiave della posizione ricostruita scaduta per TTL"
+
+
+# ------------------------------------------------------------------ c9 #2 (r4307328199, P1): baseline di espansione e
+# stato di recovery + marker del reset scritti in DUE transazioni: se la seconda fallisce, dopo un crash la nuova
+# baseline e' accettata (nessun marker) mentre tornano le perdite del ciclo precedente
+def _c9_reset_controller(tmp_path, *, fail_on):
+    """`fail_on`: insieme di chiavi la cui presenza nel payload fa fallire `save_settings` (None = mai)."""
+    rc = _reset_controller(tmp_path, fail_persist=False)
+    if fail_on:
+        real_save = rc.db.save_settings
+
+        def failing(payload):
+            if set(payload) & set(fail_on):
+                raise OSError("disk full")
+            return real_save(payload)
+        rc.db.save_settings = failing
+    rc.betfair_service.funds = {"available": 130.0, "exposure": 0.0}      # il nuovo ciclo partirebbe da 130
+    return rc
+
+
+def _c9_restart(tmp_path):
+    from test_f032_rsr12_units import _rc
+    again = _rc(tmp_path / "w.db")
+    again._load_expansion_baseline()
+    again._restore_recovery_tables()
+    return again
+
+
+@pytest.mark.parametrize("fail_on", [("roserpina.recovery_tables_state",), ("roserpina.cycle_reset_state",),
+                                     ("roserpina.expansion_baseline_state",)])
+def test_c9_2_reset_cycle_baseline_and_recovery_state_are_one_transaction(tmp_path, fail_on):
+    rc = _c9_reset_controller(tmp_path, fail_on=fail_on)
+    out = rc.reset_cycle()
+    assert out["persisted"] is False and rc._recovery_persist_failed is True
+    assert rc._expansion_baseline is None, "baseline del nuovo ciclo tenuta in memoria con reset non durevole"
+    assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "reset_cycle"}]
+    again = _c9_restart(tmp_path)
+    assert again.table_manager.recovery_state() == {1: pytest.approx(3.0)}, "perdite del ciclo precedente perse"
+    assert again._expansion_baseline == pytest.approx(100.0), (
+        "baseline del NUOVO ciclo accettata al riavvio mentre tornano le perdite del ciclo VECCHIO")
+
+
+def test_c9_2_reset_cycle_success_persists_baseline_marker_and_recovery_atomically(tmp_path):
+    rc = _c9_reset_controller(tmp_path, fail_on=None)
+    writes = []
+    real_save = rc.db.save_settings
+    rc.db.save_settings = lambda payload: (writes.append(sorted(payload)), real_save(payload))[1]
+    out = rc.reset_cycle()
+    assert out["persisted"] is True and rc._expansion_baseline == pytest.approx(130.0)
+    assert writes == [sorted([rc._EXPANSION_KEY, rc._RECOVERY_KEY, rc._CYCLE_RESET_KEY])], writes
+    again = _c9_restart(tmp_path)
+    assert again._expansion_baseline == pytest.approx(130.0) and again.table_manager.recovery_state() == {}
+    settings = again.db.get_settings()
+    assert json.loads(settings[rc._EXPANSION_KEY])["set_at_ts"] == json.loads(settings[rc._CYCLE_RESET_KEY])["at_ts"]
+
+
+@pytest.mark.parametrize("fail_on", [("roserpina.recovery_tables_state",), ("roserpina.expansion_baseline_state",)])
+def test_c9_2_auto_reset_baseline_and_recovery_state_are_one_transaction(tmp_path, fail_on):
+    rc = _c9_reset_controller(tmp_path, fail_on=fail_on)
+    rc._account_snapshot = {"ok": True, "cash_equity": 80.0, "available": 80.0, "committed": 0.0}
+    rc._cash_equity_peak = 100.0
+    rc.config.auto_reset_drawdown_pct = 15.0
+    assert rc._maybe_auto_reset(20.0) is True
+    assert rc._recovery_persist_failed is True and rc._expansion_baseline is None
+    again = _c9_restart(tmp_path)
+    assert again.table_manager.recovery_state() == {1: pytest.approx(3.0)}
+    assert again._expansion_baseline == pytest.approx(100.0), "baseline del nuovo ciclo accettata con reset non durevole"
+
+
+def test_c9_2_auto_reset_success_is_one_write(tmp_path):
+    rc = _c9_reset_controller(tmp_path, fail_on=None)
+    rc._account_snapshot = {"ok": True, "cash_equity": 80.0, "available": 80.0, "committed": 0.0}
+    rc._cash_equity_peak = 100.0
+    rc.config.auto_reset_drawdown_pct = 15.0
+    writes = []
+    real_save = rc.db.save_settings
+    rc.db.save_settings = lambda payload: (writes.append(sorted(payload)), real_save(payload))[1]
+    assert rc._maybe_auto_reset(20.0) is True
+    assert writes == [sorted([rc._EXPANSION_KEY, rc._RECOVERY_KEY, rc._CYCLE_RESET_KEY])], writes
+    again = _c9_restart(tmp_path)
+    assert again._expansion_baseline == pytest.approx(80.0) and again.table_manager.recovery_state() == {}
+
+
+def test_c9_2_first_start_stays_a_single_baseline_write_without_marker(tmp_path):
+    from test_f032_rsr12_units import _rc
+    rc = _rc(tmp_path / "s.db")
+    assert rc._start_expansion_cycle("first_start", funds={"available": 100.0, "exposure": 0.0}) is True
+    settings = rc.db.get_settings()
+    assert rc._EXPANSION_KEY in settings and rc._CYCLE_RESET_KEY not in settings and rc._RECOVERY_KEY not in settings
