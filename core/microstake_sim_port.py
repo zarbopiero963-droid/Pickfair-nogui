@@ -26,6 +26,7 @@ from core.microstake_safe import (
     MicrostakeCoordinator,
     MicrostakePolicy,
     NativeMicrostakeExecutor,
+    Phase,
     Side,
     SimOrder,
 )
@@ -142,6 +143,7 @@ class SimulationExchangePort:
         self.broker = broker
         self.operation_log: List[tuple] = []
         self.snapshot_failures = 0
+        self.last_snapshot_persisted = True     # esito dell'ULTIMO snapshot (rilievo Codex #512 su 034af59)
         self._faults: List[str] = []
         self._lock = threading.RLock()
         self._reservations: Dict[str, Decimal] = {}
@@ -207,14 +209,24 @@ class SimulationExchangePort:
         with self._lock:
             return customer_ref in self._reservations
 
-    def _snapshot(self) -> None:
+    def hold_reservation(self, customer_ref: str, exposure: Decimal) -> None:
+        """Ripristina una riserva senza verifica del cap: copre esposizione GIA' sull'exchange (saga retrocessa
+        ad AMBIGUOUS dopo uno snapshot finale non persistito). Un cap superato blocca i microstake successivi,
+        mai quello gia' inviato."""
+        with self._lock:
+            self._reservations[customer_ref] = exposure
+
+    def _snapshot(self) -> bool:
         """Snapshot del broker dopo ogni operazione: la saga deve ritrovare lo stub anche dopo un crash.
         Un fallimento non e' silenzioso (rilievo Grok #512): viene contato e dichiarato nel risultato
-        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS."""
+        dell'esecutore; lo stub resta comunque nella saga persistita e un riavvio lo riconcilia AMBIGUOUS.
+        Ritorna l'esito, memorizzato anche in `last_snapshot_persisted`."""
         persist = getattr(self.broker, "persist_snapshot", None)
-        if callable(persist) and persist() is False:
+        self.last_snapshot_persisted = not (callable(persist) and persist() is False)
+        if not self.last_snapshot_persisted:
             self.snapshot_failures += 1
             logger.warning("Microstake: snapshot del broker SIM non persistito (fallimenti=%s)", self.snapshot_failures)
+        return self.last_snapshot_persisted
 
     # -- operazioni exchange ---------------------------------------------------------------------------
     def place(self, *, market_id: str, selection_id: int, side: Side, size: Decimal, price: Decimal,
@@ -316,7 +328,10 @@ class SimulationQuoteProvider:
 
 # ---------------------------------------------------------------------------- esecutore nativo per l'engine
 class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
-    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED."""
+    """Esecutore sul broker reale: uno store illeggibile DOPO un'operazione exchange e' AMBIGUOUS, mai FAILED.
+    Snapshot FINALE del broker non persistito => la saga NON e' ACTIVE: al riavvio il broker ricaricherebbe uno
+    stato precedente all'ultima operazione (stub intero o vecchio betId) e `recover()` su ACTIVE non lo
+    riconcilierebbe. La saga viene retrocessa ad AMBIGUOUS con riserva tenuta (rilievo Codex #512 su 034af59)."""
 
     def __init__(self, port: SimulationExchangePort, store: DbSagaStore, *, quote_provider: Callable,
                  transient_exposure_cap: Any) -> None:
@@ -333,6 +348,9 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             if len(self.port.operation_log) > before:
                 # dichiarato, mai silenzioso: la fonte di reload del broker e' aggiornata oppure no
                 out["snapshot_persisted"] = self.port.snapshot_failures == snapshot_failures_before
+                if out.get("status") == "SUCCESS" and out.get("phase") == Phase.ACTIVE.value \
+                        and not self.port.last_snapshot_persisted:
+                    out = self._demote_unpersisted_active(payload, out)
             return out
         except SagaStoreError as exc:
             if len(self.port.operation_log) > before:
@@ -341,6 +359,19 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             out = self._blocked("saga_store_unreadable")
             out["pre_send"] = True          # nessuna operazione exchange: l'intento dedupe si rilascia
             return out
+
+    def _demote_unpersisted_active(self, payload: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
+        """ACTIVE con snapshot finale non persistito => AMBIGUOUS persistito, riserva ripristinata, risultato
+        AMBIGUOUS (`order_unknown`, mai `instructionReports`): riconciliazione, mai retry."""
+        ref = str(payload.get("customer_ref"))
+        saga = self.store.load(ref) or {}
+        self.port.hold_reservation(ref, _dec(saga.get("transient_exposure", "0")))
+        self.store.save(ref, phase=Phase.AMBIGUOUS, reservation_held=True, reason="snapshot_not_persisted")
+        logger.error("Microstake %s: snapshot finale del broker SIM non persistito, saga AMBIGUOUS (riconciliazione)", ref)
+        demoted = {k: v for k, v in out.items() if k != "instructionReports"}
+        demoted.update(status="AMBIGUOUS", phase=Phase.AMBIGUOUS.value, reservation_held=True, order_unknown=True,
+                       error="snapshot_not_persisted")
+        return demoted
 
     def pending_same_position(self, market_id: Any, selection_id: Any, side: Any) -> List[str]:
         """Ref delle saghe non concluse sulla stessa posizione (mercato, selezione, lato).
@@ -355,9 +386,15 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
         return out
 
     def recover_pending(self) -> Dict[str, str]:
-        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita."""
+        """Riconciliazione all'avvio: ogni saga non conclusa viene ripresa dalla sua identita' persistita.
+        Prima si persiste lo snapshot del broker: se la fonte di reload non si riesce ad allineare allo stato in
+        memoria, nessuna saga viene promossa (restano AMBIGUOUS/pendenti; un crash successivo ricaricherebbe uno
+        stato vecchio sotto una saga ACTIVE)."""
         out: Dict[str, str] = {}
-        for ref in self.store.pending_refs():
+        pending = self.store.pending_refs()
+        if pending and not self.port._snapshot():
+            return {ref: Phase.AMBIGUOUS.value for ref in pending}
+        for ref in pending:
             try:
                 out[ref] = self.coordinator.recover(ref).phase.value
             except Exception as exc:  # noqa: BLE001 - riportato, mai nascosto

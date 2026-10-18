@@ -35,9 +35,15 @@ class _DB:
     def __init__(self):
         self.rows = {}
         self.settings = {}
+        self.simulation_state = None
 
     def is_ready(self):
         return True
+
+    def save_simulation_state(self, key, state):
+        # fonte di reload del broker SIM: senza, ogni snapshot e' "non persistito" e la saga
+        # resta AMBIGUOUS (rilievo Codex #512 su 034af59); la produzione passa sempre il DB al broker
+        self.simulation_state = dict(state)
 
     def insert_order(self, payload):
         key = len(self.rows) + 1
@@ -93,8 +99,8 @@ def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, avai
 
 
 def _engine(db=None, **rt):
-    broker = SimulationBroker(starting_balance=100.0)
     db = db or _DB()
+    broker = SimulationBroker(starting_balance=100.0, db=db)
     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
     engine.simulation_broker = broker
     engine.runtime_controller = _runtime(broker, **rt)
@@ -196,8 +202,9 @@ def test_without_runtime_the_sim_broker_funds_are_the_cap_source():
     engine = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker, executor=_Inline())
     res = engine.submit_quick_bet(_payload("norc", size=0.10, price=2.0))
     assert res["ok"] is False and "transient_exposure_cap" in str(res["error"]) and _orders(broker) == []
-    broker2 = SimulationBroker(starting_balance=100.0)
-    engine2 = TradingEngine(bus=_Bus(), db=_DB(), client_getter=lambda: broker2, executor=_Inline())
+    db2 = _DB()
+    broker2 = SimulationBroker(starting_balance=100.0, db=db2)
+    engine2 = TradingEngine(bus=_Bus(), db=db2, client_getter=lambda: broker2, executor=_Inline())
     assert engine2.submit_quick_bet(_payload("norc2", size=0.10, price=2.0))["ok"] is True
 
 

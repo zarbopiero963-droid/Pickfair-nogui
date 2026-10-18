@@ -189,7 +189,8 @@ def test_snapshot_failure_is_declared_in_the_executor_result():
     port = engine.microstake_executor.port
     broker.persist_snapshot = lambda: False
     res = engine.microstake_executor.execute(_payload("snap", size=0.10, price=3.0))
-    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE" and res["snapshot_persisted"] is False, res
+    # ciclo 8 (Codex su 034af59): snapshot FINALE non persistito => mai SUCCESS/ACTIVE, saga AMBIGUOUS
+    assert res["status"] == "AMBIGUOUS" and res["phase"] == "AMBIGUOUS" and res["snapshot_persisted"] is False, res
     assert port.snapshot_failures >= 1
 
 

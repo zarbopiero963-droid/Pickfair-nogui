@@ -25,7 +25,7 @@ from core.runtime_controller import RuntimeController
 from core.table_manager import TableManager
 from simulation_broker import SimulationBroker
 from test_microstake_cashout_and_recovery import _Service, _router_payload
-from test_microstake_engine_native import _engine, _orders, _payload, _runtime
+from test_microstake_engine_native import _DB, _engine, _orders, _payload, _runtime
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "tools", "agent_checkpoint"))
@@ -37,7 +37,7 @@ def test_cached_sim_executor_is_rebuilt_when_the_simulation_broker_changes():
     engine, old_broker, _ = _engine()
     assert engine.submit_quick_bet(_payload("a", size=0.10, price=3.0))["ok"] is True
     stale = engine.microstake_executor
-    new_broker = SimulationBroker(starting_balance=100.0)                     # stop/start: broker nuovo
+    new_broker = SimulationBroker(starting_balance=100.0, db=_DB())          # stop/start: broker nuovo
     engine.simulation_broker = new_broker
     engine.client_getter = lambda: new_broker
     engine.runtime_controller = _runtime(new_broker)

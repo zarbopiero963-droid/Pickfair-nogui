@@ -73,3 +73,57 @@ def test_f1_rebuild_goes_paused_on_row_without_bet_id():
     res = rc._rebuild_open_positions()
     assert res["ok"] is False and res["reason"].startswith("EXCHANGE_ORDERS_UNAVAILABLE"), res
     assert res["closed"] == []
+
+
+# ------------------------------------------------------------------ 2. snapshot finale non persistito
+def _native_engine():
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload
+    engine, broker, _ = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    return engine, broker, _payload
+
+
+def test_f2_failed_final_snapshot_leaves_the_saga_ambiguous_with_reservation_held():
+    engine, broker, payload = _native_engine()
+    ex = engine.microstake_executor
+    broker.persist_snapshot = lambda: False
+    res = ex.execute(payload("snap", size=0.10, price=3.0))
+    assert res["status"] == "AMBIGUOUS" and res["order_unknown"] is True, res
+    assert res["phase"] == "AMBIGUOUS" and res["reservation_held"] is True and res["snapshot_persisted"] is False
+    assert "instructionReports" not in res
+    saga = ex.store.load("snap")
+    assert saga["phase"] == "AMBIGUOUS" and saga["reservation_held"] is True, saga
+    assert "snap" in ex.store.pending_refs(), "la saga deve restare da riconciliare al riavvio"
+    assert ex.port.has_reservation("snap")
+
+
+def test_f2_failed_final_snapshot_is_reconciled_by_recover_without_a_new_place():
+    engine, broker, payload = _native_engine()
+    ex = engine.microstake_executor
+    broker.persist_snapshot = lambda: False
+    ex.execute(payload("snap-r", size=0.10, price=3.0))
+    broker.persist_snapshot = lambda: True
+    out = ex.recover_pending()
+    assert out == {"snap-r": "ACTIVE"}, out
+    assert [op[0] for op in ex.port.operation_log] == ["PLACE", "CANCEL"]
+    assert ex.store.load("snap-r")["reservation_held"] is False and not ex.port.has_reservation("snap-r")
+
+
+def test_f2_intermediate_snapshot_failure_recovered_by_the_final_one_stays_active():
+    engine, broker, payload = _native_engine()
+    calls = []
+    broker.persist_snapshot = lambda: (calls.append(1), len(calls) > 1)[1]   # fallisce solo dopo il PLACE
+    res = engine.microstake_executor.execute(payload("snap-ok", size=0.10, price=3.0))
+    assert res["status"] == "SUCCESS" and res["phase"] == "ACTIVE", res
+    assert res["snapshot_persisted"] is False and engine.microstake_executor.port.snapshot_failures == 1
+
+
+def test_f2_recover_pending_does_not_promote_while_the_snapshot_still_fails():
+    engine, broker, payload = _native_engine()
+    ex = engine.microstake_executor
+    broker.persist_snapshot = lambda: False
+    ex.execute(payload("snap-x", size=0.10, price=3.0))
+    ops = list(ex.port.operation_log)
+    assert ex.recover_pending() == {"snap-x": "AMBIGUOUS"}
+    assert ex.store.load("snap-x")["phase"] == "AMBIGUOUS" and ex.port.operation_log == ops

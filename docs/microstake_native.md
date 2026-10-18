@@ -118,7 +118,11 @@ Snapshot del broker SIM: dopo ogni operazione della saga l'adapter chiama `Simul
 (scrittura **sotto il lock** del broker, così due saghe concorrenti non pubblicano uno snapshot più vecchio dopo uno
 più nuovo). Un fallimento non è silenzioso: contato in `port.snapshot_failures` e dichiarato nel risultato
 dell'esecutore (`snapshot_persisted: false`); la saga persistita resta l'autorità e un riavvio senza stub
-ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE.
+ricaricabile finisce AMBIGUOUS, mai un nuovo PLACE. Se a non persistersi è lo snapshot **finale** della saga
+(ciclo 8, rilievo Codex su 034af59), la saga NON diventa ACTIVE: viene persistita **AMBIGUOUS** con riserva
+tenuta (`reason: snapshot_not_persisted`), il risultato è `AMBIGUOUS`/`order_unknown` (nessun
+`instructionReports`) e `recover()` la riconcilia dalla sua identità. `recover_pending()` ritenta prima lo
+snapshot del broker: finché non riesce, nessuna saga pendente viene promossa (restano AMBIGUOUS).
 
 ## 6. Limiti dichiarati (non PASS)
 

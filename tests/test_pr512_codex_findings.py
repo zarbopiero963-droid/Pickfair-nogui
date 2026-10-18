@@ -28,7 +28,7 @@ from test_microstake_sim_port import _Db as _SagaDb
 
 def _engine_real_db(**rt):
     db = Database(os.path.join(tempfile.mkdtemp(prefix="pr512_"), "p.db"))
-    broker = SimulationBroker(starting_balance=100.0)
+    broker = SimulationBroker(starting_balance=100.0, db=db)      # fonte di reload: come in produzione
     engine = TradingEngine(bus=_Bus(), db=db, client_getter=lambda: broker, executor=_Inline())
     engine.simulation_broker = broker
     engine.runtime_controller = _runtime(broker, **rt)
