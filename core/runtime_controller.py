@@ -2528,6 +2528,7 @@ class RuntimeController:
             rebuild = dict(rebuild, ok=False, reason=(
                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
+        rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
         self._last_position_rebuild = dict(rebuild)
         self._reconciliation_required = not rebuild["ok"]
         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
@@ -2631,7 +2632,7 @@ class RuntimeController:
                         "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
                         "microstake": microstake, "status": self._safe_status_snapshot()}
-            rebuild = self._rebuild_open_positions()
+            rebuild = self._gate_rebuild_on_recovery_state(self._rebuild_open_positions())
             self._last_position_rebuild = dict(rebuild)
             if not rebuild["ok"]:
                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
@@ -4002,6 +4003,16 @@ class RuntimeController:
             return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
         return len(self.table_manager.recovery_state())
 
+    def _gate_rebuild_on_recovery_state(self, rebuild: dict) -> dict:
+        """RSR-12 illeggibile al riavvio = riconciliazione incompleta (rilievo Codex #512 su 034af59): le
+        perdite da recuperare non sono note, quindi nessun nuovo ingresso. Stesso percorso di
+        EXCHANGE_ORDERS_UNAVAILABLE (F018): ok=False => PAUSED; resume() non lo scavalca (serve un
+        riavvio con stato leggibile, mai una sovrascrittura)."""
+        if not getattr(self, "_recovery_state_unreadable", False):
+            return rebuild
+        return dict(rebuild, ok=False, recovery_state_unreadable=True,
+                    reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
+
     def _declare_recovery_persist_failure(self, source: str) -> None:
         """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le
         perdite perdonate in memoria tornerebbero dal DB. Fail-closed come nel settlement: capacita' di
@@ -4011,6 +4022,11 @@ class RuntimeController:
         self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
 
     def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None) -> bool:
+        if getattr(self, "_recovery_state_unreadable", False):
+            # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
+            # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
+            logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
+            return False
         try:
             state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
             payload = {self._RECOVERY_KEY: json.dumps(state)}

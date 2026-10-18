@@ -293,3 +293,55 @@ def test_f5_auto_reset_persist_failure_is_declared_and_fail_closed(tmp_path):
     assert _events(rc, "RECOVERY_STATE_PERSIST_FAILED") == [{"source": "auto_reset"}]
     assert len(_events(rc, "ROSERPINA_AUTO_RESET")) == 1
     assert rc._active_recovery_count() == rc.config.max_recovery_tables
+
+
+# ------------------------------------------------------------------ 6. stato di recovery illeggibile al riavvio
+def test_f6_persist_refuses_to_overwrite_an_unreadable_recovery_state(tmp_path):
+    from test_f032_rsr12_units import _rc
+    rc = _rc(tmp_path / "u.db")
+    rc.db.save_settings({rc._RECOVERY_KEY: "{rotto"})
+    assert rc._restore_recovery_tables() is False and rc._recovery_state_unreadable is True
+    assert rc._persist_recovery_tables() is False, "stato illeggibile sovrascritto"
+    assert rc._persist_recovery_tables(cycle_reset=True, reset_ts=1.0) is False
+    assert rc.db.get_settings().get(rc._RECOVERY_KEY) == "{rotto"
+    assert rc._active_recovery_count() == rc.config.max_recovery_tables
+
+
+def test_f6_resume_does_not_bypass_an_unreadable_recovery_state():
+    from types import SimpleNamespace
+    from core.runtime_controller import RuntimeController, RuntimeMode
+    rc = RuntimeController.__new__(RuntimeController)
+    rc.mode = RuntimeMode.PAUSED
+    rc.bus = SimpleNamespace(publish=lambda *a, **k: None)
+    rc._reconciliation_required = True
+    rc._recovery_state_unreadable = True
+    rc._monitor_daily_loss_breach = lambda **k: {"breached": False}
+    rc._loss_block_reason = lambda: ""
+    rc._recover_native_microstake = lambda: {"ok": True, "status": "RECONCILED", "pending": []}
+    rc._rebuild_open_positions = lambda: {"ok": True, "reason": "", "rebuilt": [], "uncertain": [], "held": []}
+    rc.get_status = lambda: {"mode": rc.mode.value}
+    rc._safe_status_snapshot = lambda: {"mode": rc.mode.value}
+    out = rc.resume()
+    assert out["resumed"] is False and "RECOVERY_STATE_UNREADABLE" in out["reason"], out
+    assert rc.mode is RuntimeMode.PAUSED and rc._reconciliation_required is True
+
+
+def test_f6_start_with_unreadable_recovery_state_goes_paused_and_keeps_the_stored_state():
+    """Percorso reale (harness F026 in sottoprocesso): run 1 lascia un tavolo in recovery; lo stato persistito
+    viene corrotto; run 2 deve partire PAUSED (RECOVERY_STATE_UNREADABLE), non ammettere il segnale e non
+    sovrascrivere lo stato illeggibile."""
+    import glob
+    import tempfile
+    from database import Database
+    from test_f026_financial import run
+    home = tempfile.mkdtemp(prefix="f6_")
+    first = run([{"op": "signal", "m": "1.601", "price": 2.0}, {"op": "settle", "m": "1.601", "win": False}], home=home)
+    assert any(float(t["loss"] or 0) > 0 for t in first["snaps"][-1]["tables"]), "precondizione: tavolo in recovery"
+    dbs = glob.glob(os.path.join(home, "**", "*.db"), recursive=True)
+    assert len(dbs) == 1, dbs
+    Database(dbs[0]).save_settings({"roserpina.recovery_tables_state": "{rotto"})
+    second = run([{"op": "signal", "m": "1.602", "price": 2.0}], home=home)
+    assert second["mode_after_start"] == "PAUSED", second["mode_after_start"]
+    assert second["rebuild"]["ok"] is False and second["rebuild"]["reason"] == "RECOVERY_STATE_UNREADABLE", second["rebuild"]
+    assert not any(o["market_id"] == "1.602" and o["status"] == "SUBMITTED" for o in second["snaps"][-1]["orders"])
+    assert Database(dbs[0]).get_settings().get("roserpina.recovery_tables_state") == "{rotto"
