@@ -728,7 +728,11 @@ class BetfairService:
         una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
         silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
         che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
-        decisione owner D-C del 18/10/2026)."""
+        decisione owner D-C del 18/10/2026).
+        Ogni riga deve inoltre portare un'identita' non vuota (``betId``/``bet_id`` E
+        ``marketId``/``market_id``): una riga senza betId non puo' confermare nessuna posizione
+        persistita e F018 la leggerebbe come "ordine assente => chiuso" (rilievo Codex #512 su
+        034af59). Payload senza identita' => stesso errore => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED."""
         if orders is None:
             return []
         if not isinstance(orders, list):
@@ -736,6 +740,10 @@ class BetfairService:
         for order in orders:
             if not isinstance(order, dict):
                 raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
+            bet_id = str(order.get("betId") or order.get("bet_id") or "").strip()
+            market_id = str(order.get("marketId") or order.get("market_id") or "").strip()
+            if not bet_id or not market_id:
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED: row without betId/marketId")
         return orders
 
     @staticmethod
