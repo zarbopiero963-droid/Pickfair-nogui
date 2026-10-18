@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 34,
- "updated_at": "2026-10-18T19:45:00Z",
+ "seq": 35,
+ "updated_at": "2026-10-18T21:20:00Z",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "1) attendere regressione completa su 54ee05a e riesame del delta; 2) correggere eventuali rilievi confermati; 3) push unico del ciclo 9 su ccr-bcc81683-ud0hgc; 4) CI/Sol/Grok/Codex settled, risposte 'Fatto in commit' ai thread r4306954189, r4306954197, r4307328207, r4307328199, r4307328204, r4307328211 e al punto Sol c.6250774086, resolve con prova; 5) verdetto #512 e #426; 6) ciclo 10 solo se restano difetti confermati.",
+ "next_atomic_action": "Attendere CI/Sol/Grok/Codex settled su b918a6d; rispondere 'Fatto in commit' ai thread r4306954189, r4306954197, r4307328207, r4307328199, r4307328204, r4307328211 e al punto Sol c.6250774086; resolve con prova; verdetto #512 (READY FOR OWNER MERGE o BLOCKED) su #512 e #426; ciclo 10 solo per difetti bloccanti confermati; poi #505.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,7 +470,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "b7a8c1c8932de1d5fb19df98778abc6474390da8",
+ "previous_checkpoint_sha": "cd814995af9a4eac79d6b7f888501e24db76f7b3",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -548,7 +548,7 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f",
+  "sha": "b918a6dbfb7ee313aef2b42ca939641a930c9e1a",
   "verified_with": "git push + git ls-remote",
   "patch": null
  },
@@ -1013,21 +1013,30 @@
    "authorization": "#512 c.6250353538 (cicli 8-10) — ciclo 9 solo se restano difetti confermati dopo check/review del ciclo 8"
   },
   "cycle_9": {
-   "status": "IN CORSO, non pubblicato",
-   "local_head": "54ee05a",
+   "status": "PUBBLICATO, in attesa di CI e review",
+   "head": "b918a6d",
    "commits": [
     "438a0c6",
     "916fda4",
     "fd8ef30",
     "a0d0673",
     "f0d397b",
-    "54ee05a"
+    "54ee05a",
+    "b566ab7",
+    "9723a37",
+    "83f9101",
+    "db6278a",
+    "b918a6d"
    ],
-   "independent_review_1": "su f0d397b: 1 P1 (rollback_intent perso su recover senza ordine), 4 P2 (snapshot stantio su rollback, chiave fissata dopo F028, reset non persistito separabile, pf_trace aggirabile), 3 minori: tutti corretti in 54ee05a con RED->GREEN",
-   "independent_review_2": "in corso sul delta f0d397b..54ee05a",
-   "regression": "in corso su 54ee05a (quella su f0d397b interrotta perche' superata)",
-   "scope": "files == diff completo (82 file), verificato",
-   "push": "NON eseguito: unico push dopo regressione verde e riesame pulito"
+   "independent_reviews": "5 riesami: f0d397b (1 P1, 4 P2), 54ee05a (2 P2), b566ab7 (fixture), db6278a (BLOCKER B1 P1 incertezza per tavolo), b918a6d (pulito, solo P3); tutti i bloccanti corretti RED->GREEN",
+   "owner_verification": "anti-duplicazione disattivata non disattiva le protezioni obbligatorie (posizione AMBIGUOUS per tavolo, chiave fissata F018/reset, dedupe engine per customer_ref): db6278a + b918a6d",
+   "regression": "7959 passed, 14 skipped, 2 xfailed, 0 failed su b918a6d",
+   "governance": "guard PASS (files == diff, 82 file), full-diff PASS, pf_trace validate --strict PASS",
+   "non_blockers": [
+    "N1 c9d: guardia+allocate non atomici con anti-dup off (preesistente)",
+    "N4 c9d: seed di avvio senza protezione con anti-dup off, identico a main (decisione owner se intesa letterale)",
+    "P3 c9e: reset trattiene un solo tavolo incerto per evento a mercato regolato; marcatura incerta residua dopo settlement (prudenziale); AMBIGUOUS senza tavolo"
+   ]
   }
  },
  "threads_pr512": {
@@ -1035,7 +1044,7 @@
   "open": 21,
   "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
  },
- "verdict_pr512": "ciclo 9 in preparazione locale (54ee05a); PR non pronta",
+ "verdict_pr512": "ciclo 9 pubblicato (b918a6d); verdetto dopo CI e review",
  "owner_rectification_20261018": {
   "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",
