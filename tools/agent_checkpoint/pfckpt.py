@@ -237,6 +237,12 @@ def verify(repo, ref, d=DEFAULT_DIR, code_repo=None):
     if code_sha and git(lookup, "cat-file", "-e", f"{code_sha}^{{commit}}", check=False).returncode != 0:
         problems.append(f"SHA del codice inesistente nel repository: {code_sha}")
     for t in state.get("tests_executed") or []:
+        if isinstance(t, dict) and t.get("status") in ("PASS", "FAIL"):
+            # rilievo Codex #512 su 034af59: lo SHA di un test eseguito deve risolversi a un commit reale,
+            # con la stessa lookup di code.sha (altrimenti un esito e' attribuibile a codice inesistente)
+            tsha = str(t.get("sha", ""))
+            if git(lookup, "cat-file", "-e", f"{tsha}^{{commit}}", check=False).returncode != 0:
+                problems.append(f"test {t.get('id')!r}: test sha unresolved: {tsha}")
         art = t.get("artifact") if isinstance(t, dict) else None
         for a in ([art] if isinstance(art, str) else (art or [])):
             if a not in files:

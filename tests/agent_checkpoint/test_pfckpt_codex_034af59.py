@@ -1,0 +1,41 @@
+"""PR #512 ciclo 8 — rilievo Codex su 034af59 (pfckpt.verify): ogni `tests_executed[].sha` con status PASS/FAIL deve
+risolversi a un commit reale (stessa lookup di `code.sha`, `git cat-file -e <sha>^{commit}`), altrimenti il
+checkpoint e' invalido ("test sha unresolved"). Git reale, nessun mock."""
+import json
+import os
+import sys
+
+import pytest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tools", "agent_checkpoint"))
+import pfckpt  # noqa: E402
+from test_pfckpt import D, agent, expect, next_state, world  # noqa: E402,F401
+
+
+def _checkpoint_with_tests(a, world, tests):
+    exp = next_state(a, world, tests_executed=tests)
+    pfckpt.write_manifest(a, D)
+    return exp
+
+
+@pytest.mark.parametrize("sha", ["deadbeefcafe", "0" * 40, "abcdef1"])
+def test_unresolvable_test_sha_invalidates_the_checkpoint(world, sha):
+    a = agent(world, "a")
+    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": sha}])
+    from test_pfckpt import raw_commit
+    raw_commit(a, "ckpt con sha di test inventato")
+    err = expect(2, pfckpt.verify, a, "HEAD", D)
+    assert any("t1" in p and "test sha unresolved" in p for p in err.detail["problems"]), err.detail["problems"]
+
+
+def test_real_test_sha_resolves_via_the_code_repo_lookup(world):
+    a = agent(world, "a")
+    _checkpoint_with_tests(a, world, [{"id": "t1", "status": "PASS", "sha": world["code"]},
+                                      {"id": "t2", "status": "FAIL", "sha": world["code"][:12]},
+                                      {"id": "t3", "status": "BLOCKED"}])
+    from test_pfckpt import raw_commit
+    raw_commit(a, "ckpt con sha reali")
+    rep = pfckpt.verify(a, "HEAD", D)
+    assert rep["seq"] == 2

@@ -31,7 +31,9 @@ che deve esistere nel repository), `lotto_corrente`, `lotti_completati`, `next_a
 `pr_505`, `certification_verdict` (`PASS` / `PARTIAL` / `NO-GO` / `BLOCKED` / `NOT VERIFIED`).
 
 Ogni voce di `tests_executed` ha `status` ∈ `PASS` / `FAIL` / `BLOCKED` / `NOT VERIFIED` / `MISSING`. `PASS` e `FAIL`
-richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale. Se
+richiedono `sha` (il commit di codice su cui il test è stato eseguito): un risultato senza versione non vale, e
+`verify` lo risolve con la stessa lookup di `code.sha` (`git cat-file -e <sha>^{commit}`; irrisolto ⇒ problema
+`test sha unresolved`, checkpoint invalido — ciclo 8, rilievo Codex su 034af59). Se
 una voce dichiara `artifact`, il file deve essere nel commit.
 
 ## 3. Verifica (`verify`)
