@@ -1,0 +1,8 @@
+ CHANGELOG.md                                       |  19 +-
+ core/system_state.py                               |   7 +-
+ docs/design/design_handoff.md                      |  16 +-
+ mini_gui.py                                        |  18 +-
+ services/setting_service.py                        |  64 +++--
+ tests/acceptance/test_issue437_pr28d.py            |  19 +-
+ .../test_issue437_pr28d_rectification.py           | 282 +++++++++++++++++++++
+ 7 files changed, 382 insertions(+), 43 deletions(-)

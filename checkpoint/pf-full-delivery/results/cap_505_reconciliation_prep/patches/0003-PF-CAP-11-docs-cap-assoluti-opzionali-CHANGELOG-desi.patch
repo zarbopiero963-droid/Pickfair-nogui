@@ -1,0 +1,80 @@
+From 6eb8e43bd9a944eb649d46fe1fdeb8eb54b2ef7f Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 18 Oct 2026 14:15:40 +0000
+Subject: [PATCH 3/3] PF-CAP-11: docs cap assoluti opzionali (CHANGELOG, design
+ handoff)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- CHANGELOG: voce PR28-d riscritta: limiti opzionali, disattivi di default,
+  semantica assente/None/""/invalido/legacy, LOCKDOWN invariato se configurato.
+- docs/design/design_handoff.md: etichette verbatim "(€, vuoto = non attivo)",
+  campi inizialmente vuoti, nessun 1/2/2/10 EUR proposto.
+- docs/roserpina41_parameter_dossier.md (RSR-38..41): NON presente su questo
+  branch (#505 head 618884e / main 028cee9); da allineare dove esiste.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Wrefu68dTUWD1PXe8PTZjb
+---
+ CHANGELOG.md                  | 19 ++++++++++++++-----
+ docs/design/design_handoff.md | 16 ++++++++++++----
+ 2 files changed, 26 insertions(+), 9 deletions(-)
+
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 70006be..0575b4e 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,11 +8,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
+-### PR28-d — cap assoluti Roserpina
+-- Aggiunti i cap owner configurabili per singolo ordine (1 €), mercato ed
+-  evento (2 €) e drawdown assoluto (10 €), applicati sul rischio BACK/LAY e
+-  insieme ai limiti percentuali/totali esistenti; configurazioni non finite,
+-  booleane o non positive negano nuovi ordini.
++### PR28-d — cap assoluti Roserpina (opzionali)
++- Aggiunti i limiti assoluti in euro configurabili per singolo ordine,
++  mercato, evento (identita' canonica) e drawdown assoluto, applicati sul
++  rischio BACK/LAY e insieme ai limiti percentuali/totali esistenti.
++- Rettifica owner 18/10/2026: nessun cap monetario fisso di default. I
++  quattro limiti sono DISATTIVI finche' l'utente non li configura (chiave
++  assente, `None` o campo vuoto = non attivo, mai un numero); un valore
++  presente ma invalido (0, negativo, NaN, bool, testo) non e' un opt-out e
++  nega i nuovi ordini con `<nome>_non_valido`; un valore valido e' applicato
++  esattamente; le chiavi legacy senza prefisso `roserpina.` sono lette e
++  loggate. `max_drawdown_abs` configurato mantiene il LOCKDOWN; assente non
++  produce alcun lockdown. Rimosso il loader con default numerico
++  (`_required_absolute_cap_value`); i campi GUI partono vuoti con etichetta
++  «(€, vuoto = non attivo)».
+ - Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
+   ambiguo o invalido viene rifiutato senza default BACK e senza invio.
+ - P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
+diff --git a/docs/design/design_handoff.md b/docs/design/design_handoff.md
+index 5797e21..bcfd668 100644
+--- a/docs/design/design_handoff.md
++++ b/docs/design/design_handoff.md
+@@ -362,7 +362,15 @@ e va riportata qui.
+ 
+ # PR28-d — controlli assoluti Roserpina
+ 
+-La sezione Roserpina espone quattro campi monetari aggiuntivi: esposizione massima
+-per ordine, mercato, evento e drawdown assoluto. I valori iniziali provengono
+-dalla configurazione autorevole (1 €, 2 €, 2 €, 10 €); input vuoti o invalidi
+-non rappresentano un opt-out e vengono rifiutati fail-closed dal runtime.
++La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
++(rettifica owner 18/10/2026: nessun cap monetario fisso di default):
++`Cap assoluto: Singolo ordine (€, vuoto = non attivo)`,
++`Cap assoluto: Singolo mercato (€, vuoto = non attivo)`,
++`Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
++`Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
++mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
++limite non attivo (il salvataggio non azzera un valore gia' persistito, come
++per gli altri hard-stop); un valore presente deve essere un numero finito > 0,
++altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
++illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
++ordini con `<nome>_non_valido`.
+-- 
+2.43.0
+

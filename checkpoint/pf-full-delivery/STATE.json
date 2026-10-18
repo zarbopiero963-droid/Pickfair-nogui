@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 31,
- "updated_at": "2026-10-18T14:13:21Z",
+ "seq": 32,
+ "updated_at": "2026-10-18T14:16:59Z",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -379,6 +379,11 @@
   {
    "id": "pfckpt readback regressione ciclo 8",
    "result": "seq 29: push riuscito (6a908a4) ma readback INVALID (SHA test su altri branch + albero scratch); fix locale 438a0c6 (fetch tutti i branch; unpublished_tree dichiarato); tests/agent_checkpoint+traceability 80 passed"
+  },
+  {
+   "id": "triage Codex 2c6aa09 (4 rilievi)",
+   "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f",
+   "result": "4/4 confermati con test: dedupe TTL (preesistente, PR restringe), transizione reset non atomica, ROLLED_BACK pendente, pf_trace tests; artifacts results/pr512_cycle9/triage/"
   }
  ],
  "findings": {
@@ -461,7 +466,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Ciclo 9: esito triage Codex 2c6aa09 => fix confermati (RED->GREEN), regressione completa, riesame indipendente, push unico, risposte thread, verdetto; patch #505 riconciliazione in worktree (agente); poi roadmap.",
+ "next_atomic_action": "Ciclo 9: integrare i 4 fix dal worktree (RED->GREEN), regressione completa, riesame indipendente, push unico, thread, verdetto. #505: esito riesame patch riconciliazione => pubblicare PATCH PREPARED su #505/#426. Poi roadmap.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -471,7 +476,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "04ee2c94b393db952bdb0f71f6671ac88ef1ba55",
+ "previous_checkpoint_sha": "b015ea6debfcec3102492d5bf75dd466f3429231",
  "lotto_corrente": "#512 ciclo 8 pushato: attesa check settled, triage Sol/Grok/Codex, resolve FIXED con prova, verdetto; audit cap REVIEWED; PR 10 cicli pronta (6a152e8)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -1010,7 +1015,7 @@
     "438a0c6 readback pfckpt",
     "916fda4 intento rollback (Sol)"
    ],
-   "pending": "triage Codex 2c6aa09 (agente); poi regressione, riesame, push unico"
+   "pending": "4 fix Codex in worktree wt_c9 (agente); poi cherry-pick, regressione, riesame, push unico"
   }
  },
  "threads_pr512": {
@@ -1026,7 +1031,7 @@
   "superseded": "decisioni precedenti incompatibili sui cap preimpostati => SUPERSEDED (da elencare nel registro conflitti)"
  },
  "cap_audit_20261018": {
-  "status": "AUDIT COMPLETED",
+  "status": "AUDIT COMPLETED + REVIEWED (PASS CON CORREZIONI, addendum #426 c.6250526960); #505 riconciliazione PATCH PREPARED (locale, in riesame)",
   "artifacts": "results/cap_audit_20261018/ (analisi_impatti_cap.md, registro_conflitti_cap.json, pr505_618884e.diff, MANIFEST.sha256)",
   "register_github": "#426 c.6250405396 (canonico); cross-ref #505 c.6250406580, #512 c.6250407584, #506 c.6250408721, #461 c.6250409725, #453 c.6250410915, #513 c.6250412196, #351 c.6250413342",
   "conflicts": "PF-CAP-01..12 (A: 01-04 #505 default 1/2/2/10, 08 Telegram auto_stake 1 EUR; A/B ambigui: 05 max_stake_abs, 06 max_win; A basso: 07 min_stake; C lacuna: 09 gate fondi percorso diretto NOT VERIFIED; C semantica: 10; doc: 11; B keep: 12 decisione 2)",
@@ -1035,6 +1040,17 @@
    "requirements.json OWN-Q-MAXSINGLE => PF-OD2-01"
   ],
   "owner_questions_open": "Q1-Q9 (raccomandazioni nel registro)",
-  "next": "revisione indipendente ERRORE1/ERRORE2 (agente in corso); patch isolate riconciliazione #505 (branch locale) dopo revisione; nessuna modifica a #505/main/#512"
+  "next": "revisione indipendente ERRORE1/ERRORE2 (agente in corso); patch isolate riconciliazione #505 (branch locale) dopo revisione; nessuna modifica a #505/main/#512",
+  "pr505_reconciliation": {
+   "worktree": "scratchpad/wt_cap505 branch lots/pf-cap-505-reconciliation su 618884e",
+   "commits": [
+    "550bc16 PF-CAP-01..04 + PF-CAP-10",
+    "cb6388e PF-CAP-10 test adattato",
+    "6eb8e43 PF-CAP-11 docs"
+   ],
+   "tests": "nuovo tests/acceptance/test_issue437_pr28d_rectification.py 59 (RED 32 su 618884e); suite acceptance 570, core+unit 1853, integration 671, altri 1669 passed",
+   "artifacts": "results/cap_505_reconciliation_prep/",
+   "status": "PATCH PREPARED; revisione indipendente ERRORE1/ERRORE2 in corso; integrazione solo con autorizzazione owner (PR protetta)"
+  }
  }
 }
