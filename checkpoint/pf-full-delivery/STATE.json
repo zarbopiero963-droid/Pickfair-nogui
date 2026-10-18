@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 25,
- "updated_at": "2026-10-18T12:19:09Z",
+ "seq": 26,
+ "updated_at": "2026-10-18T13:09:28Z",
  "agent": {
   "kind": "chatgpt-work",
   "session": "PF-CROSS-AGENT-HANDOFF-A06-01",
@@ -356,6 +356,11 @@
    "id": "triage Codex 034af59 (10 rilievi)",
    "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208",
    "result": "1 CURRENT_DEFECT (money_management r4306954203), 8 GUARDRAIL_GAP, 1 DOC; test throwaway 10 passed; run reale app per r4306954193"
+  },
+  {
+   "id": "regression_full",
+   "sha": "6a152e83c07e8d7a6a02ed5062272d2be9ac9b33 (branch locale pf-qa-02-fix-loop-ten-cycles, base main 028cee9)",
+   "result": "7263 passed / 0 failed / 14 skipped / 1 xfailed; log sha256 ef4a0ad934ad8f701b8b59468c84e5daf751eebccdedf2f17f8e75dc70462015"
   }
  ],
  "findings": {
@@ -437,7 +442,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
+ "next_atomic_action": "Completare audit cap (analisi_impatti_cap.md + registro_conflitti_cap.json), revisione indipendente ERRORE1/ERRORE2, pubblicare registro canonico su #426 e cross-reference su #505/#512/#506/#461/#453/#513/#351; completare le 10 patch locali; attendere decisione owner A/B/C per #512; nessun merge, nessuna modifica a #505/main.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -447,8 +452,8 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "7ce674f2e7ac98341dd46965ddd97edde532f291",
- "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 in NEEDS_MANUAL (decisione A/B/C owner); in locale: patch dei 10 rilievi Codex 034af59 (worktree, nessun push) + PR 10 cicli pronta",
+ "previous_checkpoint_sha": "3929c8efdd75875d1288e966f4cfea1dbc22cb88",
+ "lotto_corrente": "Audit cap monetari (read-only, agente) + patch locali 10 rilievi Codex 034af59 (worktree wt_c8, commit d8cb2a4 = #1) + PR 10 cicli pronta (6a152e8, regressione 7263 passed); #512 NEEDS_MANUAL in attesa decisione A/B/C",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -522,7 +527,7 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
+ "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
   "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208",
@@ -965,5 +970,11 @@
   "open": 21,
   "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
  },
- "verdict_pr512": "NEEDS_MANUAL / fix_loop_budget_exhausted (7 cicli) con CURRENT_DEFECT aperto; decisione owner richiesta: A deroga ciclo 8 | B PR 10 cicli con deroga serialita' | C chiusura #512 (#512 c.6249823409, #426 c.6249825590)"
+ "verdict_pr512": "NEEDS_MANUAL / fix_loop_budget_exhausted (7 cicli) con CURRENT_DEFECT aperto; decisione owner richiesta: A deroga ciclo 8 | B PR 10 cicli con deroga serialita' | C chiusura #512 (#512 c.6249823409, #426 c.6249825590)",
+ "owner_rectification_20261018": {
+  "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
+  "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",
+  "status": "AUDIT IN CORSO (read-only), nessuna modifica di codice",
+  "superseded": "decisioni precedenti incompatibili sui cap preimpostati => SUPERSEDED (da elencare nel registro conflitti)"
+ }
 }

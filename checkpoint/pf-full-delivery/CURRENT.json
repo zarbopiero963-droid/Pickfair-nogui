@@ -5,9 +5,9 @@
   "branch": "ccr-bcc81683-ud0hgc",
   "sha": "034af594a5bce4a121c87ec6aa57f959a1ab0208"
  },
- "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
- "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
- "previous_checkpoint_sha": "7ce674f2e7ac98341dd46965ddd97edde532f291",
+ "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
+ "next_atomic_action": "Completare audit cap (analisi_impatti_cap.md + registro_conflitti_cap.json), revisione indipendente ERRORE1/ERRORE2, pubblicare registro canonico su #426 e cross-reference su #505/#512/#506/#461/#453/#513/#351; completare le 10 patch locali; attendere decisione owner A/B/C per #512; nessun merge, nessuna modifica a #505/main.",
+ "previous_checkpoint_sha": "3929c8efdd75875d1288e966f4cfea1dbc22cb88",
  "schema": "pf-current/1",
- "seq": 25
+ "seq": 26
 }

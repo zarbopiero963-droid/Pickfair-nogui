@@ -1,0 +1,23 @@
+================================================================================
+PR GUARD REPORT
+================================================================================
+ℹ️ Changed files: 10
+ - .guardrails/allowed_scope.json
+ - AGENTS.md
+ - CHANGELOG.md
+ - CLAUDE.md
+ - docs/auto_pr_flow_spec.md
+ - docs/hard_verify_spec.md
+ - scripts/pr_fix_loop_policy.py
+ - tests/scripts/test_pr_autonomy_policy.py
+ - tests/scripts/test_pr_fix_loop_policy.py
+ - tests/scripts/test_pr_fix_loop_ten_cycles.py
+
+ℹ️ No critical files touched
+
+ℹ️ TASK source found (pr_title): pf-qa-02-fix-loop-ten-cycles
+
+ℹ️ Scope invariant: `files` di 'pf-qa-02-fix-loop-ten-cycles' coincide col diff (10 file)
+ℹ️ Registro: modificata solo la entry del task corrente
+
+✅ PR guard completed

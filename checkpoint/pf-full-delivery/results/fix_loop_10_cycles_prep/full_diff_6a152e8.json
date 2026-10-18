@@ -1,0 +1,27 @@
+{
+  "classification": {
+    "dependency_manifest": [],
+    "guard_generated": [],
+    "owner_manual": [
+      "AGENTS.md",
+      "CLAUDE.md",
+      "docs/auto_pr_flow_spec.md",
+      "docs/hard_verify_spec.md",
+      "scripts/pr_fix_loop_policy.py"
+    ],
+    "safety_critical": [],
+    "secret_material": []
+  },
+  "mcp_adapter_violations": [],
+  "new_dependencies": [],
+  "new_money_path_callers": [],
+  "new_test_only_dependencies": [],
+  "owner_manual_merge_required": true,
+  "problems": [],
+  "secret_like_content": [],
+  "secret_like_content_tests": [],
+  "status": "PASS",
+  "task_key": "pf-qa-02-fix-loop-ten-cycles",
+  "unscanned_text_files": [],
+  "unverifiable_import_files": []
+}

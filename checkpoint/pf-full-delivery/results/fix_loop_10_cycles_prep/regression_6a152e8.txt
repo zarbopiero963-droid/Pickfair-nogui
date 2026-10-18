@@ -1,0 +1,5 @@
+commit 6a152e83c07e8d7a6a02ed5062272d2be9ac9b33 (branch pf-qa-02-fix-loop-ten-cycles, base main 028cee9)
+cmd: PYTHONPATH=netguard DISPLAY=:99 venv312/python -m pytest -q -p no:cacheprovider tests
+7263 passed, 14 skipped, 1 xfailed, 8712 warnings, 8 subtests passed in 461.47s (0:07:41)
+exit=0
+pytest.log sha256: ef4a0ad934ad8f701b8b59468c84e5daf751eebccdedf2f17f8e75dc70462015

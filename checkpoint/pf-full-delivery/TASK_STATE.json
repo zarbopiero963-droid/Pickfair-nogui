@@ -47,9 +47,9 @@
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
  ],
- "lotto_corrente": "PF-AUTONOMOUS-CERTIFICATION-01: #512 in NEEDS_MANUAL (decisione A/B/C owner); in locale: patch dei 10 rilievi Codex 034af59 (worktree, nessun push) + PR 10 cicli pronta",
- "mandate_id": "PF-AUTONOMOUS-CERTIFICATION-01 (owner 18/10, chat) sopra PF-PR512-CYCLE7-AUTHORIZATION (O1) e PF-DECISIONS-DA-DJ-20261018",
- "next_atomic_action": "Preparare in locale (worktree da 034af59) le 10 patch Codex con RED->GREEN e regressione, senza push; preparare il branch PR 10 cicli dal main (commit locale, test, guard); attendere decisione owner A/B/C; nessun merge, nessun ottavo ciclo, nessuna PR parallela.",
+ "lotto_corrente": "Audit cap monetari (read-only, agente) + patch locali 10 rilievi Codex 034af59 (worktree wt_c8, commit d8cb2a4 = #1) + PR 10 cicli pronta (6a152e8, regressione 7263 passed); #512 NEEDS_MANUAL in attesa decisione A/B/C",
+ "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
+ "next_atomic_action": "Completare audit cap (analisi_impatti_cap.md + registro_conflitti_cap.json), revisione indipendente ERRORE1/ERRORE2, pubblicare registro canonico su #426 e cross-reference su #505/#512/#506/#461/#453/#513/#351; completare le 10 patch locali; attendere decisione owner A/B/C per #512; nessun merge, nessuna modifica a #505/main.",
  "pr_505": "aperta, head 618884e, non toccata; con cap assoluti alzati sull'albero scratch la #512 passa (38 passed, F033 XPASS)",
  "schema": "pf-task-state/1",
  "tests_missing": [
