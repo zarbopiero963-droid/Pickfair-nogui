@@ -528,6 +528,43 @@ def test_c9_1_disabled_anti_duplication_never_disables_the_mandatory_position_gu
     assert c.rc.table_manager.find_by_event_key(key) is not None, "tavolo della posizione liberato dal rifiuto"
 
 
+@pytest.mark.parametrize("terminal", ["failed", "success"])
+def test_c9_1_ambiguous_order_stays_protected_when_a_sibling_order_on_the_same_event_ends(tmp_path, terminal):
+    """Quarto riesame c9 (BLOCKER P1): anti-duplicazione disattivata, due ordini sullo stesso evento su due
+    tavoli; B diventa AMBIGUOUS, A ha un esito certo. L'esito di A non cancella l'incertezza di B: nessun
+    nuovo ordine sull'evento finche' B non ha un esito certo (handler reali del ciclo di vita)."""
+    c = _c9_chain(tmp_path)
+    c.rc.config.anti_duplication_enabled = False
+    c.rc._on_signal_received(_c9_signal())
+    c.rc._on_signal_received(_c9_signal(price=2.1, received_at="2026-10-08T10:05:00.000000+00:00"))
+    occ = _c9_occupied(c)
+    assert len(occ) == 2, occ
+    (t1, key), (t2, _) = occ
+    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    handler = c.rc._on_quick_bet_failed if terminal == "failed" else c.rc._on_quick_bet_success
+    handler({"event_key": key, "table_id": t1, "customer_ref": "A"})
+    assert c.rc._uncertain_reservations_map().get(key) == t2, "incertezza di B cancellata dall'esito di A"
+    n = len(c.broker.state.orders)
+    c.rc._on_signal_received(_c9_signal(price=2.3, received_at="2026-10-08T10:07:00.000000+00:00"))
+    assert _c9_rejects(c)[-1] == "evento_gia_in_posizione", _c9_rejects(c)
+    assert len(c.broker.state.orders) == n, "nuovo ordine su un evento con un ordine AMBIGUOUS aperto"
+    # BLOCK inverso: quando anche B ha un esito certo, l'evento torna libero
+    c.rc._on_quick_bet_failed({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    assert key not in c.rc._uncertain_reservations_map()
+
+
+def test_c9_1_certain_outcome_without_table_id_never_clears_ambiguity_on_two_tables(tmp_path):
+    from core.runtime_controller import RuntimeController
+    rc = RuntimeController.__new__(RuntimeController)
+    rc._mark_uncertain("E", 1)
+    rc._mark_uncertain("E", 2)
+    assert rc._clear_uncertain("E", None) is True and "E" in rc._uncertain_reservations_map()
+    assert rc._clear_uncertain("E", 1) is True and rc._uncertain_reservations_map()["E"] == 2
+    assert rc._clear_uncertain("E", 2) is False and "E" not in rc._uncertain_reservations_map()
+    rc._uncertain_reservations_map()["F"] = 3                     # marcatura senza registro per tavolo
+    assert rc._clear_uncertain("F", 3) is False and "F" not in rc._uncertain_reservations_map()
+
+
 def test_c9_1_is_pinned_tracks_only_live_pinned_keys():
     from core.duplication_guard import DuplicationGuard
     g = DuplicationGuard(ttl_seconds=60)

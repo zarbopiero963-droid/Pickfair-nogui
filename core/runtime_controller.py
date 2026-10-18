@@ -3196,8 +3196,9 @@ class RuntimeController:
         # il tavolo della posizione viva. Con l'anti-duplicazione ATTIVA (default) vale per ogni tavolo
         # occupato: e' l'estensione del dedupe oltre il TTL. Con l'anti-duplicazione disattivata
         # dall'utente restano comunque OBBLIGATORIE (mandato owner, chiusura #512) le protezioni su una
-        # posizione con esito incerto (AMBIGUOUS, PF-ALL-F024) o ricostruita al riavvio / trattenuta dal
-        # reset (chiave fissata): nessun secondo ordine su una posizione di cui non si conosce lo stato.
+        # posizione con esito incerto (AMBIGUOUS, PF-ALL-F024, registrata per tavolo) o con chiave fissata
+        # (ricostruita al riavvio da F018, o trattenuta dal reset se la chiave era attiva): nessun secondo
+        # ordine su una posizione di cui non si conosce lo stato.
         # La riconsegna dello stesso messaggio la ferma comunque l'engine col customer_ref stabile.
         if self.table_manager.find_by_event_key(event_key) is not None and (
                 self.config.anti_duplication_enabled
@@ -3540,7 +3541,6 @@ class RuntimeController:
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
 
-        uncertain = self._uncertain_reservations_map()
         if event_name in _NO_RELEASE_UNCERTAIN_EVENTS:
             # PF-ALL-F024: un esito AMBIGUOUS non prova che l'ordine non sia
             # sull'exchange. Tavolo, esposizione, riserva e chiave duplicati
@@ -3549,15 +3549,17 @@ class RuntimeController:
             # La riserva e' marcata incerta: nemmeno un reset (auto-reset da
             # drawdown, reset_cycle) la libera.
             if event_key:
-                uncertain[event_key] = table_id
+                self._mark_uncertain(event_key, table_id)
             logger.warning(
                 "Esito incerto %s: riserva trattenuta event_key=%s table_id=%s customer_ref=%s",
                 event_name, event_key, table_id, payload.get("customer_ref"),
             )
             return
 
-        if event_key:
-            uncertain.pop(event_key, None)       # esito certo: non piu' incerta
+        if event_key and not self._clear_uncertain(event_key, table_id):
+            # esito certo e nessun altro tavolo dello stesso evento ancora incerto: chiave rilasciata.
+            # Con un altro tavolo AMBIGUOUS sullo stesso evento (anti-duplicazione disattivata) la
+            # chiave e la marcatura restano: l'esito certo di un ordine non certifica l'altro (riesame c9).
             self.duplication_guard.release(event_key)
 
         if table_id is not None:
@@ -3572,6 +3574,44 @@ class RuntimeController:
                     )
             except Exception:
                 logger.exception("Errore rilascio tavolo table_id=%s", table_id)
+
+    def _mark_uncertain(self, event_key: str, table_id: Any) -> None:
+        """Registra una riserva AMBIGUOUS per (evento, tavolo). La mappa `event_key -> table_id` resta la
+        vista usata da reset/settlement/guardia; il registro per tavolo impedisce che l'esito certo di un
+        ALTRO ordine sullo stesso evento cancelli l'incertezza (riesame indipendente ciclo 9 #512)."""
+        uncertain = self._uncertain_reservations_map()
+        tables = getattr(self, "_uncertain_tables", None)
+        if tables is None:
+            tables = self._uncertain_tables = {}
+        tables.setdefault(event_key, set()).add(table_id)
+        uncertain[event_key] = table_id
+
+    def _clear_uncertain(self, event_key: str, table_id: Any) -> bool:
+        """Esito certo per (evento, tavolo). True se l'evento RESTA incerto su un altro tavolo."""
+        uncertain = self._uncertain_reservations_map()
+        tables = getattr(self, "_uncertain_tables", None)
+        if tables is None:
+            tables = self._uncertain_tables = {}
+        held = tables.get(event_key)
+        if held is None and event_key in uncertain:
+            held = {uncertain[event_key]}                 # registrato senza registro per tavolo
+        if not held:
+            uncertain.pop(event_key, None)
+            return False
+        if table_id is None:
+            # esito certo senza tavolo: chiude l'incertezza solo se non c'e' ambiguita' su piu' tavoli
+            if len(held) > 1:
+                return True
+            held = set()
+        else:
+            held = {t for t in held if str(t) != str(table_id)}
+        if held:
+            tables[event_key] = held
+            uncertain[event_key] = sorted(held, key=str)[0]
+            return True
+        tables.pop(event_key, None)
+        uncertain.pop(event_key, None)
+        return False
 
     def _uncertain_reservations_map(self) -> dict:
         """event_key -> table_id delle riserve con esito AMBIGUOUS (PF-ALL-F024)."""
@@ -3789,7 +3829,6 @@ class RuntimeController:
             result.update(ok=False, reason=f"EXCHANGE_ORDERS_UNAVAILABLE:{type(exc).__name__}")
         live_bets = {str(o.get("bet_id") or o.get("betId") or "") for o in (current or [])}
         live_markets = {str(o.get("marketId") or o.get("market_id") or "") for o in (current or [])}
-        uncertain = self._uncertain_reservations_map()
         for c in candidates:
             if c["status"] == "SUBMITTED" and current is not None:
                 if c["bet_id"] and c["bet_id"] in live_bets:
@@ -3817,7 +3856,7 @@ class RuntimeController:
                                         market_id=c["market_id"], selection_id=c["selection_id"], meta=c["meta"])
             self.duplication_guard.acquire(c["event_key"], pin=True)       # posizione viva: mai scaduta per TTL (c9)
             if is_uncertain:
-                uncertain[c["event_key"]] = table_id
+                self._mark_uncertain(c["event_key"], table_id)
                 result["uncertain"].append(c["customer_ref"])
             else:
                 result["rebuilt"].append(c["customer_ref"])
