@@ -119,6 +119,7 @@ def test_filled_position_stays_in_market_and_event_cap_until_settlement(tmp_path
 
     c.rc._on_quick_bet_filled({"table_id": 2, "event_key": "filled:event:key"})
     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.234")
+    sig.pop("event")   # un solo nome evento (alias in conflitto => evento_ambiguo, rilievo Codex #522)
     sig.update({"event_id": "E42", "event_name": "Roma v Milan"})
     c.rc._on_signal_received(sig)
 
@@ -190,6 +191,7 @@ def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
     table.current_exposure = 1.5
     table.meta = {"event_name": "Roma v Milan", "event_identity": "name:roma v milan"}
     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig.pop("event")   # un solo nome evento (alias in conflitto => evento_ambiguo, rilievo Codex #522)
     sig["event_name"] = " ROMA   v MILAN "
     sig["event_id"] = "betfair-event-42"
     c.rc._on_signal_received(sig)
@@ -208,6 +210,7 @@ def test_event_cap_same_id_aggregates_even_when_names_differ(tmp_path):
     table.current_exposure = 1.5
     table.meta = {"event_id": "E42", "event_name": "Roma v Milan", "event_identity": "id:E42"}
     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig.pop("event")   # un solo nome evento (alias in conflitto => evento_ambiguo, rilievo Codex #522)
     sig.update({"event_id": "E42", "event_name": "Roma - Milan"})
     c.rc._on_signal_received(sig)
     assert c.broker.state.orders == {}
@@ -228,6 +231,7 @@ def test_event_cap_honours_legacy_identity_alias_over_stale_display_name(tmp_pat
         "event_identity": "name:roma v milan",
     }
     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+    sig.pop("event")   # un solo nome evento (alias in conflitto => evento_ambiguo, rilievo Codex #522)
     sig.update({"event_name": "Roma v Milan", "event_id": None})
 
     c.rc._on_signal_received(sig)

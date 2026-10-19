@@ -62,6 +62,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - **grace:** il cancel del grace chiude la barriera solo se il Timer non è ancora partito;
     - **`validators.signal_side`:** con un segnale non-dict dà `ValueError` o il default, mai `AttributeError`.
 
+- **#522, review Codex su `c4ac69e`: quattro P1, ciascuno con test RED→GREEN.**
+  - **UNMATCHED:** un hedge UNMATCHED resta a riposo e può abbinarsi. La barriera ora si chiude solo quando il
+    `CashoutResidualHandler` conferma il cancel (`CASHOUT_RESIDUAL_HANDLED`, `cancel_ok=True`, con il
+    `cashout_request_id`). Se il cancel non è confermato, la richiesta resta incerta e la barriera attiva.
+  - **Alias evento in conflitto:** `event`, `match` ed `event_name` che indicano eventi diversi vengono rifiutati
+    (`evento_ambiguo`). Un unico nome canonico (`_signal_event_name`) alimenta cap evento, barriera, payload
+    d'ordine e meta del tavolo.
+  - **Ingresso accodato prima di un cashout:** con il bus non bloccante, `CMD_QUICK_BET` è solo accodato. Il fence
+    d'ammissione viaggia fino al `TradingEngine`, che lo ricontrolla prima del piazzamento
+    (`admission_fence_verdict`). Se nel frattempo è partito un cashout nel suo ambito, l'ordine viene negato
+    (`QUICK_BET_FAILED` DENIED, tavolo e dedupe liberati). Il cashout non viene ritardato (PF-EXEC-03).
+  - **Cap assoluti su bet manuale e Dutching:** `max_order_exposure`, `max_market_exposure`,
+    `max_event_exposure_abs` e `max_drawdown_abs`, se configurati, valgono anche per `manual_bet` e per il
+    precheck Dutching, prima di ogni side-effect (`absolute_cap_reason_for_orders`, stessa formula dei segnali).
+    Limite: gli ordini manuali e Dutching non occupano tavoli Roserpina, quindi la loro esposizione non entra
+    nelle misure di mercato ed evento dei controlli successivi (comportamento preesistente).
+
 - **Rettifica owner 18/10/2026, chiarimento definitivo del 19/10: tetti monetari preesistenti.**
   `max_stake_abs` (RSR-15, tetto allo stake per ordine) e `max_win` (RSR-26, tetto alla vincita/esposizione
   per gamba sul RiskGate, sul precheck Dutching e sul bet manuale) sono **opzionali e disattivati di

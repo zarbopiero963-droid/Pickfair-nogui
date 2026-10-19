@@ -333,6 +333,19 @@ class DutchingController:
         return max(1.01, float(trading_config.MIN_PRICE))
 
     # -- Max Win cap (G5) --------------------------------------------------
+    def _absolute_cap_reason(self, orders: List[Dict[str, Any]]) -> str:
+        """Cap assoluti dal RuntimeController (stessa logica dei segnali). Senza runtime: nessun cap da applicare
+        qui (la config Roserpina vive nel runtime). Errore del controllo => rifiuto (fail-closed)."""
+        checker = getattr(getattr(self, "runtime", None), "absolute_cap_reason_for_orders", None)
+        if not callable(checker):
+            return ""
+        try:
+            reason = checker(orders)
+        except Exception:
+            logger.exception("Controllo cap assoluti fallito: ordine bloccato")
+            return "cap_assoluti_non_verificabili"
+        return reason if isinstance(reason, str) else ""
+
     @staticmethod
     def _max_win(config) -> Optional[float]:
         """Cap vincita/payout per gamba dalla config (editabile GUI), OPZIONALE.
@@ -1102,6 +1115,23 @@ class DutchingController:
                 max_win_breaches=max_win_breaches,
             )
 
+        # Cap monetari assoluti opzionali configurati (PR28-d, rilievo Codex #522): valgono anche per il batch
+        # Dutching, PRIMA di ogni side-effect. Nessun cap configurato => nessun limite.
+        cap_reason = self._absolute_cap_reason([
+            {
+                "market_id": payload.get("market_id"),
+                "selection_id": item.get("selectionId"),
+                "bet_type": str(item.get("side", "BACK")).upper(),
+                "price": item.get("price"),
+                "stake": item.get("stake"),
+                "event_name": payload.get("event_name", ""),
+                "event_id": payload.get("event_id"),
+            }
+            for item in results
+        ])
+        if cap_reason:
+            return self._fail(f"Cap assoluto: {cap_reason}", cap_reason=cap_reason)
+
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
                 if not duplication_guard.acquire(event_key):
@@ -1498,6 +1528,14 @@ class DutchingController:
                     max_win=round(max_win, 2),
                     potential_win=round(potential_win, 2),
                 )
+            # Cap monetari assoluti opzionali configurati (PR28-d, rilievo Codex #522), PRIMA del dedupe.
+            cap_reason = self._absolute_cap_reason([{
+                "market_id": market_id, "selection_id": selection_id, "bet_type": side,
+                "price": price, "stake": stake, "event_name": payload.get("event_name", ""),
+                "event_id": payload.get("event_id"),
+            }])
+            if cap_reason:
+                return self._fail(f"Cap assoluto: {cap_reason}", cap_reason=cap_reason)
             if max_win_exceeded:
                 # Modalita' avviso: NON blocca ma rende OSSERVABILE lo sforamento
                 # (log + flag nel risultato _ok, come precheck), cosi' l'operatore

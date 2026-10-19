@@ -398,7 +398,7 @@ def test_barrier_stays_active_until_the_hedge_execution_completes(tmp_path, monk
     assert len(c.broker.state.orders) == 1
 
 
-@pytest.mark.parametrize("status", ["FAILURE", "UNMATCHED", "REJECTED"])
+@pytest.mark.parametrize("status", ["FAILURE", "REJECTED"])
 def test_barrier_released_by_any_certain_hedge_outcome(tmp_path, monkeypatch, status):
     c = _catena(tmp_path)
     queued = _async_cashout_chain(c, monkeypatch)
@@ -514,16 +514,27 @@ class _UnmatchedRouter:
         return dict(self.result)
 
 
-def _real_cashout_chain(c, monkeypatch, *, result=None):
-    """Router del runtime + CashoutRequestBridge reale + CashoutExecutor reale sullo stesso bus."""
+def _real_cashout_chain(c, monkeypatch, *, result=None, residual_cancel_ok=True):
+    """Router del runtime + CashoutRequestBridge, CashoutExecutor e CashoutResidualHandler reali sullo stesso bus."""
     import cashout_router
     from cashout_executor import CashoutExecutor
     from cashout_request_bridge import CashoutRequestBridge
+    from cashout_residual_handler import CashoutResidualHandler
 
     bridge = CashoutRequestBridge(c.bus)
     bridge.wire()
     order_router = _UnmatchedRouter(result)
     CashoutExecutor(c.bus, order_router).wire()
+    order_router.cancels = []
+
+    def cancel(market_id, bet_ids):
+        order_router.cancels.append((market_id, list(bet_ids)))
+        if isinstance(residual_cancel_ok, Exception):
+            raise residual_cancel_ok
+        return residual_cancel_ok
+
+    CashoutResidualHandler(cancel=cancel, persist=lambda record: None,
+                           notify=lambda text, severity=None: None).wire(c.bus)
     monkeypatch.setattr(RuntimeController, "_cashout_chain_wired", lambda self: True)
 
     def route(router, signal):
@@ -656,7 +667,7 @@ def test_cancel_after_the_grace_timer_started_keeps_the_barrier_until_the_hedge_
 
     assert len(queued) == 1
     assert c.rc.get_status()["cashout_barriers_active"] == 1
-    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": 11, "status": "UNMATCHED",
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": 11, "status": "FAILURE",
                                      "cashout_request_id": queued[0]["cashout_request_id"]})
     assert c.rc.get_status()["cashout_barriers_active"] == 0
 
@@ -708,3 +719,172 @@ def test_bridge_rejection_reports_the_request_id_and_releases_the_barrier(tmp_pa
     assert rejected["status"] == "REJECTED"
     assert rejected["cashout_request_id"] == req["cashout_request_id"]
     assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+
+# ---------------------------------------------------------------- rilievi Codex su c4ac69e
+def test_unmatched_hedge_keeps_the_barrier_until_its_cancel_is_confirmed(tmp_path, monkeypatch):
+    """Codex r4316502584: UNMATCHED = hedge a riposo, puo' ancora abbinarsi. La barriera si chiude solo quando il
+    CashoutResidualHandler reale conferma il cancel."""
+    c = _catena(tmp_path)
+    order_router = _real_cashout_chain(c, monkeypatch, residual_cancel_ok=True)
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    assert order_router.cancels == [("1.234", ["H1"])]
+    assert c.bus.payloads("CASHOUT_RESIDUAL_HANDLED")[-1]["cancel_ok"] is True
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+@pytest.mark.parametrize("cancel_result", [False, RuntimeError("exchange")])
+def test_unmatched_hedge_with_unconfirmed_cancel_keeps_entries_blocked(tmp_path, monkeypatch, cancel_result):
+    c = _catena(tmp_path)
+    _real_cashout_chain(c, monkeypatch, residual_cancel_ok=cancel_result)
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    status = c.rc.get_status()
+    assert status["cashout_barriers_active"] == 1
+    assert status["cashout_barriers_uncertain"] == 1
+    c.rc._on_signal_received(_signal())
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
+
+
+def test_unmatched_outcome_alone_does_not_release_the_barrier(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    queued = _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": 11, "status": "UNMATCHED",
+                                     "cashout_request_id": queued[0]["cashout_request_id"]})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+
+
+@pytest.mark.parametrize("aliases", [
+    {"event": "Alpha v Beta", "event_name": "Gamma v Delta"},
+    {"event": "Alpha v Beta", "match": "Gamma v Delta"},
+    {"match": "Alpha v Beta", "event_name": "Gamma v Delta"},
+])
+def test_conflicting_event_name_aliases_are_rejected(tmp_path, aliases):
+    """Codex r4316502602: cap e barriera devono misurare lo stesso evento che l'ordine registra."""
+    c = _catena(tmp_path, max_event_exposure_abs=50.0)
+    sig = _signal()
+    sig.pop("event")
+    sig.update(aliases)
+
+    c.rc._on_signal_received(sig)
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["evento_ambiguo"]
+
+
+def test_same_event_written_differently_across_aliases_is_one_event(tmp_path):
+    c = _catena(tmp_path, max_event_exposure_abs=50.0)
+    sig = _signal(event="Alpha v Beta", event_name="  alpha  V beta ")
+
+    c.rc._on_signal_received(sig)
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)
+    (table,) = [t for t in c.rc.table_manager._tables.values() if t.status != "FREE"]
+    assert table.meta["event_name"] == "Alpha v Beta"
+
+
+def test_queued_entry_is_not_placed_after_a_cashout_started_in_its_scope(tmp_path):
+    """Codex r4316502592: col bus non bloccante CMD_QUICK_BET e' solo accodato. Un cashout che parte prima che
+    l'engine lo esegua invalida l'ingresso: il TradingEngine lo nega prima del piazzamento."""
+    c = _catena(tmp_path)
+    held = []
+    original_publish = c.bus.publish
+
+    def queueing_publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            held.append(payload)                       # accodato, non ancora eseguito
+            c.bus.events.append((topic, dict(payload)))
+            return None
+        return original_publish(topic, payload)
+
+    c.bus.publish = queueing_publish
+    c.rc._on_signal_received(_signal())
+    assert len(held) == 1 and c.broker.state.orders == {}
+
+    _barrier(c.rc, {"signal_type": "CASHOUT", "event_name": "Alpha v Beta"})   # cashout nel suo ambito
+    c.bus.publish = original_publish
+    for handler in list(c.bus.subscribers.get("CMD_QUICK_BET", [])):
+        handler(held[0])                               # l'engine esegue ora l'ordine in coda
+
+    assert c.broker.state.orders == {}
+    failed = c.bus.payloads("QUICK_BET_FAILED")
+    assert failed and failed[-1]["status"] == "DENIED"
+    assert c.rc._queued_entry_fences == {}             # registrazione consumata dal controllo dell'engine
+    assert all(t.status == "FREE" for t in c.rc.table_manager._tables.values())
+
+
+def test_queued_entry_without_a_cashout_is_placed_normally(tmp_path):
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal())
+    assert len(c.broker.state.orders) == 1
+
+
+def _dutching(c):
+    from controllers.dutching_controller import DutchingController
+
+    return DutchingController(bus=c.bus, runtime_controller=c.rc)
+
+
+def test_manual_bet_respects_the_configured_absolute_order_cap(tmp_path):
+    """Codex r4316502610: i cap assoluti configurati valgono anche per il bet manuale."""
+    c = _catena(tmp_path, max_order_exposure=1.0)
+    res = _dutching(c).manual_bet({"market_id": "1.234", "selection_id": 11, "price": 2.0, "stake": 5.0,
+                                   "bet_type": "BACK", "event_name": "Alpha v Beta"})
+    assert res["ok"] is False
+    assert "max_order_exposure_exceeded" in res["error"]
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+def test_manual_bet_respects_the_configured_market_cap_with_existing_exposure(tmp_path):
+    from tests.acceptance.test_issue437_pr28d import _existing_position
+
+    c = _catena(tmp_path, max_market_exposure=2.0)
+    _existing_position(c, _signal(selection_id=12), exposure=1.5)
+    res = _dutching(c).manual_bet({"market_id": "1.234", "selection_id": 11, "price": 2.0, "stake": 0.6,
+                                   "bet_type": "BACK", "event_name": "Alpha v Beta"})
+    assert res["ok"] is False and "max_market_exposure_exceeded" in res["error"]
+
+
+def test_dutching_batch_respects_the_configured_absolute_caps(tmp_path):
+    c = _catena(tmp_path, max_market_exposure=2.0)
+    reason = c.rc.absolute_cap_reason_for_orders([
+        {"market_id": "1.234", "selection_id": 11, "bet_type": "BACK", "price": 3.0, "stake": 1.0,
+         "event_name": "Alpha v Beta"},
+        {"market_id": "1.234", "selection_id": 12, "bet_type": "BACK", "price": 3.0, "stake": 1.5,
+         "event_name": "Alpha v Beta"},
+    ])
+    assert reason.startswith("max_market_exposure_exceeded")      # 1.0 + 1.5 > 2.0 sullo stesso mercato
+
+
+def test_direct_orders_without_configured_caps_are_not_limited(tmp_path):
+    c = _catena(tmp_path)
+    assert c.rc.absolute_cap_reason_for_orders([
+        {"market_id": "1.234", "selection_id": 11, "bet_type": "LAY", "price": 50.0, "stake": 100.0}]) == ""
+
+
+def test_dutching_precheck_applies_the_cap_before_any_side_effect(monkeypatch):
+    """Il precheck Dutching consulta i cap assoluti del runtime PRIMA del dedupe: rifiuto, nessuna chiave presa."""
+    from tests.integration.test_dutching_max_win_guard import _Runtime, _controller, _patch_results, _payload
+
+    _patch_results(monkeypatch, [{"selectionId": 1, "price": 2.0, "stake": 60.0, "side": "BACK"},
+                                 {"selectionId": 2, "price": 3.0, "stake": 40.0, "side": "BACK"}])
+    rt = _Runtime()
+    seen = []
+    rt.absolute_cap_reason_for_orders = lambda orders: seen.append(orders) or "max_order_exposure_exceeded:limit=1€"
+    acquired = []
+    rt.duplication_guard.acquire = lambda key: acquired.append(key) or True
+
+    res = _controller(rt).precheck(_payload())
+
+    assert res["ok"] is False and "max_order_exposure_exceeded" in res["error"]
+    assert acquired == []
+    assert [(o["selection_id"], o["bet_type"], o["stake"], o["price"]) for o in seen[0]] == [
+        (1, "BACK", 60.0, 2.0), (2, "BACK", 40.0, 3.0)]

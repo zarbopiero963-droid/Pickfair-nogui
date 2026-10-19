@@ -1578,6 +1578,18 @@ class TradingEngine:
             logger.error("Risk gate ha restituito allowed=%r (%s) invece di bool -> DENY",
                          verdict, type(verdict).__name__)
             return self._risk_deny(request, "RISK_GATE_NON_BOOLEAN_VERDICT")
+        if verdict is True:
+            # Fence d'ammissione del RuntimeController (rilievo Codex #522): un ingresso accodato prima di un
+            # cashout nel suo ambito non viene piazzato dopo la fotografia del cashout. Errore => DENY.
+            fence_check = getattr(getattr(self, "runtime_controller", None), "admission_fence_verdict", None)
+            if callable(fence_check):
+                try:
+                    reason = fence_check(request)
+                except Exception:
+                    logger.exception("Fence d'ammissione ha sollevato -> DENY (fail-closed)")
+                    return self._risk_deny(request, "ADMISSION_FENCE_RAISED")
+                if isinstance(reason, str) and reason:
+                    return self._risk_deny(request, reason)
         return result
 
     # ==================================================================

@@ -29,6 +29,7 @@ from core.table_manager import TableManager
 from core.trading_constants import (
     CASHOUT_FAILED,
     CASHOUT_REQUEST_SUPPRESSED,
+    CASHOUT_RESIDUAL_HANDLED,
     CASHOUT_SUCCESS,
     REQ_EXECUTE_CASHOUT,
 )
@@ -1484,6 +1485,7 @@ class RuntimeController:
         self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_REQUEST_SUPPRESSED, self._on_cashout_execution_outcome)
+        self.bus.subscribe(CASHOUT_RESIDUAL_HANDLED, self._on_cashout_residual_handled)
 
     # =========================================================
     # CONFIG / MODE
@@ -2763,9 +2765,27 @@ class RuntimeController:
         )
 
     @staticmethod
+    def _signal_event_name(signal: dict) -> str:
+        """Nome evento canonico del segnale: UNA sola fonte per cap evento, barriera, payload e meta tavolo.
+
+        Alias supportati `event`, `match`, `event_name` (priorita' del payload d'ordine). Alias non vuoti che
+        normalizzati indicano eventi DIVERSI => ``ValueError``: il chiamante rifiuta (rilievo Codex #522,
+        altrimenti cap e barriera misurerebbero un evento e l'ordine ne registrerebbe un altro).
+        """
+        sig = signal if isinstance(signal, dict) else {}
+        values = [v.strip() for v in (sig.get("event"), sig.get("match"), sig.get("event_name"))
+                  if isinstance(v, str) and v.strip()]
+        if len({" ".join(v.casefold().split()) for v in values}) > 1:
+            raise ValueError("EVENT_NAME_CONFLICT")
+        return values[0] if values else ""
+
+    @staticmethod
     def _event_identity_parts(signal: dict) -> tuple[str, str]:
-        # `match` e' un alias supportato del nome evento, come nel payload d'ordine (rilievo Codex #522).
-        event_name = signal.get("event_name") or signal.get("event") or signal.get("match")
+        # Alias del nome evento risolti da `_signal_event_name` (conflitto => nessun nome: l'ammissione rifiuta).
+        try:
+            event_name = RuntimeController._signal_event_name(signal)
+        except ValueError:
+            event_name = ""
         name = " ".join(event_name.casefold().split()) if isinstance(event_name, str) else ""
         event_id = signal.get("event_id") or signal.get("eventId")
         if event_id not in (None, "") and not isinstance(event_id, bool):
@@ -3311,9 +3331,11 @@ class RuntimeController:
 
     def _entry_admission_keys(self, signal: dict) -> tuple[tuple, ...]:
         keys: list[tuple] = [("global",)]
-        sig = signal or {}
-        event_key = RuntimeController._cashout_event_admission_key(
-            sig.get("event_name") or sig.get("event") or sig.get("match"))
+        try:
+            event_name = RuntimeController._signal_event_name(signal or {})
+        except ValueError:
+            event_name = ""
+        event_key = RuntimeController._cashout_event_admission_key(event_name)
         if event_key is not None:
             keys.append(event_key)
         try:
@@ -3381,6 +3403,9 @@ class RuntimeController:
     # OGNI sua richiesta non ha un esito certo:
     # - CASHOUT_SUCCESS, CASHOUT_FAILED (FAILURE/UNMATCHED/REJECTED) o CASHOUT_REQUEST_SUPPRESSED (duplicata
     #   scartata dal bridge, nessun hedge per quella richiesta) chiudono la richiesta;
+    # - CASHOUT_FAILED con status UNMATCHED NON la chiude: l'hedge resta a riposo e puo' abbinarsi finche' il
+    #   CashoutResidualHandler non ne conferma il cancel (CASHOUT_RESIDUAL_HANDLED con cancel_ok=True); cancel
+    #   non confermato => richiesta incerta (rilievo Codex #522);
     # - CASHOUT_FAILED con status AMBIGUOUS o ERROR (esito dell'hedge ignoto) la lascia aperta: fail-closed,
     #   nessun ingresso nell'ambito fino al riavvio (`cashout_barriers_uncertain` in get_status);
     # - un esito SENZA il proprio `cashout_request_id` (hedge di altra origine) non chiude nulla (verifica
@@ -3446,7 +3471,19 @@ class RuntimeController:
         request_id = payload.get("cashout_request_id")
         if not isinstance(request_id, str) or not request_id:
             return
-        uncertain = str(payload.get("status") or "").strip().upper() in {"AMBIGUOUS", "ERROR"}
+        status = str(payload.get("status") or "").strip().upper()
+        if status == "UNMATCHED":
+            return          # hedge a riposo: decide l'esito del cancel (CASHOUT_RESIDUAL_HANDLED)
+        RuntimeController._settle_cashout_request(self, request_id, uncertain=status in {"AMBIGUOUS", "ERROR"})
+
+    def _on_cashout_residual_handled(self, payload: dict) -> None:
+        payload = payload if isinstance(payload, dict) else {}
+        request_id = payload.get("cashout_request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return
+        RuntimeController._settle_cashout_request(self, request_id, uncertain=payload.get("cancel_ok") is not True)
+
+    def _settle_cashout_request(self, request_id: str, *, uncertain: bool) -> None:
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
             inflight = getattr(self, "_cashout_inflight", {})
@@ -3465,6 +3502,99 @@ class RuntimeController:
                     inflight.pop(barrier_id, None)
                     if barrier_id in getattr(self, "_cashout_routed", set()):
                         RuntimeController._end_cashout_barrier(self, barrier_id)
+
+    def absolute_cap_reason_for_orders(self, orders) -> str:
+        """Cap monetari assoluti opzionali (PR28-d) per ordini che NON passano dall'ammissione del runtime:
+        bet manuale e batch Dutching (rilievo Codex #522). "" se ammessi, altrimenti il motivo del rifiuto.
+
+        Stessa formula dei percorsi segnale/auto-next: rischio per lato (LAY = liability), esposizione gia'
+        aperta sul mercato/evento dai tavoli, drawdown assoluto. Nessun cap configurato => "" (nessun limite
+        arbitrario). Ordine non valutabile (lato, quota, mercato, evento) con un cap attivo => rifiuto.
+        """
+        cfg = self.config
+        order_cap = self._configured_optional(cfg, "max_order_exposure")
+        market_cap = self._configured_optional(cfg, "max_market_exposure")
+        event_cap = self._configured_optional(cfg, "max_event_exposure_abs")
+        drawdown_cap = self._configured_optional(cfg, "max_drawdown_abs")
+        if order_cap is None and market_cap is None and event_cap is None and drawdown_cap is None:
+            return ""
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            per_market: dict[str, float] = {}
+            per_event: dict[str, tuple[dict, float]] = {}
+            for order in orders or []:
+                try:
+                    side = validators.signal_side(order)
+                    price = validators.order_price(order.get("price"))
+                    market_id = validators.order_market_id(order.get("market_id"))
+                except (TypeError, ValueError, AttributeError):
+                    return "ordine_non_valutabile_per_i_cap"
+                exposure = validators.order_exposure_or_inf(side, order.get("stake"), price)
+                reason = validators.absolute_cap_reason("max_order_exposure", order_cap, 0.0, exposure)
+                if reason:
+                    return reason
+                per_market[market_id] = per_market.get(market_id, 0.0) + exposure
+                identity = self._event_identity(order)
+                if event_cap is not None and not identity:
+                    return "max_event_exposure_abs_non_verificabile"
+                if identity:
+                    sample, total = per_event.get(identity, (order, 0.0))
+                    per_event[identity] = (sample, total + exposure)
+            for market_id, added in per_market.items():
+                reason = validators.absolute_cap_reason(
+                    "max_market_exposure", market_cap, self._market_current_exposure(market_id), added)
+                if reason:
+                    return reason
+            for sample, added in per_event.values():
+                reason = validators.absolute_cap_reason(
+                    "max_event_exposure_abs", event_cap, self._event_current_exposure(sample), added)
+                if reason:
+                    return reason
+            if drawdown_cap is not None:
+                cap = validators.finite_number(drawdown_cap)
+                bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+                peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+                if cap is None or cap <= 0 or bankroll is None or peak is None:
+                    return "max_drawdown_abs_non_valido"
+                drawdown_abs = max(0.0, peak - bankroll)
+                if validators.reaches_limit(drawdown_abs, cap):
+                    self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
+                    return "max_drawdown_abs_active"
+        return ""
+
+    # ---- fence fino al piazzamento (rilievo Codex #522 su c4ac69e) ----
+    # Col bus di produzione non bloccante CMD_QUICK_BET e' solo accodato quando l'ammissione rilascia il lock:
+    # un cashout puo' fotografare l'exchange PRIMA che l'ordine in coda venga piazzato, e l'ordine partirebbe
+    # dopo. Il fence d'ammissione viaggia quindi fino al TradingEngine, che lo ricontrolla subito prima del
+    # piazzamento (`admission_fence_verdict`): se nel frattempo e' iniziato un cashout nel suo ambito l'ordine
+    # e' negato (QUICK_BET_FAILED => tavolo e dedupe liberati). Il cashout non viene ritardato (PF-EXEC-03).
+
+    def _register_queued_entry_fence(self, payload: dict, fence) -> None:
+        ref = str((payload or {}).get("customer_ref") or "")
+        if not ref or fence is None:
+            return
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            queued = getattr(self, "_queued_entry_fences", None)
+            if queued is None:
+                queued = self._queued_entry_fences = {}
+            queued[ref] = fence
+
+    def admission_fence_verdict(self, request: dict) -> str:
+        """Chiamato dal TradingEngine prima del piazzamento: "" se l'ingresso puo' partire, altrimenti il motivo.
+
+        Consuma la registrazione (un solo controllo per ordine). Un ordine non ammesso dal runtime (nessuna
+        registrazione: dutching, manuale, hedge) non e' toccato.
+        """
+        ref = str((request or {}).get("customer_ref") or "")
+        if not ref:
+            return ""
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            fence = (getattr(self, "_queued_entry_fences", None) or {}).pop(ref, None)
+            if fence is None:
+                return ""
+            return "" if RuntimeController._admission_fence_valid(self, fence) else "cashout_invalidation_stale"
 
     def _call_outside_admission_lock(self, fn, *args):
         """Esegue ``fn`` (rete: best price, book F030) senza trattenere ``_risk_admission_lock``.
@@ -3610,6 +3740,11 @@ class RuntimeController:
             validators.signal_side(signal)
         except ValueError:
             self._reject_signal(signal, "lato_non_valido")
+            return
+        try:
+            self._signal_event_name(signal)
+        except ValueError:
+            self._reject_signal(signal, "evento_ambiguo")
             return
 
         copy_meta, pattern_meta = self._extract_origin_metadata(signal)
@@ -3758,7 +3893,7 @@ class RuntimeController:
             ).upper(),
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision.recommended_stake),
-            "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
+            "event_name": self._signal_event_name(signal),
             # Identita' canonica dell'evento (#505) persistita nell'ordine: la ricostruzione F018 (#512)
             # la rimette nel meta del tavolo, cosi' il cap evento riconosce l'evento anche dopo un riavvio.
             "event_id": signal.get("event_id") or signal.get("eventId"),
@@ -3917,6 +4052,7 @@ class RuntimeController:
                 },
             },
         )
+        RuntimeController._register_queued_entry_fence(self, payload, admission_fence)
         self.bus.publish("CMD_QUICK_BET", payload)
 
     def _release_acquired_and_reject(self, signal: dict, *, event_key: str,
@@ -5994,6 +6130,7 @@ class RuntimeController:
         if risk_allowed:
             try:
                 side = validators.signal_side(signal)
+                self._signal_event_name(signal)           # alias evento in conflitto => non verificabile
                 price = validators.order_price(signal.get("price", signal.get("odds")))
                 order_exposure = validators.order_exposure_or_inf(side, result["next_stake"], price)
                 event_identity = self._event_identity(signal)
@@ -6173,6 +6310,7 @@ class RuntimeController:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
 
+        RuntimeController._register_queued_entry_fence(self, submit_payload, fence)
         self.bus.publish("CMD_QUICK_BET", submit_payload)
         result["auto_trade_status"] = "AUTO_TRADE_SUBMITTED"
         result["cycle_executor_status"] = "CYCLE_STEP_SUBMITTED"
@@ -6396,7 +6534,7 @@ class RuntimeController:
             "bet_type": validators.signal_side(normalized_signal),
             "price": float(normalized_signal.get("price") or normalized_signal.get("odds")),
             "stake": float(decision_stake),
-            "event_name": normalized_signal.get("event") or normalized_signal.get("match") or normalized_signal.get("event_name") or "",
+            "event_name": self._signal_event_name(normalized_signal),
             "event_id": normalized_signal.get("event_id") or normalized_signal.get("eventId"),
             "event_identity": self._event_identity(normalized_signal),
             "market_name": normalized_signal.get("market") or normalized_signal.get("market_name") or normalized_signal.get("market_type") or "",
