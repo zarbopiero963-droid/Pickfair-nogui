@@ -1032,7 +1032,7 @@ class TradingEngine:
 
             # #524: dall'avvio dell'invio in poi un errore non prova che l'ordine non sia partito. Mai FAILED:
             # AMBIGUOUS + riconciliazione (chiavi e tavolo trattenuti), anche se il DB e' in errore.
-            if send_started and order_id is not None:
+            if send_started and order_id is not None and not audit.get("_certain_failure"):
                 try:
                     return self._resolve_ambiguity(ctx, audit, order_id,
                                                    ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
@@ -1488,6 +1488,9 @@ class TradingEngine:
                                            extra_fields=extra_fields)
 
         payload = {"order_id": order_id, "error": str(exc), "error_type": error_type}
+        # #524: rifiuto gia' classificato certo. Se il finalize solleva dopo, l'except esterno resta sul FAILED
+        # degradato invece di renderlo AMBIGUOUS (nessuna incertezza da propagare a cashout e fence).
+        audit["_certain_failure"] = True
         self._emit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
         marked_failed = self._safe_mark_failed(
             ctx,

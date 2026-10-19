@@ -333,3 +333,33 @@ def test_restarted_runtime_rebuilds_the_unpersisted_ambiguity_as_an_uncertain_he
     assert result["ok"] is True and result["uncertain"] == [ref]        # riserva incerta, non ricostruita libera
     (held,) = [t for t in restarted.table_manager.snapshot() if t.get("status") != "FREE"]
     assert held["market_id"] == "1.234" and held["current_exposure"] > 0   # tavolo ed esposizione trattenuti
+
+
+# ---------------------------------------------------------------- 9. review indipendente su 9e99925 (R1)
+def test_certain_rejection_with_a_failing_finalize_read_stays_failed_not_ambiguous(tmp_path):
+    """Rifiuto certo del broker, FAILED scritto, poi la lettura del finalize fallisce: resta FAILED degradato.
+    Mai AMBIGUOUS: nessun cashout reso incerto per un ordine che non e' partito."""
+    import sqlite3
+
+    c = _catena(tmp_path)
+
+    def rejected(*_a, **_k):
+        return {"ok": False, "status": "FAILED", "error": "INSUFFICIENT_FUNDS", "reason_code": "BROKER_REJECTED"}
+
+    c.broker.place_bet = functools.wraps(c.broker.place_bet)(rejected)
+    original_get = c.db.get_order
+
+    def get_order(order_id, *args, **kwargs):
+        row = original_get(order_id, *args, **kwargs)
+        if isinstance(row, dict) and row.get("status") == "FAILED":
+            raise sqlite3.OperationalError("database is locked")
+        return row
+
+    c.db.get_order = get_order
+    payload = _queue_entry(c)
+
+    result = c.engine.submit_quick_bet(payload)
+
+    assert result["status"] == "FAILED"
+    assert not any(t == "QUICK_BET_AMBIGUOUS" for t, _ in _quick_bet_results(c))
+    assert c.broker.state.orders == {}
