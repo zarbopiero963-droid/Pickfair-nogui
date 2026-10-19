@@ -362,3 +362,22 @@ Incidents, Incident Timeline, Audit, Safe Mode, Diagnostics`; badge
 Safe Mode` senza conferma yes/no; ExportPanel `Export Diagnostics ZIP`).
 Se verranno integrati nella Mini GUI, l'integrazione è una modifica design
 e va riportata qui.
+
+# PR28-d — controlli assoluti Roserpina
+
+La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
+(rettifica owner 18/10/2026: nessun cap monetario fisso di default):
+`Cap assoluto: Singolo ordine (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo mercato (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
+`Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
+mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
+limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
+persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
+dove il vuoto preserva il valore salvato). Se il caricamento iniziale della configurazione
+Roserpina fallisce, il salvataggio del tab Roserpina e' bloccato con un errore esplicito («Configurazione
+Roserpina non caricata: salvataggio bloccato…»), cosi' i valori iniziali della GUI non sovrascrivono mai i
+limiti salvati; un valore presente deve essere un numero finito > 0,
+altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
+illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
+ordini con `<nome>_non_valido`.

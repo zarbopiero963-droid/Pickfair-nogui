@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import ssl
@@ -16,6 +17,8 @@ from core.system_state import (
     RoserpinaConfig,
     TelegramRuntimeConfig,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsService:
@@ -324,6 +327,31 @@ class SettingsService:
                 "roserpina.max_open_exposure",
                 fallback_key="max_open_exposure",
             ),
+            # Rettifica owner 18/10/2026 (PF-CAP-01..04, PF-CAP-10): cap assoluti
+            # in euro OPZIONALI. Assente/None/"" => None = non attivo, mai un
+            # numero di default; presente ma invalido => NaN => il runtime nega
+            # ogni nuovo ordine (`<nome>_non_valido`); chiave legacy senza
+            # prefisso letta e loggata.
+            max_order_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_order_exposure",
+                fallback_key="max_order_exposure",
+            ),
+            max_market_exposure=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_market_exposure",
+                fallback_key="max_market_exposure",
+            ),
+            max_event_exposure_abs=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_event_exposure_abs",
+                fallback_key="max_event_exposure_abs",
+            ),
+            max_drawdown_abs=self._optional_hard_stop_value(
+                data,
+                "roserpina.max_drawdown_abs",
+                fallback_key="max_drawdown_abs",
+            ),
             max_session_loss=self._optional_hard_stop_value(
                 data,
                 "roserpina.max_session_loss",
@@ -415,6 +443,14 @@ class SettingsService:
             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
         if config.max_open_exposure is not None:
             payload["roserpina.max_open_exposure"] = config.max_open_exposure
+        # PF-CAP-10b (decisione owner 18/10/2026): per i quattro cap monetari opzionali il
+        # campo vuoto (None) significa "limite NON attivo" anche per un valore gia' persistito:
+        # si scrive "" (che il loader legge come None) invece di saltare la chiave, cosi' il
+        # limite viene davvero disattivato e "" oscura anche la chiave legacy senza prefisso.
+        # Gli altri hard-stop qui sotto conservano la semantica documentata "vuoto preserva".
+        for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
+            value = getattr(config, field, None)
+            payload[f"roserpina.{field}"] = "" if value is None else value
         if config.max_session_loss is not None:
             payload["roserpina.max_session_loss"] = config.max_session_loss
         if config.max_exposure_stop is not None:
@@ -431,10 +467,26 @@ class SettingsService:
         *,
         fallback_key: str | None = None,
     ) -> float | None:
+        """Limite opzionale in euro/percentuale (hard-stop, cap assoluti).
+
+        Semantica unica (rettifica owner 18/10/2026, PF-CAP-10):
+        - chiave assente, None o stringa vuota => None = NON attivo (nessun
+          default numerico, mai);
+        - valore presente ma illeggibile (testo, bool) => NaN: il consumer
+          runtime lo tratta come configurato-ma-invalido e nega i nuovi
+          ordini (`<nome>_non_valido`); 0/negativo arrivano come numero e
+          vengono respinti dallo stesso consumer. Mai interpretato come "off";
+        - chiave legacy senza prefisso `roserpina.` letta e loggata.
+        """
         if key in data:
             value = data.get(key)
         elif fallback_key and fallback_key in data:
             value = data.get(fallback_key)
+            logger.info(
+                "Impostazione legacy senza prefisso letta: %r (migrare a %r)",
+                fallback_key,
+                key,
+            )
         else:
             return None
 
@@ -443,6 +495,9 @@ class SettingsService:
 
         if isinstance(value, str) and value.strip() == "":
             return None
+
+        if isinstance(value, bool):
+            return float("nan")
 
         try:
             return float(value)

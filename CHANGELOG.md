@@ -256,6 +256,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un
   tavolo. Trovato dalla campagna di simulazione Roserpina (con un solo tavolo), reso raggiungibile da F2.
 
+### PR28-d — cap assoluti Roserpina (opzionali)
+- Aggiunti i limiti assoluti in euro configurabili per singolo ordine,
+  mercato, evento (identita' canonica) e drawdown assoluto, applicati sul
+  rischio BACK/LAY e insieme ai limiti percentuali/totali esistenti.
+- Rettifica owner 18/10/2026: nessun cap monetario fisso di default. I
+  quattro limiti sono DISATTIVI finche' l'utente non li configura (chiave
+  assente, `None` o campo vuoto = non attivo, mai un numero); un valore
+  presente ma invalido (0, negativo, NaN, bool, testo) non e' un opt-out e
+  nega i nuovi ordini con `<nome>_non_valido`; un valore valido e' applicato
+  esattamente; le chiavi legacy senza prefisso `roserpina.` sono lette e
+  loggate. `max_drawdown_abs` configurato mantiene il LOCKDOWN; assente non
+  produce alcun lockdown. Rimosso il loader con default numerico
+  (`_required_absolute_cap_value`); i campi GUI partono vuoti con etichetta
+  «(€, vuoto = non attivo)». Salvare uno di questi quattro campi vuoto
+  disattiva anche un valore gia' persistito (scritto come vuoto, letto come
+  `None`, oscura la chiave legacy); gli hard-stop di perdita/esposizione
+  conservano la semantica «vuoto preserva il valore salvato» (PF-CAP-10b).
+- Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
+  ambiguo o invalido viene rifiutato senza default BACK e senza invio.
+- P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
+  questa slice non introduce strategie, bucket o un secondo money manager.
+- Gli ingressi catturano una generation scoped market/selection prima del
+  best-price; il cashout alza una barriera prima del routing e invalida gli
+  ingressi concorrenti senza mantenere il lock durante lookup o network. Gli
+  ordini stale rilasciano dedupe e tavolo prima del rifiuto.
+
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).
