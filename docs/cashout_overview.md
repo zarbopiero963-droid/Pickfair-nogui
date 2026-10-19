@@ -240,10 +240,20 @@ ritardato (PF-EXEC-03).
   trattenuto: il cashout parte comunque (mai bloccato) e la barriera diventa
   incerta fino al riavvio.
 
-Limite noto: un invio dell'ingresso con esito AMBIGUOUS (attesa dell'executor
-scaduta) chiude la registrazione «in volo»; l'ordine può comparire sull'exchange
-dopo la fotografia del cashout e lo copre la riconciliazione AMBIGUOUS
-(tavolo trattenuto, nessun retry).
+- **Invio con esito ignoto**: se l'engine rinuncia all'esito (AMBIGUOUS, attesa
+  dell'executor scaduta: il task può ancora inviare), eccezione o risultato
+  mancante, l'ingresso passa fra gli «ambigui». Un cashout nel suo ambito diventa
+  subito incerto (nessuna attesa) finché un esito noto dell'ordine
+  (`QUICK_BET_*` diverso da AMBIGUOUS, per esempio dalla riconciliazione) non lo
+  risolve. La registrazione appartiene alla richiesta che l'ha creata: un
+  duplicato con lo stesso `customer_ref` non la chiude.
+
+Limiti noti:
+- un residuo di hedge parziale che si abbina da solo prima del cancel fa fallire
+  il cancel: barriera incerta fino al riavvio anche a posizione chiusa
+  (fail-closed, costo operativo);
+- l'attesa degli ingressi in invio occupa il thread che instrada il cashout
+  (worker del bus o poller dei settlement) fino all'esito dell'invio.
 
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,

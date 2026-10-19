@@ -1128,7 +1128,7 @@ def test_cashout_routed_while_holding_the_admission_lock_does_not_wait_and_is_un
     c = _catena(tmp_path)
     _snapshotting_router(c, monkeypatch)
     barrier_id, _scope = _barrier(c.rc, dict(_EVENT_CASHOUT))
-    c.rc._entries_in_flight = {"ref-in-volo": frozenset(c.rc._entry_admission_keys(_signal()))}
+    c.rc._entries_in_flight = {"ref-in-volo": (frozenset(c.rc._entry_admission_keys(_signal())), {})}
     import time as _time
 
     started = _time.monotonic()
@@ -1216,3 +1216,84 @@ def test_success_without_a_declared_match_completeness_keeps_the_barrier(tmp_pat
     c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "status": "DONE",
                                       "cashout_request_id": queued[0]["cashout_request_id"]})
     assert c.rc.get_status()["cashout_barriers_active"] == 1
+
+
+# Review indipendente su bdf6ece: esito AMBIGUOUS (l'engine smette di attendere, il task puo' ancora inviare) e
+# registrazione chiusa da un'altra richiesta con lo stesso customer_ref.
+class _PoolExecutor:
+    """Come ExecutorManager: submit() restituisce un Future; default_timeout corto per il test."""
+    thread_name_prefix = "pr28d-exec"
+    default_timeout = 0.2
+
+    def __init__(self):
+        import concurrent.futures
+
+        self._pool = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="pr28d-exec")
+
+    def submit(self, _name, fn, *args, **kwargs):
+        return self._pool.submit(fn, *args, **kwargs)
+
+
+def test_ambiguous_send_makes_a_later_cashout_in_scope_uncertain(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    snapshots = _snapshotting_router(c, monkeypatch)
+    c.engine.executor = _PoolExecutor()
+    entry, in_place, release = _entry_paused_inside_the_broker(c)
+    entry.start()
+    assert in_place.wait(10)
+    entry.join(10)                                       # attesa dell'executor scaduta => AMBIGUOUS
+    assert not entry.is_alive() and c.bus.payloads("QUICK_BET_AMBIGUOUS")
+
+    import time as _time
+
+    started = _time.monotonic()
+    c.rc._route_cashout_signal(dict(_EVENT_CASHOUT))     # il task del broker puo' ancora inviare
+    assert _time.monotonic() - started < 5.0             # esito ambiguo: incerta subito, nessuna attesa inutile
+    release.set()
+
+    assert len(snapshots) == 1                           # il cashout non viene bloccato (PF-EXEC-03)
+    status = c.rc.get_status()
+    assert status["cashout_barriers_active"] == 1 and status["cashout_barriers_uncertain"] == 1
+    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:09:00+00:00"))
+    assert _rifiuti(c)[-1] == "cashout_invalidation_active"
+
+
+def test_cashout_out_of_scope_of_an_ambiguous_entry_stays_certain(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _snapshotting_router(c, monkeypatch)
+    c.rc._entries_ambiguous = {"ref-ambiguo": frozenset(c.rc._entry_admission_keys(_signal()))}
+    c.rc._route_cashout_signal({"signal_type": "CASHOUT", "event_name": "Gamma v Delta",
+                                "market_id": "1.999", "selection_id": 7})
+    assert c.rc.get_status()["cashout_barriers_uncertain"] == 0
+
+
+def test_known_outcome_of_the_order_resolves_the_ambiguous_entry(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _snapshotting_router(c, monkeypatch)
+    c.rc._entries_ambiguous = {"ref-ambiguo": frozenset(c.rc._entry_admission_keys(_signal()))}
+    c.bus.publish("QUICK_BET_AMBIGUOUS", {"customer_ref": "ref-ambiguo"})
+    assert "ref-ambiguo" in c.rc._entries_ambiguous         # ancora ambiguo: nessun esito noto
+    c.bus.publish("QUICK_BET_FILLED", {"customer_ref": "ref-ambiguo", "market_id": "1.234"})
+    assert c.rc._entries_ambiguous == {}
+    c.rc._route_cashout_signal(dict(_EVENT_CASHOUT))
+    assert c.rc.get_status()["cashout_barriers_uncertain"] == 0
+
+
+def test_another_request_with_the_same_ref_does_not_close_the_registration(tmp_path):
+    c = _catena(tmp_path)
+    registered = {"customer_ref": "ref-1"}
+    keys = frozenset(c.rc._entry_admission_keys(_signal()))
+    c.rc._entries_in_flight = {"ref-1": (keys, registered)}
+
+    c.rc.admission_placement_done({"customer_ref": "ref-1"})        # duplicato negato prima dell'invio
+    assert "ref-1" in c.rc._entries_in_flight
+    c.rc.admission_placement_done(registered)                        # la richiesta che si era registrata
+    assert c.rc._entries_in_flight == {}
+
+
+def test_uncertain_send_outcome_moves_the_entry_among_the_ambiguous(tmp_path):
+    c = _catena(tmp_path)
+    registered = {"customer_ref": "ref-2"}
+    c.rc._entries_in_flight = {"ref-2": (frozenset({("global",)}), registered)}
+    c.rc.admission_placement_done(registered, certain=False)
+    assert c.rc._entries_in_flight == {} and c.rc._entries_ambiguous == {"ref-2": frozenset({("global",)})}

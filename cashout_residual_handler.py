@@ -58,7 +58,8 @@ class CashoutResidualHandler:
         self._bus: Any = None
 
     def wire(self, bus: Any) -> None:
-        """Sottoscrive il consumer di ``CASHOUT_FAILED`` (e solo quello)."""
+        """Sottoscrive ``CASHOUT_FAILED`` e ``CASHOUT_SUCCESS`` (quest'ultimo solo per il residuo di un hedge
+        abbinato in parte, #522)."""
         self._bus = bus
         bus.subscribe(CASHOUT_FAILED, self.on_cashout_failed)
         bus.subscribe(CASHOUT_SUCCESS, self.on_cashout_success)

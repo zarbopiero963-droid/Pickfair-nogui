@@ -832,16 +832,23 @@ class TradingEngine:
         # sia, chiude la registrazione nel runtime, cosi' un cashout nell'ambito fotografa dopo l'invio.
         in_flight = _admission_requests_in_flight()
         start = len(in_flight)
+        result: Any = None
         try:
-            return self._submit_via_engine(payload)
+            result = self._submit_via_engine(payload)
+            return result
         finally:
             pending = in_flight[start:]
             del in_flight[start:]
+            # Esito certo solo con un risultato non AMBIGUOUS. AMBIGUOUS (attesa dell'executor scaduta: il task
+            # puo' ancora inviare), eccezione o risultato mancante => l'ordine puo' comparire piu' tardi.
+            certain = (isinstance(result, dict)
+                       and str(result.get("status") or "").upper() != STATUS_AMBIGUOUS
+                       and str(result.get("outcome") or "").upper() != OUTCOME_AMBIGUOUS)
             done = getattr(getattr(self, "runtime_controller", None), "admission_placement_done", None)
             if callable(done):
                 for request in pending:
                     try:
-                        done(request)
+                        done(request, certain=certain)
                     except Exception:
                         logger.exception("Chiusura della registrazione d'invio fallita")
 

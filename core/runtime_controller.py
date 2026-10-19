@@ -3617,20 +3617,45 @@ class RuntimeController:
             placing = getattr(self, "_entries_in_flight", None)
             if placing is None:
                 placing = self._entries_in_flight = {}
-            placing[ref] = frozenset(key for key, _epoch in fence)
+            # Chiave = customer_ref, ma la registrazione appartiene a QUESTA richiesta: un duplicato con lo stesso
+            # ref negato prima dell'invio non la chiude (review indipendente su bdf6ece).
+            placing[ref] = (frozenset(key for key, _epoch in fence), request)
             return ""
 
-    def admission_placement_done(self, request: dict) -> None:
-        """Chiamato dal TradingEngine a invio concluso (qualunque esito): l'ingresso non e' piu' in volo."""
+    def admission_placement_done(self, request: dict, *, certain: bool = True) -> None:
+        """Chiamato dal TradingEngine a invio concluso. ``certain=False`` (esito AMBIGUOUS, eccezione, esito
+        mancante): l'ordine puo' comparire sull'exchange piu' tardi, quindi l'ingresso passa fra gli
+        ambigui e ogni cashout nel suo ambito diventa incerto finche' un esito noto non lo risolve."""
         ref = str((request or {}).get("customer_ref") or "")
         if not ref:
             return
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
-            (getattr(self, "_entries_in_flight", None) or {}).pop(ref, None)
+            placing = getattr(self, "_entries_in_flight", None) or {}
+            entry = placing.get(ref)
+            if entry is None or entry[1] is not request:
+                return                       # registrazione di un'altra richiesta (o nessuna): non si tocca
+            placing.pop(ref, None)
+            if not certain:
+                ambiguous = getattr(self, "_entries_ambiguous", None)
+                if ambiguous is None:
+                    ambiguous = self._entries_ambiguous = {}
+                ambiguous[ref] = entry[0]
+
+    def _resolve_ambiguous_entry(self, payload: dict, *, event_name: str) -> None:
+        """Un esito noto dell'ordine (qualunque QUICK_BET_* tranne AMBIGUOUS) risolve l'ingresso ambiguo."""
+        if event_name == "QUICK_BET_AMBIGUOUS":
+            return
+        ref = str((payload or {}).get("customer_ref") or "").strip()
+        if not ref or not getattr(self, "_entries_ambiguous", None):
+            return
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            self._entries_ambiguous.pop(ref, None)
 
     #: Attesa massima, prima della fotografia del router, degli ingressi gia' in invio nell'ambito del cashout.
-    #: Copre l'attesa dell'esito d'invio dell'engine (`default_timeout` 30 s dell'executor) piu' margine; oltre => incerta.
+    #: L'engine rinuncia all'esito dopo `default_timeout` (30 s) e lo segnala come ambiguo, che rende il cashout
+    #: subito incerto; l'attesa piu' lunga copre l'elaborazione successiva. Oltre => incerta.
     _ENTRIES_IN_FLIGHT_WAIT_S = 35.0
 
     def _await_entries_in_flight(self, barrier_id) -> None:
@@ -3652,14 +3677,18 @@ class RuntimeController:
                 scope = getattr(self, "_cashout_barriers", {}).get(barrier_id)
                 if not scope:
                     return
-                pending = sorted(ref for ref, keys in (getattr(self, "_entries_in_flight", None) or {}).items()
+                pending = sorted(ref for ref, (keys, _req) in (getattr(self, "_entries_in_flight", None) or {}).items()
                                  if keys & scope)
-                if not pending:
+                ambiguous = sorted(ref for ref, keys in (getattr(self, "_entries_ambiguous", None) or {}).items()
+                                   if keys & scope)
+                if not pending and not ambiguous:
                     return
-                if held or time.monotonic() >= deadline:
+                if ambiguous or held or time.monotonic() >= deadline:
+                    pending = sorted(set(pending) | set(ambiguous))
                     logger.critical(
-                        "Cashout barriera %s: ingressi ancora in invio %s (%s): barriera incerta fino al riavvio",
-                        barrier_id, pending, "lock trattenuto" if held else "attesa scaduta")
+                        "Cashout barriera %s: ingressi in invio o con esito ambiguo %s (%s): barriera incerta "
+                        "fino al riavvio", barrier_id, pending,
+                        "esito ambiguo" if ambiguous else ("lock trattenuto" if held else "attesa scaduta"))
                     inflight = getattr(self, "_cashout_inflight", None)
                     if inflight is None:
                         inflight = self._cashout_inflight = {}
@@ -5201,6 +5230,7 @@ class RuntimeController:
         (B6.3.2b). Nessun side-effect broker qui: solo tracking.
         """
         payload = payload or {}
+        RuntimeController._resolve_ambiguous_entry(self, payload, event_name=event_name)
         customer_ref = str(payload.get("customer_ref") or "").strip()
         if not customer_ref:
             return

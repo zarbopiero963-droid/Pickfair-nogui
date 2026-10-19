@@ -101,6 +101,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - Test adeguati al nuovo contratto, senza allentare gli assert: gli esiti `CASHOUT_SUCCESS` sintetici dei
       test dichiarano `partial=False`; due test sulle sottoscrizioni includono `CASHOUT_SUCCESS` del residual
       handler.
+    - **Review indipendente della correzione:** un invio con esito AMBIGUOUS (attesa dell'executor scaduta, il
+      task può ancora inviare) chiudeva comunque la registrazione «in volo»; ora l'ingresso passa fra gli
+      ambigui e ogni cashout nel suo ambito diventa subito incerto, finché un esito noto dell'ordine non lo
+      risolve. La registrazione appartiene alla richiesta che l'ha creata: un duplicato con lo stesso
+      `customer_ref` negato prima dell'invio non la chiude più. Docstring di `cashout_wiring.py` e del
+      residual handler allineati.
     - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
       fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
       dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla
