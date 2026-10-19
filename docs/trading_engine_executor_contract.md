@@ -16,6 +16,8 @@ broker oppure solleva. Non restituisce mai un `concurrent.futures.Future` né un
 | Attesa scaduta con task **avviato**, executor guasto dopo l'avvio | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta persa / `TimeoutError` del client, `order_unknown`, report discordanti, risposta non-dict | `AMBIGUOUS` + riconciliazione | **no** |
 | Risposta che dichiara esplicitamente `SUCCESS` senza alcun `betId` | `AMBIGUOUS` + riconciliazione | **no** |
+| Esito ignoto, ma la transizione DB `INFLIGHT→AMBIGUOUS` fallisce (#524) | `AMBIGUOUS` non persistito: `is_terminal=False`, `lifecycle_stage="degraded"`, `QUICK_BET_AMBIGUOUS`; la riga resta `INFLIGHT` su DB e dedupe e riconciliazione la ritrovano al riavvio. **Mai** `FAILED` | **no** |
+| Eccezione dopo l'avvio dell'invio (transizione `SUBMITTED` fallita, crash nella costruzione dell'esito, finalize che solleva) (#524) | `AMBIGUOUS` + riconciliazione (`ENGINE_FATAL_AFTER_SEND`), anche con DB indisponibile. **Mai** `FAILED` | **no** |
 | Eccezione sollevata dal client | propagata **invariata**: stessa classificazione del percorso diretto | secondo la classificazione |
 
 - **Attesa.** Il tempo di attesa vale `executor.default_timeout`. Se il valore manca o non è valido si usano 30 s (`ExecutorManager` di produzione: 30 s). Deve restare **maggiore** del timeout HTTP del `BetfairClient` (20 s), altrimenti si producono AMBIGUOUS evitabili. Il valore per LIVE resta un'ipotesi da validare (decisione owner).
