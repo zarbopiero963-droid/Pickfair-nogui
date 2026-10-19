@@ -169,10 +169,13 @@ Entry (label verbatim): `Target Profit Cycle %`, `Max Single Bet %`,
 Combobox `Risk Profile`: `CONSERVATIVE | BALANCED | AGGRESSIVE`
 (default `BALANCED`).
 
-Checkbox: `Allow Recovery` (ON), `Anti Duplication Enabled` (ON),
+Checkbox su quattro righe (CLOSURE-03: su una riga sola gli ultimi uscivano dalla finestra):
+riga 1 `Allow Recovery` (ON), `Anti Duplication Enabled` (ON), `Liquidity Guard attivo`; riga 2 liquidita' solo
+avviso; riga 3 Max Win solo avviso; riga 4 auto-green e profit epsilon. Etichette:
+`Allow Recovery` (ON), `Anti Duplication Enabled` (ON),
 `Liquidity Guard attivo`,
-`Liquidity: solo avviso (⚠ togliere = BLOCCA il submit)`,
-`Max Win: solo avviso (⚠ togliere = BLOCCA il submit)` (ON),
+`Liquidity: solo avviso (⚠ togliere = BLOCCA il submit; dati assenti bloccano sempre)` (il guard vale per dutching e ingressi singoli; un book assente o non leggibile nega l'ingresso anche in solo-avviso),
+`Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)` (ON; il flag governa solo il precheck dutching, il RiskGate blocca sempre oltre Max Win),
 `Auto-green: attiva grace prima del cashout (ritardo)` (OFF),
 `Profit epsilon: mostra avviso varianza profitto` (ON).
 

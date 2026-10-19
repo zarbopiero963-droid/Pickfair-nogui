@@ -517,6 +517,11 @@ class HeadlessApp:
             # _safe_persist nel handler assorbe eventuali errori di scrittura.
             persist=lambda record: self.db.insert_audit_event(record),
             notify=self._notify_cashout_residual,
+            # Microstake nativo per l'hedge sotto il minimo exchange: lo stesso
+            # esecutore (e la stessa saga persistita) del choke point dell'engine.
+            microstake_executor_provider=lambda: (
+                self.trading_engine.native_microstake_executor()
+                if getattr(self, "trading_engine", None) is not None else None),
         )
         self.order_router = catena.order_router
         self.cashout_executor = catena.cashout_executor

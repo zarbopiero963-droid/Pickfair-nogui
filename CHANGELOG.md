@@ -8,6 +8,254 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
+  sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
+  `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
+  rilasciavano con payload senza chiave e senza exchange (`tests/f026/test_f026_units.py`, due test c14) usano ora la
+  chiave SIM per mercato che intendevano. Test `test_c17_*`.
+- **PR #512 ciclo 16 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `23bdbfe` (filesystem in sola
+  lettura: falliscono sia il registro hedge sia la sentinella). `_market_has_foreign_cleared_legs`: prima di un
+  rilascio per mercato da settlement cleared per bet si interroga l'exchange (`listClearedOrders` per mercato); bet
+  regolate non del bot, lettura fallita o risposta vuota/malformata => nessun rilascio (fail-closed, nessuna
+  dipendenza da scritture locali). Test `test_c16_*` in `tests/test_pr512_codex_034af59.py`.
+- **PR #512 ciclo 15 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `180ffa3`. Se la scrittura del
+  registro `roserpina.hedged_markets` falliva, il fail-closed restava in RAM e dopo un riavvio il registro leggibile
+  (senza quel mercato) era trattato come affidabile. Ora si scrive anche una sentinella durevole accanto al DB
+  (`<db_path>.hedged_markets.unreliable`, fsync); se presente all'avvio il registro e' inaffidabile finche'
+  l'operatore non la rimuove dopo la riconciliazione. Test `test_c15_*` in `tests/test_pr512_codex_034af59.py`.
+- **PR #512 ciclo 14 (PF-QA-AUTONOMOUS-CONTINUATION-01 / PF-PR-SEQUENCE-RECOVERY-01, owner 19/10/2026):** la verifica
+  indipendente dei rinvii ha classificato BLOCKING il residuo di r4303297587. Con posizione singola + hedge di cashout
+  (che passa da OrderRouter senza riga in `orders`) il settlement per bet senza `table_id` di una sola gamba liberava
+  il tavolo con il P&L di quella gamba, falsando la perdita di recovery e lo stake successivo. Ora ogni esito di
+  cashout (`CASHOUT_SUCCESS`/`CASHOUT_FAILED` con mercato) marca il mercato nel registro durevole
+  `roserpina.hedged_markets` (lock, 365 giorni) e `_single_bet_position` rifiuta il rilascio per un settlement PER
+  BET su quel mercato, o con registro illeggibile/non persistito (fail-closed); il settlement SIM per mercato (netto
+  di tutte le gambe) continua a rilasciare. Corretta
+  anche la nota del ciclo 10 qui sotto («limite invariato rispetto a main»: falsa per l'effetto sulla recovery). Test
+  RED->GREEN in `tests/test_pr512_codex_034af59.py` (`test_c14_*`). Rilievi Codex su `6138254` corretti nello stesso
+  ciclo: (a) `core/liquidity.single_entry_liquidity` richiede stato esplicito OPEN/ACTIVE, una risposta senza stato
+  non e' liquidita' osservata (r4312719713); (b) `MicrostakeCoordinator.execute`: ordine gia' presente con lo stesso
+  `customer_ref` => AMBIGUOUS con riserva trattenuta, mai FAILED, e `recover()` non adotta mai quell'ordine
+  (r4312719704); (c) `pfckpt.capture_code_patch` non dereferenzia mai i symlink non tracciati: registra solo il testo
+  del link (`skipped_symlinks`), il ripristino lo ricrea (r4312719746, sicurezza). Test in
+  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py::test_c14_*`.
+- **PR #512 ciclo 13 (PF-QA-AUTONOMOUS-CONTINUATION-01, owner 19/10/2026, #426):** rilievi Codex su `4231de9`.
+  (1) `TableManager.restore_recovery_state`: una perdita di recovery persistita negativa e' stato illeggibile
+  (avvio in PAUSED), non piu' un debito cancellato in silenzio; lo zero resta ammesso (r4312360615). (2)
+  `TradingEngine._resolve_executor_future`: un `CancelledError` sollevato dalla callable gia' partita e' AMBIGUOUS,
+  non pre-invio; solo un Future davvero cancellato resta pre-invio (r4312360608). (3) `BetfairClient.get_current_orders`
+  e `BetfairService._well_formed_current_orders`: `currentOrders` assente/null e' `CURRENT_ORDERS_MALFORMED`, mai
+  "nessun ordine" per la ricostruzione F018; la lista vuota esplicita resta il caso legittimo (r4312360620). Il test
+  legacy che codificava il fail-open (`test_get_current_orders_empty_result_returns_empty_list`) usa ora una lista
+  vuota esplicita. Test RED->GREEN in `tests/test_pr512_codex_034af59.py` (`test_c13_*`).
+- **PR #512 ciclo 12 (decisioni owner del 19/10/2026: autorizzazione straordinaria del ciclo 12 e
+  PF-QA-AUTONOMOUS-CONTINUATION-01, #426):** P1 Codex su `3d3f5cc`. (1) `NativeSimMicrostakeExecutor.execute`: un
+  errore ordinario del DB (non `SagaStoreError`) dopo un'operazione exchange diventa AMBIGUOUS
+  (`saga_store_write_failed_after_exchange_call`), con riserva trattenuta e dedupe consumato; prima finiva FAILED
+  (PERMANENT) con lo stub vivo sul broker e il tavolo libero (r4311806874). (2) Emergency stop: la provenienza dei
+  settlement si persiste insieme al flag e si ripristina al riavvio; assente o non valida => `UNKNOWN`, trattata come
+  LIVE (r4311806886). (3) Riesame indipendente: in `SimulationExchangePort.place` un errore di lettura DOPO
+  l'accettazione dell'ordine e' una risposta persa (`LostResponse`, riconciliazione per `customer_ref`), non un errore
+  generico che rilasciava la riserva chiudendo FAILED con lo stub vivo. Test RED->GREEN in
+  `tests/test_pr512_codex_034af59.py` (`test_c12_*`, compresa la dedupe durevole dopo un nuovo engine).
+- **PR #512 ciclo 10 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION, ultimo ciclo):** rilievi Codex su `b918a6d`.
+  (1) il reset trattiene OGNI tavolo con esito ignoto dal registro per tavolo, anche a mercato regolato (r4308704060);
+  (2) stato di recovery non persistito => nessun nuovo ingresso su ogni percorso (`recovery_state_not_persisted`, via
+  `_loss_block_reason`) con nuovo tentativo di scrittura a ogni ammissione, che scioglie il blocco appena il disco
+  torna (r4308704062); (3) all'avvio le riserve transitorie delle saghe pendenti (`reservation_held`, assente =
+  tenuta) sono ripristinate prima di snapshot e recovery, cosi' lo stub pendente occupa il cap (r4308704071);
+  (4) `pf_trace`: solo un'evidenza PASS copre un test dichiarato (r4308704068); (5) `pfckpt`: `STATE.json` JSON
+  valido ma non oggetto e' un checkpoint invalido strutturato (`STATE_JSON_INVALID`), saltato da
+  `last_valid_checkpoint` (r4308704074). Test RED->GREEN in `tests/test_pr512_codex_034af59.py`,
+  `tests/traceability/test_pf_trace_codex_034af59.py`, `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
+  Verifica indipendente dei thread rinviati (decisione owner opzione 2): due non separabili corretti qui. (a)
+  Settlement per bet senza `table_id`: il tavolo si libera per mercato solo se la posizione e' a selezione singola con
+  UN solo ordine del bot sul mercato/evento che possa essere stato piazzato (`_single_bet_position`; esclusi solo
+  FAILED/DENIED/DUPLICATE_BLOCKED); Dutching, piu' ordini persistiti o DB illeggibile => nessun rilascio, tavolo
+  trattenuto, mercato marcato regolato. Limite noto (corretto nel ciclo 14, vedi sopra): un hedge di cashout passa da
+  OrderRouter senza riga in `orders` e non era visto (lotti D-D/D-F) (prima il P&L della prima gamba diventava la perdita di
+  recovery del tavolo; aggregazione per `bet_id` = lotto D-F, r4303297587). (b) Dossier dei 41 parametri: nessun
+  clamp dello stake minimo, rifiuto esplicito (r4306544234). Test CI robusto al clone shallow; `pfckpt` rifiuta
+  CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope
+  dichiarata). Rollback microstake con stub abbinato anche in parte prima della cancellazione => AMBIGUOUS
+  `rollback_matched` con riserva tenuta, mai ROLLED_BACK/FAILED (riesame indipendente).
+- **PR #512 ciclo 11 (autorizzazione owner straordinaria del 19/10/2026, #426; ultimo ciclo, il 12 non e' autorizzato):** bloccanti di Grok su `9ab753a`. (1) Settlement per bet
+  senza `table_id`: conta ogni ordine del bot sullo stesso mercato, qualunque selezione; il tavolo si libera solo se
+  l'unico ordine del mercato e' il suo (prima il P&L di un'altra selezione poteva diventare la perdita di recovery del
+  tavolo, confermato su sqlite reale). (2) Recovery delle riserve microstake: importo transitorio ignoto => liability
+  dello stub ricalcolata da lato e prezzo persistiti, o riserva illimitata; mai il solo stub da 2 EUR. Rilievi Codex su `9ab753a`
+  confermati dalla verifica indipendente: (3) rollback deciso con stub gia' abbinato in parte => il recover cancella
+  comunque il residuo, poi AMBIGUOUS `rollback_matched` (r4309039350); (4) F028 libera il tavolo dell'ORDINE
+  (`table_id` persistito con verifica dell'evento), mai quello di un altro ordine vivo sullo stesso evento; senza
+  `table_id` e con piu' tavoli nessun rilascio (r4309039372); (5) Dutching: book assente con guard in blocco =>
+  `LIQUIDITY_UNKNOWN` per ogni gamba (r4309039358). Trasferiti: r4309039345 -> #521, r4309039363 -> #516,
+  r4309039377 -> #518. Test di integrazione `test_fail_open_when_book_missing_block_mode` (codificava il fail-open)
+  sostituito da `test_unknown_liquidity_when_book_missing_blocks_in_block_mode`; dossier, docstring e
+  `docs/roserpina_bankroll_equity.md` (F028 per `table_id`) allineati.
+- **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
+  remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
+  cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il
+  recover successivo ritenta solo la cancellazione (mai replace); (3) nessun secondo ordine su un evento con tavolo gia'
+  occupato (`evento_gia_in_posizione`) e chiavi anti-duplicato trattenute/ricostruite esenti dal TTL (Codex r4307328207,
+  difetto preesistente su main ristretto); (4) baseline F032, stato di recovery e marker del reset in una sola
+  transazione (r4307328199); (5) saga ROLLED_BACK riconciliata all'avvio, non pendente (r4307328204); (6) `pf_trace`:
+  un test dichiarato e' coperto solo da un'evidenza che lo nomina, mai per implicito (r4307328211); aggiunta l'evidenza
+  reale mancante per `tests/test_pr512_codex_findings.py` (PF-MS-01/02/05, append-only). Test RED->GREEN in
+  `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
+  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py`.
+  Riesame indipendente del ciclo 9 (prima del push): (a) l'intento di rollback della saga e' un flag durevole
+  `rollback_intent`, che un recover senza ordine visibile non declassa ad AMBIGUOUS (prima il recover successivo
+  riduceva e riprezzava l'ordine da cancellare); un residuo gia' cancellato con snapshot SIM non persistito si chiude
+  ROLLED_BACK al giro dopo, senza seconda cancellazione; (b) `DuplicationGuard.unpin`: una chiave fissata al riavvio
+  torna alla scadenza per TTL quando F028 libera il tavolo (prima bloccava l'evento fino al riavvio); (c) un reset di
+  ciclo non persistito resta in sospeso e viaggia con la scrittura successiva dello stato tavoli; (d) `pf_trace`: gli
+  argomenti delle opzioni non sono bersagli, i comandi che filtrano i test (-k, -m, --deselect, --ignore, --lf,
+  --collect-only) o che non invocano pytest non coprono nulla senza `tests` esplicito; (e) `unpublished_tree` esige
+  comunque uno SHA ben formato; (f) una saga pendente nello store ma assente dai risultati del recover resta pendente.
+  Secondo riesame indipendente (prima del push): un reset non persistito e' abbandonato e dichiarato
+  (`CYCLE_RESET_ABANDONED`) quando lo stato si ricarica dal disco (START nello stesso processo), mai applicato alle
+  perdite del ciclo vecchio; sul broker SIM reale, dove l'ordine cancellato sparisce dagli ordini correnti, il rollback
+  deciso si chiude leggendo per bet id la riga terminale senza residuo (un ordine ancora vivo resta pendente);
+  `pf_trace` riconosce i filtri nei gruppi di opzioni corte (`-qk`, `-vm`), le opzioni che non eseguono test
+  (`--setup-plan`, `--fixtures`, ...) e `pytest` solo in posizione di comando; ogni SHA di test del checkpoint deve
+  essere esadecimale (mai `HEAD`/`main`); con store illeggibile dopo il recover si riportano tutti i ref pendenti.
+  Terzo riesame: fixture di `tests/test_pr512_review_cycle6.py` allineata a `acquire(..., pin=True)`; test sulle righe
+  terminali con abbinato trovate per bet id (sempre AMBIGUOUS); `pf_trace` non deriva copertura da `|| true`,
+  `PYTEST_ADDOPTS`, `-o addopts` e `--cache-show`.
+  Nota di comportamento: il rifiuto `evento_gia_in_posizione` (un solo ordine per evento in posizione) vale con
+  `anti_duplication_enabled=true` (default), come estensione del dedupe oltre il TTL. Con l'anti-duplicazione
+  disattivata dall'utente restano OBBLIGATORI il rifiuto su una posizione con esito incerto (AMBIGUOUS, registrata
+  per tavolo: l'esito certo di un altro ordine sullo stesso evento non la cancella) o con chiave fissata
+  (`DuplicationGuard.is_pinned`: ricostruita al riavvio da F018, o trattenuta dal reset se la chiave era attiva) e il
+  dedupe dell'engine per customer_ref sulla riconsegna dello stesso messaggio (mandato owner di chiusura #512). Un
+  nuovo segnale su una posizione regolare e nota, nello stesso processo, segue il comportamento precedente; dopo un
+  riavvio la posizione ricostruita e' fissata e blocca (prudenziale).
+- **PR #512 — patch preparate per i 10 rilievi Codex su 034af59 (in attesa di deroga ciclo 8).**
+  (1) `services/betfair_service.py`: riga di `currentOrders` senza `betId`/`marketId` ⇒
+  `CURRENT_ORDERS_MALFORMED` ⇒ F018 in PAUSED, mai "posizione chiusa"; (2) `core/microstake_sim_port.py`:
+  snapshot finale del broker SIM non persistito ⇒ saga AMBIGUOUS con riserva tenuta, mai SUCCESS/ACTIVE,
+  `recover_pending()` ritenta lo snapshot prima di promuovere; (3) `controllers/dutching_controller.py`:
+  liquidità ignota con guard armato ⇒ shortfall `LIQUIDITY_UNKNOWN` (blocco); (4) `core/microstake_safe.py`:
+  `recover()` su ROLLBACK_PENDING cancella il residuo (ROLLED_BACK / AMBIGUOUS), mai replace;
+  (5) `core/runtime_controller.py`: `reset_cycle`/auto-reset con persistenza fallita ⇒
+  `_recovery_persist_failed`, evento `RECOVERY_STATE_PERSIST_FAILED`, `persisted: false`; (6) stato di
+  recovery illeggibile al riavvio ⇒ PAUSED (`RECOVERY_STATE_UNREADABLE`), `resume()` non lo scavalca,
+  nessuna sovrascrittura; (7) docstring di `core/microstake_safe.py` veritiera; (8) `pf_trace`: l'ultima
+  evidenza deve essere PASS; (9) `pfckpt.verify`: ogni `tests_executed[].sha` risolto come `code.sha`;
+  (10) `core/money_management.py`: crescita ignota ⇒ NORMAL anche con soglia ≤ 0. Test:
+  `tests/test_pr512_codex_034af59.py`, `tests/traceability/test_pf_trace_codex_034af59.py`,
+  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py` (tutti RED prima della patch).
+- **PR #512 ciclo 7 (deroga owner PF-PR512-CYCLE7-AUTHORIZATION, tre P1 Codex su f62f0e3):** (1) riga pendente senza
+  lato persistito => non attribuita, mai ricostruita come BACK (la liability di un LAY sarebbe sottostimata;
+  r4306544229); (2) `reset_cycle()` non azzera il broker SIM finche' un tavolo resta trattenuto (esito
+  `sim_reset_skipped`; r4306544236); (3) baseline di espansione piu' vecchia dell'ultimo reset di ciclo durevole
+  (marker `roserpina.cycle_reset_state` scritto nella stessa transazione dello stato tavoli RSR-12) rifiutata al
+  riavvio: nessuna espansione da una baseline mai ribasata (r4306544231). Riesame indipendente del ciclo: baseline e
+  marker dello stesso reset portano lo stesso istante (la baseline fissata da `reset_cycle`/auto-reset sopravvive al
+  riavvio), un marker illeggibile vale come reset ignoto e un `set_at_ts` non finito (NaN/inf) nella baseline non
+  scavalca mai il confronto (nessuna espansione, fail-closed). Test RED->GREEN in
+  `tests/test_pr512_codex_f62f0e3.py`; doc `docs/roserpina_bankroll_equity.md` (F032).
+- **PR #512 ciclo 6 (deroga owner PF-DECISIONS-DA-DJ-20261018, D-A=A1):** (1) `MicrostakeCoordinator.execute` conserva
+  la riserva transitoria **preesistente** quando `store.load` fallisce su un retry dello stesso `customer_ref`
+  (rilascio solo di una riserva sicuramente nuova; Sol c.6242912622); (2) costruzione e rebinding dell'esecutore
+  Microstake serializzati da un lock dedicato in `TradingEngine` (due chiamate concorrenti => un solo esecutore,
+  una sola mappa di riserve, un solo store; Codex r4304867227); (3) decisione D-C: `BetfairClient.get_current_orders`
+  e `BetfairService.list_current_orders` sollevano `CURRENT_ORDERS_MALFORMED` su contenitore non-lista o riga non-dict
+  invece di filtrare a vuoto, cosi' la ricostruzione all'avvio finisce in `EXCHANGE_ORDERS_UNAVAILABLE` e non chiude
+  posizioni SUBMITTED vive (Codex r4304867229). Test RED→GREEN in `tests/test_pr512_review_cycle6.py`.
+- **PF-PR-RECOVERY-DECISIONS-02 (owner 17/10, lotto unico sui sei finding triagiati di PR #512):** `resume()` ritenta
+  anche la recovery delle saghe Microstake (non solo F018) e resta PAUSED finché entrambe non riescono; stake con più
+  di due decimali rifiutato prima dell'invio (`invalid_size_precision`) e residuo del broker diverso dallo stake
+  richiesto ⇒ AMBIGUOUS `unexpected_residual_size`; ladder del book malformata ⇒ liquidità ignota (RiskGate nega),
+  mai un'eccezione dopo tavolo e dedupe acquisiti; `persist_snapshot` del broker SIM scritto sotto lock e fallimento
+  dichiarato nel risultato (`snapshot_persisted`); `pre_send` calcolato per `customer_ref`; scan segreti del
+  checkpoint esteso ai sorgenti Python (esente solo `pfckpt.py`); `pf_trace` verifica che ogni SHA di evidenza sia un
+  commit reale (clone shallow ⇒ warning, `--strict` lo rende errore). Test: `tests/test_pr512_recovery_fixes.py`.
+- **PR #512 ciclo 4 (rilievi Codex su cad07e1/21aab95):** esecutore Microstake in cache legato al broker SIM e alla
+  modalità correnti (ricostruito dopo stop/start, mai l'adapter SIM in LIVE); fondi disponibili non leggibili o
+  incompleti ⇒ cap transitorio non disponibile; riserva transitoria rilasciata se lo store della saga fallisce prima
+  dell'invio; cashout AMBIGUOUS conserva il `matched` noto; nessun nuovo hedge nativo su una posizione con saga
+  pendente (`MICROSTAKE_PENDING_SAME_POSITION`); valori non finiti nella ladder ⇒ liquidità ignota; perdita di
+  recovery persistita non finita ⇒ stato illeggibile; `pfckpt` cattura i percorsi con spazi (`--porcelain -z`).
+  Test: `tests/test_pr512_review_cycle4.py`.
+- **Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02):** `RoserpinaMoneyManagement.calculate` non ridimensiona più lo
+  stake al tetto del singolo ordine: sopra `max_single_bet` rifiuto esplicito `supera_max_single_bet` con lo stake
+  richiesto (anche per i passi di recovery). Riserva transitoria di una saga Microstake già avviata conservata anche se
+  `recover()` fallisce (rilievi Sol/Grok su 464f347). Test: `tests/core/test_money_management_decision2_20261017.py`.
+
+### Added
+- **Microstake nativo automatico (PF-MICROSTAKE-NATIVE-INTEGRATION-02, decisioni owner PF-MICROSTAKE-NATIVE-AUTO-01 e
+  PF-MICROSTAKE-OWNER-RECTIFICATION-20261017):** ogni importo sotto il minimo exchange (2 EUR) passa dal Microstake
+  nativo — saga PLACE stub 2 EUR a prezzo passivo → `sizeReduction` al residuo esatto → REPLACE solo se serve (nuovo
+  betId persistito) — sul `SimulationBroker` reale (`core/microstake_sim_port.py`), senza flag; LIVE senza adapter
+  resta fail-closed. Vale per Quick Bet, Dutching, Roserpina e per l'hedge del cashout (`OrderRouter`). Esposizione
+  temporanea dello stub entro fondi disponibili e headroom di esposizione; saga nel DB (`microstake.sagas`),
+  recovery all'avvio prima di F018 (PAUSED se pendente). `SimulationBroker.cancel_orders` supporta `sizeReduction`.
+  Docs: `docs/microstake_native.md`.
+
+- **Continuità multi-agente (PF-AGENT-CONTINUITY-01):** `pfckpt` aggiunge `CURRENT.json`, `TASK_STATE.json`
+  (puntatori verificati contro STATE.json), `AGENT_LEASE.json` (lease con scadenza e fencing token letto dal
+  checkpoint remoto: `save --agent` obbligatorio, `LEASE_HELD` se tenuto da altri, `--release` per l'handoff), cattura
+  e ripristino della patch del codice non committato (`--code-repo`, `restore-code`), comando `recover` (ultimo
+  checkpoint valido, remoto intatto) e rilevazione della divergenza del branch di codice in `bootstrap`.
+
+- **Riconciliazione delle issue aperte (PF-ISSUE-RECONCILIATION-01):** `docs/issue_reconciliation/` (csv/json/md):
+  60 issue aperte al 17/10/2026 classificate con motivazione ed evidenza, deduplicate per scheda #461.
+
+### Fixed
+- **Rilievi Codex su PR #512 (commit 8ffb4f3):** riserva transitoria del Microstake rilasciata all'attivazione; blocco
+  pre-invio del Microstake = errore pre-invio tipizzato (intento dedupe rilasciato, retry non duplicato); snapshot del
+  broker SIM persistito dopo ogni operazione della saga; ricostruzione F018: righe pendenti senza attribuzione =>
+  avvio non ok, chiavi dedupe dei tavoli gia' occupati riacquisite, betId annidato letto; RSR-12: tavolo surplus con
+  perdita ricreato al riavvio, write failure dello stato di recovery fail-closed.
+
+### Changed
+- **Money Management (rettifica owner 17/10/2026):** lo stake calcolato non viene più alzato in silenzio al
+  `min_stake`: sotto il minimo configurato la decisione è rifiutata con `stake_sotto_min_stake` e lo stake richiesto
+  in chiaro. Test F001/side-parity del trasporto diretto portati sopra il minimo exchange (il percorso diretto non
+  riceve più importi sotto 2 EUR).
+- **Checkpoint multi-agente `pf-checkpoint/3`** (`tools/agent_checkpoint/pfckpt.py`, `docs/agent_checkpoint_protocol.md`):
+  verifica sul tree committato, salvataggio atomico con concorrenza ottimistica, ripresa idempotente dopo crash,
+  readback da clone pulito, bootstrap da zero; ripara l'incidente INC-b45f528 (artefatti `*.log` esclusi dal
+  `.gitignore`). Regole per tutti gli agenti in AGENTS.md/CLAUDE.md. Nessun effetto sul runtime di trading.
+
+### Fixed
+- **F026 (v2):** Roserpina distingue saldo disponibile, fondi impegnati ed equità di cassa del conto
+  (`RuntimeController._account_from_funds`, soli campi exchange). L'auto-reset, che ribasa il picco e libera
+  risorse, si decide sul regolato e non sul solo disponibile: le puntate aperte non sono più perdite. Il reset
+  trattiene tavoli e chiavi delle posizioni non regolate. La base di stake e dei limiti percentuali **non cambia**
+  (resta il disponibile). Vedi `docs/roserpina_bankroll_equity.md`.
+- **F2:** un settlement senza `table_id` (poller SIM/cleared) libera il tavolo del suo mercato, solo se univoco e
+  con esito certo.
+- **F018:** al riavvio le posizioni aperte vengono ricostruite dal DB e dagli ordini correnti dell'exchange (tavoli,
+  esposizione, chiavi anti-duplicato, riserve incerte). Con exchange illeggibile o tavoli insufficienti il runtime
+  parte in PAUSED e `resume()` rifiuta finché la riconciliazione non è completa.
+- **F032:** l'espansione dello stake Roserpina si raggiunge davvero: la crescita si misura sull'equità di cassa
+  regolata rispetto a una baseline persistente del ciclo (non più sul picco che segue il saldo); dati incerti ⇒
+  nessuna espansione.
+- **RSR-12:** lo stato dei tavoli di recovery è persistente e sopravvive al riavvio; il limite conta anche i tavoli
+  in recovery senza ordini.
+- **F027:** i settlement confermati si contabilizzano anche in PAUSED, LOCKDOWN ed emergency stop (nessun nuovo
+  ordine dalla riconciliazione; dopo un emergency stop in LIVE il registro SIM non viene usato e l'incertezza si
+  segnala).
+- **F028:** un ordine d'ingresso con stato finale confermato dal broker e nessun abbinato libera tavolo e riserva;
+  gli esiti incerti non vengono mai liberati.
+- **F031:** nel broker SIM un ordine parzialmente abbinato con residuo annullato resta fra gli ordini correnti
+  (parità con Betfair): F018 lo ricostruisce al riavvio.
+- **F030:** il Liquidity Guard protegge anche gli ingressi singoli BACK/LAY (liquidità eseguibile al prezzo, lato
+  corretto del book, `core/liquidity.py`); un book assente o non attendibile nega l'ingresso anche in solo-avviso.
+  Il Book Block resta sul dutching: per una singola selezione non esiste un book percentuale significativo.
+- **Stop di esposizione:** un ordine candidato che raggiungerebbe `max_exposure_stop` si rifiuta senza armare un
+  RISK_STOP persistente; lo stop scatta quando è l'esposizione reale a raggiungere il limite.
+- **GUI Roserpina:** etichette Max Win e Liquidity riallineate al comportamento (Max Win resta un blocco hard sul
+  percorso ordine); checkbox su quattro righe, prima gli ultimi uscivano dalla finestra.
+- **F029:** `TableManager.allocate` non riassegna più un tavolo in recovery già occupato da una posizione aperta,
+  né un tavolo oltre `table_count`. Prima, con recovery attivo e dopo una perdita, un secondo ingresso riceveva
+  lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un
+  tavolo. Trovato dalla campagna di simulazione Roserpina (con un solo tavolo), reso raggiungibile da F2.
+
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).
@@ -104,6 +352,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - `database.py`: -262 lines (-19%) after schema extraction.
 
 ### Fixed
+- Order outcome with the production `ExecutorManager` (PF-ALL-F001, #453): the
+  `TradingEngine` now waits for and classifies the `Future` instead of treating
+  it as the broker response. Rejections are `FAILED`; timeouts after the task
+  started, lost responses, `order_unknown`, mixed or malformed responses are
+  `AMBIGUOUS` with reconciliation; a task still queued when the wait expires is
+  cancelled and reported as pre-send `FAILED`. A top-level `SUCCESS` whose
+  instruction reports are all `FAILURE` is a rejection. No order is recorded as
+  `SUBMITTED` without the real broker response.
+- Table release on terminal events (PF-ALL-F023): engine bus events carry
+  `table_id` and `market_id`; a confirmed failure frees the table only if it still
+  holds that order's reservation (`TableManager.force_unlock_if_event`,
+  idempotent, lock-protected).
+- `QUICK_BET_AMBIGUOUS` no longer releases the table, the exposure or the
+  anti-duplicate key (PF-ALL-F024): the risk is held until reconciliation, also
+  across `ROSERPINA_AUTO_RESET` and `reset_cycle` (`TableManager.reset_all` and
+  `DuplicationGuard.clear` keep the uncertain reservations).
+  See `docs/trading_engine_executor_contract.md`.
 - RISK_STOP on owner stop limits, separate from EMERGENCY (#461 PR28-c,
   PKG-P24-B: P38 and the P37 exposure stop).
   - Before, reaching the session-loss limit only blocked new entries: the bot's

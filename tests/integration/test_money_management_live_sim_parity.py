@@ -37,8 +37,12 @@ def test_money_management_live_sim_parity_no_simplified_sim_sizing():
     live = mm.calculate(signal={"odds": 3.0, "simulation_mode": False}, bankroll_current=100, equity_peak=100, current_total_exposure=0, event_current_exposure=0, table={"id": 1, "loss": 200})
     sim = mm.calculate(signal={"odds": 3.0, "simulation_mode": True}, bankroll_current=100, equity_peak=100, current_total_exposure=0, event_current_exposure=0, table={"id": 1, "loss": 200})
 
-    assert live.recommended_stake == sim.recommended_stake == 11.0
-    assert live.reason == sim.reason
+    # Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): sopra il cap assoluto (11) lo stake
+    # calcolato (105) non viene ridotto: rifiuto esplicito identico in LIVE e SIM (parita' invariata).
+    assert live.approved is sim.approved is False
+    assert live.reason == sim.reason == "supera_max_single_bet"
+    assert live.recommended_stake == sim.recommended_stake == 105.0
+    assert live.metadata["max_single"] == sim.metadata["max_single"] == 11.0
     assert live.metadata.keys() == sim.metadata.keys()
 
 

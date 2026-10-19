@@ -695,11 +695,7 @@ class BetfairService:
             if not broker:
                 return []
             orders = broker.get_current_orders(market_ids)
-            return [
-                self._normalize_startup_order(o)
-                for o in (orders or [])
-                if isinstance(o, dict)
-            ]
+            return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
 
         # LIVE — fail-closed.
         if self._session_invalid:
@@ -724,11 +720,32 @@ class BetfairService:
                 logger.exception("Errore list_current_orders: %s", exc)
             raise
 
-        return [
-            self._normalize_startup_order(o)
-            for o in (orders or [])
-            if isinstance(o, dict)
-        ]
+        return [self._normalize_startup_order(o) for o in self._well_formed_current_orders(orders)]
+
+    @staticmethod
+    def _well_formed_current_orders(orders: Any) -> List[Dict[str, Any]]:
+        """Fail-closed sulla forma: solo una lista (anche vuota) e' autorevole. ``None``, un contenitore
+        che non e' una lista o una riga che non e' un dict sono un payload malformato e SOLLEVANO
+        (``None`` = collezione assente, non "nessun ordine": rilievo Codex r4312360620 su #512). Il filtro
+        silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
+        che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
+        decisione owner D-C del 18/10/2026).
+        Ogni riga deve inoltre portare un'identita' non vuota (``betId``/``bet_id`` E
+        ``marketId``/``market_id``): una riga senza betId non puo' confermare nessuna posizione
+        persistita e F018 la leggerebbe come "ordine assente => chiuso" (rilievo Codex #512 su
+        034af59). Payload senza identita' => stesso errore => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED."""
+        if orders is None:
+            raise RuntimeError("CURRENT_ORDERS_MALFORMED: current orders collection missing (None)")
+        if not isinstance(orders, list):
+            raise RuntimeError(f"CURRENT_ORDERS_MALFORMED: {type(orders).__name__} is not a list")
+        for order in orders:
+            if not isinstance(order, dict):
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED: non-dict row")
+            bet_id = str(order.get("betId") or order.get("bet_id") or "").strip()
+            market_id = str(order.get("marketId") or order.get("market_id") or "").strip()
+            if not bet_id or not market_id:
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED: row without betId/marketId")
+        return orders
 
     @staticmethod
     def _normalize_startup_order(order: Dict[str, Any]) -> Dict[str, Any]:

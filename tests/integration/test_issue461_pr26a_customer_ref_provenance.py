@@ -99,7 +99,12 @@ class _BetfairService:
         return None
 
     def get_account_funds(self):
-        return {"available": 1000.0, "ok": True}
+        # Come BetfairService: l'esposizione e' sempre presente (PF-ALL-F026: un'esposizione mancante non vale 0).
+        return {"available": 1000.0, "exposure": 0.0, "ok": True}
+
+    def list_current_orders(self, market_ids=None):
+        # Come BetfairService in SIM: ordini correnti del broker simulato (PF-ALL-F018, ricostruzione all'avvio).
+        return list(self.simulation_broker.get_current_orders(market_ids) or [])
 
     def status(self):
         return {"connected": True}

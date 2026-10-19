@@ -18,6 +18,15 @@ class _Bus:
 class _CheckpointDB:
     def __init__(self) -> None:
         self.records: dict[str, dict] = {}
+        self._settings: dict = {}
+
+    # impostazioni in memoria (RSR-12 persiste lo stato dei tavoli di recovery al settlement): senza,
+    # la scrittura fallirebbe e il runtime bloccherebbe ogni nuovo ingresso (fail-closed, ciclo 10 #512)
+    def get_settings(self):
+        return dict(self._settings)
+
+    def save_settings(self, data):
+        self._settings.update(dict(data))
 
     def _execute(self, *_args, **_kwargs):
         return None

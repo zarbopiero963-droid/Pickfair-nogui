@@ -19,6 +19,14 @@ class _DB:
     def _execute(self, *_args, **_kwargs):
         return None
 
+    # impostazioni in memoria (RSR-12 persiste lo stato dei tavoli di recovery al settlement): senza,
+    # la scrittura fallirebbe e il runtime bloccherebbe ogni nuovo ingresso (fail-closed, ciclo 10 #512)
+    def get_settings(self):
+        return dict(getattr(self, "_settings", {}))
+
+    def save_settings(self, data):
+        self._settings = {**getattr(self, "_settings", {}), **dict(data)}
+
 
 class _Settings:
     def load_roserpina_config(self):

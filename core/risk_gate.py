@@ -348,6 +348,11 @@ class RiskGate:
             # "accetto numeri illeggibili".
             return denial
         if liquidity is None:
+            if payload.get("liquidity_required") is True:
+                # PF-ALL-F030: ingresso singolo per cui la liquidita' eseguibile serve e non e' stata
+                # osservata (book assente, mercato non OPEN, selezione non attiva): dato non attendibile
+                # => NEGA, anche in solo-avviso (come per un numero illeggibile).
+                return self._deny(payload, "RISK_LIQUIDITY_UNKNOWN")
             return None
 
         required = max(stake * self._limit("LIQUIDITY_MULTIPLIER"),

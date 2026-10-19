@@ -48,16 +48,17 @@ def _calc(mm, price, *, br=100.0, peak=100.0, tot=0.0, ev=0.0, table=None):
 
 @pytest.mark.core
 def test_recovery_stake_never_exceeds_single_bet_cap():
-    """Tavolo in recovery con perdita grossa: lo stake calcolato sarebbe
-    ~103 ma il cap del 25% su bankroll 100 lo CLAMPA a 25 — la decisione
-    resta APPROVATA (e' il clamp, non un rifiuto)."""
+    """Tavolo in recovery con perdita grossa: lo stake calcolato (~103) supera il cap
+    del 25% su bankroll 100. Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026):
+    nessun ridimensionamento silenzioso a 25 — rifiuto esplicito con lo stake richiesto;
+    il cap resta un limite di rischio valido (prima: clamp a 25 e approvazione)."""
     mm = _mm()
     decision = _calc(
         mm, price=2.0,
         table={"table_id": 3, "loss_amount": 100.0, "in_recovery": True},
     )
-    assert decision.approved is True
-    assert decision.recommended_stake == pytest.approx(25.0, abs=0.01)
+    assert decision.approved is False and decision.reason == "supera_max_single_bet"
+    assert decision.recommended_stake > 25.0 and decision.metadata["max_single"] == pytest.approx(25.0, abs=0.01)
 
 
 @pytest.mark.core
@@ -69,8 +70,18 @@ def test_tiny_bankroll_rejects_with_suggested_cap_stake():
     mm = _mm()
     decision = _calc(mm, price=2.0, br=0.3, peak=0.3)
     assert decision.approved is False
-    assert decision.reason == "supera_max_single_bet"
-    assert decision.recommended_stake == pytest.approx(0.075, abs=0.001)
+    # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato (0.009) non viene
+    # piu' alzato al minimo (0.10) e poi confrontato col cap: sotto il minimo
+    # configurato il rifiuto e' esplicito e porta lo stake RICHIESTO, non un cap.
+    assert decision.reason == "stake_sotto_min_stake"
+    assert decision.recommended_stake == pytest.approx(0.009, abs=0.001)
+    assert decision.metadata["min_stake"] == pytest.approx(0.10)
+    # Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): sopra il cap del singolo
+    # ordine NESSUN ridimensionamento silenzioso: rifiuto esplicito con lo stake richiesto.
+    cfg_cap = _mm(); cfg_cap.config.max_single_bet_pct = 1.0          # cap 1% di 100 = 1.0 < stake 3.0
+    capped = _calc(cfg_cap, price=2.0)
+    assert capped.approved is False and capped.reason == "supera_max_single_bet"
+    assert capped.recommended_stake == pytest.approx(3.0, abs=0.001) and capped.metadata["max_single"] == pytest.approx(1.0)
 
 
 @pytest.mark.core
@@ -179,7 +190,7 @@ def test_adversarial_grid_never_produces_invalid_stake():
     """Proprieta' globale (TOP30 #24): su tutta la griglia avversaria lo
     stake raccomandato e' SEMPRE un float finito >= 0; quando la decisione
     non e' approvata lo stake e' 0, con l'UNICA eccezione documentata di
-    supera_max_single_bet (che porta il cap suggerito, positivo)."""
+    supera_max_single_bet / stake_sotto_min_stake (che portano lo stake RICHIESTO, positivo)."""
     mm = _mm()
     adversarial = [
         float("nan"), float("inf"), float("-inf"),
@@ -197,9 +208,9 @@ def test_adversarial_grid_never_produces_invalid_stake():
                 assert math.isfinite(stake), f"stake non finito per price={price!r} br={br!r}"
                 assert stake >= 0.0, f"stake negativo per price={price!r} br={br!r}"
                 if not decision.approved:
-                    # Unica eccezione legittima: supera_max_single_bet porta
-                    # il cap SUGGERITO (positivo) in recommended_stake.
-                    assert stake == 0.0 or decision.reason == "supera_max_single_bet", (
+                    # Uniche eccezioni legittime: supera_max_single_bet e
+                    # stake_sotto_min_stake portano lo stake RICHIESTO (positivo).
+                    assert stake == 0.0 or decision.reason in ("supera_max_single_bet", "stake_sotto_min_stake"), (
                         f"non approvato con stake>0 e reason={decision.reason!r}"
                     )
                 assert decision.reason, "reason sempre presente"

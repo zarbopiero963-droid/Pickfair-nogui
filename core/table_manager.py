@@ -105,11 +105,16 @@ class TableManager:
                 if table.status == "FREE" and table.table_id <= self.table_count:
                     return TableState(**table.to_dict())
 
-            # 2) recovery consentito
+            # 2) recovery consentito. PF-ALL-F029: solo un tavolo in recovery
+            #    NON occupato (activate sovrascriverebbe la posizione aperta:
+            #    esposizione persa dai cap, due posizioni su un tavolo) ed entro
+            #    table_count, come per i tavoli liberi.
             if allow_recovery:
                 recovery_candidates = [
                     t for t in self._tables.values()
-                    if t.status in {"RECOVERY", "LOCKED"} or t.in_recovery
+                    if (t.status in {"RECOVERY", "LOCKED"} or t.in_recovery)
+                    and not t.current_event_key
+                    and t.table_id <= self.table_count
                 ]
                 if recovery_candidates:
                     recovery_candidates.sort(key=lambda t: (t.loss_amount, t.table_id))
@@ -205,6 +210,26 @@ class TableManager:
             self._touch(table)
             self._prune_if_surplus(table)
 
+    def force_unlock_if_event(self, table_id: int, event_key: str) -> bool:
+        """Rilascia il tavolo SOLO se occupa ancora la riserva di ``event_key``.
+
+        PF-ALL-F023: il rilascio da evento terminale deve colpire l'ordine giusto.
+        Controllo e rilascio avvengono sotto lo stesso lock, quindi:
+        - idempotente: un secondo evento trova ``current_event_key`` vuoto => no-op;
+        - sicuro in concorrenza: un tavolo gia' riassegnato a un altro evento non
+          viene mai liberato da un evento terminale vecchio.
+        Restituisce True solo se ha rilasciato.
+        """
+        key = str(event_key or "")
+        if not key:
+            return False
+        with self._lock:
+            table = self._get(int(table_id))
+            if not table or table.current_event_key != key:
+                return False
+            self.force_unlock(int(table_id))
+            return True
+
     # =========================================================
     # LOOKUPS
     # =========================================================
@@ -261,9 +286,14 @@ class TableManager:
     # =========================================================
     # RESET / SNAPSHOT
     # =========================================================
-    def reset_all(self) -> None:
+    def reset_all(self, keep_table_ids=None) -> None:
+        """Azzera i tavoli. ``keep_table_ids``: tavoli che portano una riserva
+        con esito incerto (AMBIGUOUS, PF-ALL-F024) e NON vanno liberati."""
+        keep = {int(t) for t in (keep_table_ids or ())}
         with self._lock:
             for table in self._tables.values():
+                if table.table_id in keep:
+                    continue
                 table.status = "FREE"
                 table.current_event_key = ""
                 table.current_exposure = 0.0
@@ -272,6 +302,41 @@ class TableManager:
                 table.market_id = ""
                 table.selection_id = ""
                 table.meta = {}
+                self._touch(table)
+
+    def recovery_state(self) -> Dict[int, float]:
+        """RSR-12: tavoli con recovery attiva (perdita da recuperare), anche senza ordini aperti."""
+        with self._lock:
+            return {t.table_id: float(t.loss_amount) for t in self._tables.values()
+                    if t.loss_amount > 0.0 or t.in_recovery}
+
+    def restore_recovery_state(self, state: Dict[int, float]) -> None:
+        """RSR-12: ripristina al riavvio la perdita da recuperare dei tavoli. Non tocca posizione ed
+        esposizione di un tavolo gia' occupato (ricostruito da F018): ne ripristina solo la perdita."""
+        with self._lock:
+            for table_id, loss in (state or {}).items():
+                table = self._get(int(table_id))
+                loss = float(loss)
+                if not math.isfinite(loss):
+                    # JSON NaN/Infinity (rilievo Codex #512): debito ignoto => stato illeggibile,
+                    # il runtime blocca la capacita' di recovery (fail-closed)
+                    raise ValueError(f"perdita di recovery non finita per il tavolo {table_id}: {loss!r}")
+                if loss < 0.0:
+                    # Debito negativo (rilievo Codex r4312360615 su #512): non e' "nessun debito", e' stato
+                    # incoerente. Saltarlo cancellava la perdita persistita: illeggibile => fail-closed.
+                    raise ValueError(f"perdita di recovery negativa per il tavolo {table_id}: {loss!r}")
+                if loss == 0.0:
+                    continue
+                if table is None:
+                    # Tavolo oltre table_count (config ridotta a bot acceso, `resize` lo
+                    # conservava con la sua perdita): al riavvio va ricreato, altrimenti
+                    # il debito sparisce e la capacita' di recovery e' sottostimata
+                    # (rilievo Codex #512).
+                    table = TableState(table_id=int(table_id))
+                    self._tables[int(table_id)] = table
+                table.loss_amount = loss
+                table.in_recovery = True
+                table.status = "RECOVERY"
                 self._touch(table)
 
     def snapshot(self) -> List[Dict[str, Any]]:

@@ -372,12 +372,26 @@ def test_get_current_orders_raises_when_pagination_never_terminates(client):
 def test_get_current_orders_empty_result_returns_empty_list(client):
     client.session_token = "TOK"
     client.session.post = lambda *a, **k: _RPCResp(
-        [{"jsonrpc": "2.0", "id": 1, "result": {"moreAvailable": False}}]
+        [{"jsonrpc": "2.0", "id": 1, "result": {"currentOrders": [], "moreAvailable": False}}]
     )
 
     out = client.get_current_orders()
 
     assert out == []
+
+
+@pytest.mark.unit
+def test_get_current_orders_missing_collection_is_malformed_not_empty(client):
+    # PR #512 (Codex r4312360620): `currentOrders` assente non e' "nessun ordine" — la
+    # ricostruzione all'avvio chiuderebbe posizioni vive. Prima questo test codificava
+    # proprio quel fail-open (risultato senza la chiave => []).
+    client.session_token = "TOK"
+    client.session.post = lambda *a, **k: _RPCResp(
+        [{"jsonrpc": "2.0", "id": 1, "result": {"moreAvailable": False}}]
+    )
+
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
+        client.get_current_orders()
 
 
 @pytest.mark.unit

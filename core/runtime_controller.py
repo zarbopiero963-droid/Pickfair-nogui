@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
 import logging
 import math
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from core import loss_limits, validators
+from core import liquidity, loss_limits, validators
 from core import risk_stop as stop_rules
 from core.duplication_guard import DuplicationGuard
 from core.dutching_batch_manager import DutchingBatchManager
@@ -22,7 +24,7 @@ from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
-from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
+from core.trading_constants import CASHOUT_FAILED, CASHOUT_SUCCESS, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from services.catalog_sync_service import CatalogSyncService
 from cashout_cancel_adapter import CashoutCancelAdapter
@@ -54,6 +56,9 @@ _DIRECT_TTL_ACK_EVENTS = frozenset({"QUICK_BET_ACCEPTED", "QUICK_BET_PARTIAL"})
 # abbinato vivo su Betfair — rimuoverlo lo toglierebbe dall'allowlist del poller
 # TTL, che quindi non lo cancellerebbe più (Greptile P2). Fail-safe: resta
 # tracciato finché un terminale certo lo rimuove o il poller lo cancella.
+# PF-ALL-F024: esiti che NON autorizzano il rilascio di tavolo, esposizione e
+# chiave duplicati (l'ordine puo' essere vivo sull'exchange).
+_NO_RELEASE_UNCERTAIN_EVENTS = frozenset({"QUICK_BET_AMBIGUOUS"})
 _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
     "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_ROLLBACK_DONE",
 })
@@ -181,6 +186,11 @@ class RuntimeController:
         self._emergency_stopped: bool = False
         self._emergency_stopped_at: str = ""
         self._emergency_reason: str = ""
+        # PF-ALL-F027: provenienza dei settlement prima del flip a SIM ("", "SIM", "LIVE", "UNKNOWN"); persistita
+        self._settlement_source_before_emergency: str = ""
+        # Mercati con un comando di cashout/hedge (registro durevole, verifica indipendente r4303297587)
+        self._hedged_markets: dict = {}
+        self._hedged_markets_unreliable: bool = False
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
@@ -300,6 +310,7 @@ class RuntimeController:
         # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
+        self._load_hedged_markets()
 
     @property
     def catalog_sync(self) -> CatalogSyncService:
@@ -596,6 +607,10 @@ class RuntimeController:
                     else int(generation)
                 )
             )
+            try:
+                self._release_final_unmatched_orders()   # PF-ALL-F028, dopo i settlement del giro
+            except Exception:
+                logger.exception("F028: rilascio ordini non abbinati abortito (nessun rilascio)")
         finally:
             self._settlement_poll_round_lock.release()
 
@@ -729,7 +744,7 @@ class RuntimeController:
         if self.simulation_mode:
             self._poll_simulated_settlements_locked()
             return
-        if self.mode is not RuntimeMode.ACTIVE:
+        if not self._settlement_reconciliation_allowed():
             return
 
         identity_getter = getattr(self.db, "get_bot_active_orders", None)
@@ -905,6 +920,31 @@ class RuntimeController:
             # il lookback (rilievi Fable/GPT-5.6 su #440).
             self._settlement_sweep_done_generation = generation
 
+    _SETTLEMENT_RECONCILIATION_MODES = (RuntimeMode.ACTIVE, RuntimeMode.PAUSED, RuntimeMode.LOCKDOWN)
+
+    def _settlement_reconciliation_allowed(self) -> bool:
+        """PF-ALL-F027 (decisione owner, PF-ROSERPINA-FINANCIAL-CLOSURE-03).
+
+        LOCKDOWN, PAUSE ed emergency stop impediscono i NUOVI ingressi, non la riconciliazione
+        finanziaria delle posizioni gia' aperte: i settlement confermati si contabilizzano anche li'.
+        STOPPED no: il servizio e' disconnesso e la riconciliazione riparte da start() (F018 + sweep).
+        La riconciliazione non produce ordini: l'auto-next resta riservato ad ACTIVE.
+        """
+        return self.mode in self._SETTLEMENT_RECONCILIATION_MODES
+
+    def _report_settlement_source_uncertain(self, reason: str) -> None:
+        """Esposizione mantenuta prudenzialmente: si segnala una volta per motivo, mai un settlement presunto."""
+        reported = getattr(self, "_settlement_uncertain_reported", None)
+        if reported is None:
+            reported = set()
+            self._settlement_uncertain_reported = reported
+        if reason in reported:
+            return
+        reported.add(reason)
+        logger.warning("Settlement non riconciliabile: %s (esposizione mantenuta)", reason)
+        self.bus.publish("SETTLEMENT_RECONCILIATION_UNCERTAIN", {
+            "reason": reason, "open_exposure": float(self.table_manager.total_exposure())})
+
     def _poll_simulated_settlements_locked(self) -> None:
         """Giro SIM del poller settlement (PR03 #461).
 
@@ -924,8 +964,16 @@ class RuntimeController:
         emissione sospesa senza marcare), guardia nel motore. Cosi' il
         settlement persistito dal broker prima di un riavvio arriva al
         ciclo dopo il riavvio, e mai due volte.
+
+        PF-ALL-F027: gira anche in PAUSED e LOCKDOWN (emergency stop compreso), vedi
+        ``_settlement_reconciliation_allowed``. Dopo un emergency stop scattato in LIVE il servizio
+        e' stato portato in SIM: il registro SIM non descrive le posizioni reali, quindi nessuna
+        emissione e l'incertezza si segnala (``SETTLEMENT_RECONCILIATION_UNCERTAIN``).
         """
-        if self.mode is not RuntimeMode.ACTIVE:
+        if not self._settlement_reconciliation_allowed():
+            return
+        if getattr(self, "_settlement_source_before_emergency", "") in {"LIVE", "UNKNOWN"}:
+            self._report_settlement_source_uncertain("LIVE_POSITIONS_AFTER_EMERGENCY_SIM_FLIP")
             return
         getter = getattr(self.betfair_service, "get_simulation_broker", None)
         broker = getter() if callable(getter) else None
@@ -1218,7 +1266,19 @@ class RuntimeController:
 
     def _loss_block_reason(self) -> str:
         stopped = getattr(self, "_risk_stop_reason", "")
-        return self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+        return (self._limits_block_reason() or (f"risk_stop_active:{stopped}" if stopped else "")
+                or self._recovery_persist_block_reason())
+
+    def _recovery_persist_block_reason(self) -> str:
+        """Stato di recovery non durevole (scrittura fallita dopo un reset o un settlement): nessun nuovo
+        ingresso, su ogni percorso, finche' una scrittura riesce (rilievo Codex r4308704062). Dopo un crash
+        il DB conterrebbe perdite vecchie e il dimensionamento della recovery sarebbe incoerente. Il nuovo
+        tentativo di scrittura e' fatto qui, cosi' il blocco si scioglie da solo appena il disco torna."""
+        if not getattr(self, "_recovery_persist_failed", False):
+            return ""
+        if getattr(self, "_recovery_state_unreadable", False) or not self._persist_recovery_tables():
+            return "recovery_state_not_persisted"
+        return ""
 
     def _publish_session_loss_breach(self) -> None:
         reason = self._session_loss_block_reason()
@@ -1259,12 +1319,30 @@ class RuntimeController:
         self.bus.publish("RISK_STOP_RESET", {"reset_at": datetime.utcnow().isoformat()})
         return {"risk_stop_reset": True, "reason": ""}
 
-    def _exposure_stop(self, trigger=True) -> str:
-        reason = stop_rules.exposure_stop_reason(getattr(self.config, "max_exposure_stop", None),
-                                                 self.table_manager.total_exposure())
-        if trigger and stop_rules.is_stop_trigger(reason):
-            self.risk_stop(reason)  # pre-submit
-        return reason
+    def _exposure_stop(self, trigger=True, candidate_exposure: float = 0.0) -> str:
+        """Stop di esposizione complessiva (P38), con la distinzione decisa dall'owner (CLOSURE-03).
+
+        ``candidate_exposure`` e' la parte del totale che appartiene all'ordine ancora candidato (gia'
+        riservato sul tavolo, non inviato). Se e' solo il candidato a raggiungere il limite, il candidato si
+        rifiuta (``exposure_stop_candidate_rejected``) e NON si arma un RISK_STOP persistente. Se lo
+        raggiunge l'esposizione reale gia' presente, e' una violazione effettiva: RISK_STOP. Esposizione o
+        limite non valutabili bloccano (motivo non-trigger), come prima.
+        """
+        limit = getattr(self.config, "max_exposure_stop", None)
+        total = self.table_manager.total_exposure()
+        reason = stop_rules.exposure_stop_reason(limit, total)
+        if not stop_rules.is_stop_trigger(reason):
+            return reason
+        candidate = validators.finite_number(candidate_exposure)
+        if candidate is None or candidate < 0.0:
+            return "esposizione_non_valida"
+        real_reason = stop_rules.exposure_stop_reason(limit, max(0.0, total - candidate)) if candidate > 0.0 \
+            else reason
+        if stop_rules.is_stop_trigger(real_reason):
+            if trigger:
+                self.risk_stop(real_reason)  # pre-submit: violazione effettiva
+            return real_reason
+        return "exposure_stop_candidate_rejected:" + reason.split(":", 1)[1]
 
     def _monitor_daily_loss_breach(self, *, source: str, payload: Optional[dict] = None) -> dict[str, Any]:
         now = datetime.utcnow()
@@ -1374,6 +1452,9 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
+        # Esito di ogni cashout/hedge (CMD_EXECUTE_CASHOUT resta a consumatore unico: l'executor)
+        self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_command)
+        self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_command)
 
     # =========================================================
     # CONFIG / MODE
@@ -1984,6 +2065,10 @@ class RuntimeController:
             self._emergency_reason = str(
                 settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
             )
+            # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement ripristinata; assente (stato legacy) o
+            # non valida => UNKNOWN, trattata come LIVE (registro SIM mai usato per posizioni di origine ignota).
+            source = str(settings.get("emergency_settlement_source") or "").strip().upper()
+            self._settlement_source_before_emergency = source if source in {"SIM", "LIVE"} else "UNKNOWN"
         except Exception:
             # Fail-closed: se NON si riesce a leggere lo stato persistito non
             # si puo' PROVARE che non ci fosse un'emergenza in corso => si
@@ -1996,6 +2081,7 @@ class RuntimeController:
             self._emergency_stopped = True
             self._emergency_stopped_at = datetime.utcnow().isoformat()
             self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
+            self._settlement_source_before_emergency = "UNKNOWN"
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero
@@ -2029,6 +2115,8 @@ class RuntimeController:
                 "emergency_stopped": "1" if self._emergency_stopped else "0",
                 "emergency_stopped_at": self._emergency_stopped_at,
                 "emergency_reason": self._emergency_reason,
+                # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
+                "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
             })
             return ""
         except Exception as exc:
@@ -2050,6 +2138,10 @@ class RuntimeController:
                 "emergency_stopped": "1" if active else "0",
                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
                 "emergency_reason": reason if active else self._emergency_reason,
+                "emergency_settlement_source": (
+                    (getattr(self, "_settlement_source_before_emergency", "")
+                     or ("SIM" if self.simulation_mode else "LIVE")) if active
+                    else getattr(self, "_settlement_source_before_emergency", "") or ""),
             })
             return ""
         except Exception as exc:
@@ -2077,6 +2169,10 @@ class RuntimeController:
         self._emergency_stopped = True
         self._emergency_stopped_at = triggered_at
         self._emergency_reason = reason or "EMERGENCY_STOP"
+        # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM. Fissata PRIMA
+        # del salvataggio, che la persiste col flag (Codex r4311806886: in sola memoria un riavvio la perdeva).
+        if not getattr(self, "_settlement_source_before_emergency", ""):
+            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
 
         # Persist SUBITO (prima del cancel): anche se il processo muore
         # durante il cancel-all, il riavvio riparte in emergenza.
@@ -2215,6 +2311,7 @@ class RuntimeController:
         self._emergency_stopped = False
         self._emergency_stopped_at = ""
         self._emergency_reason = ""
+        self._settlement_source_before_emergency = ""
         with self._daily_loss_stop_lock:
             self._daily_loss_pending_stop = False
         persist_error = self._persist_emergency_state()
@@ -2420,6 +2517,9 @@ class RuntimeController:
             )
             raise
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
+        self._record_account_snapshot(funds, source="start")          # PF-ALL-F026
+        if not self._load_expansion_baseline():                       # F032: primo avvio => apre il ciclo
+            self._start_expansion_cycle("first_start", funds=funds)
 
         start_telegram = time.monotonic()
         try:
@@ -2449,8 +2549,30 @@ class RuntimeController:
         except Exception:
             logger.exception("Errore durante la fase di recovery/reconcile")
 
-        self.mode = RuntimeMode.ACTIVE
-        self.last_error = ""
+        # PF-ALL-F018: ricostruzione delle posizioni aperte (DB + ordini correnti dell'exchange) PRIMA
+        # di accettare nuovi ingressi. Riconciliazione incompleta => runtime in PAUSED, mai ACTIVE
+        # (ATOMIC-RESERVE-01 regola 7: nessun nuovo ingresso prima della riconciliazione completa).
+        self._restore_recovery_tables()                                # RSR-12, prima di F018
+        # Microstake nativo (M5): uno stub da 2 EUR lasciato intero da un crash fra
+        # PLACE e riduzione va completato dalla sua identita' persistita PRIMA di
+        # ricostruire le posizioni, altrimenti F018 vedrebbe un'esposizione da 2 EUR.
+        microstake = self._recover_native_microstake()
+        rebuild = self._rebuild_open_positions()
+        if not microstake.get("ok", False):
+            rebuild = dict(rebuild, ok=False, reason=(
+                f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
+                if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
+        rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
+        self._last_position_rebuild = dict(rebuild)
+        self._reconciliation_required = not rebuild["ok"]
+        self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
+        if self._reconciliation_required:
+            self.mode = RuntimeMode.PAUSED
+            self.last_error = f"RECONCILIATION_REQUIRED:{rebuild['reason']}"
+            logger.error("Avvio in PAUSED: riconciliazione posizioni incompleta (%s)", rebuild["reason"])
+        else:
+            self.mode = RuntimeMode.ACTIVE
+            self.last_error = ""
 
         # PR3: ciclo chiusura reale — parte solo se abilitato in config
         # (settlement.poll_enabled); in SIM legge il registro del broker
@@ -2533,6 +2655,23 @@ class RuntimeController:
         session_block = self._loss_block_reason()
         if session_block:
             return {"resumed": False, "reason": session_block, "status": self._safe_status_snapshot()}
+        if getattr(self, "_reconciliation_required", False):
+            # PF-ALL-F018: il resume non scavalca una riconciliazione post-riavvio incompleta: la ritenta.
+            # Microstake (rilievo Codex #512, PF-PR-RECOVERY-DECISIONS-02): anche le saghe pendenti vanno
+            # ritentate qui, altrimenti una ricostruzione F018 riuscita azzererebbe il flag con uno stub da
+            # 2 EUR ancora irrisolto sull'exchange. Entrambe devono riuscire prima di ACTIVE.
+            microstake = self._recover_native_microstake()
+            if not microstake.get("ok", False):
+                return {"resumed": False,
+                        "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
+                                  f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
+                        "microstake": microstake, "status": self._safe_status_snapshot()}
+            rebuild = self._gate_rebuild_on_recovery_state(self._rebuild_open_positions())
+            self._last_position_rebuild = dict(rebuild)
+            if not rebuild["ok"]:
+                return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
+                        "status": self._safe_status_snapshot()}
+            self._reconciliation_required = False
 
         self.mode = RuntimeMode.ACTIVE
         status = self.get_status()
@@ -2543,21 +2682,41 @@ class RuntimeController:
         }
 
     def reset_cycle(self) -> dict:
-        self.table_manager.reset_all()
-        self.duplication_guard.clear()
+        self._reset_reservations_keeping_uncertain()       # PF-ALL-F024
         self._reset_recovery_cycle_keeping_losses()
 
+        # Rilievo Codex #512 (r4306544236): un tavolo trattenuto (posizione viva/incerta non
+        # regolata) corrisponde a un ordine/posizione nel ledger del broker SIM; azzerarlo
+        # lascerebbe un'esposizione riservata che non potra' mai regolarsi. Reset SIM solo
+        # senza tavoli trattenuti; altrimenti dichiarato, mai silenzioso.
+        retained = sorted(int(t["table_id"]) for t in self.table_manager.snapshot()
+                          if str(t.get("current_event_key") or ""))
         if self.simulation_mode and hasattr(self.betfair_service, "reset_simulation"):
-            try:
-                self.betfair_service.reset_simulation()
-            except Exception:
-                logger.exception("Errore reset_simulation")
+            if retained:
+                logger.warning("reset_cycle: broker SIM NON azzerato, %d tavoli trattenuti %s", len(retained), retained)
+            else:
+                try:
+                    self.betfair_service.reset_simulation()
+                except Exception:
+                    logger.exception("Errore reset_simulation")
 
+        # F032: nuovo ciclo, dopo l'eventuale reset SIM. Baseline e marker durevole del reset portano lo
+        # STESSO istante: la baseline fissata da questo reset non e' "precedente" al reset stesso.
+        # Baseline, marker e stato di recovery in UNA transazione (rilievo Codex #512 ciclo 9, r4307328199):
+        # mai una baseline nuova accettata al riavvio accanto alle perdite del ciclo precedente.
+        reset_ts = time.time()
+        expansion_state = self._expansion_cycle_state("reset_cycle", set_at_ts=reset_ts)
+        persisted = self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts,
+                                                  expansion_state=expansion_state)   # RSR-12 + marker + baseline F032
+        if not persisted:
+            self._declare_recovery_persist_failure("reset_cycle")
         status = self.get_status()
         self.bus.publish("RUNTIME_CYCLE_RESET", status)
         return {
             "reset": True,
             "status": status,
+            "sim_reset_skipped": retained if self.simulation_mode else [],
+            "persisted": persisted,
         }
 
     # =========================================================
@@ -3064,8 +3223,26 @@ class RuntimeController:
             self._reject_signal(signal, "duplicato_bloccato")
             return
 
+        # Rilievo Codex #512 ciclo 9 (r4307328207): la chiave anti-duplicato scade per TTL, la posizione
+        # no. Un tavolo gia' occupato per questo evento e' una posizione aperta o incerta: nessun secondo
+        # ordine (stesso invariante della ricostruzione F018 in `_rebuild_open_positions`). La chiave
+        # resta acquisita e il tavolo trattenuto: nessun `_release_acquired_and_reject`, che libererebbe
+        # il tavolo della posizione viva. Con l'anti-duplicazione ATTIVA (default) vale per ogni tavolo
+        # occupato: e' l'estensione del dedupe oltre il TTL. Con l'anti-duplicazione disattivata
+        # dall'utente restano comunque OBBLIGATORIE (mandato owner, chiusura #512) le protezioni su una
+        # posizione con esito incerto (AMBIGUOUS, PF-ALL-F024, registrata per tavolo) o con chiave fissata
+        # (ricostruita al riavvio da F018, o trattenuta dal reset se la chiave era attiva): nessun secondo
+        # ordine su una posizione di cui non si conosce lo stato.
+        # La riconsegna dello stesso messaggio la ferma comunque l'engine col customer_ref stabile.
+        if self.table_manager.find_by_event_key(event_key) is not None and (
+                self.config.anti_duplication_enabled
+                or event_key in self._uncertain_reservations_map()
+                or self.duplication_guard.is_pinned(event_key)):
+            self._reject_signal(signal, "evento_gia_in_posizione")
+            return
+
         # Enforcement A3: Limite Tavoli Recovery (#320)
-        active_recovery_count = len([t for t in self.table_manager._tables.values() if getattr(t, 'in_recovery', False) and t.status != "FREE"])
+        active_recovery_count = self._active_recovery_count()   # RSR-12: anche i tavoli in recovery senza ordini
         max_recovery = getattr(self.config, "max_recovery_tables", 2)
         
         allow_recovery = bool(getattr(self.config, "allow_recovery", False))
@@ -3104,7 +3281,7 @@ class RuntimeController:
                         return
 
         decision = self.mm.calculate(
-            signal=signal,
+            signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
@@ -3230,6 +3407,9 @@ class RuntimeController:
                                               reason="esposizione_cresciuta_dopo_best_price")
             return
 
+        # PF-ALL-F030: liquidita' eseguibile dell'ingresso singolo, alla quota finale, per il RiskGate.
+        self._attach_single_entry_liquidity(payload)
+
         # Gate finali pre-submit, RIESEGUITI dopo lo snapshot. Vanno PRIMA di
         # SIGNAL_APPROVED perche' l'audit consuma sia SIGNAL_APPROVED sia
         # SIGNAL_REJECTED: approvare-poi-rifiutare registrerebbe un ordine
@@ -3256,7 +3436,8 @@ class RuntimeController:
                 reason="emergency_stop_active:pre_submit_recheck",
             )
             return
-        session_block = self._loss_block_reason() or self._exposure_stop()  # F4/P37/P38
+        session_block = self._loss_block_reason() or self._exposure_stop(
+            candidate_exposure=order_exposure)  # F4/P37/P38; candidato != violazione (CLOSURE-03)
         if session_block:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=session_block)
@@ -3291,6 +3472,32 @@ class RuntimeController:
         except Exception:
             logger.exception("Errore force_unlock table_id=%s", table_id)
         self._reject_signal(signal, reason)
+
+    def _attach_single_entry_liquidity(self, payload: dict) -> None:
+        """PF-ALL-F030 (decisione owner, CLOSURE-03): il Liquidity Guard protegge anche gli ingressi singoli.
+
+        Snapshot fresco del book del mercato (mai la cache: un dato vecchio non e' attendibile), liquidita'
+        eseguibile al lato e alla quota dell'ordine (``core.liquidity``). Il RiskGate applica moltiplicatore,
+        minimo assoluto e solo-avviso; ``liquidity_required`` gli dice che un dato assente va negato.
+        Book Block non si applica: per una singola selezione non esiste un book percentuale significativo.
+        Guard disattivato dalla config => nessun fetch, nessun marcatore (il gate lo salta comunque).
+        """
+        if not bool(getattr(self.config, "liquidity_guard_enabled", True)):
+            return
+        payload["liquidity_required"] = True
+        book = None
+        try:
+            book = self.betfair_service.get_market_book_snapshot(str(payload.get("market_id") or ""),
+                                                                 include_prices=True)
+        except Exception as exc:
+            logger.warning("F030: book del mercato non leggibile (%s)", exc)
+        value, reason = liquidity.single_entry_liquidity(book, payload.get("selection_id"),
+                                                         payload.get("bet_type"), payload.get("price"))
+        if value is None:
+            payload.pop("available_liquidity", None)
+            payload["liquidity_unknown_reason"] = reason
+        else:
+            payload["available_liquidity"] = float(value)
 
     def _apply_direct_best_price(self, payload: dict) -> bool:
         """Sovrascrive ``payload['price']`` col best price DIRECT difensivo (B6.2).
@@ -3368,14 +3575,897 @@ class RuntimeController:
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
 
-        if event_key:
+        if event_name in _NO_RELEASE_UNCERTAIN_EVENTS:
+            # PF-ALL-F024: un esito AMBIGUOUS non prova che l'ordine non sia
+            # sull'exchange. Tavolo, esposizione, riserva e chiave duplicati
+            # restano acquisiti finche' la riconciliazione non porta un esito
+            # certo (FAILED / settlement). Nessun retry, nessun nuovo ingresso.
+            # La riserva e' marcata incerta: nemmeno un reset (auto-reset da
+            # drawdown, reset_cycle) la libera.
+            if event_key:
+                self._mark_uncertain(event_key, table_id)
+            logger.warning(
+                "Esito incerto %s: riserva trattenuta event_key=%s table_id=%s customer_ref=%s",
+                event_name, event_key, table_id, payload.get("customer_ref"),
+            )
+            return
+
+        if event_key and not self._clear_uncertain(event_key, table_id):
+            # esito certo e nessun altro tavolo dello stesso evento ancora incerto: chiave rilasciata.
+            # Con un altro tavolo AMBIGUOUS sullo stesso evento (anti-duplicazione disattivata) la
+            # chiave e la marcatura restano: l'esito certo di un ordine non certifica l'altro (riesame c9).
             self.duplication_guard.release(event_key)
 
         if table_id is not None:
             try:
-                self.table_manager.force_unlock(int(table_id))
+                # PF-ALL-F023: rilascia solo il tavolo che porta ancora questa
+                # riserva (idempotente, mai un tavolo riassegnato).
+                released = self.table_manager.force_unlock_if_event(int(table_id), event_key)
+                if not released:
+                    logger.info(
+                        "Rilascio tavolo non applicato %s: table_id=%s non porta event_key=%s",
+                        event_name, table_id, event_key,
+                    )
             except Exception:
-                logger.exception("Errore force_unlock table_id=%s", table_id)
+                logger.exception("Errore rilascio tavolo table_id=%s", table_id)
+
+    def _mark_uncertain(self, event_key: str, table_id: Any) -> None:
+        """Registra una riserva AMBIGUOUS per (evento, tavolo). La mappa `event_key -> table_id` resta la
+        vista usata da reset/settlement/guardia; il registro per tavolo impedisce che l'esito certo di un
+        ALTRO ordine sullo stesso evento cancelli l'incertezza (riesame indipendente ciclo 9 #512)."""
+        uncertain = self._uncertain_reservations_map()
+        tables = getattr(self, "_uncertain_tables", None)
+        if tables is None:
+            tables = self._uncertain_tables = {}
+        tables.setdefault(event_key, set()).add(table_id)
+        uncertain[event_key] = table_id
+
+    def _clear_uncertain(self, event_key: str, table_id: Any) -> bool:
+        """Esito certo per (evento, tavolo). True se l'evento RESTA incerto su un altro tavolo."""
+        uncertain = self._uncertain_reservations_map()
+        tables = getattr(self, "_uncertain_tables", None)
+        if tables is None:
+            tables = self._uncertain_tables = {}
+        held = tables.get(event_key)
+        if held is None and event_key in uncertain:
+            held = {uncertain[event_key]}                 # registrato senza registro per tavolo
+        if not held:
+            uncertain.pop(event_key, None)
+            return False
+        if table_id is None:
+            # esito certo senza tavolo: chiude l'incertezza solo se non c'e' ambiguita' su piu' tavoli
+            if len(held) > 1:
+                return True
+            held = set()
+        else:
+            held = {t for t in held if str(t) != str(table_id)}
+        if held:
+            tables[event_key] = held
+            uncertain[event_key] = sorted(held, key=str)[0]
+            return True
+        tables.pop(event_key, None)
+        uncertain.pop(event_key, None)
+        return False
+
+    def _uncertain_reservations_map(self) -> dict:
+        """event_key -> table_id delle riserve con esito AMBIGUOUS (PF-ALL-F024)."""
+        current = getattr(self, "_uncertain_reservations", None)
+        if current is None:
+            current = {}
+            self._uncertain_reservations = current
+        return current
+
+    def _mark_market_settled(self, market_id: Any) -> None:
+        """PF-ALL-F026: mercato con settlement confermato e contabilizzato (RUNTIME_CLOSE_POSITION accettato)."""
+        mid = str(market_id or "").strip()
+        if not mid:
+            return
+        settled = getattr(self, "_settled_market_ids", None)
+        if settled is None:
+            settled = set()
+            self._settled_market_ids = settled
+        settled.add(mid)
+
+    def _open_order_candidates(self) -> tuple:
+        """Righe ordine non terminali dal DB (stato persistente), con l'identita' della posizione."""
+        rows = self.db._execute(
+            "SELECT customer_ref, status, payload_json, response_json FROM orders "
+            "WHERE status IN ('SUBMITTED', 'AMBIGUOUS', 'INFLIGHT') ORDER BY id ASC",
+            fetch=True, commit=False,
+        ) or []
+        candidates, unattributed = [], []
+        for raw in rows:
+            row = dict(raw)
+            try:
+                p = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError):
+                p = {}
+            try:
+                resp = json.loads(row.get("response_json") or "{}")
+            except (TypeError, ValueError):
+                resp = {}
+            # betId nelle forme note: top-level (broker SIM, Betfair grezzo) o annidato
+            # sotto result/raw (BetfairClient.place_bet). Prima il nested restava senza
+            # identita' e ogni ordine LIVE diventava incerto (rilievo Codex #512).
+            bet_id = ""
+            if isinstance(resp, dict):
+                for container in (resp, resp.get("result"), resp.get("raw")):
+                    if not isinstance(container, dict):
+                        continue
+                    direct = container.get("betId") or container.get("bet_id")
+                    reports = container.get("instructionReports") or []
+                    first = reports[0] if reports and isinstance(reports[0], dict) else {}
+                    found = first.get("betId") or first.get("bet_id") or direct
+                    if found not in (None, ""):
+                        bet_id = str(found)
+                        break
+            item = {
+                "customer_ref": str(row.get("customer_ref") or ""),
+                "status": str(row.get("status") or ""),
+                "market_id": str(p.get("market_id") or ""),
+                "selection_id": p.get("selection_id"),
+                "event_key": str(p.get("event_key") or ""),
+                "table_id": p.get("table_id"),
+                "side": str(p.get("bet_type") or p.get("side") or "").upper(),
+                "stake": p.get("stake"),
+                "price": p.get("price"),
+                "bet_id": bet_id,
+                "meta": {k: p.get(k) for k in ("event_name", "market_name", "runner_name", "bet_type",
+                                               "price", "simulation_mode")},
+            }
+            # Rilievo Codex #512 (r4306544229): un lato assente/non valido NON si inventa (BACK
+            # sottostimerebbe la liability di un LAY): la riga resta non attribuita, riconciliazione.
+            if not item["market_id"] or not item["event_key"] or item["side"] not in ("BACK", "LAY"):
+                unattributed.append(item["customer_ref"])
+                continue
+            candidates.append(item)
+        return candidates, unattributed
+
+    _UNMATCHED_FINAL_STATUSES = frozenset({"CANCELLED", "LAPSED", "VOIDED", "EXPIRED"})
+
+    def _final_unmatched_bets(self, market_ids: list, bet_ids: list) -> Optional[set]:
+        """PF-ALL-F028: betId con stato finale CONFERMATO dal broker e nessun abbinato.
+
+        None se lo stato non e' leggibile (nessun rilascio). SIM: registro del broker simulato.
+        LIVE: un betId vale solo se assente dagli ordini correnti, presente fra i cleared
+        LAPSED/CANCELLED/VOIDED e assente dai cleared SETTLED (nessuna parte abbinata).
+        """
+        if not bet_ids:
+            return set()
+        try:
+            if self.simulation_mode:
+                broker = self.betfair_service.get_simulation_broker()
+                rows = (broker.list_current_orders(market_ids) or {}).get("currentOrders") or []
+                return {str(o.get("betId")) for o in rows
+                        if str(o.get("status") or "").upper() in self._UNMATCHED_FINAL_STATUSES
+                        and float(o.get("sizeMatched") or 0.0) == 0.0}
+            current = {str(o.get("bet_id") or o.get("betId") or "")
+                       for o in (self.betfair_service.list_current_orders(market_ids) or [])}
+            ids = [b for b in bet_ids if b not in current]
+            if not ids:
+                return set()
+            settled = {str(o.get("betId") or o.get("bet_id") or "")
+                       for o in self.betfair_service.list_cleared_orders(bet_status="SETTLED", bet_ids=ids)}
+            final = set()
+            for status in ("LAPSED", "CANCELLED", "VOIDED"):
+                for o in self.betfair_service.list_cleared_orders(bet_status=status, bet_ids=ids):
+                    bid = str(o.get("betId") or o.get("bet_id") or "")
+                    if bid and bid not in settled:
+                        final.add(bid)
+            return final
+        except Exception as exc:
+            logger.warning("F028: stato finale degli ordini non leggibile (%s): nessun rilascio", exc)
+            return None
+
+    def _release_final_unmatched_orders(self) -> list:
+        """PF-ALL-F028 (decisione owner, CLOSURE-03): libera tavolo e riserva di un ordine d'ingresso
+        il cui stato finale (annullato, decaduto, chiuso) e' confermato dal broker senza alcun abbinato.
+
+        Solo righe SUBMITTED con betId: un esito incerto (AMBIGUOUS/INFLIGHT, riserve incerte) non e'
+        mai considerato annullato. Rilascio idempotente (``force_unlock_if_event``): la perdita di
+        recovery del tavolo resta. La chiave anti-duplicato resta acquisita: un segnale riconsegnato
+        non viene rigiocato per il TTL; se era fissata al riavvio (F018) torna a scadere normalmente
+        (`unpin`, riesame indipendente c9). Dopo un riavvio la stessa conclusione la trae F018 (ordine assente).
+        """
+        if not self._settlement_reconciliation_allowed():
+            return []
+        uncertain = set(self._uncertain_reservations_map())
+        tables_by_key: dict = {}
+        for t in self.table_manager.snapshot():
+            key = str(t.get("current_event_key") or "")
+            if key and key not in uncertain:
+                tables_by_key.setdefault(key, []).append(t)
+        held = {key: ts[0] for key, ts in tables_by_key.items()}
+        if not held:
+            return []
+        try:
+            candidates, _ = self._open_order_candidates()
+        except Exception as exc:
+            logger.warning("F028: ordini del bot illeggibili (%s): nessun rilascio", exc)
+            return []
+        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]]
+        if not eligible:
+            return []
+        final = self._final_unmatched_bets(sorted({c["market_id"] for c in eligible}),
+                                           sorted({c["bet_id"] for c in eligible}))
+        if not final:
+            return []
+        released = []
+        for c in eligible:
+            if c["bet_id"] not in final:
+                continue
+            # Il tavolo e' quello dell'ORDINE (table_id persistito, con verifica dell'evento), mai uno qualsiasi
+            # con lo stesso evento: con anti-duplicazione disattivata due ordini dello stesso evento stanno su
+            # tavoli diversi e si libererebbe la riserva dell'ordine ancora vivo (rilievo Codex r4309039372).
+            # table_id assente e piu' tavoli sull'evento => nessun rilascio (fail-closed).
+            candidates_tables = tables_by_key.get(c["event_key"]) or []
+            try:
+                own_id = int(c["table_id"]) if c.get("table_id") is not None else None
+            except (TypeError, ValueError):
+                own_id = None
+            if own_id is not None:
+                table = next((t for t in candidates_tables if int(t["table_id"]) == own_id), None)
+            else:
+                table = candidates_tables[0] if len(candidates_tables) == 1 else None
+            if table is None:
+                logger.warning("F028: tavolo dell'ordine %s non attribuibile: nessun rilascio", c["customer_ref"])
+                continue
+            if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"]):
+                # La chiave resta (dedupe del segnale per il TTL) ma non e' piu' una posizione viva:
+                # se era fissata al riavvio torna a scadere normalmente (riesame indipendente c9).
+                self.duplication_guard.unpin(c["event_key"])
+                released.append(c["customer_ref"])
+                self.bus.publish("UNMATCHED_ORDER_RELEASED", {
+                    "customer_ref": c["customer_ref"], "bet_id": c["bet_id"], "market_id": c["market_id"],
+                    "table_id": table["table_id"], "released_exposure": table.get("current_exposure")})
+        return released
+
+    def _recover_native_microstake(self) -> Dict[str, Any]:
+        """Riconciliazione delle saghe Microstake pendenti via engine; errore => non ok (fail-closed)."""
+        fn = getattr(getattr(self, "trading_engine", None), "recover_native_microstake_sagas", None)
+        if not callable(fn):
+            return {"ok": True, "status": "ENGINE_WITHOUT_MICROSTAKE", "pending": []}
+        try:
+            out = fn()
+        except Exception as exc:
+            logger.exception("Microstake: recovery delle saghe fallita")
+            return {"ok": False, "status": f"ERROR:{type(exc).__name__}", "pending": []}
+        if not isinstance(out, dict):
+            return {"ok": False, "status": "MALFORMED_RESULT", "pending": []}
+        if out.get("ok"):
+            logger.info("Microstake: saghe riconciliate (%s)", out.get("status"))
+        else:
+            logger.error("Microstake: saghe pendenti non riconciliate: %s", out)
+        return out
+
+    def _rebuild_open_positions(self) -> dict:
+        """PF-ALL-F018: ricostruisce tavoli, esposizione e chiavi anti-duplicato delle posizioni aperte.
+
+        Fonti: lo stato persistente (riga ordine con event_key, table_id, mercato, stake) e gli ordini
+        correnti dell'exchange (autorita' sull'esistenza della posizione, OD-PF-RECON-02).
+        - SUBMITTED con betId presente fra gli ordini correnti => posizione viva, tavolo ricostruito;
+        - SUBMITTED assente dagli ordini correnti => chiusa (regolata/annullata): nessun tavolo; il P&L
+          arriva dal settlement;
+        - AMBIGUOUS / INFLIGHT, o exchange non leggibile => riserva trattenuta come INCERTA (F024/F004):
+          mai considerata chiusa per assenza di dati (un dato mancante non vale zero).
+        ``ok`` False (=> nessun nuovo ingresso) se l'exchange non e' leggibile mentre esistono posizioni
+        candidate, o se una posizione non trova un tavolo.
+        """
+        result = {"ok": True, "reason": "", "rebuilt": [], "uncertain": [], "closed": [], "unattributed": []}
+        try:
+            candidates, unattributed = self._open_order_candidates()
+        except Exception as exc:
+            result.update(ok=False, reason=f"ORDERS_READ_FAILED:{type(exc).__name__}")
+            return result
+        result["unattributed"] = unattributed
+        if unattributed:
+            # Righe pendenti senza mercato/event_key: possono essere esposizione viva che
+            # nessun tavolo riserva. Riconciliazione incompleta => nessun nuovo ingresso
+            # (rilievo Codex #512); i candidati attribuibili vengono comunque ricostruiti.
+            result.update(ok=False, reason=f"UNATTRIBUTED_PENDING_ORDERS:{len(unattributed)}")
+        held = {str(t.get("current_event_key") or "") for t in self.table_manager.snapshot()}
+        # Tavolo gia' occupato per quell'evento (start() ripetuto nello stesso processo): la
+        # posizione non si ricostruisce due volte, ma la chiave anti-duplicato va riacquisita
+        # nel guard nuovo, altrimenti un secondo tavolo potrebbe accettare lo stesso evento.
+        result["held"] = []
+        for c in candidates:
+            if c["event_key"] in held:
+                self.duplication_guard.acquire(c["event_key"], pin=True)   # posizione viva: mai scaduta per TTL (c9)
+                result["held"].append(c["customer_ref"])
+        candidates = [c for c in candidates if c["event_key"] not in held]
+        if not candidates:
+            return result
+        current = None
+        try:
+            current = list(self.betfair_service.list_current_orders() or [])
+        except Exception as exc:
+            result.update(ok=False, reason=f"EXCHANGE_ORDERS_UNAVAILABLE:{type(exc).__name__}")
+        live_bets = {str(o.get("bet_id") or o.get("betId") or "") for o in (current or [])}
+        live_markets = {str(o.get("marketId") or o.get("market_id") or "") for o in (current or [])}
+        for c in candidates:
+            if c["status"] == "SUBMITTED" and current is not None:
+                if c["bet_id"] and c["bet_id"] in live_bets:
+                    is_uncertain = False
+                elif not c["bet_id"] and c["market_id"] in live_markets:
+                    is_uncertain = True                       # ordine sul mercato ma senza identita' certa
+                else:
+                    result["closed"].append(c["customer_ref"])
+                    continue
+            else:
+                is_uncertain = True
+            free = {int(t["table_id"]) for t in self.table_manager.snapshot()
+                    if not str(t.get("current_event_key") or "")}
+            preferred = c["table_id"]
+            try:
+                preferred = int(preferred) if preferred is not None else None
+            except (TypeError, ValueError):
+                preferred = None
+            table_id = preferred if preferred in free else (min(free) if free else None)
+            if table_id is None:
+                result.update(ok=False, reason="NO_TABLE_FOR_OPEN_POSITION")
+                continue
+            exposure = validators.order_exposure_or_inf(c["side"], c["stake"], c["price"])
+            self.table_manager.activate(table_id=table_id, event_key=c["event_key"], exposure=float(exposure),
+                                        market_id=c["market_id"], selection_id=c["selection_id"], meta=c["meta"])
+            self.duplication_guard.acquire(c["event_key"], pin=True)       # posizione viva: mai scaduta per TTL (c9)
+            if is_uncertain:
+                self._mark_uncertain(c["event_key"], table_id)
+                result["uncertain"].append(c["customer_ref"])
+            else:
+                result["rebuilt"].append(c["customer_ref"])
+        if current is None and not result["reason"]:
+            result.update(ok=False, reason="EXCHANGE_ORDERS_UNAVAILABLE")
+        return result
+
+    def _release_settled_tables(self, payload: dict, *, table_id: Any, pnl: float) -> None:
+        """Rilascia il tavolo di una posizione con settlement confermato e contabilizzato.
+
+        Con ``table_id`` nel payload: comportamento invariato. PF-ALL-F2: i settlement dal poller
+        (cleared/SIM) arrivano senza ``table_id``; il tavolo si individua dal ``market_id``. Si
+        rilascia SOLO se il tavolo e' univoco: una riserva incerta (AMBIGUOUS, F024/F004) resta
+        trattenuta, e con piu' tavoli sullo stesso mercato l'attribuzione del P&L per tavolo non
+        e' determinabile => nessun rilascio automatico (fail-closed, log).
+        PF-ALL-F026: il mercato viene marcato regolato in ogni caso, anche quando il tavolo resta
+        trattenuto, cosi' un successivo auto-reset puo' liberarne i tavoli.
+        """
+        self._mark_market_settled((payload or {}).get("market_id"))
+        if table_id is not None:
+            self.table_manager.release(int(table_id), pnl=pnl)
+            return
+        market_id = str((payload or {}).get("market_id") or "").strip()
+        if not market_id:
+            return
+        uncertain_keys = set(self._uncertain_reservations_map())
+        matches = [t for t in self.table_manager.snapshot()
+                   if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
+        certain = [t for t in matches if str(t.get("current_event_key")) not in uncertain_keys]
+        # Settlement SIM per MERCATO (`sim:<mercato>:<id>`): il broker regola il netto di tutte le gambe, hedge
+        # compreso. Ogni altro (cleared per bet, chiave assente) e' per bet: un hedge lo rende non attribuibile.
+        event_key = str((payload or {}).get("event_key") or "")
+        per_bet = not event_key.startswith("sim:")
+        if (len(certain) == 1 and len(matches) == 1
+                and self._single_bet_position(certain[0], per_bet=per_bet)
+                # Ogni settlement non di mercato (cleared, chiusura di posizione, chiave assente) passa dalla
+                # riconciliazione sull'exchange (bloccante Sol su 9f0d6ec): nessun settlement per bet non verificabile.
+                and not (per_bet and self._market_has_foreign_cleared_legs(market_id))):
+            self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
+        elif len(certain) == 1 and len(matches) == 1:
+            # Settlement per bet di una posizione con PIU' gambe persistite sullo stesso mercato (Dutching,
+            # piu' ordini del bot): il P&L di una gamba non e' il netto del tavolo. Nessun rilascio per mercato
+            # (fail-closed): il tavolo resta trattenuto, il mercato e' marcato regolato (auto-reset/F026).
+            # L'aggregazione per bet_id e' il lotto D-F (verifica indipendente ciclo 10, r4303297587).
+            logger.warning("Settlement %s senza table_id su una posizione multi-gamba: nessun rilascio "
+                           "per mercato (P&L della singola gamba non attribuibile al tavolo)", market_id)
+        elif matches:
+            logger.warning(
+                "Settlement %s senza table_id: %d tavoli sul mercato (%d incerti), nessun rilascio automatico",
+                market_id, len(matches), len(matches) - len(certain),
+            )
+
+    _HEDGED_MARKETS_KEY = "roserpina.hedged_markets"
+    _HEDGED_MARKETS_RETENTION_DAYS = 365          # oltre la durata di qualunque mercato (antepost compresi)
+    _HEDGED_MARKETS_LOCK = threading.Lock()       # lettura-modifica-scrittura serializzata fra i worker del bus
+
+    def _load_hedged_markets(self) -> None:
+        """Registro durevole dei mercati con un comando di cashout/hedge. Illeggibile => inaffidabile
+        (nessun rilascio per mercato finche' non si riavvia con uno stato leggibile). Un DB senza settings
+        (doppi di test) parte vuoto: il DB reale le ha sempre."""
+        self._hedged_markets = {}
+        self._hedged_markets_unreliable = False
+        sentinel = self._hedged_markets_sentinel_path()
+        if sentinel and os.path.exists(sentinel):
+            # Una scrittura del registro e' fallita in un processo precedente (bloccante Sol su 180ffa3): il registro
+            # leggibile puo' non contenere quel mercato. Inaffidabile finche' l'operatore non rimuove la sentinella
+            # dopo aver riconciliato i mercati con cashout.
+            logger.critical("Registro hedge: sentinella %s presente, nessun rilascio per mercato", sentinel)
+            self._hedged_markets_unreliable = True
+            self._publish_hedge_registry_unreliable("sentinel_present_at_startup")
+        getter = getattr(self.db, "get_settings", None)
+        if not callable(getter):
+            return
+        try:
+            raw = (getter() or {}).get(self._HEDGED_MARKETS_KEY)
+            data = json.loads(raw) if raw not in (None, "") else {}
+            if not isinstance(data, dict):
+                raise ValueError("not_an_object")
+            self._hedged_markets = {str(k): str(v) for k, v in data.items() if str(k).strip()}
+        except Exception:
+            logger.exception("Registro hedge di cashout illeggibile: nessun rilascio del tavolo per mercato")
+            self._hedged_markets_unreliable = True
+
+    def _on_cashout_command(self, payload: dict) -> None:
+        """Verifica indipendente del ciclo 14 (r4303297587): un hedge di cashout passa da OrderRouter senza riga
+        in `orders`, quindi il settlement PER BET della gamba originale NON e' il netto del tavolo. Ogni esito di
+        cashout (CASHOUT_SUCCESS / CASHOUT_FAILED: anche un fallimento puo' aver lasciato un hedge) marca il
+        mercato in modo durevole; scrittura fallita o impossibile => registro inaffidabile (fail-closed: nessun
+        rilascio per mercato). Esito senza mercato: nessun hedge e' attribuibile a un mercato, quindi nessuno
+        puo' essere stato piazzato su un mercato del bot (rifiuti pre-instradamento del bridge)."""
+        market_id = str((payload or {}).get("market_id") or "").strip()
+        if not market_id:
+            return
+        with self._HEDGED_MARKETS_LOCK:
+            self._record_hedged_market_locked(market_id)
+
+    def _record_hedged_market_locked(self, market_id: str) -> None:
+        markets = dict(getattr(self, "_hedged_markets", {}) or {})
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=self._HEDGED_MARKETS_RETENTION_DAYS)
+        kept = {}
+        for mid, ts in markets.items():
+            try:
+                when = datetime.fromisoformat(str(ts))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+            except ValueError:
+                when = now                                   # data illeggibile: si conserva
+            if when >= cutoff:
+                kept[mid] = ts
+        kept[market_id] = now.isoformat()
+        self._hedged_markets = kept
+        saver = getattr(self.db, "save_settings", None)
+        try:
+            if not callable(saver):
+                raise RuntimeError("db_save_settings_unavailable")
+            saver({self._HEDGED_MARKETS_KEY: json.dumps(kept, sort_keys=True)})
+        except Exception:
+            logger.exception("Registro hedge di cashout non persistito (mercato %s): nessun rilascio per mercato",
+                             market_id)
+            self._hedged_markets_unreliable = True
+            self._write_hedged_markets_sentinel(market_id)
+            self._publish_hedge_registry_unreliable("registry_write_failed", market_id=market_id)
+
+    def _publish_hedge_registry_unreliable(self, reason: str, **detail) -> None:
+        """Pubblica l'evento HEDGE_REGISTRY_UNRELIABLE (oggi nessun consumatore cablato: il segnale osservabile e'
+        `get_status()["hedged_markets_unreliable"]` piu' il log critico; consumer Telegram/health in #521). Mai raise."""
+        try:
+            self.bus.publish("HEDGE_REGISTRY_UNRELIABLE", {"reason": reason,
+                                                            "sentinel": self._hedged_markets_sentinel_path(),
+                                                            **detail})
+        except Exception:
+            logger.exception("HEDGE_REGISTRY_UNRELIABLE non pubblicato")
+
+    def _hedged_markets_sentinel_path(self) -> str:
+        """Sentinella durevole su un canale diverso dal DB (file accanto al database): sopravvive al riavvio anche se
+        la scrittura del registro nel DB e' fallita. DB in memoria o senza percorso => nessuna sentinella."""
+        path = str(getattr(self.db, "db_path", "") or "")
+        if not path or path == ":memory:":
+            return ""
+        return f"{path}.hedged_markets.unreliable"
+
+    def _write_hedged_markets_sentinel(self, market_id: str) -> None:
+        sentinel = self._hedged_markets_sentinel_path()
+        if not sentinel:
+            logger.critical("Registro hedge non persistito e nessuna sentinella possibile (mercato %s)", market_id)
+            return
+        try:
+            with open(sentinel, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"market_id": market_id, "at": datetime.now(timezone.utc).isoformat()}) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            logger.critical("Registro hedge non persistito e sentinella non scrivibile (mercato %s)", market_id,
+                            exc_info=True)
+
+    def _market_has_foreign_cleared_legs(self, market_id: str) -> bool:
+        """Riconciliazione sull'exchange (autorita') prima di un rilascio per mercato da settlement cleared per bet
+        (bloccante Sol su 23bdbfe): `listClearedOrders` per il MERCATO, non per i soli bet del bot. Una bet regolata
+        che non e' del bot (hedge di cashout senza riga in `orders`, ordine manuale) => il P&L della gamba non e' il
+        netto del tavolo. Non dipende da nessuna scrittura locale. Lettura fallita, risposta malformata o vuota =>
+        True (fail-closed: nessun rilascio per mercato)."""
+        lister = getattr(self.betfair_service, "list_cleared_orders", None)
+        identity = getattr(self.db, "get_bot_active_orders", None)
+        if not callable(lister) or not callable(identity):
+            return True
+        try:
+            bot_bets = {str(o.get("bet_id") or "").strip() for o in (identity() or [])
+                        if isinstance(o, dict) and str(o.get("market_id") or "").strip() == market_id}
+            rows = lister(bet_status="SETTLED", market_ids=[market_id])
+        except Exception:
+            logger.exception("Settlement %s: ordini regolati del mercato illeggibili, nessun rilascio", market_id)
+            return True
+        if not isinstance(rows, list) or not rows:
+            return True
+        settled = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                return True
+            bet_id = str(row.get("betId") or row.get("bet_id") or "").strip()
+            if not bet_id:
+                return True
+            settled.add(bet_id)
+        foreign = settled - bot_bets
+        if foreign:
+            logger.warning("Settlement %s: %d bet regolate non del bot (hedge/manuali), nessun rilascio per mercato",
+                           market_id, len(foreign))
+        return bool(foreign)
+
+    def _single_bet_position(self, table: dict, *, per_bet: bool = True) -> bool:
+        """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo
+        stesso mercato/evento che possa essere stato piazzato: solo allora il P&L di un settlement per bet e'
+        il netto del tavolo. Batch Dutching (nessuna selezione), piu' ordini persistiti o DB illeggibile =>
+        False. Non contano i tentativi certamente mai piazzati (FAILED / DENIED / DUPLICATE_BLOCKED); ogni
+        altro stato conta (fail-closed). Un hedge di cashout passa da OrderRouter senza riga in `orders`: per un
+        settlement PER BET, mercato con un cashout registrato (o registro inaffidabile) => False (r4303297587)."""
+        if table.get("selection_id") in (None, ""):
+            return False
+        market_id = str(table.get("market_id") or "")
+        if per_bet and (getattr(self, "_hedged_markets_unreliable", False)
+                        or market_id in (getattr(self, "_hedged_markets", {}) or {})):
+            return False
+        event_key = str(table.get("current_event_key") or "")
+        try:
+            rows = self.db._execute(
+                "SELECT payload_json, status FROM orders WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')",
+                fetch=True, commit=False) or []
+        except Exception:
+            logger.exception("Settlement: ordini del bot illeggibili, nessun rilascio per mercato")
+            return False
+        count = 0
+        owns_it = False
+        for raw in rows:
+            row = dict(raw)
+            if str(row.get("status") or "").upper() in ("FAILED", "DENIED", "DUPLICATE_BLOCKED"):
+                continue
+            try:
+                p = json.loads(row.get("payload_json") or "{}")
+            except (TypeError, ValueError, AttributeError):
+                return False                            # riga illeggibile: attribuzione non dimostrabile
+            if not isinstance(p, dict):
+                return False
+            # Ogni ordine del bot sullo STESSO MERCATO conta, qualunque sia la sua selezione/evento (Grok su
+            # 9ab753a): il settlement per bet senza table_id non dice di quale scommessa e', quindi il P&L e'
+            # attribuibile al tavolo solo se sul mercato esiste un solo ordine possibile, ed e' il suo.
+            if str(p.get("market_id") or "") == market_id:
+                count += 1
+                owns_it = not event_key or str(p.get("event_key") or "") == event_key
+        return count == 1 and owns_it
+
+    def _reset_reservations_keeping_uncertain(self) -> None:
+        """Reset di tavoli e chiavi duplicati che NON libera capitale ancora impegnato.
+
+        Trattiene (PF-ALL-F024) le riserve con esito incerto e (PF-ALL-F026) i tavoli di posizioni
+        non ancora regolate: solo un settlement confermato rende liberabile un tavolo occupato
+        (#426 OWNER-SETTLEMENT-02 / OC-04: nessuna liberazione di capitale ancora impegnato).
+        """
+        uncertain = dict(self._uncertain_reservations_map())
+        settled = set(getattr(self, "_settled_market_ids", None) or ())
+        keep_tables = {int(t) for t in uncertain.values() if t is not None}
+        # ogni tavolo con esito ignoto, non solo quello della vista event_key -> table_id (rilievo Codex
+        # r4308704060): un ordine AMBIGUOUS non libera mai il suo tavolo, nemmeno a mercato regolato
+        for key, tables in (getattr(self, "_uncertain_tables", None) or {}).items():
+            keep_tables.update(int(t) for t in tables if t is not None)
+            if tables:
+                uncertain.setdefault(key, None)
+        keep_keys = set(uncertain)
+        for table in self.table_manager.snapshot():
+            event_key = str(table.get("current_event_key") or "")
+            market_id = str(table.get("market_id") or "")
+            if event_key and market_id not in settled:
+                keep_tables.add(int(table.get("table_id")))
+                keep_keys.add(event_key)
+        self.table_manager.reset_all(keep_table_ids=keep_tables)
+        self.duplication_guard.clear(keep_keys=keep_keys)
+        if keep_tables:
+            logger.warning("Reset tavoli: %d tavoli trattenuti (posizioni vive/incerte) %s",
+                           len(keep_tables), sorted(keep_tables))
+
+    @staticmethod
+    def _account_from_funds(funds: Any) -> dict:
+        """PF-ALL-F026: grandezze del conto dai SOLI campi exchange, tenute separate.
+
+        - ``available``: disponibile per nuovi ordini (base invariata di stake e limiti);
+        - ``committed``: fondi impegnati nelle posizioni aperte = |exposure| (Betfair LIVE la
+          riporta negativa, il broker SIM positiva);
+        - ``cash_equity``: disponibile + impegnato = saldo di cassa regolato. NON e' un'equity
+          mark-to-market e non viene usata per stake, limiti o ammissione: serve solo a non
+          confondere puntate aperte con perdite (#426/6146717266) nelle azioni che liberano risorse.
+        Un campo mancante, non numerico, non finito o negativo rende il risultato non valido
+        (ok=False): un dato mancante non vale zero (OD-PF-RECON-02).
+        """
+        out = {"ok": False, "available": 0.0, "committed": 0.0, "cash_equity": 0.0, "reason": ""}
+        if not isinstance(funds, dict):
+            out["reason"] = "BALANCE_PAYLOAD_NOT_DICT"
+            return out
+        if funds.get("available") is None or funds.get("exposure") is None:
+            out["reason"] = "BALANCE_FIELD_MISSING"
+            return out
+        try:
+            available = float(funds.get("available"))
+            committed = abs(float(funds.get("exposure")))
+        except (TypeError, ValueError):
+            out["reason"] = "BALANCE_NOT_NUMERIC"
+            return out
+        if not (math.isfinite(available) and math.isfinite(committed)) or available < 0.0:
+            out["reason"] = "BALANCE_NOT_FINITE_OR_NEGATIVE"
+            return out
+        out.update(ok=True, available=available, committed=committed, cash_equity=available + committed)
+        return out
+
+    def _record_account_snapshot(self, funds: Any, *, source: str) -> dict:
+        """Registra lo snapshot del conto e il picco dell'equity di cassa (solo dati validi)."""
+        account = self._account_from_funds(funds)
+        account["source"] = source
+        self._account_snapshot = dict(account)
+        if account["ok"]:
+            peak = float(getattr(self, "_cash_equity_peak", 0.0) or 0.0)
+            if account["cash_equity"] > peak:
+                self._cash_equity_peak = account["cash_equity"]
+        return account
+
+    # ================================================================= PF-ALL-F032 / RSR-12
+    _EXPANSION_KEY = "roserpina.expansion_baseline_state"
+    _RECOVERY_KEY = "roserpina.recovery_tables_state"
+
+    def _expansion_cycle_state(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> dict:
+        """Stato della baseline di un nuovo ciclo (F032), SENZA persisterlo ne' applicarlo: il chiamante lo
+        scrive da solo (`_start_expansion_cycle`) o nella stessa transazione dello stato di recovery e del
+        marker del reset (`_persist_recovery_tables(expansion_state=...)`, rilievo Codex #512 ciclo 9,
+        r4307328199). `baseline` None = dati del conto non validi => nessuna espansione."""
+        if funds is None:
+            try:
+                funds = self.betfair_service.get_account_funds()
+            except Exception as exc:
+                logger.warning("F032: fondi illeggibili alla transizione di ciclo (%s)", exc)
+                funds = None
+        account = self._account_from_funds(funds)
+        baseline = float(account["cash_equity"]) if account["ok"] and account["cash_equity"] > 0.0 else None
+        return {"baseline": baseline, "reason": str(reason), "set_at": datetime.utcnow().isoformat(),
+                "set_at_ts": float(set_at_ts) if set_at_ts is not None else time.time()}
+
+    def _start_expansion_cycle(self, reason: str, funds: Any = None, *, set_at_ts: Optional[float] = None) -> bool:
+        """F032 (decisione owner): baseline del ciclo = equita' di cassa REGOLATA (disponibile + impegnato,
+        nessun profitto virtuale) all'inizio di un ciclo autorizzato. Si fissa solo su transizioni esplicite
+        (primo avvio senza baseline, auto-reset, reset del ciclo) e si persiste. Dati non validi o
+        persistenza fallita => nessuna baseline => nessuna espansione.
+        Scrittura singola, senza marker: e' il percorso del primo avvio. I reset di ciclo passano da
+        `_persist_recovery_tables(cycle_reset=True, expansion_state=...)` (una sola transazione, ciclo 9)."""
+        state = self._expansion_cycle_state(reason, funds, set_at_ts=set_at_ts)
+        baseline = state["baseline"]
+        try:
+            self.db.save_settings({self._EXPANSION_KEY: json.dumps(state)})
+        except Exception as exc:
+            logger.error("F032: baseline del ciclo non persistita (%s): nessuna espansione", exc)
+            baseline = None
+        self._expansion_baseline = baseline
+        return baseline is not None
+
+    def _load_expansion_baseline(self) -> bool:
+        """F032: la baseline persistita sopravvive al riavvio. Assente => False (il chiamante apre il ciclo);
+        illeggibile => nessuna baseline (nessuna espansione) finche' una transizione esplicita non la fissa."""
+        self._expansion_baseline = None
+        try:
+            raw = (self.db.get_settings() or {}).get(self._EXPANSION_KEY)
+        except Exception as exc:
+            logger.warning("F032: stato della baseline illeggibile (%s)", exc)
+            return True
+        if raw in (None, ""):
+            return False
+        try:
+            parsed = json.loads(raw)
+            value = validators.finite_number(parsed.get("baseline"))
+            # `set_at_ts` assente = baseline legacy (0.0: stantia non appena esiste un marker di reset);
+            # presente ma non finito (NaN/inf/testo) = corrotto, mai "piu' recente" per default
+            set_at_ts = 0.0 if "set_at_ts" not in parsed else validators.finite_number(parsed.get("set_at_ts"))
+            if set_at_ts is None:
+                raise ValueError("set_at_ts non finito")
+        except Exception:
+            logger.warning("F032: stato della baseline corrotto: nessuna espansione")
+            return True
+        # Rilievo Codex #512 (r4306544231): una baseline piu' VECCHIA dell'ultimo reset di ciclo
+        # durevole e' stantia (la sua scrittura era fallita): nessuna espansione finche' una
+        # transizione esplicita non la fissa di nuovo. Baseline e marker scritti dallo stesso reset
+        # portano lo stesso istante (uguale => valida). Marker illeggibile => reset ignoto => stantia.
+        reset_ts = self._last_durable_cycle_reset_ts()
+        if reset_ts is not None and set_at_ts < reset_ts:
+            logger.warning("F032: baseline (%.0f) precedente all'ultimo reset durevole (%s): nessuna espansione",
+                           set_at_ts, "illeggibile" if reset_ts == float("inf") else "%.0f" % reset_ts)
+            self._expansion_baseline = None
+            return True
+        self._expansion_baseline = value if value is not None and value > 0.0 else None
+        return True
+
+    _CYCLE_RESET_KEY = "roserpina.cycle_reset_state"
+
+    def _last_durable_cycle_reset_ts(self) -> Optional[float]:
+        """Istante dell'ultimo reset di ciclo durevole; None se mai registrato. Marker presente ma
+        illeggibile/non finito => +inf (fail-closed: ogni baseline persistita e' considerata stantia)."""
+        try:
+            raw = (self.db.get_settings() or {}).get(self._CYCLE_RESET_KEY)
+        except Exception as exc:
+            logger.warning("F032: marker del reset di ciclo illeggibile (%s): nessuna espansione", exc)
+            return float("inf")
+        if raw in (None, ""):
+            return None
+        try:
+            at_ts = validators.finite_number(json.loads(raw).get("at_ts"))
+        except Exception:
+            at_ts = None
+        if at_ts is None:
+            logger.warning("F032: marker del reset di ciclo corrotto: nessuna espansione")
+            return float("inf")
+        return float(at_ts)
+
+    def _expansion_growth_pct(self) -> Optional[float]:
+        """Crescita % dell'equita' di cassa regolata sulla baseline del ciclo; None se incerta."""
+        baseline = getattr(self, "_expansion_baseline", None)
+        account = getattr(self, "_account_snapshot", None) or {}
+        if baseline is None or baseline <= 0.0 or not account.get("ok"):
+            return None
+        if self._uncertain_reservations_map():
+            return None
+        return (float(account["cash_equity"]) - baseline) / baseline * 100.0
+
+    def _with_expansion_snapshot(self, signal: dict) -> dict:
+        """Copia del segnale con la crescita per il money management (None = nessuna espansione)."""
+        out = dict(signal or {})
+        out["expansion_growth_snapshot"] = self._expansion_growth_pct()
+        return out
+
+    def _active_recovery_count(self) -> int:
+        """RSR-12 (decisione owner): tavoli con recovery attiva o pendente, con o senza ordini. Stato di
+        recovery illeggibile al riavvio => capacita' considerata esaurita (fail-closed)."""
+        if getattr(self, "_recovery_state_unreadable", False) or getattr(self, "_recovery_persist_failed", False):
+            return max(int(getattr(self.config, "max_recovery_tables", 0) or 0), len(self.table_manager.recovery_state()))
+        return len(self.table_manager.recovery_state())
+
+    def _gate_rebuild_on_recovery_state(self, rebuild: dict) -> dict:
+        """RSR-12 illeggibile al riavvio = riconciliazione incompleta (rilievo Codex #512 su 034af59): le
+        perdite da recuperare non sono note, quindi nessun nuovo ingresso. Stesso percorso di
+        EXCHANGE_ORDERS_UNAVAILABLE (F018): ok=False => PAUSED; resume() non lo scavalca (serve un
+        riavvio con stato leggibile, mai una sovrascrittura)."""
+        if not getattr(self, "_recovery_state_unreadable", False):
+            return rebuild
+        return dict(rebuild, ok=False, recovery_state_unreadable=True,
+                    reason="RECOVERY_STATE_UNREADABLE" if rebuild.get("ok") else rebuild.get("reason"))
+
+    def _declare_recovery_persist_failure(self, source: str) -> None:
+        """Stato di recovery NON durevole dopo un reset (rilievo Codex #512 su 034af59): dopo un crash le
+        perdite perdonate in memoria tornerebbero dal DB. Fail-closed come nel settlement: capacita' di
+        recovery esaurita finche' una scrittura riesce, evento dichiarato, mai silenzioso."""
+        self._recovery_persist_failed = True
+        logger.error("RSR-12: stato dei tavoli di recovery non persistito dopo %s: capacita' bloccata", source)
+        self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"source": source})
+
+    def _persist_recovery_tables(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None,
+                                 expansion_state: Optional[dict] = None) -> bool:
+        """Persiste lo stato dei tavoli di recovery (RSR-12); con ``cycle_reset`` anche il marker durevole del
+        reset e, se dato, lo stato della baseline F032 (``expansion_state`` da `_expansion_cycle_state`), in
+        UNA SOLA transazione (`Database.save_settings`): baseline del nuovo ciclo, marker e perdite perdonate
+        o si persistono insieme o non si persistono affatto (rilievo Codex #512 ciclo 9, r4307328199).
+        Fallimento con ``expansion_state`` => nessuna baseline in memoria (nessuna espansione).
+
+        Un reset di ciclo NON persistito resta in sospeso in memoria (`_pending_cycle_reset`) e viaggia con
+        OGNI scrittura successiva dello stato tavoli finche' una riesce (riesame indipendente ciclo 9 #512):
+        altrimenti il settlement seguente scriverebbe le perdite gia' perdonate dal nuovo ciclo accanto alla
+        baseline e al marker del ciclo VECCHIO."""
+        pending = getattr(self, "_pending_cycle_reset", None)
+        if not cycle_reset and pending is not None:
+            cycle_reset = True
+            reset_ts = pending.get("reset_ts")
+            expansion_state = pending.get("expansion_state")
+        if cycle_reset and reset_ts is None:
+            reset_ts = time.time()
+        if getattr(self, "_recovery_state_unreadable", False):
+            # Lo stato persistito e' illeggibile ma non vuoto: sovrascriverlo con lo stato in memoria
+            # (che non lo contiene) cancellerebbe perdite da recuperare (rilievo Codex #512 su 034af59).
+            logger.error("RSR-12: stato dei tavoli di recovery illeggibile: scrittura rifiutata, nessuna sovrascrittura")
+            if expansion_state is not None:
+                self._expansion_baseline = None
+            if cycle_reset:
+                self._pending_cycle_reset = {"reset_ts": reset_ts, "expansion_state": expansion_state}
+            return False
+        try:
+            state = {str(k): v for k, v in self.table_manager.recovery_state().items()}
+            payload = {self._RECOVERY_KEY: json.dumps(state)}
+            if cycle_reset:
+                # marker durevole del reset di ciclo, nella STESSA transazione dello stato tavoli
+                # (F032 / rilievo Codex r4306544231); `reset_ts` e' l'istante condiviso con la baseline
+                payload[self._CYCLE_RESET_KEY] = json.dumps({"at_ts": float(reset_ts)})
+            if expansion_state is not None:
+                payload[self._EXPANSION_KEY] = json.dumps(expansion_state)
+            self.db.save_settings(payload)
+            self._recovery_persist_failed = False                           # scrittura riuscita: ritentata con successo
+            self._pending_cycle_reset = None                                # reset (se c'era) ora durevole
+            if expansion_state is not None:
+                self._expansion_baseline = expansion_state.get("baseline")
+            return True
+        except Exception as exc:
+            logger.error("RSR-12: stato dei tavoli di recovery non persistito (%s)", exc)
+            if expansion_state is not None:
+                logger.error("F032: baseline del ciclo non persistita: nessuna espansione")
+                self._expansion_baseline = None
+            if cycle_reset:
+                self._pending_cycle_reset = {"reset_ts": reset_ts, "expansion_state": expansion_state}
+            return False
+
+    def _restore_recovery_tables(self) -> bool:
+        self._recovery_state_unreadable = False
+        if getattr(self, "_pending_cycle_reset", None) is not None:
+            # Lo stato si ricarica dal disco (START nello stesso processo): il reset mai persistito non
+            # vale piu', perche' perdite e baseline tornano quelle del ciclo VECCHIO. Applicarlo alla
+            # scrittura successiva metterebbe la baseline nuova accanto alle perdite vecchie (secondo
+            # riesame indipendente ciclo 9 #512). Abbandonato e dichiarato, mai silenzioso.
+            self._pending_cycle_reset = None
+            logger.error("RSR-12/F032: reset di ciclo mai persistito abbandonato al ricaricamento dello stato")
+            bus = getattr(self, "bus", None)
+            if bus is not None:
+                bus.publish("CYCLE_RESET_ABANDONED", {"reason": "state_reloaded_before_reset_was_persisted"})
+        try:
+            raw = (self.db.get_settings() or {}).get(self._RECOVERY_KEY)
+            state = json.loads(raw) if raw not in (None, "") else {}
+            if not isinstance(state, dict):
+                raise ValueError("stato non dict")
+            self.table_manager.restore_recovery_state({int(k): float(v) for k, v in state.items()})
+            return True
+        except Exception as exc:
+            logger.error("RSR-12: stato dei tavoli di recovery illeggibile (%s): capacita' bloccata", exc)
+            self._recovery_state_unreadable = True
+            return False
+
+    def _maybe_auto_reset(self, available_drawdown: float) -> bool:
+        """PF-ALL-F026: auto-reset Roserpina deciso sul drawdown dell'equity di cassa (il regolato).
+
+        Snapshot del conto non valutabile o drawdown sotto soglia => nessun reset (fail-closed).
+        Il reset trattiene posizioni non regolate e riserve incerte e ribasa il picco di cassa.
+        """
+        cash_drawdown = self._cash_drawdown_pct()
+        if cash_drawdown is None:
+            return False
+        if cash_drawdown < self.config.auto_reset_drawdown_pct:
+            return False
+        self._reset_reservations_keeping_uncertain()   # PF-ALL-F024 / F026
+        self._reset_recovery_cycle_keeping_losses()
+        account = getattr(self, "_account_snapshot", None) or {}
+        if account.get("ok"):
+            self._cash_equity_peak = float(account["cash_equity"])   # il reset ribasa il picco (OC-04)
+        reset_ts = time.time()                                           # stesso istante per baseline e marker
+        expansion_state = self._expansion_cycle_state(                   # F032: nuovo ciclo
+            "auto_reset", funds={"available": account.get("available"), "exposure": account.get("committed")}
+            if account.get("ok") else None, set_at_ts=reset_ts)
+        # RSR-12 + marker reset + baseline in UNA transazione (rilievo Codex #512 ciclo 9, r4307328199)
+        if not self._persist_recovery_tables(cycle_reset=True, reset_ts=reset_ts, expansion_state=expansion_state):
+            self._declare_recovery_persist_failure("auto_reset")
+        self.bus.publish(
+            "ROSERPINA_AUTO_RESET",
+            {
+                "reason": "drawdown_limit",
+                "drawdown_pct": cash_drawdown,
+                "drawdown_basis": "cash_equity",
+                "available_drawdown_pct": available_drawdown,
+            },
+        )
+        return True
+
+    def _cash_drawdown_pct(self) -> Optional[float]:
+        """Drawdown dell'equity di cassa (regolato) rispetto al suo picco; None se non valutabile."""
+        account = getattr(self, "_account_snapshot", None) or {}
+        peak = float(getattr(self, "_cash_equity_peak", 0.0) or 0.0)
+        if not account.get("ok") or peak <= 0.0:
+            return None
+        equity = float(account["cash_equity"])
+        if equity >= peak:
+            return 0.0
+        return (peak - equity) / peak * 100.0
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
@@ -3701,9 +4791,15 @@ class RuntimeController:
             self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
             return
 
-        if table_id is not None:
-            self.table_manager.release(int(table_id), pnl=pnl)
-            
+        self._release_settled_tables(payload, table_id=table_id, pnl=pnl)   # PF-ALL-F026 / F2
+        if not self._persist_recovery_tables():                             # RSR-12
+            # Stato di recovery NON durevole: dopo un crash la perdita aggiornata non
+            # tornerebbe. Fail-closed: capacita' di recovery considerata esaurita (nessun
+            # nuovo ingresso in recovery) finche' una scrittura riesce (rilievo Codex #512).
+            self._recovery_persist_failed = True
+            self.bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"event_key": event_key,
+                                                               "market_id": payload.get("market_id")})
+
         # Persistenza cronologia Risk Desk (Issue #274/293)
         try:
             history_payload = {
@@ -3848,18 +4944,11 @@ class RuntimeController:
                 },
             )
 
-        if current_drawdown >= self.config.auto_reset_drawdown_pct:
-            self.table_manager.reset_all()
-            self.duplication_guard.clear()
-            self._reset_recovery_cycle_keeping_losses()
-
-            self.bus.publish(
-                "ROSERPINA_AUTO_RESET",
-                {
-                    "reason": "drawdown_limit",
-                    "drawdown_pct": current_drawdown,
-                },
-            )
+        # PF-ALL-F026: l'auto-reset ribasa il picco e libera risorse, quindi si decide sul drawdown
+        # del REGOLATO (equity di cassa), mai sul solo disponibile: le puntate aperte non sono
+        # perdite. Dati del conto non valutabili => nessun auto-reset (fail-closed). I blocchi
+        # protettivi (lockdown sotto, difesa nel MM) restano sulla base invariata.
+        self._maybe_auto_reset(current_drawdown)
 
         if current_drawdown >= self.config.lockdown_drawdown_pct:
             self.force_lockdown("Drawdown oltre soglia lockdown")
@@ -4130,6 +5219,12 @@ class RuntimeController:
         result["bankroll_after"] = float(self.risk_desk.bankroll_current)
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
         result["balance_source"] = "exchange_available"
+        # PF-ALL-F026: grandezze del conto registrate SEPARATAMENTE. La base dello stake e dei
+        # limiti (bankroll_current = disponibile) NON cambia.
+        account = self._record_account_snapshot(funds, source="settlement")
+        result["available_balance"] = account["available"]
+        result["committed_funds"] = account["committed"]
+        result["cash_equity"] = account["cash_equity"] if account["ok"] else None
         result["reason"] = "BALANCE_SYNCED_FROM_EXCHANGE"
         self._persist_cycle_checkpoint(
             settlement_key=settlement_key,
@@ -4155,6 +5250,12 @@ class RuntimeController:
         if not parts:
             return ""
         return "|".join(parts)
+
+    def _runtime_not_active_reason(self) -> str:
+        """Nessun nuovo ordine fuori da ACTIVE (PF-ALL-F027): un settlement contabilizzato in PAUSED o
+        LOCKDOWN non puo' far partire l'ordine successivo del ciclo."""
+        mode = getattr(self, "mode", None)
+        return "" if mode is RuntimeMode.ACTIVE else f"runtime_not_active:{getattr(mode, 'value', mode)}"
 
     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
         settlement_key = self._build_bankroll_sync_key(payload)
@@ -4314,7 +5415,7 @@ class RuntimeController:
         except Exception:
             next_event_exposure = float("inf")
         decision = self.mm.evaluate_next_trade_after_settlement(
-            signal=signal,
+            signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),
@@ -4497,11 +5598,17 @@ class RuntimeController:
                 },
             )
 
+        self._attach_single_entry_liquidity(submit_payload)   # PF-ALL-F030: anche l'ingresso del ciclo
+
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
         stop_block = ("emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
-                      else self._loss_block_reason() or self._exposure_stop())  # P38
+                      else self._runtime_not_active_reason()          # PF-ALL-F027: riconciliazione != ingresso
+                      or self._loss_block_reason() or self._exposure_stop(
+                          candidate_exposure=validators.order_exposure_or_inf(
+                              submit_payload["bet_type"], submit_payload["stake"], submit_payload["price"])
+                          if table_id is not None else 0.0))  # P38; candidato != violazione
         if stop_block:
             # Sblocca il tavolo attivato sopra: nessun CMD_QUICK_BET parte, quindi
             # nessun evento terminale lo libererebbe (tavolo/esposizione fantasma).
@@ -4813,6 +5920,9 @@ class RuntimeController:
         data["is_emergency_stopped"] = bool(self._emergency_stopped)
         data["emergency_stopped_at"] = str(self._emergency_stopped_at)
         data["emergency_reason"] = str(self._emergency_reason)
+        # Registro hedge inaffidabile (ciclo 15 #512): visibile, non solo nel log. Nessun rilascio per mercato con
+        # settlement per bet finche' resta True (sentinella rimossa dall'operatore + riavvio).
+        data["hedged_markets_unreliable"] = bool(getattr(self, "_hedged_markets_unreliable", False))
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["runtime_io"] = self.runtime_io_snapshot()

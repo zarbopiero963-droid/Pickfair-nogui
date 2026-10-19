@@ -106,6 +106,8 @@ class RoserpinaMoneyManagement:
         bankroll_current: float,
         equity_peak: float,
         daily_loss: float = 0.0,
+        expansion_growth_pct: Any = None,
+        expansion_growth_given: bool = False,
     ) -> DeskMode:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         equity_peak = self._safe_float(equity_peak, 0.0)
@@ -129,8 +131,19 @@ class RoserpinaMoneyManagement:
             return DeskMode.DEFENSE
 
         growth_pct = 0.0
-        if bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
-            # Fix bug EXPANSION (#320): calcolo corretto della crescita
+        if expansion_growth_given:
+            # PF-ALL-F032 (decisione owner CONTINUOUS-DELIVERY-04): crescita dell'equita' di cassa regolata
+            # rispetto alla baseline persistente del ciclo, calcolata dal runtime. Ignota (None) => nessuna
+            # espansione: mai stake aumentato su dati incerti.
+            growth = validators.finite_number(expansion_growth_pct)
+            if growth is None:
+                # Crescita IGNOTA => NORMAL prima di qualunque confronto con la soglia: con
+                # expansion_profit_pct <= 0 il vecchio "0.0 >= soglia" espandeva su dati incerti
+                # (rilievo Codex #512 su 034af59).
+                return DeskMode.NORMAL
+            growth_pct = growth
+        elif bankroll_current > 0 and equity_peak > 0 and bankroll_current >= equity_peak:
+            # Chiamanti senza baseline del ciclo (es. dutching): calcolo storico #320.
             growth_pct = ((bankroll_current - equity_peak) / equity_peak) * 100.0 if equity_peak > 0 else 0.0
 
         if growth_pct >= self._safe_float(self.config.expansion_profit_pct, 5.0):
@@ -337,6 +350,8 @@ class RoserpinaMoneyManagement:
             bankroll_current=bankroll_current,
             equity_peak=equity_peak,
             daily_loss=daily_loss,
+            expansion_growth_pct=signal.get("expansion_growth_snapshot"),
+            expansion_growth_given="expansion_growth_snapshot" in signal,
         )
 
         if desk_mode == DeskMode.LOCKDOWN:
@@ -417,24 +432,43 @@ class RoserpinaMoneyManagement:
                 },
             )
 
-        # clamp tecnico
-        recommended = self._clamp(recommended, min_stake, max(max_single, min_stake))
-        # Rischio dell'ordine (#461 PR28): BACK = stake, LAY = liability
-        # stake*(quota-1). Prima tutti i cap confrontavano lo stake: una LAY 10
-        # a 21 (liability 200) passava il tetto singolo di 180. La LAY oltre il
-        # tetto si rifiuta (nessun ridimensionamento: la formula di sizing resta
-        # alla PR23); soglia esatta con tolleranza float.
+        # PF-MICROSTAKE-OWNER-RECTIFICATION-20261017: lo stake calcolato NON si
+        # arrotonda mai verso l'alto fino al minimo. Il minimo configurato resta un
+        # limite: sotto, rifiuto ESPLICITO con lo stake richiesto in chiaro (il
+        # Microstake nativo esegue esattamente gli importi sotto il minimo exchange;
+        # un minimo software resta solo cio' che l'owner ha configurato).
+        if recommended < min_stake and not math.isclose(recommended, min_stake, rel_tol=0.0, abs_tol=1e-9):
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=recommended,
+                desk_mode=desk_mode,
+                reason="stake_sotto_min_stake",
+                table_id=table_id,
+                metadata={
+                    "base_stake": base_stake,
+                    "risk_mult": risk_mult,
+                    "desk_mult": desk_mult,
+                    "requested_stake": recommended,
+                    "min_stake": min_stake,
+                },
+            )
+        # Decisione owner 2 (PF-PR-RECOVERY-DECISIONS-02, 17/10/2026): lo stake calcolato non si
+        # ridimensiona MAI in silenzio al tetto del singolo ordine. Il cap resta un limite di
+        # rischio valido: oltre, rifiuto esplicito con lo stake RICHIESTO in chiaro (prima il BACK
+        # veniva ridotto al cap e approvato). Rischio dell'ordine (#461 PR28): BACK = stake,
+        # LAY = liability stake*(quota-1); soglia esatta con tolleranza float.
         exposure = validators.order_exposure(side, recommended, price)
 
         if validators.exceeds_cap(exposure, max_single):
             return MoneyManagementDecision(
                 approved=False,
-                recommended_stake=max_single,
+                recommended_stake=recommended,
                 desk_mode=desk_mode,
                 reason="supera_max_single_bet",
                 table_id=table_id,
                 metadata={
                     "recommended": recommended,
+                    "requested_stake": recommended,
                     "exposure": exposure,
                     "side": side,
                     "max_single": max_single,

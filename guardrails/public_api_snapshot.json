@@ -283,7 +283,8 @@
             "risk_middleware",
             "reconciliation_engine",
             "state_recovery",
-            "async_db_writer"
+            "async_db_writer",
+            "microstake_executor"
           ],
           "recover_after_restart": [],
           "submit_quick_bet": [

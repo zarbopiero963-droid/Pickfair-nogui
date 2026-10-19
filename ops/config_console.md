@@ -256,7 +256,9 @@ esplicita dell'operatore). `MIN_LIQUIDITY` resta non usata (superata da
 
 `trading_config.MAX_WIN` (10000.0) era *dead* (solo voce display in
 `config_registry`). Ora il tab **Roserpina** espone il campo "**Max Win €**" +
-la checkbox "**Max Win: solo avviso (⚠ togliere = BLOCCA il submit)**": un **cap
+la checkbox "**Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)**"
+(etichetta riallineata in CLOSURE-03: il flag governa solo il precheck dutching, il RiskGate sul percorso
+ordine blocca sempre oltre Max Win, H-14): un **cap
 di sicurezza sulla vincita/payout potenziale per gamba**, applicato sia al submit
 **dutching** sia al **bet manuale**.
 
