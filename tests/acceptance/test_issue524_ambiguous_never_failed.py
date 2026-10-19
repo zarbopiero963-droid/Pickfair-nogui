@@ -267,3 +267,69 @@ def _queue_entry(c):
     c.bus.publish = original_publish
     assert len(held) == 1, _rifiuti(c)
     return held[0]
+
+
+# ---------------------------------------------------------------- 7. contratto di _resolve_ambiguity, per livello
+def _engine_order(c):
+    payload = _queue_entry(c)
+    engine = c.engine
+    normalized = engine._normalize_request(payload)
+    ctx = engine._new_execution_context(normalized)
+    audit = engine._new_audit(ctx)
+    order_id = engine._persist_inflight(ctx, normalized)
+    return engine, ctx, audit, order_id
+
+
+def test_unpersisted_ambiguity_reports_its_original_cause_without_touching_the_finalize(tmp_path):
+    c = _catena(tmp_path)
+    engine, ctx, audit, order_id = _engine_order(c)
+    _fail_db_transition_to(c, "AMBIGUOUS")
+
+    result = engine._resolve_ambiguity(ctx, audit, order_id, ambiguity_reason="SUBMIT_TIMEOUT",
+                                       trigger_event="SUBMIT_AMBIGUOUS", trigger_error="read timeout")
+
+    assert result["status"] == "AMBIGUOUS" and result["is_terminal"] is False
+    assert result["error"] == "read timeout"                     # la causa vera, non l'errore del finalize
+    assert not any(e["type"].startswith("FINAL_") for e in audit["events"])
+
+
+def test_finalize_raising_after_a_persisted_ambiguity_still_returns_ambiguous(tmp_path):
+    c = _catena(tmp_path)
+    engine, ctx, audit, order_id = _engine_order(c)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("ORDER_ALREADY_FINALIZED")
+
+    engine._precheck_finalize = boom
+
+    result = engine._resolve_ambiguity(ctx, audit, order_id, ambiguity_reason="SUBMIT_TIMEOUT",
+                                       trigger_event="SUBMIT_AMBIGUOUS", trigger_error="read timeout")
+
+    assert result["status"] == "AMBIGUOUS" and result["is_terminal"] is False
+    assert _db_status(c, ctx.customer_ref) == ["AMBIGUOUS"]
+
+
+# ---------------------------------------------------------------- 8. riavvio del runtime (F018) sul DB reale
+def test_restarted_runtime_rebuilds_the_unpersisted_ambiguity_as_an_uncertain_held_table(tmp_path):
+    from core.duplication_guard import DuplicationGuard
+    from core.runtime_controller import RuntimeController
+    from core.table_manager import TableManager
+
+    c = _catena(tmp_path)
+    _broker_times_out_after_sending(c)
+    _fail_db_transition_to(c, "AMBIGUOUS")
+    c.rc._on_signal_received(_signal())
+    ref = c.bus.payloads("CMD_QUICK_BET")[-1]["customer_ref"]
+    assert _db_status(c, ref) == ["INFLIGHT"]
+
+    restarted = RuntimeController.__new__(RuntimeController)        # processo nuovo: solo DB ed exchange
+    restarted.db = c.db
+    restarted.betfair_service = c.rc.betfair_service
+    restarted.table_manager = TableManager(table_count=5)
+    restarted.duplication_guard = DuplicationGuard()
+
+    result = restarted._rebuild_open_positions()
+
+    assert result["ok"] is True and result["uncertain"] == [ref]        # riserva incerta, non ricostruita libera
+    (held,) = [t for t in restarted.table_manager.snapshot() if t.get("status") != "FREE"]
+    assert held["market_id"] == "1.234" and held["current_exposure"] > 0   # tavolo ed esposizione trattenuti
