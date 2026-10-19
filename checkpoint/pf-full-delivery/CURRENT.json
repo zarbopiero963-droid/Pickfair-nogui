@@ -6,8 +6,8 @@
   "sha": "3d3f5cca90420d576ee5d576cd749ab69eced004"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "CI/Sol/Grok/Codex settled su 3d3f5cc; risposte con prova ai thread B3/B4/B5 e ai bloccanti Grok; resolve thread con prova a CI settled; verdetto READY FOR OWNER MERGE o BLOCKED. Ciclo 12 vietato: nuovi blocker => evidenze e stop.",
- "previous_checkpoint_sha": "7a0cb1cfc49546d59ab94e1880dbe0bfdaeae39e",
+ "next_atomic_action": "ATTENDERE decisione owner sul ciclo 12. Evidenze RED in scratchpad c12_evidence/test_c12_red_probes.py (non committate). Nessun push, nessun merge, #505 intoccata.",
+ "previous_checkpoint_sha": "2f0498c3fc849b5bea0e6938e3badfc81ab2d23a",
  "schema": "pf-current/1",
- "seq": 38
+ "seq": 39
 }

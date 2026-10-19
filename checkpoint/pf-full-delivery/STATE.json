@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 38,
- "updated_at": "2026-10-19T08:00:00Z",
+ "seq": 39,
+ "updated_at": "2026-10-19T08:50:00Z",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -457,10 +457,10 @@
   }
  ],
  "owner_decisions_pending": [
-  "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
+  "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "CI/Sol/Grok/Codex settled su 3d3f5cc; risposte con prova ai thread B3/B4/B5 e ai bloccanti Grok; resolve thread con prova a CI settled; verdetto READY FOR OWNER MERGE o BLOCKED. Ciclo 12 vietato: nuovi blocker => evidenze e stop.",
+ "next_atomic_action": "ATTENDERE decisione owner sul ciclo 12. Evidenze RED in scratchpad c12_evidence/test_c12_red_probes.py (non committate). Nessun push, nessun merge, #505 intoccata.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,7 +470,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "7a0cb1cfc49546d59ab94e1880dbe0bfdaeae39e",
+ "previous_checkpoint_sha": "2f0498c3fc849b5bea0e6938e3badfc81ab2d23a",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -1087,11 +1087,12 @@
   "twelfth_cycle": "NON AUTORIZZATO"
  },
  "threads_pr512": {
-  "resolved_with_proof": 25,
-  "open": 21,
-  "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
+  "resolved_with_proof_total": 40,
+  "resolved_cycle11": 15,
+  "open": 19,
+  "open_detail": "13 DEFERRED_BY_POLICY (#516-#521), 4 duplicati/varianti Codex 3d3f5cc rinviati (#517/#518), 2 P1 Codex PATCH_REQUIRED (ciclo 12)"
  },
- "verdict_pr512": "ciclo 11 pubblicato (3d3f5cc); verdetto dopo CI e review",
+ "verdict_pr512": "BLOCKED (ciclo 11 chiuso su 3d3f5cc): B1-B5 chiusi con prova; residui 2 P1 Codex confermati RED (r4311806874 errore SQLite post-invio => FAILED con stub vivo; r4311806886 provenienza settlement emergenza non persistita); ciclo 12 non autorizzato. Report #512 c.6263256483, #426 c.6263257590",
  "owner_rectification_20261018": {
   "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",
@@ -1155,5 +1156,6 @@
     "r4309039345"
    ]
   }
- }
+ },
+ "ci_3d3f5cc": "settled: 37/39 success; rossi overlap-check (strutturale) e Merge readiness (UNSTABLE + 28 thread aperti al momento del run)"
 }
