@@ -52,8 +52,16 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   scrittura serializzata da un lock) e su quel mercato un settlement **per bet** (`cleared:<mercato>:<bet>` o chiave
   assente) non rilascia per mercato; registro illeggibile o non persistito => nessun rilascio per mercato
   (fail-closed). Il settlement SIM e' **per mercato** (`sim:<mercato>:<id>`, netto di tutte le gambe, hedge
-  compreso) e continua a rilasciare. Limite residuo dichiarato: un errore di scrittura del registro e' noto solo in
-  memoria (stesso archivio guasto), quindi dopo un riavvio quel mercato non risulta marcato (#521). Corretto nel ciclo 14 della #512 (verifica indipendente,
+  compreso) e continua a rilasciare. Scrittura del registro fallita: oltre al flag in memoria si scrive una
+  sentinella durevole su un canale diverso dal DB, `<db_path>.hedged_markets.unreliable` (una riga JSON per mercato,
+  nessun segreto). Se esiste all'avvio, il registro e' inaffidabile: nessun rilascio per mercato con settlement per
+  bet — su **tutti** i mercati, non solo quelli elencati — finche' l'operatore, dopo aver riconciliato i mercati con
+  cashout elencati nella sentinella, non la rimuove a mano **e riavvia** (la sentinella si legge solo all'avvio); i
+  tavoli gia' trattenuti si liberano poi con `reset_cycle()` o con l'auto-reset (ciclo 15 della #512, bloccante Sol
+  su 180ffa3). Lo stato e' visibile in `get_status()["hedged_markets_unreliable"]` e nel log critico; l'evento
+  `HEDGE_REGISTRY_UNRELIABLE` viene pubblicato ma oggi non ha consumatori cablati (notifica Telegram/health: #521). Limiti residui dichiarati (#521): un crash fra il piazzamento dell'hedge e la
+  consegna dell'esito sul bus; una sentinella non scrivibile (stesso filesystem guasto del DB: resta il solo flag in
+  memoria e il log critico). Corretto nel ciclo 14 della #512 (verifica indipendente,
   r4303297587): l'affermazione precedente «invariato rispetto a main» era falsa per l'effetto sulla perdita di
   recovery, perché su main il rilascio per mercato senza `table_id` non esisteva.
 

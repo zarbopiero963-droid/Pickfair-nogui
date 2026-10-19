@@ -1783,3 +1783,46 @@ def test_c14_hedge_registry_concurrent_updates_are_not_lost():
     [t.join() for t in threads]
     persisted = json.loads(db.settings["roserpina.hedged_markets"])
     assert {f"5.{i}" for i in range(16)} <= set(persisted), sorted(persisted)
+
+
+# ------------------------------------------------------------------ ciclo 15 (bloccante Sol su 180ffa3)
+def test_c15_failed_registry_save_survives_restart_as_unreliable(tmp_path):
+    """Sol su 180ffa3: se save_settings fallisce dopo un hedge, il fail-closed restava in RAM; al riavvio il registro
+    leggibile (senza quel mercato) risultava affidabile e il settlement di UNA gamba liberava il tavolo. Ora una
+    sentinella durevole accanto al DB rende il registro inaffidabile anche dopo il riavvio."""
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}], fail_save=True)
+    db.db_path = str(tmp_path / "pickfair.db")
+    rc = _c14_rc(db)
+    _c14_hedge(rc)                                           # hedge sul mercato 1.10, registro NON persistito
+    sentinel = tmp_path / "pickfair.db.hedged_markets.unreliable"
+    assert sentinel.exists(), "nessuna traccia durevole del registro non persistito"
+    db.fail_save = False                                     # il DB torna a funzionare, processo riavviato
+    again = _c14_rc(db)
+    assert again._hedged_markets_unreliable is True
+    again._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:1"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in again.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "rilascio con P&L di una sola gamba"
+
+
+def test_c15_no_sentinel_without_a_failure(tmp_path):
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
+    db.db_path = str(tmp_path / "pickfair.db")
+    rc = _c14_rc(db)
+    _c14_hedge(rc, market="2.20")
+    assert not (tmp_path / "pickfair.db.hedged_markets.unreliable").exists()
+    assert _c14_rc(db)._hedged_markets_unreliable is False
+
+
+def test_c15_unreliable_registry_is_visible_and_notified(tmp_path):
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}], fail_save=True)
+    db.db_path = str(tmp_path / "pickfair.db")
+    rc = _c14_rc(db)
+    sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
+    from test_f026_units import _Bus
+    rc.bus = _Bus()
+    _c14_hedge(rc)
+    events = [n for n, _p in rc.bus.events]
+    assert "HEDGE_REGISTRY_UNRELIABLE" in events, events
+    import inspect
+    from core.runtime_controller import RuntimeController
+    assert 'data["hedged_markets_unreliable"]' in inspect.getsource(RuntimeController.get_status)

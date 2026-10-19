@@ -5,6 +5,7 @@ import inspect
 import json
 import logging
 import math
+import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -3966,6 +3967,14 @@ class RuntimeController:
         (doppi di test) parte vuoto: il DB reale le ha sempre."""
         self._hedged_markets = {}
         self._hedged_markets_unreliable = False
+        sentinel = self._hedged_markets_sentinel_path()
+        if sentinel and os.path.exists(sentinel):
+            # Una scrittura del registro e' fallita in un processo precedente (bloccante Sol su 180ffa3): il registro
+            # leggibile puo' non contenere quel mercato. Inaffidabile finche' l'operatore non rimuove la sentinella
+            # dopo aver riconciliato i mercati con cashout.
+            logger.critical("Registro hedge: sentinella %s presente, nessun rilascio per mercato", sentinel)
+            self._hedged_markets_unreliable = True
+            self._publish_hedge_registry_unreliable("sentinel_present_at_startup")
         getter = getattr(self.db, "get_settings", None)
         if not callable(getter):
             return
@@ -4017,6 +4026,40 @@ class RuntimeController:
             logger.exception("Registro hedge di cashout non persistito (mercato %s): nessun rilascio per mercato",
                              market_id)
             self._hedged_markets_unreliable = True
+            self._write_hedged_markets_sentinel(market_id)
+            self._publish_hedge_registry_unreliable("registry_write_failed", market_id=market_id)
+
+    def _publish_hedge_registry_unreliable(self, reason: str, **detail) -> None:
+        """Pubblica l'evento HEDGE_REGISTRY_UNRELIABLE (oggi nessun consumatore cablato: il segnale osservabile e'
+        `get_status()["hedged_markets_unreliable"]` piu' il log critico; consumer Telegram/health in #521). Mai raise."""
+        try:
+            self.bus.publish("HEDGE_REGISTRY_UNRELIABLE", {"reason": reason,
+                                                            "sentinel": self._hedged_markets_sentinel_path(),
+                                                            **detail})
+        except Exception:
+            logger.exception("HEDGE_REGISTRY_UNRELIABLE non pubblicato")
+
+    def _hedged_markets_sentinel_path(self) -> str:
+        """Sentinella durevole su un canale diverso dal DB (file accanto al database): sopravvive al riavvio anche se
+        la scrittura del registro nel DB e' fallita. DB in memoria o senza percorso => nessuna sentinella."""
+        path = str(getattr(self.db, "db_path", "") or "")
+        if not path or path == ":memory:":
+            return ""
+        return f"{path}.hedged_markets.unreliable"
+
+    def _write_hedged_markets_sentinel(self, market_id: str) -> None:
+        sentinel = self._hedged_markets_sentinel_path()
+        if not sentinel:
+            logger.critical("Registro hedge non persistito e nessuna sentinella possibile (mercato %s)", market_id)
+            return
+        try:
+            with open(sentinel, "a", encoding="utf-8") as fh:
+                fh.write(json.dumps({"market_id": market_id, "at": datetime.now(timezone.utc).isoformat()}) + "\n")
+                fh.flush()
+                os.fsync(fh.fileno())
+        except Exception:
+            logger.critical("Registro hedge non persistito e sentinella non scrivibile (mercato %s)", market_id,
+                            exc_info=True)
 
     def _single_bet_position(self, table: dict, *, per_bet: bool = True) -> bool:
         """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo
@@ -5839,6 +5882,9 @@ class RuntimeController:
         data["is_emergency_stopped"] = bool(self._emergency_stopped)
         data["emergency_stopped_at"] = str(self._emergency_stopped_at)
         data["emergency_reason"] = str(self._emergency_reason)
+        # Registro hedge inaffidabile (ciclo 15 #512): visibile, non solo nel log. Nessun rilascio per mercato con
+        # settlement per bet finche' resta True (sentinella rimossa dall'operatore + riavvio).
+        data["hedged_markets_unreliable"] = bool(getattr(self, "_hedged_markets_unreliable", False))
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["runtime_io"] = self.runtime_io_snapshot()

@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 15 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `180ffa3`. Se la scrittura del
+  registro `roserpina.hedged_markets` falliva, il fail-closed restava in RAM e dopo un riavvio il registro leggibile
+  (senza quel mercato) era trattato come affidabile. Ora si scrive anche una sentinella durevole accanto al DB
+  (`<db_path>.hedged_markets.unreliable`, fsync); se presente all'avvio il registro e' inaffidabile finche'
+  l'operatore non la rimuove dopo la riconciliazione. Test `test_c15_*` in `tests/test_pr512_codex_034af59.py`.
 - **PR #512 ciclo 14 (PF-QA-AUTONOMOUS-CONTINUATION-01 / PF-PR-SEQUENCE-RECOVERY-01, owner 19/10/2026):** la verifica
   indipendente dei rinvii ha classificato BLOCKING il residuo di r4303297587. Con posizione singola + hedge di cashout
   (che passa da OrderRouter senza riga in `orders`) il settlement per bet senza `table_id` di una sola gamba liberava
