@@ -1386,3 +1386,47 @@ def test_a_single_queued_entry_is_unaffected_by_the_conflict_rule(tmp_path):
     c = _catena(tmp_path)
     c.rc._on_signal_received(_signal(customer_ref="ref-solo"))
     assert len(c.broker.state.orders) == 1
+
+
+
+# Review indipendente su 7a715c6: un ingresso rifiutato dall'engine prima del controllo del fence non lascia un
+# fence orfano che metterebbe in conflitto permanente le riconsegne con lo stesso customer_ref.
+def test_entry_refused_in_lockdown_leaves_no_orphan_fence_and_a_redelivery_is_not_in_conflict(tmp_path):
+    c = _catena(tmp_path)
+    payload = _queue_one_entry(c)
+    ref = payload["customer_ref"]
+    c.engine.safe_mode = type("_Lockdown", (), {"is_lockdown": lambda self: True})()
+
+    _run_queued(c, payload)                                   # rifiutato in lockdown, prima del fence
+
+    assert c.rc._queued_entry_fences == {}
+    c.engine.safe_mode = None
+    with c.rc._risk_admission_lock:
+        fence = c.rc._capture_admission_fence(_signal())
+    redelivered = {"customer_ref": ref}
+    c.rc._register_queued_entry_fence(redelivered, fence)
+    assert c.rc.admission_fence_verdict(redelivered) != "customer_ref_in_conflitto"
+
+
+def test_entry_failing_normalization_leaves_no_orphan_fence(tmp_path):
+    c = _catena(tmp_path)
+    payload = _queue_one_entry(c)
+    payload["price"] = "non-un-prezzo"                        # normalizzazione fallita nell'engine
+
+    _run_queued(c, payload)
+
+    assert c.broker.state.orders == {}
+    assert c.rc._queued_entry_fences == {}
+
+
+def test_discard_never_removes_the_fence_of_another_request(tmp_path):
+    c = _catena(tmp_path)
+    with c.rc._risk_admission_lock:
+        fence = c.rc._capture_admission_fence(_signal())
+    owner = {"customer_ref": "ref-o"}
+    c.rc._register_queued_entry_fence(owner, fence)
+
+    c.rc.admission_fence_discard({"customer_ref": "ref-o"})    # altra richiesta, stesso ref: nessun effetto
+    assert len(c.rc._queued_entry_fences["ref-o"]) == 1
+    c.rc.admission_fence_discard(owner)
+    assert c.rc._queued_entry_fences == {}

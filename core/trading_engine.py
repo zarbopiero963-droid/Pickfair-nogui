@@ -822,6 +822,7 @@ class TradingEngine:
         # Hard Block Kill Switch (#284)
         if self.safe_mode and hasattr(self.safe_mode, "is_lockdown") and self.safe_mode.is_lockdown():
             logger.warning("TRADING_ENGINE_HARD_BLOCK: System in LOCKDOWN mode. Rejecting order.")
+            self._discard_unchecked_admission_fence(payload)
             return {
                 "status": STATUS_DENIED,
                 "outcome": LIFECYCLE_CONTRACT["FAILED"]["outcome"],
@@ -851,6 +852,20 @@ class TradingEngine:
                         done(request, certain=certain)
                     except Exception:
                         logger.exception("Chiusura della registrazione d'invio fallita")
+            if not pending:
+                # Uscita prima del controllo del fence (normalizzazione fallita, engine non pronto): il fence
+                # in coda per questa richiesta non resta orfano (review indipendente su 7a715c6).
+                self._discard_unchecked_admission_fence(payload)
+
+    def _discard_unchecked_admission_fence(self, payload: Dict[str, Any]) -> None:
+        """Ordine rifiutato prima del controllo del fence: il runtime scarta il fence in coda della richiesta.
+        Senza, una riconsegna con lo stesso customer_ref troverebbe due fence e resterebbe in conflitto."""
+        discard = getattr(getattr(self, "runtime_controller", None), "admission_fence_discard", None)
+        if callable(discard):
+            try:
+                discard(payload)
+            except Exception:
+                logger.exception("Scarto del fence d'ammissione non controllato fallito")
 
     # ==================================================================
     # [P5] RECOVERY — Normalized result contract

@@ -233,7 +233,10 @@ ritardato (PF-EXEC-03).
   (`ADMISSION_FENCE_RAISED` / `ADMISSION_FENCE_BAD_RESULT`).
 - **Un fence per richiesta**: due ingressi in coda con lo stesso `customer_ref`
   non si scambiano il fence; finché la coda di quel ref non si svuota sono
-  negati tutti (`customer_ref_in_conflitto`, fail-closed).
+  negati tutti (`customer_ref_in_conflitto`, fail-closed). Una richiesta
+  rifiutata dall'engine prima del controllo (lockdown, normalizzazione fallita)
+  scarta solo il proprio fence (`admission_fence_discard`), così non resta un
+  fence orfano.
 - **Ingresso già in invio**: un ingresso che ha superato il fence resta registrato
   come «in volo» finché l'engine non ha l'esito dell'invio
   (`admission_placement_done`, qualunque esito). Un cashout nel suo ambito, prima

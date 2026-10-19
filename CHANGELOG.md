@@ -114,7 +114,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - **Codex su `fcbaad7` (deroga owner sul fix loop della #522, fino al ciclo 10):** due ingressi in coda con
       lo stesso `customer_ref` si sovrascrivevano il fence, quindi il primo poteva partire con il fence
       dell'altro evento e il secondo senza fence. Ora c'è un fence per richiesta e, finché quel ref ha più
-      ingressi in coda, sono negati tutti (`customer_ref_in_conflitto`).
+      ingressi in coda, sono negati tutti (`customer_ref_in_conflitto`). Un ingresso rifiutato dall'engine
+      prima del controllo del fence (lockdown, normalizzazione fallita, engine non pronto) scarta il proprio
+      fence (`admission_fence_discard`, legato all'identità della richiesta): nessun fence orfano lascia le
+      riconsegne dello stesso intento in conflitto fino al riavvio (review indipendente su `7a715c6`).
     - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
       fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
       dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla
