@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 42,
- "updated_at": "2026-10-19T14:44:25.999401+00:00",
+ "seq": 43,
+ "updated_at": "2026-10-19T16:47:48.789594+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Triage CI/Sol/Grok su #522 head ab0df6e; merge solo con autorizzazione owner",
+ "next_atomic_action": "Attendere CI/Sol/Grok/Codex su c4ac69e; triage; risolvere 4 thread Codex con CI settled; Merge readiness; report finale per autorizzazione owner (NO merge)",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -469,20 +469,18 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "phase": "D",
   "pr": 522,
-  "replaces": 505,
-  "head": "ab0df6e",
-  "regression": "8221 passed 0 failed",
-  "integration_fixes": [
-   "F030 fetch fuori dal lock di ammissione",
-   "event_id/event_identity persistiti e ricostruiti F018"
-  ],
-  "f026_31": "requisito cambiato (cap default attivi pre-rettifica); 34/34 passano sul codice integrato",
-  "status": "CHECKS_PENDING"
+  "head": "c4ac69e",
+  "regression": "8294 passed 0 failed",
+  "status": "CHECKS_PENDING",
+  "codex_findings": "4/4 corretti con RED->GREEN (6371030, dc9d951, bdd7a21, c4ac69e)",
+  "independent_verification": "0 P0/P1; 21/25 mutazioni + 3 chiuse in c4ac69e",
+  "monetary_rectification": "max_stake_abs/max_win None di default (#426 c.6272356144)",
+  "formal_verification_spec": "docs/verification/continuous_formal_verification.md@c4ac69e",
+  "archive": "archive/pr512-head=fda6992; simulate-merge success"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "26db3e554e3c984476c5b0f608b0a272cdda7ac6",
+ "previous_checkpoint_sha": "af9016c38a6a22f019c61e6b66fa10039fe7c5e6",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -560,12 +558,12 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "ab0df6e492c3ad34ac2c908534b1e89fc2d31ea8",
+  "sha": "c4ac69e53a503915235f79cdfe9e71ad24e496fa",
   "verified_with": "git push + git ls-remote",
   "patch": {
-   "head": "ab0df6e492c3ad34ac2c908534b1e89fc2d31ea8",
-   "tree": "eead266b8b448fd48c8df4acbbfd87c23829f701",
-   "captured_at": "2026-10-19T14:44:26+00:00",
+   "head": "c4ac69e53a503915235f79cdfe9e71ad24e496fa",
+   "tree": "7ffe6128e8e329bde0a8cdf5cff83713c8328099",
+   "captured_at": "2026-10-19T16:47:49+00:00",
    "modified": [],
    "untracked": [],
    "files": [
