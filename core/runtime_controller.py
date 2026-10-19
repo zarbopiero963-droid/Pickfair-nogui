@@ -3311,6 +3311,31 @@ class RuntimeController:
     def _end_cashout_barrier(self, barrier_id: int) -> None:
         getattr(self, "_cashout_barriers", {}).pop(barrier_id, None)
 
+    def _call_outside_admission_lock(self, fn, *args):
+        """Esegue ``fn`` (rete: best price, book F030) senza trattenere ``_risk_admission_lock``.
+
+        Rilascia solo se il thread corrente lo possiede a un solo livello. In un'ammissione
+        rientrante il livello esterno e' a meta' della propria sezione critica: il lock resta
+        tenuto, come prima di questa correzione (``release()`` su un RLock annidato non lo
+        liberava). Chiamato senza lock (test o percorsi diretti) esegue e basta. Il chiamante
+        rivalida il fence di ammissione al ritorno: un cashout arrivato durante la rete invalida
+        l'ingresso prima di ogni ordine.
+        """
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        is_owned = getattr(lock, "_is_owned", None)
+        release_save = getattr(lock, "_release_save", None)
+        acquire_restore = getattr(lock, "_acquire_restore", None)
+        state = (release_save() if callable(is_owned) and is_owned()
+                 and callable(release_save) and callable(acquire_restore) else None)
+        if state is not None and state[0] != 1:
+            acquire_restore(state)      # rientrante: nessun rilascio parziale
+            state = None
+        try:
+            return fn(*args)
+        finally:
+            if state is not None:
+                acquire_restore(state)
+
     def _admission_fence_valid(self, fence: tuple[tuple, ...]) -> bool:
         keys = {key for key, _epoch in fence}
         if any(keys.intersection(scope) for scope in getattr(self, "_cashout_barriers", {}).values()):
@@ -3574,6 +3599,10 @@ class RuntimeController:
             "price": float(signal.get("price") or signal.get("odds")),
             "stake": float(decision.recommended_stake),
             "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
+            # Identita' canonica dell'evento (#505) persistita nell'ordine: la ricostruzione F018 (#512)
+            # la rimette nel meta del tavolo, cosi' il cap evento riconosce l'evento anche dopo un riavvio.
+            "event_id": signal.get("event_id") or signal.get("eventId"),
+            "event_identity": event_identity,
             "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
             "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
             "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
@@ -3649,14 +3678,16 @@ class RuntimeController:
         # daily-loss/emergency qui sotto coprano anche la finestra dello snapshot
         # (niente approved-without-submit). Con flag OFF e' un no-op totale e
         # ritorna False => i gate sotto restano identici a oggi.
-        admission_lock = getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock)
         # La rete/prezzo non deve trattenere il lock di ammissione: il cashout
-        # può partire subito e incrementare l'epoch scoped.
-        admission_lock.release()
-        try:
-            best_price_attempted = self._apply_direct_best_price(payload)
-        finally:
-            admission_lock.acquire()
+        # può partire subito e incrementare l'epoch scoped. Vale anche per il
+        # book di PF-ALL-F030 (#512, attivo di default): letto alla quota finale,
+        # nella stessa finestra fuori dal lock (integrazione #505/#512, fase D).
+        def _network_window() -> bool:
+            attempted = self._apply_direct_best_price(payload)
+            self._attach_single_entry_liquidity(payload)
+            return attempted
+
+        best_price_attempted = self._call_outside_admission_lock(_network_window)
         if not self._admission_fence_valid(admission_fence):
             self._release_acquired_and_reject(
                 signal, event_key=event_key, table_id=decision.table_id,
@@ -3669,8 +3700,8 @@ class RuntimeController:
                                               reason="esposizione_cresciuta_dopo_best_price")
             return
 
-        # PF-ALL-F030: liquidita' eseguibile dell'ingresso singolo, alla quota finale, per il RiskGate.
-        self._attach_single_entry_liquidity(payload)
+        # PF-ALL-F030: la liquidita' eseguibile dell'ingresso singolo, alla quota finale, e' gia' nel
+        # payload (letta sopra nella finestra di rete, fuori dal lock di ammissione).
 
         # Gate finali pre-submit, RIESEGUITI dopo lo snapshot. Vanno PRIMA di
         # SIGNAL_APPROVED perche' l'audit consuma sia SIGNAL_APPROVED sia
@@ -3976,8 +4007,10 @@ class RuntimeController:
                 "stake": p.get("stake"),
                 "price": p.get("price"),
                 "bet_id": bet_id,
-                "meta": {k: p.get(k) for k in ("event_name", "market_name", "runner_name", "bet_type",
-                                               "price", "simulation_mode")},
+                # event_id/event_identity (#505): identita' dell'evento per il cap evento dopo il riavvio;
+                # assenti negli ordini salvati prima => None, resta il confronto per nome.
+                "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
+                                               "runner_name", "bet_type", "price", "simulation_mode")},
             }
             # Rilievo Codex #512 (r4306544229): un lato assente/non valido NON si inventa (BACK
             # sottostimerebbe la liability di un LAY): la riga resta non attribuita, riconciliazione.
@@ -5924,12 +5957,16 @@ class RuntimeController:
                 },
             )
 
-        self._attach_single_entry_liquidity(submit_payload)   # PF-ALL-F030: anche l'ingresso del ciclo
+        # PF-ALL-F030: anche l'ingresso del ciclo. Il fetch del book gira fuori dal lock di ammissione
+        # (#505) come sul percorso del segnale; un cashout arrivato nel frattempo invalida l'ingresso.
+        fence = self._capture_admission_fence(submit_payload)
+        self._call_outside_admission_lock(self._attach_single_entry_liquidity, submit_payload)
 
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
-        stop_block = ("emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
+        stop_block = ("cashout_invalidation_stale" if not self._admission_fence_valid(fence)
+                      else "emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
                       else self._runtime_not_active_reason()          # PF-ALL-F027: riconciliazione != ingresso
                       or self._loss_block_reason() or self._exposure_stop(
                           candidate_exposure=validators.order_exposure_or_inf(
@@ -6190,6 +6227,7 @@ class RuntimeController:
             "stake": float(decision_stake),
             "event_name": normalized_signal.get("event") or normalized_signal.get("match") or normalized_signal.get("event_name") or "",
             "event_id": normalized_signal.get("event_id") or normalized_signal.get("eventId"),
+            "event_identity": self._event_identity(normalized_signal),
             "market_name": normalized_signal.get("market") or normalized_signal.get("market_name") or normalized_signal.get("market_type") or "",
             "runner_name": normalized_signal.get("selection") or normalized_signal.get("runner_name") or normalized_signal.get("runnerName") or "",
             "simulation_mode": bool(normalized_signal.get("simulation_mode", self.simulation_mode)),

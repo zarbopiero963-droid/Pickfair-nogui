@@ -2269,6 +2269,7 @@
         "services/telegram_signal_processor.py",
         "telegram_listener.py",
         "tests/acceptance/test_issue437_pr28d.py",
+        "tests/acceptance/test_issue437_pr28d_integration_512.py",
         "tests/acceptance/test_issue437_pr28d_rectification.py",
         "tests/core/test_auto_trade_mm_gate.py",
         "tests/core/test_cycle_executor.py",
@@ -2283,9 +2284,9 @@
         "tests/unit/test_telegram_listener_copy_pattern_action.py",
         "tests/unit/test_ui_freeze_boundaries.py"
       ],
-      "max_files": 25,
+      "max_files": 26,
       "allow_tests": true,
-      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505)."
+      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505). Correzioni d'integrazione #505/#512 dal riesame indipendente (fetch F030 fuori dal lock di ammissione; event_id/event_identity persistiti e ricostruiti da F018): test in tests/acceptance/test_issue437_pr28d_integration_512.py."
     }
   }
 }

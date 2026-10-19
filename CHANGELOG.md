@@ -21,6 +21,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     è fermata prima dalla #512 (`evento_gia_in_posizione`);
   - F033 (cap evento aggregato su più mercati dello stesso incontro) non è più xfail, perché lo consegna la #505.
 
+  Il riesame indipendente ha trovato due difetti P1 nati solo dalla combinazione #505 + #512, entrambi corretti
+  (RED→GREEN, `tests/acceptance/test_issue437_pr28d_integration_512.py`):
+  - **lock di ammissione durante la rete:** il fetch del book di PF-ALL-F030 (attivo di default) girava con
+    `_risk_admission_lock` tenuto, quindi un CASHOUT/CASHOUT_ALL, `risk_stop` o il salvataggio della config
+    aspettavano la rete dell'ingresso. Ora il fetch gira fuori dal lock, insieme al best price
+    (`_call_outside_admission_lock`), sia sul segnale sia sull'auto-next. Un cashout arrivato nel frattempo
+    invalida l'ingresso prima di ogni ordine (`cashout_invalidation_stale`) e il tavolo viene liberato. In
+    un'ammissione rientrante il lock resta tenuto;
+  - **identità dell'evento dopo il riavvio:** l'ordine ora salva `event_id` ed `event_identity` e la
+    ricostruzione F018 li rimette nel meta del tavolo. Con `max_event_exposure_abs` configurato, due segnali
+    dello stesso `event_id` con nomi scritti diversamente vengono riconosciuti come lo stesso evento anche dopo
+    un riavvio. Gli ordini salvati prima di questa correzione restano riconosciuti per nome, come prima.
+
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
   `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
