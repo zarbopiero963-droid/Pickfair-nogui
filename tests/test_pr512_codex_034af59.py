@@ -1826,3 +1826,69 @@ def test_c15_unreliable_registry_is_visible_and_notified(tmp_path):
     import inspect
     from core.runtime_controller import RuntimeController
     assert 'data["hedged_markets_unreliable"]' in inspect.getsource(RuntimeController.get_status)
+
+
+# ------------------------------------------------------------------ ciclo 16 (bloccante Sol su 23bdbfe)
+class _C16Service:
+    def __init__(self, rows=None, fail=False):
+        self.rows = rows
+        self.fail = fail
+        self.calls = []
+
+    def list_cleared_orders(self, **kw):
+        self.calls.append(kw)
+        if self.fail:
+            raise RuntimeError("betfair down")
+        return list(self.rows or [])
+
+
+class _C16Db(_C14Db):
+    def __init__(self, *a, bot_bets=(), **kw):
+        super().__init__(*a, **kw)
+        self.bot_bets = list(bot_bets)
+
+    def get_bot_active_orders(self):
+        return [{"bet_id": b, "market_id": "1.10", "event_name": "E"} for b in self.bot_bets]
+
+
+def _c16_rc(service, *, bot_bets=("111",), fail_save=False, tmp_path=None):
+    db = _C16Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}], bot_bets=bot_bets, fail_save=fail_save)
+    if tmp_path is not None:
+        db.db_path = str(tmp_path / "ro" / "pickfair.db")          # directory inesistente: sentinella non scrivibile
+    rc = _c14_rc(db)
+    rc.betfair_service = service
+    return rc
+
+
+def _c16_table(rc):
+    return {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+
+
+def test_c16_foreign_settled_leg_on_the_exchange_blocks_release_without_any_local_state(tmp_path):
+    """Sol su 23bdbfe: con filesystem in sola lettura falliscono registro E sentinella; dopo il riavvio il registro
+    vecchio e' 'affidabile'. La riconciliazione sull'exchange non dipende da scritture locali: una bet regolata sul
+    mercato che non e' del bot (l'hedge) => nessun rilascio per mercato."""
+    service = _C16Service(rows=[{"betId": "111", "marketId": "1.10"}, {"betId": "999", "marketId": "1.10"}])
+    rc = _c16_rc(service, fail_save=True, tmp_path=tmp_path)
+    _c14_hedge(rc)                                           # registro E sentinella falliscono
+    again = _c16_rc(service, tmp_path=tmp_path)              # riavvio: nessuna traccia locale dell'hedge
+    assert again._hedged_markets_unreliable is False
+    again._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    t = _c16_table(again)
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "rilascio con il P&L di una sola gamba"
+    assert service.calls and service.calls[-1].get("market_ids") == ["1.10"]
+
+
+@pytest.mark.parametrize("service", [_C16Service(fail=True), _C16Service(rows=[]),
+                                     _C16Service(rows=[{"marketId": "1.10"}]), _C16Service(rows=["x"])])
+def test_c16_unreadable_exchange_reconciliation_is_fail_closed(service):
+    rc = _c16_rc(service)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    assert _c16_table(rc)["current_event_key"] == "EV-A"
+
+
+def test_c16_only_bot_legs_on_the_exchange_still_release():
+    rc = _c16_rc(_C16Service(rows=[{"betId": "111", "marketId": "1.10"}]))
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    t = _c16_table(rc)
+    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0

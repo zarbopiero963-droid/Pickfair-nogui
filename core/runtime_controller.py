@@ -3941,8 +3941,11 @@ class RuntimeController:
         certain = [t for t in matches if str(t.get("current_event_key")) not in uncertain_keys]
         # Settlement SIM per MERCATO (`sim:<mercato>:<id>`): il broker regola il netto di tutte le gambe, hedge
         # compreso. Ogni altro (cleared per bet, chiave assente) e' per bet: un hedge lo rende non attribuibile.
-        per_bet = not str((payload or {}).get("event_key") or "").startswith("sim:")
-        if len(certain) == 1 and len(matches) == 1 and self._single_bet_position(certain[0], per_bet=per_bet):
+        event_key = str((payload or {}).get("event_key") or "")
+        per_bet = not event_key.startswith("sim:")
+        if (len(certain) == 1 and len(matches) == 1
+                and self._single_bet_position(certain[0], per_bet=per_bet)
+                and not (event_key.startswith("cleared:") and self._market_has_foreign_cleared_legs(market_id))):
             self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
         elif len(certain) == 1 and len(matches) == 1:
             # Settlement per bet di una posizione con PIU' gambe persistite sullo stesso mercato (Dutching,
@@ -4060,6 +4063,39 @@ class RuntimeController:
         except Exception:
             logger.critical("Registro hedge non persistito e sentinella non scrivibile (mercato %s)", market_id,
                             exc_info=True)
+
+    def _market_has_foreign_cleared_legs(self, market_id: str) -> bool:
+        """Riconciliazione sull'exchange (autorita') prima di un rilascio per mercato da settlement cleared per bet
+        (bloccante Sol su 23bdbfe): `listClearedOrders` per il MERCATO, non per i soli bet del bot. Una bet regolata
+        che non e' del bot (hedge di cashout senza riga in `orders`, ordine manuale) => il P&L della gamba non e' il
+        netto del tavolo. Non dipende da nessuna scrittura locale. Lettura fallita, risposta malformata o vuota =>
+        True (fail-closed: nessun rilascio per mercato)."""
+        lister = getattr(self.betfair_service, "list_cleared_orders", None)
+        identity = getattr(self.db, "get_bot_active_orders", None)
+        if not callable(lister) or not callable(identity):
+            return True
+        try:
+            bot_bets = {str(o.get("bet_id") or "").strip() for o in (identity() or [])
+                        if isinstance(o, dict) and str(o.get("market_id") or "").strip() == market_id}
+            rows = lister(bet_status="SETTLED", market_ids=[market_id])
+        except Exception:
+            logger.exception("Settlement %s: ordini regolati del mercato illeggibili, nessun rilascio", market_id)
+            return True
+        if not isinstance(rows, list) or not rows:
+            return True
+        settled = set()
+        for row in rows:
+            if not isinstance(row, dict):
+                return True
+            bet_id = str(row.get("betId") or row.get("bet_id") or "").strip()
+            if not bet_id:
+                return True
+            settled.add(bet_id)
+        foreign = settled - bot_bets
+        if foreign:
+            logger.warning("Settlement %s: %d bet regolate non del bot (hedge/manuali), nessun rilascio per mercato",
+                           market_id, len(foreign))
+        return bool(foreign)
 
     def _single_bet_position(self, table: dict, *, per_bet: bool = True) -> bool:
         """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo

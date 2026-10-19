@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 16 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `23bdbfe` (filesystem in sola
+  lettura: falliscono sia il registro hedge sia la sentinella). `_market_has_foreign_cleared_legs`: prima di un
+  rilascio per mercato da settlement cleared per bet si interroga l'exchange (`listClearedOrders` per mercato); bet
+  regolate non del bot, lettura fallita o risposta vuota/malformata => nessun rilascio (fail-closed, nessuna
+  dipendenza da scritture locali). Test `test_c16_*` in `tests/test_pr512_codex_034af59.py`.
 - **PR #512 ciclo 15 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `180ffa3`. Se la scrittura del
   registro `roserpina.hedged_markets` falliva, il fail-closed restava in RAM e dopo un riavvio il registro leggibile
   (senza quel mercato) era trattato come affidabile. Ora si scrive anche una sentinella durevole accanto al DB

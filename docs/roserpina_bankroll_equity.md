@@ -59,7 +59,12 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   cashout elencati nella sentinella, non la rimuove a mano **e riavvia** (la sentinella si legge solo all'avvio); i
   tavoli gia' trattenuti si liberano poi con `reset_cycle()` o con l'auto-reset (ciclo 15 della #512, bloccante Sol
   su 180ffa3). Lo stato e' visibile in `get_status()["hedged_markets_unreliable"]` e nel log critico; l'evento
-  `HEDGE_REGISTRY_UNRELIABLE` viene pubblicato ma oggi non ha consumatori cablati (notifica Telegram/health: #521). Limiti residui dichiarati (#521): un crash fra il piazzamento dell'hedge e la
+  `HEDGE_REGISTRY_UNRELIABLE` viene pubblicato ma oggi non ha consumatori cablati (notifica Telegram/health: #521).
+- **Riconciliazione sull'exchange** (ciclo 16, bloccante Sol su 23bdbfe): prima di un rilascio per mercato da
+  settlement cleared per bet (`cleared:<mercato>:<bet>`) il runtime legge `listClearedOrders` per il **mercato**;
+  una bet regolata che non e' del bot (hedge, ordine manuale), una lettura fallita o una risposta vuota/malformata
+  => nessun rilascio per mercato. Non dipende da scritture locali, quindi copre anche registro e sentinella non
+  scrivibili (filesystem in sola lettura); registro e sentinella restano difese aggiuntive. Limiti residui dichiarati (#521): un crash fra il piazzamento dell'hedge e la
   consegna dell'esito sul bus; una sentinella non scrivibile (stesso filesystem guasto del DB: resta il solo flag in
   memoria e il log critico). Corretto nel ciclo 14 della #512 (verifica indipendente,
   r4303297587): l'affermazione precedente «invariato rispetto a main» era falsa per l'effetto sulla perdita di
