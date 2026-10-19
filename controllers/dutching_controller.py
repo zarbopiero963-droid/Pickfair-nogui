@@ -334,14 +334,25 @@ class DutchingController:
 
     # -- Max Win cap (G5) --------------------------------------------------
     @staticmethod
-    def _max_win(config) -> float:
-        """Cap vincita/payout per gamba dalla config (editabile GUI), fail-safe.
+    def _max_win(config) -> Optional[float]:
+        """Cap vincita/payout per gamba dalla config (editabile GUI), OPZIONALE.
 
-        Riusa `_book_threshold` (numerico finito > 0, fallback FAIL-SAFE): un
-        backend rotto o un valore corrotto NON deve disattivare il cap ne'
-        spostarlo su un valore assurdo. Fallback = trading_config.MAX_WIN.
+        Rettifica owner 18/10/2026 (chiarimento definitivo 19/10): None/assente = non attivo, nessun
+        default numerico. Presente ma non numerico, non finito o <= 0 => ``ValueError``: il chiamante
+        blocca l'ordine (fail-closed), mai "cap disattivato" per un valore corrotto.
         """
-        return DutchingController._book_threshold(config, "max_win", trading_config.MAX_WIN)
+        raw = getattr(config, "max_win", None)
+        if raw is None:
+            return None
+        if isinstance(raw, bool):
+            raise ValueError("max_win non valido")
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError("max_win non valido") from None
+        if not math.isfinite(val) or val <= 0.0:
+            raise ValueError("max_win non valido")
+        return val
 
     @staticmethod
     def _profit_epsilon(config) -> float:
@@ -1077,9 +1088,13 @@ class DutchingController:
         # book%/liquidity gate. Per-gamba (esiti dutching mutuamente esclusivi =>
         # si valuta la MAX, non la somma). In modalita' avviso (default opt-in) solo
         # segnalazione (max_win_warning/max_win_breaches nel risultato, sotto).
-        # FAIL-SAFE: config rotta ricade su trading_config.MAX_WIN (cap sempre armato).
-        max_win = self._max_win(config)
-        max_win_breaches = self._max_win_breaches(results, max_win)
+        # Opzionale (rettifica owner 18-19/10/2026): non configurato => nessun controllo; configurato ma
+        # non valido => blocco esplicito (fail-closed).
+        try:
+            max_win = self._max_win(config)
+        except ValueError:
+            return self._fail("Max Win configurato ma non valido: nessun ordine")
+        max_win_breaches = [] if max_win is None else self._max_win_breaches(results, max_win)
         if max_win_breaches and not self._max_win_warning_only(config):
             return self._fail(
                 f"Vincita potenziale oltre il cap {max_win:.2f}€ su una o più gambe",
@@ -1184,7 +1199,7 @@ class DutchingController:
             book_warning_exceeded=bool(float(book_pct) >= self._book_warning_threshold(config)),
             liquidity_warning=bool(liquidity.get("warning")),
             liquidity_shortfall=liquidity.get("shortfall", []),
-            max_win=round(max_win, 2),
+            max_win=None if max_win is None else round(max_win, 2),
             max_win_warning=bool(max_win_breaches),
             max_win_breaches=max_win_breaches,
             max_stake_pct=round(max_stake_pct, 4),
@@ -1469,11 +1484,14 @@ class DutchingController:
             # anti fat-finger), PRIMA di ogni side-effect. Importo potenziale: BACK
             # = payout stake*quota; LAY = liability stake*(quota-1) (il RISCHIO reale).
             # Enforce-first opt-in: in modalita' avviso (default) non blocca.
-            # FAIL-SAFE su trading_config.MAX_WIN.
+            # Opzionale (rettifica owner 18-19/10/2026): non configurato => nessun controllo.
             side = str(self._normalize_side(payload.get("bet_type", "BACK"))).upper()
             potential_win = self._leg_potential_win({"side": side, "stake": stake, "price": price})
-            max_win = self._max_win(config)
-            max_win_exceeded = potential_win > max_win + 1e-9
+            try:
+                max_win = self._max_win(config)
+            except ValueError:
+                return self._fail("Max Win configurato ma non valido: nessun ordine")
+            max_win_exceeded = max_win is not None and potential_win > max_win + 1e-9
             if max_win_exceeded and not self._max_win_warning_only(config):
                 return self._fail(
                     f"Vincita potenziale {potential_win:.2f}€ oltre il cap {max_win:.2f}€",
@@ -1543,7 +1561,7 @@ class DutchingController:
             self._publish_audit("MANUAL_BET_APPROVED", {"order": order})
             return self._ok(
                 order=order,
-                max_win=round(max_win, 2),
+                max_win=None if max_win is None else round(max_win, 2),
                 max_win_warning=bool(max_win_exceeded),
                 potential_win=round(potential_win, 2),
             )

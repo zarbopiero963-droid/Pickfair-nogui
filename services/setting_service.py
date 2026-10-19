@@ -380,7 +380,7 @@ class SettingsService:
             anti_duplication_enabled=self._b(data, "roserpina.anti_duplication_enabled", True),
             commission_pct=self._f(data, "roserpina.commission_pct", 4.5),
             min_stake=self._f(data, "roserpina.min_stake", trading_config.MIN_STAKE),
-            max_stake_abs=self._f(data, "roserpina.max_stake_abs", 10000.0),
+            max_stake_abs=self._rectified_monetary_cap(data, "roserpina.max_stake_abs"),
             book_warning=self._f(data, "roserpina.book_warning", trading_config.BOOK_WARNING),
             book_block=self._f(data, "roserpina.book_block", trading_config.BOOK_BLOCK),
             liquidity_guard_enabled=self._b(data, "roserpina.liquidity_guard_enabled", trading_config.LIQUIDITY_GUARD_ENABLED),
@@ -388,7 +388,7 @@ class SettingsService:
             min_liquidity_absolute=self._f(data, "roserpina.min_liquidity_absolute", trading_config.MIN_LIQUIDITY_ABSOLUTE),
             liquidity_warning_only=self._b(data, "roserpina.liquidity_warning_only", trading_config.LIQUIDITY_WARNING_ONLY),
             min_price=self._f(data, "roserpina.min_price", trading_config.MIN_PRICE),
-            max_win=self._f(data, "roserpina.max_win", trading_config.MAX_WIN),
+            max_win=self._rectified_monetary_cap(data, "roserpina.max_win"),
             max_win_warning_only=self._b(data, "roserpina.max_win_warning_only", True),
             # Scala percentuale (0-100): la costante MAX_STAKE_PCT e' frazione => *100.
             max_stake_pct=self._f(data, "roserpina.max_stake_pct", trading_config.MAX_STAKE_PCT * 100.0),
@@ -419,7 +419,9 @@ class SettingsService:
             "roserpina.anti_duplication_enabled": int(bool(config.anti_duplication_enabled)),
             "roserpina.commission_pct": config.commission_pct,
             "roserpina.min_stake": config.min_stake,
-            "roserpina.max_stake_abs": config.max_stake_abs,
+            # Rettifica owner 18-19/10/2026: vuoto (None) = non attivo, scritto "" per disattivare davvero
+            # un valore gia' persistito; il marcatore registra che i valori salvati da qui sono scelte esplicite.
+            "roserpina.max_stake_abs": "" if config.max_stake_abs is None else config.max_stake_abs,
             "roserpina.book_warning": config.book_warning,
             "roserpina.book_block": config.book_block,
             "roserpina.liquidity_guard_enabled": int(bool(config.liquidity_guard_enabled)),
@@ -427,7 +429,8 @@ class SettingsService:
             "roserpina.min_liquidity_absolute": config.min_liquidity_absolute,
             "roserpina.liquidity_warning_only": int(bool(config.liquidity_warning_only)),
             "roserpina.min_price": config.min_price,
-            "roserpina.max_win": config.max_win,
+            "roserpina.max_win": "" if config.max_win is None else config.max_win,
+            self._MONETARY_RECTIFICATION_MARKER: 1,
             "roserpina.max_win_warning_only": int(bool(config.max_win_warning_only)),
             "roserpina.max_stake_pct": config.max_stake_pct,
             "roserpina.profit_epsilon": config.profit_epsilon,
@@ -459,6 +462,24 @@ class SettingsService:
             payload["roserpina.max_recovery_chase_abs"] = config.max_recovery_chase_abs
 
         self.db.save_settings(payload)
+
+    # Rettifica owner 18/10/2026, chiarimento definitivo 19/10: anche i tetti monetari preesistenti
+    # (max_stake_abs RSR-15, max_win RSR-26) sono opzionali e DISATTIVATI di default. Il vecchio default
+    # 10000.0 veniva scritto nel DB a ogni salvataggio della tab Roserpina: finche' questo marcatore manca,
+    # un 10000.0 persistito e' il default storico, non una scelta dell'utente, e vale "non attivo".
+    _MONETARY_RECTIFICATION_MARKER = "roserpina.monetary_caps_rectified_20261018"
+    _LEGACY_MONETARY_DEFAULT = 10000.0
+
+    def _rectified_monetary_cap(self, data: Dict[str, Any], key: str) -> float | None:
+        value = self._optional_hard_stop_value(data, key)
+        if (
+            value is not None
+            and not data.get(self._MONETARY_RECTIFICATION_MARKER)
+            and value == self._LEGACY_MONETARY_DEFAULT
+        ):
+            logger.info("%s=10000.0 e' il default storico (rettifica owner 18/10/2026): non attivo", key)
+            return None
+        return value
 
     def _optional_hard_stop_value(
         self,

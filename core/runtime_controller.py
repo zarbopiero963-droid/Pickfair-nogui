@@ -9,6 +9,7 @@ import math
 import os
 import threading
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -25,7 +26,12 @@ from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
-from core.trading_constants import CASHOUT_FAILED, CASHOUT_SUCCESS, REQ_EXECUTE_CASHOUT
+from core.trading_constants import (
+    CASHOUT_FAILED,
+    CASHOUT_REQUEST_SUPPRESSED,
+    CASHOUT_SUCCESS,
+    REQ_EXECUTE_CASHOUT,
+)
 from core.type_helpers import safe_bool
 from services.catalog_sync_service import CatalogSyncService
 from cashout_cancel_adapter import CashoutCancelAdapter
@@ -120,9 +126,12 @@ class RuntimeController:
         self._cashout_barrier_seq = 0
         # Barriera viva fino all'esito dell'hedge (Codex r4315283906, PF-522-FINAL-HARDENING-01): per barriera,
         # le gambe REQ_EXECUTE_CASHOUT pubblicate dal router e non ancora chiuse da CASHOUT_SUCCESS/FAILED.
-        self._cashout_inflight: dict[int, set[tuple[str, str]]] = {}
+        self._cashout_inflight: dict[int, dict[str, tuple[str, str]]] = {}
+        self._cashout_uncertain: set[str] = set()
         self._cashout_routed: set[int] = set()
         self._cashout_route_ctx = threading.local()
+        self._cashout_grace_started: set[int] = set()
+        self._cashout_grace_cancelled: set[int] = set()
 
         self.batch_manager = DutchingBatchManager(db, bus=bus)
         self.reconciliation_engine = self._build_reconciliation_engine()
@@ -1474,6 +1483,7 @@ class RuntimeController:
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_command)
         self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_execution_outcome)
+        self.bus.subscribe(CASHOUT_REQUEST_SUPPRESSED, self._on_cashout_execution_outcome)
 
     # =========================================================
     # CONFIG / MODE
@@ -3003,6 +3013,20 @@ class RuntimeController:
         ``CASHOUT_FAILED`` strutturato (mai scarto silenzioso). Rilascia sempre la
         pending-guard.
         """
+        if barrier_id is not None:
+            # Barriera e cancel del grace (verifica indipendente, PF-522-FINAL-HARDENING-01): il Timer partito
+            # si marca prima di instradare; se il cancel e' arrivato prima, non instrada nulla. Il cancel
+            # chiude la barriera solo se il Timer non e' partito (altrimenti la chiude il finally qui sotto,
+            # dopo aver registrato le gambe pubblicate).
+            with getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock):
+                if barrier_id in getattr(self, "_cashout_grace_cancelled", set()):
+                    self._cashout_grace_cancelled.discard(barrier_id)
+                    self._auto_green_release(key, gen)
+                    return
+                started = getattr(self, "_cashout_grace_started", None)
+                if started is None:
+                    started = self._cashout_grace_started = set()
+                started.add(barrier_id)
         try:
             # Tombstone generazionale: se un CASHOUT_ALL ha bumpato la generazione
             # dopo lo scheduling, questo grace e' invalidato (il target e' /verra'
@@ -3171,6 +3195,12 @@ class RuntimeController:
             if barrier_id is not None:
                 lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
                 with lock:
+                    if barrier_id in getattr(self, "_cashout_grace_started", set()):
+                        continue    # il Timer e' partito: la barriera la chiude il suo finally
+                    cancelled = getattr(self, "_cashout_grace_cancelled", None)
+                    if cancelled is None:
+                        cancelled = self._cashout_grace_cancelled = set()
+                    cancelled.add(barrier_id)
                     RuntimeController._finish_cashout_route(self, barrier_id)
 
     def _cashout_gates_still_open(self, signal: dict, enqueue_mode: str = "") -> tuple:
@@ -3339,16 +3369,22 @@ class RuntimeController:
 
     def _end_cashout_barrier(self, barrier_id: int) -> None:
         getattr(self, "_cashout_barriers", {}).pop(barrier_id, None)
-        getattr(self, "_cashout_inflight", {}).pop(barrier_id, None)
+        requests = getattr(self, "_cashout_inflight", {}).pop(barrier_id, None) or {}
+        getattr(self, "_cashout_uncertain", set()).difference_update(requests)
         getattr(self, "_cashout_routed", set()).discard(barrier_id)
+        getattr(self, "_cashout_grace_started", set()).discard(barrier_id)
 
     # ---- barriera viva fino all'esito dell'hedge (Codex r4315283906, PF-522-FINAL-HARDENING-01) ----
     # Il bus di produzione e' asincrono: il routing ritorna dopo aver pubblicato REQ_EXECUTE_CASHOUT, ma
-    # l'hedge viene piazzato dopo, sui worker di bridge/executor. La barriera resta quindi attiva finche'
-    # OGNI gamba pubblicata dal router non ha un esito (CASHOUT_SUCCESS o CASHOUT_FAILED, qualunque status:
-    # FAILURE/AMBIGUOUS/UNMATCHED/REJECTED). Un esito che non arriva lascia la barriera attiva: fail-closed,
-    # nessun ingresso nell'ambito del cashout fino al riavvio; `get_status()["cashout_barriers_active"]`
-    # lo rende visibile.
+    # l'hedge viene piazzato dopo, sui worker di bridge/executor. Ogni richiesta pubblicata dal router riceve
+    # un `cashout_request_id` che bridge ed executor riportano nell'esito; la barriera resta attiva finche'
+    # OGNI sua richiesta non ha un esito certo:
+    # - CASHOUT_SUCCESS, CASHOUT_FAILED (FAILURE/UNMATCHED/REJECTED) o CASHOUT_REQUEST_SUPPRESSED (duplicata
+    #   scartata dal bridge, nessun hedge per quella richiesta) chiudono la richiesta;
+    # - CASHOUT_FAILED con status AMBIGUOUS o ERROR (esito dell'hedge ignoto) la lascia aperta: fail-closed,
+    #   nessun ingresso nell'ambito fino al riavvio (`cashout_barriers_uncertain` in get_status);
+    # - un esito SENZA il proprio `cashout_request_id` (hedge di altra origine: auto-green, UI) non chiude
+    #   nulla (verifica indipendente: rilascio anticipato da esito estraneo).
 
     @contextlib.contextmanager
     def _cashout_route_context(self, barrier_id):
@@ -3376,19 +3412,20 @@ class RuntimeController:
         return market_id, selection
 
     def _publish_from_cashout_router(self, topic, payload=None):
-        """``publish`` del CashoutRouter: registra ogni gamba REQ_EXECUTE_CASHOUT sulla barriera corrente
-        PRIMA di pubblicarla (un esito sincrono la trova gia' registrata)."""
+        """``publish`` del CashoutRouter: ogni REQ_EXECUTE_CASHOUT riceve un ``cashout_request_id`` ed e'
+        registrata sulla barriera corrente PRIMA di essere pubblicata (un esito sincrono la trova gia')."""
         ctx = getattr(self, "_cashout_route_ctx", None)
         barrier_id = getattr(ctx, "barrier_id", None)
-        if topic == REQ_EXECUTE_CASHOUT and barrier_id is not None:
-            leg = RuntimeController._cashout_leg_key(payload)
+        if topic == REQ_EXECUTE_CASHOUT and barrier_id is not None and isinstance(payload, dict):
             lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
             with lock:
-                if leg is not None and barrier_id in getattr(self, "_cashout_barriers", {}):
+                if barrier_id in getattr(self, "_cashout_barriers", {}):
+                    request_id = f"crq-{barrier_id}-{uuid.uuid4().hex}"
+                    payload = {**payload, "cashout_request_id": request_id}
                     inflight = getattr(self, "_cashout_inflight", None)
                     if inflight is None:
                         inflight = self._cashout_inflight = {}
-                    inflight.setdefault(barrier_id, set()).add(leg)
+                    inflight.setdefault(barrier_id, {})[request_id] = RuntimeController._cashout_leg_key(payload)
         return self.bus.publish(topic, payload)
 
     def _finish_cashout_route(self, barrier_id: int) -> None:
@@ -3402,16 +3439,26 @@ class RuntimeController:
         RuntimeController._end_cashout_barrier(self, barrier_id)
 
     def _on_cashout_execution_outcome(self, payload: dict) -> None:
-        leg = RuntimeController._cashout_leg_key(payload)
-        if leg is None:
+        payload = payload if isinstance(payload, dict) else {}
+        request_id = payload.get("cashout_request_id")
+        if not isinstance(request_id, str) or not request_id:
             return
+        uncertain = str(payload.get("status") or "").strip().upper() in {"AMBIGUOUS", "ERROR"}
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
             inflight = getattr(self, "_cashout_inflight", {})
             for barrier_id in list(inflight):
-                legs = inflight[barrier_id]
-                legs.discard(leg)
-                if not legs:
+                requests = inflight[barrier_id]
+                if request_id not in requests:
+                    continue
+                if uncertain:
+                    marks = getattr(self, "_cashout_uncertain", None)
+                    if marks is None:
+                        marks = self._cashout_uncertain = set()
+                    marks.add(request_id)
+                    return
+                requests.pop(request_id, None)
+                if not requests:
                     inflight.pop(barrier_id, None)
                     if barrier_id in getattr(self, "_cashout_routed", set()):
                         RuntimeController._end_cashout_barrier(self, barrier_id)
@@ -6412,6 +6459,9 @@ class RuntimeController:
         # settlement per bet finche' resta True (sentinella rimossa dall'operatore + riavvio).
         data["hedged_markets_unreliable"] = bool(getattr(self, "_hedged_markets_unreliable", False))
         data["cashout_barriers_active"] = len(getattr(self, "_cashout_barriers", {}) or {})
+        data["cashout_barriers_uncertain"] = sum(
+            1 for requests in (getattr(self, "_cashout_inflight", {}) or {}).values()
+            if set(requests) & (getattr(self, "_cashout_uncertain", set()) or set()))
         data["execution_gate_reason"] = str(self.last_execution_gate_reason)
         data["deploy_gate"] = dict(self.last_deploy_gate_status or {})
         data["runtime_io"] = self.runtime_io_snapshot()

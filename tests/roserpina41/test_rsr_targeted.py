@@ -23,7 +23,7 @@ PARAMS = [
     ("max_event_exposure_pct", 9.0, 18.0), ("auto_reset_drawdown_pct", 11.0, 15.0), ("defense_drawdown_pct", 6.0, 7.5),
     ("lockdown_drawdown_pct", 25.0, 20.0), ("expansion_profit_pct", 4.0, 5.0), ("expansion_multiplier", 1.25, 1.10),
     ("defense_multiplier", 0.6, 0.80), ("table_count", 3, 5), ("max_recovery_tables", 1, 2), ("commission_pct", 4.5, 4.5),
-    ("min_stake", 2.0, None), ("max_stake_abs", 50.0, 10000.0), ("max_daily_loss", 25.0, None),
+    ("min_stake", 2.0, None), ("max_stake_abs", 50.0, None), ("max_daily_loss", 25.0, None),
     ("max_open_exposure", 80.0, None), ("max_session_loss", 30.0, None), ("max_exposure_stop", 90.0, None),
     ("max_drawdown_hard_stop_pct", 12.0, None), ("book_warning", 104.0, None), ("book_block", 108.0, None),
     ("liquidity_multiplier", 4.0, None), ("min_liquidity_absolute", 75.0, None), ("min_price", 1.3, None),
@@ -66,7 +66,9 @@ def test_rsr_unreadable_numeric_value_falls_back_to_code_default(tmp_path, key, 
 
 
 HARD_STOPS = ["max_daily_loss", "max_open_exposure", "max_session_loss", "max_exposure_stop",
-              "max_drawdown_hard_stop_pct"]
+              "max_drawdown_hard_stop_pct",
+              # Rettifica owner 18-19/10/2026: tetti monetari opzionali, stessa semantica degli hard stop.
+              "max_stake_abs", "max_win"]
 
 
 @pytest.mark.parametrize("key", HARD_STOPS)

@@ -78,10 +78,14 @@ class RoserpinaMoneyManagement:
             # fail-closed a 0, nessuno stake ammesso. Prima NaN valeva 0 =
             # "tetto disattivato" e restava il solo cap percentuale (PR27).
             return 0.0
+        if raw_abs_cap is None:
+            # Rettifica owner 18-19/10/2026: tetto assoluto opzionale, non attivo => solo il cap percentuale.
+            return max(0.0, pct_cap)
         abs_cap = self._safe_float(raw_abs_cap, 0.0)
-        if abs_cap > 0:
-            return max(0.0, min(pct_cap, abs_cap))
-        return max(0.0, pct_cap)
+        if abs_cap <= 0:
+            # Configurato ma <= 0: fail-closed come i cap assoluti PR28-d, mai "tetto disattivato".
+            return 0.0
+        return max(0.0, min(pct_cap, abs_cap))
 
     def _max_total_exposure_abs(self, bankroll_current: float) -> float:
         bankroll_current = self._safe_float(bankroll_current, 0.0)

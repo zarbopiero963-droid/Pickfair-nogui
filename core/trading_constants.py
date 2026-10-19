@@ -24,6 +24,9 @@ REQ_EXECUTE_CASHOUT = "REQ_EXECUTE_CASHOUT"
 CMD_EXECUTE_CASHOUT = "CMD_EXECUTE_CASHOUT"
 CASHOUT_SUCCESS = "CASHOUT_SUCCESS"
 CASHOUT_FAILED = "CASHOUT_FAILED"
+# Il bridge ha scartato una REQ_EXECUTE_CASHOUT duplicata (nessun hedge piazzato per quella richiesta):
+# esito esplicito, cosi' chi attende la richiesta (barriera d'ammissione) non resta appeso.
+CASHOUT_REQUEST_SUPPRESSED = "CASHOUT_REQUEST_SUPPRESSED"
 
 # ── ORDER STATES ──
 STATUS_INFLIGHT = "INFLIGHT"

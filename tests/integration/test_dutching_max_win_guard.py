@@ -222,26 +222,43 @@ def test_cap_is_per_leg_not_sum(monkeypatch):
     assert res["max_win_breaches"] == []
 
 
-def test_bad_config_max_win_still_blocks_huge_payout(monkeypatch):
-    # BLOCK-proof: config con max_win corrotto (=0) NON deve far passare un payout
-    # 15000 — il fallback fail-safe (trading_config.MAX_WIN=10000) blocca comunque.
+@pytest.mark.parametrize("warning_only", [False, True])
+def test_bad_config_max_win_still_blocks_huge_payout(monkeypatch, warning_only):
+    # BLOCK-proof: config con max_win corrotto (=0) NON deve far passare un payout 15000. Rettifica owner
+    # 18-19/10/2026: niente piu' fallback su una costante; un cap configurato ma non valido blocca l'ordine
+    # (fail-closed), anche in modalita' avviso.
     _patch_results(monkeypatch, [{"selectionId": 1, "price": 15.0, "stake": 1000.0, "side": "BACK"}])
-    rt = _runtime_with(max_win=0.0, warning_only=False)
+    rt = _runtime_with(max_win=0.0, warning_only=warning_only)
     res = _controller(rt).precheck(_payload())
-    assert res["ok"] is False and "oltre il cap" in res["error"]
-    assert res["max_win"] == float(trading_config.MAX_WIN)
+    assert res["ok"] is False and "Max Win configurato ma non valido" in res["error"]
+
+
+def test_unset_max_win_is_not_an_arbitrary_cap(monkeypatch):
+    # Rettifica owner 18-19/10/2026: max_win non configurato = non attivo, nessun default numerico.
+    _patch_results(monkeypatch, [{"selectionId": 1, "price": 15.0, "stake": 1000.0, "side": "BACK"}])
+    rt = _runtime_with(max_win=None, warning_only=False)
+    res = _controller(rt).precheck(_payload())
+    assert res["ok"] is True, res
+    assert res["max_win"] is None and res["max_win_breaches"] == []
 
 
 # ==========================================================================
 # 2) Helper puri (fail-safe / semantica)
 # ==========================================================================
-@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc", None])
-def test_max_win_fail_safe_falls_back_to_constant(bad):
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc", True])
+def test_max_win_configured_but_invalid_raises(bad):
     from controllers.dutching_controller import DutchingController
 
-    cfg = SimpleNamespace() if bad is None else SimpleNamespace(max_win=bad)
-    assert DutchingController._max_win(cfg) == float(trading_config.MAX_WIN)
+    with pytest.raises(ValueError):
+        DutchingController._max_win(SimpleNamespace(max_win=bad))
     assert DutchingController._max_win(SimpleNamespace(max_win=250.0)) == 250.0
+
+
+def test_max_win_absent_or_none_is_not_active():
+    from controllers.dutching_controller import DutchingController
+
+    assert DutchingController._max_win(SimpleNamespace()) is None
+    assert DutchingController._max_win(SimpleNamespace(max_win=None)) is None
 
 
 @pytest.mark.parametrize(
@@ -394,7 +411,7 @@ def test_max_win_round_trip():
 
 def test_max_win_defaults_when_absent():
     reloaded = SettingsService(_InMemoryDB()).load_roserpina_config()
-    assert reloaded.max_win == float(trading_config.MAX_WIN)
+    assert reloaded.max_win is None                 # rettifica owner 18-19/10/2026: non attivo di default
     assert reloaded.max_win_warning_only is True  # default OPT-IN
 
 
@@ -441,7 +458,19 @@ def test_gui_saves_max_win(monkeypatch):
         app.destroy()
 
 
-@pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc"])
+def test_gui_save_empty_max_win_disables_the_cap(monkeypatch):
+    # Rettifica owner 18-19/10/2026: campo vuoto = cap non attivo (salvato come None, non bloccato).
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_max_win_var.set("")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.max_win is None
+    finally:
+        app.destroy()
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "nan", "inf", "abc"])
 def test_gui_save_blocks_invalid_max_win(monkeypatch, bad):
     # Un cap non valido NON deve essere persistito (niente drift GUI-vs-enforcement).
     app = _make_gui(monkeypatch)

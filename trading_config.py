@@ -11,7 +11,9 @@ BOOK_BLOCK = 110.0  # Blocco submit (rosso)
 
 # Stake limits (Betfair Italia)
 MIN_STAKE = 0.10  # Floor software 0.10 (Betfair Italia rifiuterà < €2 in live)
-MAX_WIN = 10000.0  # Vincita massima €10.000
+# Vincita massima: OPZIONALE e NON attiva di default (rettifica owner 18/10/2026, chiarimento definitivo
+# 19/10 sui parametri preesistenti). None = nessun tetto; l'utente lo configura dalla tab Roserpina.
+MAX_WIN = None
 
 # Commission
 # NB: la commissione operativa reale e' sourced da `commission_pct`

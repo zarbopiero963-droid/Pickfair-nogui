@@ -51,6 +51,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ingresso nello stesso ambito poteva essere piazzato mentre l'hedge era ancora in coda.
   - Il `RuntimeController` usa gli helper della barriera tramite la classe: i test con stub (`_RC`) che
     chiamano i metodi non legati continuano a funzionare.
+  - **Barriera, correzioni dalla verifica indipendente:**
+    - **identificativo per richiesta:** ogni `REQ_EXECUTE_CASHOUT` del router porta un `cashout_request_id`,
+      che bridge ed executor riportano in ogni esito. La barriera si chiude solo con gli esiti delle proprie
+      richieste: l'esito di un altro hedge sulla stessa gamba (auto-green, UI) non la rilascia;
+    - **duplicati:** quando il bridge scarta una REQ duplicata pubblica `CASHOUT_REQUEST_SUPPRESSED`, che chiude
+      la richiesta. Prima la barriera restava appesa fino al riavvio, in modo globale con CASHOUT_ALL (P1);
+    - **esito ignoto:** con esito `AMBIGUOUS` o `ERROR` l'hedge è ignoto e la barriera resta attiva
+      (`cashout_barriers_uncertain`);
+    - **grace:** il cancel del grace chiude la barriera solo se il Timer non è ancora partito;
+    - **`validators.signal_side`:** con un segnale non-dict dà `ValueError` o il default, mai `AttributeError`.
+
+- **Rettifica owner 18/10/2026, chiarimento definitivo del 19/10: tetti monetari preesistenti.**
+  `max_stake_abs` (RSR-15, tetto allo stake per ordine) e `max_win` (RSR-26, tetto alla vincita/esposizione
+  per gamba sul RiskGate, sul precheck Dutching e sul bet manuale) sono **opzionali e disattivati di
+  default**. Il default numerico 10000.0 è stato rimosso da `RoserpinaConfig`, dal loader, dalla GUI e da
+  `trading_config.MAX_WIN`. Nella GUI un campo vuoto significa "non attivo". Un valore presente ma illeggibile
+  o `<= 0` blocca gli ordini (fail-closed), non disattiva il tetto. Un `10000.0` salvato prima della rettifica,
+  cioè il vecchio default scritto a ogni salvataggio della tab, vale "non attivo"; dopo il primo salvataggio la
+  marcatura `roserpina.monetary_caps_rectified_20261018` rende esplicito ogni valore successivo. Restano
+  invariati le formule e le percentuali del Money Management, i fondi, la liability LAY, le riserve, i vincoli
+  Betfair e le protezioni di integrità.
 
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza

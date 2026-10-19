@@ -13,6 +13,7 @@ import pytest
 
 import trading_config
 from core.risk_gate import (
+    _OPTIONAL_LIMITS,
     _REQUIRED_FLAGS,
     _REQUIRED_LIMITS,
     RiskGate,
@@ -21,7 +22,24 @@ from core.risk_gate import (
 from core.system_state import RoserpinaConfig
 from core.trading_engine import TradingEngine
 
-GATE = RiskGate()
+# Rettifica owner 18-19/10/2026: MAX_WIN non e' piu' attivo di default (trading_config.MAX_WIN = None).
+# I test che verificano IL CAP lo configurano esplicitamente, come farebbe l'owner dalla tab Roserpina:
+# stessi limiti di trading_config, piu' MAX_WIN = _CAP.
+_CAP = 10000.0
+
+
+class _ConfiguredLimits:
+    MIN_STAKE = trading_config.MIN_STAKE
+    MIN_PRICE = trading_config.MIN_PRICE
+    MAX_WIN = _CAP
+    BOOK_BLOCK = trading_config.BOOK_BLOCK
+    LIQUIDITY_MULTIPLIER = trading_config.LIQUIDITY_MULTIPLIER
+    MIN_LIQUIDITY_ABSOLUTE = trading_config.MIN_LIQUIDITY_ABSOLUTE
+    LIQUIDITY_GUARD_ENABLED = trading_config.LIQUIDITY_GUARD_ENABLED
+    LIQUIDITY_WARNING_ONLY = trading_config.LIQUIDITY_WARNING_ONLY
+
+
+GATE = RiskGate(config=_ConfiguredLimits)
 
 
 def payload(**over: Any) -> Dict[str, Any]:
@@ -93,7 +111,7 @@ def test_block_nan_supererebbe_ogni_soglia() -> None:
     """Fissa per iscritto il motivo per cui H-13 esiste."""
     nan = float("nan")
     assert (nan < trading_config.MIN_STAKE) is False
-    assert (nan > trading_config.MAX_WIN) is False
+    assert (nan > _CAP) is False
     assert (nan <= 0) is False
 
 
@@ -160,7 +178,7 @@ def test_block_stesso_ordine_motivo_diverso_per_lato() -> None:
     Un gate che misurasse la LAY come stake vedrebbe solo 100 e la farebbe
     passare: e' esattamente il buco di H-14.
     """
-    cap = trading_config.MAX_WIN
+    cap = _CAP
     stake, price = 100.0, 500.0
     payout = stake * (price - 1)
     assert stake <= cap < payout, "i numeri del test devono davvero stare a cavallo del cap"
@@ -173,14 +191,14 @@ def test_block_stesso_ordine_motivo_diverso_per_lato() -> None:
 
 def test_block_back_oltre_max_win() -> None:
     # BACK: vincita = stake*(price-1). Con quota 2.0 basta superare il cap.
-    r = verdict(stake=trading_config.MAX_WIN + 1, price=2.0)
+    r = verdict(stake=_CAP + 1, price=2.0)
     assert r["reason"] == "RISK_MAX_WIN_EXCEEDED"
 
 
 def test_pass_lay_esattamente_al_cap() -> None:
     # LAY: vincita = stake, liability = stake*(price-1). A quota 2.0 sono pari
     # al cap: entrambi ammessi perche' il confronto e' stretto.
-    cap = trading_config.MAX_WIN
+    cap = _CAP
     assert verdict(bet_type="LAY", stake=cap, price=2.0)["allowed"] is True
 
 
@@ -360,7 +378,7 @@ def test_block_back_che_puo_vincere_oltre_il_cap() -> None:
     Il difetto era confrontarla col RISCHIO. Una BACK da 500 a quota 100
     rischia solo 500 e passava, ma puo' vincere 49.500.
     """
-    cap = trading_config.MAX_WIN
+    cap = _CAP
     stake, price = 500.0, 100.0
     assert stake <= cap, "il rischio della BACK sta sotto il tetto"
     assert stake * (price - 1) > cap, "ma la vincita lo supera"
@@ -376,7 +394,7 @@ def test_block_lay_con_vincita_bassa_ma_liability_enorme() -> None:
     Una LAY con stake piccolo e quota alta ha vincita bassa (= stake) ma
     liability enorme. Controllare solo la vincita la lascerebbe passare.
     """
-    cap = trading_config.MAX_WIN
+    cap = _CAP
     stake, price = 60.0, 900.0
     assert stake <= cap, "la vincita della LAY e' bassa"
     assert stake * (price - 1) > cap, "la liability no"
@@ -566,7 +584,7 @@ def test_block_invariante_regge_anche_senza_assert_attivi() -> None:
     # qui perche' un valore senza `repr` valido come literal genererebbe codice
     # rotto nel sottoprocesso, e il test fallirebbe per il motivo sbagliato.
     righe = []
-    for nome in _REQUIRED_LIMITS + _REQUIRED_FLAGS:
+    for nome in _REQUIRED_LIMITS + _OPTIONAL_LIMITS + _REQUIRED_FLAGS:
         valore = getattr(_Cfg, nome)
         assert isinstance(valore, (int, float, bool)), (
             f"_Cfg.{nome} = {valore!r} non e' un literal: il config del "
@@ -645,7 +663,7 @@ def test_tripwire_limiti_configurati_oggi() -> None:
     """
     assert trading_config.MIN_STAKE == 0.10
     assert trading_config.MIN_PRICE == 1.02
-    assert trading_config.MAX_WIN == 10000.0
+    assert trading_config.MAX_WIN is None   # rettifica owner 18-19/10/2026: non attivo di default
     assert trading_config.BOOK_BLOCK == 110.0
     assert trading_config.LIQUIDITY_MULTIPLIER == 3.0
     assert trading_config.MIN_LIQUIDITY_ABSOLUTE == 50.0
@@ -707,10 +725,15 @@ def test_roserpina_vista_default_vergini_identici_alle_costanti() -> None:
     assert gate.check(payload())["allowed"] is True
     assert gate.check(payload(price=1.01))["reason"] == "RISK_PRICE_BELOW_MIN"
     assert gate.check(payload(stake=0.05))["reason"] == "RISK_BELOW_MIN_STAKE"
+    # Rettifica owner 18-19/10/2026: nessun tetto monetario arbitrario di default sul gate (stessi verdetti
+    # del modulo costanti, dove MAX_WIN e' None). I limiti di stake/esposizione restano nel Money Management.
+    assert gate.check(payload(stake=600.0, price=21.0, bet_type="LAY"))["allowed"] is True
+    assert RiskGate().check(payload(stake=600.0, price=21.0, bet_type="LAY"))["allowed"] is True
+    capped, _ = _gate_roserpina(RoserpinaConfig(max_win=10000.0))
     assert (
-        gate.check(payload(stake=600.0, price=21.0, bet_type="LAY"))["reason"]
+        capped.check(payload(stake=600.0, price=21.0, bet_type="LAY"))["reason"]
         == "RISK_MAX_EXPOSURE_EXCEEDED"
-    )  # H-14: liability 12.000 > max_win 10.000
+    )  # H-14 con il cap configurato: liability 12.000 > max_win 10.000
 
 
 def test_roserpina_vista_campo_mancante_nega_fail_closed() -> None:
@@ -848,3 +871,26 @@ def test_gate_check_concorrenti_ognuno_col_suo_snapshot() -> None:
     assert esiti["restrittivo"]["reason"] == "RISK_PRICE_BELOW_MIN"
     assert esiti["permissivo"]["allowed"] is True
     assert esiti["permissivo"]["reason"] is None
+
+
+# ---------------------------------------------------------------------------
+# Rettifica owner 18/10/2026 (chiarimento definitivo 19/10): MAX_WIN opzionale
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf"), "abc", True],
+                         ids=["zero", "negativo", "nan", "inf", "testo", "bool"])
+def test_block_max_win_configurato_ma_non_valido_nega(bad: Any) -> None:
+    """Presente ma illeggibile o <= 0: mai "cap disattivato" per errore, il gate NEGA."""
+    cfg = _ConfiguredLimits()
+    cfg.MAX_WIN = bad
+    r = RiskGate(config=cfg).check(payload())
+    assert r["allowed"] is False
+    assert r["reason"] == "RISK_CONFIG_MISSING"
+
+
+def test_pass_max_win_none_non_attivo_ma_gli_altri_limiti_restano() -> None:
+    cfg = _ConfiguredLimits()
+    cfg.MAX_WIN = None
+    gate = RiskGate(config=cfg)
+    assert gate.check(payload(stake=500.0, price=100.0))["allowed"] is True       # vincita 49.500
+    assert gate.check(payload(stake=0.05))["reason"] == "RISK_BELOW_MIN_STAKE"
+    assert gate.check(payload(price=1.01))["reason"] == "RISK_PRICE_BELOW_MIN"

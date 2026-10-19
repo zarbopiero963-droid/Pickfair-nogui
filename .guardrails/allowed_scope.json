@@ -2259,12 +2259,21 @@
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "cashout_executor.py",
+        "cashout_request_bridge.py",
+        "config_registry.py",
+        "controllers/dutching_controller.py",
         "core/money_management.py",
+        "core/risk_gate.py",
         "core/runtime_controller.py",
         "core/system_state.py",
+        "core/trading_constants.py",
         "core/validators.py",
         "docs/design/design_handoff.md",
+        "docs/roserpina41_parameter_dossier.md",
+        "docs/verification/continuous_formal_verification.md",
         "mini_gui.py",
+        "ops/config_console.md",
         "services/setting_service.py",
         "services/telegram_signal_processor.py",
         "telegram_listener.py",
@@ -2273,20 +2282,24 @@
         "tests/acceptance/test_issue437_pr28d_rectification.py",
         "tests/core/test_auto_trade_mm_gate.py",
         "tests/core/test_cycle_executor.py",
+        "tests/core/test_risk_gate.py",
         "tests/f026/test_f026_financial.py",
+        "tests/integration/test_dutching_max_win_guard.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
         "tests/integration/test_mini_gui_optional_caps_save.py",
         "tests/integration/test_runtime_controller_auto_trade_mm.py",
         "tests/integration/test_runtime_controller_cycle_executor.py",
         "tests/integration/test_runtime_controller_live_sim_parity.py",
         "tests/parsers/test_parser_personalizzati.py",
+        "tests/roserpina41/test_rsr_targeted.py",
         "tests/services/test_telegram_signal_processor.py",
         "tests/unit/test_telegram_listener_copy_pattern_action.py",
-        "tests/unit/test_ui_freeze_boundaries.py"
+        "tests/unit/test_ui_freeze_boundaries.py",
+        "trading_config.py"
       ],
-      "max_files": 26,
+      "max_files": 39,
       "allow_tests": true,
-      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505). Correzioni d'integrazione #505/#512 dal riesame indipendente (fetch F030 fuori dal lock di ammissione; event_id/event_identity persistiti e ricostruiti da F018): test in tests/acceptance/test_issue437_pr28d_integration_512.py."
+      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505). Correzioni d'integrazione #505/#512 dal riesame indipendente (fetch F030 fuori dal lock di ammissione; event_id/event_identity persistiti e ricostruiti da F018): test in tests/acceptance/test_issue437_pr28d_integration_512.py. Estensione dichiarata (mandati owner PF-522-FINAL-HARDENING-01, rettifica definitiva 19/10 sui limiti monetari, PF-CONTINUOUS-FORMAL-VERIFICATION-01): barriera cashout fino all'esito dell'hedge con cashout_request_id (cashout_request_bridge.py, cashout_executor.py, core/trading_constants.py), max_stake_abs/max_win opzionali e disattivati di default (core/system_state.py, services/setting_service.py, core/money_management.py, core/risk_gate.py, controllers/dutching_controller.py, trading_config.py, config_registry.py, mini_gui.py, docs e test relativi), specifica permanente docs/verification/continuous_formal_verification.md."
     }
   }
 }

@@ -390,35 +390,64 @@ def test_barrier_stays_active_until_the_hedge_execution_completes(tmp_path, monk
     assert _rifiuti(c) == ["cashout_invalidation_active"]
     assert c.rc.get_status()["cashout_barriers_active"] == 1
 
-    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "status": "DONE"})
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "status": "DONE",
+                                      "cashout_request_id": queued[0]["cashout_request_id"]})
 
     assert c.rc.get_status()["cashout_barriers_active"] == 0
     c.rc._on_signal_received(_signal(received_at="2026-10-08T10:09:00+00:00"))
     assert len(c.broker.state.orders) == 1
 
 
-@pytest.mark.parametrize("status", ["FAILURE", "AMBIGUOUS", "UNMATCHED", "REJECTED"])
-def test_barrier_released_by_any_hedge_outcome(tmp_path, monkeypatch, status):
+@pytest.mark.parametrize("status", ["FAILURE", "UNMATCHED", "REJECTED"])
+def test_barrier_released_by_any_certain_hedge_outcome(tmp_path, monkeypatch, status):
     c = _catena(tmp_path)
-    _async_cashout_chain(c, monkeypatch)
+    queued = _async_cashout_chain(c, monkeypatch)
     c.rc._route_cashout_signal(dict(_CASHOUT))
 
-    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": "11", "status": status})
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": "11", "status": status,
+                                     "cashout_request_id": queued[0]["cashout_request_id"]})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+@pytest.mark.parametrize("status", ["AMBIGUOUS", "ERROR"])
+def test_uncertain_hedge_outcome_keeps_the_barrier(tmp_path, monkeypatch, status):
+    c = _catena(tmp_path)
+    queued = _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": 11, "status": status,
+                                     "cashout_request_id": queued[0]["cashout_request_id"]})
+
+    status_now = c.rc.get_status()
+    assert status_now["cashout_barriers_active"] == 1
+    assert status_now["cashout_barriers_uncertain"] == 1
+
+
+def test_suppressed_request_releases_its_leg(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    queued = _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_REQUEST_SUPPRESSED", {"market_id": "1.234", "selection_id": 11,
+                                                 "cashout_request_id": queued[0]["cashout_request_id"]})
 
     assert c.rc.get_status()["cashout_barriers_active"] == 0
 
 
 def test_barrier_waits_for_every_hedge_of_the_cashout(tmp_path, monkeypatch):
     c = _catena(tmp_path)
-    _async_cashout_chain(c, monkeypatch, hedges=(("1.234", 11), ("1.999", 7)))
+    queued = _async_cashout_chain(c, monkeypatch, hedges=(("1.234", 11), ("1.999", 7)))
     c.rc._route_cashout_signal(dict(_CASHOUT))
+    first, second = (q["cashout_request_id"] for q in queued)
 
-    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11})
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "cashout_request_id": first})
     assert c.rc.get_status()["cashout_barriers_active"] == 1    # manca l'esito della seconda gamba
     c.rc._on_signal_received(_signal(event="Alpha v Beta", market_id="1.999"))
     assert c.broker.state.orders == {}
 
-    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.999", "selection_id": 7, "status": "FAILURE"})
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.999", "selection_id": 7, "status": "FAILURE",
+                                     "cashout_request_id": second})
     assert c.rc.get_status()["cashout_barriers_active"] == 0
 
 
@@ -427,7 +456,7 @@ def test_outcome_of_another_hedge_does_not_release_the_barrier(tmp_path, monkeyp
     _async_cashout_chain(c, monkeypatch)
     c.rc._route_cashout_signal(dict(_CASHOUT))
 
-    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 12})
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 12, "cashout_request_id": "crq-x"})
     c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.555", "selection_id": 11})
     c.bus.publish("CASHOUT_FAILED", {"reason": "fetch_bot_orders:x", "status": "FAILURE"})
 
@@ -449,7 +478,8 @@ def test_synchronous_hedge_outcome_during_routing_releases_the_barrier(tmp_path,
     c = _catena(tmp_path)
     _async_cashout_chain(c, monkeypatch)
     c.bus.subscribe("REQ_EXECUTE_CASHOUT", lambda req: c.bus.publish(
-        "CASHOUT_SUCCESS", {"market_id": req["market_id"], "selection_id": req["selection_id"]}))
+        "CASHOUT_SUCCESS", {"market_id": req["market_id"], "selection_id": req["selection_id"],
+                            "cashout_request_id": req["cashout_request_id"]}))
 
     c.rc._route_cashout_signal(dict(_CASHOUT))
 
@@ -458,13 +488,200 @@ def test_synchronous_hedge_outcome_during_routing_releases_the_barrier(tmp_path,
 
 def test_hedge_outcome_arriving_from_another_thread_releases_the_barrier(tmp_path, monkeypatch):
     c = _catena(tmp_path)
-    _async_cashout_chain(c, monkeypatch)
+    queued = _async_cashout_chain(c, monkeypatch)
     c.rc._route_cashout_signal(dict(_CASHOUT))
 
     worker = threading.Thread(target=c.bus.publish,
-                              args=("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11}))
+                              args=("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11,
+                                                        "cashout_request_id": queued[0]["cashout_request_id"]}))
     worker.start()
     worker.join(5)
 
     assert not worker.is_alive()
     assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+# ---------------------------------------------------------------- catena cashout REALE (bridge + executor)
+class _UnmatchedRouter:
+    """OrderRouter finto: l'hedge viene piazzato ma resta non abbinato (esito UNMATCHED reale dell'executor)."""
+
+    def __init__(self, result=None):
+        self.calls = []
+        self.result = result or {"placed": True, "matched": 0.0, "bet_id": "H1"}
+
+    def place(self, payload):
+        self.calls.append(payload)
+        return dict(self.result)
+
+
+def _real_cashout_chain(c, monkeypatch, *, result=None):
+    """Router del runtime + CashoutRequestBridge reale + CashoutExecutor reale sullo stesso bus."""
+    import cashout_router
+    from cashout_executor import CashoutExecutor
+    from cashout_request_bridge import CashoutRequestBridge
+
+    bridge = CashoutRequestBridge(c.bus)
+    bridge.wire()
+    order_router = _UnmatchedRouter(result)
+    CashoutExecutor(c.bus, order_router).wire()
+    monkeypatch.setattr(RuntimeController, "_cashout_chain_wired", lambda self: True)
+
+    def route(router, signal):
+        router.publish("REQ_EXECUTE_CASHOUT", {"market_id": "1.234", "selection_id": 11, "side": "LAY",
+                                               "stake": 0.5, "price": 2.0, "green_up": 0.1})
+        return {"published": 1, "positions": 1, "skipped": 0}
+
+    monkeypatch.setattr(cashout_router.CashoutRouter, "route", route)
+    svc = c.rc.betfair_service
+    for name, value in (("is_simulation_mode", lambda: True), ("get_live_client", lambda: None),
+                        ("get_simulation_broker", lambda: None), ("list_current_orders", lambda **_: [])):
+        if not hasattr(svc, name):
+            monkeypatch.setattr(svc, name, value, raising=False)
+    return order_router
+
+
+def test_bridge_duplicate_suppression_never_leaves_the_barrier_stuck(tmp_path, monkeypatch):
+    """Verifica indipendente (P1): secondo CASHOUT sulla stessa gamba entro la finestra di dedup del bridge.
+    Il bridge scarta la REQ duplicata; la barriera deve chiudersi comunque, non restare appesa fino al riavvio."""
+    c = _catena(tmp_path)
+    order_router = _real_cashout_chain(c, monkeypatch)
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))          # 1a: hedge UNMATCHED
+    c.rc._route_cashout_signal(dict(_CASHOUT))          # 2a: REQ scartata come duplicata dal bridge
+
+    assert len(order_router.calls) == 1
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+    c.rc._on_signal_received(_signal())
+    assert len(c.broker.state.orders) == 1
+
+
+def test_cashout_all_duplicate_suppression_never_blocks_every_entry(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _real_cashout_chain(c, monkeypatch)
+
+    c.rc._route_cashout_signal({"signal_type": "CASHOUT_ALL"})
+    c.rc._route_cashout_signal({"signal_type": "CASHOUT_ALL"})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_ambiguous_hedge_keeps_the_barrier_until_restart(tmp_path, monkeypatch):
+    """Esito ignoto dell'hedge (AMBIGUOUS): lo stato della posizione non e' noto, nessun ingresso nell'ambito."""
+    c = _catena(tmp_path)
+    _real_cashout_chain(c, monkeypatch, result={"order_unknown": True, "bet_id": None})
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+    c.rc._on_signal_received(_signal())
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
+
+
+def test_foreign_outcome_on_the_same_leg_does_not_release_the_barrier(tmp_path, monkeypatch):
+    """Verifica indipendente (P2): l'esito di un hedge diverso (auto-green, UI) sulla stessa gamba non chiude la
+    barriera del router: conta solo l'esito della richiesta pubblicata dal router."""
+    c = _catena(tmp_path)
+    queued = _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+    assert len(queued) == 1
+
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "status": "DONE"})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": "11",
+                                      "cashout_request_id": queued[0]["cashout_request_id"]})
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+# ---------------------------------------------------------------- barriera sul percorso grace (Timer)
+class _FakeTimer:
+    def __init__(self, barrier_id):
+        self._cashout_admission_barrier_id = barrier_id
+        self.cancelled = False
+
+    def cancel(self):
+        self.cancelled = True
+
+
+def _grace_setup(c, monkeypatch):
+    queued = _async_cashout_chain(c, monkeypatch)
+    monkeypatch.setattr(RuntimeController, "_cashout_gates_still_open", lambda self, s, m="": (True, ""))
+    barrier_id, _ = _barrier(c.rc, dict(_CASHOUT))
+    return queued, barrier_id
+
+
+def test_deferred_grace_route_registers_its_hedges_on_the_barrier(tmp_path, monkeypatch):
+    """Mutazione M9 della verifica indipendente: il percorso differito deve registrare le gambe."""
+    c = _catena(tmp_path)
+    queued, barrier_id = _grace_setup(c, monkeypatch)
+
+    c.rc._deferred_cashout_route(dict(_CASHOUT), ("1.234", "11"), "", None, barrier_id)
+
+    assert len(queued) == 1
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11,
+                                      "cashout_request_id": queued[0]["cashout_request_id"]})
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_cancel_before_the_grace_timer_starts_closes_the_barrier_and_routes_nothing(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    queued, barrier_id = _grace_setup(c, monkeypatch)
+    c.rc._auto_green_pending[("1.234", "11")] = _FakeTimer(barrier_id)
+
+    c.rc._cancel_pending_auto_green()
+    c.rc._deferred_cashout_route(dict(_CASHOUT), ("1.234", "11"), "", None, barrier_id)   # corsa del Timer
+
+    assert queued == []
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_cancel_after_the_grace_timer_started_keeps_the_barrier_until_the_hedge_outcome(tmp_path, monkeypatch):
+    """Verifica indipendente (P2): il cancel non deve chiudere la barriera di un Timer gia' partito."""
+    c = _catena(tmp_path)
+    queued, barrier_id = _grace_setup(c, monkeypatch)
+    c.rc._auto_green_pending[("1.234", "11")] = _FakeTimer(barrier_id)
+
+    def route_with_cancel_in_between(router, signal):
+        c.rc._cancel_pending_auto_green()          # CASHOUT_ALL concorrente mentre il Timer instrada
+        router.publish("REQ_EXECUTE_CASHOUT", {"market_id": "1.234", "selection_id": 11, "side": "LAY",
+                                               "stake": 0.5, "price": 2.0})
+        return {"published": 1}
+
+    import cashout_router
+    monkeypatch.setattr(cashout_router.CashoutRouter, "route", route_with_cancel_in_between)
+
+    c.rc._deferred_cashout_route(dict(_CASHOUT), ("1.234", "11"), "", None, barrier_id)
+
+    assert len(queued) == 1
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": 11, "status": "UNMATCHED",
+                                     "cashout_request_id": queued[0]["cashout_request_id"]})
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_request_id_travels_through_the_real_bridge_and_executor(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    order_router = _real_cashout_chain(c, monkeypatch)
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    req = c.bus.payloads("REQ_EXECUTE_CASHOUT")[-1]
+    cmd = c.bus.payloads("CMD_EXECUTE_CASHOUT")[-1]
+    outcome = c.bus.payloads("CASHOUT_FAILED")[-1]
+    assert req["cashout_request_id"].startswith("crq-")
+    assert cmd["cashout_request_id"] == req["cashout_request_id"]
+    assert outcome["cashout_request_id"] == req["cashout_request_id"]
+    assert outcome["status"] == "UNMATCHED"
+    assert len(order_router.calls) == 1
+
+
+@pytest.mark.parametrize("signal", [None, "BACK", 3, ["LAY"]])
+def test_signal_side_with_a_non_dict_signal_is_a_value_error_or_the_default(signal):
+    """Verifica indipendente (P2): un segnale non-dict non deve mai sollevare AttributeError."""
+    from core import validators
+
+    assert validators.signal_side(signal, default="BACK") == "BACK"
+    with pytest.raises(ValueError):
+        validators.signal_side(signal)

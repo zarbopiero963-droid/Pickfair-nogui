@@ -254,6 +254,9 @@ esplicita dell'operatore). `MIN_LIQUIDITY` resta non usata (superata da
 
 ## Max Win: cap vincita/payout per gamba editabile in GUI (tab Roserpina) — G5
 
+**Rettifica owner 18/10/2026, chiarimento definitivo del 19/10.** `Max Win` e `Max Stake Assoluto` (`max_stake_abs`) sono tetti monetari assoluti **opzionali e DISATTIVATI di default**: campo vuoto = non attivo, nessun default numerico (`trading_config.MAX_WIN = None`). Un valore presente ma illeggibile o `<= 0` blocca gli ordini (fail-closed: RiskGate `RISK_CONFIG_MISSING`, precheck e bet manuale "Max Win configurato ma non valido", Money Management stake 0). Un `10000.0` persistito **prima** della rettifica (vecchio default scritto a ogni salvataggio della tab) vale "non attivo"; dopo il primo salvataggio la chiave `roserpina.monetary_caps_rectified_20261018` rende esplicita ogni scelta successiva. Le note storiche sotto descrivono il comportamento precedente: il fallback su `trading_config.MAX_WIN` non esiste piu'.
+
+
 `trading_config.MAX_WIN` (10000.0) era *dead* (solo voce display in
 `config_registry`). Ora il tab **Roserpina** espone il campo "**Max Win €**" +
 la checkbox "**Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)**"

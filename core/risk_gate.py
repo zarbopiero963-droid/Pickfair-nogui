@@ -50,9 +50,13 @@ _SIDES = frozenset({BACK, LAY})
 # Tutto cio' che il gate pretende di saper leggere dal config, elencato qui e
 # verificato IN BLOCCO a ogni check. Vedi `_validate_config` per il perche'.
 _REQUIRED_LIMITS = (
-    "MIN_STAKE", "MIN_PRICE", "MAX_WIN", "BOOK_BLOCK",
+    "MIN_STAKE", "MIN_PRICE", "BOOK_BLOCK",
     "LIQUIDITY_MULTIPLIER", "MIN_LIQUIDITY_ABSOLUTE",
 )
+# Limiti monetari assoluti OPZIONALI (rettifica owner 18/10/2026, chiarimento definitivo 19/10): devono
+# essere DICHIARATI dal config (attributo assente => NEGA, come gli altri), ma il valore None significa
+# "non attivo". Presente ma non finito o <= 0 => NEGA (fail-closed, mai "disattivato" per errore).
+_OPTIONAL_LIMITS = ("MAX_WIN",)
 _REQUIRED_FLAGS = ("LIQUIDITY_GUARD_ENABLED", "LIQUIDITY_WARNING_ONLY")
 
 # Verdetto gia' pronto, oppure None se il controllo e' passato.
@@ -203,6 +207,22 @@ class RiskGate:
             raise MissingRiskConfig(f"{name} non e' un numero finito")
         return value
 
+    def _optional_limit(self, name: str) -> Optional[float]:
+        """Limite monetario opzionale: dichiarato obbligatoriamente, None = non attivo.
+
+        Attributo assente => NEGA (una costante rinominata non si disattiva in silenzio). Valore None =>
+        limite non attivo (decisione owner). Valore presente ma non finito o <= 0 => NEGA.
+        """
+        if not hasattr(self.config, name):
+            raise MissingRiskConfig(name)
+        raw = getattr(self.config, name)
+        if raw is None:
+            return None
+        value = self._finite(raw)
+        if value is None or value <= 0:
+            raise MissingRiskConfig(f"{name} configurato ma non valido ({raw!r})")
+        return value
+
     def _flag(self, name: str) -> bool:
         """Legge un interruttore dal config. Assente o non bool -> NEGA.
 
@@ -233,6 +253,8 @@ class RiskGate:
         """
         for name in _REQUIRED_LIMITS:
             self._limit(name)
+        for name in _OPTIONAL_LIMITS:
+            self._optional_limit(name)
         for name in _REQUIRED_FLAGS:
             self._flag(name)
 
@@ -320,7 +342,10 @@ class RiskGate:
             # stake e price sono finiti, ma il prodotto puo' traboccare.
             return self._deny(payload, "RISK_EXPOSURE_NOT_FINITE")
 
-        max_win = self._limit("MAX_WIN")
+        max_win = self._optional_limit("MAX_WIN")
+        if max_win is None:
+            # Non attivo per decisione owner: restano MM, fondi, liability, riserve e i cap configurati.
+            return None
         # Soglia esatta con tolleranza float (PR28): 0.1*(4-1) e' 0.3, non oltre.
         if validators.exceeds_cap(win, max_win):
             return self._deny(payload, "RISK_MAX_WIN_EXCEEDED")

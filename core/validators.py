@@ -179,8 +179,9 @@ def signal_side(signal, *, default=None) -> str:
     if side not in ("BACK", "LAY"):
         raise ValueError("INVALID_SIDE")
     aliases = []
+    source = signal if isinstance(signal, dict) else {}   # non-dict: solo il default, mai AttributeError
     for key in ("bet_type", "side", "action"):
-        value = signal.get(key)
+        value = source.get(key)
         if value not in (None, ""):
             if not isinstance(value, str) or value.strip().upper() not in ("BACK", "LAY"):
                 raise ValueError("INVALID_SIDE")
