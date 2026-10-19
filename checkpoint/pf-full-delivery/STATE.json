@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 47,
+ "seq": 48,
  "updated_at": "2026-10-19T21:09:18.122519+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere autorizzazione owner al merge della #522 (NO merge autonomo, NO LIVE)",
+ "next_atomic_action": "Attendere CI/Sol/Grok/Codex su #526 head c57f565, triage; NO merge, NO LIVE",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -469,17 +469,18 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "pr": 522,
-  "head": "2b7d90f",
-  "regression": "8365 passed 0 failed (2d5622b; 2b7d90f solo docs)",
-  "status": "READY_FOR_OWNER_AUTHORIZATION",
-  "fix_loop_cycle": "6 di 10 (deroga owner c.6276390954)",
-  "ci": "tutti verdi, Merge readiness PASS, mergeable clean, 0 thread aperti",
-  "reviews": "Sol/Grok nessun bloccante su fcbaad7...2b7d90f; Codex usage limit; review indipendenti 0 P0/P1",
-  "followups": "#523 #524 #525"
+  "pr": 526,
+  "issue": 524,
+  "head": "c57f565",
+  "regression": "8380 passed 0 failed (c57f565)",
+  "status": "CHECKS_PENDING",
+  "fix_loop_cycle": "0 di 5",
+  "prev_merged": "#522 squash dd0ae58 (merge owner)",
+  "mutation": "7/7 uccise",
+  "followups": "#525 -> #523 -> fix loop 10 -> #461 matrice"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "1202534e7d056844811e05aec21d8c8c546e949f",
+ "previous_checkpoint_sha": "5c5346ce527ef2c5c5d21879746b444b940c70e5",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -557,12 +558,12 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "2b7d90f30779136f6884059221d14fa53fbb5b8d",
+  "sha": "c57f5659bc5fa317528cd3b625d82c5afc0e3e2e",
   "verified_with": "git push + git ls-remote",
   "patch": {
-   "head": "2b7d90f30779136f6884059221d14fa53fbb5b8d",
-   "tree": "3e73537eeb32ff0ca744e2eb2276af71de99d72a",
-   "captured_at": "2026-10-19T21:09:18+00:00",
+   "head": "c57f5659bc5fa317528cd3b625d82c5afc0e3e2e",
+   "tree": "325d243cd6371ef91aff9995f3b32d6a913a83d1",
+   "captured_at": "2026-10-19T22:06:33+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -570,8 +571,8 @@
    ],
    "skipped_symlinks": {}
   },
-  "merged_main_sha": "f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9",
-  "base_main": "f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9"
+  "merged_main_sha": "dd0ae58fb120ad5bc1ddccf9106ea6fbec23752a",
+  "base_main": "dd0ae58fb120ad5bc1ddccf9106ea6fbec23752a"
  },
  "blocks": [
   "Gate A #506 NON PASS",
