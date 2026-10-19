@@ -49,7 +49,7 @@
  ],
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere decisione owner sul ciclo 11 della #512. Se autorizzato: regressione completa su 48e99ed, riesame indipendente, push unico, CI/Sol/Grok/Codex, resolve thread con prova, verdetto. Nessuna PR nuova; #505 resta PATCH PREPARED.",
+ "next_atomic_action": "CI/Sol/Grok/Codex settled su 3d3f5cc; risposte con prova ai thread B3/B4/B5 e ai bloccanti Grok; resolve thread con prova a CI settled; verdetto READY FOR OWNER MERGE o BLOCKED. Ciclo 12 vietato: nuovi blocker => evidenze e stop.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

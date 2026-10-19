@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 37,
- "updated_at": "2026-10-18T22:55:00Z",
+ "seq": 38,
+ "updated_at": "2026-10-19T08:00:00Z",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512 verdetto c.: O1 deroga 1 ciclo per i 3 P1 Codex, oppure O2 merge owner con 12 thread aperti tracciati; mandato di resolve dei 24 thread 'fatto in commit'"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere decisione owner sul ciclo 11 della #512. Se autorizzato: regressione completa su 48e99ed, riesame indipendente, push unico, CI/Sol/Grok/Codex, resolve thread con prova, verdetto. Nessuna PR nuova; #505 resta PATCH PREPARED.",
+ "next_atomic_action": "CI/Sol/Grok/Codex settled su 3d3f5cc; risposte con prova ai thread B3/B4/B5 e ai bloccanti Grok; resolve thread con prova a CI settled; verdetto READY FOR OWNER MERGE o BLOCKED. Ciclo 12 vietato: nuovi blocker => evidenze e stop.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,7 +470,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "176e5cb3d25b6d5dcc14cf8ac2da21c5e401900e",
+ "previous_checkpoint_sha": "7a0cb1cfc49546d59ab94e1880dbe0bfdaeae39e",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -548,18 +548,9 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "9ab753aebc086cb05bfa4641f574db7de56f1772",
+  "sha": "3d3f5cca90420d576ee5d576cd749ab69eced004",
   "verified_with": "git push + git ls-remote",
-  "patch": {
-   "head": "48e99edcf92c56afd6c56d69f920e17527937222",
-   "tree": "52964ac18ea32effa7f8a91f77c7e2f167b2566a",
-   "captured_at": "2026-10-18T22:43:54+00:00",
-   "modified": [],
-   "untracked": [],
-   "files": [
-    "code_patch/BASELINE.json"
-   ]
-  }
+  "patch": null
  },
  "blocks": [
   "Gate A #506 NON PASS",
@@ -957,6 +948,12 @@
    "status": "PASS",
    "sha": "9ab753aebc086cb05bfa4641f574db7de56f1772",
    "result": "7983 passed, 14 skipped, 2 xfailed, 0 failed"
+  },
+  {
+   "id": "regressione completa ciclo 11",
+   "status": "PASS",
+   "sha": "3d3f5cca90420d576ee5d576cd749ab69eced004",
+   "result": "8008 passed, 14 skipped, 2 xfailed, 0 failed"
   }
  ],
  "tests_missing": [
@@ -1002,7 +999,7 @@
   "PF-PR-RECOVERY-DECISIONS-02": "mandato owner in chat 17/10 (decisioni 1-5); rapporto lotto su #506"
  },
  "cycles_pr512": {
-  "used": 10,
+  "used": 11,
   "cap": 5,
   "ceiling_with_owner_grants": 10,
   "deroghe": [
@@ -1069,28 +1066,32 @@
    "governance": "guard PASS (87 file == diff), full-diff PASS, pf_trace strict PASS"
   },
   "cycle_11": {
-   "status": "PREPARATO, NON PUBBLICATO: richiede autorizzazione owner",
-   "commits_local": [
+   "status": "PUBBLICATO (autorizzazione owner straordinaria 19/10, #426 c.6262487915), in attesa di CI e review",
+   "head": "3d3f5cc",
+   "commits": [
     "ac4e180",
-    "48e99ed"
+    "48e99ed",
+    "3d3f5cc"
    ],
-   "blockers": {
-    "B1": "Grok: settlement altra selezione stesso mercato",
-    "B2": "Grok: riserva LAY con importo ignoto",
-    "B3": "Codex r4309039350 rollback residuo",
-    "B4": "Codex r4309039372 F028 tavolo sbagliato",
-    "B5": "Codex r4309039358 book Dutching assente"
-   },
-   "tests": "23 RED su 9ab753a -> GREEN; suite toccate 335 passed; da fare nel ciclo: regressione completa + riesame indipendente",
-   "patch_archive": "scratchpad/c11patch (format-patch 9ab753a..48e99ed)"
-  }
+   "blockers_fixed": [
+    "B1",
+    "B2",
+    "B3",
+    "B4",
+    "B5"
+   ],
+   "review": "riesame indipendente: B1-B5 chiusi con sonde; X1 (test che codificava il fail-open, connesso a B5) corretto in 3d3f5cc; 4 non-blocker -> #521, #520",
+   "regression": "8008 passed, 14 skipped, 2 xfailed, 0 failed su 3d3f5cc",
+   "governance": "guard PASS (87 file), full-diff PASS, pf_trace strict PASS"
+  },
+  "twelfth_cycle": "NON AUTORIZZATO"
  },
  "threads_pr512": {
   "resolved_with_proof": 25,
   "open": 21,
   "open_detail": "10 Codex 034af59, 4 decisioni D-D/D-E/D-F (lotto), 1 DEFERRED_BY_POLICY, 6 follow-up tooling/doc/guardrail"
  },
- "verdict_pr512": "BLOCKED su 9ab753a (#512 c.6256082201): B1-B5 fail-open confermati; patch preparata locale ac4e180+48e99ed; richiesta owner: autorizzazione ciclo 11 (#426 c.6256083616)",
+ "verdict_pr512": "ciclo 11 pubblicato (3d3f5cc); verdetto dopo CI e review",
  "owner_rectification_20261018": {
   "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",

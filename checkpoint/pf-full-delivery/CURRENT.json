@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "9ab753aebc086cb05bfa4641f574db7de56f1772"
+  "sha": "3d3f5cca90420d576ee5d576cd749ab69eced004"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere decisione owner sul ciclo 11 della #512. Se autorizzato: regressione completa su 48e99ed, riesame indipendente, push unico, CI/Sol/Grok/Codex, resolve thread con prova, verdetto. Nessuna PR nuova; #505 resta PATCH PREPARED.",
- "previous_checkpoint_sha": "176e5cb3d25b6d5dcc14cf8ac2da21c5e401900e",
+ "next_atomic_action": "CI/Sol/Grok/Codex settled su 3d3f5cc; risposte con prova ai thread B3/B4/B5 e ai bloccanti Grok; resolve thread con prova a CI settled; verdetto READY FOR OWNER MERGE o BLOCKED. Ciclo 12 vietato: nuovi blocker => evidenze e stop.",
+ "previous_checkpoint_sha": "7a0cb1cfc49546d59ab94e1880dbe0bfdaeae39e",
  "schema": "pf-current/1",
- "seq": 37
+ "seq": 38
 }
