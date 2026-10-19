@@ -55,20 +55,55 @@ def test_lay_order_cap_uses_liability(tmp_path):
     assert _rifiuti(c)[0].startswith("max_order_exposure_exceeded")
 
 
-def test_market_and_event_caps_use_existing_exposure(tmp_path):
-    c = _catena(tmp_path)
-    c.rc.config.max_market_exposure = 2.0
-    c.rc.config.max_event_exposure_abs = 2.0
-    sig = _signal(stake=0.6, bet_type="BACK")
-    key = c.rc.duplication_guard.build_event_key(sig)
+def _existing_position(c, sig, *, exposure):
+    """Posizione aperta su un'ALTRA chiave evento (altra selezione/mercato).
+
+    Integrazione fase D sopra la #512: un tavolo con la STESSA chiave evento
+    viene fermato prima dei cap dal gate `evento_gia_in_posizione` della #512
+    (un solo ordine per posizione). Per misurare i cap mercato/evento serve
+    una posizione diversa nello stesso mercato o nello stesso evento.
+    """
     table = c.rc.table_manager._tables[2]
     table.status = "ACTIVE"
-    table.current_event_key = key
+    table.current_event_key = c.rc.duplication_guard.build_event_key(sig)
     table.market_id = str(sig["market_id"])
-    table.current_exposure = 1.5
-    c.rc._on_signal_received(sig)
-    assert c.broker.state.orders == {}
-    assert _rifiuti(c)[0].startswith(("max_market_exposure_exceeded", "max_event_exposure_abs_exceeded"))
+    table.meta = {"event_name": sig["event"]}
+    table.current_exposure = exposure
+    return table
+
+
+def test_market_and_event_caps_use_existing_exposure(tmp_path):
+    # Cap mercato: altra selezione dello stesso mercato, 1.5 + 0.6 > 2.0.
+    m = _catena(tmp_path / "market")
+    m.rc.config.max_market_exposure = 2.0
+    _existing_position(m, _signal(selection_id=12), exposure=1.5)
+    m.rc._on_signal_received(_signal(stake=0.6, bet_type="BACK"))
+    assert m.broker.state.orders == {}
+    assert _rifiuti(m)[0].startswith("max_market_exposure_exceeded")
+
+    # Cap evento: altro mercato dello stesso incontro, 1.5 + 0.6 > 2.0.
+    e = _catena(tmp_path / "event")
+    e.rc.config.max_event_exposure_abs = 2.0
+    _existing_position(e, _signal(market_id="1.999"), exposure=1.5)
+    e.rc._on_signal_received(_signal(stake=0.6, bet_type="BACK"))
+    assert e.broker.state.orders == {}
+    assert _rifiuti(e)[0].startswith("max_event_exposure_abs_exceeded")
+
+    # Sotto il cap lo stesso scenario passa: il cap misura, non blocca a priori.
+    ok = _catena(tmp_path / "ok")
+    ok.rc.config.max_market_exposure = 2.0
+    _existing_position(ok, _signal(selection_id=12), exposure=1.0)
+    ok.rc._on_signal_received(_signal(stake=0.6, bet_type="BACK"))
+    assert len(ok.broker.state.orders) == 1
+
+    # Stessa chiave evento: nessun secondo ordine, fermato dal gate #512.
+    same = _catena(tmp_path / "same")
+    same.rc.config.max_market_exposure = 2.0
+    sig = _signal(stake=0.6, bet_type="BACK")
+    _existing_position(same, sig, exposure=1.5)
+    same.rc._on_signal_received(sig)
+    assert same.broker.state.orders == {}
+    assert _rifiuti(same) == ["evento_gia_in_posizione"]
 
 
 def test_filled_position_stays_in_market_and_event_cap_until_settlement(tmp_path):
