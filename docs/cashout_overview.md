@@ -263,6 +263,12 @@ Limiti noti:
 - un residuo di hedge parziale che si abbina da solo prima del cancel fa fallire
   il cancel: barriera incerta fino al riavvio anche a posizione chiusa
   (fail-closed, costo operativo);
+- un fence orfano (due ingressi in coda con lo stesso `customer_ref` consumati
+  dall'engine in ordine inverso, bus che scarta la coda allo stop) nega le
+  riconsegne di quel ref fino al riavvio: mai un ingresso senza fence. Oggi
+  nessun produttore fornisce `customer_ref` duplicati;
+- lo scarto del fence presuppone un solo consumer di `CMD_QUICK_BET` per bus
+  (oggi un solo `TradingEngine`): un secondo consumer va prima reso compatibile;
 - l'attesa degli ingressi in invio occupa il thread che instrada il cashout
   (worker del bus o poller dei settlement) fino all'esito dell'invio.
 
