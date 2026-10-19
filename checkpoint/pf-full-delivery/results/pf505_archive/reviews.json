@@ -1,0 +1,1322 @@
+[
+  {
+    "id": 5469183923,
+    "node_id": "PRR_kwDORumVCM8AAAABRf0fsw",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `aa705fc033`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469183923",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469183923"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:02:47Z",
+    "commit_id": "aa705fc033532c9287a7abb7b92cb99e95fdbb39"
+  },
+  {
+    "id": 5469241189,
+    "node_id": "PRR_kwDORumVCM8AAAABRf3_ZQ",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241189",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241189"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:08:52Z",
+    "commit_id": "fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+  },
+  {
+    "id": 5469241399,
+    "node_id": "PRR_kwDORumVCM8AAAABRf4ANw",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241399",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241399"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:08:53Z",
+    "commit_id": "fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+  },
+  {
+    "id": 5469241692,
+    "node_id": "PRR_kwDORumVCM8AAAABRf4BXA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241692",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241692"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:08:55Z",
+    "commit_id": "fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+  },
+  {
+    "id": 5469241929,
+    "node_id": "PRR_kwDORumVCM8AAAABRf4CSQ",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241929",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469241929"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:08:56Z",
+    "commit_id": "fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+  },
+  {
+    "id": 5469242132,
+    "node_id": "PRR_kwDORumVCM8AAAABRf4DFA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469242132",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469242132"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:08:57Z",
+    "commit_id": "fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+  },
+  {
+    "id": 5469332036,
+    "node_id": "PRR_kwDORumVCM8AAAABRf9iRA",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `3051bbe1c0`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469332036",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5469332036"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T11:18:54Z",
+    "commit_id": "3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738"
+  },
+  {
+    "id": 5470572550,
+    "node_id": "PRR_kwDORumVCM8AAAABRhJQBg",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `4ac94a4d37`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5470572550",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5470572550"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T13:20:02Z",
+    "commit_id": "4ac94a4d375039c940bdffb32de369828f393a6a"
+  },
+  {
+    "id": 5470768443,
+    "node_id": "PRR_kwDORumVCM8AAAABRhVNOw",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `5cc249b41a`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5470768443",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5470768443"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T13:34:35Z",
+    "commit_id": "5cc249b41a816db6a4979236f5fbe151357f7644"
+  },
+  {
+    "id": 5472014727,
+    "node_id": "PRR_kwDORumVCM8AAAABRihRhw",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `8f6762855d`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5472014727",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5472014727"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T15:21:28Z",
+    "commit_id": "8f6762855d78059a1c8871a41fd4c8f1b18918e6"
+  },
+  {
+    "id": 5472667230,
+    "node_id": "PRR_kwDORumVCM8AAAABRjJGXg",
+    "user": {
+      "login": "chatgpt-codex-connector[bot]",
+      "id": 199175422,
+      "node_id": "BOT_kgDOC98s_g",
+      "avatar_url": "https://avatars.githubusercontent.com/in/1144995?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D",
+      "html_url": "https://github.com/apps/chatgpt-codex-connector",
+      "followers_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/followers",
+      "following_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/following{/other_user}",
+      "gists_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/subscriptions",
+      "organizations_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/orgs",
+      "repos_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/repos",
+      "events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/chatgpt-codex-connector%5Bbot%5D/received_events",
+      "type": "Bot",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "\n### 💡 Codex Review\n\nHere are some automated review suggestions for this pull request.\n\n**Reviewed commit:** `618884e6c0`\n    \n\n<details> <summary>ℹ️ About Codex in GitHub</summary>\n<br/>\n\n[Your team has set up Codex to review pull requests in this repo](https://chatgpt.com/codex/cloud/settings/general). Reviews are triggered when you\n- Open a pull request for review\n- Mark a draft as ready\n- Comment \"@codex review\".\n\nIf Codex has suggestions, it will comment; otherwise it will react with 👍.\n\n\n\n\nCodex can also answer questions or update the PR. Try commenting \"@codex address that feedback\".\n            \n</details>",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5472667230",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "NONE",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5472667230"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-09T16:23:04Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488898259,
+    "node_id": "PRR_kwDORumVCM8AAAABRynw0w",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488898259",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488898259"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:34:56Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488898700,
+    "node_id": "PRR_kwDORumVCM8AAAABRynyjA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488898700",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488898700"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:34:58Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488899240,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn0qA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488899240",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488899240"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:01Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488899762,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn2sg",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488899762",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488899762"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:03Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488900289,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn4wQ",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488900289",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488900289"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:04Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488900744,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn6iA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488900744",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488900744"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:07Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488901176,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn8OA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488901176",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488901176"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:09Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488901704,
+    "node_id": "PRR_kwDORumVCM8AAAABRyn-SA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488901704",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488901704"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:12Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488902346,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoAyg",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488902346",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488902346"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:14Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488902877,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoC3Q",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488902877",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488902877"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:17Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488903256,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoEWA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488903256",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488903256"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:18Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488903602,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoFsg",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488903602",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488903602"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:20Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488904052,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoHdA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488904052",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488904052"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:23Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488904675,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoJ4w",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488904675",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488904675"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:25Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488905116,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoLnA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488905116",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488905116"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:27Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488905675,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoNyw",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488905675",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488905675"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:29Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488906148,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoPpA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906148",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906148"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:31Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488906440,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoQyA",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906440",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906440"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:32Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488906691,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoRww",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906691",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488906691"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:34Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488907101,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoTXQ",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907101",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907101"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:36Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488907386,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoUeg",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907386",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907386"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:37Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  },
+  {
+    "id": 5488907728,
+    "node_id": "PRR_kwDORumVCM8AAAABRyoV0A",
+    "user": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "body": "",
+    "state": "COMMENTED",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907728",
+    "pull_request_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505",
+    "author_association": "OWNER",
+    "_links": {
+      "html": {
+        "href": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/505#pullrequestreview-5488907728"
+      },
+      "pull_request": {
+        "href": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/pulls/505"
+      }
+    },
+    "submitted_at": "2026-10-12T09:35:39Z",
+    "commit_id": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4"
+  }
+]

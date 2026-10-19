@@ -1,0 +1,59 @@
+From 5cc249b41a816db6a4979236f5fbe151357f7644 Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 15:30:26 +0200
+Subject: [PATCH 7/9] fix: preserve Telegram event identity alias
+
+---
+ services/telegram_signal_processor.py   |  2 +-
+ tests/acceptance/test_issue437_pr28d.py | 22 ++++++++++++++++++++++
+ 2 files changed, 23 insertions(+), 1 deletion(-)
+
+diff --git a/services/telegram_signal_processor.py b/services/telegram_signal_processor.py
+index 0f17975..0600a3e 100644
+--- a/services/telegram_signal_processor.py
++++ b/services/telegram_signal_processor.py
+@@ -389,7 +389,7 @@ class TelegramSignalProcessor:
+             "selection_id": selection_id,
+             "price": price,
+             "event_name": self.parse_event_name(raw),
+-            "event_id": raw.get("event_id", raw.get("eventId")),
++            "event_id": raw.get("event_id") or raw.get("eventId"),
+             "market_name": self.parse_market_name(raw),
+             "market_type": self.parse_market_type(raw),
+             "selection": self.parse_selection_name(raw, selection_id),
+diff --git a/tests/acceptance/test_issue437_pr28d.py b/tests/acceptance/test_issue437_pr28d.py
+index 1a4d849..ed1ba31 100644
+--- a/tests/acceptance/test_issue437_pr28d.py
++++ b/tests/acceptance/test_issue437_pr28d.py
+@@ -171,6 +171,28 @@ def test_auto_trade_payload_falls_back_to_event_id_alias_when_primary_is_blank(t
+     assert payload["event_id"] == "E42"
+ 
+ 
++def test_telegram_event_id_alias_reaches_runtime_event_cap(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_market_exposure = 100.0
++    c.rc.config.max_event_exposure_abs = 2.0
++    table = c.rc.table_manager._tables[2]
++    table.status = "ACTIVE"
++    table.current_event_key = "legacy:event:key"
++    table.market_id = "1.old"
++    table.current_exposure = 1.5
++    table.meta = {"event_id": "E42", "event_name": "Roma v Milan"}
++    raw = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
++    raw.update({"event_id": None, "eventId": "E42", "event_name": "Roma - Milan"})
++
++    ingested = TelegramSignalProcessor().normalize_ingestion_signal(raw)
++
++    assert ingested["ok"] is True
++    assert ingested["normalized_signal"]["event_id"] == "E42"
++    c.rc._on_signal_received(ingested["normalized_signal"])
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
++
++
+ @pytest.mark.parametrize("field", [
+     "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
+     "max_drawdown_abs",
+-- 
+2.43.0
+

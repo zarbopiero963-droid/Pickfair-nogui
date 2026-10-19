@@ -1,0 +1,38 @@
+From 330d9c36dff95343ef7fd9d4eccbd44cc8b0974e Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 13:09:59 +0200
+Subject: [PATCH 3/9] fix: register expanded PR28-d scope
+
+---
+ .guardrails/allowed_scope.json | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index 00343d0..4fd4930 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2132,10 +2132,7 @@
+         "core/system_state.py",
+         "core/validators.py",
+         "mini_gui.py",
+-        "telegram_listener.py",
+         "services/setting_service.py",
+-        "services/telegram_signal_processor.py",
+-        "docs/design/design_handoff.md",
+         "tests/acceptance/test_issue437_pr28b.py",
+         "tests/unit/test_runtime_controller_best_price_direct.py",
+         "tests/unit/test_runtime_controller_gate_proofs.py",
+@@ -2172,7 +2169,10 @@
+         "core/system_state.py",
+         "core/validators.py",
+         "mini_gui.py",
++        "telegram_listener.py",
+         "services/setting_service.py",
++        "services/telegram_signal_processor.py",
++        "docs/design/design_handoff.md",
+         "tests/acceptance/test_issue437_pr28d.py",
+         "tests/core/test_auto_trade_mm_gate.py",
+         "tests/core/test_cycle_executor.py",
+-- 
+2.43.0
+

@@ -1,0 +1,740 @@
+[
+  {
+    "sha": "aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+    "node_id": "C_kwDORumVCNoAKGFhNzA1ZmMwMzM1MzJjOTI4N2E3YWJiN2I5MmNiOTllOTVmZGJiMzk",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T10:55:21Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T10:55:21Z"
+      },
+      "message": "[TASK: issue461-pr28d-absolute-caps] enforce absolute risk caps fail closed",
+      "tree": {
+        "sha": "8e3f5651a716af8ef22566259cacc8327a7b841b",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/8e3f5651a716af8ef22566259cacc8327a7b841b"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/aa705fc033532c9287a7abb7b92cb99e95fdbb39/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/028cee9074c3ab6c2a8014449a1897ae8faebc93",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/028cee9074c3ab6c2a8014449a1897ae8faebc93"
+      }
+    ]
+  },
+  {
+    "sha": "fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+    "node_id": "C_kwDORumVCNoAKGZjZGNkZjg0NjQxYjViYjY2NGI4NTVkOTE3YmI3MjZmYmRjODBjYWI",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:08:38Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:08:38Z"
+      },
+      "message": "fix: close PR28-d review gaps",
+      "tree": {
+        "sha": "c470ce8749ce991840475fb41cb5b6e6646b8a44",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/c470ce8749ce991840475fb41cb5b6e6646b8a44"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/fcdcdf84641b5bb664b855d917bb726fbdc80cab/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/aa705fc033532c9287a7abb7b92cb99e95fdbb39",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/aa705fc033532c9287a7abb7b92cb99e95fdbb39"
+      }
+    ]
+  },
+  {
+    "sha": "330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+    "node_id": "C_kwDORumVCNoAKDMzMGQ5YzM2ZGZmOTUzNDNlZjdmZDlkNGVjY2JkNDRjYzhiMDk3NGU",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:09:59Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:09:59Z"
+      },
+      "message": "fix: register expanded PR28-d scope",
+      "tree": {
+        "sha": "e06339460f58f5f074ffe560527bb4af2c59cf24",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/e06339460f58f5f074ffe560527bb4af2c59cf24"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/fcdcdf84641b5bb664b855d917bb726fbdc80cab",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/fcdcdf84641b5bb664b855d917bb726fbdc80cab"
+      }
+    ]
+  },
+  {
+    "sha": "9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+    "node_id": "C_kwDORumVCNoAKDlkZTMwN2Y5MWJiODU2NGZmYTUzYzI2MzI3YmMyMWU4NmJmMWExMmE",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:11:23Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:11:23Z"
+      },
+      "message": "fix: unify mixed event identities for caps",
+      "tree": {
+        "sha": "dc2682e15aecfcf9a46450ce501dac78ab66d479",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/dc2682e15aecfcf9a46450ce501dac78ab66d479"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/9de307f91bb8564ffa53c26327bc21e86bf1a12a/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/330d9c36dff95343ef7fd9d4eccbd44cc8b0974e"
+      }
+    ]
+  },
+  {
+    "sha": "3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+    "node_id": "C_kwDORumVCNoAKDMwNTFiYmUxYzBiZDlmZmQxZDVmOGE0ZjY2OTMxNGZkZTgzZTg3Mzg",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:13:50Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T11:13:50Z"
+      },
+      "message": "fix: reconcile canonical event identity",
+      "tree": {
+        "sha": "83f07ea45a9d2bfd97ceac57ba9e9b4da5c4c9c5",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/83f07ea45a9d2bfd97ceac57ba9e9b4da5c4c9c5"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/9de307f91bb8564ffa53c26327bc21e86bf1a12a",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/9de307f91bb8564ffa53c26327bc21e86bf1a12a"
+      }
+    ]
+  },
+  {
+    "sha": "4ac94a4d375039c940bdffb32de369828f393a6a",
+    "node_id": "C_kwDORumVCNoAKDRhYzk0YTRkMzc1MDM5Yzk0MGJkZmZiMzJkZTM2OTgyOGYzOTNhNmE",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T13:07:08Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T13:07:08Z"
+      },
+      "message": "fix: close PR28-d admission gaps",
+      "tree": {
+        "sha": "010c8aa8001f53b39ae48503c067fccb171d04a7",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/010c8aa8001f53b39ae48503c067fccb171d04a7"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/4ac94a4d375039c940bdffb32de369828f393a6a",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/4ac94a4d375039c940bdffb32de369828f393a6a",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/4ac94a4d375039c940bdffb32de369828f393a6a",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/4ac94a4d375039c940bdffb32de369828f393a6a/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/3051bbe1c0bd9ffd1d5f8a4f669314fde83e8738"
+      }
+    ]
+  },
+  {
+    "sha": "5cc249b41a816db6a4979236f5fbe151357f7644",
+    "node_id": "C_kwDORumVCNoAKDVjYzI0OWI0MWE4MTZkYjZhNDk3OTIzNmY1ZmJlMTUxMzU3Zjc2NDQ",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T13:30:26Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T13:30:26Z"
+      },
+      "message": "fix: preserve Telegram event identity alias",
+      "tree": {
+        "sha": "b1ecc450556783aef7021162545236e3d3d246b3",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/b1ecc450556783aef7021162545236e3d3d246b3"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/5cc249b41a816db6a4979236f5fbe151357f7644",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/5cc249b41a816db6a4979236f5fbe151357f7644",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/5cc249b41a816db6a4979236f5fbe151357f7644",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/5cc249b41a816db6a4979236f5fbe151357f7644/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "4ac94a4d375039c940bdffb32de369828f393a6a",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/4ac94a4d375039c940bdffb32de369828f393a6a",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/4ac94a4d375039c940bdffb32de369828f393a6a"
+      }
+    ]
+  },
+  {
+    "sha": "8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+    "node_id": "C_kwDORumVCNoAKDhmNjc2Mjg1NWQ3ODA1OWExYzg4NzFhNDFmZDRjOGYxYjE4OTE4ZTY",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T15:15:19Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T15:15:19Z"
+      },
+      "message": "fix: close PR28-d safety cluster",
+      "tree": {
+        "sha": "489567e2b14c998fb1f624977ad9310192ab12bf",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/489567e2b14c998fb1f624977ad9310192ab12bf"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/8f6762855d78059a1c8871a41fd4c8f1b18918e6/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "5cc249b41a816db6a4979236f5fbe151357f7644",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/5cc249b41a816db6a4979236f5fbe151357f7644",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/5cc249b41a816db6a4979236f5fbe151357f7644"
+      }
+    ]
+  },
+  {
+    "sha": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
+    "node_id": "C_kwDORumVCNoAKDYxODg4NGU2YzBhYTgyMzQyYmI5OGFkN2M4MWE0Y2Y4OTYzZjFmYTQ",
+    "commit": {
+      "author": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T16:18:01Z"
+      },
+      "committer": {
+        "name": "zarbopiero963-droid",
+        "email": "zarbopiero963@gmail.com",
+        "date": "2026-10-09T16:18:01Z"
+      },
+      "message": "fix: fence order admissions against cashout",
+      "tree": {
+        "sha": "7e768f477c928a98a8f76a624d37e9ec93692416",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/trees/7e768f477c928a98a8f76a624d37e9ec93692416"
+      },
+      "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/git/commits/618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
+    "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
+    "comments_url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/618884e6c0aa82342bb98ad7c81a4cf8963f1fa4/comments",
+    "author": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "committer": {
+      "login": "zarbopiero963-droid",
+      "id": 249075720,
+      "node_id": "U_kgDODtiYCA",
+      "avatar_url": "https://avatars.githubusercontent.com/u/249075720?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/zarbopiero963-droid",
+      "html_url": "https://github.com/zarbopiero963-droid",
+      "followers_url": "https://api.github.com/users/zarbopiero963-droid/followers",
+      "following_url": "https://api.github.com/users/zarbopiero963-droid/following{/other_user}",
+      "gists_url": "https://api.github.com/users/zarbopiero963-droid/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/zarbopiero963-droid/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/zarbopiero963-droid/subscriptions",
+      "organizations_url": "https://api.github.com/users/zarbopiero963-droid/orgs",
+      "repos_url": "https://api.github.com/users/zarbopiero963-droid/repos",
+      "events_url": "https://api.github.com/users/zarbopiero963-droid/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/zarbopiero963-droid/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+        "url": "https://api.github.com/repos/zarbopiero963-droid/Pickfair-nogui/commits/8f6762855d78059a1c8871a41fd4c8f1b18918e6",
+        "html_url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/commit/8f6762855d78059a1c8871a41fd4c8f1b18918e6"
+      }
+    ]
+  }
+]

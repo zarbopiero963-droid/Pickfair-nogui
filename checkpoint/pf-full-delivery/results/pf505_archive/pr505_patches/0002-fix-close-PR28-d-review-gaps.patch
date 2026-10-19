@@ -1,0 +1,426 @@
+From fcdcdf84641b5bb664b855d917bb726fbdc80cab Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 13:08:38 +0200
+Subject: [PATCH 2/9] fix: close PR28-d review gaps
+
+---
+ .guardrails/allowed_scope.json                |  8 +-
+ core/runtime_controller.py                    | 78 ++++++++++++++++---
+ docs/design/design_handoff.md                 |  7 ++
+ services/telegram_signal_processor.py         | 38 ++++++---
+ telegram_listener.py                          |  4 +-
+ tests/acceptance/test_issue437_pr28d.py       | 37 +++++++++
+ .../test_runtime_controller_auto_trade_mm.py  | 44 +++++++++++
+ tests/unit/test_ui_freeze_boundaries.py       |  2 +-
+ 8 files changed, 191 insertions(+), 27 deletions(-)
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index 636e563..00343d0 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2132,7 +2132,10 @@
+         "core/system_state.py",
+         "core/validators.py",
+         "mini_gui.py",
++        "telegram_listener.py",
+         "services/setting_service.py",
++        "services/telegram_signal_processor.py",
++        "docs/design/design_handoff.md",
+         "tests/acceptance/test_issue437_pr28b.py",
+         "tests/unit/test_runtime_controller_best_price_direct.py",
+         "tests/unit/test_runtime_controller_gate_proofs.py",
+@@ -2176,9 +2179,10 @@
+         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+         "tests/integration/test_runtime_controller_auto_trade_mm.py",
+         "tests/integration/test_runtime_controller_cycle_executor.py",
+-        "tests/integration/test_runtime_controller_live_sim_parity.py"
++        "tests/integration/test_runtime_controller_live_sim_parity.py",
++        "tests/unit/test_ui_freeze_boundaries.py"
+       ],
+-      "max_files": 15,
++      "max_files": 19,
+       "allow_tests": true,
+       "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
+     }
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 4779fda..b64de5e 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2578,11 +2578,31 @@ class RuntimeController:
+             },
+         )
+ 
+-    def _event_current_exposure(self, event_key: str) -> float:
+-        table = self.table_manager.find_by_event_key(event_key)
+-        if not table:
++    @staticmethod
++    def _event_identity(signal: dict) -> str:
++        event_id = signal.get("event_id") or signal.get("eventId")
++        if event_id not in (None, "") and not isinstance(event_id, bool):
++            return f"id:{str(event_id).strip()}"
++        event_name = signal.get("event_name") or signal.get("event")
++        if isinstance(event_name, str) and event_name.strip():
++            return "name:" + " ".join(event_name.casefold().split())
++        return ""
++
++    def _event_current_exposure(self, event_identity: str) -> float:
++        if not event_identity:
+             return 0.0
+-        return float(table.current_exposure or 0.0)
++        total = 0.0
++        for table in self.table_manager.active_tables():
++            meta = table.meta if isinstance(table.meta, dict) else {}
++            stored = str(meta.get("event_identity") or "")
++            if not stored:
++                stored = self._event_identity(meta)
++            if stored == event_identity:
++                value = validators.finite_number(table.current_exposure)
++                if value is None or value < 0:
++                    return float("inf")
++                total += value
++        return total
+ 
+     def _market_current_exposure(self, market_id: str) -> float:
+         total = 0.0
+@@ -3125,7 +3145,8 @@ class RuntimeController:
+             return
+ 
+         total_exposure = self.table_manager.total_exposure()
+-        event_exposure = self._event_current_exposure(event_key)
++        event_identity = self._event_identity(signal)
++        event_exposure = self._event_current_exposure(event_identity)
+ 
+         # Enforcement A1: Drawdown Hard Stop (#320)
+         if str(self.execution_mode).upper() == "LIVE":
+@@ -3148,11 +3169,15 @@ class RuntimeController:
+             bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
+             peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
+             if cap is None or cap <= 0 or bankroll is None or peak is None:
++                if self.config.anti_duplication_enabled:
++                    self.duplication_guard.release(event_key)
+                 self._reject_signal(signal, "max_drawdown_abs_non_valido")
+                 return
+             drawdown_abs = max(0.0, peak - bankroll)
+             if validators.reaches_limit(drawdown_abs, cap):
+                 self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
++                if self.config.anti_duplication_enabled:
++                    self.duplication_guard.release(event_key)
+                 self._reject_signal(signal, "max_drawdown_abs_active")
+                 return
+ 
+@@ -3172,7 +3197,8 @@ class RuntimeController:
+             absolute_checks = (
+                 ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
+                 ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
+-                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"), event_exposure),
++                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
++                 event_exposure if event_identity else float("inf")),
+                 ("max_open_exposure", getattr(self.config, "max_open_exposure", None), total_exposure),
+             )
+             for cap_name, cap_raw, current in absolute_checks:
+@@ -3272,6 +3298,7 @@ class RuntimeController:
+             selection_id=payload["selection_id"],
+             meta={
+                 "event_name": payload["event_name"],
++                "event_identity": event_identity,
+                 "market_name": payload["market_name"],
+                 "runner_name": payload["runner_name"],
+                 "bet_type": payload["bet_type"],
+@@ -4371,7 +4398,7 @@ class RuntimeController:
+             {"table_id": table_id} if table_id is not None else None
+         )
+         try:  # PR28: era 0.0
+-            next_event_exposure = (self._event_current_exposure(self.duplication_guard.build_event_key(signal))
++            next_event_exposure = (self._event_current_exposure(self._event_identity(signal))
+                                    if isinstance(signal, dict) else 0.0)
+         except Exception:
+             next_event_exposure = float("inf")
+@@ -4461,9 +4488,39 @@ class RuntimeController:
+             return result
+ 
+         risk_allowed, risk_reason = self._risk_allows_auto_trade()
+-        if risk_allowed:  # PR28: cap A2 come per il segnale
+-            risk_reason = validators.signal_cap_reason(signal, result["next_stake"], getattr(
+-                self.config, "max_open_exposure", None), self.table_manager.total_exposure()) or risk_reason
++        if risk_allowed:
++            try:
++                side = validators.signal_side(signal)
++                price = validators.order_price(signal.get("price", signal.get("odds")))
++                order_exposure = validators.order_exposure_or_inf(side, result["next_stake"], price)
++                event_identity = self._event_identity(signal)
++                checks = (
++                    ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
++                    ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
++                    ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"),
++                     self._event_current_exposure(event_identity) if event_identity else float("inf")),
++                    ("max_open_exposure", getattr(self.config, "max_open_exposure", None), self.table_manager.total_exposure()),
++                )
++                for cap_name, cap_raw, current in checks:
++                    risk_reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
++                    if risk_reason:
++                        break
++                else:
++                    drawdown_raw = self._configured_optional(self.config, "max_drawdown_abs")
++                    if drawdown_raw is None:
++                        risk_reason = "risk_approved"
++                    else:
++                        cap = validators.finite_number(drawdown_raw)
++                        bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
++                        peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
++                        if cap is None or cap <= 0 or bankroll is None or peak is None:
++                            risk_reason = "max_drawdown_abs_non_valido"
++                        elif validators.reaches_limit(max(0.0, peak - bankroll), cap):
++                            risk_reason = "max_drawdown_abs_active"
++                        else:
++                            risk_reason = "risk_approved"
++            except (TypeError, ValueError):
++                risk_reason = "ordine_auto_trade_non_verificabile"
+             risk_allowed = risk_reason == "risk_approved"
+         result["risk_status"] = "RISK_APPROVED" if risk_allowed else "RISK_REJECTED"
+         if not risk_allowed:
+@@ -4550,6 +4607,7 @@ class RuntimeController:
+                 selection_id=submit_payload.get("selection_id"),
+                 meta={
+                     "event_name": submit_payload.get("event_name") or "",
++                    "event_identity": self._event_identity(submit_payload),
+                     "market_name": submit_payload.get("market_name") or "",
+                     "runner_name": submit_payload.get("runner_name") or "",
+                     "bet_type": submit_payload.get("bet_type") or "",
+diff --git a/docs/design/design_handoff.md b/docs/design/design_handoff.md
+index b200aa1..5797e21 100644
+--- a/docs/design/design_handoff.md
++++ b/docs/design/design_handoff.md
+@@ -359,3 +359,10 @@ Incidents, Incident Timeline, Audit, Safe Mode, Diagnostics`; badge
+ Safe Mode` senza conferma yes/no; ExportPanel `Export Diagnostics ZIP`).
+ Se verranno integrati nella Mini GUI, l'integrazione è una modifica design
+ e va riportata qui.
++
++# PR28-d — controlli assoluti Roserpina
++
++La sezione Roserpina espone quattro campi monetari aggiuntivi: esposizione massima
++per ordine, mercato, evento e drawdown assoluto. I valori iniziali provengono
++dalla configurazione autorevole (1 €, 2 €, 2 €, 10 €); input vuoti o invalidi
++non rappresentano un opt-out e vengono rifiutati fail-closed dal runtime.
+diff --git a/services/telegram_signal_processor.py b/services/telegram_signal_processor.py
+index 89b1486..46a0aa1 100644
+--- a/services/telegram_signal_processor.py
++++ b/services/telegram_signal_processor.py
+@@ -29,17 +29,21 @@ class TelegramSignalProcessor:
+     # =========================================================
+     # NORMALIZZAZIONE BASE
+     # =========================================================
+-    def normalize_action(self, signal: Dict[str, Any]) -> str:
+-        action = (
+-            signal.get("action")
+-            or signal.get("side")
+-            or signal.get("bet_type")
+-            or "BACK"
+-        )
+-        action = str(action).upper().strip()
+-        if action not in ("BACK", "LAY"):
+-            action = "BACK"
+-        return action
++    def normalize_action(self, signal: Dict[str, Any]) -> Optional[str]:
++        values = []
++        for key in ("action", "side", "bet_type"):
++            raw = signal.get(key)
++            if raw in (None, ""):
++                continue
++            if not isinstance(raw, str):
++                return None
++            value = raw.upper().strip()
++            if value not in ("BACK", "LAY"):
++                return None
++            values.append(value)
++        if not values or len(set(values)) != 1:
++            return None
++        return values[0]
+ 
+     def parse_price(self, signal: Dict[str, Any]) -> Optional[float]:
+         raw = (
+@@ -369,6 +373,14 @@ class TelegramSignalProcessor:
+         action = self.normalize_action(raw)
+         price = self.parse_price(raw)
+ 
++        if action is None:
++            return {
++                "ok": False,
++                "error_code": "INVALID_OR_MISSING_SIDE",
++                "error_reason": "telegram side must be one unambiguous BACK or LAY value",
++                "normalized_signal": {},
++            }
++
+         normalized: Dict[str, Any] = {
+             "boundary_stage": "telegram_ingestion_normalized_v1",
+             "market_id": market_id,
+@@ -377,6 +389,7 @@ class TelegramSignalProcessor:
+             "action": action,
+             "price": price,
+             "event_name": self.parse_event_name(raw),
++            "event_id": raw.get("event_id", raw.get("eventId")),
+             "market_name": self.parse_market_name(raw),
+             "market_type": self.parse_market_type(raw),
+             "selection": self.parse_selection_name(raw, selection_id),
+@@ -423,7 +436,7 @@ class TelegramSignalProcessor:
+         market_id = self.parse_market_id(signal)
+         original_price = self.parse_price(signal)
+ 
+-        if selection_id is None or not market_id or original_price is None:
++        if action is None or selection_id is None or not market_id or original_price is None:
+             return None
+ 
+         selection_name = self.parse_selection_name(signal, selection_id)
+@@ -435,6 +448,7 @@ class TelegramSignalProcessor:
+             "market_id": market_id,
+             "market_type": market_type,
+             "event_name": event_name,
++            "event_id": signal.get("event_id", signal.get("eventId")),
+             "event": event_name,
+             "market_name": market_name,
+             "market": market_name,
+diff --git a/telegram_listener.py b/telegram_listener.py
+index 7128267..674df27 100644
+--- a/telegram_listener.py
++++ b/telegram_listener.py
+@@ -1131,13 +1131,13 @@ class TelegramListener:
+ 
+         market_id = self._extract_master_field("market_id", text)
+         selection_id = self._extract_master_field("selection_id", text)
+-        action = self._extract_master_field("action", text) or "BACK"
++        action = self._extract_master_field("action", text)
+         master_price = self._extract_master_field("master_price", text) or "2.0"
+         event_name = self._extract_master_field("event_name", text)
+         market_name = self._extract_master_field("market_name", text)
+         selection = self._extract_master_field("selection", text)
+ 
+-        if not market_id or not selection_id:
++        if not market_id or not selection_id or str(action).upper() not in {"BACK", "LAY"}:
+             return None
+ 
+         return {
+diff --git a/tests/acceptance/test_issue437_pr28d.py b/tests/acceptance/test_issue437_pr28d.py
+index 4a3083b..d498b13 100644
+--- a/tests/acceptance/test_issue437_pr28d.py
++++ b/tests/acceptance/test_issue437_pr28d.py
+@@ -5,6 +5,7 @@ import pytest
+ import threading
+ 
+ from core import validators
++from services.telegram_signal_processor import TelegramSignalProcessor
+ from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
+ from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
+ 
+@@ -89,6 +90,42 @@ def test_absolute_drawdown_reaches_threshold_and_blocks(tmp_path):
+     assert _rifiuti(c)[-1] == "max_drawdown_abs_active"
+ 
+ 
++def test_drawdown_rejection_releases_dedupe_for_retry(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_drawdown_abs = True
++    sig = _signal(stake=0.5, bet_type="BACK")
++    c.rc._on_signal_received(sig)
++    c.rc.config.max_drawdown_abs = 10.0
++    c.rc.risk_desk.equity_peak = c.rc.risk_desk.bankroll_current
++    c.rc._on_signal_received(sig)
++    assert len(c.broker.state.orders) == 1
++
++
++def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_market_exposure = 100.0
++    c.rc.config.max_event_exposure_abs = 2.0
++    table = c.rc.table_manager._tables[2]
++    table.status = "ACTIVE"
++    table.current_event_key = "other-market:key"
++    table.market_id = "1.other"
++    table.current_exposure = 1.5
++    table.meta = {"event_name": "Roma v Milan", "event_identity": "name:roma v milan"}
++    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
++    sig["event_name"] = " ROMA   v MILAN "
++    c.rc._on_signal_received(sig)
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
++
++
++@pytest.mark.parametrize("raw", [{}, {"action": "BOTH"}, {"action": "BACK", "side": "LAY"}])
++def test_telegram_ingestion_rejects_missing_invalid_or_conflicting_side(raw):
++    payload = {"market_id": "1.2", "selection_id": 3, "price": 2.0, **raw}
++    result = TelegramSignalProcessor().normalize_ingestion_signal(payload)
++    assert result["ok"] is False
++    assert result["error_code"] == "INVALID_OR_MISSING_SIDE"
++
++
+ def test_most_restrictive_cap_wins(tmp_path):
+     c = _catena(tmp_path)
+     c.rc.config.max_order_exposure = 1.0
+diff --git a/tests/integration/test_runtime_controller_auto_trade_mm.py b/tests/integration/test_runtime_controller_auto_trade_mm.py
+index 6303693..05f7c6f 100644
+--- a/tests/integration/test_runtime_controller_auto_trade_mm.py
++++ b/tests/integration/test_runtime_controller_auto_trade_mm.py
+@@ -144,6 +144,50 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
+     assert payload["auto_trade_status"] == "AUTO_TRADE_SUBMITTED"
+ 
+ 
++def test_auto_trade_applies_absolute_order_cap_before_publish():
++    rc, bus = _make_controller(responses=[{"available": 150.0}])
++    rc.mode = RuntimeMode.ACTIVE
++    rc.risk_desk.sync_bankroll(100.0)
++    rc.config.max_order_exposure = 0.25
++    rc._on_close_position(
++        _canonical_close_payload(
++            auto_trade_enabled=True,
++            cycle_executor_enabled=True,
++            mm_context={
++                "cycle_active": True,
++                "cycle_id": "cycle-absolute-order-cap",
++                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
++                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
++                                "side": "BACK", "event_name": "Roma v Milan"},
++            },
++        )
++    )
++    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
++    assert rc._last_auto_trade_result["reason"].startswith("max_order_exposure_exceeded")
++
++
++def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
++    rc, bus = _make_controller(responses=[{"available": 150.0}])
++    rc.mode = RuntimeMode.ACTIVE
++    rc.risk_desk.sync_bankroll(100.0)
++    rc.config.max_drawdown_abs = True
++    rc._on_close_position(
++        _canonical_close_payload(
++            auto_trade_enabled=True,
++            cycle_executor_enabled=True,
++            mm_context={
++                "cycle_active": True,
++                "cycle_id": "cycle-absolute-drawdown-cap",
++                "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
++                "next_signal": {"market_id": "1.234", "selection_id": 8, "price": 2.0,
++                                "side": "BACK", "event_name": "Roma v Milan"},
++            },
++        )
++    )
++    assert [event for event in bus.events if event[0] == "CMD_QUICK_BET"] == []
++    assert rc._last_auto_trade_result["reason"] == "max_drawdown_abs_non_valido"
++
++
+ def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility():
+     rc, bus = _make_controller(responses=[{"available": 140.0}])
+     rc.mode = RuntimeMode.ACTIVE
+diff --git a/tests/unit/test_ui_freeze_boundaries.py b/tests/unit/test_ui_freeze_boundaries.py
+index 3c03de7..44d7b83 100644
+--- a/tests/unit/test_ui_freeze_boundaries.py
++++ b/tests/unit/test_ui_freeze_boundaries.py
+@@ -128,7 +128,7 @@ def test_telegram_signal_resolution_is_submitted_to_executor():
+     h = _TelegramHarness()
+     h.bus.subscribers = {"SIGNAL_RECEIVED": [object()]}
+ 
+-    h._handle_telegram_signal({"event_name": "A v B", "price": 2.1})
++    h._handle_telegram_signal({"event_name": "A v B", "price": 2.1, "side": "BACK"})
+ 
+     assert "telegram_signal_resolution" in h.executor.calls
+     assert h.resolution_calls == 1
+-- 
+2.43.0
+

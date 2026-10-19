@@ -1,0 +1,472 @@
+From 4ac94a4d375039c940bdffb32de369828f393a6a Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 15:07:08 +0200
+Subject: [PATCH 6/9] fix: close PR28-d admission gaps
+
+---
+ .guardrails/allowed_scope.json                |  7 +-
+ core/runtime_controller.py                    | 36 +++++--
+ services/setting_service.py                   | 25 ++++-
+ services/telegram_signal_processor.py         | 11 ++-
+ telegram_listener.py                          | 10 +-
+ tests/acceptance/test_issue437_pr28d.py       | 96 +++++++++++++++++++
+ tests/parsers/test_parser_personalizzati.py   |  3 +-
+ .../test_telegram_signal_processor.py         | 58 +++--------
+ ...t_telegram_listener_copy_pattern_action.py |  9 +-
+ 9 files changed, 191 insertions(+), 64 deletions(-)
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index 4fd4930..ac58606 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2180,11 +2180,14 @@
+         "tests/integration/test_runtime_controller_auto_trade_mm.py",
+         "tests/integration/test_runtime_controller_cycle_executor.py",
+         "tests/integration/test_runtime_controller_live_sim_parity.py",
++        "tests/parsers/test_parser_personalizzati.py",
++        "tests/services/test_telegram_signal_processor.py",
++        "tests/unit/test_telegram_listener_copy_pattern_action.py",
+         "tests/unit/test_ui_freeze_boundaries.py"
+       ],
+-      "max_files": 19,
++      "max_files": 22,
+       "allow_tests": true,
+-      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
++      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. Scope esteso nel fix cycle 4 ai tre test legacy Telegram che codificavano ancora il default BACK: vengono riallineati al rifiuto fail-closed e coprono custom-pattern/cashout senza riattivare Telegram. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
+     }
+   }
+ }
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 6b9b71a..20ad34a 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2596,6 +2596,11 @@ class RuntimeController:
+         event_id, event_name = self._event_identity_parts(signal)
+         if not event_id and not event_name:
+             return 0.0
++        signal_names = {event_name} if event_name else set()
++        signal_legacy = str(signal.get("event_identity") or "")
++        if signal_legacy.startswith("name:") and signal_legacy[5:]:
++            signal_names.add(" ".join(signal_legacy[5:].casefold().split()))
++        signal_event_key = self.duplication_guard.build_event_key(signal)
+         total = 0.0
+         for table in self.table_manager.active_tables():
+             meta = table.meta if isinstance(table.meta, dict) else {}
+@@ -2603,14 +2608,19 @@ class RuntimeController:
+             legacy = str(meta.get("event_identity") or "")
+             if not stored_id and legacy.startswith("id:"):
+                 stored_id = legacy[3:]
+-            if not stored_name and legacy.startswith("name:"):
+-                stored_name = legacy[5:]
++            stored_names = {stored_name} if stored_name else set()
++            if legacy.startswith("name:") and legacy[5:]:
++                stored_names.add(" ".join(legacy[5:].casefold().split()))
+             # Betfair event_id e' primario quando presente su entrambi. Se uno
+-            # dei due record legacy ne e' privo, il nome normalizzato permette
+-            # la riconciliazione; due ID differenti non vengono mai fusi.
++            # dei due record legacy ne e' privo, qualunque alias nome persistito
++            # permette la riconciliazione; due ID differenti non vengono mai
++            # fusi. I tavoli pre-PR28 privi di meta restano riconoscibili quando
++            # conservano la stessa chiave ordine/evento storica.
+             same_event = (bool(event_id and stored_id) and event_id == stored_id) or (
+-                not (event_id and stored_id) and bool(event_name and stored_name)
+-                and event_name == stored_name
++                not (event_id and stored_id) and bool(signal_names & stored_names)
++            ) or (
++                not stored_id and not stored_names
++                and str(getattr(table, "current_event_key", "") or "") == signal_event_key
+             )
+             if same_event:
+                 value = validators.finite_number(table.current_exposure)
+@@ -3313,7 +3323,7 @@ class RuntimeController:
+             selection_id=payload["selection_id"],
+             meta={
+                 "event_name": payload["event_name"],
+-                "event_id": signal.get("event_id", signal.get("eventId")),
++                "event_id": signal.get("event_id") or signal.get("eventId"),
+                 "event_identity": event_identity,
+                 "market_name": payload["market_name"],
+                 "runner_name": payload["runner_name"],
+@@ -4262,6 +4272,16 @@ class RuntimeController:
+         return "|".join(parts)
+ 
+     def _evaluate_and_maybe_submit_auto_next_trade(self, *, payload: dict, sync_result: dict) -> dict:
++        """Serializza l'ammissione auto-next con ogni altro ingresso d'ordine."""
++        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
++            return self._evaluate_and_maybe_submit_auto_next_trade_serial(
++                payload=payload,
++                sync_result=sync_result,
++            )
++
++    def _evaluate_and_maybe_submit_auto_next_trade_serial(
++        self, *, payload: dict, sync_result: dict
++    ) -> dict:
+         settlement_key = self._build_bankroll_sync_key(payload)
+         source_corr_id = str(sync_result.get("correlation_id") or "")
+         recovery_enabled = bool(payload.get("recovery_enabled", self.config.allow_recovery))
+@@ -4886,7 +4906,7 @@ class RuntimeController:
+             "price": float(signal.get("price") or signal.get("odds")),
+             "stake": float(decision_stake),
+             "event_name": signal.get("event") or signal.get("match") or signal.get("event_name") or "",
+-            "event_id": signal.get("event_id", signal.get("eventId")),
++            "event_id": signal.get("event_id") or signal.get("eventId"),
+             "market_name": signal.get("market") or signal.get("market_name") or signal.get("market_type") or "",
+             "runner_name": signal.get("selection") or signal.get("runner_name") or signal.get("runnerName") or "",
+             "simulation_mode": bool(signal.get("simulation_mode", self.simulation_mode)),
+diff --git a/services/setting_service.py b/services/setting_service.py
+index a1508c0..18de001 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -324,10 +324,10 @@ class SettingsService:
+                 "roserpina.max_open_exposure",
+                 fallback_key="max_open_exposure",
+             ),
+-            max_order_exposure=self._optional_hard_stop_value(data, "roserpina.max_order_exposure") if "roserpina.max_order_exposure" in data else 1.0,
+-            max_market_exposure=self._optional_hard_stop_value(data, "roserpina.max_market_exposure") if "roserpina.max_market_exposure" in data else 2.0,
+-            max_event_exposure_abs=self._optional_hard_stop_value(data, "roserpina.max_event_exposure_abs") if "roserpina.max_event_exposure_abs" in data else 2.0,
+-            max_drawdown_abs=self._optional_hard_stop_value(data, "roserpina.max_drawdown_abs") if "roserpina.max_drawdown_abs" in data else 10.0,
++            max_order_exposure=self._required_absolute_cap_value(data, "roserpina.max_order_exposure", 1.0),
++            max_market_exposure=self._required_absolute_cap_value(data, "roserpina.max_market_exposure", 2.0),
++            max_event_exposure_abs=self._required_absolute_cap_value(data, "roserpina.max_event_exposure_abs", 2.0),
++            max_drawdown_abs=self._required_absolute_cap_value(data, "roserpina.max_drawdown_abs", 10.0),
+             max_session_loss=self._optional_hard_stop_value(
+                 data,
+                 "roserpina.max_session_loss",
+@@ -457,6 +457,23 @@ class SettingsService:
+         except Exception:
+             return float("nan")
+ 
++    @staticmethod
++    def _required_absolute_cap_value(
++        data: Dict[str, Any], key: str, default: float
++    ) -> float:
++        """Carica un cap owner obbligatorio senza trasformare il vuoto in opt-out."""
++        if key not in data:
++            return float(default)
++        value = data.get(key)
++        if isinstance(value, bool) or value is None:
++            return float("nan")
++        if isinstance(value, str) and value.strip() == "":
++            return float("nan")
++        try:
++            return float(value)
++        except Exception:
++            return float("nan")
++
+     # =========================================================
+     # SIMULATION CONFIG
+     # =========================================================
+diff --git a/services/telegram_signal_processor.py b/services/telegram_signal_processor.py
+index 46a0aa1..0f17975 100644
+--- a/services/telegram_signal_processor.py
++++ b/services/telegram_signal_processor.py
+@@ -372,8 +372,10 @@ class TelegramSignalProcessor:
+         market_id = self.parse_market_id(raw)
+         action = self.normalize_action(raw)
+         price = self.parse_price(raw)
++        signal_type = str(raw.get("signal_type") or raw.get("signal_name") or "").strip().upper()
++        is_cashout = signal_type in {"CASHOUT", "CASHOUT_ALL"}
+ 
+-        if action is None:
++        if action is None and not is_cashout:
+             return {
+                 "ok": False,
+                 "error_code": "INVALID_OR_MISSING_SIDE",
+@@ -385,21 +387,22 @@ class TelegramSignalProcessor:
+             "boundary_stage": "telegram_ingestion_normalized_v1",
+             "market_id": market_id,
+             "selection_id": selection_id,
+-            "bet_type": action,
+-            "action": action,
+             "price": price,
+             "event_name": self.parse_event_name(raw),
+             "event_id": raw.get("event_id", raw.get("eventId")),
+             "market_name": self.parse_market_name(raw),
+             "market_type": self.parse_market_type(raw),
+             "selection": self.parse_selection_name(raw, selection_id),
+-            "signal_type": str(raw.get("signal_type") or raw.get("signal_name") or ""),
++            "signal_type": signal_type,
+             "minute": self.parse_minute(raw),
+             "home_score": self.parse_home_score(raw),
+             "away_score": self.parse_away_score(raw),
+             "raw_text": raw.get("raw_text") or raw.get("message") or raw.get("text") or "",
+             "raw_signal": raw,
+         }
++        if not is_cashout:
++            normalized["bet_type"] = action
++            normalized["action"] = action
+ 
+         if isinstance(copy_meta, dict):
+             normalized["copy_meta"] = dict(copy_meta)
+diff --git a/telegram_listener.py b/telegram_listener.py
+index 674df27..995874d 100644
+--- a/telegram_listener.py
++++ b/telegram_listener.py
+@@ -1030,7 +1030,15 @@ class TelegramListener:
+                     continue
+ 
+                 market_type = str(cp.get("market_type") or "MATCH_ODDS").strip()
+-                bet_side = str(cp.get("bet_side") or "BACK").strip().upper()
++                raw_bet_side = cp.get("bet_side")
++                if not isinstance(raw_bet_side, str) or raw_bet_side.strip().upper() not in {"BACK", "LAY"}:
++                    logger.warning(
++                        "[TelegramListener] copy-pattern QUICK_BET ignorato "
++                        "(pattern_id=%s): bet_side assente o invalido",
++                        cp.get("id"),
++                    )
++                    continue
++                bet_side = raw_bet_side.strip().upper()
+ 
+                 if not selection:
+                     selection = str(cp.get("label") or cp.get("name") or "Custom Pattern")
+diff --git a/tests/acceptance/test_issue437_pr28d.py b/tests/acceptance/test_issue437_pr28d.py
+index 57bced5..1a4d849 100644
+--- a/tests/acceptance/test_issue437_pr28d.py
++++ b/tests/acceptance/test_issue437_pr28d.py
+@@ -3,8 +3,11 @@ from __future__ import annotations
+ 
+ import pytest
+ import threading
++import time
+ 
+ from core import validators
++from core.runtime_controller import RuntimeController
++from services.setting_service import SettingsService
+ from services.telegram_signal_processor import TelegramSignalProcessor
+ from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
+ from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
+@@ -136,6 +139,99 @@ def test_event_cap_same_id_aggregates_even_when_names_differ(tmp_path):
+     assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+ 
+ 
++def test_event_cap_honours_legacy_identity_alias_over_stale_display_name(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_market_exposure = 100.0
++    c.rc.config.max_event_exposure_abs = 2.0
++    table = c.rc.table_manager._tables[2]
++    table.status = "ACTIVE"
++    table.current_event_key = "legacy:event:key"
++    table.market_id = "1.old"
++    table.current_exposure = 1.5
++    table.meta = {
++        "event_name": "Roma - Milan",
++        "event_identity": "name:roma v milan",
++    }
++    sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
++    sig.update({"event_name": "Roma v Milan", "event_id": None})
++
++    c.rc._on_signal_received(sig)
++
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
++
++
++def test_auto_trade_payload_falls_back_to_event_id_alias_when_primary_is_blank(tmp_path):
++    c = _catena(tmp_path)
++    sig = _signal(stake=0.5, bet_type="BACK")
++    sig.update({"event_id": None, "eventId": "E42"})
++
++    payload = c.rc._build_auto_trade_payload(signal=sig, decision_stake=0.5)
++
++    assert payload["event_id"] == "E42"
++
++
++@pytest.mark.parametrize("field", [
++    "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
++    "max_drawdown_abs",
++])
++def test_blank_persisted_absolute_cap_stays_configured_and_fails_closed(field):
++    key = f"roserpina.{field}"
++
++    class _Db:
++        def get_settings(self):
++            return {key: ""}
++
++        def get_all_settings(self):
++            return self.get_settings()
++
++    value = getattr(SettingsService(_Db()).load_roserpina_config(), field)
++    assert validators.finite_number(value) is None
++    assert value is not None
++
++
++def test_auto_trade_admission_uses_same_serial_lock_as_signal_orders():
++    rc = object.__new__(RuntimeController)
++    rc._risk_admission_lock = threading.RLock()
++    active = 0
++    max_active = 0
++    state_lock = threading.Lock()
++
++    def serial(*, payload, sync_result):
++        nonlocal active, max_active
++        with state_lock:
++            active += 1
++            max_active = max(max_active, active)
++        time.sleep(0.03)
++        with state_lock:
++            active -= 1
++        return {"payload": payload, "sync_result": sync_result}
++
++    rc._evaluate_and_maybe_submit_auto_next_trade_serial = serial
++    threads = [threading.Thread(
++        target=rc._evaluate_and_maybe_submit_auto_next_trade,
++        kwargs={"payload": {"n": n}, "sync_result": {"n": n}},
++    ) for n in range(2)]
++    for thread in threads:
++        thread.start()
++    for thread in threads:
++        thread.join(timeout=2)
++
++    assert all(not thread.is_alive() for thread in threads)
++    assert max_active == 1
++
++
++def test_cashout_ingestion_does_not_require_order_side():
++    result = TelegramSignalProcessor().normalize_ingestion_signal({
++        "signal_type": "CASHOUT_ALL",
++        "event_name": "Roma v Milan",
++        "raw_text": "CASHOUT ALL",
++    })
++    assert result["ok"] is True
++    assert result["normalized_signal"]["signal_type"] == "CASHOUT_ALL"
++    assert "bet_type" not in result["normalized_signal"]
++
++
+ @pytest.mark.parametrize("raw", [{}, {"action": "BOTH"}, {"action": "BACK", "side": "LAY"}])
+ def test_telegram_ingestion_rejects_missing_invalid_or_conflicting_side(raw):
+     payload = {"market_id": "1.2", "selection_id": 3, "price": 2.0, **raw}
+diff --git a/tests/parsers/test_parser_personalizzati.py b/tests/parsers/test_parser_personalizzati.py
+index 6469528..cae1c53 100644
+--- a/tests/parsers/test_parser_personalizzati.py
++++ b/tests/parsers/test_parser_personalizzati.py
+@@ -214,7 +214,8 @@ def test_senza_parser_il_segnale_resta_intatto(monkeypatch, tmp_path):
+     assert p.ricarica_parser() == 0
+     segnale = {"raw_text": MESSAGGIO}
+     esito = p.normalize_ingestion_signal(segnale)
+-    assert esito["ok"] is True
++    assert esito["ok"] is False
++    assert esito["error_code"] == "INVALID_OR_MISSING_SIDE"
+     assert "event_name" not in segnale
+ 
+ 
+diff --git a/tests/services/test_telegram_signal_processor.py b/tests/services/test_telegram_signal_processor.py
+index 041b17b..79c3ce6 100644
+--- a/tests/services/test_telegram_signal_processor.py
++++ b/tests/services/test_telegram_signal_processor.py
+@@ -61,17 +61,12 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
+             "normalized_signal": {},
+         }
+ 
+-    # Una stringa NON matchata dal parser viene normalizzata (nuovo
+-    # contratto) ma il fail-closed regge A VALLE: market_id/selection_id
+-    # restano None e il runtime la rifiuta al gate campi-obbligatori
+-    # (core/runtime_controller.py:1932, required=[market_id, selection_id]
+-    # => SIGNAL_REJECTED campi_mancanti). Nessun ordine puo' nascere da
+-    # una stringa spazzatura. Il rifiuto end-to-end e' provato dal test
+-    # test_unmatched_string_signal_rejected_by_runtime_mandatory_gate.
++    # Una stringa non matchata non contiene neppure un lato d'ordine:
++    # il boundary la rifiuta prima del runtime, senza inventare BACK.
+     unmatched = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")
+-    assert unmatched["ok"] is True
+-    assert unmatched["normalized_signal"]["market_id"] is None
+-    assert unmatched["normalized_signal"]["selection_id"] is None
++    assert unmatched["ok"] is False
++    assert unmatched["error_code"] == "INVALID_OR_MISSING_SIDE"
++    assert unmatched["normalized_signal"] == {}
+ 
+     both = p.normalize_ingestion_signal(
+         {"event_name": "Roma v Milan", "copy_meta": {"master_id": "M1"}, "pattern_meta": {"pattern_id": "P1"}}
+@@ -81,36 +76,12 @@ def test_normalize_ingestion_signal_rejects_non_dict_and_ambiguous_meta_fail_clo
+     assert both["normalized_signal"] == {}
+ 
+ 
+-def test_unmatched_string_signal_rejected_by_runtime_mandatory_gate():
+-    # End-to-end del fail-closed Telegram->denaro (Grok/Fugu, PR #352): il
+-    # segnale normalizzato da una stringa non parsabile (market_id e
+-    # selection_id None) DEVE essere RIFIUTATO dal gate campi-obbligatori di
+-    # RuntimeController._on_signal_received, mai inoltrato all'order path.
+-    # Harness bare (object.__new__) come tests/unit/test_runtime_controller_
+-    # cashout_trigger.py: si esercita il gate reale, non un mock del gate.
+-    import threading
+-
+-    from core.runtime_controller import RuntimeController
+-
++def test_unmatched_string_signal_rejected_at_ingestion_boundary():
+     p = TelegramSignalProcessor()
+-    normalized = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")[
+-        "normalized_signal"
+-    ]
+-    assert normalized["market_id"] is None  # precondizione del percorso
+-
+-    rc = object.__new__(RuntimeController)
+-    rc._daily_loss_stop_lock = threading.Lock()
+-    rc._emergency_stopped = False
+-    rc._daily_loss_pending_stop = False
+-    rc._emergency_stopped_at = ""
+-    rc.execution_mode = "SIMULATION"
+-    rc._runtime_active = lambda: True  # runtime attivo: si arriva al gate
+-    rejected = []
+-    rc._reject_signal = lambda sig, reason: rejected.append(reason)
+-
+-    rc._on_signal_received(normalized)
+-
+-    assert rejected == ["campi_mancanti:market_id,selection_id"]
++    out = p.normalize_ingestion_signal("stringa non parsabile qualsiasi")
++    assert out["ok"] is False
++    assert out["error_code"] == "INVALID_OR_MISSING_SIDE"
++    assert out["normalized_signal"] == {}
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -127,12 +98,12 @@ def test_normalize_ingestion_signal_malformed_price_values_are_fail_closed(raw_p
+     assert out["normalized_signal"]["price"] is expected_price
+ 
+ 
+-def test_normalize_ingestion_signal_missing_action_uses_current_fail_closed_default_back():
++def test_normalize_ingestion_signal_missing_action_is_rejected_fail_closed():
+     p = TelegramSignalProcessor()
+     out = p.normalize_ingestion_signal(_valid_signal(action=None))
+-    assert out["ok"] is True
+-    assert out["normalized_signal"]["action"] == "BACK"
+-    assert out["normalized_signal"]["bet_type"] == "BACK"
++    assert out["ok"] is False
++    assert out["error_code"] == "INVALID_OR_MISSING_SIDE"
++    assert out["normalized_signal"] == {}
+ 
+ 
+ @pytest.mark.parametrize(
+@@ -157,6 +128,7 @@ def test_normalize_ingestion_signal_does_not_mutate_input_and_output_is_resolver
+         "odds": "1.90",
+         "selectionId": 11,
+         "marketId": "1.900",
++        "action": "BACK",
+         "message": "NEXT GOL",
+     }
+     before = copy.deepcopy(raw)
+diff --git a/tests/unit/test_telegram_listener_copy_pattern_action.py b/tests/unit/test_telegram_listener_copy_pattern_action.py
+index a02259e..039cec7 100644
+--- a/tests/unit/test_telegram_listener_copy_pattern_action.py
++++ b/tests/unit/test_telegram_listener_copy_pattern_action.py
+@@ -18,7 +18,8 @@ def _listener(patterns):
+ 
+ 
+ def _pat(**over):
+-    p = {"id": 1, "label": "L", "pattern": "GOAL", "enabled": True, "action": "QUICK_BET"}
++    p = {"id": 1, "label": "L", "pattern": "GOAL", "enabled": True,
++         "action": "QUICK_BET", "bet_side": "BACK"}
+     p.update(over)
+     return p
+ 
+@@ -67,3 +68,9 @@ def test_absent_action_defaults_to_bet_descriptor():
+     out = lst._parse_custom_patterns("GOAL Team A")
+     assert out is not None
+     assert "signal_type" not in out
++
++
++def test_quick_bet_without_side_is_rejected_fail_closed():
++    p = _pat(pattern="GOAL")
++    p.pop("bet_side")
++    assert _listener([p])._parse_custom_patterns("GOAL Team A") is None
+-- 
+2.43.0
+

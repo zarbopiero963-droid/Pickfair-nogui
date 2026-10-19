@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 39,
- "updated_at": "2026-10-19T08:50:00Z",
+ "seq": 40,
+ "updated_at": "2026-10-19T10:40:00Z",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "ATTENDERE decisione owner sul ciclo 12. Evidenze RED in scratchpad c12_evidence/test_c12_red_probes.py (non committate). Nessun push, nessun merge, #505 intoccata.",
+ "next_atomic_action": "Fase B: commento e chiusura temporanea #505 (dopo checkpoint durevole). Fase C: ciclo 14 su r4303297587, riferimenti incrociati #516/#517/#518/#521, overlap-check rerun, CI/review, merge #512 solo a gate conformi.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,7 +470,7 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": "NO-GO (Gate A NON PASS: F033 dipende da #505, RSR-20 solo LIVE, RSR-38..41 e 37 celle VALID ancora bloccate); nessuna certificazione finanziaria",
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "2f0498c3fc849b5bea0e6938e3badfc81ab2d23a",
+ "previous_checkpoint_sha": "01efeb47a9a63cfa5b45283b59eb0389dc831353",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -548,7 +548,7 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "3d3f5cca90420d576ee5d576cd749ab69eced004",
+  "sha": "6138254a180c9e13d165e352e5ad319ad0d03144",
   "verified_with": "git push + git ls-remote",
   "patch": null
  },
@@ -1092,7 +1092,7 @@
   "open": 19,
   "open_detail": "13 DEFERRED_BY_POLICY (#516-#521), 4 duplicati/varianti Codex 3d3f5cc rinviati (#517/#518), 2 P1 Codex PATCH_REQUIRED (ciclo 12)"
  },
- "verdict_pr512": "BLOCKED (ciclo 11 chiuso su 3d3f5cc): B1-B5 chiusi con prova; residui 2 P1 Codex confermati RED (r4311806874 errore SQLite post-invio => FAILED con stub vivo; r4311806886 provenienza settlement emergenza non persistita); ciclo 12 non autorizzato. Report #512 c.6263256483, #426 c.6263257590",
+ "verdict_pr512": "cicli 12 (4231de9) e 13 (6138254) pubblicati; verifica rinvii: r4303297587 residuo BLOCKING (cashout hedge + rilascio per mercato) => ciclo 14 nel perimetro; 16 rinvii non bloccanti",
  "owner_rectification_20261018": {
   "source": "#512 c.6249984179 + mandati chat PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 / PF-MM-STRATEGY-PRESERVATION",
   "rule": "nessun cap monetario fisso arbitrario di default (1 EUR ordine, 2 EUR mercato/evento, 10 EUR drawdown assoluto o equivalenti); limiti opzionali configurabili, disattivati per default; percentuali strategiche MM analizzate singolarmente e conservate se approvate; protezioni finanziarie obbligatorie intatte; vecchi cap #505 = conflitto da riconciliare, non default vigenti; stake > max_single_bet: proposta NON ratificata (#514), nessun resize/reject nuovo",
@@ -1157,5 +1157,15 @@
    ]
   }
  },
- "ci_3d3f5cc": "settled: 37/39 success; rossi overlap-check (strutturale) e Merge readiness (UNSTABLE + 28 thread aperti al momento del run)"
+ "ci_3d3f5cc": "settled: 37/39 success; rossi overlap-check (strutturale) e Merge readiness (UNSTABLE + 28 thread aperti al momento del run)",
+ "pr505_preservation": {
+  "archive_branch": "archive/pf-505-pre-512",
+  "archive_sha": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
+  "original_branch": "feat/issue461-pr28d-absolute-caps",
+  "prep_branch": "archive/pf-505-cap-reconciliation-prep",
+  "prep_sha": "022ee9d619f04de65ea38166705dc499adbbdcac",
+  "prep_tree_verified": "aaa60bc78d1ef656a737e60ff47f2e159c5d4a27",
+  "archive_dir": "results/pf505_archive",
+  "mandate": "PF-PR-SEQUENCE-RECOVERY-01 (owner 19/10)"
+ }
 }

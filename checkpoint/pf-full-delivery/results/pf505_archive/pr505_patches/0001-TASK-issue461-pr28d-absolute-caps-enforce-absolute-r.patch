@@ -1,0 +1,689 @@
+From aa705fc033532c9287a7abb7b92cb99e95fdbb39 Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 12:55:21 +0200
+Subject: [PATCH 1/9] [TASK: issue461-pr28d-absolute-caps] enforce absolute
+ risk caps fail closed
+
+---
+ .guardrails/allowed_scope.json                |  22 ++++
+ CHANGELOG.md                                  |  10 ++
+ core/money_management.py                      |   4 +-
+ core/runtime_controller.py                    |  72 ++++++++++-
+ core/system_state.py                          |   6 +
+ core/validators.py                            |  47 ++++++-
+ mini_gui.py                                   |  20 +++
+ services/setting_service.py                   |   8 ++
+ tests/acceptance/test_issue437_pr28d.py       | 117 ++++++++++++++++++
+ tests/core/test_auto_trade_mm_gate.py         |   6 +-
+ tests/core/test_cycle_executor.py             |   2 +-
+ ..._issue461_pr26a_customer_ref_provenance.py |   1 +
+ .../test_runtime_controller_auto_trade_mm.py  |   2 +
+ .../test_runtime_controller_cycle_executor.py |   4 +-
+ ...test_runtime_controller_live_sim_parity.py |   9 +-
+ 15 files changed, 310 insertions(+), 20 deletions(-)
+ create mode 100644 tests/acceptance/test_issue437_pr28d.py
+
+diff --git a/.guardrails/allowed_scope.json b/.guardrails/allowed_scope.json
+index 458acc0..636e563 100644
+--- a/.guardrails/allowed_scope.json
++++ b/.guardrails/allowed_scope.json
+@@ -2159,6 +2159,28 @@
+       "max_files": 11,
+       "allow_tests": true,
+       "description": "#461 PR28-c (PKG-P24-B: P38 + stop esposizione P37), baseline main f7c103c (#503), nessuna PR aperta. Fonti: #426 P37/P38 (stop perdita sessione ed esposizione complessiva, valori owner; allo stop blocco nuovi ordini + cancel unmatched pertinenti + tentativo cashout, tutte e tre), #426 decisione 06/10 e docs/mcp_operational_contract.md (nessun importo fisso 10€/10€ per STOP/cashout; PAUSE solo blocco; EMERGENCY barriera massima; RESUME solo dopo readiness completa), #461 5932610970 (P38: PR28 coordinamento; barriera STOP fisica resta PR37). RISK_STOP distinto da EMERGENCY in core/risk_stop.py + RuntimeController.risk_stop/reset_risk_stop: blocca entrate (segnali, auto-next, resume), non il cashout; cancel + cashout riusando CASHOUT_ALL del CashoutRouter (solo ordini del bot, gate propri); persistito (setting risk_stop_state, illeggibile => attivo); reset solo dopo ricontrollo completo (emergency, perdita giornaliera, limiti, esposizione sotto lo stop), anche da start(). Trigger: perdita di sessione raggiunta (P37, PR28-b) e max_exposure_stop (nuovo limite owner senza default, GUI/loader/salvataggio, illeggibile o <=0 => blocco senza chiusura) valutato pre-submit con il tavolo dell'ordine attivato. Fake di test con catch-all __getattr__=0 riallineati (max_exposure_stop=None). Fix c1: ritenta CASHOUT_ALL a start(), persistenza sotto lock. Fix c2 (review owner, boot reale fail-open): start()/riavvio non riaprono MAI lo stop (tavoli in memoria => esposizione 0); solo reset_risk_stop() esplicito; persistenza versionata {active,reason,seq} in db + marker accanto al db (modello PR28-b: vince la seq maggiore leggibile, pari/ignota/illeggibile => stop; reset = nuova versione salvata prima di riaprire, altrimenti rifiutato). PR28-d: cap assoluti ordine/mercato-evento/drawdown + lato mancante e True come 1.0. P06 per strategia: DIFFERITO/non implementato (decisione owner 08/10 22:06: Roserpina unica autorita' monetaria, nessuna strategia o bucket default)."
++    },
++    "issue461-pr28d-absolute-caps": {
++      "files": [
++        ".guardrails/allowed_scope.json",
++        "CHANGELOG.md",
++        "core/money_management.py",
++        "core/runtime_controller.py",
++        "core/system_state.py",
++        "core/validators.py",
++        "mini_gui.py",
++        "services/setting_service.py",
++        "tests/acceptance/test_issue437_pr28d.py",
++        "tests/core/test_auto_trade_mm_gate.py",
++        "tests/core/test_cycle_executor.py",
++        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
++        "tests/integration/test_runtime_controller_auto_trade_mm.py",
++        "tests/integration/test_runtime_controller_cycle_executor.py",
++        "tests/integration/test_runtime_controller_live_sim_parity.py"
++      ],
++      "max_files": 15,
++      "allow_tests": true,
++      "description": "#461 PR28-d: cap assoluti Roserpina owner (ordine 1 EUR, mercato/evento 2 EUR, drawdown 10 EUR), lato ordine obbligatorio fail-closed e bool monetari rifiutati. P06 per-strategy DEFERRED secondo decisione owner vigente; nessuna strategia artificiale. LIVE resta OFF."
+     }
+   }
+ }
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 94239ed..9dfa27a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -8,6 +8,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+ 
+ ## [Unreleased]
+ 
++### PR28-d — cap assoluti Roserpina
++- Aggiunti i cap owner configurabili per singolo ordine (1 €), mercato ed
++  evento (2 €) e drawdown assoluto (10 €), applicati sul rischio BACK/LAY e
++  insieme ai limiti percentuali/totali esistenti; configurazioni non finite,
++  booleane o non positive negano nuovi ordini.
++- Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
++  ambiguo o invalido viene rifiutato senza default BACK e senza invio.
++- P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
++  questa slice non introduce strategie, bucket o un secondo money manager.
++
+ ### Security
+ - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at
+   rest in SQLite using a stdlib-only XOF stream cipher (`hashlib.shake_256`).
+diff --git a/core/money_management.py b/core/money_management.py
+index 55667f4..534c969 100644
+--- a/core/money_management.py
++++ b/core/money_management.py
+@@ -321,7 +321,9 @@ class RoserpinaMoneyManagement:
+ 
+         # Lato dell'ordine (#461 PR28): i cap misurano il RISCHIO, non lo
+         # stake. Un lato sconosciuto non ha un rischio stimabile: si rifiuta.
+-        side = validators.signal_side(signal)
++        # Il calcolatore puro mantiene BACK come default storico per calcoli
++        # interni; ogni ingresso ordine reale viene validato strict dal runtime.
++        side = validators.signal_side(signal, default="BACK")
+         if side not in ("BACK", "LAY"):
+             return MoneyManagementDecision(
+                 approved=False,
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index 707403c..4779fda 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -75,6 +75,8 @@ class RuntimeController:
+     - la chiusura resta manuale/comando
+     """
+ 
++    _fallback_risk_admission_lock = threading.RLock()
++
+     def __init__(
+         self,
+         *,
+@@ -101,6 +103,9 @@ class RuntimeController:
+         self.duplication_guard = DuplicationGuard()
+         self.risk_desk = RiskDesk()
+         self.mm = RoserpinaMoneyManagement(self.config)
++        # PR28-d: snapshot dei cap + contabilizzazione/publish sono serializzati
++        # nel processo. La prenotazione durevole cross-process resta PR29.
++        self._risk_admission_lock = threading.RLock()
+ 
+         self.batch_manager = DutchingBatchManager(db, bus=bus)
+         self.reconciliation_engine = self._build_reconciliation_engine()
+@@ -2579,6 +2584,29 @@ class RuntimeController:
+             return 0.0
+         return float(table.current_exposure or 0.0)
+ 
++    def _market_current_exposure(self, market_id: str) -> float:
++        total = 0.0
++        for table in self.table_manager.active_tables():
++            if str(table.market_id or "") == str(market_id):
++                value = validators.finite_number(table.current_exposure)
++                if value is None or value < 0:
++                    return float("inf")
++                total += value
++        return total
++
++    @staticmethod
++    def _configured_optional(config: object, name: str):
++        """Legge solo campi realmente dichiarati, ignorando catch-all dei test.
++
++        In produzione RoserpinaConfig dichiara i campi nella dataclass. Un
++        ``__getattr__`` generico che restituisce 0 non deve inventare un cap.
++        """
++        if name in getattr(config, "__dict__", {}):
++            return getattr(config, name)
++        if any(name in getattr(cls, "__dict__", {}) for cls in type(config).__mro__):
++            return getattr(config, name)
++        return None
++
+     def _cashout_chain_wired(self) -> bool:
+         """True se esiste almeno un subscriber per ``REQ_EXECUTE_CASHOUT``.
+ 
+@@ -2953,6 +2981,10 @@ class RuntimeController:
+             })
+ 
+     def _on_signal_received(self, signal: dict) -> None:
++        with getattr(self, "_risk_admission_lock", self._fallback_risk_admission_lock):
++            self._on_signal_received_serial(signal)
++
++    def _on_signal_received_serial(self, signal: dict) -> None:
+         """
+         Runtime signal gate for Telegram/UI-driven order intents.
+ 
+@@ -3051,6 +3083,11 @@ class RuntimeController:
+         except ValueError:
+             self._reject_signal(signal, "quota_non_valida")
+             return
++        try:
++            validators.signal_side(signal)
++        except ValueError:
++            self._reject_signal(signal, "lato_non_valido")
++            return
+ 
+         copy_meta, pattern_meta = self._extract_origin_metadata(signal)
+         if isinstance(copy_meta, dict) and isinstance(pattern_meta, dict):
+@@ -3103,6 +3140,22 @@ class RuntimeController:
+                         self._reject_signal(signal, "drawdown_hard_stop_active")
+                         return
+ 
++        # PR28-d: drawdown assoluto owner, stessa semantica SIM/LIVE. Un limite
++        # configurato ma illeggibile o uno stato equity non verificabile nega.
++        drawdown_abs_raw = self._configured_optional(self.config, "max_drawdown_abs")
++        if drawdown_abs_raw is not None:
++            cap = validators.finite_number(drawdown_abs_raw)
++            bankroll = validators.finite_number(getattr(self.risk_desk, "bankroll_current", None))
++            peak = validators.finite_number(getattr(self.risk_desk, "equity_peak", None))
++            if cap is None or cap <= 0 or bankroll is None or peak is None:
++                self._reject_signal(signal, "max_drawdown_abs_non_valido")
++                return
++            drawdown_abs = max(0.0, peak - bankroll)
++            if validators.reaches_limit(drawdown_abs, cap):
++                self.force_lockdown(f"drawdown_abs_hard_stop_triggered:{drawdown_abs:.2f}€")
++                self._reject_signal(signal, "max_drawdown_abs_active")
++                return
++
+         decision = self.mm.calculate(
+             signal=signal,
+             bankroll_current=self.risk_desk.bankroll_current,
+@@ -3116,8 +3169,20 @@ class RuntimeController:
+         order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
+             validators.signal_side(signal), decision.recommended_stake, raw_price)
+         if decision.approved:
++            absolute_checks = (
++                ("max_order_exposure", self._configured_optional(self.config, "max_order_exposure"), 0.0),
++                ("max_market_exposure", self._configured_optional(self.config, "max_market_exposure"), self._market_current_exposure(signal.get("market_id"))),
++                ("max_event_exposure_abs", self._configured_optional(self.config, "max_event_exposure_abs"), event_exposure),
++                ("max_open_exposure", getattr(self.config, "max_open_exposure", None), total_exposure),
++            )
++            for cap_name, cap_raw, current in absolute_checks:
++                reason = validators.absolute_cap_reason(cap_name, cap_raw, current, order_exposure)
++                if reason:
++                    decision.approved = False
++                    decision.reason = reason
++                    break
+             max_abs_exposure = getattr(self.config, "max_open_exposure", None)
+-            if max_abs_exposure is not None:
++            if decision.approved and max_abs_exposure is not None:
+                 # Hard-stop configurato ma illeggibile (NaN dal loader, inf,
+                 # bool, testo): fail-closed. `projected > NaN` e' sempre falso e
+                 # disattivava il cap (PR27, #461).
+@@ -3142,10 +3207,7 @@ class RuntimeController:
+             "market_id": str(signal.get("market_id")),
+             "selection_id": int(signal.get("selection_id")),
+             "bet_type": str(
+-                signal.get("bet_type")
+-                or signal.get("side")
+-                or signal.get("action")
+-                or "BACK"
++                validators.signal_side(signal)
+             ).upper(),
+             "price": float(signal.get("price") or signal.get("odds")),
+             "stake": float(decision.recommended_stake),
+diff --git a/core/system_state.py b/core/system_state.py
+index 4aa3451..601d5fe 100644
+--- a/core/system_state.py
++++ b/core/system_state.py
+@@ -66,6 +66,12 @@ class RoserpinaConfig:
+     max_daily_loss: Optional[float] = None
+     max_drawdown_hard_stop_pct: Optional[float] = None
+     max_open_exposure: Optional[float] = None
++    # Limiti assoluti owner PR28-d (EUR). Valori deliberati in #426/#461;
++    # restano configurabili e sono applicati insieme ai limiti percentuali.
++    max_order_exposure: Optional[float] = None
++    max_market_exposure: Optional[float] = None
++    max_event_exposure_abs: Optional[float] = None
++    max_drawdown_abs: Optional[float] = None
+     # P37 (#461 PR28): stop perdita di sessione (EUR, da start()). None = non
+     # impostato; illeggibile => blocco nuove entrate. Nessun default inventato.
+     max_session_loss: Optional[float] = None
+diff --git a/core/validators.py b/core/validators.py
+index 04fb54c..af16d73 100644
+--- a/core/validators.py
++++ b/core/validators.py
+@@ -164,15 +164,30 @@ def order_exposure(side, stake, price) -> float:
+     return importo * (order_price(price) - 1.0)
+ 
+ 
+-def signal_side(signal) -> str:
++def signal_side(signal, *, default=None) -> str:
+     """Lato di un segnale runtime, risolto come il payload `CMD_QUICK_BET`
+-    (`bet_type` / `side` / `action`, maiuscolo). L'assenza ricade su BACK come
+-    il payload storico: il finding "lato assente => BACK" resta tracciato a
+-    parte e qui NON si cambia, si misura solo lo stesso lato che parte."""
++    (`bet_type` / `side` / `action`, maiuscolo). Assenza, ambiguita' o valore
++    invalido sono rifiutati: un ordine non diventa mai BACK per default."""
+     raw = None
+     if isinstance(signal, dict):
+         raw = signal.get("bet_type") or signal.get("side") or signal.get("action")
+-    return str(raw or "BACK").upper()
++    if raw in (None, "") and default is not None:
++        raw = default
++    if not isinstance(raw, str):
++        raise ValueError("INVALID_SIDE")
++    side = raw.strip().upper()
++    if side not in ("BACK", "LAY"):
++        raise ValueError("INVALID_SIDE")
++    aliases = []
++    for key in ("bet_type", "side", "action"):
++        value = signal.get(key)
++        if value not in (None, ""):
++            if not isinstance(value, str) or value.strip().upper() not in ("BACK", "LAY"):
++                raise ValueError("INVALID_SIDE")
++            aliases.append(value.strip().upper())
++    if len(set(aliases)) > 1:
++        raise ValueError("INVALID_SIDE")
++    return side
+ 
+ 
+ def order_exposure_or_inf(side, stake, price) -> float:
+@@ -202,12 +217,32 @@ def open_exposure_cap_reason(cap_raw, total_exposure, order_risk) -> str:
+ def signal_cap_reason(signal, stake, cap_raw, total_exposure) -> str:
+     """Cap A2 sul rischio di un segnale (lato e quota come nel payload)."""
+     sig = signal if isinstance(signal, dict) else {}
+-    risk = order_exposure_or_inf(signal_side(sig), stake, sig.get("price") or sig.get("odds"))
++    try:
++        side = signal_side(sig)
++    except ValueError:
++        return "lato_o_quota_non_validi"
++    risk = order_exposure_or_inf(side, stake, sig.get("price") or sig.get("odds"))
+     if not math.isfinite(risk):
+         return "lato_o_quota_non_validi"
+     return open_exposure_cap_reason(cap_raw, total_exposure, risk)
+ 
+ 
++def absolute_cap_reason(name, cap_raw, current, order_risk) -> str:
++    """Valida e applica un cap assoluto Roserpina, senza coercizione bool."""
++    if cap_raw is None:
++        return ""
++    cap = finite_number(cap_raw)
++    base = finite_number(current)
++    risk = finite_number(order_risk)
++    if cap is None or cap <= 0:
++        return f"{name}_non_valido"
++    if base is None or base < 0 or risk is None or risk < 0:
++        return f"{name}_non_verificabile"
++    if exceeds_cap(base + risk, cap):
++        return f"{name}_exceeded:limit={cap_raw}€"
++    return ""
++
++
+ def reaches_limit(amount, limit) -> bool:
+     """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
+     return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)
+diff --git a/mini_gui.py b/mini_gui.py
+index ae6400d..8c65bf7 100644
+--- a/mini_gui.py
++++ b/mini_gui.py
+@@ -701,6 +701,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         # (vedi _parse_hard_stop / _save_roserpina_settings).
+         self.rs_max_daily_loss_var = self._make_string_var("")
+         self.rs_max_open_exposure_var = self._make_string_var("")
++        self.rs_max_order_exposure_var = self._make_string_var("1.0")
++        self.rs_max_market_exposure_var = self._make_string_var("2.0")
++        self.rs_max_event_exposure_abs_var = self._make_string_var("2.0")
++        self.rs_max_drawdown_abs_var = self._make_string_var("10.0")
+         self.rs_max_session_loss_var = self._make_string_var("")  # P37 (#461 PR28)
+         self.rs_max_exposure_stop_var = self._make_string_var("")  # P37/P38 (#461 PR28-c)
+         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
+@@ -1123,6 +1127,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+         self._labeled_entry(outer, "Max Stake Assoluto", self.rs_max_abs_var)
+         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
+         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
++        self._labeled_entry(outer, "Cap assoluto: Singolo ordine €", self.rs_max_order_exposure_var)
++        self._labeled_entry(outer, "Cap assoluto: Singolo mercato €", self.rs_max_market_exposure_var)
++        self._labeled_entry(outer, "Cap assoluto: Singolo evento €", self.rs_max_event_exposure_abs_var)
++        self._labeled_entry(outer, "Hard-stop: Drawdown assoluto €", self.rs_max_drawdown_abs_var)
+         self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
+         self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
+         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
+@@ -1604,6 +1612,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+                 self.rs_max_abs_var.set(str(getattr(rs, "max_stake_abs", self.rs_max_abs_var.get())))
+                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
++                self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
++                self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
++                self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
++                self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
+                 self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+                 self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
+                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
+@@ -2006,6 +2018,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+                 max_stake_abs=float(self.rs_max_abs_var.get()),
+                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
+                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
++                max_order_exposure=self._parse_hard_stop(self.rs_max_order_exposure_var.get(), "Cap singolo ordine"),
++                max_market_exposure=self._parse_hard_stop(self.rs_max_market_exposure_var.get(), "Cap singolo mercato"),
++                max_event_exposure_abs=self._parse_hard_stop(self.rs_max_event_exposure_abs_var.get(), "Cap singolo evento"),
++                max_drawdown_abs=self._parse_hard_stop(self.rs_max_drawdown_abs_var.get(), "Drawdown assoluto"),
+                 max_session_loss=self._parse_hard_stop(self.rs_max_session_loss_var.get(), "Perdita sessione max"),
+                 max_exposure_stop=self._parse_hard_stop(self.rs_max_exposure_stop_var.get(), "Stop esposizione complessiva"),
+                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
+@@ -2079,6 +2095,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
+             rs = self.settings_service.load_roserpina_config()
+             self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
+             self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
++            self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
++            self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
++            self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
++            self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
+             self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
+             self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
+             self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
+diff --git a/services/setting_service.py b/services/setting_service.py
+index a524e3d..a1508c0 100644
+--- a/services/setting_service.py
++++ b/services/setting_service.py
+@@ -324,6 +324,10 @@ class SettingsService:
+                 "roserpina.max_open_exposure",
+                 fallback_key="max_open_exposure",
+             ),
++            max_order_exposure=self._optional_hard_stop_value(data, "roserpina.max_order_exposure") if "roserpina.max_order_exposure" in data else 1.0,
++            max_market_exposure=self._optional_hard_stop_value(data, "roserpina.max_market_exposure") if "roserpina.max_market_exposure" in data else 2.0,
++            max_event_exposure_abs=self._optional_hard_stop_value(data, "roserpina.max_event_exposure_abs") if "roserpina.max_event_exposure_abs" in data else 2.0,
++            max_drawdown_abs=self._optional_hard_stop_value(data, "roserpina.max_drawdown_abs") if "roserpina.max_drawdown_abs" in data else 10.0,
+             max_session_loss=self._optional_hard_stop_value(
+                 data,
+                 "roserpina.max_session_loss",
+@@ -415,6 +419,10 @@ class SettingsService:
+             payload["roserpina.max_drawdown_hard_stop_pct"] = config.max_drawdown_hard_stop_pct
+         if config.max_open_exposure is not None:
+             payload["roserpina.max_open_exposure"] = config.max_open_exposure
++        for field in ("max_order_exposure", "max_market_exposure", "max_event_exposure_abs", "max_drawdown_abs"):
++            value = getattr(config, field, None)
++            if value is not None:
++                payload[f"roserpina.{field}"] = value
+         if config.max_session_loss is not None:
+             payload["roserpina.max_session_loss"] = config.max_session_loss
+         if config.max_exposure_stop is not None:
+diff --git a/tests/acceptance/test_issue437_pr28d.py b/tests/acceptance/test_issue437_pr28d.py
+new file mode 100644
+index 0000000..4a3083b
+--- /dev/null
++++ b/tests/acceptance/test_issue437_pr28d.py
+@@ -0,0 +1,117 @@
++"""PR28-d: cap assoluti Roserpina e input ordine fail-closed."""
++from __future__ import annotations
++
++import pytest
++import threading
++
++from core import validators
++from tests.acceptance.test_issue437_pr27 import _catena, _rifiuti
++from tests.integration.test_issue461_pr26a_customer_ref_provenance import _signal
++
++pytestmark = [pytest.mark.integration, pytest.mark.safety]
++
++
++@pytest.mark.parametrize("side", [None, "", "BOTH", True])
++def test_missing_or_invalid_side_rejected_before_any_order(tmp_path, side):
++    c = _catena(tmp_path)
++    sig = _signal(stake=0.5)
++    sig["bet_type"] = side
++    c.rc._on_signal_received(sig)
++    assert c.bus.payloads("CMD_QUICK_BET") == []
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c) == ["lato_non_valido"]
++
++
++@pytest.mark.parametrize("value", [True, False, float("nan"), float("inf"), "x"])
++def test_bool_and_non_finite_money_never_become_numbers(value):
++    assert validators.finite_number(value) is None
++    with pytest.raises(ValueError):
++        validators.order_stake(value)
++
++
++def test_order_absolute_cap_exact_and_over(tmp_path):
++    exact = _catena(tmp_path / "exact")
++    exact.rc.config.max_order_exposure = 1.0
++    exact.rc._on_signal_received(_signal(stake=1.0, bet_type="BACK"))
++    assert len(exact.broker.state.orders) == 1
++
++    over = _catena(tmp_path / "over")
++    over.rc.config.max_order_exposure = 1.0
++    over.rc._on_signal_received(_signal(stake=1.01, bet_type="BACK"))
++    assert over.broker.state.orders == {}
++    assert _rifiuti(over)[0].startswith("max_order_exposure_exceeded")
++
++
++def test_lay_order_cap_uses_liability(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_order_exposure = 1.0
++    c.rc._on_signal_received(_signal(stake=0.51, price=3.0, bet_type="LAY"))
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[0].startswith("max_order_exposure_exceeded")
++
++
++def test_market_and_event_caps_use_existing_exposure(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_market_exposure = 2.0
++    c.rc.config.max_event_exposure_abs = 2.0
++    sig = _signal(stake=0.6, bet_type="BACK")
++    key = c.rc.duplication_guard.build_event_key(sig)
++    table = c.rc.table_manager._tables[2]
++    table.status = "ACTIVE"
++    table.current_event_key = key
++    table.market_id = str(sig["market_id"])
++    table.current_exposure = 1.5
++    c.rc._on_signal_received(sig)
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[0].startswith(("max_market_exposure_exceeded", "max_event_exposure_abs_exceeded"))
++
++
++@pytest.mark.parametrize("field", [
++    "max_order_exposure", "max_market_exposure", "max_event_exposure_abs",
++    "max_open_exposure", "max_drawdown_abs",
++])
++@pytest.mark.parametrize("bad", [True, False, float("nan"), float("inf"), 0.0, -1.0])
++def test_invalid_configured_absolute_cap_fails_closed(tmp_path, field, bad):
++    c = _catena(tmp_path)
++    setattr(c.rc.config, field, bad)
++    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
++    assert c.broker.state.orders == {}
++    assert field in _rifiuti(c)[0]
++
++
++def test_absolute_drawdown_reaches_threshold_and_blocks(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_drawdown_abs = 10.0
++    c.rc.risk_desk.equity_peak = 100.0
++    c.rc.risk_desk.bankroll_current = 90.0
++    c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
++    assert c.broker.state.orders == {}
++    assert _rifiuti(c)[-1] == "max_drawdown_abs_active"
++
++
++def test_most_restrictive_cap_wins(tmp_path):
++    c = _catena(tmp_path)
++    c.rc.config.max_order_exposure = 1.0
++    c.rc.config.max_open_exposure = 100.0
++    c.rc._on_signal_received(_signal(stake=1.01, bet_type="BACK"))
++    assert _rifiuti(c)[0].startswith("max_order_exposure_exceeded")
++
++
++def test_concurrent_orders_cannot_bypass_total_cap(tmp_path):
++    c = _catena(tmp_path, max_open_exposure=1.0)
++    barrier = threading.Barrier(3)
++
++    def submit(selection):
++        sig = _signal(stake=0.6, bet_type="BACK", selection_id=selection)
++        barrier.wait()
++        c.rc._on_signal_received(sig)
++
++    threads = [threading.Thread(target=submit, args=(n,)) for n in (101, 102)]
++    for thread in threads:
++        thread.start()
++    barrier.wait()
++    for thread in threads:
++        thread.join(timeout=5)
++    assert sum(1 for thread in threads if thread.is_alive()) == 0
++    assert len(c.broker.state.orders) == 1
++    assert any(reason.startswith("max_open_exposure_exceeded") for reason in _rifiuti(c))
+diff --git a/tests/core/test_auto_trade_mm_gate.py b/tests/core/test_auto_trade_mm_gate.py
+index 3f4d085..19265a1 100644
+--- a/tests/core/test_auto_trade_mm_gate.py
++++ b/tests/core/test_auto_trade_mm_gate.py
+@@ -197,7 +197,7 @@ def test_auto_trade_skips_when_mm_blocks_progression():
+             "cycle_active": False,
+             "cycle_id": "cycle-stop",
+             "table": {"table_id": 1},
+-            "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
++                    "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
+         },
+     )
+     rc._on_close_position(payload)
+@@ -257,7 +257,7 @@ def test_auto_trade_skips_on_existing_inflight_conflict():
+                 "cycle_active": True,
+                 "table_id": 2,
+                 "table": {"table_id": 2, "loss_amount": 0.0, "in_recovery": False},
+-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
++                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
+             },
+         )
+     )
+@@ -276,7 +276,7 @@ def test_auto_trade_submit_failure_returns_structured_status():
+         mm_context={
+             "cycle_active": True,
+             "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+-            "next_signal": {"market_id": "1.2", "selection_id": "bad", "price": 2.0},
++            "next_signal": {"market_id": "1.2", "selection_id": "bad", "price": 2.0, "side": "BACK"},
+         },
+     )
+     rc._on_close_position(payload)
+diff --git a/tests/core/test_cycle_executor.py b/tests/core/test_cycle_executor.py
+index 0bac1b5..74e8a47 100644
+--- a/tests/core/test_cycle_executor.py
++++ b/tests/core/test_cycle_executor.py
+@@ -280,7 +280,7 @@ def test_cycle_executor_skips_inflight_conflict():
+                 "cycle_id": "cycle-1",
+                 "table_id": 2,
+                 "table": {"table_id": 2, "loss_amount": 0.0, "in_recovery": False},
+-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "table_id": 2},
++                    "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "table_id": 2, "side": "BACK"},
+             }
+         )
+     )
+diff --git a/tests/integration/test_issue461_pr26a_customer_ref_provenance.py b/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
+index 3f3612e..eda83e9 100644
+--- a/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
++++ b/tests/integration/test_issue461_pr26a_customer_ref_provenance.py
+@@ -437,6 +437,7 @@ def _close_payload(batch_id, **overrides):
+                 "market_id": "1.555",
+                 "selection_id": 8,
+                 "price": 2.0,
++                "side": "BACK",
+                 "simulation_mode": True,
+                 # Un template riusato fra step del ciclo NON deve dare l'identita'.
+                 "customer_ref": "template-ref",
+diff --git a/tests/integration/test_runtime_controller_auto_trade_mm.py b/tests/integration/test_runtime_controller_auto_trade_mm.py
+index 6a631ed..6303693 100644
+--- a/tests/integration/test_runtime_controller_auto_trade_mm.py
++++ b/tests/integration/test_runtime_controller_auto_trade_mm.py
+@@ -129,6 +129,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
+                     "market_id": "1.234",
+                     "selection_id": 8,
+                     "price": 2.0,
++                        "side": "BACK",
+                 },
+             },
+         )
+@@ -222,6 +223,7 @@ def test_runtime_controller_auto_trade_activates_table_before_publish():
+                     "selection_id": 11,
+                     "table_id": 1,
+                     "price": 2.0,
++                        "side": "BACK",
+                 },
+             },
+         )
+diff --git a/tests/integration/test_runtime_controller_cycle_executor.py b/tests/integration/test_runtime_controller_cycle_executor.py
+index e5b589c..198a51e 100644
+--- a/tests/integration/test_runtime_controller_cycle_executor.py
++++ b/tests/integration/test_runtime_controller_cycle_executor.py
+@@ -121,7 +121,7 @@ def test_cycle_executor_result_event_contains_contract_fields():
+                 "cycle_active": True,
+                 "cycle_id": "cycle-integration-1",
+                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
++                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
+             },
+         )
+     )
+@@ -169,7 +169,7 @@ def test_cycle_executor_max_steps_with_valid_cycle_id_allows_below_limit():
+                 "cycle_id": "cycle-integration-max-ok",
+                 "max_steps": 2,
+                 "table": {"table_id": 1, "loss_amount": 0.0, "in_recovery": False},
+-                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0},
++                "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "side": "BACK"},
+             },
+         )
+     )
+diff --git a/tests/integration/test_runtime_controller_live_sim_parity.py b/tests/integration/test_runtime_controller_live_sim_parity.py
+index a090407..d329228 100644
+--- a/tests/integration/test_runtime_controller_live_sim_parity.py
++++ b/tests/integration/test_runtime_controller_live_sim_parity.py
+@@ -208,7 +208,7 @@ def test_runtime_controller_routing_parity(simulation_mode):
+     rc.duplication_guard = type("DG", (), {"build_event_key": staticmethod(lambda s: "1.2:11:BACK:default"), "is_duplicate": staticmethod(lambda _k: False), "register": staticmethod(lambda _k: None)})()
+     rc.mm.calculate = lambda **_kw: type("D", (), {"approved": True, "recommended_stake": 4.0, "table_id": 1, "reason": "ok", "desk_mode": DeskMode.NORMAL, "metadata": {}})()
+ 
+-    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}}
++    signal = {"market_id": "1.2", "selection_id": 11, "price": 2.0, "side": "BACK", "simulation_mode": simulation_mode, "copy_meta": {"k": "v"}}
+     rc._on_signal_received(signal)
+ 
+     routed = [e for e in bus.events if e[0] == "CMD_QUICK_BET"]
+@@ -265,6 +265,7 @@ def test_runtime_controller_preserves_origin_metadata_passthrough(meta_field, me
+         "market_id": "1.2",
+         "selection_id": 11,
+         "price": 2.0,
++            "side": "BACK",
+         "simulation_mode": True,
+         "order_origin": "telegram",
+         meta_field: meta_value,
+@@ -319,6 +320,7 @@ def test_runtime_controller_accepts_telegram_boundary_marker_without_contract_dr
+             "market_id": "1.2",
+             "selection_id": 11,
+             "price": 2.2,
++                "side": "BACK",
+             "order_origin": "telegram",
+             "copy_meta": {"master_id": "M1"},
+             "simulation_mode": True,
+@@ -391,6 +393,7 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
+             "market_id": "1.2",
+             "selection_id": 11,
+             "price": 2.2,
++                "side": "BACK",
+             "order_origin": "telegram",
+             "copy_meta": {"master_id": "M1"},
+             "telegram_routing_contract": "telegram_authoritative_routing_v1",
+@@ -422,6 +425,7 @@ def test_telegram_routing_markers_survive_runtime_to_risk_to_trading_intake_path
+             "market_id": "1.2",
+             "selection_id": 11,
+             "price": 2.2,
++                "side": "BACK",
+             "copy_meta": {"master_id": "M1"},
+             "pattern_meta": {"pattern_id": "P1"},
+         }
+@@ -448,6 +452,7 @@ def test_runtime_controller_rejects_signal_when_copy_and_pattern_meta_are_both_p
+         "market_id": "1.2",
+         "selection_id": 11,
+         "price": 2.0,
++        "side": "BACK",
+         "copy_meta": {"channel": "telegram"},
+         "pattern_meta": {"pattern_id": 9},
+     }
+@@ -484,7 +489,7 @@ def test_duplication_lock_released_on_table_allocation_failure():
+     # Force allocate to always return None regardless of table_count
+     rc.table_manager.allocate = lambda **_kw: None
+ 
+-    signal = {"market_id": "1.9", "selection_id": 99, "price": 3.0}
++    signal = {"market_id": "1.9", "selection_id": 99, "price": 3.0, "side": "BACK"}
+ 
+     # First send: lock acquired → table fails → lock must be released
+     rc._on_signal_received(signal)
+-- 
+2.43.0
+

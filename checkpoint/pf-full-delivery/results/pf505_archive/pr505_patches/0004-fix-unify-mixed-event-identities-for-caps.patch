@@ -1,0 +1,45 @@
+From 9de307f91bb8564ffa53c26327bc21e86bf1a12a Mon Sep 17 00:00:00 2001
+From: zarbopiero963-droid <zarbopiero963@gmail.com>
+Date: Fri, 9 Oct 2026 13:11:23 +0200
+Subject: [PATCH 4/9] fix: unify mixed event identities for caps
+
+---
+ core/runtime_controller.py              | 6 +++---
+ tests/acceptance/test_issue437_pr28d.py | 1 +
+ 2 files changed, 4 insertions(+), 3 deletions(-)
+
+diff --git a/core/runtime_controller.py b/core/runtime_controller.py
+index b64de5e..a4c5aaa 100644
+--- a/core/runtime_controller.py
++++ b/core/runtime_controller.py
+@@ -2580,12 +2580,12 @@ class RuntimeController:
+ 
+     @staticmethod
+     def _event_identity(signal: dict) -> str:
+-        event_id = signal.get("event_id") or signal.get("eventId")
+-        if event_id not in (None, "") and not isinstance(event_id, bool):
+-            return f"id:{str(event_id).strip()}"
+         event_name = signal.get("event_name") or signal.get("event")
+         if isinstance(event_name, str) and event_name.strip():
+             return "name:" + " ".join(event_name.casefold().split())
++        event_id = signal.get("event_id") or signal.get("eventId")
++        if event_id not in (None, "") and not isinstance(event_id, bool):
++            return f"id:{str(event_id).strip()}"
+         return ""
+ 
+     def _event_current_exposure(self, event_identity: str) -> float:
+diff --git a/tests/acceptance/test_issue437_pr28d.py b/tests/acceptance/test_issue437_pr28d.py
+index d498b13..7c5a018 100644
+--- a/tests/acceptance/test_issue437_pr28d.py
++++ b/tests/acceptance/test_issue437_pr28d.py
+@@ -113,6 +113,7 @@ def test_event_cap_aggregates_distinct_markets_same_event(tmp_path):
+     table.meta = {"event_name": "Roma v Milan", "event_identity": "name:roma v milan"}
+     sig = _signal(stake=0.6, bet_type="BACK", market_id="1.new")
+     sig["event_name"] = " ROMA   v MILAN "
++    sig["event_id"] = "betfair-event-42"
+     c.rc._on_signal_received(sig)
+     assert c.broker.state.orders == {}
+     assert _rifiuti(c)[0].startswith("max_event_exposure_abs_exceeded")
+-- 
+2.43.0
+
