@@ -1261,7 +1261,7 @@ def test_ambiguous_send_makes_a_later_cashout_in_scope_uncertain(tmp_path, monke
 def test_cashout_out_of_scope_of_an_ambiguous_entry_stays_certain(tmp_path, monkeypatch):
     c = _catena(tmp_path)
     _snapshotting_router(c, monkeypatch)
-    c.rc._entries_ambiguous = {"ref-ambiguo": frozenset(c.rc._entry_admission_keys(_signal()))}
+    c.rc._entries_ambiguous = {"ref-ambiguo": (frozenset(c.rc._entry_admission_keys(_signal())), "corr-a")}
     c.rc._route_cashout_signal({"signal_type": "CASHOUT", "event_name": "Gamma v Delta",
                                 "market_id": "1.999", "selection_id": 7})
     assert c.rc.get_status()["cashout_barriers_uncertain"] == 0
@@ -1270,10 +1270,11 @@ def test_cashout_out_of_scope_of_an_ambiguous_entry_stays_certain(tmp_path, monk
 def test_known_outcome_of_the_order_resolves_the_ambiguous_entry(tmp_path, monkeypatch):
     c = _catena(tmp_path)
     _snapshotting_router(c, monkeypatch)
-    c.rc._entries_ambiguous = {"ref-ambiguo": frozenset(c.rc._entry_admission_keys(_signal()))}
-    c.bus.publish("QUICK_BET_AMBIGUOUS", {"customer_ref": "ref-ambiguo"})
+    c.rc._entries_ambiguous = {"ref-ambiguo": (frozenset(c.rc._entry_admission_keys(_signal())), "corr-a")}
+    c.bus.publish("QUICK_BET_AMBIGUOUS", {"customer_ref": "ref-ambiguo", "correlation_id": "corr-a"})
     assert "ref-ambiguo" in c.rc._entries_ambiguous         # ancora ambiguo: nessun esito noto
-    c.bus.publish("QUICK_BET_FILLED", {"customer_ref": "ref-ambiguo", "market_id": "1.234"})
+    c.bus.publish("QUICK_BET_FILLED", {"customer_ref": "ref-ambiguo", "correlation_id": "corr-a",
+                                       "market_id": "1.234"})
     assert c.rc._entries_ambiguous == {}
     c.rc._route_cashout_signal(dict(_EVENT_CASHOUT))
     assert c.rc.get_status()["cashout_barriers_uncertain"] == 0
@@ -1296,4 +1297,44 @@ def test_uncertain_send_outcome_moves_the_entry_among_the_ambiguous(tmp_path):
     registered = {"customer_ref": "ref-2"}
     c.rc._entries_in_flight = {"ref-2": (frozenset({("global",)}), registered)}
     c.rc.admission_placement_done(registered, certain=False)
-    assert c.rc._entries_in_flight == {} and c.rc._entries_ambiguous == {"ref-2": frozenset({("global",)})}
+    assert c.rc._entries_in_flight == {} and c.rc._entries_ambiguous == {"ref-2": (frozenset({("global",)}), "")}
+
+
+@pytest.mark.parametrize("status", ["DUPLICATE_BLOCKED", "DENIED"])
+def test_pre_send_rejection_of_a_duplicate_does_not_resolve_the_ambiguous_entry(tmp_path, status):
+    """Review indipendente su 4f223ea (b1/b2): un duplicato con lo stesso ref, bloccato o negato prima dell'invio,
+    pubblica un esito che non riguarda l'ordine ambiguo."""
+    c = _catena(tmp_path)
+    c.rc._entries_ambiguous = {"ref-a": (frozenset({("global",)}), "corr-a")}
+    topic = "QUICK_BET_SUCCESS" if status == "DUPLICATE_BLOCKED" else "QUICK_BET_FAILED"
+    c.bus.publish(topic, {"customer_ref": "ref-a", "correlation_id": "corr-a", "status": status})
+    assert "ref-a" in c.rc._entries_ambiguous
+
+
+def test_outcome_of_another_correlation_does_not_resolve_the_ambiguous_entry(tmp_path):
+    c = _catena(tmp_path)
+    c.rc._entries_ambiguous = {"ref-a": (frozenset({("global",)}), "corr-a")}
+    c.bus.publish("QUICK_BET_FILLED", {"customer_ref": "ref-a", "correlation_id": "corr-altra"})
+    assert "ref-a" in c.rc._entries_ambiguous
+
+
+@pytest.mark.parametrize("state", ["in_flight", "ambiguous"])
+def test_second_admission_with_the_same_ref_is_denied_and_keeps_the_first(tmp_path, state):
+    """Review indipendente su 4f223ea (b3): la seconda ammissione non sovrascrive la registrazione del primo."""
+    c = _catena(tmp_path)
+    first = {"customer_ref": "ref-1"}
+    keys = frozenset(c.rc._entry_admission_keys(_signal()))
+    if state == "in_flight":
+        c.rc._entries_in_flight = {"ref-1": (keys, first)}
+    else:
+        c.rc._entries_ambiguous = {"ref-1": (keys, "")}
+    with c.rc._risk_admission_lock:
+        fence = c.rc._capture_admission_fence(_signal())
+    second = {"customer_ref": "ref-1"}
+    c.rc._register_queued_entry_fence(second, fence)
+
+    assert c.rc.admission_fence_verdict(second) == "ingresso_gia_in_invio"
+    if state == "in_flight":
+        assert c.rc._entries_in_flight == {"ref-1": (keys, first)}
+    else:
+        assert c.rc._entries_ambiguous == {"ref-1": (keys, "")}

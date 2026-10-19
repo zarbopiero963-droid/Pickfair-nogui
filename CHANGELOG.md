@@ -107,6 +107,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
       risolve. La registrazione appartiene alla richiesta che l'ha creata: un duplicato con lo stesso
       `customer_ref` negato prima dell'invio non la chiude più. Docstring di `cashout_wiring.py` e del
       residual handler allineati.
+    - **Seconda review indipendente:** l'ingresso ambiguo si risolve solo con un esito dello stesso ordine
+      (stesso `correlation_id`, non un rifiuto pre-invio DENIED/DUPLICATE_BLOCKED di un duplicato); un secondo
+      ingresso con lo stesso `customer_ref` mentre il primo è in invio o ambiguo è negato
+      (`ingresso_gia_in_invio`) invece di sovrascrivere la registrazione.
     - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
       fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
       dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla

@@ -3617,6 +3617,10 @@ class RuntimeController:
             placing = getattr(self, "_entries_in_flight", None)
             if placing is None:
                 placing = self._entries_in_flight = {}
+            if ref in placing or ref in (getattr(self, "_entries_ambiguous", None) or {}):
+                # Stesso customer_ref gia' in invio o con esito ignoto: un secondo ingresso non sovrascrive la
+                # registrazione del primo (review indipendente su 4f223ea) e viene negato (fail-closed).
+                return "ingresso_gia_in_invio"
             # Chiave = customer_ref, ma la registrazione appartiene a QUESTA richiesta: un duplicato con lo stesso
             # ref negato prima dell'invio non la chiude (review indipendente su bdf6ece).
             placing[ref] = (frozenset(key for key, _epoch in fence), request)
@@ -3640,17 +3644,30 @@ class RuntimeController:
                 ambiguous = getattr(self, "_entries_ambiguous", None)
                 if ambiguous is None:
                     ambiguous = self._entries_ambiguous = {}
-                ambiguous[ref] = entry[0]
+                ambiguous[ref] = (entry[0], str(request.get("correlation_id") or ""))
+
+    #: Esiti che non dicono nulla dell'ordine ambiguo: rifiuti di un'ALTRA richiesta prima dell'invio.
+    _NOT_AN_ORDER_OUTCOME = frozenset({"DENIED", "DUPLICATE_BLOCKED"})
 
     def _resolve_ambiguous_entry(self, payload: dict, *, event_name: str) -> None:
-        """Un esito noto dell'ordine (qualunque QUICK_BET_* tranne AMBIGUOUS) risolve l'ingresso ambiguo."""
+        """Un esito noto dello STESSO ordine (QUICK_BET_* diverso da AMBIGUOUS, con il suo correlation_id) risolve
+        l'ingresso ambiguo. Un rifiuto pre-invio di un duplicato con lo stesso customer_ref non lo risolve."""
         if event_name == "QUICK_BET_AMBIGUOUS":
             return
-        ref = str((payload or {}).get("customer_ref") or "").strip()
+        payload = payload or {}
+        ref = str(payload.get("customer_ref") or "").strip()
         if not ref or not getattr(self, "_entries_ambiguous", None):
+            return
+        if str(payload.get("status") or "").strip().upper() in self._NOT_AN_ORDER_OUTCOME:
             return
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
+            entry = self._entries_ambiguous.get(ref)
+            if entry is None:
+                return
+            correlation_id = entry[1]
+            if correlation_id and str(payload.get("correlation_id") or "") != correlation_id:
+                return
             self._entries_ambiguous.pop(ref, None)
 
     #: Attesa massima, prima della fotografia del router, degli ingressi gia' in invio nell'ambito del cashout.
@@ -3679,7 +3696,7 @@ class RuntimeController:
                     return
                 pending = sorted(ref for ref, (keys, _req) in (getattr(self, "_entries_in_flight", None) or {}).items()
                                  if keys & scope)
-                ambiguous = sorted(ref for ref, keys in (getattr(self, "_entries_ambiguous", None) or {}).items()
+                ambiguous = sorted(ref for ref, (keys, _corr) in (getattr(self, "_entries_ambiguous", None) or {}).items()
                                    if keys & scope)
                 if not pending and not ambiguous:
                     return

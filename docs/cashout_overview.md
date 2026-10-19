@@ -243,10 +243,15 @@ ritardato (PF-EXEC-03).
 - **Invio con esito ignoto**: se l'engine rinuncia all'esito (AMBIGUOUS, attesa
   dell'executor scaduta: il task può ancora inviare), eccezione o risultato
   mancante, l'ingresso passa fra gli «ambigui». Un cashout nel suo ambito diventa
-  subito incerto (nessuna attesa) finché un esito noto dell'ordine
-  (`QUICK_BET_*` diverso da AMBIGUOUS, per esempio dalla riconciliazione) non lo
-  risolve. La registrazione appartiene alla richiesta che l'ha creata: un
-  duplicato con lo stesso `customer_ref` non la chiude.
+  subito incerto (nessuna attesa) finché un esito noto dello stesso ordine
+  (`QUICK_BET_*` diverso da AMBIGUOUS, con lo stesso `correlation_id`, non un
+  rifiuto pre-invio DENIED/DUPLICATE_BLOCKED) non lo risolve. Oggi questi esiti
+  arrivano solo dal ciclo di vita dell'ordine in LIVE (`order_manager`); la
+  riconciliazione non pubblica `QUICK_BET_*`, quindi in SIM l'ingresso resta
+  ambiguo fino al riavvio (fail-closed). La registrazione appartiene alla
+  richiesta che l'ha creata: un secondo ingresso con lo stesso `customer_ref`,
+  mentre il primo è in invio o ambiguo, viene negato (`ingresso_gia_in_invio`)
+  e non la sovrascrive.
 
 Limiti noti:
 - un residuo di hedge parziale che si abbina da solo prima del cancel fa fallire
