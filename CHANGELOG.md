@@ -78,6 +78,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     precheck Dutching, prima di ogni side-effect (`absolute_cap_reason_for_orders`, stessa formula dei segnali).
     Limite: gli ordini manuali e Dutching non occupano tavoli Roserpina, quindi la loro esposizione non entra
     nelle misure di mercato ed evento dei controlli successivi (comportamento preesistente).
+  - **Verifica indipendente del delta (#522):** la registrazione del fence ora si consuma per ogni ordine che
+    arriva all'engine, anche se lo negano safe mode o RiskGate (prima restava in memoria). Un controllo del
+    fence o dei cap diretti che risponde un tipo inatteso blocca l'ordine (`ADMISSION_FENCE_BAD_RESULT`,
+    `cap_assoluti_non_verificabili`). Un CASHOUT che nomina la partita con `event` o `match` apre la barriera su
+    quella partita. Aggiunti i test per LAY = liability, errore del controllo cap, cap evento senza identità,
+    drawdown assoluto e registrazione dell'auto-next. Documentazione in `docs/cashout_overview.md` §7.1.
 
 - **Rettifica owner 18/10/2026, chiarimento definitivo del 19/10: tetti monetari preesistenti.**
   `max_stake_abs` (RSR-15, tetto allo stake per ordine) e `max_win` (RSR-26, tetto alla vincita/esposizione

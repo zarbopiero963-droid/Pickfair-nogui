@@ -3362,9 +3362,13 @@ class RuntimeController:
             scope = frozenset({("global",)})
         else:
             scope_keys: set[tuple] = set()
-            event_key = RuntimeController._cashout_event_admission_key(signal.get("event_name"))
-            if event_key is not None:
-                scope_keys.add(event_key)
+            # Ogni alias del nome evento (`event_name`, `event`, `match`) apre la barriera sul suo evento:
+            # un CASHOUT che porta solo `event` o `match` blocca comunque gli ingressi su quell'evento, e
+            # alias in conflitto bloccano entrambi (fail-closed, verifica indipendente su 93c67cf).
+            for alias in ("event_name", "event", "match"):
+                event_key = RuntimeController._cashout_event_admission_key(signal.get(alias))
+                if event_key is not None:
+                    scope_keys.add(event_key)
             try:
                 market_id = validators.order_market_id(signal.get("market_id"))
                 try:

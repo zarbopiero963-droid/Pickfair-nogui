@@ -939,6 +939,7 @@ class TradingEngine:
             safe_on = self._is_safe_mode_enabled()
             self._emit(ctx, audit, "SAFE_MODE_CHECK", {"enabled": safe_on}, category="guard")
             if safe_on:
+                self._consume_admission_fence(normalized)   # registrazione del fence non lasciata in memoria
                 self._emit(ctx, audit, "SAFE_MODE_DENIED", {}, category="guard")
                 return self._complete_order_lifecycle(
                     ctx, audit, order_id=None,
@@ -1535,7 +1536,7 @@ class TradingEngine:
     def _risk_deny(request: Dict[str, Any], reason: str) -> Dict[str, Any]:
         return {"allowed": False, "reason": reason, "payload": request}
 
-    def _risk_gate(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    def _risk_gate_verdict(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """FAIL-CLOSED: qualsiasi anomalia del gate NEGA l'ordine (H-04).
 
         Prima ogni percorso anomalo — `check` assente, non callable, risultato
@@ -1578,18 +1579,34 @@ class TradingEngine:
             logger.error("Risk gate ha restituito allowed=%r (%s) invece di bool -> DENY",
                          verdict, type(verdict).__name__)
             return self._risk_deny(request, "RISK_GATE_NON_BOOLEAN_VERDICT")
-        if verdict is True:
-            # Fence d'ammissione del RuntimeController (rilievo Codex #522): un ingresso accodato prima di un
-            # cashout nel suo ambito non viene piazzato dopo la fotografia del cashout. Errore => DENY.
-            fence_check = getattr(getattr(self, "runtime_controller", None), "admission_fence_verdict", None)
-            if callable(fence_check):
-                try:
-                    reason = fence_check(request)
-                except Exception:
-                    logger.exception("Fence d'ammissione ha sollevato -> DENY (fail-closed)")
-                    return self._risk_deny(request, "ADMISSION_FENCE_RAISED")
-                if isinstance(reason, str) and reason:
-                    return self._risk_deny(request, reason)
+        return result
+
+    def _consume_admission_fence(self, request: Dict[str, Any]) -> str:
+        """Fence d'ammissione del RuntimeController (rilievo Codex #522): "" se l'ingresso puo' partire.
+
+        Un ingresso accodato prima di un cashout nel suo ambito non viene piazzato dopo la fotografia del
+        cashout. La registrazione si consuma per OGNI ordine che arriva all'engine, anche negato da safe mode
+        o dal RiskGate (verifica indipendente su 93c67cf: altrimenti restava in memoria). Errore => motivo
+        di rifiuto (fail-closed).
+        """
+        fence_check = getattr(getattr(self, "runtime_controller", None), "admission_fence_verdict", None)
+        if not callable(fence_check):
+            return ""
+        try:
+            reason = fence_check(request)
+        except Exception:
+            logger.exception("Fence d'ammissione ha sollevato -> DENY (fail-closed)")
+            return "ADMISSION_FENCE_RAISED"
+        if reason is None or isinstance(reason, str):
+            return reason or ""
+        logger.error("Fence d'ammissione ha restituito %r invece di str -> DENY", reason)
+        return "ADMISSION_FENCE_BAD_RESULT"
+
+    def _risk_gate(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        result = self._risk_gate_verdict(request)
+        reason = self._consume_admission_fence(request)
+        if reason and result.get("allowed") is True:
+            return self._risk_deny(request, reason)
         return result
 
     # ==================================================================

@@ -344,7 +344,10 @@ class DutchingController:
         except Exception:
             logger.exception("Controllo cap assoluti fallito: ordine bloccato")
             return "cap_assoluti_non_verificabili"
-        return reason if isinstance(reason, str) else ""
+        if reason is None or isinstance(reason, str):
+            return reason or ""
+        logger.error("Controllo cap assoluti ha restituito %r invece di str: ordine bloccato", reason)
+        return "cap_assoluti_non_verificabili"
 
     @staticmethod
     def _max_win(config) -> Optional[float]:

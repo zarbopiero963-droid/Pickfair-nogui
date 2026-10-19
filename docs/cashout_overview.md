@@ -197,6 +197,40 @@ Persistenza su `audit_events` (zero migrazioni). Notify Telegram (best-effort).
 Il cancel è limitato **esclusivamente** al cashout UNMATCHED: mai
 QUICK_BET/dutching/cancel/replace.
 
+Dopo ogni esito l'handler pubblica `CASHOUT_RESIDUAL_HANDLED` (`status`,
+`cancel_attempted`, `cancel_ok`, `bet_id`, `market_id`, `selection_id`,
+`cashout_request_id`).
+
+### 7.1 Barriera d'ammissione degli ingressi (PR28-d, #522)
+
+Un CASHOUT/CASHOUT_ALL apre una **barriera** sul proprio ambito (globale per
+CASHOUT_ALL; altrimenti la partita — ogni alias `event_name`/`event`/`match` —
+più mercato o selezione). Finché è attiva, nessun nuovo ingresso nell'ambito
+viene ammesso (`cashout_invalidation_active`); il cashout non viene mai
+ritardato (PF-EXEC-03).
+
+- Ogni `REQ_EXECUTE_CASHOUT` porta un `cashout_request_id`; la barriera resta
+  attiva finché **ogni** richiesta ha un esito certo: `CASHOUT_SUCCESS`,
+  `CASHOUT_FAILED` certo, `CASHOUT_REQUEST_SUPPRESSED` (duplicato del bridge).
+- **UNMATCHED** non chiude la barriera da solo: la chiude
+  `CASHOUT_RESIDUAL_HANDLED` con `cancel_ok=True`. Cancel non tentato (nessun
+  `bet_id`) o non confermato => barriera tenuta (incerta) fino al riavvio.
+- **AMBIGUOUS/ERROR** => barriera incerta, tenuta fino al riavvio.
+- `get_status()` espone `cashout_barriers_active` e `cashout_barriers_uncertain`.
+- **Fence fino all'engine**: col bus non bloccante `CMD_QUICK_BET` è solo
+  accodato. L'ingresso porta la registrazione del fence (`customer_ref`) e il
+  `TradingEngine` la ricontrolla prima del piazzamento
+  (`admission_fence_verdict`): cashout iniziato nel suo ambito =>
+  `cashout_invalidation_stale`, `QUICK_BET_FAILED`, tavolo e dedupe liberati.
+  La registrazione si consuma per ogni ordine che arriva all'engine, anche
+  negato da safe mode o RiskGate; un errore del controllo nega l'ordine
+  (`ADMISSION_FENCE_RAISED` / `ADMISSION_FENCE_BAD_RESULT`).
+
+Limiti noti (non introdotti da #522): `CASHOUT_SUCCESS` con match parziale
+chiude la barriera mentre il residuo dell'hedge può restare a riposo
+(`cashout_executor.py`); resta una finestra di millisecondi fra il controllo
+del fence nell'engine e l'invio dell'ordine.
+
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).

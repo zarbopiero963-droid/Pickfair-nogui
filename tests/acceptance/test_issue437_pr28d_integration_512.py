@@ -888,3 +888,140 @@ def test_dutching_precheck_applies_the_cap_before_any_side_effect(monkeypatch):
     assert acquired == []
     assert [(o["selection_id"], o["bet_type"], o["stake"], o["price"]) for o in seen[0]] == [
         (1, "BACK", 60.0, 2.0), (2, "BACK", 40.0, 3.0)]
+
+
+# ---------------------------------------------------------------- verifica indipendente su 93c67cf (#522)
+def _queue_one_entry(c):
+    held = []
+    original_publish = c.bus.publish
+
+    def queueing_publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            held.append(payload)
+            return None
+        return original_publish(topic, payload)
+
+    c.bus.publish = queueing_publish
+    c.rc._on_signal_received(_signal())
+    c.bus.publish = original_publish
+    assert len(held) == 1 and len(c.rc._queued_entry_fences) == 1
+    return held[0]
+
+
+def _run_queued(c, payload):
+    for handler in list(c.bus.subscribers.get("CMD_QUICK_BET", [])):
+        handler(payload)
+
+
+def test_fence_registration_is_consumed_when_safe_mode_denies_the_order(tmp_path):
+    """Un ordine negato dal safe mode dell'engine non lascia la sua registrazione del fence in memoria."""
+    c = _catena(tmp_path)
+    payload = _queue_one_entry(c)
+    c.engine._is_safe_mode_enabled = lambda: True
+
+    _run_queued(c, payload)
+
+    assert c.broker.state.orders == {}
+    assert c.bus.payloads("QUICK_BET_FAILED")[-1]["status"] == "DENIED"
+    assert c.rc._queued_entry_fences == {}
+
+
+def test_fence_registration_is_consumed_when_the_risk_gate_denies_the_order(tmp_path):
+    c = _catena(tmp_path)
+    payload = _queue_one_entry(c)
+    c.engine.risk_middleware.check = lambda request: {"allowed": False, "reason": "negato", "payload": request}
+
+    _run_queued(c, payload)
+
+    assert c.broker.state.orders == {}
+    assert c.rc._queued_entry_fences == {}
+
+
+@pytest.mark.parametrize("verdict,reason", [
+    (RuntimeError("fence rotto"), "ADMISSION_FENCE_RAISED"),
+    (True, "ADMISSION_FENCE_BAD_RESULT"),
+    (["x"], "ADMISSION_FENCE_BAD_RESULT"),
+])
+def test_engine_denies_the_order_when_the_fence_check_is_not_verifiable(tmp_path, verdict, reason):
+    """Fence che solleva o risponde un tipo inatteso => DENY (fail-closed), mai ordine ammesso."""
+    c = _catena(tmp_path)
+
+    def broken(request):
+        if isinstance(verdict, Exception):
+            raise verdict
+        return verdict
+
+    c.rc.admission_fence_verdict = broken
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert c.engine._consume_admission_fence({"customer_ref": "r"}) == reason
+    assert c.bus.payloads("QUICK_BET_FAILED")[-1]["status"] == "DENIED"
+
+
+def test_auto_next_entry_registers_its_fence_for_the_engine():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+
+    rc._on_close_position(_auto_next_close())
+
+    (published,) = [p for t, p in bus.events if t == "CMD_QUICK_BET"]
+    assert published["customer_ref"] in rc._queued_entry_fences
+    _barrier(rc, {"signal_type": "CASHOUT_ALL"})                    # cashout prima dell'esecuzione in coda
+    assert rc.admission_fence_verdict(published) == "cashout_invalidation_stale"
+    assert rc._queued_entry_fences == {}
+
+
+def test_direct_order_cap_measures_lay_liability_not_the_stake(tmp_path):
+    c = _catena(tmp_path, max_order_exposure=1.5)
+    lay = {"market_id": "1.234", "selection_id": 11, "bet_type": "LAY", "price": 3.0, "stake": 1.0}
+    back = dict(lay, bet_type="BACK")
+    assert c.rc.absolute_cap_reason_for_orders([lay]).startswith("max_order_exposure_exceeded")  # liability 2.0
+    assert c.rc.absolute_cap_reason_for_orders([back]) == ""                                      # rischio 1.0
+
+
+@pytest.mark.parametrize("result", [RuntimeError("runtime rotto"), True, 0])
+def test_manual_bet_is_blocked_when_the_cap_check_is_not_verifiable(tmp_path, result):
+    c = _catena(tmp_path)
+
+    def broken(orders):
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    c.rc.absolute_cap_reason_for_orders = broken
+    res = _dutching(c).manual_bet({"market_id": "1.234", "selection_id": 11, "price": 2.0, "stake": 1.0,
+                                   "bet_type": "BACK", "event_name": "Alpha v Beta"})
+    assert res["ok"] is False and "cap_assoluti_non_verificabili" in res["error"]
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+def test_direct_order_without_event_identity_is_refused_when_the_event_cap_is_active(tmp_path):
+    c = _catena(tmp_path, max_event_exposure_abs=50.0)
+    order = {"market_id": "1.234", "selection_id": 11, "bet_type": "BACK", "price": 2.0, "stake": 1.0}
+    assert c.rc.absolute_cap_reason_for_orders([order]) == "max_event_exposure_abs_non_verificabile"
+    assert c.rc.absolute_cap_reason_for_orders([dict(order, event_name="Alpha v Beta")]) == ""
+
+
+def test_direct_orders_respect_the_configured_absolute_drawdown(tmp_path):
+    order = {"market_id": "1.234", "selection_id": 11, "bet_type": "BACK", "price": 2.0, "stake": 1.0}
+    c = _catena(tmp_path, max_drawdown_abs=200.0)
+    c.rc.risk_desk.bankroll_current = 900.0                         # drawdown 100 < 200
+    assert c.rc.absolute_cap_reason_for_orders([order]) == ""
+
+    c.rc.config.max_drawdown_abs = 50.0                             # drawdown 100 >= 50
+    assert c.rc.absolute_cap_reason_for_orders([order]) == "max_drawdown_abs_active"
+    assert c.rc.mode == RuntimeMode.LOCKDOWN
+
+
+@pytest.mark.parametrize("alias", ["event", "match"])
+def test_cashout_naming_the_event_by_alias_fences_entries_of_that_event(tmp_path, alias):
+    c = _catena(tmp_path)
+    _barrier_id, scope = _barrier(c.rc, {"signal_type": "CASHOUT", alias: "Alpha v Beta"})
+    assert ("event", "alpha v beta") in scope
+
+    c.rc._on_signal_received(_signal(event="Alpha v Beta"))
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
