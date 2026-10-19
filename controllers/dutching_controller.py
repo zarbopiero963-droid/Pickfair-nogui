@@ -514,7 +514,8 @@ class DutchingController:
 
         Nessuna chiamata di rete nel path di submit (niente snapshot sincrono che
         stallerebbe il thread o restituirebbe ladder vuoti da cold-cache). Se il
-        book non e' in cache => None => il gate NON blocca (fail-open).
+        book non e' in cache => None: in sola osservazione nessun blocco; con il guard
+        armato liquidita' IGNOTA, blocco LIQUIDITY_UNKNOWN (ciclo 11 #512).
         """
         tracker = getattr(self.runtime, "market_tracker", None)
         if tracker is not None and hasattr(tracker, "get_market"):
@@ -1054,8 +1055,9 @@ class DutchingController:
         # osservazione (liquidity_warning_only=False), BLOCCA il submit PRIMA di
         # ogni side-effect (duplication acquire), come il book% gate. In modalita'
         # avviso (default opt-in) segnala soltanto (liquidity_warning/shortfall nel
-        # risultato). Book assente (cache fredda) => nessuna osservazione; liquidita'
-        # IGNOTA di una gamba con il guard armato => blocco LIQUIDITY_UNKNOWN (ciclo 8 #512).
+        # risultato). Book assente (cache fredda) o liquidita' IGNOTA di una gamba: in sola
+        # osservazione nessuna osservazione; con il guard armato blocco LIQUIDITY_UNKNOWN
+        # (cicli 8 e 11 #512).
         liquidity = self._evaluate_liquidity_guard(config, payload, results)
         if liquidity.get("shortfall") and not self._liquidity_warning_only(config):
             # Segnale di blocco AUTOREVOLE: ok=False. NON si aggiunge

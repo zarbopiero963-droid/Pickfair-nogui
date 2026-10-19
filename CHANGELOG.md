@@ -31,7 +31,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope
   dichiarata). Rollback microstake con stub abbinato anche in parte prima della cancellazione => AMBIGUOUS
   `rollback_matched` con riserva tenuta, mai ROLLED_BACK/FAILED (riesame indipendente).
-- **PR #512 ciclo 11 (PREPARATO, richiede autorizzazione owner):** bloccanti di Grok su `9ab753a`. (1) Settlement per bet
+- **PR #512 ciclo 11 (autorizzazione owner straordinaria del 19/10/2026, #426; ultimo ciclo, il 12 non e' autorizzato):** bloccanti di Grok su `9ab753a`. (1) Settlement per bet
   senza `table_id`: conta ogni ordine del bot sullo stesso mercato, qualunque selezione; il tavolo si libera solo se
   l'unico ordine del mercato e' il suo (prima il P&L di un'altra selezione poteva diventare la perdita di recovery del
   tavolo, confermato su sqlite reale). (2) Recovery delle riserve microstake: importo transitorio ignoto => liability
@@ -41,7 +41,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`table_id` persistito con verifica dell'evento), mai quello di un altro ordine vivo sullo stesso evento; senza
   `table_id` e con piu' tavoli nessun rilascio (r4309039372); (5) Dutching: book assente con guard in blocco =>
   `LIQUIDITY_UNKNOWN` per ogni gamba (r4309039358). Trasferiti: r4309039345 -> #521, r4309039363 -> #516,
-  r4309039377 -> #518.
+  r4309039377 -> #518. Test di integrazione `test_fail_open_when_book_missing_block_mode` (codificava il fail-open)
+  sostituito da `test_unknown_liquidity_when_book_missing_blocks_in_block_mode`; dossier, docstring e
+  `docs/roserpina_bankroll_equity.md` (F028 per `table_id`) allineati.
 - **PR #512 ciclo 9 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION):** (1) readback del checkpoint con tutti i branch
   remoti; evidenza su albero non pubblicato ammessa solo se dichiarata (`unpublished_tree` + `sha_note`); (2) bloccante Sol:
   cancellazione del rollback fallita => risultato AMBIGUOUS con riserva tenuta ma fase persistita ROLLBACK_PENDING, il

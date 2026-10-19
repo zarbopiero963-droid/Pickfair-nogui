@@ -265,13 +265,23 @@ def test_price_filter_excludes_non_executable_levels(monkeypatch):
 
 
 # ==========================================================================
-# 3) FAIL-OPEN e guard-off (mai blocco anche in block mode)
+# 3) Dato mancante (blocca solo col guard armato) e guard-off (mai blocco)
 # ==========================================================================
-def test_fail_open_when_book_missing_block_mode(monkeypatch):
+def test_unknown_liquidity_when_book_missing_blocks_in_block_mode(monkeypatch):
+    """Ciclo 11 (Codex r4309039358, blocker B5): book assente con il guard armato (warning_only=False) =
+    liquidita' IGNOTA per ogni gamba, blocco esplicito LIQUIDITY_UNKNOWN; un dato mancante non vale
+    "sufficiente". (Sostituisce test_fail_open_when_book_missing_block_mode, che codificava il fail-open.)"""
     _patch_calc(monkeypatch)
     res = _controller(_Runtime(book=None, config=_cfg(warning_only=False))).precheck(_payload())
-    assert res["ok"] is True
-    assert res.get("liquidity_warning") is False
+    assert res["ok"] is False
+    assert res["liquidity_shortfall"] and all(leg["reason"] == "LIQUIDITY_UNKNOWN" and leg["available"] is None
+                                              for leg in res["liquidity_shortfall"])
+
+
+def test_book_missing_stays_unobserved_in_warning_mode(monkeypatch):
+    _patch_calc(monkeypatch)
+    res = _controller(_Runtime(book=None, config=_cfg(warning_only=True))).precheck(_payload())
+    assert res["ok"] is True and res.get("liquidity_warning") is False
 
 
 def test_unknown_liquidity_when_selection_absent_blocks_in_block_mode(monkeypatch):
