@@ -6,8 +6,8 @@
   "sha": "c57f5659bc5fa317528cd3b625d82c5afc0e3e2e"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere CI/Sol/Grok/Codex su #526 head c57f565, triage; NO merge, NO LIVE",
- "previous_checkpoint_sha": "5c5346ce527ef2c5c5d21879746b444b940c70e5",
+ "next_atomic_action": "Attendere autorizzazione owner al merge della #526 (NO merge autonomo, NO LIVE); poi #525",
+ "previous_checkpoint_sha": "1e6d94f4f991617743d2147c5f5b40dbbed24edb",
  "schema": "pf-current/1",
- "seq": 48
+ "seq": 49
 }

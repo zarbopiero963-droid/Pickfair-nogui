@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 48,
+ "seq": 49,
  "updated_at": "2026-10-19T21:09:18.122519+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere CI/Sol/Grok/Codex su #526 head c57f565, triage; NO merge, NO LIVE",
+ "next_atomic_action": "Attendere autorizzazione owner al merge della #526 (NO merge autonomo, NO LIVE); poi #525",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -473,14 +473,17 @@
   "issue": 524,
   "head": "c57f565",
   "regression": "8380 passed 0 failed (c57f565)",
-  "status": "CHECKS_PENDING",
+  "status": "READY_FOR_OWNER_AUTHORIZATION",
   "fix_loop_cycle": "0 di 5",
   "prev_merged": "#522 squash dd0ae58 (merge owner)",
   "mutation": "7/7 uccise",
-  "followups": "#525 -> #523 -> fix loop 10 -> #461 matrice"
+  "followups": "#525 -> #523 -> fix loop 10 -> #461 matrice",
+  "ci": "36/36 success, Merge readiness PASS, mergeable clean, 0 thread",
+  "reviews": "Sol/Grok nessun bloccante su dd0ae58...c57f565; Codex usage limit; CodeRabbit skip",
+  "triage_comment": "c.6278651396"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "5c5346ce527ef2c5c5d21879746b444b940c70e5",
+ "previous_checkpoint_sha": "1e6d94f4f991617743d2147c5f5b40dbbed24edb",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -563,7 +566,7 @@
   "patch": {
    "head": "c57f5659bc5fa317528cd3b625d82c5afc0e3e2e",
    "tree": "325d243cd6371ef91aff9995f3b32d6a913a83d1",
-   "captured_at": "2026-10-19T22:06:33+00:00",
+   "captured_at": "2026-10-19T22:21:39+00:00",
    "modified": [],
    "untracked": [],
    "files": [
