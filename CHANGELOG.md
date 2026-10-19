@@ -10,6 +10,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 12 (decisioni owner del 19/10/2026: autorizzazione straordinaria del ciclo 12 e
+  PF-QA-AUTONOMOUS-CONTINUATION-01, #426):** P1 Codex su `3d3f5cc`. (1) `NativeSimMicrostakeExecutor.execute`: un
+  errore ordinario del DB (non `SagaStoreError`) dopo un'operazione exchange diventa AMBIGUOUS
+  (`saga_store_write_failed_after_exchange_call`), con riserva trattenuta e dedupe consumato; prima finiva FAILED
+  (PERMANENT) con lo stub vivo sul broker e il tavolo libero (r4311806874). (2) Emergency stop: la provenienza dei
+  settlement si persiste insieme al flag e si ripristina al riavvio; assente o non valida => `UNKNOWN`, trattata come
+  LIVE (r4311806886). (3) Riesame indipendente: in `SimulationExchangePort.place` un errore di lettura DOPO
+  l'accettazione dell'ordine e' una risposta persa (`LostResponse`, riconciliazione per `customer_ref`), non un errore
+  generico che rilasciava la riserva chiudendo FAILED con lo stub vivo. Test RED->GREEN in
+  `tests/test_pr512_codex_034af59.py` (`test_c12_*`, compresa la dedupe durevole dopo un nuovo engine).
 - **PR #512 ciclo 10 (deroga owner PF-PR512-CYCLES-08-10-AUTHORIZATION, ultimo ciclo):** rilievi Codex su `b918a6d`.
   (1) il reset trattiene OGNI tavolo con esito ignoto dal registro per tavolo, anche a mercato regolato (r4308704060);
   (2) stato di recovery non persistito => nessun nuovo ingresso su ogni percorso (`recovery_state_not_persisted`, via

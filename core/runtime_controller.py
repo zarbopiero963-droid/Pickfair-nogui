@@ -185,6 +185,8 @@ class RuntimeController:
         self._emergency_stopped: bool = False
         self._emergency_stopped_at: str = ""
         self._emergency_reason: str = ""
+        # PF-ALL-F027: provenienza dei settlement prima del flip a SIM ("", "SIM", "LIVE", "UNKNOWN"); persistita
+        self._settlement_source_before_emergency: str = ""
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
@@ -965,7 +967,7 @@ class RuntimeController:
         """
         if not self._settlement_reconciliation_allowed():
             return
-        if getattr(self, "_settlement_source_before_emergency", "") == "LIVE":
+        if getattr(self, "_settlement_source_before_emergency", "") in {"LIVE", "UNKNOWN"}:
             self._report_settlement_source_uncertain("LIVE_POSITIONS_AFTER_EMERGENCY_SIM_FLIP")
             return
         getter = getattr(self.betfair_service, "get_simulation_broker", None)
@@ -2055,6 +2057,10 @@ class RuntimeController:
             self._emergency_reason = str(
                 settings.get("emergency_reason") or "RESTORED_AFTER_RESTART"
             )
+            # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement ripristinata; assente (stato legacy) o
+            # non valida => UNKNOWN, trattata come LIVE (registro SIM mai usato per posizioni di origine ignota).
+            source = str(settings.get("emergency_settlement_source") or "").strip().upper()
+            self._settlement_source_before_emergency = source if source in {"SIM", "LIVE"} else "UNKNOWN"
         except Exception:
             # Fail-closed: se NON si riesce a leggere lo stato persistito non
             # si puo' PROVARE che non ci fosse un'emergenza in corso => si
@@ -2067,6 +2073,7 @@ class RuntimeController:
             self._emergency_stopped = True
             self._emergency_stopped_at = datetime.utcnow().isoformat()
             self._emergency_reason = "EMERGENCY_STATE_UNREADABLE"
+            self._settlement_source_before_emergency = "UNKNOWN"
 
         # Postura COMPLETA, non solo il flag: senza lockdown/live-gate anche
         # i percorsi che non leggono il flag (es. mode-based) resterebbero
@@ -2100,6 +2107,8 @@ class RuntimeController:
                 "emergency_stopped": "1" if self._emergency_stopped else "0",
                 "emergency_stopped_at": self._emergency_stopped_at,
                 "emergency_reason": self._emergency_reason,
+                # PF-ALL-F027 / Codex r4311806886: provenienza dei settlement nello STESSO salvataggio del flag
+                "emergency_settlement_source": getattr(self, "_settlement_source_before_emergency", "") or "",
             })
             return ""
         except Exception as exc:
@@ -2121,6 +2130,10 @@ class RuntimeController:
                 "emergency_stopped": "1" if active else "0",
                 "emergency_stopped_at": datetime.utcnow().isoformat() if active else self._emergency_stopped_at,
                 "emergency_reason": reason if active else self._emergency_reason,
+                "emergency_settlement_source": (
+                    (getattr(self, "_settlement_source_before_emergency", "")
+                     or ("SIM" if self.simulation_mode else "LIVE")) if active
+                    else getattr(self, "_settlement_source_before_emergency", "") or ""),
             })
             return ""
         except Exception as exc:
@@ -2148,6 +2161,10 @@ class RuntimeController:
         self._emergency_stopped = True
         self._emergency_stopped_at = triggered_at
         self._emergency_reason = reason or "EMERGENCY_STOP"
+        # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM. Fissata PRIMA
+        # del salvataggio, che la persiste col flag (Codex r4311806886: in sola memoria un riavvio la perdeva).
+        if not getattr(self, "_settlement_source_before_emergency", ""):
+            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
 
         # Persist SUBITO (prima del cancel): anche se il processo muore
         # durante il cancel-all, il riavvio riparte in emergenza.
@@ -2171,9 +2188,6 @@ class RuntimeController:
             self.mode = RuntimeMode.LOCKDOWN
             cancel_errors.append({"stage": "force_lockdown", "error": str(exc)})
 
-        # PF-ALL-F027: da dove arrivano i settlement delle posizioni aperte prima del flip a SIM.
-        if not getattr(self, "_settlement_source_before_emergency", ""):
-            self._settlement_source_before_emergency = "SIM" if self.simulation_mode else "LIVE"
         # Ora possiamo flippare a SIMULATION in sicurezza
         self.execution_mode = "SIMULATION"
         self.set_simulation_mode(True)

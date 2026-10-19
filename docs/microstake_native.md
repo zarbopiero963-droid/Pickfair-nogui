@@ -85,7 +85,12 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
   stub si appoggia al target; con controparte: target se passivo, altrimenti primo tick della scala Betfair oltre il
   best (`best_counterparty_price`, lettura pubblica coerente con `_match_order`).
 - `DbSagaStore`: saga nel DB dell'app (chiave settings `microstake.sagas`), riavvio-sicura; JSON corrotto =>
-  `SagaStoreError` (AMBIGUOUS se l'exchange è già stato toccato, altrimenti BLOCKED). Stessa scelta di persistenza
+  `SagaStoreError` (AMBIGUOUS se l'exchange è già stato toccato, altrimenti BLOCKED). Qualunque altro errore di
+  scrittura (es. `sqlite3.OperationalError`) DOPO un'operazione exchange è AMBIGUOUS
+  (`saga_store_write_failed_after_exchange_call`): riserva trattenuta, intento dedupe consumato, ordine contato come
+  posizione fino alla riconciliazione, mai FAILED; prima dell'invio resta un fallimento (Codex r4311806874). Ordine
+  accettato dal broker con lettura successiva fallita (`SimulationExchangePort.place`): `LostResponse`, quindi
+  riconciliazione per `customer_ref`, mai riserva rilasciata con lo stub vivo (riesame indipendente ciclo 12). Stessa scelta di persistenza
   di RSR-12 (`roserpina.recovery_tables_state`): nessuna modifica a `database_schema`.
 - Riserva transitoria **in-process** (lock); la riserva durevole cross-process è PR29 (#461), fuori scope.
 - Blocchi PRIMA di qualunque operazione exchange (`pre_send: True` nel risultato) diventano nell'engine un errore

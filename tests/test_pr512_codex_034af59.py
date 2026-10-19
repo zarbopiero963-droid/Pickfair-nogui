@@ -1274,3 +1274,226 @@ def test_c11_f028_without_table_id_and_two_tables_releases_nothing(tmp_path):
     c.rc._settlement_reconciliation_allowed = lambda: True
     assert c.rc._release_final_unmatched_orders() == []
     assert len(_c9_occupied(c)) == 2
+
+
+# ------------------------------------------------------------------ ciclo 12 (decisione owner 19/10/2026)
+def _c12_failing_saga_db(db, phase, exc):
+    """`save_settings` del DB dell'app fallisce con `exc` quando la saga passa a `phase`; il resto e' invariato."""
+    real = db.save_settings
+
+    def flaky(data):
+        raw = next((v for k, v in data.items() if "saga" in str(k).lower()), None)
+        if raw and f'"{phase}"' in raw:
+            raise exc
+        return real(data)
+
+    db.save_settings = flaky
+
+
+@pytest.mark.parametrize("phase", ["STUB_ACCEPTED", "REDUCED"])
+def test_c12_db_error_after_stub_send_is_ambiguous_never_failed(phase):
+    """Codex r4311806874 (P1): un errore ordinario del DB (non `SagaStoreError`) DOPO l'invio dello stub era
+    classificato PERMANENT => FAILED, con lo stub vivo sul broker e il tavolo libero. Deve restare AMBIGUOUS:
+    riserva trattenuta, intento dedupe consumato, ordine contato come posizione fino alla riconciliazione."""
+    import sqlite3
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload, _orders
+    engine, broker, db = _engine()
+    _c12_failing_saga_db(db, phase, sqlite3.OperationalError("database is locked"))
+    res = engine.submit_quick_bet(_payload("c12", size=0.10, price=3.0))
+    live = [o for o in _orders(broker) if o.get("customerOrderRef") == "c12"]
+    assert live, "probe non significativo: lo stub non e' partito"
+    assert str(res.get("status")).upper() == "AMBIGUOUS", res.get("status")
+    assert res.get("ok") is not True
+    assert engine.microstake_executor.port.has_reservation("c12"), "riserva dello stub vivo rilasciata"
+    # anti-duplicazione: lo stesso intento non riparte
+    again = engine.submit_quick_bet(_payload("c12", size=0.10, price=3.0))
+    assert str(again.get("status")).upper() == "DUPLICATE_BLOCKED", again.get("status")
+    assert len([o for o in _orders(broker) if o.get("customerOrderRef") == "c12"]) == len(live), "secondo invio"
+
+
+def test_c12_db_error_before_any_send_stays_a_plain_failure():
+    """Senza operazioni exchange l'errore resta un fallimento: nessun ordine sul broker, nessuna riserva appesa."""
+    import sqlite3
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload, _orders
+    engine, broker, db = _engine()
+    _c12_failing_saga_db(db, "PREPARED", sqlite3.OperationalError("disk I/O error"))
+    res = engine.submit_quick_bet(_payload("c12-pre", size=0.10, price=3.0))
+    assert not [o for o in _orders(broker) if o.get("customerOrderRef") == "c12-pre"]
+    assert str(res.get("status")).upper() != "AMBIGUOUS", res.get("status")
+    assert not engine.microstake_executor.port.has_reservation("c12-pre")
+
+
+def _c12_rc(db):
+    sys.path.insert(0, os.path.join(ROOT, "tests", "safety"))
+    from test_emergency_stop import _make_rc
+    rc, bus = _make_rc(db=db)
+    return rc, bus
+
+
+class _C12Broker:
+    def __init__(self):
+        self.reads = 0
+
+    def list_settlements(self):
+        self.reads += 1
+        return []
+
+
+def _c12_poll(rc):
+    broker = _C12Broker()
+    rc.betfair_service.get_simulation_broker = lambda: broker
+    rc._poll_simulated_settlements_locked()
+    return broker.reads
+
+
+def _c12_db(settings=None):
+    sys.path.insert(0, os.path.join(ROOT, "tests", "safety"))
+    from test_emergency_stop import _PersistentDb
+    return _PersistentDb(settings=settings)
+
+
+def test_c12_live_emergency_source_survives_restart():
+    """Codex r4311806886 (P1): la provenienza LIVE dei settlement era solo in memoria. Dopo il riavvio in
+    emergenza il registro SIM non deve valere per le posizioni LIVE aperte prima dello stop."""
+    db = _c12_db()
+    rc1, _ = _c12_rc(db)
+    rc1.set_simulation_mode(False)
+    rc1.emergency_stop(reason="c12_live")
+    assert db.settings.get("emergency_settlement_source") == "LIVE", db.settings
+    rc2, bus2 = _c12_rc(db)
+    assert rc2.is_emergency_stopped is True
+    assert rc2._settlement_source_before_emergency == "LIVE"
+    assert _c12_poll(rc2) == 0, "registro SIM letto per posizioni LIVE dopo il riavvio"
+    assert any(n == "SETTLEMENT_RECONCILIATION_UNCERTAIN" for n, _ in bus2.published)
+
+
+def test_c12_source_is_persisted_before_the_sim_flip():
+    """Il marker entra nello STESSO salvataggio del flag di emergenza: un crash subito dopo non lo perde."""
+    db = _c12_db()
+    rc, _ = _c12_rc(db)
+    rc.set_simulation_mode(False)
+    writes = []
+    real = db.save_settings
+    db.save_settings = lambda data: (writes.append(dict(data)), real(data))[1]
+    rc.emergency_stop(reason="c12_order")
+    first = writes[0]
+    assert first.get("emergency_stopped") == "1" and first.get("emergency_settlement_source") == "LIVE", first
+
+
+def test_c12_sim_emergency_restart_keeps_reading_sim_ledger():
+    db = _c12_db()
+    rc1, _ = _c12_rc(db)
+    rc1.set_simulation_mode(True)
+    rc1.emergency_stop(reason="c12_sim")
+    rc2, _ = _c12_rc(db)
+    assert rc2._settlement_source_before_emergency == "SIM"
+    assert _c12_poll(rc2) == 1
+
+
+@pytest.mark.parametrize("settings", [
+    {"emergency_stopped": "1", "emergency_reason": "legacy"},                                  # senza marker
+    {"emergency_stopped": "1", "emergency_reason": "x", "emergency_settlement_source": "??"},  # marker invalido
+])
+def test_c12_unknown_source_after_restart_is_fail_closed(settings):
+    rc, _ = _c12_rc(_c12_db(settings))
+    assert rc.is_emergency_stopped is True
+    assert rc._settlement_source_before_emergency == "UNKNOWN"
+    assert _c12_poll(rc) == 0, "provenienza ignota trattata come SIM"
+
+
+def test_c12_daily_loss_durable_marker_records_the_source():
+    db = _c12_db()
+    rc, _ = _c12_rc(db)
+    rc.set_simulation_mode(False)
+    assert rc._persist_db_emergency_marker(active=True, reason="daily_loss") == ""
+    rc2, _ = _c12_rc(db)
+    assert rc2._settlement_source_before_emergency == "LIVE"
+
+
+def test_c12_reset_clears_the_persisted_source():
+    db = _c12_db()
+    rc, _ = _c12_rc(db)
+    rc.set_simulation_mode(False)
+    rc.emergency_stop(reason="c12_reset")
+    rc.reset_emergency()
+    assert db.settings.get("emergency_settlement_source") == ""
+    rc2, _ = _c12_rc(db)
+    assert rc2.is_emergency_stopped is False and rc2._settlement_source_before_emergency == ""
+
+
+def test_c12_db_error_after_stub_send_keeps_the_durable_intent_consumed():
+    """Riesame indipendente ciclo 12 (lacuna P2): con la dedupe DUREVOLE, l'intento dello stub vivo resta consumato
+    anche per un engine nuovo sullo stesso DB (memoria persa, come dopo un riavvio): nessun secondo invio."""
+    import sqlite3
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _DB, _engine, _payload, _orders
+    from helpers.fake_consumed_intents import FakeConsumedIntentsMixin
+
+    class _DurableDB(FakeConsumedIntentsMixin, _DB):
+        pass
+
+    db = _DurableDB()
+    engine, broker, _ = _engine(db)
+    _c12_failing_saga_db(db, "STUB_ACCEPTED", sqlite3.OperationalError("database is locked"))
+    res = engine.submit_quick_bet(_payload("c12-dur", size=0.10, price=3.0))
+    assert str(res.get("status")).upper() == "AMBIGUOUS", res.get("status")
+    assert db.is_order_intent_consumed("c12-dur"), "intento durevole rilasciato con lo stub vivo"
+    sent = len([o for o in _orders(broker) if o.get("customerOrderRef") == "c12-dur"])
+    engine2, _, _ = _engine(db)
+    engine2.simulation_broker = broker
+    engine2.runtime_controller = engine.runtime_controller
+    again = engine2.submit_quick_bet(_payload("c12-dur", size=0.10, price=3.0))
+    assert len([o for o in _orders(broker) if o.get("customerOrderRef") == "c12-dur"]) == sent, "secondo invio"
+    assert str(again.get("status")).upper() == "DUPLICATE_BLOCKED", again.get("status")
+
+
+@pytest.mark.parametrize("fail_lookup", [False, True])
+def test_c12_post_accept_read_failure_never_releases_a_live_stub(fail_lookup):
+    """Riesame indipendente ciclo 12: ordine accettato dal broker ma lettura successiva fallita (`order(bet_id)`).
+    Prima: eccezione generica => riserva rilasciata e saga FAILED con lo stub vivo. Ora e' una risposta persa:
+    riconciliazione per customer_ref; se anche quella fallisce, AMBIGUOUS con riserva tenuta. Mai FAILED."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload, _orders
+    engine, broker, db = _engine()
+    engine._default_native_microstake_executor("SIMULATION")
+    port = engine.microstake_executor.port
+    real_order, real_find = port.order, port.find_by_ref
+    calls = {"n": 0}
+
+    def flaky_order(bet_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise KeyError(bet_id)
+        return real_order(bet_id)
+
+    port.order = flaky_order
+    if fail_lookup:
+        placed = {"done": False}
+        orig_place = port.broker.place_bet
+
+        def place_and_mark(**kw):
+            out = orig_place(**kw)
+            placed["done"] = True
+            return out
+
+        port.broker.place_bet = place_and_mark
+
+        def flaky_find(ref):
+            if placed["done"]:
+                raise RuntimeError("lookup unavailable")
+            return real_find(ref)
+
+        port.find_by_ref = flaky_find
+    res = engine.submit_quick_bet(_payload("c12-pa", size=0.10, price=3.0))
+    live = [o for o in _orders(broker) if o.get("customerOrderRef") == "c12-pa"]
+    assert live, "probe non significativo"
+    status = str(res.get("status")).upper()
+    assert status != "FAILED", res.get("error")
+    if fail_lookup:
+        assert status == "AMBIGUOUS", status
+        assert port.has_reservation("c12-pa"), "riserva rilasciata con lo stub vivo"
+    else:
+        # riconciliato per customer_ref: la saga prosegue e si attiva normalmente (riserva sciolta solo ad ACTIVE)
+        assert res.get("ok") is True and status in {"SUBMITTED", "ACCEPTED_FOR_PROCESSING"}, status

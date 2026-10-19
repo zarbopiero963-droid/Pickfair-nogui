@@ -250,10 +250,17 @@ class SimulationExchangePort:
         self.operation_log.append(("PLACE", bet_id, str(size), str(price), customer_ref))
         if str(report.get("status")).upper() != "SUCCESS" or not bet_id:
             raise RuntimeError(f"PLACE_REJECTED:{report.get('orderStatus') or report.get('errorCode') or 'FAILURE'}")
-        self._snapshot()
         if self._take("LOST_PLACE_RESPONSE"):
+            self._snapshot()
             raise LostResponse("accepted but response lost")
-        return self.order(bet_id)
+        try:
+            self._snapshot()
+            return self.order(bet_id)
+        except Exception as exc:
+            # Riesame indipendente ciclo 12 (#512): ordine ACCETTATO (betId noto), lettura successiva fallita. Mai un
+            # errore generico, che nel coordinator rilascerebbe la riserva e chiuderebbe FAILED con lo stub vivo:
+            # esito da riconciliare per customer_ref (find_by_ref), come una risposta persa.
+            raise LostResponse(f"accepted but post-accept read failed: {type(exc).__name__}") from exc
 
     def cancel_reduction(self, bet_id: str, reduction: Decimal) -> SimOrder:
         current = self.order(bet_id)
@@ -360,6 +367,18 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             out = self._blocked("saga_store_unreadable")
             out["pre_send"] = True          # nessuna operazione exchange: l'intento dedupe si rilascia
             return out
+        except Exception as exc:
+            # Rilievo Codex r4311806874 (#512 su 3d3f5cc): un errore ordinario del DB (es. sqlite3.OperationalError)
+            # DOPO un'operazione exchange non e' un fallimento: lo stub puo' essere vivo. AMBIGUOUS con riserva
+            # trattenuta (mai rilasciata qui), intento dedupe consumato, riconciliazione. Prima dell'invio resta
+            # l'eccezione originale: nulla e' partito.
+            if len(self.port.operation_log) > before:
+                ref = str(payload.get("customer_ref"))
+                logger.error("Microstake %s: errore di persistenza dopo l'invio, saga AMBIGUOUS (riconciliazione)", ref)
+                return {"status": "AMBIGUOUS", "order_unknown": True, "microstake": True,
+                        "reservation_held": self.port.has_reservation(ref),
+                        "error": f"saga_store_write_failed_after_exchange_call:{type(exc).__name__}"}
+            raise
 
     def _demote_unpersisted_active(self, payload: Dict[str, Any], out: Dict[str, Any]) -> Dict[str, Any]:
         """ACTIVE con snapshot finale non persistito => AMBIGUOUS persistito, riserva ripristinata, risultato
