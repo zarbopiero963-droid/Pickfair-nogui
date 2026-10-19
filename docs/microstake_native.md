@@ -90,7 +90,10 @@ Commissione: 4,5% sul solo profitto netto positivo del mercato (`market_commissi
   (`saga_store_write_failed_after_exchange_call`): riserva trattenuta, intento dedupe consumato, ordine contato come
   posizione fino alla riconciliazione, mai FAILED; prima dell'invio resta un fallimento (Codex r4311806874). Ordine
   accettato dal broker con lettura successiva fallita (`SimulationExchangePort.place`): `LostResponse`, quindi
-  riconciliazione per `customer_ref`, mai riserva rilasciata con lo stub vivo (riesame indipendente ciclo 12). Stessa scelta di persistenza
+  riconciliazione per `customer_ref`, mai riserva rilasciata con lo stub vivo (riesame indipendente ciclo 12). Un
+  ordine gia' presente sul broker con lo stesso `customer_ref` (stato SIM ripristinato senza la saga) e' AMBIGUOUS
+  `existing_customer_ref` con riserva trattenuta, mai FAILED/pre-invio e mai toccato, nemmeno da `recover()` (saga
+  `foreign_ref`: nessuna riduzione/replace/cancel, Codex r4312719704 e riesame indipendente ciclo 14). Stessa scelta di persistenza
   di RSR-12 (`roserpina.recovery_tables_state`): nessuna modifica a `database_schema`.
 - Riserva transitoria **in-process** (lock); la riserva durevole cross-process è PR29 (#461), fuori scope.
 - Blocchi PRIMA di qualunque operazione exchange (`pre_send: True` nel risultato) diventano nell'engine un errore

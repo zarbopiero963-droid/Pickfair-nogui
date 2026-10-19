@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 14 (PF-QA-AUTONOMOUS-CONTINUATION-01 / PF-PR-SEQUENCE-RECOVERY-01, owner 19/10/2026):** la verifica
+  indipendente dei rinvii ha classificato BLOCKING il residuo di r4303297587. Con posizione singola + hedge di cashout
+  (che passa da OrderRouter senza riga in `orders`) il settlement per bet senza `table_id` di una sola gamba liberava
+  il tavolo con il P&L di quella gamba, falsando la perdita di recovery e lo stake successivo. Ora ogni esito di
+  cashout (`CASHOUT_SUCCESS`/`CASHOUT_FAILED` con mercato) marca il mercato nel registro durevole
+  `roserpina.hedged_markets` (lock, 365 giorni) e `_single_bet_position` rifiuta il rilascio per un settlement PER
+  BET su quel mercato, o con registro illeggibile/non persistito (fail-closed); il settlement SIM per mercato (netto
+  di tutte le gambe) continua a rilasciare. Corretta
+  anche la nota del ciclo 10 qui sotto («limite invariato rispetto a main»: falsa per l'effetto sulla recovery). Test
+  RED->GREEN in `tests/test_pr512_codex_034af59.py` (`test_c14_*`). Rilievi Codex su `6138254` corretti nello stesso
+  ciclo: (a) `core/liquidity.single_entry_liquidity` richiede stato esplicito OPEN/ACTIVE, una risposta senza stato
+  non e' liquidita' osservata (r4312719713); (b) `MicrostakeCoordinator.execute`: ordine gia' presente con lo stesso
+  `customer_ref` => AMBIGUOUS con riserva trattenuta, mai FAILED, e `recover()` non adotta mai quell'ordine
+  (r4312719704); (c) `pfckpt.capture_code_patch` non dereferenzia mai i symlink non tracciati: registra solo il testo
+  del link (`skipped_symlinks`), il ripristino lo ricrea (r4312719746, sicurezza). Test in
+  `tests/agent_checkpoint/test_pfckpt_codex_034af59.py::test_c14_*`.
 - **PR #512 ciclo 13 (PF-QA-AUTONOMOUS-CONTINUATION-01, owner 19/10/2026, #426):** rilievi Codex su `4231de9`.
   (1) `TableManager.restore_recovery_state`: una perdita di recovery persistita negativa e' stato illeggibile
   (avvio in PAUSED), non piu' un debito cancellato in silenzio; lo zero resta ammesso (r4312360615). (2)
@@ -43,8 +59,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   Settlement per bet senza `table_id`: il tavolo si libera per mercato solo se la posizione e' a selezione singola con
   UN solo ordine del bot sul mercato/evento che possa essere stato piazzato (`_single_bet_position`; esclusi solo
   FAILED/DENIED/DUPLICATE_BLOCKED); Dutching, piu' ordini persistiti o DB illeggibile => nessun rilascio, tavolo
-  trattenuto, mercato marcato regolato. Limite noto invariato rispetto a main: un hedge di cashout passa da
-  OrderRouter senza riga in `orders` e non e' visto (lotti D-D/D-F) (prima il P&L della prima gamba diventava la perdita di
+  trattenuto, mercato marcato regolato. Limite noto (corretto nel ciclo 14, vedi sopra): un hedge di cashout passa da
+  OrderRouter senza riga in `orders` e non era visto (lotti D-D/D-F) (prima il P&L della prima gamba diventava la perdita di
   recovery del tavolo; aggregazione per `bet_id` = lotto D-F, r4303297587). (b) Dossier dei 41 parametri: nessun
   clamp dello stake minimo, rifiuto esplicito (r4306544234). Test CI robusto al clone shallow; `pfckpt` rifiuta
   CURRENT/TASK_STATE non oggetto; cinque database finti di test con impostazioni in memoria (estensione di scope

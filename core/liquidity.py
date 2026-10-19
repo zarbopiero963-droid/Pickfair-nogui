@@ -78,12 +78,14 @@ def single_entry_liquidity(book: Any, selection_id: Any, side: Any, price: Any) 
     attendibile per un ingresso (None, motivo); il RiskGate nega un dato richiesto e assente."""
     if not isinstance(book, dict) or not isinstance(book.get("runners"), list):
         return None, "LIQUIDITY_BOOK_UNAVAILABLE"
-    if str(book.get("status") or "OPEN").upper() != "OPEN":
+    # Stato esplicito obbligatorio (rilievo Codex r4312719713 su #512): una risposta senza stato e' incompleta,
+    # non un mercato OPEN / una selezione ACTIVE.
+    if str(book.get("status") or "").upper() != "OPEN":
         return None, "LIQUIDITY_MARKET_NOT_OPEN"
     for runner in book["runners"]:
         try:
             if isinstance(runner, dict) and int(runner.get("selectionId")) == int(selection_id):
-                if str(runner.get("status") or "ACTIVE").upper() != "ACTIVE":
+                if str(runner.get("status") or "").upper() != "ACTIVE":
                     return None, "LIQUIDITY_RUNNER_NOT_ACTIVE"
         except (TypeError, ValueError):
             continue

@@ -334,12 +334,19 @@ def capture_code_patch(code_repo, worktree, d):
     modified = sorted(l[3:] for l in status if not l.startswith("??"))
     untracked = sorted(l[3:] for l in status if l.startswith("??") and "__pycache__" not in l and not l.endswith(".pyc"))
     files = []
+    skipped_symlinks = {}
     if tracked:
         with open(os.path.join(root, "tracked.patch"), "wb") as fh:
             fh.write(tracked)
         files.append(f"{CODE_PATCH_DIR}/tracked.patch")
     for rel in untracked:
         src = os.path.join(code_repo, rel)
+        if os.path.islink(src):
+            # Rilievo Codex r4312719746 (#512): seguire il link copierebbe nel checkpoint (poi pubblicato) il
+            # contenuto di un file arbitrario fuori dal repo. Mai dereferenziare: si registra solo il testo del
+            # link (os.readlink, nessuna lettura del bersaglio) in BASELINE.json `skipped_symlinks`.
+            skipped_symlinks[rel] = os.readlink(src)
+            continue
         if not os.path.isfile(src):
             continue
         dst = os.path.join(root, "untracked", rel)
@@ -347,7 +354,7 @@ def capture_code_patch(code_repo, worktree, d):
         shutil.copyfile(src, dst)
         files.append(f"{CODE_PATCH_DIR}/untracked/{rel}")
     meta = {"head": head, "tree": tree, "captured_at": iso(utcnow()), "modified": modified, "untracked": untracked,
-            "files": files}
+            "files": files, "skipped_symlinks": skipped_symlinks}
     with open(os.path.join(root, "BASELINE.json"), "w") as fh:
         json.dump(meta, fh, indent=1, sort_keys=True)
     files.append(f"{CODE_PATCH_DIR}/BASELINE.json")
@@ -369,7 +376,14 @@ def restore_code_patch(ckpt_repo, ref, d, code_repo):
         patch = blob(ckpt_repo, ref, files[f"{CODE_PATCH_DIR}/tracked.patch"])
         git(code_repo, "apply", "--binary", "--index", "-", input_bytes=patch)
         git(code_repo, "reset", "-q")
+    links = meta.get("skipped_symlinks") or {}
     for rel in meta.get("untracked") or []:
+        if rel in links:
+            # symlink registrato solo come testo del link (mai il contenuto del bersaglio): si ricrea il link
+            dst = os.path.join(code_repo, rel)
+            os.makedirs(os.path.dirname(dst) or ".", exist_ok=True)
+            os.symlink(str(links[rel]), dst)
+            continue
         key = f"{CODE_PATCH_DIR}/untracked/{rel}"
         if key not in files:
             raise CheckpointError(2, "CODE_PATCH_FILE_MISSING", file=key)

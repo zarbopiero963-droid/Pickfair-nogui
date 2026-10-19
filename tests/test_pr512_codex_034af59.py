@@ -1575,3 +1575,211 @@ def test_c13_service_treats_a_missing_collection_as_malformed():
     with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
         BetfairService._well_formed_current_orders(None)
     assert BetfairService._well_formed_current_orders([]) == []
+
+
+# ------------------------------------------------------------------ ciclo 14 (verifica indipendente dei rinvii)
+class _C14Db:
+    """Ordini del bot + settings persistiti, per il registro dei mercati con hedge di cashout."""
+
+    def __init__(self, payloads=(), settings=None, fail_save=False, fail_load=False):
+        self.payloads = [dict(p) for p in payloads]
+        self.settings = dict(settings or {})
+        self.fail_save = fail_save
+        self.fail_load = fail_load
+
+    def _execute(self, sql, *args, **kwargs):
+        if "FROM orders" in sql:
+            return [{"payload_json": json.dumps(p), "status": "SUBMITTED"} for p in self.payloads]
+        return []
+
+    def get_settings(self):
+        if self.fail_load:
+            raise RuntimeError("settings down")
+        return dict(self.settings)
+
+    def save_settings(self, data):
+        if self.fail_save:
+            raise RuntimeError("disk full")
+        self.settings.update({str(k): v for k, v in data.items()})
+
+
+def _c14_rc(db):
+    sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
+    from test_f026_units import _rc, _activate
+    rc = _rc()
+    rc.db = db
+    rc._load_hedged_markets()
+    _activate(rc, 1, "EV-A", "1.10")
+    return rc
+
+
+def _c14_hedge(rc, market="1.10"):
+    rc._on_cashout_command({"market_id": market, "selection_id": 7, "side": "LAY", "price": 2.0, "stake": 5.0,
+                            "green_up": 0.5})
+
+
+def test_c14_cashout_hedge_blocks_release_by_market_with_one_leg_pnl():
+    """Verifica indipendente (r4303297587, residuo BLOCKING): posizione singola + hedge di cashout. Il settlement
+    per bet senza table_id di UNA gamba liberava il tavolo con il P&L di quella gamba sola => perdita di recovery
+    (e stake successivo) sbagliata. Con un hedge registrato sul mercato: nessun rilascio, perdita invariata."""
+    rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
+    _c14_hedge(rc)
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "EV-A", "tavolo liberato con il P&L di una sola gamba"
+    assert t["loss_amount"] == 0.0
+
+
+def test_c14_hedge_registry_survives_restart():
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
+    rc = _c14_rc(db)
+    _c14_hedge(rc)
+    again = _c14_rc(db)                                      # nuovo processo, stesso DB
+    again._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in again.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "EV-A", "registro degli hedge perso al riavvio"
+
+
+@pytest.mark.parametrize("kind", ["save", "load"])
+def test_c14_unreliable_hedge_registry_is_fail_closed(kind):
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}],
+                fail_save=(kind == "save"), fail_load=(kind == "load"))
+    rc = _c14_rc(db)
+    if kind == "save":
+        _c14_hedge(rc, market="9.99")                        # hedge su ALTRO mercato, ma non persistito
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "EV-A", "registro inaffidabile trattato come vuoto"
+
+
+def test_c14_without_hedge_the_unique_single_bet_table_is_still_released():
+    rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
+    _c14_hedge(rc, market="2.20")                            # hedge su un altro mercato: irrilevante
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
+
+
+def test_c14_runtime_marks_every_cashout_outcome_and_leaves_the_command_single_consumer():
+    import inspect
+    from core.runtime_controller import RuntimeController
+    src = inspect.getsource(RuntimeController)
+    assert "subscribe(CASHOUT_SUCCESS, self._on_cashout_command)" in src
+    assert "subscribe(CASHOUT_FAILED, self._on_cashout_command)" in src
+    assert "subscribe(CMD_EXECUTE_CASHOUT" not in src, "CMD_EXECUTE_CASHOUT deve restare a consumatore unico"
+
+
+def test_c14_sim_market_level_settlement_still_releases_after_a_hedge():
+    """Il settlement SIM e' PER MERCATO (`sim:<mercato>:<id>`): il broker regola il netto di tutte le gambe,
+    hedge compreso, quindi il P&L e' il netto del tavolo e il rilascio resta corretto."""
+    rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
+    _c14_hedge(rc)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-0.5)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "" and t["loss_amount"] == 0.5
+
+
+def test_c14_cleared_per_bet_settlement_with_hedge_is_held():
+    rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
+    _c14_hedge(rc)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0
+
+
+def test_c14_outcome_without_market_is_ignored_not_unreliable():
+    rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
+    rc._on_cashout_command({"reason": "bridge_rejected"})
+    assert rc._hedged_markets_unreliable is False
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
+    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
+
+
+@pytest.mark.parametrize("book", [
+    {"runners": [{"selectionId": 7, "status": "ACTIVE",
+                  "ex": {"availableToBack": [{"price": 3.0, "size": 50}], "availableToLay": []}}]},          # no status
+    {"status": "", "runners": [{"selectionId": 7, "status": "ACTIVE",
+                                "ex": {"availableToBack": [{"price": 3.0, "size": 50}], "availableToLay": []}}]},
+    {"status": "OPEN", "runners": [{"selectionId": 7,
+                                    "ex": {"availableToBack": [{"price": 3.0, "size": 50}], "availableToLay": []}}]},
+])
+def test_c14_missing_market_or_runner_status_is_not_observed_liquidity(book):
+    """Codex r4312719713: uno stato di mercato/selezione assente era letto come OPEN/ACTIVE e la liquidita'
+    risultava osservata (ingresso ammesso da una risposta incompleta). Ora stato esplicito obbligatorio."""
+    from core.liquidity import single_entry_liquidity
+    value, reason = single_entry_liquidity(book, 7, "BACK", 3.0)
+    assert value is None and reason in {"LIQUIDITY_MARKET_NOT_OPEN", "LIQUIDITY_RUNNER_NOT_ACTIVE"}, (value, reason)
+
+
+def test_c14_explicit_open_active_book_is_still_observed():
+    from core.liquidity import single_entry_liquidity
+    book = {"status": "OPEN", "runners": [{"selectionId": 7, "status": "ACTIVE",
+                                           "ex": {"availableToBack": [{"price": 3.0, "size": 50}], "availableToLay": []}}]}
+    value, reason = single_entry_liquidity(book, 7, "BACK", 3.0)
+    assert value is not None and reason == ""
+
+
+def test_c14_existing_customer_ref_on_the_broker_is_ambiguous_never_failed():
+    """Codex r4312719704: un ordine gia' presente sul broker con lo stesso customer_ref (stato SIM ripristinato senza
+    la saga) dava DUPLICATE_CUSTOMER_REF prima dell'operation log => FAILED, riserva rilasciata e pre_send=True:
+    l'engine rilasciava intento e tavolo con l'ordine vivo. Ora AMBIGUOUS con riserva trattenuta."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload, _orders
+    engine, broker, db = _engine()
+    broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=3.0, size=2.0, customer_ref="c14-dup")
+    engine._default_native_microstake_executor("SIMULATION")
+    ex = engine.microstake_executor
+    res = ex.execute(_payload("c14-dup", size=0.10, price=3.0))
+    assert res.get("status") == "AMBIGUOUS", res
+    assert res.get("pre_send") is not True
+    assert ex.port.has_reservation("c14-dup"), "riserva rilasciata con un ordine vivo sullo stesso customer_ref"
+
+
+def test_c14_recover_never_adopts_a_pre_existing_order_with_the_same_ref():
+    """Riesame indipendente ciclo 14: dopo AMBIGUOUS `existing_customer_ref`, recover() riduceva e riprezzava l'ordine
+    preesistente come se fosse il proprio stub (fino ad ACTIVE). Ora resta AMBIGUOUS, nessuna operazione exchange."""
+    sys.path.insert(0, os.path.join(ROOT, "tests"))
+    from test_microstake_engine_native import _engine, _payload, _orders
+    engine, broker, db = _engine()
+    broker.place_bet(market_id="1.100", selection_id=7, side="BACK", price=2.5, size=2.0, customer_ref="c14-adopt")
+    engine._default_native_microstake_executor("SIMULATION")
+    ex = engine.microstake_executor
+    assert ex.execute(_payload("c14-adopt", size=0.10, price=3.0)).get("status") == "AMBIGUOUS"
+    ops_before = list(ex.port.operation_log)
+    before = [(o["sizeRemaining"], o["priceSize"]["price"]) for o in _orders(broker) if o.get("customerOrderRef") == "c14-adopt"]
+    out = ex.recover_pending()
+    assert out.get("c14-adopt") == "AMBIGUOUS", out
+    after = [(o["sizeRemaining"], o["priceSize"]["price"]) for o in _orders(broker) if o.get("customerOrderRef") == "c14-adopt"]
+    assert after == before == [(2.0, 2.5)], (before, after)
+    assert ex.port.operation_log == ops_before, "operazioni exchange sull'ordine preesistente"
+
+
+def test_c14_hedge_registry_concurrent_updates_are_not_lost():
+    import threading
+    import time
+    db = _C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
+    rc = _c14_rc(db)
+    from collections.abc import Mapping
+
+    class _SlowRegistry(Mapping):            # copia lenta: finestra larga fra lettura e riscrittura del registro
+        def __init__(self):
+            from datetime import datetime, timezone
+            self._d = {"0.0": datetime.now(timezone.utc).isoformat()}   # non vuoto: niente scorciatoia `or {}`
+
+        def __getitem__(self, k):
+            return self._d[k]
+
+        def __iter__(self):
+            time.sleep(0.05)
+            return iter(self._d)
+
+        def __len__(self):
+            return len(self._d)
+
+    rc._hedged_markets = _SlowRegistry()
+    threads = [threading.Thread(target=_c14_hedge, args=(rc, f"5.{i}")) for i in range(16)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    persisted = json.loads(db.settings["roserpina.hedged_markets"])
+    assert {f"5.{i}" for i in range(16)} <= set(persisted), sorted(persisted)

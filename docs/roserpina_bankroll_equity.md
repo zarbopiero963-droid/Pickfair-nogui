@@ -45,7 +45,17 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
 - senza `table_id` (settlement dal poller SIM o cleared) il tavolo si individua dal `market_id` e si libera,
   con il P&L del tavolo, **solo se è univoco e certo**;
 - una riserva incerta resta trattenuta (F024/F004);
-- con più tavoli sullo stesso mercato non si rilascia nulla automaticamente (log).
+- con più tavoli sullo stesso mercato non si rilascia nulla automaticamente (log);
+- un hedge di cashout passa da OrderRouter senza riga in `orders`, quindi il settlement di una gamba non è il netto
+  del tavolo: ogni esito di cashout (`CASHOUT_SUCCESS` / `CASHOUT_FAILED` con mercato; `CMD_EXECUTE_CASHOUT` resta
+  a consumatore unico) marca il mercato nel registro durevole `roserpina.hedged_markets` (conservazione 365 giorni,
+  scrittura serializzata da un lock) e su quel mercato un settlement **per bet** (`cleared:<mercato>:<bet>` o chiave
+  assente) non rilascia per mercato; registro illeggibile o non persistito => nessun rilascio per mercato
+  (fail-closed). Il settlement SIM e' **per mercato** (`sim:<mercato>:<id>`, netto di tutte le gambe, hedge
+  compreso) e continua a rilasciare. Limite residuo dichiarato: un errore di scrittura del registro e' noto solo in
+  memoria (stesso archivio guasto), quindi dopo un riavvio quel mercato non risulta marcato (#521). Corretto nel ciclo 14 della #512 (verifica indipendente,
+  r4303297587): l'affermazione precedente «invariato rispetto a main» era falsa per l'effetto sulla perdita di
+  recovery, perché su main il rilascio per mercato senza `table_id` non esisteva.
 
 ## F027 — settlement fuori da ACTIVE (decisione owner, CLOSURE-03)
 

@@ -23,7 +23,7 @@ from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
 from core.system_state import DeskMode, RuntimeMode
 from core.table_manager import TableManager
-from core.trading_constants import CASHOUT_FAILED, REQ_EXECUTE_CASHOUT
+from core.trading_constants import CASHOUT_FAILED, CASHOUT_SUCCESS, REQ_EXECUTE_CASHOUT
 from core.type_helpers import safe_bool
 from services.catalog_sync_service import CatalogSyncService
 from cashout_cancel_adapter import CashoutCancelAdapter
@@ -187,6 +187,9 @@ class RuntimeController:
         self._emergency_reason: str = ""
         # PF-ALL-F027: provenienza dei settlement prima del flip a SIM ("", "SIM", "LIVE", "UNKNOWN"); persistita
         self._settlement_source_before_emergency: str = ""
+        # Mercati con un comando di cashout/hedge (registro durevole, verifica indipendente r4303297587)
+        self._hedged_markets: dict = {}
+        self._hedged_markets_unreliable: bool = False
         # Serializza il trigger della kill-switch da daily-loss: rende atomico
         # il check-and-stop dell'handler sotto dispatch EventBus concorrente.
         self._daily_loss_stop_lock = threading.Lock()
@@ -306,6 +309,7 @@ class RuntimeController:
         # a costruzione COMPLETATA: ripristina l'intera postura (lockdown
         # incluso), non solo il flag.
         self._reload_persisted_emergency_state()
+        self._load_hedged_markets()
 
     @property
     def catalog_sync(self) -> CatalogSyncService:
@@ -1447,6 +1451,9 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
+        # Esito di ogni cashout/hedge (CMD_EXECUTE_CASHOUT resta a consumatore unico: l'executor)
+        self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_command)
+        self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_command)
 
     # =========================================================
     # CONFIG / MODE
@@ -3931,7 +3938,10 @@ class RuntimeController:
         matches = [t for t in self.table_manager.snapshot()
                    if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
         certain = [t for t in matches if str(t.get("current_event_key")) not in uncertain_keys]
-        if len(certain) == 1 and len(matches) == 1 and self._single_bet_position(certain[0]):
+        # Settlement SIM per MERCATO (`sim:<mercato>:<id>`): il broker regola il netto di tutte le gambe, hedge
+        # compreso. Ogni altro (cleared per bet, chiave assente) e' per bet: un hedge lo rende non attribuibile.
+        per_bet = not str((payload or {}).get("event_key") or "").startswith("sim:")
+        if len(certain) == 1 and len(matches) == 1 and self._single_bet_position(certain[0], per_bet=per_bet):
             self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
         elif len(certain) == 1 and len(matches) == 1:
             # Settlement per bet di una posizione con PIU' gambe persistite sullo stesso mercato (Dutching,
@@ -3946,16 +3956,81 @@ class RuntimeController:
                 market_id, len(matches), len(matches) - len(certain),
             )
 
-    def _single_bet_position(self, table: dict) -> bool:
+    _HEDGED_MARKETS_KEY = "roserpina.hedged_markets"
+    _HEDGED_MARKETS_RETENTION_DAYS = 365          # oltre la durata di qualunque mercato (antepost compresi)
+    _HEDGED_MARKETS_LOCK = threading.Lock()       # lettura-modifica-scrittura serializzata fra i worker del bus
+
+    def _load_hedged_markets(self) -> None:
+        """Registro durevole dei mercati con un comando di cashout/hedge. Illeggibile => inaffidabile
+        (nessun rilascio per mercato finche' non si riavvia con uno stato leggibile). Un DB senza settings
+        (doppi di test) parte vuoto: il DB reale le ha sempre."""
+        self._hedged_markets = {}
+        self._hedged_markets_unreliable = False
+        getter = getattr(self.db, "get_settings", None)
+        if not callable(getter):
+            return
+        try:
+            raw = (getter() or {}).get(self._HEDGED_MARKETS_KEY)
+            data = json.loads(raw) if raw not in (None, "") else {}
+            if not isinstance(data, dict):
+                raise ValueError("not_an_object")
+            self._hedged_markets = {str(k): str(v) for k, v in data.items() if str(k).strip()}
+        except Exception:
+            logger.exception("Registro hedge di cashout illeggibile: nessun rilascio del tavolo per mercato")
+            self._hedged_markets_unreliable = True
+
+    def _on_cashout_command(self, payload: dict) -> None:
+        """Verifica indipendente del ciclo 14 (r4303297587): un hedge di cashout passa da OrderRouter senza riga
+        in `orders`, quindi il settlement PER BET della gamba originale NON e' il netto del tavolo. Ogni esito di
+        cashout (CASHOUT_SUCCESS / CASHOUT_FAILED: anche un fallimento puo' aver lasciato un hedge) marca il
+        mercato in modo durevole; scrittura fallita o impossibile => registro inaffidabile (fail-closed: nessun
+        rilascio per mercato). Esito senza mercato: nessun hedge e' attribuibile a un mercato, quindi nessuno
+        puo' essere stato piazzato su un mercato del bot (rifiuti pre-instradamento del bridge)."""
+        market_id = str((payload or {}).get("market_id") or "").strip()
+        if not market_id:
+            return
+        with self._HEDGED_MARKETS_LOCK:
+            self._record_hedged_market_locked(market_id)
+
+    def _record_hedged_market_locked(self, market_id: str) -> None:
+        markets = dict(getattr(self, "_hedged_markets", {}) or {})
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(days=self._HEDGED_MARKETS_RETENTION_DAYS)
+        kept = {}
+        for mid, ts in markets.items():
+            try:
+                when = datetime.fromisoformat(str(ts))
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+            except ValueError:
+                when = now                                   # data illeggibile: si conserva
+            if when >= cutoff:
+                kept[mid] = ts
+        kept[market_id] = now.isoformat()
+        self._hedged_markets = kept
+        saver = getattr(self.db, "save_settings", None)
+        try:
+            if not callable(saver):
+                raise RuntimeError("db_save_settings_unavailable")
+            saver({self._HEDGED_MARKETS_KEY: json.dumps(kept, sort_keys=True)})
+        except Exception:
+            logger.exception("Registro hedge di cashout non persistito (mercato %s): nessun rilascio per mercato",
+                             market_id)
+            self._hedged_markets_unreliable = True
+
+    def _single_bet_position(self, table: dict, *, per_bet: bool = True) -> bool:
         """True solo se il tavolo porta una posizione a SELEZIONE SINGOLA con UN SOLO ordine del bot sullo
         stesso mercato/evento che possa essere stato piazzato: solo allora il P&L di un settlement per bet e'
         il netto del tavolo. Batch Dutching (nessuna selezione), piu' ordini persistiti o DB illeggibile =>
         False. Non contano i tentativi certamente mai piazzati (FAILED / DENIED / DUPLICATE_BLOCKED); ogni
-        altro stato conta (fail-closed). Limite noto, invariato rispetto a main: un hedge di cashout passa da
-        OrderRouter senza riga in `orders` e quindi non e' visto qui (lotti D-D/D-F)."""
+        altro stato conta (fail-closed). Un hedge di cashout passa da OrderRouter senza riga in `orders`: per un
+        settlement PER BET, mercato con un cashout registrato (o registro inaffidabile) => False (r4303297587)."""
         if table.get("selection_id") in (None, ""):
             return False
         market_id = str(table.get("market_id") or "")
+        if per_bet and (getattr(self, "_hedged_markets_unreliable", False)
+                        or market_id in (getattr(self, "_hedged_markets", {}) or {})):
+            return False
         event_key = str(table.get("current_event_key") or "")
         try:
             rows = self.db._execute(

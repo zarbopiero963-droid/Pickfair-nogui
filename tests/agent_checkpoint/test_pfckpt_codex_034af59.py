@@ -113,3 +113,24 @@ def test_c10_non_object_derived_pointer_is_a_structured_invalid_checkpoint(world
     raw_commit(a, f"ckpt con {name} non oggetto")
     err = expect(2, pfckpt.verify, a, "HEAD", D)
     assert any(name in p and "non e' un oggetto" in p for p in err.detail["problems"]), err.detail
+
+
+def test_c14_untracked_symlink_is_never_dereferenced(world, tmp_path):
+    """Codex r4312719746 (P1, sicurezza): un symlink non tracciato verso un file fuori dal repo veniva seguito e il
+    CONTENUTO del bersaglio copiato in code_patch/untracked, poi pubblicato. Ora si registra solo il testo del link
+    (BASELINE.json `skipped_symlinks`), mai il contenuto; il salvataggio non si blocca (es. symlink `venv`)."""
+    import subprocess
+    from test_pfckpt import CODE_BR, _cfg
+    code = str(world["tmp"] / "code")
+    subprocess.run(["git", "clone", "-q", "--no-local", "--branch", CODE_BR, world["url"], code], check=True); _cfg(code)
+    secret = tmp_path / "fuori_dal_repo.txt"
+    secret.write_text("SEGRETO-LOCALE-NON-PUBBLICARE\n")
+    os.symlink(str(secret), os.path.join(code, "link_al_segreto"))
+    a = agent(world, "a")
+    next_state(a, world)
+    meta = pfckpt.capture_code_patch(code, a, D)
+    assert meta["skipped_symlinks"] == {"link_al_segreto": str(secret)}
+    for dirpath, _dirs, files in os.walk(os.path.join(a, D)):
+        for name in files:
+            with open(os.path.join(dirpath, name), "rb") as fh:
+                assert b"SEGRETO-LOCALE" not in fh.read(), os.path.join(dirpath, name)

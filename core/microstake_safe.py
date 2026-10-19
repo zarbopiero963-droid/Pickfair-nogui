@@ -488,6 +488,14 @@ class MicrostakeCoordinator:
                 return self._result(Phase.AMBIGUOUS, req=req, reason="place_outcome_unknown",
                                     max_exposure=transient, held=True)
         except Exception as exc:
+            if str(exc) == "DUPLICATE_CUSTOMER_REF":
+                # Rilievo Codex r4312719704 (#512): esiste gia' un ordine con questo customer_ref (stato del broker
+                # ripristinato senza la saga). Non e' un fallimento: l'ordine puo' essere vivo. AMBIGUOUS con riserva
+                # trattenuta, mai toccato (origine non dimostrabile), riconciliazione.
+                self.store.save(req.customer_ref, phase=Phase.AMBIGUOUS, reason="existing_customer_ref",
+                                foreign_ref=True)
+                return self._result(Phase.AMBIGUOUS, req=req, reason="existing_customer_ref",
+                                    max_exposure=transient, held=True)
             self.exchange.release_reservation(req.customer_ref)
             self.store.save(req.customer_ref, phase=Phase.FAILED, reservation_held=False,
                             reason=str(exc))
@@ -589,6 +597,13 @@ class MicrostakeCoordinator:
             raise KeyError(customer_ref)
         req = self._request_from_json(saved["request"])
         transient = D(saved.get("transient_exposure", "0"))
+        if saved.get("foreign_ref") is True:
+            # Ordine preesistente con lo stesso customer_ref, non piazzato da questa saga (riesame indipendente
+            # ciclo 14 #512): la saga non lo adotta MAI come proprio stub (niente riduzione/replace/cancel).
+            # Resta AMBIGUOUS con riserva tenuta fino alla riconciliazione manuale/esterna.
+            self.store.save(customer_ref, phase=Phase.AMBIGUOUS, reservation_held=True)
+            return self._result(Phase.AMBIGUOUS, req=req, reason="existing_customer_ref",
+                                max_exposure=transient, held=True)
         rollback_intent = saved.get("rollback_intent") is True or saved.get("phase") == Phase.ROLLBACK_PENDING.value
         order = self.exchange.find_by_ref(customer_ref)
         if order is None and rollback_intent and saved.get("bet_id"):

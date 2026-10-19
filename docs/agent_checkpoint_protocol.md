@@ -98,7 +98,7 @@ procedure, nessuna dipendenza dalla cronologia della chat. Lo strumento aggiunge
 | `CURRENT.json` | puntatore minimo: seq, SHA precedente, `code.{branch,sha}`, mandato, prossima azione atomica, verdetto | deve coincidere con STATE.json, altrimenti checkpoint non valido |
 | `TASK_STATE.json` | mandato, lotto corrente, lotti completati, prossima azione, blocchi, dipendenze, test mancanti, Gate A, PR #505 | idem |
 | `AGENT_LEASE.json` | `owner`, `fencing_token` (= seq del checkpoint che lo ha preso/rinnovato), `acquired_at`, `expires_at` | token = seq, timestamp validi |
-| `code_patch/` | `BASELINE.json` (head/tree del codice, file modificati e nuovi), `tracked.patch`, `untracked/<file>` | ogni file dichiarato presente nel commit |
+| `code_patch/` | `BASELINE.json` (head/tree del codice, file modificati e nuovi), `tracked.patch`, `untracked/<file>` (un symlink non tracciato NON viene mai seguito: se ne registra solo il testo del link in `BASELINE.json` `skipped_symlinks`, e il ripristino ricrea il link; nessun contenuto di file fuori dal repo finisce nel checkpoint pubblicato) | ogni file dichiarato presente nel commit |
 
 **Lease e fencing.** `save --agent <nome>` è obbligatorio: il lease si legge dal checkpoint **remoto atteso**
 (`--expected`), mai dal disco. Tenuto da un altro agente e non scaduto ⇒ `LEASE_HELD` (exit 6), nessuna scrittura.
