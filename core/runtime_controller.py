@@ -3383,8 +3383,11 @@ class RuntimeController:
     #   scartata dal bridge, nessun hedge per quella richiesta) chiudono la richiesta;
     # - CASHOUT_FAILED con status AMBIGUOUS o ERROR (esito dell'hedge ignoto) la lascia aperta: fail-closed,
     #   nessun ingresso nell'ambito fino al riavvio (`cashout_barriers_uncertain` in get_status);
-    # - un esito SENZA il proprio `cashout_request_id` (hedge di altra origine: auto-green, UI) non chiude
-    #   nulla (verifica indipendente: rilascio anticipato da esito estraneo).
+    # - un esito SENZA il proprio `cashout_request_id` (hedge di altra origine) non chiude nulla (verifica
+    #   indipendente: rilascio anticipato da esito estraneo). Limite noto: oggi l'unico publisher di
+    #   REQ_EXECUTE_CASHOUT in produzione e' il CashoutRouter dentro la barriera; se si aggiunge un altro
+    #   publisher (UI, auto-green) una sua REQ in volo sulla stessa gamba non e' coperta dalla barriera, e la
+    #   soppressione della REQ del router come duplicata la chiuderebbe prima dell'esito di quell'hedge.
 
     @contextlib.contextmanager
     def _cashout_route_context(self, barrier_id):

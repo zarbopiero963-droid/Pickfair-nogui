@@ -435,3 +435,21 @@ def test_sim_order_above_the_old_10000_ceiling_is_sized_by_the_approved_strategy
                               "roserpina.monetary_caps_rectified_20261018": 1})
     capped.rc._on_signal_received(_signal(price=2.0))
     assert capped.broker.state.orders == {}
+
+
+@pytest.mark.parametrize("field", _LEGACY_CAPS)
+@pytest.mark.parametrize("legacy", [0.0, -1.0])
+def test_legacy_non_positive_value_saved_before_the_rectification_is_not_active(tmp_path, field, legacy):
+    """Verifica indipendente P2-5(b): prima della rettifica 0 valeva "nessun tetto" (max_stake_abs) o ricadeva
+    sul default (max_win). Migrato a non attivo, non a "blocca ogni ordine"."""
+    db, service = _real_settings(tmp_path)
+    db.save_settings({f"roserpina.{field}": legacy})
+    assert getattr(service.load_roserpina_config(), field) is None
+
+
+@pytest.mark.parametrize("field", _LEGACY_CAPS)
+def test_non_positive_value_saved_after_the_rectification_stays_invalid(tmp_path, field):
+    """Dopo la rettifica un valore <= 0 e' una configurazione non valida: resta presente e blocca."""
+    db, service = _real_settings(tmp_path)
+    db.save_settings({f"roserpina.{field}": 0.0, "roserpina.monetary_caps_rectified_20261018": 1})
+    assert getattr(service.load_roserpina_config(), field) == 0.0

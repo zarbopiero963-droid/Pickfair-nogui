@@ -71,7 +71,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   cioè il vecchio default scritto a ogni salvataggio della tab, vale "non attivo"; dopo il primo salvataggio la
   marcatura `roserpina.monetary_caps_rectified_20261018` rende esplicito ogni valore successivo. Restano
   invariati le formule e le percentuali del Money Management, i fondi, la liability LAY, le riserve, i vincoli
-  Betfair e le protezioni di integrità.
+  Betfair e le protezioni di integrità. Anche un valore `<= 0` salvato prima della rettifica vale "non attivo":
+  prima significava "nessun tetto" per `max_stake_abs` e ricadeva sul default per `max_win`. Dopo la marcatura,
+  invece, un valore `<= 0` è una configurazione non valida e blocca.
+
+  **Residui dichiarati** (verifica indipendente, P2):
+  - un CASHOUT_ALL con una gamba AMBIGUOUS/ERROR tiene una barriera globale fino al riavvio, senza sblocco
+    manuale (fail-closed, visibile in `cashout_barriers_uncertain`);
+  - un `10000` scelto esplicitamente prima della rettifica non è distinguibile dal default storico e diventa
+    "non attivo" (log info);
+  - il set dei grace annullati cresce di un intero per cancel riuscito, senza effetti sulla correttezza;
+  - se in futuro si aggiunge un secondo publisher di `REQ_EXECUTE_CASHOUT` (UI, auto-green), una sua REQ in
+    volo non è coperta dalla barriera (commento in `core/runtime_controller.py`).
 
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza

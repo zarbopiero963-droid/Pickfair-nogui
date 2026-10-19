@@ -685,3 +685,26 @@ def test_signal_side_with_a_non_dict_signal_is_a_value_error_or_the_default(sign
     assert validators.signal_side(signal, default="BACK") == "BACK"
     with pytest.raises(ValueError):
         validators.signal_side(signal)
+
+
+def test_bridge_rejection_reports_the_request_id_and_releases_the_barrier(tmp_path, monkeypatch):
+    """Mutazione M24: un REJECTED del bridge (REQ non valida) deve riportare il cashout_request_id, altrimenti la
+    barriera resterebbe appesa fino al riavvio."""
+    import cashout_router
+
+    c = _catena(tmp_path)
+    _real_cashout_chain(c, monkeypatch)
+
+    def route(router, signal):
+        router.publish("REQ_EXECUTE_CASHOUT", {"market_id": "1.234", "selection_id": 11, "side": "BOTH",
+                                               "stake": 0.5, "price": 2.0, "green_up": 0.1})
+        return {"published": 1}
+
+    monkeypatch.setattr(cashout_router.CashoutRouter, "route", route)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    req = c.bus.payloads("REQ_EXECUTE_CASHOUT")[-1]
+    rejected = c.bus.payloads("CASHOUT_FAILED")[-1]
+    assert rejected["status"] == "REJECTED"
+    assert rejected["cashout_request_id"] == req["cashout_request_id"]
+    assert c.rc.get_status()["cashout_barriers_active"] == 0

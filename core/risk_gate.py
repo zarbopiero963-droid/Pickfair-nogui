@@ -326,11 +326,13 @@ class RiskGate:
         `MAX_WIN` dice "vincita massima", e su quella va confrontata la vincita
         (era il difetto: confrontarla con il rischio lasciava passare una BACK
         da 500 a quota 100, che vince 49.500).
-        La stessa costante e' usata anche come tetto all'esposizione: e' l'unico
-        limite in euro assoluti disponibile nel config, e senza di esso H-14
-        resterebbe scoperto, perche' una LAY con stake piccolo e quota alta ha
-        vincita bassa ma liability enorme. Scelta CONSERVATIVA e dichiarata: se
-        serve un tetto d'esposizione diverso va aggiunta una costante sua.
+        La stessa costante, quando l'utente la configura, e' usata anche come tetto
+        all'esposizione (H-14: una LAY con stake piccolo e quota alta ha vincita
+        bassa ma liability enorme). Rettifica owner 18-19/10/2026: MAX_WIN e'
+        opzionale e non attivo di default; senza di esso il tetto d'esposizione
+        del singolo ordine e' dato dal Money Management (percentuali approvate,
+        liability LAY), dai fondi e dai cap assoluti configurati, non da un
+        numero arbitrario nel gate.
         """
         payout = stake * (price - 1.0)
         win = payout if side == BACK else stake

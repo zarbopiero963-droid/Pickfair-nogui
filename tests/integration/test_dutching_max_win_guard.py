@@ -480,3 +480,46 @@ def test_gui_save_blocks_invalid_max_win(monkeypatch, bad):
         assert app.settings_service.saved_cfg is None, bad
     finally:
         app.destroy()
+
+
+# ==========================================================================
+# Rettifica owner 18-19/10/2026: verifica indipendente su bdd7a21 (P2-1)
+# ==========================================================================
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc"])
+@pytest.mark.parametrize("warning_only", [False, True])
+def test_manual_bet_with_configured_but_invalid_max_win_is_blocked(bad, warning_only):
+    """Mutazione M14: un max_win non valido sul bet manuale non deve diventare fail-open."""
+    bus = _Bus()
+    rt = _runtime_with(max_win=bad, warning_only=warning_only)
+    res = _controller(rt, bus=bus).manual_bet(_manual_payload(2.0, 1.0))
+    assert res["ok"] is False
+    assert "Max Win configurato ma non valido" in res["error"]
+    assert not bus.published
+
+
+def test_manual_bet_without_max_win_has_no_arbitrary_cap():
+    bus = _Bus()
+    rt = _runtime_with(max_win=None, warning_only=False)
+    res = _controller(rt, bus=bus).manual_bet(_manual_payload(15.0, 1000.0))      # payout 15.000
+    assert res["ok"] is True, res
+    assert any(topic == "CMD_QUICK_BET" for topic, _ in bus.published)
+    assert res["max_win"] is None and res["max_win_warning"] is False
+
+
+def test_gui_save_max_stake_abs_blank_valid_and_invalid(monkeypatch):
+    """Mutazione M25: il salvataggio di Max Stake Assoluto non deve reinventare un default."""
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_max_abs_var.set("")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg.max_stake_abs is None
+        app.rs_max_abs_var.set("50")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg.max_stake_abs == 50.0
+        for bad in ("0", "-1", "abc", "nan"):
+            app.settings_service.saved_cfg = None
+            app.rs_max_abs_var.set(bad)
+            app._save_roserpina_settings()
+            assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()

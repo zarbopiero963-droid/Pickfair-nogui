@@ -472,13 +472,15 @@ class SettingsService:
 
     def _rectified_monetary_cap(self, data: Dict[str, Any], key: str) -> float | None:
         value = self._optional_hard_stop_value(data, key)
-        if (
-            value is not None
-            and not data.get(self._MONETARY_RECTIFICATION_MARKER)
-            and value == self._LEGACY_MONETARY_DEFAULT
-        ):
-            logger.info("%s=10000.0 e' il default storico (rettifica owner 18/10/2026): non attivo", key)
-            return None
+        if value is not None and not data.get(self._MONETARY_RECTIFICATION_MARKER):
+            if value == self._LEGACY_MONETARY_DEFAULT:
+                logger.info("%s=10000.0 e' il default storico (rettifica owner 18/10/2026): non attivo", key)
+                return None
+            if value == value and value <= 0:
+                # Prima della rettifica 0/negativo valeva "tetto disattivato" (max_stake_abs) o ricadeva sul
+                # default 10000 (max_win): il significato salvato era "nessun tetto scelto", non "blocca tutto".
+                logger.info("%s=%s salvato prima della rettifica: non attivo", key, value)
+                return None
         return value
 
     def _optional_hard_stop_value(
