@@ -2746,7 +2746,8 @@ class RuntimeController:
 
     @staticmethod
     def _event_identity_parts(signal: dict) -> tuple[str, str]:
-        event_name = signal.get("event_name") or signal.get("event")
+        # `match` e' un alias supportato del nome evento, come nel payload d'ordine (rilievo Codex #522).
+        event_name = signal.get("event_name") or signal.get("event") or signal.get("match")
         name = " ".join(event_name.casefold().split()) if isinstance(event_name, str) else ""
         event_id = signal.get("event_id") or signal.get("eventId")
         if event_id not in (None, "") and not isinstance(event_id, bool):
@@ -3258,8 +3259,23 @@ class RuntimeController:
                 return
             self._on_signal_received_serial(signal, admission_fence=fence)
 
+    @staticmethod
+    def _cashout_event_admission_key(name) -> tuple | None:
+        """Chiave d'ammissione per partita, normalizzata come ``cashout_router._norm``.
+
+        Il CASHOUT singolo chiude TUTTI i mercati della partita (``event_name``) nel router: la barriera
+        deve coprire la stessa partita, non solo mercato/selezione del payload (rilievo Codex #522).
+        """
+        value = str(name or "").strip().lower() if isinstance(name, str) else ""
+        return ("event", value) if value else None
+
     def _entry_admission_keys(self, signal: dict) -> tuple[tuple, ...]:
         keys: list[tuple] = [("global",)]
+        sig = signal or {}
+        event_key = self._cashout_event_admission_key(
+            sig.get("event_name") or sig.get("event") or sig.get("match"))
+        if event_key is not None:
+            keys.append(event_key)
         try:
             market_id = validators.order_market_id((signal or {}).get("market_id"))
             keys.append(("market", market_id))
@@ -3284,6 +3300,9 @@ class RuntimeController:
             scope = frozenset({("global",)})
         else:
             scope_keys: set[tuple] = set()
+            event_key = self._cashout_event_admission_key(signal.get("event_name"))
+            if event_key is not None:
+                scope_keys.add(event_key)
             try:
                 market_id = validators.order_market_id(signal.get("market_id"))
                 try:
@@ -3692,7 +3711,16 @@ class RuntimeController:
             self._attach_single_entry_liquidity(payload)
             return attempted
 
+        config_before = self.config
         best_price_attempted = self._call_outside_admission_lock(_network_window)
+        if self.config is not config_before:
+            # Un reload_config durante la finestra di rete puo' aver cambiato cap/limiti: l'ingresso
+            # approvato con la config precedente non parte (rilievo Codex #522, fail-closed).
+            self._release_acquired_and_reject(
+                signal, event_key=event_key, table_id=decision.table_id,
+                reason="config_cambiata_durante_ammissione",
+            )
+            return
         if not self._admission_fence_valid(admission_fence):
             self._release_acquired_and_reject(
                 signal, event_key=event_key, table_id=decision.table_id,
@@ -5965,12 +5993,14 @@ class RuntimeController:
         # PF-ALL-F030: anche l'ingresso del ciclo. Il fetch del book gira fuori dal lock di ammissione
         # (#505) come sul percorso del segnale; un cashout arrivato nel frattempo invalida l'ingresso.
         fence = self._capture_admission_fence(submit_payload)
+        config_before = self.config
         self._call_outside_admission_lock(self._attach_single_entry_liquidity, submit_payload)
 
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
-        stop_block = ("cashout_invalidation_stale" if not self._admission_fence_valid(fence)
+        stop_block = ("config_cambiata_durante_ammissione" if self.config is not config_before
+                      else "cashout_invalidation_stale" if not self._admission_fence_valid(fence)
                       else "emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
                       else self._runtime_not_active_reason()          # PF-ALL-F027: riconciliazione != ingresso
                       or self._loss_block_reason() or self._exposure_stop(

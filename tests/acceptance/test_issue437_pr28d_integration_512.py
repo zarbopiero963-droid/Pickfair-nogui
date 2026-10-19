@@ -271,3 +271,78 @@ def test_auto_next_cashout_invalidation_checkpoints_the_cycle_as_not_attempted()
     assert last["checkpoint_stage"] == "CYCLE_BLOCKED"
     assert last["next_trade_submission_status"] == "NOT_ATTEMPTED"
     assert last["reason"] == "cashout_invalidation_stale"
+
+
+# ---------------------------------------------------------------- rilievi Codex su ab0df6e (#522)
+def _barrier(rc, signal):
+    with rc._risk_admission_lock:
+        return rc._begin_cashout_barrier(signal)
+
+
+def test_event_only_cashout_fences_entries_of_the_same_event(tmp_path):
+    """Codex r4315283877: il CashoutRouter chiude per `event_name` tutti i mercati della partita; la
+    barriera deve coprire la stessa partita anche quando il CASHOUT porta solo il nome evento."""
+    c = _catena(tmp_path)
+    barrier_id, scope = _barrier(c.rc, {"signal_type": "CASHOUT", "event_name": "Alpha v Beta"})
+    assert scope
+
+    c.rc._on_signal_received(_signal(event="Alpha v Beta"))
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
+
+    # Altra partita: nessun blocco.
+    c.rc._on_signal_received(_signal(event="Gamma v Delta", market_id="1.777",
+                                     received_at="2026-10-08T10:06:00+00:00"))
+    assert len(c.broker.state.orders) == 1
+
+
+def test_market_cashout_also_fences_other_markets_of_the_same_event(tmp_path):
+    c = _catena(tmp_path)
+    _barrier(c.rc, {"signal_type": "CASHOUT", "event_name": "Alpha v Beta",
+                    "market_id": "1.234", "selection_id": 11})
+
+    c.rc._on_signal_received(_signal(event="Alpha v Beta", market_id="1.999"))
+
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
+
+
+def test_config_reload_during_network_window_blocks_the_entry(tmp_path):
+    """Codex r4315283893: un reload_config durante la finestra di rete puo' installare cap piu' bassi;
+    l'ingresso approvato con la config precedente non deve partire."""
+    c = _catena(tmp_path)
+    _wrap_book(c.rc, c.rc.reload_config)
+
+    c.rc._on_signal_received(_signal())
+
+    assert c.broker.state.orders == {}
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+    assert _rifiuti(c) == ["config_cambiata_durante_ammissione"]
+    assert all(t.status == "FREE" for t in c.rc.table_manager._tables.values())
+
+
+def test_auto_next_config_reload_during_network_window_blocks_the_entry():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    _wrap_book(rc, rc.reload_config)
+
+    rc._on_close_position(_auto_next_close())
+
+    result = _auto_next_result(bus)
+    assert result["submitted"] is False
+    assert result["reason"] == "config_cambiata_durante_ammissione"
+    assert [t for t, _ in bus.events if t == "CMD_QUICK_BET"] == []
+    assert all(t.status == "FREE" for t in rc.table_manager._tables.values())
+
+
+def test_match_alias_is_a_valid_event_name_for_the_event_cap(tmp_path):
+    """Codex r4315283886: `match` e' un alias supportato del nome evento (payload d'ordine)."""
+    c = _catena(tmp_path, max_event_exposure_abs=50.0)
+    sig = _signal(match="Alpha v Beta")
+    sig.pop("event")
+
+    c.rc._on_signal_received(sig)
+
+    assert len(c.broker.state.orders) == 1, _rifiuti(c)

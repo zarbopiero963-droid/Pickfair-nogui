@@ -34,6 +34,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     dello stesso `event_id` con nomi scritti diversamente vengono riconosciuti come lo stesso evento anche dopo
     un riavvio. Gli ordini salvati prima di questa correzione restano riconosciuti per nome, come prima.
 
+  Correzioni dalla review Codex della #522, ognuna con test RED→GREEN:
+  - **cashout per partita:** il `CashoutRouter` chiude per `event_name` tutti i mercati della partita, quindi
+    la barriera d'ammissione ora copre anche la partita (chiave `("event", nome normalizzato)`), non solo
+    mercato e selezione. Prima un CASHOUT con il solo nome evento non fermava nessun ingresso;
+  - **config ricaricata durante la finestra di rete:** se `reload_config` sostituisce la config mentre un
+    ingresso è fuori dal lock, l'ingresso approvato con la config precedente non parte
+    (`config_cambiata_durante_ammissione`). Il tavolo viene liberato e il segnale si può ripetere;
+  - **alias `match`:** vale come nome evento anche per il cap evento. Prima, con il cap configurato, un
+    segnale con `match` veniva rifiutato come `max_event_exposure_abs_non_verificabile`.
+
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
   `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
