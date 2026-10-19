@@ -1655,7 +1655,7 @@ def test_c14_unreliable_hedge_registry_is_fail_closed(kind):
 def test_c14_without_hedge_the_unique_single_bet_table_is_still_released():
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     _c14_hedge(rc, market="2.20")                            # hedge su un altro mercato: irrilevante
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
 
@@ -1691,7 +1691,7 @@ def test_c14_outcome_without_market_is_ignored_not_unreliable():
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     rc._on_cashout_command({"reason": "bridge_rejected"})
     assert rc._hedged_markets_unreliable is False
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
 
@@ -1890,5 +1890,26 @@ def test_c16_unreadable_exchange_reconciliation_is_fail_closed(service):
 def test_c16_only_bot_legs_on_the_exchange_still_release():
     rc = _c16_rc(_C16Service(rows=[{"betId": "111", "marketId": "1.10"}]))
     rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    t = _c16_table(rc)
+    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
+
+
+# ------------------------------------------------------------------ ciclo 17 (bloccante Sol su 9f0d6ec)
+@pytest.mark.parametrize("payload", [{"market_id": "1.10"}, {"market_id": "1.10", "event_key": "EV-A"}])
+def test_c17_keyless_or_position_settlement_also_reconciles_on_the_exchange(tmp_path, payload):
+    """Sol su 9f0d6ec: la riconciliazione scattava solo per `cleared:`; un settlement senza chiave (o con la chiave
+    della posizione) dopo un riavvio senza tracce dell'hedge liberava ancora il tavolo con il P&L di una sola gamba."""
+    service = _C16Service(rows=[{"betId": "111", "marketId": "1.10"}, {"betId": "999", "marketId": "1.10"}])
+    rc = _c16_rc(service, fail_save=True, tmp_path=tmp_path)
+    _c14_hedge(rc)
+    again = _c16_rc(service, tmp_path=tmp_path)
+    again._release_settled_tables(dict(payload), table_id=None, pnl=-10.0)
+    t = _c16_table(again)
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "settlement per bet non verificato"
+
+
+def test_c17_keyless_settlement_with_only_bot_legs_still_releases():
+    rc = _c16_rc(_C16Service(rows=[{"betId": "111", "marketId": "1.10"}]))
+    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
     t = _c16_table(rc)
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0

@@ -183,7 +183,7 @@ def test_settlement_without_table_id_releases_the_unique_table_of_the_market():
     rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
     _activate(rc, 1, "EV-A", "1.10")
     _activate(rc, 2, "EV-B", "1.20")
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
     t = _tables(rc)
     assert t[1]["current_event_key"] == "" and t[1]["current_exposure"] == 0.0
     assert t[1]["status"] == "RECOVERY" and t[1]["loss_amount"] == 10.0, "P&L del tavolo come col table_id"
@@ -218,7 +218,7 @@ def test_settlement_without_table_id_ignores_orders_that_were_never_placed(never
     rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "_status": never_placed},
                        {"market_id": "1.10", "event_key": "EV-A", "_status": "SUBMITTED"}])
     _activate(rc, 1, "EV-A", "1.10")
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
     t = _tables(rc)[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0, t
 

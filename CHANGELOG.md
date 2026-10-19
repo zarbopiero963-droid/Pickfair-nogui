@@ -10,6 +10,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
+  sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
+  `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
+  rilasciavano con payload senza chiave e senza exchange (`tests/f026/test_f026_units.py`, due test c14) usano ora la
+  chiave SIM per mercato che intendevano. Test `test_c17_*`.
 - **PR #512 ciclo 16 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `23bdbfe` (filesystem in sola
   lettura: falliscono sia il registro hedge sia la sentinella). `_market_has_foreign_cleared_legs`: prima di un
   rilascio per mercato da settlement cleared per bet si interroga l'exchange (`listClearedOrders` per mercato); bet

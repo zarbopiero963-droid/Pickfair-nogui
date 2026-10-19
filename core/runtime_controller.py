@@ -3945,7 +3945,9 @@ class RuntimeController:
         per_bet = not event_key.startswith("sim:")
         if (len(certain) == 1 and len(matches) == 1
                 and self._single_bet_position(certain[0], per_bet=per_bet)
-                and not (event_key.startswith("cleared:") and self._market_has_foreign_cleared_legs(market_id))):
+                # Ogni settlement non di mercato (cleared, chiusura di posizione, chiave assente) passa dalla
+                # riconciliazione sull'exchange (bloccante Sol su 9f0d6ec): nessun settlement per bet non verificabile.
+                and not (per_bet and self._market_has_foreign_cleared_legs(market_id))):
             self.table_manager.release(int(certain[0]["table_id"]), pnl=pnl)
         elif len(certain) == 1 and len(matches) == 1:
             # Settlement per bet di una posizione con PIU' gambe persistite sullo stesso mercato (Dutching,
