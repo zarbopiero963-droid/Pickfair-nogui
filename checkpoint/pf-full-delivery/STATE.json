@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 45,
- "updated_at": "2026-10-19T18:28:47.197317+00:00",
+ "seq": 46,
+ "updated_at": "2026-10-19T19:57:14.129972+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere autorizzazione owner al merge della #522 (NO merge autonomo)",
+ "next_atomic_action": "Attendere CI/Sol/Grok/Codex su fcbaad7 (fix loop esaurito: nuovi PATCH_REQUIRED => NEEDS_MANUAL); report per autorizzazione owner; NO merge",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -470,17 +470,16 @@
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
   "pr": 522,
-  "head": "7f722e9",
-  "regression": "8322 passed 0 failed (c822e79; 7f722e9 solo CHANGELOG)",
-  "status": "READY_FOR_OWNER_AUTHORIZATION",
-  "fix_loop_cycle": 4,
-  "ci": "tutti i check verdi, Merge readiness PASS ready_to_merge, mergeable clean",
-  "reviews": "Sol e Grok senza bloccanti sul range finale; Grok c822e79 triagiato (c.6273783249)",
-  "threads": "10/10 risolti (8 FIXED, 2 DEFERRED_BY_POLICY -> #523 BLOCKS_DUTCHING_ACTIVATION)",
-  "cost": "/bin/bash.41, 8 review, 4 range"
+  "head": "fcbaad7",
+  "regression": "8359 passed 0 failed",
+  "status": "CHECKS_PENDING",
+  "fix_loop_cycle": 5,
+  "owner_premerge_verification": "c.6276021876: 1 PASS(fix), 2 PASS(fix), 3 PASS, 4 identificati/non obbligatori (#525), 5 PASS",
+  "independent_reviews": "bdf6ece: P1 AMBIGUOUS+P2 ref -> fix 4f223ea; 4f223ea: 0 P0/P1, P2 ref -> fix fcbaad7",
+  "followups": "#523 BLOCKS_DUTCHING_ACTIVATION, #524 BLOCKS_LIVE, #525 governance"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "476d9476c2e96b641a6cf1bacaff853e6b8a64b2",
+ "previous_checkpoint_sha": "f3836cff54fab2ae6cbc70645143035150be9f30",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -558,12 +557,12 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "7f722e9546cecaeec26c0177e4e14f5c6428ad09",
+  "sha": "fcbaad7bab56f661845422a588ca40595cab7592",
   "verified_with": "git push + git ls-remote",
   "patch": {
-   "head": "7f722e9546cecaeec26c0177e4e14f5c6428ad09",
-   "tree": "b6e090768ee41ca78e5b5097628ddbac2d91d94f",
-   "captured_at": "2026-10-19T18:28:48+00:00",
+   "head": "fcbaad7bab56f661845422a588ca40595cab7592",
+   "tree": "08e467c61291b24a36cc604ce20a61ad176daae3",
+   "captured_at": "2026-10-19T19:57:14+00:00",
    "modified": [],
    "untracked": [],
    "files": [
