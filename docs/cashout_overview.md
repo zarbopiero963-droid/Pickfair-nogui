@@ -231,6 +231,9 @@ ritardato (PF-EXEC-03).
   La registrazione si consuma per ogni ordine che arriva all'engine, anche
   negato da safe mode o RiskGate; un errore del controllo nega l'ordine
   (`ADMISSION_FENCE_RAISED` / `ADMISSION_FENCE_BAD_RESULT`).
+- **Un fence per richiesta**: due ingressi in coda con lo stesso `customer_ref`
+  non si scambiano il fence; finché la coda di quel ref non si svuota sono
+  negati tutti (`customer_ref_in_conflitto`, fail-closed).
 - **Ingresso già in invio**: un ingresso che ha superato il fence resta registrato
   come «in volo» finché l'engine non ha l'esito dell'invio
   (`admission_placement_done`, qualunque esito). Un cashout nel suo ambito, prima

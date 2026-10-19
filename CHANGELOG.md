@@ -111,6 +111,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
       (stesso `correlation_id`, non un rifiuto pre-invio DENIED/DUPLICATE_BLOCKED di un duplicato); un secondo
       ingresso con lo stesso `customer_ref` mentre il primo è in invio o ambiguo è negato
       (`ingresso_gia_in_invio`) invece di sovrascrivere la registrazione.
+    - **Codex su `fcbaad7` (deroga owner sul fix loop della #522, fino al ciclo 10):** due ingressi in coda con
+      lo stesso `customer_ref` si sovrascrivevano il fence, quindi il primo poteva partire con il fence
+      dell'altro evento e il secondo senza fence. Ora c'è un fence per richiesta e, finché quel ref ha più
+      ingressi in coda, sono negati tutti (`customer_ref_in_conflitto`).
     - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
       fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
       dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla

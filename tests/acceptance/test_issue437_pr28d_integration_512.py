@@ -1338,3 +1338,51 @@ def test_second_admission_with_the_same_ref_is_denied_and_keeps_the_first(tmp_pa
         assert c.rc._entries_in_flight == {"ref-1": (keys, first)}
     else:
         assert c.rc._entries_ambiguous == {"ref-1": (keys, "")}
+
+
+
+# Codex r4318304393 (fcbaad7): due ingressi in coda con lo stesso customer_ref non si scambiano il fence.
+def test_two_queued_entries_with_the_same_ref_are_both_denied_and_never_swap_fences(tmp_path):
+    c = _catena(tmp_path)
+    with c.rc._risk_admission_lock:
+        fence_a = c.rc._capture_admission_fence(_signal())
+        fence_b = c.rc._capture_admission_fence(_signal(event="Gamma v Delta", market_id="1.777"))
+    first, second = {"customer_ref": "ref-x"}, {"customer_ref": "ref-x"}
+    c.rc._register_queued_entry_fence(first, fence_a)
+    c.rc._register_queued_entry_fence(second, fence_b)
+    _barrier(c.rc, {"signal_type": "CASHOUT", "event_name": "Gamma v Delta"})   # cashout sull'evento del secondo
+
+    assert c.rc.admission_fence_verdict(first) == "customer_ref_in_conflitto"
+    assert c.rc.admission_fence_verdict(second) == "customer_ref_in_conflitto"   # mai "" senza fence
+    assert c.rc._queued_entry_fences == {} and c.rc._queued_ref_conflicts == set()
+    assert getattr(c.rc, "_entries_in_flight", {}) == {}      # nessuno dei due risulta in invio
+
+
+def test_two_queued_entries_with_the_same_ref_place_no_order_through_the_engine(tmp_path):
+    c = _catena(tmp_path)
+    held = []
+    original_publish = c.bus.publish
+
+    def queueing_publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            held.append(payload)
+            return None
+        return original_publish(topic, payload)
+
+    c.bus.publish = queueing_publish
+    c.rc._on_signal_received(_signal(customer_ref="ref-dup"))
+    c.rc._on_signal_received(_signal(customer_ref="ref-dup", event="Gamma v Delta", market_id="1.777",
+                                     received_at="2026-10-08T10:06:00+00:00"))
+    c.bus.publish = original_publish
+    assert len(held) == 2, _rifiuti(c)                        # entrambi ammessi e accodati con lo stesso ref
+    for payload in held:
+        _run_queued(c, payload)
+
+    assert c.broker.state.orders == {}                        # nessun ordine con un fence scambiato o assente
+    assert [p["status"] for p in c.bus.payloads("QUICK_BET_FAILED")][-2:] == ["DENIED", "DENIED"]
+
+
+def test_a_single_queued_entry_is_unaffected_by_the_conflict_rule(tmp_path):
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal(customer_ref="ref-solo"))
+    assert len(c.broker.state.orders) == 1

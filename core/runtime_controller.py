@@ -3593,7 +3593,16 @@ class RuntimeController:
             queued = getattr(self, "_queued_entry_fences", None)
             if queued is None:
                 queued = self._queued_entry_fences = {}
-            queued[ref] = fence
+            # Un fence per richiesta (Codex r4318304393): due ingressi in coda con lo stesso customer_ref non si
+            # sovrascrivono. Il conflitto nega tutti gli ingressi con quel ref finche' la coda non si svuota.
+            pending = queued.setdefault(ref, [])
+            pending.append(fence)
+            if len(pending) > 1:
+                conflicts = getattr(self, "_queued_ref_conflicts", None)
+                if conflicts is None:
+                    conflicts = self._queued_ref_conflicts = set()
+                conflicts.add(ref)
+                logger.critical("customer_ref %s con piu' ingressi in coda: tutti negati (fail-closed)", ref)
 
     def admission_fence_verdict(self, request: dict) -> str:
         """Chiamato dal TradingEngine prima del piazzamento: "" se l'ingresso puo' partire, altrimenti il motivo.
@@ -3606,9 +3615,18 @@ class RuntimeController:
             return ""
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
-            fence = (getattr(self, "_queued_entry_fences", None) or {}).pop(ref, None)
-            if fence is None:
+            queued = getattr(self, "_queued_entry_fences", None) or {}
+            pending = queued.get(ref)
+            if not pending:
                 return ""
+            fence = pending.pop(0)
+            conflicts = getattr(self, "_queued_ref_conflicts", None) or set()
+            in_conflict = ref in conflicts
+            if not pending:
+                queued.pop(ref, None)
+                conflicts.discard(ref)
+            if in_conflict:
+                return "customer_ref_in_conflitto"
             if not RuntimeController._admission_fence_valid(self, fence):
                 return "cashout_invalidation_stale"
             # Ingresso ammesso e in invio (verifica owner pre-merge #522): finche' l'engine non ha l'esito
