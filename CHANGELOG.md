@@ -76,8 +76,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - **Cap assoluti su bet manuale e Dutching:** `max_order_exposure`, `max_market_exposure`,
     `max_event_exposure_abs` e `max_drawdown_abs`, se configurati, valgono anche per `manual_bet` e per il
     precheck Dutching, prima di ogni side-effect (`absolute_cap_reason_for_orders`, stessa formula dei segnali).
-    Limite: gli ordini manuali e Dutching non occupano tavoli Roserpina, quindi la loro esposizione non entra
-    nelle misure di mercato ed evento dei controlli successivi (comportamento preesistente).
+    I lotti Dutching occupano un tavolo con mercato, evento ed esposizione (`submit_dutching`), quindi entrano
+    nelle misure dei controlli successivi. Limite preesistente: il bet manuale non occupa un tavolo, quindi la
+    sua esposizione non entra in quelle misure (`manual_bet` oggi non ha chiamanti di produzione). Restano da
+    fare prima di attivare le corsie Dutching/manuale (oggi dormienti), registrati in #523 con
+    `BLOCKS_DUTCHING_ACTIVATION`: lato obbligatorio per ogni selezione e passaggio dalla barriera cashout e dal
+    fence d'ammissione.
   - **Verifica indipendente del delta (#522):** la registrazione del fence ora si consuma per ogni ordine che
     arriva all'engine, anche se lo negano safe mode o RiskGate (prima restava in memoria). Un controllo del
     fence o dei cap diretti che risponde un tipo inatteso blocca l'ordine (`ADMISSION_FENCE_BAD_RESULT`,
