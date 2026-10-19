@@ -3325,10 +3325,15 @@ class RuntimeController:
         is_owned = getattr(lock, "_is_owned", None)
         release_save = getattr(lock, "_release_save", None)
         acquire_restore = getattr(lock, "_acquire_restore", None)
-        state = (release_save() if callable(is_owned) and is_owned()
-                 and callable(release_save) and callable(acquire_restore) else None)
+        recursion_count = getattr(lock, "_recursion_count", None)
+        owned = (callable(is_owned) and is_owned()
+                 and callable(release_save) and callable(acquire_restore))
+        # Livello letto PRIMA di rilasciare: un'ammissione rientrante non apre nemmeno per un istante.
+        if owned and callable(recursion_count) and recursion_count() != 1:
+            owned = False
+        state = release_save() if owned else None
         if state is not None and state[0] != 1:
-            acquire_restore(state)      # rientrante: nessun rilascio parziale
+            acquire_restore(state)      # rientrante (RLock senza _recursion_count): nessun rilascio parziale
             state = None
         try:
             return fn(*args)

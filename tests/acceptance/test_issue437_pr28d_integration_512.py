@@ -229,3 +229,45 @@ def test_outside_admission_lock_releases_single_hold_but_never_a_reentrant_one()
         with pytest.raises(RuntimeError):
             rc._call_outside_admission_lock(lambda: (_ for _ in ()).throw(RuntimeError("rete")))
         assert lock._is_owned()                                      # ripreso anche su errore
+
+
+def test_auto_next_payload_carries_event_identity():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    close = _auto_next_close()
+    close["mm_context"]["next_signal"].update({"event_id": "E9", "event": "Gamma v Delta"})
+
+    rc._on_close_position(close)
+
+    published = [p for t, p in bus.events if t == "CMD_QUICK_BET"]
+    assert len(published) == 1
+    assert published[0]["event_id"] == "E9"
+    assert published[0]["event_identity"] == "id:E9"
+
+
+def test_auto_next_cashout_invalidation_checkpoints_the_cycle_as_not_attempted():
+    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc.risk_desk.sync_bankroll(100.0)
+    checkpoints = []
+    original = rc._persist_cycle_checkpoint
+
+    def record(**kwargs):
+        checkpoints.append(kwargs)
+        return original(**kwargs)
+
+    rc._persist_cycle_checkpoint = record
+
+    def cashout_arrives():
+        with rc._risk_admission_lock:
+            rc._begin_cashout_barrier({"signal_type": "CASHOUT_ALL"})
+
+    _wrap_book(rc, cashout_arrives)
+
+    rc._on_close_position(_auto_next_close())
+
+    last = checkpoints[-1]
+    assert last["checkpoint_stage"] == "CYCLE_BLOCKED"
+    assert last["next_trade_submission_status"] == "NOT_ATTEMPTED"
+    assert last["reason"] == "cashout_invalidation_stale"
