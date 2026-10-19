@@ -215,6 +215,12 @@ ritardato (PF-EXEC-03).
 - **UNMATCHED** non chiude la barriera da solo: la chiude
   `CASHOUT_RESIDUAL_HANDLED` con `cancel_ok=True`. Cancel non tentato (nessun
   `bet_id`) o non confermato => barriera tenuta (incerta) fino al riavvio.
+- **Match parziale**: `CASHOUT_SUCCESS` dichiara `requested`, `residual` e `partial`.
+  Solo `partial=False` (match completo) chiude la richiesta. Con `partial` vero o
+  non dichiarato il `CashoutResidualHandler` esegue **un solo** cancel del residuo
+  dello stesso `bet_id`, persiste un record `PARTIAL` e pubblica
+  `CASHOUT_RESIDUAL_HANDLED`: la barriera si chiude solo con `cancel_ok=True`,
+  altrimenti resta incerta fino al riavvio e alla riconciliazione.
 - **AMBIGUOUS/ERROR** => barriera incerta, tenuta fino al riavvio.
 - `get_status()` espone `cashout_barriers_active` e `cashout_barriers_uncertain`.
 - **Fence fino all'engine**: col bus non bloccante `CMD_QUICK_BET` è solo
@@ -225,11 +231,19 @@ ritardato (PF-EXEC-03).
   La registrazione si consuma per ogni ordine che arriva all'engine, anche
   negato da safe mode o RiskGate; un errore del controllo nega l'ordine
   (`ADMISSION_FENCE_RAISED` / `ADMISSION_FENCE_BAD_RESULT`).
+- **Ingresso già in invio**: un ingresso che ha superato il fence resta registrato
+  come «in volo» finché l'engine non ha l'esito dell'invio
+  (`admission_placement_done`, qualunque esito). Un cashout nel suo ambito, prima
+  di fotografare l'exchange, attende quegli ingressi (fino a 35 s,
+  `_ENTRIES_IN_FLIGHT_WAIT_S`), così la fotografia del router contiene anche
+  l'ordine appena piazzato. Attesa scaduta, o routing con il lock d'ammissione
+  trattenuto: il cashout parte comunque (mai bloccato) e la barriera diventa
+  incerta fino al riavvio.
 
-Limiti noti (non introdotti da #522): `CASHOUT_SUCCESS` con match parziale
-chiude la barriera mentre il residuo dell'hedge può restare a riposo
-(`cashout_executor.py`); resta una finestra di millisecondi fra il controllo
-del fence nell'engine e l'invio dell'ordine.
+Limite noto: un invio dell'ingresso con esito AMBIGUOUS (attesa dell'executor
+scaduta) chiude la registrazione «in volo»; l'ordine può comparire sull'exchange
+dopo la fotografia del cashout e lo copre la riconciliazione AMBIGUOUS
+(tavolo trattenuto, nessun retry).
 
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,

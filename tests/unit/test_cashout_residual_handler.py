@@ -67,11 +67,12 @@ def _failed(**over):
 # =========================================================
 # WIRING
 # =========================================================
-def test_wire_subscribes_only_to_cashout_failed():
+def test_wire_subscribes_only_to_cashout_failed_and_success():
     bus = _SyncBus()
     handler, _ = _make()
     handler.wire(bus)
-    assert [t for t, _ in bus.subscriptions] == [CASHOUT_FAILED]
+    # CASHOUT_SUCCESS: solo per il residuo di un hedge abbinato in parte (verifica owner pre-merge #522).
+    assert [t for t, _ in bus.subscriptions] == [CASHOUT_FAILED, "CASHOUT_SUCCESS"]
 
 
 # =========================================================
@@ -164,8 +165,10 @@ def test_other_order_type_events_not_handled():
     handler, rec = _make()
     handler.wire(bus)
     for topic in ("QUICK_BET_FAILED", "DUTCHING_FAILED", "ORDER_CANCEL_FAILED",
-                  "ORDER_REPLACE_FAILED", "CMD_EXECUTE_CASHOUT", "CASHOUT_SUCCESS"):
+                  "ORDER_REPLACE_FAILED", "CMD_EXECUTE_CASHOUT"):
         bus.publish(topic, {"status": "UNMATCHED", "bet_id": "B1", "market_id": "1.1"})
+    # CASHOUT_SUCCESS con match COMPLETO: nessun residuo, nulla da fare (verifica owner pre-merge #522).
+    bus.publish("CASHOUT_SUCCESS", {"status": "DONE", "partial": False, "bet_id": "B1", "market_id": "1.1"})
     assert rec.cancel_calls == []
     assert rec.persisted == []
     assert rec.notifications == []
@@ -211,3 +214,37 @@ def test_persist_and_notify_failures_do_not_crash():
     handler = CashoutResidualHandler(cancel=lambda m, b: True, persist=boom_persist, notify=boom_notify)
     # Non deve sollevare.
     handler.on_cashout_failed(_failed(status="UNMATCHED"))
+
+
+# Verifica owner pre-merge #522: residuo di un hedge abbinato in parte.
+def test_partial_success_cancels_the_residual_once_and_persists_it():
+    bus = _SyncBus()
+    handler, rec = _make()
+    handler.wire(bus)
+    bus.publish("CASHOUT_SUCCESS", {"status": "DONE", "partial": True, "requested": 4.0, "matched": 1.5,
+                                    "residual": 2.5, "bet_id": "B1", "market_id": "1.1", "selection_id": 5,
+                                    "cashout_request_id": "crq-1"})
+    assert rec.cancel_calls == [("1.1", ["B1"])]
+    (record,) = rec.persisted
+    assert record["status"] == "PARTIAL" and record["residual"] == 2.5 and record["cancel_ok"] is True
+    assert rec.notifications
+
+
+def test_partial_success_publishes_the_residual_outcome_for_the_barrier():
+    bus = _SyncBus()
+    handler, rec = _make(cancel_result=False)
+    handler.wire(bus)
+    seen = []
+    bus.subscribe("CASHOUT_RESIDUAL_HANDLED", seen.append)
+    bus.publish("CASHOUT_SUCCESS", {"status": "DONE", "partial": True, "bet_id": "B1", "market_id": "1.1",
+                                    "cashout_request_id": "crq-1"})
+    assert seen and seen[-1]["status"] == "PARTIAL" and seen[-1]["cancel_ok"] is False
+    assert seen[-1]["cashout_request_id"] == "crq-1"
+
+
+def test_success_without_declared_completeness_is_handled_as_residual():
+    bus = _SyncBus()
+    handler, rec = _make()
+    handler.wire(bus)
+    bus.publish("CASHOUT_SUCCESS", {"status": "DONE", "bet_id": "B1", "market_id": "1.1"})
+    assert rec.cancel_calls == [("1.1", ["B1"])]

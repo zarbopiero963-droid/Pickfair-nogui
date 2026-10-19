@@ -1482,7 +1482,7 @@ class RuntimeController:
         # Esito di ogni cashout/hedge (CMD_EXECUTE_CASHOUT resta a consumatore unico: l'executor)
         self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_command)
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_command)
-        self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_execution_outcome)
+        self.bus.subscribe(CASHOUT_SUCCESS, self._on_cashout_success_outcome)
         self.bus.subscribe(CASHOUT_FAILED, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_REQUEST_SUPPRESSED, self._on_cashout_execution_outcome)
         self.bus.subscribe(CASHOUT_RESIDUAL_HANDLED, self._on_cashout_residual_handled)
@@ -3285,6 +3285,8 @@ class RuntimeController:
                 commission_pct=commission,
                 source="TELEGRAM",
             )
+            ctx = getattr(self, "_cashout_route_ctx", None)
+            RuntimeController._await_entries_in_flight(self, getattr(ctx, "barrier_id", None))
             result = router.route(signal)
             logger.info(
                 "[RuntimeController] cashout instradato: type=%s result=%s",
@@ -3480,6 +3482,15 @@ class RuntimeController:
             return          # hedge a riposo: decide l'esito del cancel (CASHOUT_RESIDUAL_HANDLED)
         RuntimeController._settle_cashout_request(self, request_id, uncertain=status in {"AMBIGUOUS", "ERROR"})
 
+    def _on_cashout_success_outcome(self, payload: dict) -> None:
+        """Hedge abbinato: chiude la richiesta solo se il match e' COMPLETO (`partial is False`, verifica owner
+        pre-merge #522). Parziale o non dichiarato: il residuo a riposo decide come per UNMATCHED
+        (CASHOUT_RESIDUAL_HANDLED dal CashoutResidualHandler)."""
+        payload = payload if isinstance(payload, dict) else {}
+        if payload.get("partial") is not False:
+            return
+        RuntimeController._on_cashout_execution_outcome(self, payload)
+
     def _on_cashout_residual_handled(self, payload: dict) -> None:
         payload = payload if isinstance(payload, dict) else {}
         request_id = payload.get("cashout_request_id")
@@ -3598,7 +3609,69 @@ class RuntimeController:
             fence = (getattr(self, "_queued_entry_fences", None) or {}).pop(ref, None)
             if fence is None:
                 return ""
-            return "" if RuntimeController._admission_fence_valid(self, fence) else "cashout_invalidation_stale"
+            if not RuntimeController._admission_fence_valid(self, fence):
+                return "cashout_invalidation_stale"
+            # Ingresso ammesso e in invio (verifica owner pre-merge #522): finche' l'engine non ha l'esito
+            # dell'invio, un cashout nel suo ambito attende prima di fotografare l'exchange
+            # (`_await_entries_in_flight`), cosi' la fotografia contiene anche questo ordine.
+            placing = getattr(self, "_entries_in_flight", None)
+            if placing is None:
+                placing = self._entries_in_flight = {}
+            placing[ref] = frozenset(key for key, _epoch in fence)
+            return ""
+
+    def admission_placement_done(self, request: dict) -> None:
+        """Chiamato dal TradingEngine a invio concluso (qualunque esito): l'ingresso non e' piu' in volo."""
+        ref = str((request or {}).get("customer_ref") or "")
+        if not ref:
+            return
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            (getattr(self, "_entries_in_flight", None) or {}).pop(ref, None)
+
+    #: Attesa massima, prima della fotografia del router, degli ingressi gia' in invio nell'ambito del cashout.
+    #: Copre l'attesa dell'esito d'invio dell'engine (`default_timeout` 30 s dell'executor) piu' margine; oltre => incerta.
+    _ENTRIES_IN_FLIGHT_WAIT_S = 35.0
+
+    def _await_entries_in_flight(self, barrier_id) -> None:
+        """Prima che il router fotografi l'exchange: attende gli ingressi gia' oltre il fence e in invio
+        nell'ambito della barriera, cosi' nessun ordine viene piazzato DOPO la fotografia senza essere visto.
+
+        L'attesa avviene senza trattenere `_risk_admission_lock` (l'engine lo prende per segnalare l'esito).
+        Se il thread lo trattiene, o l'attesa scade, il cashout prosegue (mai bloccato, PF-EXEC-03) ma la
+        barriera diventa incerta: nessun nuovo ingresso nell'ambito fino al riavvio (fail-closed).
+        """
+        if barrier_id is None:
+            return
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        is_owned = getattr(lock, "_is_owned", None)
+        held = bool(callable(is_owned) and is_owned())
+        deadline = time.monotonic() + float(self._ENTRIES_IN_FLIGHT_WAIT_S)
+        while True:
+            with lock:
+                scope = getattr(self, "_cashout_barriers", {}).get(barrier_id)
+                if not scope:
+                    return
+                pending = sorted(ref for ref, keys in (getattr(self, "_entries_in_flight", None) or {}).items()
+                                 if keys & scope)
+                if not pending:
+                    return
+                if held or time.monotonic() >= deadline:
+                    logger.critical(
+                        "Cashout barriera %s: ingressi ancora in invio %s (%s): barriera incerta fino al riavvio",
+                        barrier_id, pending, "lock trattenuto" if held else "attesa scaduta")
+                    inflight = getattr(self, "_cashout_inflight", None)
+                    if inflight is None:
+                        inflight = self._cashout_inflight = {}
+                    marks = getattr(self, "_cashout_uncertain", None)
+                    if marks is None:
+                        marks = self._cashout_uncertain = set()
+                    for ref in pending:
+                        mark = f"entry-in-flight:{ref}"
+                        inflight.setdefault(barrier_id, {})[mark] = None
+                        marks.add(mark)
+                    return
+            time.sleep(0.005)
 
     def _call_outside_admission_lock(self, fn, *args):
         """Esegue ``fn`` (rete: best price, book F030) senza trattenere ``_risk_admission_lock``.

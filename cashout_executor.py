@@ -180,9 +180,18 @@ class CashoutExecutor:
             self._fail("unmatched", status="UNMATCHED", payload=payload, bet_id=bet_id)
             return
 
+        # Match parziale (verifica owner pre-merge #522): il residuo dell'hedge resta a riposo e puo' abbinarsi
+        # dopo. `partial` e' True anche quando lo stake richiesto non e' leggibile (fail-closed): il
+        # CashoutResidualHandler ne tenta il cancel e la barriera d'ammissione resta fino all'esito.
+        requested = self._as_float(payload.get("stake"))
+        residual = max(0.0, requested - matched) if requested > 0.0 else None
+        partial = residual is None or residual > 1e-9
         success = {
             "green_up": self._as_float(payload.get("green_up")),
             "matched": matched,
+            "requested": requested,
+            "residual": residual,
+            "partial": partial,
             "status": "DONE",
             "bet_id": bet_id,
             "market_id": str(payload.get("market_id", "")),

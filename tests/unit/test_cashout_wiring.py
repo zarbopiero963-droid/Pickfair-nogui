@@ -79,7 +79,9 @@ def test_catena_con_safety_layer_e_un_consumer_per_topic(bus):
     assert [cb.__self__ for cb in subs[REQ_EXECUTE_CASHOUT]] == [catena.cashout_request_bridge]
     assert [cb.__self__ for cb in subs[CMD_EXECUTE_CASHOUT]] == [catena.cashout_executor]
     assert [cb.__self__ for cb in subs[CASHOUT_FAILED]] == [catena.cashout_residual_handler]
-    assert set(subs) == {REQ_EXECUTE_CASHOUT, CMD_EXECUTE_CASHOUT, CASHOUT_FAILED}
+    # Il residual handler consuma anche CASHOUT_SUCCESS (residuo dell'hedge abbinato in parte, #522).
+    assert [cb.__self__ for cb in subs["CASHOUT_SUCCESS"]] == [catena.cashout_residual_handler]
+    assert set(subs) == {REQ_EXECUTE_CASHOUT, CMD_EXECUTE_CASHOUT, CASHOUT_FAILED, "CASHOUT_SUCCESS"}
 
 
 def test_cablaggio_inerte_nessun_evento_nessun_accesso_ai_servizi(bus):

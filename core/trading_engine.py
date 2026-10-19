@@ -57,6 +57,16 @@ from order_manager import OrderManager
 
 logger = logging.getLogger(__name__)
 
+_ADMISSION_TLS = threading.local()
+
+
+def _admission_requests_in_flight() -> list:
+    """Richieste di questo thread passate dal fence d'ammissione e non ancora concluse (verifica owner #522)."""
+    pending = getattr(_ADMISSION_TLS, "requests", None)
+    if pending is None:
+        pending = _ADMISSION_TLS.requests = []
+    return pending
+
 # =============================================================================
 # NOTE: String constants, set/dict literals, ALLOWED_TRANSITIONS, and
 #       _ExecutionContext are defined in core/trading_constants.py and imported
@@ -818,7 +828,22 @@ class TradingEngine:
                 "reason": "system_lockdown",
                 "correlation_id": payload.get("correlation_id"),
             }
-        return self._submit_via_engine(payload)
+        # Ingresso ammesso dal fence e in invio (verifica owner pre-merge #522): l'esito dell'invio, qualunque
+        # sia, chiude la registrazione nel runtime, cosi' un cashout nell'ambito fotografa dopo l'invio.
+        in_flight = _admission_requests_in_flight()
+        start = len(in_flight)
+        try:
+            return self._submit_via_engine(payload)
+        finally:
+            pending = in_flight[start:]
+            del in_flight[start:]
+            done = getattr(getattr(self, "runtime_controller", None), "admission_placement_done", None)
+            if callable(done):
+                for request in pending:
+                    try:
+                        done(request)
+                    except Exception:
+                        logger.exception("Chiusura della registrazione d'invio fallita")
 
     # ==================================================================
     # [P5] RECOVERY — Normalized result contract
@@ -1592,6 +1617,7 @@ class TradingEngine:
         fence_check = getattr(getattr(self, "runtime_controller", None), "admission_fence_verdict", None)
         if not callable(fence_check):
             return ""
+        _admission_requests_in_flight().append(request)    # chiusa a fine invio da submit_quick_bet
         try:
             reason = fence_check(request)
         except Exception:

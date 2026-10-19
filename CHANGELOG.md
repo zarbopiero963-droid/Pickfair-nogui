@@ -88,6 +88,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `cap_assoluti_non_verificabili`). Un CASHOUT che nomina la partita con `event` o `match` apre la barriera su
     quella partita. Aggiunti i test per LAY = liability, errore del controllo cap, cap evento senza identità,
     drawdown assoluto e registrazione dell'auto-next. Documentazione in `docs/cashout_overview.md` §7.1.
+  - **Verifica owner pre-merge (#522), due P1 corretti con RED→GREEN:**
+    - **Ingresso già in invio durante un cashout:** con il bus di produzione l'engine piazza fuori dal lock
+      d'ammissione. Un cashout partito fra il controllo del fence e l'invio fotografava l'exchange senza
+      l'ordine, che veniva poi piazzato fuori dalla chiusura (riprodotto 3 volte su 3). Ora l'ingresso resta
+      «in volo» fino all'esito dell'invio e il cashout attende prima della fotografia. Attesa scaduta
+      (35 s) o lock trattenuto: cashout comunque eseguito, barriera incerta fino al riavvio.
+    - **Hedge abbinato in parte:** `CASHOUT_SUCCESS` con match parziale chiudeva la barriera e lasciava il
+      residuo a riposo senza cancel né record. Ora l'executor dichiara `requested`/`residual`/`partial`, il
+      residual handler esegue un solo cancel del residuo e persiste un record `PARTIAL`, e la barriera si
+      chiude solo con il cancel confermato. Un successo senza `partial=False` non chiude nulla (fail-closed).
+    - Test adeguati al nuovo contratto, senza allentare gli assert: gli esiti `CASHOUT_SUCCESS` sintetici dei
+      test dichiarano `partial=False`; due test sulle sottoscrizioni includono `CASHOUT_SUCCESS` del residual
+      handler.
+    - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
+      fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
+      dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla
+      #523.
 
 - **Rettifica owner 18/10/2026, chiarimento definitivo del 19/10: tetti monetari preesistenti.**
   `max_stake_abs` (RSR-15, tetto allo stake per ordine) e `max_win` (RSR-26, tetto alla vincita/esposizione

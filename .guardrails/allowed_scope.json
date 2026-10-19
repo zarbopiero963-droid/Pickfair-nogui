@@ -2287,6 +2287,7 @@
         "tests/core/test_cycle_executor.py",
         "tests/core/test_risk_gate.py",
         "tests/f026/test_f026_financial.py",
+        "tests/guardrails/test_dutching_lane_dormant_523.py",
         "tests/integration/test_dutching_max_win_guard.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
         "tests/integration/test_mini_gui_optional_caps_save.py",
@@ -2296,13 +2297,16 @@
         "tests/parsers/test_parser_personalizzati.py",
         "tests/roserpina41/test_rsr_targeted.py",
         "tests/services/test_telegram_signal_processor.py",
+        "tests/unit/test_cashout_executor.py",
+        "tests/unit/test_cashout_residual_handler.py",
+        "tests/unit/test_cashout_wiring.py",
         "tests/unit/test_telegram_listener_copy_pattern_action.py",
         "tests/unit/test_ui_freeze_boundaries.py",
         "trading_config.py"
       ],
-      "max_files": 42,
+      "max_files": 46,
       "allow_tests": true,
-      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505). Correzioni d'integrazione #505/#512 dal riesame indipendente (fetch F030 fuori dal lock di ammissione; event_id/event_identity persistiti e ricostruiti da F018): test in tests/acceptance/test_issue437_pr28d_integration_512.py. Estensione dichiarata (mandati owner PF-522-FINAL-HARDENING-01, rettifica definitiva 19/10 sui limiti monetari, PF-CONTINUOUS-FORMAL-VERIFICATION-01): barriera cashout fino all'esito dell'hedge con cashout_request_id (cashout_request_bridge.py, cashout_executor.py, core/trading_constants.py), max_stake_abs/max_win opzionali e disattivati di default (core/system_state.py, services/setting_service.py, core/money_management.py, core/risk_gate.py, controllers/dutching_controller.py, trading_config.py, config_registry.py, mini_gui.py, docs e test relativi), specifica permanente docs/verification/continuous_formal_verification.md. Estensione dichiarata (review Codex su c4ac69e): cashout_residual_handler.py (esito del cancel del residuo UNMATCHED), core/trading_engine.py (controllo del fence d'ammissione prima del piazzamento). Estensione dichiarata (verifica indipendente su 93c67cf): docs/cashout_overview.md (barriera d'ammissione, esito del residuo UNMATCHED, fence fino all'engine)."
+      "description": "#461 PR28-d ripresa (fase D, PF-505-RECOVERY-INTEGRATION-01): integra la #505 chiusa temporaneamente (archive/pf-505-pre-512 618884e + archive/pf-505-cap-reconciliation-prep 022ee9d) su main f8bbbe9 (#512 mergiata). Cap monetari assoluti OPZIONALI, non attivi di default (decisione owner 18/10/2026); lato ordine obbligatorio fail-closed; identita' canonica evento per il cap evento; fencing ingressi/cashout. Estensione dichiarata rispetto alla #505 originale: file della patch 022ee9d (tests/acceptance/test_issue437_pr28d_rectification.py, tests/integration/test_mini_gui_optional_caps_save.py) e tests/f026/test_f026_financial.py (rimozione xfail F033 consegnato dalla #505). Correzioni d'integrazione #505/#512 dal riesame indipendente (fetch F030 fuori dal lock di ammissione; event_id/event_identity persistiti e ricostruiti da F018): test in tests/acceptance/test_issue437_pr28d_integration_512.py. Estensione dichiarata (mandati owner PF-522-FINAL-HARDENING-01, rettifica definitiva 19/10 sui limiti monetari, PF-CONTINUOUS-FORMAL-VERIFICATION-01): barriera cashout fino all'esito dell'hedge con cashout_request_id (cashout_request_bridge.py, cashout_executor.py, core/trading_constants.py), max_stake_abs/max_win opzionali e disattivati di default (core/system_state.py, services/setting_service.py, core/money_management.py, core/risk_gate.py, controllers/dutching_controller.py, trading_config.py, config_registry.py, mini_gui.py, docs e test relativi), specifica permanente docs/verification/continuous_formal_verification.md. Estensione dichiarata (review Codex su c4ac69e): cashout_residual_handler.py (esito del cancel del residuo UNMATCHED), core/trading_engine.py (controllo del fence d'ammissione prima del piazzamento). Estensione dichiarata (verifica indipendente su 93c67cf): docs/cashout_overview.md (barriera d'ammissione, esito del residuo UNMATCHED, fence fino all'engine). Estensione dichiarata (verifica owner pre-merge su 7f722e9): tests/unit/test_cashout_executor.py, tests/unit/test_cashout_residual_handler.py, tests/unit/test_cashout_wiring.py (contratto CASHOUT_SUCCESS con match parziale), tests/guardrails/test_dutching_lane_dormant_523.py (corsie Dutching/manual_bet dormienti, #523)."
     }
   }
 }
