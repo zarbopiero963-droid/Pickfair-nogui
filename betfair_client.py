@@ -1906,9 +1906,11 @@ class BetfairClient:
                 params,
             )
 
-            page_orders = result.get("currentOrders")
+            page_orders = result.get("currentOrders") if isinstance(result, dict) else None
+            # `currentOrders` assente o null non e' "nessun ordine" (rilievo Codex r4312360620 su #512): la
+            # ricostruzione F018 chiuderebbe ogni SUBMITTED persistito. Solo una lista, anche vuota, e' autorevole.
             if page_orders is None:
-                page_orders = []
+                raise RuntimeError("CURRENT_ORDERS_MALFORMED: currentOrders missing or null")
             # Payload malformato (contenitore non-lista o riga non-dict): errore esplicito,
             # mai una lista vuota/parziale che la ricostruzione all'avvio leggerebbe come
             # "nessun ordine" chiudendo posizioni vive (rilievo Codex #512, decisione owner

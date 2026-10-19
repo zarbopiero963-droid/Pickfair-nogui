@@ -656,6 +656,8 @@ class TradingEngine:
         - risultato o eccezione di ``fn``: restituito / propagata INVARIATA,
           cosi' la classificazione e' identica al percorso diretto;
         - ``Future`` cancellato: ``fn`` non e' mai partita => pre-invio;
+        - ``CancelledError`` sollevato da ``fn`` stessa (``handle.cancelled()`` falso): era partita =>
+          AMBIGUOUS, mai pre-invio (rilievo Codex r4312360608);
         - attesa scaduta con task non partito: ``cancel()`` riuscito garantisce
           che ``fn`` non partira' mai => pre-invio;
         - attesa scaduta con task partito, o executor guasto: esito ignoto =>
@@ -668,7 +670,15 @@ class TradingEngine:
         try:
             return handle.result(timeout=wait_s)
         except concurrent.futures.CancelledError as exc:
-            raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START") from exc
+            if handle.cancelled():
+                raise _ErrorePrimaDellInvio("EXECUTOR_TASK_CANCELLED_BEFORE_START") from exc
+            # Rilievo Codex r4312360608 (#512): la cancellazione l'ha sollevata la callable stessa, quindi era
+            # partita (il trasporto puo' aver inviato). Esito ignoto => AMBIGUOUS, mai pre-invio.
+            raise ExecutionError(
+                f"EXECUTOR_TASK_RAISED_CANCELLED_AFTER_START:{exc}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            ) from exc
         except concurrent.futures.TimeoutError:
             if handle.done():
                 # Su Python >= 3.11 il TimeoutError dell'attesa e' lo stesso tipo

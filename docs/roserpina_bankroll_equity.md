@@ -75,6 +75,8 @@ LOCKDOWN, PAUSE ed emergency stop bloccano i **nuovi ingressi**, non la riconcil
   assente e piu' tavoli sull'evento => nessun rilascio (ciclo 11 #512, Codex r4309039372);
 - rilascio idempotente (`force_unlock_if_event`), perdita di recovery del tavolo conservata, chiave anti-duplicato
   trattenuta (un segnale riconsegnato non si rigioca); evento `UNMATCHED_ORDER_RELEASED`;
+- `listCurrentOrders` con `currentOrders` assente o null e' `CURRENT_ORDERS_MALFORMED`, mai "nessun ordine": solo una
+  lista, anche vuota, e' autorevole per la ricostruzione F018 (Codex r4312360620).
 - crash fra conferma della cancellazione e rilascio: al riavvio F018 trova l'ordine assente e non ricostruisce il tavolo.
 
 ## F031 — parziale abbinato con residuo annullato (parità SIM/LIVE)
@@ -106,7 +108,8 @@ LOCKDOWN (il money management applica i cap dopo il moltiplicatore).
 `max_recovery_tables` conta i tavoli con recovery attiva o pendente anche senza ordini aperti. Lo stato (perdita da
 recuperare per tavolo) è salvato a ogni settlement e reset (`roserpina.recovery_tables_state`) e ripristinato al
 riavvio prima della ricostruzione F018. Un tavolo esce dal conteggio solo a perdita recuperata o con un reset
-autorizzato del ciclo; uno stato illeggibile blocca la capacità di recovery **e l'avvio**: `start()` tratta
+autorizzato del ciclo; uno stato illeggibile (JSON rotto, perdita non finita o **negativa**: lo zero e' ammesso,
+Codex r4312360615) blocca la capacità di recovery **e l'avvio**: `start()` tratta
 `_restore_recovery_tables()` fallita come ricostruzione incompleta (`RECONCILIATION_REQUIRED:RECOVERY_STATE_UNREADABLE`,
 runtime in PAUSED, stesso percorso di `EXCHANGE_ORDERS_UNAVAILABLE`), `resume()` non lo scavalca e
 `_persist_recovery_tables` rifiuta di sovrascrivere lo stato illeggibile (serve un riavvio con stato leggibile).

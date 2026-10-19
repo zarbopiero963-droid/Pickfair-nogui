@@ -724,8 +724,9 @@ class BetfairService:
 
     @staticmethod
     def _well_formed_current_orders(orders: Any) -> List[Dict[str, Any]]:
-        """Fail-closed sulla forma: ``None`` vale "nessun ordine", ma un contenitore che non e'
-        una lista o una riga che non e' un dict e' un payload malformato e SOLLEVA. Il filtro
+        """Fail-closed sulla forma: solo una lista (anche vuota) e' autorevole. ``None``, un contenitore
+        che non e' una lista o una riga che non e' un dict sono un payload malformato e SOLLEVANO
+        (``None`` = collezione assente, non "nessun ordine": rilievo Codex r4312360620 su #512). Il filtro
         silenzioso ``isinstance`` trasformava una risposta illeggibile in una lista vuota/parziale
         che la ricostruzione all'avvio leggeva come posizioni chiuse (rilievo Codex #512,
         decisione owner D-C del 18/10/2026).
@@ -734,7 +735,7 @@ class BetfairService:
         persistita e F018 la leggerebbe come "ordine assente => chiuso" (rilievo Codex #512 su
         034af59). Payload senza identita' => stesso errore => EXCHANGE_ORDERS_UNAVAILABLE => PAUSED."""
         if orders is None:
-            return []
+            raise RuntimeError("CURRENT_ORDERS_MALFORMED: current orders collection missing (None)")
         if not isinstance(orders, list):
             raise RuntimeError(f"CURRENT_ORDERS_MALFORMED: {type(orders).__name__} is not a list")
         for order in orders:

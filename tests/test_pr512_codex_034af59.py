@@ -1497,3 +1497,81 @@ def test_c12_post_accept_read_failure_never_releases_a_live_stub(fail_lookup):
     else:
         # riconciliato per customer_ref: la saga prosegue e si attiva normalmente (riserva sciolta solo ad ACTIVE)
         assert res.get("ok") is True and status in {"SUBMITTED", "ACCEPTED_FOR_PROCESSING"}, status
+
+
+# ------------------------------------------------------------------ ciclo 13 (PF-QA-AUTONOMOUS-CONTINUATION-01)
+@pytest.mark.parametrize("bad", [-0.01, -5.0])
+def test_c13_negative_persisted_recovery_loss_is_unreadable_state(tmp_path, bad):
+    """Codex r4312360615: una perdita di recovery persistita NEGATIVA era saltata in silenzio e il restore
+    riportava successo, cancellando il debito. Ora e' stato illeggibile (fail-closed); lo zero resta ammesso."""
+    sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
+    from test_f032_rsr12_units import _rc
+    rc = _rc(tmp_path / "neg.db")
+    rc.db.save_settings({"roserpina.recovery_tables_state": json.dumps({"1": 3.0, "2": bad})})
+    assert rc._restore_recovery_tables() is False
+    assert rc._recovery_state_unreadable is True
+    assert rc._active_recovery_count() >= rc.config.max_recovery_tables, "debito negativo trattato come zero"
+
+
+def test_c13_zero_persisted_recovery_loss_is_still_accepted(tmp_path):
+    sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
+    from test_f032_rsr12_units import _rc
+    rc = _rc(tmp_path / "zero.db")
+    rc.db.save_settings({"roserpina.recovery_tables_state": json.dumps({"1": 3.0, "2": 0.0})})
+    assert rc._restore_recovery_tables() is True
+    assert rc._active_recovery_count() == 1
+
+
+def test_c13_cancelled_error_raised_by_the_task_is_ambiguous_not_pre_send():
+    """Codex r4312360608: un `CancelledError` sollevato DALLA callable (trasporto partito) non e' un Future
+    cancellato prima dell'avvio: AMBIGUOUS, mai `_ErrorePrimaDellInvio` (che rilascerebbe l'intento)."""
+    import concurrent.futures
+    import types as _t
+    from core.trading_engine import TradingEngine, _ErrorePrimaDellInvio, ExecutionError, ERROR_AMBIGUOUS
+    eng = TradingEngine.__new__(TradingEngine)
+    eng.executor = _t.SimpleNamespace(default_timeout=1.0)
+    f = concurrent.futures.Future()
+    f.set_running_or_notify_cancel()
+    f.set_exception(concurrent.futures.CancelledError("transport cancelled after send"))
+    assert not f.cancelled()
+    with pytest.raises(ExecutionError) as ei:
+        eng._resolve_executor_future(f)
+    assert not isinstance(ei.value, _ErrorePrimaDellInvio)
+    assert ei.value.error_type == ERROR_AMBIGUOUS
+
+
+def test_c13_really_cancelled_future_stays_pre_send():
+    import concurrent.futures
+    import types as _t
+    from core.trading_engine import TradingEngine, _ErrorePrimaDellInvio
+    eng = TradingEngine.__new__(TradingEngine)
+    eng.executor = _t.SimpleNamespace(default_timeout=1.0)
+    f = concurrent.futures.Future()
+    assert f.cancel()
+    with pytest.raises(_ErrorePrimaDellInvio):
+        eng._resolve_executor_future(f)
+
+
+@pytest.mark.parametrize("result", [{"moreAvailable": False}, {"currentOrders": None, "moreAvailable": False}])
+def test_c13_missing_current_orders_collection_is_malformed(result):
+    """Codex r4312360620: `currentOrders` assente o null non e' una lista vuota autorevole: la ricostruzione F018
+    chiuderebbe ogni SUBMITTED persistito. Errore esplicito; la lista vuota esplicita resta il caso legittimo."""
+    from betfair_client import BetfairClient
+    client = BetfairClient.__new__(BetfairClient)
+    client._post_jsonrpc = lambda *a, **k: dict(result)
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
+        client.get_current_orders()
+
+
+def test_c13_explicit_empty_current_orders_is_no_orders():
+    from betfair_client import BetfairClient
+    client = BetfairClient.__new__(BetfairClient)
+    client._post_jsonrpc = lambda *a, **k: {"currentOrders": [], "moreAvailable": False}
+    assert client.get_current_orders() == []
+
+
+def test_c13_service_treats_a_missing_collection_as_malformed():
+    """Stesso difetto a livello di servizio (input reale di F018): `None` dal client non e' "nessun ordine"."""
+    with pytest.raises(RuntimeError, match="CURRENT_ORDERS_MALFORMED"):
+        BetfairService._well_formed_current_orders(None)
+    assert BetfairService._well_formed_current_orders([]) == []

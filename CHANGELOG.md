@@ -10,6 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **PR #512 ciclo 13 (PF-QA-AUTONOMOUS-CONTINUATION-01, owner 19/10/2026, #426):** rilievi Codex su `4231de9`.
+  (1) `TableManager.restore_recovery_state`: una perdita di recovery persistita negativa e' stato illeggibile
+  (avvio in PAUSED), non piu' un debito cancellato in silenzio; lo zero resta ammesso (r4312360615). (2)
+  `TradingEngine._resolve_executor_future`: un `CancelledError` sollevato dalla callable gia' partita e' AMBIGUOUS,
+  non pre-invio; solo un Future davvero cancellato resta pre-invio (r4312360608). (3) `BetfairClient.get_current_orders`
+  e `BetfairService._well_formed_current_orders`: `currentOrders` assente/null e' `CURRENT_ORDERS_MALFORMED`, mai
+  "nessun ordine" per la ricostruzione F018; la lista vuota esplicita resta il caso legittimo (r4312360620). Il test
+  legacy che codificava il fail-open (`test_get_current_orders_empty_result_returns_empty_list`) usa ora una lista
+  vuota esplicita. Test RED->GREEN in `tests/test_pr512_codex_034af59.py` (`test_c13_*`).
 - **PR #512 ciclo 12 (decisioni owner del 19/10/2026: autorizzazione straordinaria del ciclo 12 e
   PF-QA-AUTONOMOUS-CONTINUATION-01, #426):** P1 Codex su `3d3f5cc`. (1) `NativeSimMicrostakeExecutor.execute`: un
   errore ordinario del DB (non `SagaStoreError`) dopo un'operazione exchange diventa AMBIGUOUS

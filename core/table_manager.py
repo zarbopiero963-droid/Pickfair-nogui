@@ -321,7 +321,11 @@ class TableManager:
                     # JSON NaN/Infinity (rilievo Codex #512): debito ignoto => stato illeggibile,
                     # il runtime blocca la capacita' di recovery (fail-closed)
                     raise ValueError(f"perdita di recovery non finita per il tavolo {table_id}: {loss!r}")
-                if loss <= 0.0:
+                if loss < 0.0:
+                    # Debito negativo (rilievo Codex r4312360615 su #512): non e' "nessun debito", e' stato
+                    # incoerente. Saltarlo cancellava la perdita persistita: illeggibile => fail-closed.
+                    raise ValueError(f"perdita di recovery negativa per il tavolo {table_id}: {loss!r}")
+                if loss == 0.0:
                     continue
                 if table is None:
                     # Tavolo oltre table_count (config ridotta a bot acceso, `resize` lo
