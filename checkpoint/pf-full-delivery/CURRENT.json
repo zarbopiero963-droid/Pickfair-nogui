@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "c822e7969d31055a39275132103f92949245e81c"
+  "sha": "7f722e9546cecaeec26c0177e4e14f5c6428ad09"
  },
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Attendere CI/Sol/Grok/Codex su c822e79; triage; risolvere 8 thread Codex con CI settled; Merge readiness; report finale per autorizzazione owner (NO merge)",
- "previous_checkpoint_sha": "c8729b93bf13bad313ce11b363c7e70ca6a64e45",
+ "next_atomic_action": "Attendere autorizzazione owner al merge della #522 (NO merge autonomo)",
+ "previous_checkpoint_sha": "476d9476c2e96b641a6cf1bacaff853e6b8a64b2",
  "schema": "pf-current/1",
- "seq": 44
+ "seq": 45
 }
