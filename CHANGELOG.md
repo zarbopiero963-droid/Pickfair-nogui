@@ -10,6 +10,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#505 ripresa sopra la #512 (PF-505-RECOVERY-INTEGRATION-01, fase D di PF-PR-SEQUENCE-RECOVERY-01):** il
+  lavoro della #505 (chiusa temporaneamente, conservato in `archive/pf-505-pre-512` `618884e` e
+  `archive/pf-505-cap-reconciliation-prep` `022ee9d`) è integrato su `main` `f8bbbe9`. Restano in vigore la
+  rettifica owner del 18/10/2026, cioè i cap monetari assoluti (`max_order_exposure`, `max_market_exposure`,
+  `max_event_exposure_abs`, `max_drawdown_abs`) **opzionali e non attivi di default**, e tutte le protezioni della
+  #512 (fondi verificati, liability LAY, riserve atomiche, dedupe, riconciliazione). Due test sono stati
+  allineati, senza allentare nessun assert:
+  - il test del cap mercato/evento ora misura una posizione su un'altra chiave evento, perché la stessa chiave
+    è fermata prima dalla #512 (`evento_gia_in_posizione`);
+  - F033 (cap evento aggregato su più mercati dello stesso incontro) non è più xfail, perché lo consegna la #505.
+
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
   `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
