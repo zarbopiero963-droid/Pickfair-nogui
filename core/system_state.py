@@ -66,6 +66,15 @@ class RoserpinaConfig:
     max_daily_loss: Optional[float] = None
     max_drawdown_hard_stop_pct: Optional[float] = None
     max_open_exposure: Optional[float] = None
+    # Limiti assoluti PR28-d (EUR): per ordine, per mercato, per evento
+    # (identita' canonica) e drawdown assoluto. OPZIONALI (rettifica owner
+    # 18/10/2026): None = non attivo, nessun default numerico; configurati
+    # vengono applicati esattamente insieme ai limiti percentuali; presenti
+    # ma illeggibili/<= 0 => blocco esplicito dei nuovi ordini.
+    max_order_exposure: Optional[float] = None
+    max_market_exposure: Optional[float] = None
+    max_event_exposure_abs: Optional[float] = None
+    max_drawdown_abs: Optional[float] = None
     # P37 (#461 PR28): stop perdita di sessione (EUR, da start()). None = non
     # impostato; illeggibile => blocco nuove entrate. Nessun default inventato.
     max_session_loss: Optional[float] = None
@@ -102,7 +111,10 @@ class RoserpinaConfig:
 
     commission_pct: float = 4.5
     min_stake: float = trading_config.MIN_STAKE  # fonte unica (#320-D2)
-    max_stake_abs: float = 10000.0
+    # Tetto assoluto dello stake per ordine (RSR-15). OPZIONALE (decisione owner 18/10/2026, rettifica
+    # definitiva del 19/10 sui parametri preesistenti): None = non attivo, nessun default numerico;
+    # presente ma illeggibile o <= 0 => nessuno stake (fail-closed, core/money_management.py).
+    max_stake_abs: Optional[float] = None
 
     # Book % (over-round) thresholds — editabili da GUI, applicati come gate reale
     # al submit dutching (controllers/dutching_controller.precheck) e — book_block —
@@ -133,16 +145,17 @@ class RoserpinaConfig:
     min_price: float = 1.02
 
     # Cap importo potenziale PER GAMBA (G5), editabile da GUI, applicato al submit
-    # dutching e al bet manuale. Default = trading_config.MAX_WIN. Semantica
+    # dutching e al bet manuale, e tetto hard di vincita/esposizione sul RiskGate. OPZIONALE (decisione owner
+    # 18/10/2026, rettifica definitiva del 19/10 sui parametri preesistenti): None = non attivo, nessun default
+    # numerico; presente ma illeggibile o <= 0 => blocco (fail-closed). Semantica
     # (controllers/dutching_controller): BACK = payout stake*price; LAY = liability
     # stake*(price-1) (il RISCHIO, decisione owner su #393); si valuta la MAX sulle
     # gambe (esiti mutuamente esclusivi).
     # Default OPT-IN (#383-style): max_win_warning_only=True => il cap parte in
-    # AVVISO; l'owner lo arma a BLOCCO reale mettendo False dalla GUI. FAIL-SAFE:
-    # config assente/corrotta ricade su trading_config.MAX_WIN (mai disattiva il cap).
+    # AVVISO; l'owner lo arma a BLOCCO reale mettendo False dalla GUI.
     # NOTA: il flag governa SOLO il precheck dutching — sul RiskGate del percorso
-    # ordine (vista RoserpinaRiskLimits) max_win resta un BLOCCO hard (H-14).
-    max_win: float = 10000.0
+    # ordine (vista RoserpinaRiskLimits) max_win configurato resta un BLOCCO hard (H-14).
+    max_win: Optional[float] = None
     max_win_warning_only: bool = True
 
     # Soglia WARNING (non blocca mai) sull'esposizione della singola operazione

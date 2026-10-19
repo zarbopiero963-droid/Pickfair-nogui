@@ -699,13 +699,19 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self.rs_recovery_tables_var = self._make_string_var("1")
         self.rs_commission_var = self._make_string_var("4.5")
         self.rs_min_stake_var = self._make_string_var("0.10")
-        self.rs_max_abs_var = self._make_string_var("10000.0")
+        self.rs_max_abs_var = self._make_string_var("")
         # Hard-stop giornalieri (safety-critical, prerequisiti del gate LIVE).
         # Campo vuoto = "non impostato" (None): il salvataggio NON azzera il
         # valore persistito e il gate LIVE resta fail-closed se non configurato
         # (vedi _parse_hard_stop / _save_roserpina_settings).
         self.rs_max_daily_loss_var = self._make_string_var("")
         self.rs_max_open_exposure_var = self._make_string_var("")
+        # Cap assoluti PR28-d: opzionali, vuoto = non attivo (rettifica owner
+        # 18/10/2026). Nessun valore iniziale in euro.
+        self.rs_max_order_exposure_var = self._make_string_var("")
+        self.rs_max_market_exposure_var = self._make_string_var("")
+        self.rs_max_event_exposure_abs_var = self._make_string_var("")
+        self.rs_max_drawdown_abs_var = self._make_string_var("")
         self.rs_max_session_loss_var = self._make_string_var("")  # P37 (#461 PR28)
         self.rs_max_exposure_stop_var = self._make_string_var("")  # P37/P38 (#461 PR28-c)
         self.rs_max_drawdown_hard_stop_var = self._make_string_var("")
@@ -721,7 +727,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         # Quota minima di strategia (floor editabile sopra il minimo Betfair 1.01).
         self.rs_min_price_var = self._make_string_var(str(trading_config.MIN_PRICE))
         # Max Win: cap vincita/payout per gamba + toggle solo-avviso (opt-in).
-        self.rs_max_win_var = self._make_string_var(str(trading_config.MAX_WIN))
+        self.rs_max_win_var = self._make_string_var("")
         self.rs_max_win_warning_only_var = self._make_bool_var(True)
         # Max Stake %: soglia di AVVISO (mai blocco) sull'esposizione dell'operazione.
         self.rs_max_stake_pct_var = self._make_string_var(str(trading_config.MAX_STAKE_PCT * 100))
@@ -1125,9 +1131,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Max Recovery Tables", self.rs_recovery_tables_var)
         self._labeled_entry(outer, "Commission %", self.rs_commission_var)
         self._labeled_entry(outer, "Min Stake", self.rs_min_stake_var)
-        self._labeled_entry(outer, "Max Stake Assoluto", self.rs_max_abs_var)
+        self._labeled_entry(outer, "Max Stake Assoluto (€, vuoto = non attivo)", self.rs_max_abs_var)
         self._labeled_entry(outer, "Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)", self.rs_max_daily_loss_var)
         self._labeled_entry(outer, "Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)", self.rs_max_open_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo ordine (€, vuoto = non attivo)", self.rs_max_order_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo mercato (€, vuoto = non attivo)", self.rs_max_market_exposure_var)
+        self._labeled_entry(outer, "Cap assoluto: Singolo evento (€, vuoto = non attivo)", self.rs_max_event_exposure_abs_var)
+        self._labeled_entry(outer, "Hard-stop: Drawdown assoluto (€, vuoto = non attivo)", self.rs_max_drawdown_abs_var)
         self._labeled_entry(outer, "Stop: Perdita Sessione Max (€, vuoto=non impostato)", self.rs_max_session_loss_var)
         self._labeled_entry(outer, "Stop: Esposizione Complessiva (€, vuoto=non impostato)", self.rs_max_exposure_stop_var)
         self._labeled_entry(outer, "Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)", self.rs_max_drawdown_hard_stop_var)
@@ -1136,7 +1146,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         self._labeled_entry(outer, "Liquidity avviso: Moltiplicatore (richiesta = stake x N)", self.rs_liq_multiplier_var)
         self._labeled_entry(outer, "Liquidity avviso: Floor assoluto € (0 = nessun floor)", self.rs_liq_min_abs_var)
         self._labeled_entry(outer, "Quota minima / Min Price (>= 1.02)", self.rs_min_price_var)
-        self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba)", self.rs_max_win_var)
+        self._labeled_entry(outer, "Max Win € (cap vincita/payout per gamba, vuoto = non attivo)", self.rs_max_win_var)
         self._labeled_entry(outer, "Max Stake % (avviso se esposizione operazione > % balance)", self.rs_max_stake_pct_var)
         self._labeled_entry(outer, "Profit epsilon € (avviso se varianza profitto tra esiti > tolleranza)", self.rs_profit_epsilon_var)
         self._labeled_entry(outer, "Auto-green delay (s) — grace prima del cashout (0.1-30)", self.rs_auto_green_delay_sec_var)
@@ -1597,6 +1607,11 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         except Exception:
             pass
 
+        # PF-CAP-10b/F1 (riesame indipendente): i campi Roserpina riflettono il persistito solo se il
+        # caricamento e' riuscito. Altrimenti un salvataggio scriverebbe i valori iniziali della GUI
+        # (cap opzionali vuoti => disattivati) sopra la configurazione scelta dall'utente: il save viene
+        # rifiutato con errore esplicito finche' un caricamento non riesce.
+        self._roserpina_loaded_ok = not hasattr(self.settings_service, "load_roserpina_config")
         try:
             if hasattr(self.settings_service, "load_roserpina_config"):
                 rs = self.settings_service.load_roserpina_config()
@@ -1614,9 +1629,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_recovery_tables_var.set(str(getattr(rs, "max_recovery_tables", self.rs_recovery_tables_var.get())))
                 self.rs_commission_var.set(str(getattr(rs, "commission_pct", self.rs_commission_var.get())))
                 self.rs_min_stake_var.set(str(getattr(rs, "min_stake", self.rs_min_stake_var.get())))
-                self.rs_max_abs_var.set(str(getattr(rs, "max_stake_abs", self.rs_max_abs_var.get())))
+                self.rs_max_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_stake_abs", None)))
                 self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
                 self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+                self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
+                self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
+                self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
+                self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
                 self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
                 self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
                 self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))
@@ -1627,7 +1646,7 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 self.rs_liq_guard_enabled_var.set(bool(getattr(rs, "liquidity_guard_enabled", True)))
                 self.rs_liq_warning_only_var.set(bool(getattr(rs, "liquidity_warning_only", True)))
                 self.rs_min_price_var.set(str(getattr(rs, "min_price", trading_config.MIN_PRICE)))
-                self.rs_max_win_var.set(str(getattr(rs, "max_win", trading_config.MAX_WIN)))
+                self.rs_max_win_var.set(self._hard_stop_to_str(getattr(rs, "max_win", None)))
                 self.rs_max_win_warning_only_var.set(bool(getattr(rs, "max_win_warning_only", True)))
                 self.rs_max_stake_pct_var.set(str(getattr(rs, "max_stake_pct", trading_config.MAX_STAKE_PCT * 100)))
                 self.rs_profit_epsilon_var.set(str(getattr(rs, "profit_epsilon", trading_config.PROFIT_EPSILON)))
@@ -1639,8 +1658,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 risk_profile = getattr(rs, "risk_profile", None)
                 risk_profile_value = getattr(risk_profile, "value", self.rs_risk_profile_var.get())
                 self.rs_risk_profile_var.set(str(risk_profile_value))
+                self._roserpina_loaded_ok = True
         except Exception:
-            pass
+            _LOGGER.exception("Caricamento configurazione Roserpina fallito: salvataggio Roserpina bloccato")
+            self._roserpina_loaded_ok = False
 
         try:
             if hasattr(self.settings_service, "load_simulation_config"):
@@ -1840,9 +1861,12 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
     def _parse_hard_stop(raw, label, *, is_pct=False):
         """Parsa un campo hard-stop dalla GUI in modo FAIL-CLOSED.
 
-        - vuoto => None: il save preserva il valore persistito (non azzera un
-          limite di sicurezza gia' configurato) e il gate LIVE resta bloccante
-          se il campo non e' impostato;
+        - vuoto => None. Per gli hard-stop di perdita/esposizione il save
+          preserva il valore persistito (non azzera un limite di sicurezza gia'
+          configurato) e il gate LIVE resta bloccante se il campo non e'
+          impostato; per i quattro cap monetari opzionali (ordine, mercato,
+          evento, drawdown assoluto) il vuoto DISATTIVA il limite (PF-CAP-10b,
+          decisione owner 18/10/2026);
         - valore presente: DEVE essere numerico, finito e > 0 (per la % anche
           <= 100), coerente con `_validate_live_hard_stop_config` del deploy
           gate (core/runtime_controller). Altrimenti solleva ValueError: il
@@ -1966,6 +1990,15 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
         return val
 
     def _save_roserpina_settings(self):
+        if getattr(self, "_roserpina_loaded_ok", True) is False:
+            # Caricamento fallito: i campi non rappresentano il persistito. Salvare ora
+            # sovrascriverebbe (e per i cap opzionali disattiverebbe) i limiti dell'utente.
+            self._safe_show_error(
+                "Errore salvataggio Roserpina",
+                "Configurazione Roserpina non caricata: salvataggio bloccato per non sovrascrivere "
+                "i limiti salvati. Riavvia l'applicazione.",
+            )
+            return
         try:
             from core.system_state import RoserpinaConfig, RiskProfile
 
@@ -1976,7 +2009,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             liq_multiplier = self._parse_book_pct(self.rs_liq_multiplier_var.get(), "Liquidity Moltiplicatore")
             liq_min_abs = self._parse_min_liquidity(self.rs_liq_min_abs_var.get(), "Liquidity Floor assoluto")
             min_price = self._parse_min_price(self.rs_min_price_var.get(), "Quota minima")
-            max_win = self._parse_max_win(self.rs_max_win_var.get(), "Max Win")
+            # Rettifica owner 18-19/10/2026: vuoto = non attivo, presente = numero finito > 0.
+            max_win = self._parse_hard_stop(self.rs_max_win_var.get(), "Max Win")
             # Profit epsilon: tolleranza € > 0 (riusa _parse_max_win: finito, > 0, ha default).
             profit_epsilon = self._parse_max_win(self.rs_profit_epsilon_var.get(), "Profit epsilon")
             max_stake_pct = self._parse_book_pct(self.rs_max_stake_pct_var.get(), "Max Stake %")
@@ -2016,9 +2050,13 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
                 anti_duplication_enabled=bool(self.rs_anti_dup_var.get()),
                 commission_pct=float(self.rs_commission_var.get()),
                 min_stake=float(self.rs_min_stake_var.get()),
-                max_stake_abs=float(self.rs_max_abs_var.get()),
+                max_stake_abs=self._parse_hard_stop(self.rs_max_abs_var.get(), "Max Stake Assoluto"),
                 max_daily_loss=self._parse_hard_stop(self.rs_max_daily_loss_var.get(), "Perdita giornaliera max"),
                 max_open_exposure=self._parse_hard_stop(self.rs_max_open_exposure_var.get(), "Esposizione aperta max"),
+                max_order_exposure=self._parse_hard_stop(self.rs_max_order_exposure_var.get(), "Cap singolo ordine"),
+                max_market_exposure=self._parse_hard_stop(self.rs_max_market_exposure_var.get(), "Cap singolo mercato"),
+                max_event_exposure_abs=self._parse_hard_stop(self.rs_max_event_exposure_abs_var.get(), "Cap singolo evento"),
+                max_drawdown_abs=self._parse_hard_stop(self.rs_max_drawdown_abs_var.get(), "Drawdown assoluto"),
                 max_session_loss=self._parse_hard_stop(self.rs_max_session_loss_var.get(), "Perdita sessione max"),
                 max_exposure_stop=self._parse_hard_stop(self.rs_max_exposure_stop_var.get(), "Stop esposizione complessiva"),
                 max_drawdown_hard_stop_pct=self._parse_hard_stop(self.rs_max_drawdown_hard_stop_var.get(), "Drawdown max %", is_pct=True),
@@ -2057,7 +2095,8 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             except Exception as exc:
                 reload_error = exc
         # Riallinea i campi hard-stop al valore REALMENTE persistito: un campo
-        # lasciato vuoto (semantica preserve) torna a mostrare il limite
+        # lasciato vuoto (semantica preserve, non per i quattro cap monetari
+        # opzionali che il vuoto disattiva) torna a mostrare il limite
         # conservato, evitando una divergenza UI/stato (un limite attivo ma
         # invisibile). Refresh mirato ai soli hard-stop, per non toccare gli
         # altri tab ne' la logica force-simulation di _load_initial_settings.
@@ -2092,6 +2131,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             rs = self.settings_service.load_roserpina_config()
             self.rs_max_daily_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_daily_loss", None)))
             self.rs_max_open_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_open_exposure", None)))
+            self.rs_max_order_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_order_exposure", None)))
+            self.rs_max_market_exposure_var.set(self._hard_stop_to_str(getattr(rs, "max_market_exposure", None)))
+            self.rs_max_event_exposure_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_event_exposure_abs", None)))
+            self.rs_max_drawdown_abs_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_abs", None)))
             self.rs_max_session_loss_var.set(self._hard_stop_to_str(getattr(rs, "max_session_loss", None)))
             self.rs_max_exposure_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_exposure_stop", None)))
             self.rs_max_drawdown_hard_stop_var.set(self._hard_stop_to_str(getattr(rs, "max_drawdown_hard_stop_pct", None)))

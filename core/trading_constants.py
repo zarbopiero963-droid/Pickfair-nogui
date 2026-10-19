@@ -24,6 +24,12 @@ REQ_EXECUTE_CASHOUT = "REQ_EXECUTE_CASHOUT"
 CMD_EXECUTE_CASHOUT = "CMD_EXECUTE_CASHOUT"
 CASHOUT_SUCCESS = "CASHOUT_SUCCESS"
 CASHOUT_FAILED = "CASHOUT_FAILED"
+# Il bridge ha scartato una REQ_EXECUTE_CASHOUT duplicata (nessun hedge piazzato per quella richiesta):
+# esito esplicito, cosi' chi attende la richiesta (barriera d'ammissione) non resta appeso.
+CASHOUT_REQUEST_SUPPRESSED = "CASHOUT_REQUEST_SUPPRESSED"
+# Esito della gestione del residuo di un hedge UNMATCHED (CashoutResidualHandler): cancel confermato o no.
+# Un hedge UNMATCHED resta a riposo e puo' abbinarsi finche' il cancel non e' confermato.
+CASHOUT_RESIDUAL_HANDLED = "CASHOUT_RESIDUAL_HANDLED"
 
 # ── ORDER STATES ──
 STATUS_INFLIGHT = "INFLIGHT"

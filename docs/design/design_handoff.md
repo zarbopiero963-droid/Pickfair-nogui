@@ -152,7 +152,7 @@ Entry (label verbatim): `Target Profit Cycle %`, `Max Single Bet %`,
 `Max Total Exposure %`, `Max Event Exposure %`, `Auto Reset Drawdown %`,
 `Defense Drawdown %`, `Lockdown Drawdown %`, `Expansion Profit %`,
 `Expansion Multiplier`, `Defense Multiplier`, `Table Count`,
-`Max Recovery Tables`, `Commission %`, `Min Stake`, `Max Stake Assoluto`,
+`Max Recovery Tables`, `Commission %`, `Min Stake`, `Max Stake Assoluto (€, vuoto = non attivo)`,
 `Hard-stop: Perdita Giornaliera Max (€, vuoto=non impostato)`,
 `Hard-stop: Esposizione Aperta Max (€, vuoto=non impostato)`,
 `Hard-stop: Drawdown Max % (0-100, vuoto=non impostato)`,
@@ -161,7 +161,7 @@ Entry (label verbatim): `Target Profit Cycle %`, `Max Single Bet %`,
 `Liquidity avviso: Moltiplicatore (richiesta = stake x N)`,
 `Liquidity avviso: Floor assoluto € (0 = nessun floor)`,
 `Quota minima / Min Price (>= 1.02)`,
-`Max Win € (cap vincita/payout per gamba)`,
+`Max Win € (cap vincita/payout per gamba, vuoto = non attivo)`,
 `Max Stake % (avviso se esposizione operazione > % balance)`,
 `Profit epsilon € (avviso se varianza profitto tra esiti > tolleranza)`,
 `Auto-green delay (s) — grace prima del cashout (0.1-30)`.
@@ -175,7 +175,7 @@ avviso; riga 3 Max Win solo avviso; riga 4 auto-green e profit epsilon. Etichett
 `Allow Recovery` (ON), `Anti Duplication Enabled` (ON),
 `Liquidity Guard attivo`,
 `Liquidity: solo avviso (⚠ togliere = BLOCCA il submit; dati assenti bloccano sempre)` (il guard vale per dutching e ingressi singoli; un book assente o non leggibile nega l'ingresso anche in solo-avviso),
-`Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)` (ON; il flag governa solo il precheck dutching, il RiskGate blocca sempre oltre Max Win),
+`Max Win: solo avviso nel precheck Dutching (l'ordine oltre Max Win è sempre bloccato)` (ON; il flag governa solo il precheck dutching, il RiskGate blocca sempre oltre un Max Win configurato),
 `Auto-green: attiva grace prima del cashout (ritardo)` (OFF),
 `Profit epsilon: mostra avviso varianza profitto` (ON).
 
@@ -362,3 +362,22 @@ Incidents, Incident Timeline, Audit, Safe Mode, Diagnostics`; badge
 Safe Mode` senza conferma yes/no; ExportPanel `Export Diagnostics ZIP`).
 Se verranno integrati nella Mini GUI, l'integrazione è una modifica design
 e va riportata qui.
+
+# PR28-d — controlli assoluti Roserpina
+
+La sezione Roserpina espone quattro campi monetari aggiuntivi, tutti opzionali
+(rettifica owner 18/10/2026: nessun cap monetario fisso di default):
+`Cap assoluto: Singolo ordine (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo mercato (€, vuoto = non attivo)`,
+`Cap assoluto: Singolo evento (€, vuoto = non attivo)` e
+`Hard-stop: Drawdown assoluto (€, vuoto = non attivo)`. I campi partono vuoti e
+mostrano solo il valore persistito dall'utente, se presente. Campo vuoto =
+limite non attivo: salvare con il campo vuoto DISATTIVA anche un valore gia'
+persistito (PF-CAP-10b; diversamente dagli hard-stop di perdita/esposizione,
+dove il vuoto preserva il valore salvato). Se il caricamento iniziale della configurazione
+Roserpina fallisce, il salvataggio del tab Roserpina e' bloccato con un errore esplicito («Configurazione
+Roserpina non caricata: salvataggio bloccato…»), cosi' i valori iniziali della GUI non sovrascrivono mai i
+limiti salvati; un valore presente deve essere un numero finito > 0,
+altrimenti il salvataggio si interrompe con errore. Un valore persistito ma
+illeggibile (0, negativo, testo) non e' un opt-out: il runtime nega i nuovi
+ordini con `<nome>_non_valido`.

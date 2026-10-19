@@ -50,6 +50,7 @@ from typing import Any, Dict
 
 from core.trading_constants import (
     CASHOUT_FAILED,
+    CASHOUT_REQUEST_SUPPRESSED,
     CMD_EXECUTE_CASHOUT,
     REQ_EXECUTE_CASHOUT,
 )
@@ -99,6 +100,15 @@ class CashoutRequestBridge:
 
         if self._is_duplicate(normalized):
             logger.warning("[CashoutRequestBridge] REQ_EXECUTE_CASHOUT duplicata ignorata.")
+            # Esito esplicito della richiesta scartata: nessun hedge parte per QUESTA richiesta. Senza, chi
+            # attende l'esito (barriera d'ammissione del runtime) resterebbe appeso fino al riavvio.
+            self.bus.publish(CASHOUT_REQUEST_SUPPRESSED, {
+                "reason": "duplicate_request_suppressed",
+                "market_id": normalized["market_id"],
+                "selection_id": normalized["selection_id"],
+                "side": normalized["side"],
+                **self._request_identity(normalized),
+            })
             return
 
         logger.info("[CashoutRequestBridge] Forward REQ_EXECUTE_CASHOUT -> CMD_EXECUTE_CASHOUT")
@@ -143,7 +153,14 @@ class CashoutRequestBridge:
             "event_name": str(payload.get("event_name", "")),
             "market_name": str(payload.get("market_name", "")),
             "runner_name": str(payload.get("runner_name", "")),
+            **cls._request_identity(payload),
         }
+
+    @staticmethod
+    def _request_identity(payload: Any) -> Dict[str, Any]:
+        """``cashout_request_id`` della richiesta, propagato fino all'esito (solo se presente e stringa)."""
+        raw = payload.get("cashout_request_id") if isinstance(payload, dict) else None
+        return {"cashout_request_id": raw} if isinstance(raw, str) and raw else {}
 
     @staticmethod
     def _require_market_id(value: Any) -> str:
@@ -251,6 +268,7 @@ class CashoutRequestBridge:
             "matched": 0.0,
             "market_id": str(raw_market) if isinstance(raw_market, (str, int, float)) and not isinstance(raw_market, bool) else "",
             "selection_id": safe.get("selection_id"),
+            **self._request_identity(safe),
         })
 
 

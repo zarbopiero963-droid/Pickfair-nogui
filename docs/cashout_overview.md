@@ -197,6 +197,81 @@ Persistenza su `audit_events` (zero migrazioni). Notify Telegram (best-effort).
 Il cancel è limitato **esclusivamente** al cashout UNMATCHED: mai
 QUICK_BET/dutching/cancel/replace.
 
+Dopo ogni esito l'handler pubblica `CASHOUT_RESIDUAL_HANDLED` (`status`,
+`cancel_attempted`, `cancel_ok`, `bet_id`, `market_id`, `selection_id`,
+`cashout_request_id`).
+
+### 7.1 Barriera d'ammissione degli ingressi (PR28-d, #522)
+
+Un CASHOUT/CASHOUT_ALL apre una **barriera** sul proprio ambito (globale per
+CASHOUT_ALL; altrimenti la partita — ogni alias `event_name`/`event`/`match` —
+più mercato o selezione). Finché è attiva, nessun nuovo ingresso nell'ambito
+viene ammesso (`cashout_invalidation_active`); il cashout non viene mai
+ritardato (PF-EXEC-03).
+
+- Ogni `REQ_EXECUTE_CASHOUT` porta un `cashout_request_id`; la barriera resta
+  attiva finché **ogni** richiesta ha un esito certo: `CASHOUT_SUCCESS`,
+  `CASHOUT_FAILED` certo, `CASHOUT_REQUEST_SUPPRESSED` (duplicato del bridge).
+- **UNMATCHED** non chiude la barriera da solo: la chiude
+  `CASHOUT_RESIDUAL_HANDLED` con `cancel_ok=True`. Cancel non tentato (nessun
+  `bet_id`) o non confermato => barriera tenuta (incerta) fino al riavvio.
+- **Match parziale**: `CASHOUT_SUCCESS` dichiara `requested`, `residual` e `partial`.
+  Solo `partial=False` (match completo) chiude la richiesta. Con `partial` vero o
+  non dichiarato il `CashoutResidualHandler` esegue **un solo** cancel del residuo
+  dello stesso `bet_id`, persiste un record `PARTIAL` e pubblica
+  `CASHOUT_RESIDUAL_HANDLED`: la barriera si chiude solo con `cancel_ok=True`,
+  altrimenti resta incerta fino al riavvio e alla riconciliazione.
+- **AMBIGUOUS/ERROR** => barriera incerta, tenuta fino al riavvio.
+- `get_status()` espone `cashout_barriers_active` e `cashout_barriers_uncertain`.
+- **Fence fino all'engine**: col bus non bloccante `CMD_QUICK_BET` è solo
+  accodato. L'ingresso porta la registrazione del fence (`customer_ref`) e il
+  `TradingEngine` la ricontrolla prima del piazzamento
+  (`admission_fence_verdict`): cashout iniziato nel suo ambito =>
+  `cashout_invalidation_stale`, `QUICK_BET_FAILED`, tavolo e dedupe liberati.
+  La registrazione si consuma per ogni ordine che arriva all'engine, anche
+  negato da safe mode o RiskGate; un errore del controllo nega l'ordine
+  (`ADMISSION_FENCE_RAISED` / `ADMISSION_FENCE_BAD_RESULT`).
+- **Un fence per richiesta**: due ingressi in coda con lo stesso `customer_ref`
+  non si scambiano il fence; finché la coda di quel ref non si svuota sono
+  negati tutti (`customer_ref_in_conflitto`, fail-closed). Una richiesta
+  rifiutata dall'engine prima del controllo (lockdown, normalizzazione fallita)
+  scarta solo il proprio fence (`admission_fence_discard`), così non resta un
+  fence orfano.
+- **Ingresso già in invio**: un ingresso che ha superato il fence resta registrato
+  come «in volo» finché l'engine non ha l'esito dell'invio
+  (`admission_placement_done`, qualunque esito). Un cashout nel suo ambito, prima
+  di fotografare l'exchange, attende quegli ingressi (fino a 35 s,
+  `_ENTRIES_IN_FLIGHT_WAIT_S`), così la fotografia del router contiene anche
+  l'ordine appena piazzato. Attesa scaduta, o routing con il lock d'ammissione
+  trattenuto: il cashout parte comunque (mai bloccato) e la barriera diventa
+  incerta fino al riavvio.
+
+- **Invio con esito ignoto**: se l'engine rinuncia all'esito (AMBIGUOUS, attesa
+  dell'executor scaduta: il task può ancora inviare), eccezione o risultato
+  mancante, l'ingresso passa fra gli «ambigui». Un cashout nel suo ambito diventa
+  subito incerto (nessuna attesa) finché un esito noto dello stesso ordine
+  (`QUICK_BET_*` diverso da AMBIGUOUS, con lo stesso `correlation_id`, non un
+  rifiuto pre-invio DENIED/DUPLICATE_BLOCKED) non lo risolve. Oggi questi esiti
+  arrivano solo dal ciclo di vita dell'ordine in LIVE (`order_manager`); la
+  riconciliazione non pubblica `QUICK_BET_*`, quindi in SIM l'ingresso resta
+  ambiguo fino al riavvio (fail-closed). La registrazione appartiene alla
+  richiesta che l'ha creata: un secondo ingresso con lo stesso `customer_ref`,
+  mentre il primo è in invio o ambiguo, viene negato (`ingresso_gia_in_invio`)
+  e non la sovrascrive.
+
+Limiti noti:
+- un residuo di hedge parziale che si abbina da solo prima del cancel fa fallire
+  il cancel: barriera incerta fino al riavvio anche a posizione chiusa
+  (fail-closed, costo operativo);
+- un fence orfano (due ingressi in coda con lo stesso `customer_ref` consumati
+  dall'engine in ordine inverso, bus che scarta la coda allo stop) nega le
+  riconsegne di quel ref fino al riavvio: mai un ingresso senza fence. Oggi
+  nessun produttore fornisce `customer_ref` duplicati;
+- lo scarto del fence presuppone un solo consumer di `CMD_QUICK_BET` per bus
+  (oggi un solo `TradingEngine`): un secondo consumer va prima reso compatibile;
+- l'attesa degli ingressi in invio occupa il thread che instrada il cashout
+  (worker del bus o poller dei settlement) fino all'esito dell'invio.
+
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).

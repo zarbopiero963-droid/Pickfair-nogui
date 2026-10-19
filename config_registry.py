@@ -431,7 +431,8 @@ class ConfigRegistry:
                     key=f"trading.{const}",
                     label=label,
                     value=value,
-                    valid=value is not None,
+                    # MAX_WIN opzionale (rettifica owner 18-19/10/2026): None = non attivo, valido.
+                    valid=value is not None or const == "MAX_WIN",
                     required_for_live=False,
                     source="code",
                 )

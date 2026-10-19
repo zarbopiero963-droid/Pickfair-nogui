@@ -390,3 +390,33 @@ def test_senza_layer_selection_id_str_oggi_piazza():
     )
 
     assert router.calls, "gli invarianti hard ora bloccano i tipi: aggiorna il delta"
+
+
+# Verifica owner pre-merge #522: completezza del match dichiarata nel CASHOUT_SUCCESS.
+def test_fully_matched_hedge_declares_no_residual():
+    bus = _FakeBus()
+    CashoutExecutor(bus, _FakeRouter(_ok_result(matched=4.0))).on_cmd_execute_cashout(_cmd_payload(stake=4.0))
+    out = bus.last(CASHOUT_SUCCESS)
+    assert out["partial"] is False and out["requested"] == 4.0 and out["residual"] == 0.0
+
+
+def test_partially_matched_hedge_declares_its_residual():
+    bus = _FakeBus()
+    CashoutExecutor(bus, _FakeRouter(_ok_result(matched=1.5))).on_cmd_execute_cashout(_cmd_payload(stake=4.0))
+    out = bus.last(CASHOUT_SUCCESS)
+    assert out["partial"] is True and out["requested"] == 4.0 and out["residual"] == 2.5
+
+
+def test_unreadable_requested_stake_is_rejected_before_any_send():
+    bus = _FakeBus()
+    router = _FakeRouter(_ok_result(matched=1.5))
+    CashoutExecutor(bus, router).on_cmd_execute_cashout(_cmd_payload(stake="x"))
+    assert router.calls == [] and CASHOUT_SUCCESS not in bus.topics()
+
+
+def test_success_without_a_readable_requested_stake_is_declared_partial():
+    """Fail-closed se l'esito arriva senza stake richiesto leggibile: il residuo non e' dimostrato nullo."""
+    bus = _FakeBus()
+    CashoutExecutor(bus, _FakeRouter())._handle_result(_ok_result(matched=1.5), {"market_id": "1.222"})
+    out = bus.last(CASHOUT_SUCCESS)
+    assert out["partial"] is True and out["residual"] is None

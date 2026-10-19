@@ -10,6 +10,141 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#505 ripresa sopra la #512 (PF-505-RECOVERY-INTEGRATION-01, fase D di PF-PR-SEQUENCE-RECOVERY-01):** il
+  lavoro della #505 (chiusa temporaneamente, conservato in `archive/pf-505-pre-512` `618884e` e
+  `archive/pf-505-cap-reconciliation-prep` `022ee9d`) è integrato su `main` `f8bbbe9`. Restano in vigore la
+  rettifica owner del 18/10/2026, cioè i cap monetari assoluti (`max_order_exposure`, `max_market_exposure`,
+  `max_event_exposure_abs`, `max_drawdown_abs`) **opzionali e non attivi di default**, e tutte le protezioni della
+  #512 (fondi verificati, liability LAY, riserve atomiche, dedupe, riconciliazione). Due test sono stati
+  allineati, senza allentare nessun assert:
+  - il test del cap mercato/evento ora misura una posizione su un'altra chiave evento, perché la stessa chiave
+    è fermata prima dalla #512 (`evento_gia_in_posizione`);
+  - F033 (cap evento aggregato su più mercati dello stesso incontro) non è più xfail, perché lo consegna la #505.
+
+  Il riesame indipendente ha trovato due difetti P1 nati solo dalla combinazione #505 + #512, entrambi corretti
+  (RED→GREEN, `tests/acceptance/test_issue437_pr28d_integration_512.py`):
+  - **lock di ammissione durante la rete:** il fetch del book di PF-ALL-F030 (attivo di default) girava con
+    `_risk_admission_lock` tenuto, quindi un CASHOUT/CASHOUT_ALL, `risk_stop` o il salvataggio della config
+    aspettavano la rete dell'ingresso. Ora il fetch gira fuori dal lock, insieme al best price
+    (`_call_outside_admission_lock`), sia sul segnale sia sull'auto-next. Un cashout arrivato nel frattempo
+    invalida l'ingresso prima di ogni ordine (`cashout_invalidation_stale`) e il tavolo viene liberato. In
+    un'ammissione rientrante il lock resta tenuto;
+  - **identità dell'evento dopo il riavvio:** l'ordine ora salva `event_id` ed `event_identity` e la
+    ricostruzione F018 li rimette nel meta del tavolo. Con `max_event_exposure_abs` configurato, due segnali
+    dello stesso `event_id` con nomi scritti diversamente vengono riconosciuti come lo stesso evento anche dopo
+    un riavvio. Gli ordini salvati prima di questa correzione restano riconosciuti per nome, come prima.
+
+  Correzioni dalla review Codex della #522, ognuna con test RED→GREEN:
+  - **cashout per partita:** il `CashoutRouter` chiude per `event_name` tutti i mercati della partita, quindi
+    la barriera d'ammissione ora copre anche la partita (chiave `("event", nome normalizzato)`), non solo
+    mercato e selezione. Prima un CASHOUT con il solo nome evento non fermava nessun ingresso;
+  - **config ricaricata durante la finestra di rete:** se `reload_config` sostituisce la config mentre un
+    ingresso è fuori dal lock, l'ingresso approvato con la config precedente non parte
+    (`config_cambiata_durante_ammissione`). Il tavolo viene liberato e il segnale si può ripetere;
+  - **alias `match`:** vale come nome evento anche per il cap evento. Prima, con il cap configurato, un
+    segnale con `match` veniva rifiutato come `max_event_exposure_abs_non_verificabile`;
+  - **barriera viva fino all'esito dell'hedge** (PF-522-FINAL-HARDENING-01): il bus di produzione è
+    asincrono, quindi il routing ritorna dopo aver pubblicato `REQ_EXECUTE_CASHOUT`, ma l'hedge viene
+    piazzato più tardi. La barriera ora resta attiva finché ogni gamba pubblicata dal router non riceve un
+    esito `CASHOUT_SUCCESS`/`CASHOUT_FAILED` (qualunque status). Un esito che non arriva lascia la barriera
+    attiva (fail-closed) fino al riavvio, visibile in `get_status()["cashout_barriers_active"]`. Prima, un
+    ingresso nello stesso ambito poteva essere piazzato mentre l'hedge era ancora in coda.
+  - Il `RuntimeController` usa gli helper della barriera tramite la classe: i test con stub (`_RC`) che
+    chiamano i metodi non legati continuano a funzionare.
+  - **Barriera, correzioni dalla verifica indipendente:**
+    - **identificativo per richiesta:** ogni `REQ_EXECUTE_CASHOUT` del router porta un `cashout_request_id`,
+      che bridge ed executor riportano in ogni esito. La barriera si chiude solo con gli esiti delle proprie
+      richieste: l'esito di un altro hedge sulla stessa gamba (auto-green, UI) non la rilascia;
+    - **duplicati:** quando il bridge scarta una REQ duplicata pubblica `CASHOUT_REQUEST_SUPPRESSED`, che chiude
+      la richiesta. Prima la barriera restava appesa fino al riavvio, in modo globale con CASHOUT_ALL (P1);
+    - **esito ignoto:** con esito `AMBIGUOUS` o `ERROR` l'hedge è ignoto e la barriera resta attiva
+      (`cashout_barriers_uncertain`);
+    - **grace:** il cancel del grace chiude la barriera solo se il Timer non è ancora partito;
+    - **`validators.signal_side`:** con un segnale non-dict dà `ValueError` o il default, mai `AttributeError`.
+
+- **#522, review Codex su `c4ac69e`: quattro P1, ciascuno con test RED→GREEN.**
+  - **UNMATCHED:** un hedge UNMATCHED resta a riposo e può abbinarsi. La barriera ora si chiude solo quando il
+    `CashoutResidualHandler` conferma il cancel (`CASHOUT_RESIDUAL_HANDLED`, `cancel_ok=True`, con il
+    `cashout_request_id`). Se il cancel non è confermato, la richiesta resta incerta e la barriera attiva.
+  - **Alias evento in conflitto:** `event`, `match` ed `event_name` che indicano eventi diversi vengono rifiutati
+    (`evento_ambiguo`). Un unico nome canonico (`_signal_event_name`) alimenta cap evento, barriera, payload
+    d'ordine e meta del tavolo.
+  - **Ingresso accodato prima di un cashout:** con il bus non bloccante, `CMD_QUICK_BET` è solo accodato. Il fence
+    d'ammissione viaggia fino al `TradingEngine`, che lo ricontrolla prima del piazzamento
+    (`admission_fence_verdict`). Se nel frattempo è partito un cashout nel suo ambito, l'ordine viene negato
+    (`QUICK_BET_FAILED` DENIED, tavolo e dedupe liberati). Il cashout non viene ritardato (PF-EXEC-03).
+  - **Cap assoluti su bet manuale e Dutching:** `max_order_exposure`, `max_market_exposure`,
+    `max_event_exposure_abs` e `max_drawdown_abs`, se configurati, valgono anche per `manual_bet` e per il
+    precheck Dutching, prima di ogni side-effect (`absolute_cap_reason_for_orders`, stessa formula dei segnali).
+    I lotti Dutching occupano un tavolo con mercato, evento ed esposizione (`submit_dutching`), quindi entrano
+    nelle misure dei controlli successivi. Limite preesistente: il bet manuale non occupa un tavolo, quindi la
+    sua esposizione non entra in quelle misure (`manual_bet` oggi non ha chiamanti di produzione). Restano da
+    fare prima di attivare le corsie Dutching/manuale (oggi dormienti), registrati in #523 con
+    `BLOCKS_DUTCHING_ACTIVATION`: lato obbligatorio per ogni selezione e passaggio dalla barriera cashout e dal
+    fence d'ammissione.
+  - **Verifica indipendente del delta (#522):** la registrazione del fence ora si consuma per ogni ordine che
+    arriva all'engine, anche se lo negano safe mode o RiskGate (prima restava in memoria). Un controllo del
+    fence o dei cap diretti che risponde un tipo inatteso blocca l'ordine (`ADMISSION_FENCE_BAD_RESULT`,
+    `cap_assoluti_non_verificabili`). Un CASHOUT che nomina la partita con `event` o `match` apre la barriera su
+    quella partita. Aggiunti i test per LAY = liability, errore del controllo cap, cap evento senza identità,
+    drawdown assoluto e registrazione dell'auto-next. Documentazione in `docs/cashout_overview.md` §7.1.
+  - **Verifica owner pre-merge (#522), due P1 corretti con RED→GREEN:**
+    - **Ingresso già in invio durante un cashout:** con il bus di produzione l'engine piazza fuori dal lock
+      d'ammissione. Un cashout partito fra il controllo del fence e l'invio fotografava l'exchange senza
+      l'ordine, che veniva poi piazzato fuori dalla chiusura (riprodotto 3 volte su 3). Ora l'ingresso resta
+      «in volo» fino all'esito dell'invio e il cashout attende prima della fotografia. Attesa scaduta
+      (35 s) o lock trattenuto: cashout comunque eseguito, barriera incerta fino al riavvio.
+    - **Hedge abbinato in parte:** `CASHOUT_SUCCESS` con match parziale chiudeva la barriera e lasciava il
+      residuo a riposo senza cancel né record. Ora l'executor dichiara `requested`/`residual`/`partial`, il
+      residual handler esegue un solo cancel del residuo e persiste un record `PARTIAL`, e la barriera si
+      chiude solo con il cancel confermato. Un successo senza `partial=False` non chiude nulla (fail-closed).
+    - Test adeguati al nuovo contratto, senza allentare gli assert: gli esiti `CASHOUT_SUCCESS` sintetici dei
+      test dichiarano `partial=False`; due test sulle sottoscrizioni includono `CASHOUT_SUCCESS` del residual
+      handler.
+    - **Review indipendente della correzione:** un invio con esito AMBIGUOUS (attesa dell'executor scaduta, il
+      task può ancora inviare) chiudeva comunque la registrazione «in volo»; ora l'ingresso passa fra gli
+      ambigui e ogni cashout nel suo ambito diventa subito incerto, finché un esito noto dell'ordine non lo
+      risolve. La registrazione appartiene alla richiesta che l'ha creata: un duplicato con lo stesso
+      `customer_ref` negato prima dell'invio non la chiude più. Docstring di `cashout_wiring.py` e del
+      residual handler allineati.
+    - **Seconda review indipendente:** l'ingresso ambiguo si risolve solo con un esito dello stesso ordine
+      (stesso `correlation_id`, non un rifiuto pre-invio DENIED/DUPLICATE_BLOCKED di un duplicato); un secondo
+      ingresso con lo stesso `customer_ref` mentre il primo è in invio o ambiguo è negato
+      (`ingresso_gia_in_invio`) invece di sovrascrivere la registrazione.
+    - **Codex su `fcbaad7` (deroga owner sul fix loop della #522, fino al ciclo 10):** due ingressi in coda con
+      lo stesso `customer_ref` si sovrascrivevano il fence, quindi il primo poteva partire con il fence
+      dell'altro evento e il secondo senza fence. Ora c'è un fence per richiesta e, finché quel ref ha più
+      ingressi in coda, sono negati tutti (`customer_ref_in_conflitto`). Un ingresso rifiutato dall'engine
+      prima del controllo del fence (lockdown, normalizzazione fallita, engine non pronto) scarta il proprio
+      fence (`admission_fence_discard`, legato all'identità della richiesta): nessun fence orfano lascia le
+      riconsegne dello stesso intento in conflitto fino al riavvio (review indipendente su `7a715c6`).
+    - **Corsie Dutching e `manual_bet`:** il guardrail `tests/guardrails/test_dutching_lane_dormant_523.py`
+      fallisce se il codice di produzione pubblica `REQ_PLACE_DUTCHING`/`CMD_PLACE_DUTCHING` (fuori
+      dall'inoltro del RiskMiddleware) o chiama `manual_bet`/`submit_dutching`/`precheck`, e rimanda alla
+      #523.
+
+- **Rettifica owner 18/10/2026, chiarimento definitivo del 19/10: tetti monetari preesistenti.**
+  `max_stake_abs` (RSR-15, tetto allo stake per ordine) e `max_win` (RSR-26, tetto alla vincita/esposizione
+  per gamba sul RiskGate, sul precheck Dutching e sul bet manuale) sono **opzionali e disattivati di
+  default**. Il default numerico 10000.0 è stato rimosso da `RoserpinaConfig`, dal loader, dalla GUI e da
+  `trading_config.MAX_WIN`. Nella GUI un campo vuoto significa "non attivo". Un valore presente ma illeggibile
+  o `<= 0` blocca gli ordini (fail-closed), non disattiva il tetto. Un `10000.0` salvato prima della rettifica,
+  cioè il vecchio default scritto a ogni salvataggio della tab, vale "non attivo"; dopo il primo salvataggio la
+  marcatura `roserpina.monetary_caps_rectified_20261018` rende esplicito ogni valore successivo. Restano
+  invariati le formule e le percentuali del Money Management, i fondi, la liability LAY, le riserve, i vincoli
+  Betfair e le protezioni di integrità. Anche un valore `<= 0` salvato prima della rettifica vale "non attivo":
+  prima significava "nessun tetto" per `max_stake_abs` e ricadeva sul default per `max_win`. Dopo la marcatura,
+  invece, un valore `<= 0` è una configurazione non valida e blocca.
+
+  **Residui dichiarati** (verifica indipendente, P2):
+  - un CASHOUT_ALL con una gamba AMBIGUOUS/ERROR tiene una barriera globale fino al riavvio, senza sblocco
+    manuale (fail-closed, visibile in `cashout_barriers_uncertain`);
+  - un `10000` scelto esplicitamente prima della rettifica non è distinguibile dal default storico e diventa
+    "non attivo" (log info);
+  - il set dei grace annullati cresce di un intero per cancel riuscito, senza effetti sulla correttezza;
+  - se in futuro si aggiunge un secondo publisher di `REQ_EXECUTE_CASHOUT` (UI, auto-green), una sua REQ in
+    volo non è coperta dalla barriera (commento in `core/runtime_controller.py`).
+
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza
   `event_key`), non solo per `cleared:`; senza verifica possibile nessun rilascio per mercato. Test esistenti che
@@ -255,6 +390,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   né un tavolo oltre `table_count`. Prima, con recovery attivo e dopo una perdita, un secondo ingresso riceveva
   lo stesso tavolo e ne sovrascriveva la posizione: esposizione persa dal totale dei cap e due posizioni su un
   tavolo. Trovato dalla campagna di simulazione Roserpina (con un solo tavolo), reso raggiungibile da F2.
+
+### PR28-d — cap assoluti Roserpina (opzionali)
+- Aggiunti i limiti assoluti in euro configurabili per singolo ordine,
+  mercato, evento (identita' canonica) e drawdown assoluto, applicati sul
+  rischio BACK/LAY e insieme ai limiti percentuali/totali esistenti.
+- Rettifica owner 18/10/2026: nessun cap monetario fisso di default. I
+  quattro limiti sono DISATTIVI finche' l'utente non li configura (chiave
+  assente, `None` o campo vuoto = non attivo, mai un numero); un valore
+  presente ma invalido (0, negativo, NaN, bool, testo) non e' un opt-out e
+  nega i nuovi ordini con `<nome>_non_valido`; un valore valido e' applicato
+  esattamente; le chiavi legacy senza prefisso `roserpina.` sono lette e
+  loggate. `max_drawdown_abs` configurato mantiene il LOCKDOWN; assente non
+  produce alcun lockdown. Rimosso il loader con default numerico
+  (`_required_absolute_cap_value`); i campi GUI partono vuoti con etichetta
+  «(€, vuoto = non attivo)». Salvare uno di questi quattro campi vuoto
+  disattiva anche un valore gia' persistito (scritto come vuoto, letto come
+  `None`, oscura la chiave legacy); gli hard-stop di perdita/esposizione
+  conservano la semantica «vuoto preserva il valore salvato» (PF-CAP-10b).
+- Il lato dell'ordine e' ora obbligatorio e coerente fra alias: assente,
+  ambiguo o invalido viene rifiutato senza default BACK e senza invio.
+- P06 per-strategy resta esplicitamente rinviato alla futura gestione MCP;
+  questa slice non introduce strategie, bucket o un secondo money manager.
+- Gli ingressi catturano una generation scoped market/selection prima del
+  best-price; il cashout alza una barriera prima del routing e invalida gli
+  ingressi concorrenti senza mantenere il lock durante lookup o network. Gli
+  ordini stale rilasciano dedupe e tavolo prima del rifiuto.
 
 ### Security
 - Secrets (`password`, `api_hash`, `session_string`, etc.) now encrypted at

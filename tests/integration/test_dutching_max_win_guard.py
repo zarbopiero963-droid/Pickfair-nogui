@@ -222,26 +222,43 @@ def test_cap_is_per_leg_not_sum(monkeypatch):
     assert res["max_win_breaches"] == []
 
 
-def test_bad_config_max_win_still_blocks_huge_payout(monkeypatch):
-    # BLOCK-proof: config con max_win corrotto (=0) NON deve far passare un payout
-    # 15000 — il fallback fail-safe (trading_config.MAX_WIN=10000) blocca comunque.
+@pytest.mark.parametrize("warning_only", [False, True])
+def test_bad_config_max_win_still_blocks_huge_payout(monkeypatch, warning_only):
+    # BLOCK-proof: config con max_win corrotto (=0) NON deve far passare un payout 15000. Rettifica owner
+    # 18-19/10/2026: niente piu' fallback su una costante; un cap configurato ma non valido blocca l'ordine
+    # (fail-closed), anche in modalita' avviso.
     _patch_results(monkeypatch, [{"selectionId": 1, "price": 15.0, "stake": 1000.0, "side": "BACK"}])
-    rt = _runtime_with(max_win=0.0, warning_only=False)
+    rt = _runtime_with(max_win=0.0, warning_only=warning_only)
     res = _controller(rt).precheck(_payload())
-    assert res["ok"] is False and "oltre il cap" in res["error"]
-    assert res["max_win"] == float(trading_config.MAX_WIN)
+    assert res["ok"] is False and "Max Win configurato ma non valido" in res["error"]
+
+
+def test_unset_max_win_is_not_an_arbitrary_cap(monkeypatch):
+    # Rettifica owner 18-19/10/2026: max_win non configurato = non attivo, nessun default numerico.
+    _patch_results(monkeypatch, [{"selectionId": 1, "price": 15.0, "stake": 1000.0, "side": "BACK"}])
+    rt = _runtime_with(max_win=None, warning_only=False)
+    res = _controller(rt).precheck(_payload())
+    assert res["ok"] is True, res
+    assert res["max_win"] is None and res["max_win_breaches"] == []
 
 
 # ==========================================================================
 # 2) Helper puri (fail-safe / semantica)
 # ==========================================================================
-@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc", None])
-def test_max_win_fail_safe_falls_back_to_constant(bad):
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc", True])
+def test_max_win_configured_but_invalid_raises(bad):
     from controllers.dutching_controller import DutchingController
 
-    cfg = SimpleNamespace() if bad is None else SimpleNamespace(max_win=bad)
-    assert DutchingController._max_win(cfg) == float(trading_config.MAX_WIN)
+    with pytest.raises(ValueError):
+        DutchingController._max_win(SimpleNamespace(max_win=bad))
     assert DutchingController._max_win(SimpleNamespace(max_win=250.0)) == 250.0
+
+
+def test_max_win_absent_or_none_is_not_active():
+    from controllers.dutching_controller import DutchingController
+
+    assert DutchingController._max_win(SimpleNamespace()) is None
+    assert DutchingController._max_win(SimpleNamespace(max_win=None)) is None
 
 
 @pytest.mark.parametrize(
@@ -394,7 +411,7 @@ def test_max_win_round_trip():
 
 def test_max_win_defaults_when_absent():
     reloaded = SettingsService(_InMemoryDB()).load_roserpina_config()
-    assert reloaded.max_win == float(trading_config.MAX_WIN)
+    assert reloaded.max_win is None                 # rettifica owner 18-19/10/2026: non attivo di default
     assert reloaded.max_win_warning_only is True  # default OPT-IN
 
 
@@ -441,7 +458,19 @@ def test_gui_saves_max_win(monkeypatch):
         app.destroy()
 
 
-@pytest.mark.parametrize("bad", ["", "0", "-5", "nan", "inf", "abc"])
+def test_gui_save_empty_max_win_disables_the_cap(monkeypatch):
+    # Rettifica owner 18-19/10/2026: campo vuoto = cap non attivo (salvato come None, non bloccato).
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_max_win_var.set("")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg is not None
+        assert app.settings_service.saved_cfg.max_win is None
+    finally:
+        app.destroy()
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "nan", "inf", "abc"])
 def test_gui_save_blocks_invalid_max_win(monkeypatch, bad):
     # Un cap non valido NON deve essere persistito (niente drift GUI-vs-enforcement).
     app = _make_gui(monkeypatch)
@@ -449,5 +478,48 @@ def test_gui_save_blocks_invalid_max_win(monkeypatch, bad):
         app.rs_max_win_var.set(bad)
         app._save_roserpina_settings()
         assert app.settings_service.saved_cfg is None, bad
+    finally:
+        app.destroy()
+
+
+# ==========================================================================
+# Rettifica owner 18-19/10/2026: verifica indipendente su bdd7a21 (P2-1)
+# ==========================================================================
+@pytest.mark.parametrize("bad", [0.0, -5.0, float("nan"), float("inf"), "abc"])
+@pytest.mark.parametrize("warning_only", [False, True])
+def test_manual_bet_with_configured_but_invalid_max_win_is_blocked(bad, warning_only):
+    """Mutazione M14: un max_win non valido sul bet manuale non deve diventare fail-open."""
+    bus = _Bus()
+    rt = _runtime_with(max_win=bad, warning_only=warning_only)
+    res = _controller(rt, bus=bus).manual_bet(_manual_payload(2.0, 1.0))
+    assert res["ok"] is False
+    assert "Max Win configurato ma non valido" in res["error"]
+    assert not bus.published
+
+
+def test_manual_bet_without_max_win_has_no_arbitrary_cap():
+    bus = _Bus()
+    rt = _runtime_with(max_win=None, warning_only=False)
+    res = _controller(rt, bus=bus).manual_bet(_manual_payload(15.0, 1000.0))      # payout 15.000
+    assert res["ok"] is True, res
+    assert any(topic == "CMD_QUICK_BET" for topic, _ in bus.published)
+    assert res["max_win"] is None and res["max_win_warning"] is False
+
+
+def test_gui_save_max_stake_abs_blank_valid_and_invalid(monkeypatch):
+    """Mutazione M25: il salvataggio di Max Stake Assoluto non deve reinventare un default."""
+    app = _make_gui(monkeypatch)
+    try:
+        app.rs_max_abs_var.set("")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg.max_stake_abs is None
+        app.rs_max_abs_var.set("50")
+        app._save_roserpina_settings()
+        assert app.settings_service.saved_cfg.max_stake_abs == 50.0
+        for bad in ("0", "-1", "abc", "nan"):
+            app.settings_service.saved_cfg = None
+            app.rs_max_abs_var.set(bad)
+            app._save_roserpina_settings()
+            assert app.settings_service.saved_cfg is None, bad
     finally:
         app.destroy()

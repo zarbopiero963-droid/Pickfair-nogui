@@ -554,9 +554,8 @@ def test_F027_06_crash_with_open_positions_market_settles_while_down_booked_once
 
 
 # ================================================================ famiglia D: due mercati dello stesso evento (F033)
-@pytest.mark.xfail(strict=True, reason="F033: l'esposizione per evento e' per event_key (mercato+selezione+lato); due "
-                                       "mercati dello stesso incontro non si sommano nel cap evento. L'aggregazione per "
-                                       "identita' canonica e' nella PR #505 (protetta): BLOCKED, nessuna copia anticipata.")
+# F033: era xfail stretto finche' l'aggregazione per identita' canonica dell'evento stava nella #505; con la
+# #505 integrata (fase D, PF-505-RECOVERY-INTEGRATION-01) due mercati dello stesso incontro si sommano nel cap.
 def test_F033_event_cap_aggregates_markets_of_the_same_event():
     ev = "Juventus v Inter"
     r = run([{"op": "signal", "m": "1.951", "price": 2.0, "event": ev},

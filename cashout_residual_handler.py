@@ -15,10 +15,14 @@ riconciliazione è manuale/operatore):
   **severità alta**.
 - ``status ∈ {ERROR, REJECTED, FAILURE}``: notifica l'operatore; persiste un
   record diagnostico se c'è un ``bet_id`` o altro contesto utile.
+- ``CASHOUT_SUCCESS`` con ``partial`` non falso (hedge abbinato in parte, verifica owner
+  pre-merge #522): il residuo resta a riposo come per UNMATCHED ⇒ **un solo** cancel
+  del residuo dello stesso ``bet_id``, record ``PARTIAL`` persistito, notifica.
 
-Il cancel è limitato **esclusivamente** al cashout UNMATCHED: questo handler
-sottoscrive solo ``CASHOUT_FAILED`` e chiama ``cancel`` solo in
-``_handle_unmatched`` — non tocca mai QUICK_BET / dutching / cancel / replace.
+Il cancel è limitato **esclusivamente** al residuo dell'hedge di cashout (UNMATCHED o
+abbinato in parte): questo handler sottoscrive ``CASHOUT_FAILED`` e ``CASHOUT_SUCCESS`` e
+chiama ``cancel`` solo in ``_cancel_residual`` — non tocca mai QUICK_BET / dutching /
+cancel / replace.
 
 Gli I/O (``cancel``/``persist``/``notify``) sono **iniettati** → testabile senza
 broker, DB o Telegram. ``persist`` e ``notify`` non propagano mai eccezioni
@@ -29,7 +33,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict
 
-from core.trading_constants import CASHOUT_FAILED
+from core.trading_constants import CASHOUT_FAILED, CASHOUT_RESIDUAL_HANDLED, CASHOUT_SUCCESS
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +55,20 @@ class CashoutResidualHandler:
         self._cancel = cancel        # cancel(market_id, bet_ids) -> bool (cashout-only)
         self._persist = persist      # persist(record: dict) -> None
         self._notify = notify        # notify(text, *, severity) -> None
+        self._bus: Any = None
 
     def wire(self, bus: Any) -> None:
-        """Sottoscrive il consumer di ``CASHOUT_FAILED`` (e solo quello)."""
+        """Sottoscrive ``CASHOUT_FAILED`` e ``CASHOUT_SUCCESS`` (quest'ultimo solo per il residuo di un hedge
+        abbinato in parte, #522)."""
+        self._bus = bus
         bus.subscribe(CASHOUT_FAILED, self.on_cashout_failed)
+        bus.subscribe(CASHOUT_SUCCESS, self.on_cashout_success)
+
+    def on_cashout_success(self, payload: Any) -> None:
+        """Hedge abbinato in parte: il residuo a riposo si gestisce come un UNMATCHED. Completo => nulla."""
+        if not isinstance(payload, dict) or payload.get("partial") is False:
+            return
+        self._handle_unmatched(payload, status="PARTIAL")
 
     # =========================================================
     # HANDLER
@@ -83,25 +97,14 @@ class CashoutResidualHandler:
     # =========================================================
     # UNMATCHED — un solo cancel sicuro del resting + persist + notify
     # =========================================================
-    def _handle_unmatched(self, payload: Dict[str, Any]) -> None:
+    def _handle_unmatched(self, payload: Dict[str, Any], status: str = "UNMATCHED") -> None:
         bet_id = self._str(payload.get("bet_id"))
         market_id = self._str(payload.get("market_id"))
-
-        cancel_attempted = False
-        cancel_ok = False
-        cancel_error = ""
-        # Cancel SOLO se abbiamo l'identità dell'ordine; un solo tentativo, mai retry.
-        if bet_id and market_id:
-            cancel_attempted = True
-            try:
-                cancel_ok = bool(self._cancel(market_id, [bet_id]))
-            except Exception as exc:  # noqa: BLE001 - cancel best-effort, mai crash
-                cancel_error = str(exc)
-                cancel_ok = False
+        cancel_attempted, cancel_ok, cancel_error = self._cancel_residual(market_id, bet_id)
 
         record = {
             "type": AUDIT_TYPE_RESIDUAL,
-            "status": "UNMATCHED",
+            "status": status,
             "cancel_attempted": cancel_attempted,
             "cancel_ok": cancel_ok,
             "cancel_error": cancel_error,
@@ -110,7 +113,12 @@ class CashoutResidualHandler:
             "selection_id": payload.get("selection_id"),
             "matched": self._float(payload.get("matched")),
         }
+        if status == "PARTIAL":
+            record["requested"] = payload.get("requested")
+            record["residual"] = payload.get("residual")
         self._safe_persist(record)
+        self._publish_residual_outcome(payload, cancel_attempted=cancel_attempted, cancel_ok=cancel_ok,
+                                       status=status)
 
         if not cancel_attempted:
             detail = "nessun cancel (bet_id/market_id mancanti)"
@@ -119,9 +127,40 @@ class CashoutResidualHandler:
         else:
             detail = f"cancel NON confermato ({cancel_error or 'esito negativo'})"
         self._safe_notify(
-            f"CASHOUT UNMATCHED market={market_id} bet={bet_id}: {detail}",
+            f"CASHOUT {status} market={market_id} bet={bet_id}: {detail}",
             severity="HIGH",
         )
+
+    def _cancel_residual(self, market_id: str, bet_id: str) -> tuple:
+        """Un solo cancel del residuo a riposo dell'hedge, mai retry. -> (tentato, confermato, errore)."""
+        if not (bet_id and market_id):      # cancel SOLO con l'identità dell'ordine
+            return False, False, ""
+        try:
+            return True, bool(self._cancel(market_id, [bet_id])), ""
+        except Exception as exc:  # noqa: BLE001 - cancel best-effort, mai crash
+            return True, False, str(exc)
+
+    def _publish_residual_outcome(self, payload: Dict[str, Any], *, cancel_attempted: bool,
+                                  cancel_ok: bool, status: str = "UNMATCHED") -> None:
+        """Esito esplicito del residuo UNMATCHED (rilievo Codex #522): chi attende l'hedge (barriera
+        d'ammissione del runtime) lo considera chiuso SOLO con cancel confermato. Mai raise."""
+        if self._bus is None:
+            return
+        out = {
+            "status": status,
+            "cancel_attempted": bool(cancel_attempted),
+            "cancel_ok": bool(cancel_ok),
+            "bet_id": self._str(payload.get("bet_id")),
+            "market_id": self._str(payload.get("market_id")),
+            "selection_id": payload.get("selection_id"),
+        }
+        request_id = payload.get("cashout_request_id")
+        if isinstance(request_id, str) and request_id:
+            out["cashout_request_id"] = request_id
+        try:
+            self._bus.publish(CASHOUT_RESIDUAL_HANDLED, out)
+        except Exception:  # noqa: BLE001 - diagnostica: mai crash del consumer
+            logger.exception("[CashoutResidualHandler] publish CASHOUT_RESIDUAL_HANDLED fallito")
 
     # =========================================================
     # AMBIGUOUS — mai cancel, persist reconciliation + notify alta severità

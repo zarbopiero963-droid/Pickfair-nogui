@@ -6,6 +6,7 @@ funzione, cosi' i due entrypoint non possono divergere::
     REQ_EXECUTE_CASHOUT -> CashoutRequestBridge (normalizza, dedup 2 s per posizione)
     CMD_EXECUTE_CASHOUT -> CashoutExecutor (invarianti hard + SafetyLayer) -> OrderRouter
     CASHOUT_FAILED      -> CashoutResidualHandler (UNMATCHED: un cancel; AMBIGUOUS: mai)
+    CASHOUT_SUCCESS     -> CashoutResidualHandler (solo match parziale: un cancel del residuo, #522)
 
 Fino alla PR04 la catena esisteva solo in ``headless_main``: nella GUI un
 CASHOUT arrivato dalla chat veniva rifiutato (``cashout_chain_not_wired``) e
@@ -64,7 +65,8 @@ def cabla_catena_cashout(
       puo' rigettare cashout legittimi;
     - ``CashoutRequestBridge``: consuma ``REQ_EXECUTE_CASHOUT`` (dedup,
       normalizzazione, ``CASHOUT_FAILED`` strutturato) e pubblica il CMD;
-    - ``CashoutResidualHandler``: consuma ``CASHOUT_FAILED``; il cancel passa
+    - ``CashoutResidualHandler``: consuma ``CASHOUT_FAILED`` e ``CASHOUT_SUCCESS``
+      (residuo di un hedge abbinato in parte); il cancel passa
       dal ``CashoutCancelAdapter`` (solo cashout), ``persist`` e ``notify``
       sono quelli dell'entrypoint.
 
@@ -103,7 +105,7 @@ def cabla_catena_cashout(
         "Catena cashout cablata: "
         "CashoutRequestBridge[REQ_EXECUTE_CASHOUT] -> "
         "CashoutExecutor[CMD_EXECUTE_CASHOUT] -> OrderRouter; "
-        "CashoutResidualHandler[CASHOUT_FAILED]"
+        "CashoutResidualHandler[CASHOUT_FAILED, CASHOUT_SUCCESS parziale]"
     )
     return CatenaCashout(
         order_router=order_router,

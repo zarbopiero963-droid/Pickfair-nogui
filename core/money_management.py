@@ -78,10 +78,14 @@ class RoserpinaMoneyManagement:
             # fail-closed a 0, nessuno stake ammesso. Prima NaN valeva 0 =
             # "tetto disattivato" e restava il solo cap percentuale (PR27).
             return 0.0
+        if raw_abs_cap is None:
+            # Rettifica owner 18-19/10/2026: tetto assoluto opzionale, non attivo => solo il cap percentuale.
+            return max(0.0, pct_cap)
         abs_cap = self._safe_float(raw_abs_cap, 0.0)
-        if abs_cap > 0:
-            return max(0.0, min(pct_cap, abs_cap))
-        return max(0.0, pct_cap)
+        if abs_cap <= 0:
+            # Configurato ma <= 0: fail-closed come i cap assoluti PR28-d, mai "tetto disattivato".
+            return 0.0
+        return max(0.0, min(pct_cap, abs_cap))
 
     def _max_total_exposure_abs(self, bankroll_current: float) -> float:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
@@ -334,7 +338,9 @@ class RoserpinaMoneyManagement:
 
         # Lato dell'ordine (#461 PR28): i cap misurano il RISCHIO, non lo
         # stake. Un lato sconosciuto non ha un rischio stimabile: si rifiuta.
-        side = validators.signal_side(signal)
+        # Il calcolatore puro mantiene BACK come default storico per calcoli
+        # interni; ogni ingresso ordine reale viene validato strict dal runtime.
+        side = validators.signal_side(signal, default="BACK")
         if side not in ("BACK", "LAY"):
             return MoneyManagementDecision(
                 approved=False,
@@ -602,6 +608,23 @@ class RoserpinaMoneyManagement:
                 table_id=table_id,
                 cycle_id=cycle_id,
                 money_management_status="MM_STOP_CONTEXT_MISSING",
+                desk_mode=DeskMode.NORMAL,
+                metadata={},
+            )
+
+        try:
+            validators.signal_side(signal)
+        except ValueError:
+            return PostSettlementDecision(
+                cycle_active=True,
+                progression_allowed=False,
+                bankroll_reference=bankroll_current,
+                next_stake=0.0,
+                target_reached=False,
+                stop_reason="lato_non_valido",
+                table_id=table_id,
+                cycle_id=cycle_id,
+                money_management_status="MM_STOP_INVALID_SIDE",
                 desk_mode=DeskMode.NORMAL,
                 metadata={},
             )
