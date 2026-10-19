@@ -42,7 +42,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     ingresso è fuori dal lock, l'ingresso approvato con la config precedente non parte
     (`config_cambiata_durante_ammissione`). Il tavolo viene liberato e il segnale si può ripetere;
   - **alias `match`:** vale come nome evento anche per il cap evento. Prima, con il cap configurato, un
-    segnale con `match` veniva rifiutato come `max_event_exposure_abs_non_verificabile`.
+    segnale con `match` veniva rifiutato come `max_event_exposure_abs_non_verificabile`;
+  - **barriera viva fino all'esito dell'hedge** (PF-522-FINAL-HARDENING-01): il bus di produzione è
+    asincrono, quindi il routing ritorna dopo aver pubblicato `REQ_EXECUTE_CASHOUT`, ma l'hedge viene
+    piazzato più tardi. La barriera ora resta attiva finché ogni gamba pubblicata dal router non riceve un
+    esito `CASHOUT_SUCCESS`/`CASHOUT_FAILED` (qualunque status). Un esito che non arriva lascia la barriera
+    attiva (fail-closed) fino al riavvio, visibile in `get_status()["cashout_barriers_active"]`. Prima, un
+    ingresso nello stesso ambito poteva essere piazzato mentre l'hedge era ancora in coda.
+  - Il `RuntimeController` usa gli helper della barriera tramite la classe: i test con stub (`_RC`) che
+    chiamano i metodi non legati continuano a funzionare.
 
 - **PR #512 ciclo 17 (PF-QA-AUTONOMOUS-CONTINUATION-01):** bloccante GPT-6.1 Sol su `9f0d6ec`. La riconciliazione
   sull'exchange vale ora per ogni settlement non SIM per mercato (anche chiusura di posizione e payload senza

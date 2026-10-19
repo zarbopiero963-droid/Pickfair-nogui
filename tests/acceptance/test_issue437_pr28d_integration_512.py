@@ -346,3 +346,125 @@ def test_match_alias_is_a_valid_event_name_for_the_event_cap(tmp_path):
     c.rc._on_signal_received(sig)
 
     assert len(c.broker.state.orders) == 1, _rifiuti(c)
+
+
+# ---------------------------------------------------------------- barriera viva fino all'esito dell'hedge
+_CASHOUT = {"signal_type": "CASHOUT", "event_name": "Alpha v Beta", "market_id": "1.234", "selection_id": 11}
+
+
+def _async_cashout_chain(c, monkeypatch, *, hedges=(("1.234", 11),)):
+    """Router reale nel runtime, ma la sua `route` pubblica le REQ_EXECUTE_CASHOUT indicate; l'executor
+    e' asincrono (bus di produzione non bloccante): la REQ resta in coda finche' il test non pubblica l'esito."""
+    import cashout_router
+
+    queued = []
+    c.bus.subscribe("REQ_EXECUTE_CASHOUT", queued.append)
+    monkeypatch.setattr(RuntimeController, "_cashout_chain_wired", lambda self: True)
+
+    def route(router, signal):
+        for market_id, selection_id in hedges:
+            router.publish("REQ_EXECUTE_CASHOUT", {"market_id": market_id, "selection_id": selection_id,
+                                                   "side": "LAY", "stake": 0.5, "price": 2.0})
+        return {"published": len(hedges), "positions": len(hedges), "skipped": 0}
+
+    monkeypatch.setattr(cashout_router.CashoutRouter, "route", route)
+    svc = c.rc.betfair_service
+    for name, value in (("is_simulation_mode", lambda: True), ("get_live_client", lambda: None),
+                        ("get_simulation_broker", lambda: None), ("list_current_orders", lambda **_: [])):
+        if not hasattr(svc, name):
+            monkeypatch.setattr(svc, name, value, raising=False)
+    return queued
+
+
+def test_barrier_stays_active_until_the_hedge_execution_completes(tmp_path, monkeypatch):
+    """Codex r4315283906 / mandato PF-522-FINAL-HARDENING-01: il publish di REQ_EXECUTE_CASHOUT non e'
+    l'esecuzione. Finche' l'hedge non ha esito, nessun ingresso nello stesso ambito."""
+    c = _catena(tmp_path)
+    queued = _async_cashout_chain(c, monkeypatch)
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+    assert len(queued) == 1
+
+    c.rc._on_signal_received(_signal())                       # stesso mercato/selezione/partita
+    assert c.broker.state.orders == {}
+    assert _rifiuti(c) == ["cashout_invalidation_active"]
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11, "status": "DONE"})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+    c.rc._on_signal_received(_signal(received_at="2026-10-08T10:09:00+00:00"))
+    assert len(c.broker.state.orders) == 1
+
+
+@pytest.mark.parametrize("status", ["FAILURE", "AMBIGUOUS", "UNMATCHED", "REJECTED"])
+def test_barrier_released_by_any_hedge_outcome(tmp_path, monkeypatch, status):
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.234", "selection_id": "11", "status": status})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_barrier_waits_for_every_hedge_of_the_cashout(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch, hedges=(("1.234", 11), ("1.999", 7)))
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11})
+    assert c.rc.get_status()["cashout_barriers_active"] == 1    # manca l'esito della seconda gamba
+    c.rc._on_signal_received(_signal(event="Alpha v Beta", market_id="1.999"))
+    assert c.broker.state.orders == {}
+
+    c.bus.publish("CASHOUT_FAILED", {"market_id": "1.999", "selection_id": 7, "status": "FAILURE"})
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_outcome_of_another_hedge_does_not_release_the_barrier(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 12})
+    c.bus.publish("CASHOUT_SUCCESS", {"market_id": "1.555", "selection_id": 11})
+    c.bus.publish("CASHOUT_FAILED", {"reason": "fetch_bot_orders:x", "status": "FAILURE"})
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 1
+
+
+def test_cashout_without_hedges_releases_the_barrier_when_routing_ends(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch, hedges=())
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+    c.rc._on_signal_received(_signal())
+    assert len(c.broker.state.orders) == 1
+
+
+def test_synchronous_hedge_outcome_during_routing_releases_the_barrier(tmp_path, monkeypatch):
+    """Esito pubblicato prima che il routing ritorni (bus sincrono): la barriera non resta appesa."""
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch)
+    c.bus.subscribe("REQ_EXECUTE_CASHOUT", lambda req: c.bus.publish(
+        "CASHOUT_SUCCESS", {"market_id": req["market_id"], "selection_id": req["selection_id"]}))
+
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
+
+
+def test_hedge_outcome_arriving_from_another_thread_releases_the_barrier(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    _async_cashout_chain(c, monkeypatch)
+    c.rc._route_cashout_signal(dict(_CASHOUT))
+
+    worker = threading.Thread(target=c.bus.publish,
+                              args=("CASHOUT_SUCCESS", {"market_id": "1.234", "selection_id": 11}))
+    worker.start()
+    worker.join(5)
+
+    assert not worker.is_alive()
+    assert c.rc.get_status()["cashout_barriers_active"] == 0
