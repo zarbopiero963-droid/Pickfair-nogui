@@ -9,7 +9,7 @@ dell'agente (HTTP 403) e resta da verificare dall'owner.
 
 | Workflow | Trigger | Cosa chiama |
 |---|---|---|
-| `ci-dynamic-intelligent.yml` | `pull_request`, `workflow_dispatch`, `workflow_call` | `detect` (`scripts/ci_changed_modules.py origin/main`), poi sempre `noise-free-pr-gate`, `repo-guardrails-extended`, `merge-simulation-hard`, `mutation-guardrails`; le 15 lane di modulo solo se `detect` le segnala toccate |
+| `ci-dynamic-intelligent.yml` | `pull_request`, `workflow_dispatch`, `workflow_call` | `detect` (`scripts/ci_changed_modules.py origin/main`), poi sempre `noise-free-pr-gate`, `repo-guardrails-extended`, `merge-simulation-hard`; solo se `detect` le segnala toccate le 15 lane di modulo e `mutation-guardrails` (quest'ultima per diff su `guardrails/mutations/`, `scripts/run_mutation_guardrails.py`, `tests/`, `core/` o i moduli in radice elencati in `ci_changed_modules.py`) |
 | `ci-master-gate.yml` | `pull_request`, `workflow_dispatch` | `ci-dynamic-intelligent` più tutte le lane di modulo **senza condizioni**, `live-gate`, `chaos-critical`, `mutation-guardrails`, `merge-simulation-hard` |
 
 Le lane di modulo chiamano `_module-ultra-check.yml`: esistenza del modulo e
@@ -53,8 +53,21 @@ sarebbe 0% contro una soglia dell'80%, e 120 esecuzioni della suite completa
 non stanno nei 45 minuti del job, che viene interrotto (`cancelled`).
 
 È rosso per costruzione, non un falso verde, ma non è una misura attendibile.
-Finché l'owner non decide come trattarlo (vedi #525), la conclusione di
-entrambi gli orchestratori resta non verde anche su un head sano. Il mutation
+Finché l'owner non decide come trattarlo (vedi #525), `ci-master-gate`, che lo
+chiama senza condizioni, resta non verde anche su un head sano;
+`ci-dynamic-intelligent` resta non verde solo quando il diff tocca i path che
+attivano la lane (ad esempio `tests/` o `core/`), mentre un diff di sola
+documentazione o di soli workflow può chiudersi verde.
+
+## Artifact `ultra-check-cache`
+
+`_module-ultra-check.yml` carica `.pytest_cache` con un nome fisso, e nello
+stesso run più lane chiamano quel workflow: `upload-artifact@v4` rifiuterebbe
+il secondo caricamento con lo stesso nome. Oggi non succede: in tutti i job
+`ultra-check` dei run qui sotto lo step scrive «No files were found with the
+provided path: .pytest_cache. No artifacts will be uploaded», e l'unico
+artifact del run è `changed-modules`. Il conflitto è latente: diventerebbe
+reale solo se la suite tornasse a scrivere `.pytest_cache`. Il mutation
 testing reale delle PR resta quello eseguito dall'agente sul codice mutato.
 
 ## Prove su run reali
