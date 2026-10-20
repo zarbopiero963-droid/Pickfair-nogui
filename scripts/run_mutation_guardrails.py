@@ -153,6 +153,27 @@ def build_sandbox(repo_root: Path, dest: Path) -> None:
         shutil.copy2(src, target)
 
 
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Termina pytest e cio' che ha lanciato. Su POSIX l'intero gruppo di
+    processi; dove `killpg` non esiste (Windows) `taskkill /T`, e in ultima
+    istanza il solo processo."""
+    killpg = getattr(os, "killpg", None)
+    if killpg is not None and hasattr(signal, "SIGKILL"):
+        try:
+            killpg(proc.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    elif os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False
+        )
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
 def _run_pytest(sandbox: Path, tests: list[str], pytest_args: list[str], timeout_sec: int):
     env = os.environ.copy()
     env["PYTHONDONTWRITEBYTECODE"] = "1"
@@ -168,10 +189,7 @@ def _run_pytest(sandbox: Path, tests: list[str], pytest_args: list[str], timeout
     try:
         out, _ = proc.communicate(timeout=timeout_sec)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        _kill_process_tree(proc)
         out, _ = proc.communicate()
         return None, time.monotonic() - start, _tail(out)
     return proc.returncode, time.monotonic() - start, _tail(out)

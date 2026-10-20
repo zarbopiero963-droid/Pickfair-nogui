@@ -277,3 +277,17 @@ def test_il_catalogo_attiva_la_lane_mutation_nel_dynamic():
     catalog = runner.load_catalog(ROOT)
     for f in {"guardrails/mutation_catalog.json", *(e["file"] for e in catalog["mutations"])}:
         assert any(f.startswith(p) for p in paths), f"{f} non attiva mutation-guardrails"
+
+
+def test_il_timeout_funziona_anche_senza_killpg(tmp_path, monkeypatch):
+    # Windows non ha os.killpg ne' signal.SIGKILL: il cleanup non deve sollevare
+    # AttributeError e il timeout resta INCONCLUSIVE (rilievo GPT-6.1 Sol su #527).
+    monkeypatch.delattr(runner.os, "killpg", raising=False)
+    lento = TEST_FORTE + "\n\nimport os, time\n\ndef test_lento():\n    if os.path.exists('MUTATED'):\n        time.sleep(30)\n"
+    repo = _repo(tmp_path, [_mut("liab_slow", LIAB, "    open('MUTATED', 'w').close(); return stake * (price - 1.0)")],
+                 test_src=lento)
+    out = tmp_path / "report.json"
+    rc = runner.main(["--repo-root", str(repo), "--output", str(out), "--timeout-sec", "3"])
+    report = json.loads(out.read_text(encoding="utf-8"))
+    assert report["results"][0]["status"] == runner.INCONCLUSIVE
+    assert rc == 1
