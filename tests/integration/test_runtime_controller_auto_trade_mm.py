@@ -70,7 +70,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0, "ok": True}
+            return {"available": 0.0, "exposure": 0.0, "ok": True}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -121,7 +121,7 @@ def _canonical_close_payload(**overrides):
 
 
 def test_runtime_controller_emits_structured_auto_trade_result_payload():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -156,7 +156,7 @@ def test_runtime_controller_emits_structured_auto_trade_result_payload():
 
 
 def test_auto_trade_entry_is_rejected_during_pertinent_cashout_barrier():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     next_signal = {
@@ -196,7 +196,7 @@ def test_auto_trade_entry_is_rejected_during_pertinent_cashout_barrier():
 
 
 def test_auto_trade_applies_absolute_order_cap_before_publish():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     rc.config.max_order_exposure = 0.25
@@ -218,7 +218,7 @@ def test_auto_trade_applies_absolute_order_cap_before_publish():
 
 
 def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     rc.config.max_drawdown_abs = True
@@ -240,7 +240,7 @@ def test_auto_trade_rejects_unverifiable_absolute_drawdown_cap():
 
 
 def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
-    rc, bus = _make_controller(responses=[{"available": 90.0}])
+    rc, bus = _make_controller(responses=[{"available": 90.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     rc.config.max_drawdown_abs = 10.0
@@ -266,7 +266,7 @@ def test_auto_trade_drawdown_threshold_latches_runtime_lockdown():
 
 @pytest.mark.parametrize("side", [None, "BOTH"])
 def test_missing_or_invalid_auto_trade_side_fails_closed_without_escaping_settlement(side):
-    rc, bus = _make_controller(responses=[{"available": 100.0}])
+    rc, bus = _make_controller(responses=[{"available": 100.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -296,7 +296,7 @@ def test_missing_or_invalid_auto_trade_side_fails_closed_without_escaping_settle
 
 
 def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility():
-    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc, bus = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -318,7 +318,7 @@ def test_runtime_controller_auto_trade_disabled_preserves_backward_compatibility
 
 
 def test_runtime_controller_status_includes_auto_trade_snapshot():
-    rc, _ = _make_controller(responses=[{"available": 150.0}, {"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -340,7 +340,7 @@ def test_runtime_controller_status_includes_auto_trade_snapshot():
 
 
 def test_runtime_controller_auto_trade_activates_table_before_publish():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     observed = {}

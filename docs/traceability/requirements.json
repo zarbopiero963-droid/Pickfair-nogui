@@ -647,15 +647,20 @@
    ],
    "component": [
     "core/trading_engine.py",
-    "core/money_management.py"
+    "core/money_management.py",
+    "core/runtime_controller.py"
    ],
    "code": [
     "core/trading_engine.py::_native_transient_cap",
-    "core/money_management.py::RoserpinaMoneyManagement.calculate"
+    "core/money_management.py::RoserpinaMoneyManagement.calculate",
+    "core/runtime_controller.py::RuntimeController._entry_funds_reason",
+    "core/runtime_controller.py::RuntimeController._read_funds_for_entry"
    ],
-   "oracle": "stub oltre i fondi disponibili bloccato (transient_exposure_cap); stake richiesto mai ridotto; codice di errore distinto fra fondi e limite provider",
+   "oracle": "stub oltre i fondi disponibili bloccato (transient_exposure_cap); stake richiesto mai ridotto; codice di errore distinto fra fondi e limite provider; #461 PR28-e: nuova entrata (segnale, auto-next) oltre il disponibile o oltre disponibile+impegnato al netto delle riserve sui tavoli => fondi_insufficienti, fondi illeggibili => fondi_non_verificabili, nessun ordine, mai ridimensionamento",
    "tests": [
-    "tests/test_microstake_engine_native.py::test_insufficient_available_funds_block_the_temporary_stub_before_any_place"
+    "tests/test_microstake_engine_native.py::test_insufficient_available_funds_block_the_temporary_stub_before_any_place",
+    "tests/acceptance/test_issue461_pr28e_funds_gate.py::test_back_stake_oltre_i_fondi_disponibili_e_rifiutato",
+    "tests/acceptance/test_issue461_pr28e_funds_gate.py::test_auto_next_lay_liability_oltre_i_fondi_e_rifiutato"
    ],
    "evidence": [
     {
@@ -671,7 +676,7 @@
    "reviewer": null,
    "gate": "A #506",
    "limitations": [
-    "stake economico oltre i fondi riconciliati (impegnati + liability): test PLANNED",
+    "stake economico oltre i fondi: bloccato su segnale e auto-next (#461 PR28-e); Dutching e bet manuale (corsie dormienti) non ancora coperti dal gate dei fondi",
     "codici di errore fondi vs provider: PLANNED"
    ]
   },

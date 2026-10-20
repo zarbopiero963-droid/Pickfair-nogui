@@ -80,7 +80,7 @@ class _Betfair:
     def set_simulation_mode(self, enabled):
         self.sim_flags.append(bool(enabled))
     def get_account_funds(self):
-        return {"available": 0.0}
+        return {"available": 1000.0, "exposure": 0.0}  # gate fondi PR28-e: conto capiente
     def status(self):
         return {"connected": True}
     def get_live_client(self):
@@ -1405,7 +1405,7 @@ def test_runtime_controller_legacy_non_canonical_close_is_hard_rejected_fail_clo
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
-    rc.betfair_service.get_account_funds = lambda: {"available": 150.0}
+    rc.betfair_service.get_account_funds = lambda: {"available": 150.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(100.0)
 
     with caplog.at_level("WARNING"):
@@ -1555,7 +1555,7 @@ def test_runtime_controller_logs_structured_context_for_non_canonical_settlement
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
-    rc.betfair_service.get_account_funds = lambda: {"available": 200.0}
+    rc.betfair_service.get_account_funds = lambda: {"available": 200.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(150.0)
 
     with caplog.at_level("WARNING"):
@@ -1594,7 +1594,7 @@ def test_runtime_controller_rejected_settlement_boundary_is_fail_closed_and_does
         telegram_service=_Telegram(),
     )
     rc.mode = RuntimeMode.ACTIVE
-    rc.betfair_service.get_account_funds = lambda: {"available": 500.0}
+    rc.betfair_service.get_account_funds = lambda: {"available": 500.0, "exposure": 0.0}
     rc.risk_desk.sync_bankroll(500.0)
 
     canonical_payload = {

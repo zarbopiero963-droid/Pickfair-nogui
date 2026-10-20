@@ -22,6 +22,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**
+  un segnale o un auto-next con esposizione (BACK = stake, LAY = liability) oltre i fondi del conto viene
+  rifiutato con `fondi_insufficienti:...`, mai ridimensionato; prima partiva se stava nel bankroll interno
+  anche con meno fondi sul conto. Due condizioni sotto il lock d'ammissione: l'entrata sta nel disponibile,
+  e le riserve su tutti i tavoli (compresa l'entrata) stanno in disponibile + impegnato a mercato. Così gli
+  ordini già piazzati non contano due volte, le riserve non ancora a mercato consumano il disponibile e
+  l'impegnato esterno al bot non gonfia i fondi. Fondi illeggibili, incompleti (senza `exposure`) o con
+  errore => `fondi_non_verificabili`, nessuna entrata (prima restava il bankroll di ripiego, PF-CAP-19).
+  Il segnale legge il conto fuori dal lock, nella stessa finestra di rete della best price; l'auto-next usa
+  lo snapshot del settlement. Hedge e uscite protettive esclusi (PF-EXEC-03). Le corsie dormienti
+  Dutching/bet manuale non sono ancora coperte: blocca la loro attivazione. Fixture di test allineate
+  alla forma reale di `BetfairService.get_account_funds` (sempre con `exposure`).
+
 - **#523 — Dutching e bet manuale conformi ai gate (corsie ancora dormienti):** lato BACK/LAY
   obbligatorio su ogni gamba e sul bet manuale (mai BACK per default, anche nel `RiskMiddleware`; alias
   in conflitto rifiutati; il lato esplicito della gamba prevale sul `bet_type` del lotto, usato solo come

@@ -86,7 +86,7 @@ def _cmd(bus):
 
 
 def test_auto_next_entry_carries_executable_liquidity():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.betfair_service.get_market_book_snapshot = lambda market_id, include_prices=False: BOOK
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
@@ -96,7 +96,7 @@ def test_auto_next_entry_carries_executable_liquidity():
 
 
 def test_auto_next_entry_without_book_is_marked_unknown_for_the_gate():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.betfair_service.get_market_book_snapshot = lambda market_id, include_prices=False: None
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
@@ -108,7 +108,7 @@ def test_auto_next_entry_without_book_is_marked_unknown_for_the_gate():
 
 @pytest.mark.parametrize("mode", [RuntimeMode.PAUSED, RuntimeMode.LOCKDOWN])
 def test_auto_next_never_submits_outside_active_F027(mode):
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = mode
     rc.risk_desk.sync_bankroll(100.0)
     _close(rc)
@@ -119,7 +119,7 @@ def test_auto_next_never_submits_outside_active_F027(mode):
 
 def test_auto_next_pre_submit_recheck_blocks_mode_change_after_first_gate_F027():
     """Il modo cambia (LOCKDOWN) dopo il gate d'ingresso dell'auto-next: il recheck pre-invio blocca."""
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     real = rc._risk_allows_auto_trade

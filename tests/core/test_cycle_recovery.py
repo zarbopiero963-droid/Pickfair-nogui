@@ -182,13 +182,13 @@ def _close_payload(**overrides):
 
 
 def test_cycle_recovery_no_prior_state_defaults_to_no_state():
-    rc, _, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     probe = rc._read_cycle_recovery_state("missing|key")
     assert probe["status"] == "RECOVERY_NO_STATE"
 
 
 def test_restore_only_blocks_submit_when_resume_disabled_and_checkpoint_missing():
-    rc, bus, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-no-state", event_key="evt-no-state", batch_id="batch-no-state")
 
     rc._on_close_position(payload)
@@ -200,7 +200,7 @@ def test_restore_only_blocks_submit_when_resume_disabled_and_checkpoint_missing(
 
 
 def test_restore_only_blocks_submit_when_checkpoint_persistence_unavailable():
-    rc, bus = _make_controller_no_checkpoint(responses=[{"available": 150.0}])
+    rc, bus = _make_controller_no_checkpoint(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-no-db", event_key="evt-no-db", batch_id="batch-no-db")
 
     rc._on_close_position(payload)
@@ -212,7 +212,7 @@ def test_restore_only_blocks_submit_when_checkpoint_persistence_unavailable():
 
 
 def test_cycle_recovery_checkpoint_progression_and_duplicate_marker():
-    rc, _, db = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
+    rc, _, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 999.0, "exposure": 0.0}])
     payload = _close_payload(resume_submit_enabled=True)
     rc._on_close_position(payload)
     key = rc._build_bankroll_sync_key(payload)
@@ -224,7 +224,7 @@ def test_cycle_recovery_checkpoint_progression_and_duplicate_marker():
 
 
 def test_cycle_recovery_ambiguous_state_fails_closed_without_submit():
-    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-amb", event_key="evt-amb", batch_id="batch-amb", resume_submit_enabled=True)
     key = rc._build_bankroll_sync_key(payload)
     db.upsert_cycle_recovery_checkpoint(
@@ -245,7 +245,7 @@ def test_cycle_recovery_ambiguous_state_fails_closed_without_submit():
 
 
 def test_cycle_reentry_does_not_downgrade_confirmed_checkpoint():
-    rc, _, db = _make_controller(responses=[{"available": 999.0}])
+    rc, _, db = _make_controller(responses=[{"available": 999.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-confirmed", event_key="evt-confirmed", batch_id="batch-confirmed")
     key = rc._build_bankroll_sync_key(payload)
     db.upsert_cycle_recovery_checkpoint(
@@ -267,7 +267,7 @@ def test_cycle_reentry_does_not_downgrade_confirmed_checkpoint():
 
 
 def test_cycle_reentry_does_not_downgrade_attempted_checkpoint():
-    rc, _, db = _make_controller(responses=[{"available": 180.0}])
+    rc, _, db = _make_controller(responses=[{"available": 180.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-attempted", event_key="evt-attempted", batch_id="batch-attempted")
     key = rc._build_bankroll_sync_key(payload)
     db.upsert_cycle_recovery_checkpoint(
@@ -288,7 +288,7 @@ def test_cycle_reentry_does_not_downgrade_attempted_checkpoint():
 
 
 def test_recovery_checkpoint_defaults_to_restore_only_without_resume_submit():
-    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(correlation_id="corr-restore", event_key="evt-restore", batch_id="batch-restore")
     key = rc._build_bankroll_sync_key(payload)
     db.upsert_cycle_recovery_checkpoint(
@@ -308,7 +308,7 @@ def test_recovery_checkpoint_defaults_to_restore_only_without_resume_submit():
 
 
 def test_startup_restore_only_never_emits_cmd_quick_bet_without_explicit_resume_enable():
-    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(
         correlation_id="corr-startup-no-autofire",
         event_key="evt-startup-no-autofire",
@@ -335,7 +335,7 @@ def test_startup_restore_only_never_emits_cmd_quick_bet_without_explicit_resume_
 
 
 def test_recovery_checkpoint_resume_submit_submits_one_step_when_enabled():
-    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(
         correlation_id="corr-resume",
         event_key="evt-resume",
@@ -360,7 +360,7 @@ def test_recovery_checkpoint_resume_submit_submits_one_step_when_enabled():
 
 
 def test_recovery_resume_submit_invalid_stake_blocks_submit():
-    rc, bus, db = _make_controller(responses=[{"available": 150.0}])
+    rc, bus, db = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     payload = _close_payload(
         correlation_id="corr-invalid-stake",
         event_key="evt-invalid-stake",

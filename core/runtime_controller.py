@@ -4293,9 +4293,12 @@ class RuntimeController:
         # può partire subito e incrementare l'epoch scoped. Vale anche per il
         # book di PF-ALL-F030 (#512, attivo di default): letto alla quota finale,
         # nella stessa finestra fuori dal lock (integrazione #505/#512, fase D).
+        entry_funds: dict = {}
+
         def _network_window() -> bool:
             attempted = self._apply_direct_best_price(payload)
             self._attach_single_entry_liquidity(payload)
+            entry_funds["funds"] = self._read_funds_for_entry()     # PR28-e: fondi, fuori dal lock
             return attempted
 
         config_before = self.config
@@ -4318,6 +4321,15 @@ class RuntimeController:
                 payload["bet_type"], payload["stake"], payload.get("price")), order_exposure):
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason="esposizione_cresciuta_dopo_best_price")
+            return
+        # #461 PR28-e (PF-CAP-09/19, PF-EXEC-04): fondi verificati sotto il lock, al netto di TUTTE le riserve
+        # sui tavoli (che includono gia' questo ingresso e quelli concorrenti). Fondi insufficienti o non
+        # verificabili => nessun ordine, risorse rilasciate (ritentabile), mai ridimensionamento.
+        funds_reason = self._entry_funds_reason(entry_funds.get("funds"), self.table_manager.total_exposure(),
+                                                order_exposure)
+        if funds_reason:
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=funds_reason)
             return
 
         # PF-ALL-F030: la liquidita' eseguibile dell'ingresso singolo, alla quota finale, e' gia' nel
@@ -5129,6 +5141,52 @@ class RuntimeController:
             return out
         out.update(ok=True, available=available, committed=committed, cash_equity=available + committed)
         return out
+
+    def _read_funds_for_entry(self) -> Any:
+        """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
+        lock d'ammissione (rete). Qualunque errore => None => fondi non verificabili (fail-closed)."""
+        started_at = time.monotonic()
+        try:
+            funds = self.betfair_service.get_account_funds()
+        except Exception as exc:
+            self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=False,
+                                    error=str(exc))
+            logger.warning("PR28-e: fondi illeggibili all'ingresso (%s): nessuna nuova entrata", exc)
+            return None
+        self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=True)
+        return funds
+
+    def _entry_funds_reason(self, account: Any, reserved_exposure: float, order_exposure: float) -> str:
+        """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se la nuova entrata e' coperta dai fondi del conto,
+        altrimenti il motivo del rifiuto. Due condizioni, entrambe obbligatorie:
+
+        1. l'esposizione della nuova entrata (BACK = stake, LAY = liability) sta nel ``available`` del conto;
+        2. l'esposizione riservata su TUTTI i tavoli, compresa la nuova entrata e le riserve concorrenti, sta nei
+           fondi gia' impegnati a mercato piu' il disponibile (``available + committed``): le riserve gia'
+           piazzate sono nel ``committed`` e non contano due volte, quelle non ancora a mercato consumano il
+           disponibile.
+
+        La (1) copre i fondi impegnati da posizioni esterne al bot, che nella (2) gonfierebbero il margine.
+        Solo NUOVE entrate (segnale, auto-next): mai hedge o uscite protettive (PF-EXEC-03). `account` e' il
+        payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
+        => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""
+        if isinstance(account, dict) and "cash_equity" in account and "ok" in account:
+            parsed = account
+        elif isinstance(account, dict) and not account.get("error"):
+            parsed = self._account_from_funds(account)
+        else:
+            parsed = {"ok": False}
+        if not parsed.get("ok"):
+            return "fondi_non_verificabili"
+        available = float(parsed["available"])
+        covered = available + float(parsed["committed"])
+        order_exposure = float(order_exposure)
+        reserved_exposure = float(reserved_exposure)
+        if validators.exceeds_cap(order_exposure, available):
+            return f"fondi_insufficienti:ordine={order_exposure:.2f}€,disponibile={available:.2f}€"
+        if validators.exceeds_cap(reserved_exposure, covered):
+            return f"fondi_insufficienti:esposizione={reserved_exposure:.2f}€,coperta={covered:.2f}€"
+        return ""
 
     def _record_account_snapshot(self, funds: Any, *, source: str) -> dict:
         """Registra lo snapshot del conto e il picco dell'equity di cassa (solo dati validi)."""
@@ -6490,6 +6548,14 @@ class RuntimeController:
                                 risk_reason = "max_drawdown_abs_active"
                             else:
                                 risk_reason = "risk_approved"
+                if risk_reason == "risk_approved":
+                    # #461 PR28-e: l'auto-next e' una nuova entrata; fondi dallo snapshot appena registrato dal
+                    # settlement (nessuna rete sotto il lock), al netto delle riserve sui tavoli.
+                    risk_reason = self._entry_funds_reason(
+                        getattr(self, "_account_snapshot", None),
+                        self.table_manager.total_exposure() + order_exposure,
+                        order_exposure,
+                    ) or "risk_approved"
             except (TypeError, ValueError):
                 risk_reason = "ordine_auto_trade_non_verificabile"
             risk_allowed = risk_reason == "risk_approved"

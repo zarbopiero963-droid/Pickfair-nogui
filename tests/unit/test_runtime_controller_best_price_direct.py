@@ -119,7 +119,7 @@ class _Betfair:
 
     @staticmethod
     def get_account_funds():
-        return {"available": 0.0}
+        return {"available": 1000.0, "exposure": 0.0}  # gate fondi PR28-e: conto capiente
 
     @staticmethod
     def status():
