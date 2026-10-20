@@ -25,6 +25,14 @@ from core.order_identity import normalize_upstream_customer_ref
 logger = logging.getLogger(__name__)
 
 
+def _explicit_side(*candidates):
+    """#523: primo lato esplicito fra i candidati, maiuscolo; None se nessuno. Nessun default."""
+    for value in candidates:
+        if value not in (None, ""):
+            return str(value).strip().upper()
+    return None
+
+
 class RiskMiddleware:
     def __init__(self, bus, guardrail=None, wom_engine=None, topics=None):
         """OMS bridge REQ->CMD, con corsie selezionabili.
@@ -196,29 +204,12 @@ class RiskMiddleware:
                         "runnerName": str(r.get("runnerName", "")),
                         "price": float(r.get("price", 0.0)),
                         "stake": float(r.get("stake", 0.0)),
-                        "side": (
-                            str(
-                                r.get(
-                                    "side",
-                                    payload.get("bet_type", "BACK"),
-                                )
-                            ).upper()
-                            if r.get("side") is not None
-                            else str(payload.get("bet_type", "BACK")).upper()
-                        ),
-                        "effectiveType": (
-                            str(
-                                r.get(
-                                    "effectiveType",
-                                    r.get("side", payload.get("bet_type", "BACK")),
-                                )
-                            ).upper()
-                            if (
-                                r.get("effectiveType") is not None
-                                or r.get("side") is not None
-                            )
-                            else str(payload.get("bet_type", "BACK")).upper()
-                        ),
+                        # #523: il lato della gamba viaggia com'e' (gamba, altrimenti il bet_type esplicito
+                        # del lotto); nessun BACK inventato qui. Lato assente o invalido => il
+                        # DutchingController rifiuta il lotto intero.
+                        "side": _explicit_side(r.get("side"), payload.get("bet_type")),
+                        "effectiveType": _explicit_side(
+                            r.get("effectiveType"), r.get("side"), payload.get("bet_type")),
                     }
                 )
 
@@ -228,7 +219,7 @@ class RiskMiddleware:
                 "event_name": str(payload.get("event_name", "")),
                 "market_name": str(payload.get("market_name", "")),
                 "results": normalized_results,
-                "bet_type": str(payload.get("bet_type", "BACK")).upper(),
+                "bet_type": _explicit_side(payload.get("bet_type")),
                 "total_stake": float(payload.get("total_stake", 0.0)),
                 "use_best_price": bool(payload.get("use_best_price", False)),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),

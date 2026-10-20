@@ -10,6 +10,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#523 — Dutching e bet manuale conformi ai gate (corsie ancora dormienti):** lato BACK/LAY
+  obbligatorio su ogni gamba e sul bet manuale (mai BACK per default, anche nel `RiskMiddleware`);
+  ammissione atomica del lotto sotto la barriera cashout con fence fino all'engine; bet manuale con
+  esposizione reale (liability LAY) su cap e tavolo; errore del dedupe => rifiuto (prima fail-open);
+  l'esito di una gamba non libera più il lotto: tenuto finché ogni gamba è certa, AMBIGUOUS non
+  azzerato dalle altre, parziale segnalato con `DUTCHING_BATCH_PARTIAL` (PF-EXEC-02, parte
+  implementata). Ribilanciamento/copertura e persistenza del lotto: DEFERRED (miglior prezzo dinamico,
+  PR30). Test con catena reale e broker SIM in `tests/acceptance/test_issue523_dutching_manual_bet.py`.
 - **#525 — gli orchestratori CI si avviano di nuovo:** `ci-master-gate` e `ci-dynamic-intelligent`
   richiamavano `dutching.yml`, `pnl-engine.yml` e `live-gate.yml`, che non dichiaravano
   `on: workflow_call`; GitHub rifiutava l'intero workflow all'avvio (0 job, 100 run su 100 falliti).

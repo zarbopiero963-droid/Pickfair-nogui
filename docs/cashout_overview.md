@@ -272,6 +272,52 @@ Limiti noti:
 - l'attesa degli ingressi in invio occupa il thread che instrada il cashout
   (worker del bus o poller dei settlement) fino all'esito dell'invio.
 
+### 7.2 Dutching e bet manuale davanti alla barriera (#523)
+
+Le corsie Dutching (`REQ_PLACE_DUTCHING`) e `manual_bet` restano **dormienti**
+(nessun produttore in produzione, `tests/guardrails/test_dutching_lane_dormant_523.py`
+invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
+
+- **Lato obbligatorio**: ogni gamba e ogni bet manuale passano da
+  `validators.signal_side` (stessa normalizzazione dei segnali: `"back "` →
+  BACK). Lato assente, vuoto, non BACK/LAY o alias in conflitto => rifiuto
+  (`INVALID_SIDE`), nessun ordine, nessun BACK per default. Il `RiskMiddleware`
+  inoltra il lato esplicito o `None`, mai un default.
+- **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
+  `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
+  `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
+  cade in un ambito con cashout attivo, il lotto intero è rifiutato
+  (`cashout_invalidation_active`, `DUTCHING_BATCH_REJECTED`) e nessun fence
+  resta registrato. Le gambe ammesse portano il fence fino all'engine (§7.1):
+  un cashout fra ammissione e invio nega le gambe in coda
+  (`cashout_invalidation_stale`). Runtime senza questa API, eccezione o esito
+  non stringa => rifiuto (`barriera_cashout_non_disponibile` /
+  `ammissione_non_verificabile`).
+- **Bet manuale**: esposizione = rischio reale (`validators.order_exposure`:
+  BACK stake, LAY stake × (quota − 1)) per `max_single_bet`, `max_total` e il
+  tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il
+  dedupe si acquisisce dopo i controlli; un errore del dedupe rifiuta
+  (prima era fail-open), anche nel `precheck` del Dutching.
+- **Esito del lotto (PF-EXEC-02, parte implementata)**: l'esito di una gamba
+  non libera più tavolo e chiave dell'intero lotto. `_settle_batch_leg`
+  trattiene il lotto finché **ogni** gamba ha un esito certo; AMBIGUOUS lo
+  tiene incerto (`_mark_uncertain`) e un'altra gamba non lo azzera. Poi:
+  tutte fallite => rilascio; tutte vive => stesso rilascio di un ordine
+  singolo (SUCCESS/FILLED); miste => `DUTCHING_BATCH_PARTIAL` con gambe vive
+  e chiuse, rischio residuo segnalato, tavolo e chiave trattenuti (nuove
+  esposizioni sospese). Publish fallito a metà lotto: le gambe non pubblicate
+  sono ritirate (`withdraw_controller_entries`) e il lotto resta aperto sulle
+  gambe pubblicate.
+
+**DEFERRED** (non in questa PR): ribilanciamento e copertura del parziale con
+miglior prezzo dinamico e Microstake (PF-BEST-EXECUTION-DYNAMIC-01 non
+implementata), persistenza e riconciliazione del lotto al riavvio (PR30,
+PF-EXEC-06; oggi il controller cerca `runtime.dutching_batch_manager`, che il
+runtime non definisce). Al riavvio valgono la dedupe e la riconciliazione per
+singolo ordine: una gamba incerta resta incerta e nessuna gamba viene
+ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
+(parità SIM/LIVE, tracciato a parte).
+
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).

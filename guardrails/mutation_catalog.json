@@ -471,6 +471,102 @@
         "tests/scripts/test_live_gate.py"
       ],
       "rationale": "Il gate di checklist LIVE passa con controlli non spuntati."
+    },
+    {
+      "id": "dutching_side_default_back",
+      "module": "controllers.dutching_controller",
+      "area": "side",
+      "file": "controllers/dutching_controller.py",
+      "original": "    return validators.signal_side({\"side\": value})",
+      "mutated": "    return validators.signal_side({\"side\": value}, default=\"BACK\")",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Una gamba Dutching senza lato diventa BACK per default."
+    },
+    {
+      "id": "middleware_dutching_side_default_back",
+      "module": "core.risk_middleware",
+      "area": "side",
+      "file": "core/risk_middleware.py",
+      "original": "                        \"side\": _explicit_side(r.get(\"side\"), payload.get(\"bet_type\")),",
+      "mutated": "                        \"side\": _explicit_side(r.get(\"side\"), payload.get(\"bet_type\"), \"BACK\"),",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Il RiskMiddleware torna a inventare BACK per una gamba senza lato."
+    },
+    {
+      "id": "manual_bet_lay_exposure_is_stake",
+      "module": "controllers.dutching_controller",
+      "area": "lay_liability",
+      "file": "controllers/dutching_controller.py",
+      "original": "            exposure = validators.order_exposure(side, stake, price)",
+      "mutated": "            exposure = float(stake)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Il bet manuale LAY misura lo stake invece della liability su cap e tavolo."
+    },
+    {
+      "id": "controller_admission_fence_ignored",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                if not RuntimeController._admission_fence_valid(self, fence):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un lotto Dutching viene ammesso dentro un ambito con cashout attivo."
+    },
+    {
+      "id": "controller_admission_missing_api_allowed",
+      "module": "controllers.dutching_controller",
+      "area": "cashout",
+      "file": "controllers/dutching_controller.py",
+      "original": "            return \"barriera_cashout_non_disponibile\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un runtime senza barriera cashout ammette il lotto (fail-open)."
+    },
+    {
+      "id": "batch_released_with_ambiguous_leg",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            if len(outcomes) < len(batch[\"refs\"]) or \"QUICK_BET_AMBIGUOUS\" in outcomes.values():",
+      "mutated": "            if len(outcomes) < len(batch[\"refs\"]):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Una gamba AMBIGUOUS non trattiene piu' il lotto quando le altre gambe chiudono."
+    },
+    {
+      "id": "batch_partial_released_as_success",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if live and closed:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un lotto parziale (gambe vive e chiuse) libera tavolo e chiave come un esito completo."
+    },
+    {
+      "id": "dutching_dedupe_error_fail_open",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "                return self._fail(\"Anti-duplicato non disponibile: nessun ordine\", event_key=event_key)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un errore dell'anti-duplicato lascia proseguire il lotto."
     }
   ]
 }

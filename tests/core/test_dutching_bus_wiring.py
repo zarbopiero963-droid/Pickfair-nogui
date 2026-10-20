@@ -48,6 +48,13 @@ class _RuntimeAttivo:
 
     mode = RuntimeMode.ACTIVE
 
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette le gambe tramite il runtime; "" = ammesso
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        return None
+
 
 def _catena(runtime=None):
     """Monta la corsia completa su bus sincrono e ritorna (bus, middleware,
@@ -69,8 +76,9 @@ def _req(**over: Any) -> Dict[str, Any]:
         "bet_type": "BACK",
         "total_stake": 100.0,
         "results": [
-            {"selectionId": 111, "runnerName": "Casa", "price": 2.0},
-            {"selectionId": 222, "runnerName": "Ospite", "price": 4.0},
+            # #523: side esplicito per gamba obbligatorio (bet_type di testata non lo sostituisce)
+            {"selectionId": 111, "runnerName": "Casa", "price": 2.0, "side": "BACK"},
+            {"selectionId": 222, "runnerName": "Ospite", "price": 4.0, "side": "BACK"},
         ],
         "source": "TEST",
     }
@@ -261,8 +269,8 @@ def test_adattatore_niente_passthrough_su_selections_dal_wire() -> None:
             "total_stake": 100.0,
             "bet_type": "BACK",
             "selections": [
-                {"selectionId": 111, "price": 2.0, "stake": 99.0},
-                {"selectionId": 222, "price": 4.0, "stake": 1.0},
+                {"selectionId": 111, "price": 2.0, "stake": 99.0, "side": "BACK"},  # #523: side esplicito
+                {"selectionId": 222, "price": 4.0, "stake": 1.0, "side": "BACK"},  # #523: side esplicito
             ],
         },
     )

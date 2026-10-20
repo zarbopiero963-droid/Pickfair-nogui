@@ -67,8 +67,8 @@ def test_many_parallel_dry_runs_do_not_crash(monkeypatch):
         "total_stake": 100.0,
         "simulation_mode": True,
         "selections": [
-            {"selectionId": 1, "price": 2.0},
-            {"selectionId": 2, "price": 3.0},
+            {"selectionId": 1, "price": 2.0, "side": "BACK"},  # #523: side esplicito obbligatorio
+            {"selectionId": 2, "price": 3.0, "side": "BACK"},  # #523: side esplicito obbligatorio
         ],
     }
 

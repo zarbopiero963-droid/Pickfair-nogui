@@ -3604,6 +3604,129 @@ class RuntimeController:
                 conflicts.add(ref)
                 logger.critical("customer_ref %s con piu' ingressi in coda: tutti negati (fail-closed)", ref)
 
+    # ---- #523: ingressi delle corsie del DutchingController (gambe Dutching, ordine manuale) ----
+
+    def admit_controller_entries(self, orders: list, *, batch_id: str = "") -> str:
+        """Ammissione di ingressi costruiti fuori dal percorso dei segnali (DutchingController).
+
+        Sotto un'unica presa del lock d'ammissione: per ogni ordine si fotografa il fence (stesso ambito dei
+        segnali: globale, evento, mercato, selezione); con una barriera cashout attiva nel suo ambito l'intero
+        lotto e' rifiutato ("cashout_invalidation_active") e nulla viene registrato. Altrimenti ogni ordine
+        registra il fence per il suo customer_ref, cosi' il TradingEngine lo ricontrolla subito prima del
+        piazzamento (`admission_fence_verdict`) e un cashout iniziato nel frattempo nega le gambe in coda.
+        Un lotto con piu' gambe viene registrato per il rilascio a livello di lotto (`_settle_batch_leg`).
+        Ritorna "" se ammesso, altrimenti il motivo del rifiuto.
+        """
+        orders = [o for o in (orders or []) if isinstance(o, dict)]
+        if not orders or any(not str(o.get("customer_ref") or "") for o in orders):
+            return "ingresso_senza_customer_ref"
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            fences = []
+            for order in orders:
+                fence = self._capture_admission_fence(order)
+                if not RuntimeController._admission_fence_valid(self, fence):
+                    return "cashout_invalidation_active"
+                fences.append(fence)
+            for order, fence in zip(orders, fences):
+                RuntimeController._register_queued_entry_fence(self, order, fence)
+            if batch_id and len(orders) > 1:
+                batches = getattr(self, "_entry_batches", None)
+                if batches is None:
+                    batches = self._entry_batches = {}
+                by_ref = getattr(self, "_entry_batch_of_ref", None)
+                if by_ref is None:
+                    by_ref = self._entry_batch_of_ref = {}
+                refs = [str(o["customer_ref"]) for o in orders]
+                batches[str(batch_id)] = {
+                    "refs": refs,
+                    "outcomes": {},
+                    "event_key": str(orders[0].get("event_key") or ""),
+                    "table_id": orders[0].get("table_id"),
+                }
+                for ref in refs:
+                    by_ref[ref] = str(batch_id)
+        return ""
+
+    def withdraw_controller_entries(self, orders: list) -> None:
+        """Pubblicazione fallita dopo l'ammissione: il fence dell'ordine e' scartato e, se l'ordine e' una
+        gamba di un lotto, la gamba e' contata come chiusa senza invio (nessun ordine e' partito)."""
+        for order in orders or []:
+            if not isinstance(order, dict):
+                continue
+            self.admission_fence_discard(order)
+            RuntimeController._settle_batch_leg(
+                self, {**order, "status": "NOT_SENT"}, event_name="QUICK_BET_FAILED")
+
+    #: Esiti certi di una gamba: viva (puo' essere sull'exchange) o chiusa senza esposizione.
+    _BATCH_LEG_LIVE = frozenset({"QUICK_BET_SUCCESS", "QUICK_BET_FILLED"})
+
+    def _settle_batch_leg(self, payload: dict, *, event_name: str) -> bool:
+        """#523 (PF-EXEC-02): rilascio a livello di lotto per le gambe Dutching.
+
+        Tutte le gambe condividono tavolo e chiave anti-duplicato. L'esito di UNA gamba non li rilascia: si
+        attende un esito certo di ogni gamba. Una gamba AMBIGUOUS trattiene tutto (riserva incerta) e non e'
+        cancellata dall'esito certo di un'altra. Con tutte le gambe chiuse senza esposizione il lotto si
+        rilascia come un singolo FAILED; tutte vive come un singolo SUCCESS/FILLED. Gambe vive e gambe chiuse
+        insieme = lotto PARZIALE: tavolo e chiave restano trattenuti (nuove esposizioni sospese) e il rischio
+        residuo e' segnalato con DUTCHING_BATCH_PARTIAL. Ribilanciamento e copertura automatica non sono
+        implementati (dipendono dal miglior prezzo dinamico, PF-BEST-EXECUTION-DYNAMIC-01).
+
+        True se l'evento appartiene a una gamba registrata (gestito qui), False altrimenti.
+        """
+        ref = str((payload or {}).get("customer_ref") or "")
+        by_ref = getattr(self, "_entry_batch_of_ref", None) or {}
+        batch_id = by_ref.get(ref)
+        if not batch_id:
+            return False
+        status = str((payload or {}).get("status") or "").strip().upper()
+        if event_name != "QUICK_BET_AMBIGUOUS" and status == "DUPLICATE_BLOCKED":
+            return True                      # rifiuto di un'ALTRA richiesta con lo stesso ref: non e' l'esito della gamba
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            batch = (getattr(self, "_entry_batches", None) or {}).get(batch_id)
+            if batch is None:
+                return False
+            event_key, table_id = batch["event_key"], batch["table_id"]
+            if event_name == "QUICK_BET_AMBIGUOUS":
+                batch["outcomes"][ref] = event_name
+                if event_key:
+                    self._mark_uncertain(event_key, table_id)
+                logger.warning("Gamba %s del lotto %s con esito incerto: lotto trattenuto", ref, batch_id)
+                return True
+            batch["outcomes"][ref] = event_name
+            outcomes = batch["outcomes"]
+            if len(outcomes) < len(batch["refs"]) or "QUICK_BET_AMBIGUOUS" in outcomes.values():
+                return True                  # gambe ancora aperte o incerte: nulla si rilascia
+            for leg in batch["refs"]:
+                by_ref.pop(leg, None)
+            self._entry_batches.pop(batch_id, None)
+            live = [leg for leg in batch["refs"] if outcomes[leg] in self._BATCH_LEG_LIVE]
+            closed = [leg for leg in batch["refs"] if outcomes[leg] not in self._BATCH_LEG_LIVE]
+        if live and closed:
+            if event_key:
+                self._clear_uncertain(event_key, table_id)    # gli esiti sono certi; la chiave resta trattenuta
+            logger.critical("Lotto Dutching %s PARZIALE: gambe vive %s, chiuse %s; nuove esposizioni sospese",
+                            batch_id, live, closed)
+            try:
+                self.bus.publish("DUTCHING_BATCH_PARTIAL", {
+                    "batch_id": batch_id, "event_key": event_key, "table_id": table_id,
+                    "live_legs": live, "failed_legs": closed,
+                    "residual_risk": "gambe vive senza le altre: obiettivo del Dutching non garantito",
+                    "action": "nuove esposizioni sospese; ribilanciamento e copertura non automatici",
+                })
+            except Exception:
+                logger.exception("Errore pubblicazione DUTCHING_BATCH_PARTIAL")
+            return True
+        if not live:
+            representative = "QUICK_BET_FAILED"
+        elif any(outcomes[leg] == "QUICK_BET_FILLED" for leg in live):
+            representative = "QUICK_BET_FILLED"
+        else:
+            representative = "QUICK_BET_SUCCESS"
+        self._release_if_terminal({"event_key": event_key, "table_id": table_id}, event_name=representative)
+        return True
+
     def admission_fence_discard(self, request: dict) -> None:
         """L'engine ha rifiutato la richiesta prima di controllarne il fence (lockdown, normalizzazione fallita):
         si scarta il suo fence in coda, nessun ordine e' partito. Il conflitto resta finche' la coda del ref non
@@ -4329,6 +4452,8 @@ class RuntimeController:
     def _release_if_terminal(self, payload: dict, *, event_name: str) -> None:
         if event_name not in TERMINAL_LIFECYCLE_EVENTS:
             return
+        if RuntimeController._settle_batch_leg(self, payload, event_name=event_name):
+            return                           # #523: gamba di un lotto Dutching, rilascio a livello di lotto
         payload = dict(payload or {})
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")

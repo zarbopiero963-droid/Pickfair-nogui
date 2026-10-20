@@ -38,6 +38,13 @@ class FakeDuplicationGuard:
     def release(self, key):
         self.keys.discard(key)
 
+    def acquire(self, key):
+        # #523: acquire mancante/eccezione ora rifiuta (prima fail-open): il double espone la API reale
+        if key in self.keys:
+            return False
+        self.keys.add(key)
+        return True
+
 
 class FakeTableManager:
     def __init__(self):
@@ -86,6 +93,13 @@ class FakeRuntime:
         self.duplication_guard = FakeDuplicationGuard()
         self.table_manager = FakeTableManager()
         self.dutching_batch_manager = FakeBatchManager()
+
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette le gambe tramite il runtime; "" = ammesso
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        return None
 
 
 @pytest.fixture

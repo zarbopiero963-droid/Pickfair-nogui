@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import trading_config
 from core import liquidity
+from core import validators
 from core.order_identity import (
     derive_customer_ref,
     new_operation_customer_ref,
@@ -40,7 +41,7 @@ except ImportError:
 
         results = []
         for idx, selection in enumerate(selections):
-            side = str(selection.get("side") or selection.get("effectiveType") or "BACK").upper()
+            side = _side(selection.get("side") or selection.get("effectiveType"))
             item = {
                 "selectionId": int(selection["selectionId"]),
                 "price": float(selection["price"]),
@@ -63,6 +64,12 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _side(value: Any) -> str:
+    """#523: lato BACK/LAY esplicito, con lo stesso contratto dei segnali (`validators.signal_side`).
+    Assente o non valido => ValueError("INVALID_SIDE"): un ordine non diventa mai BACK per default."""
+    return validators.signal_side({"side": value})
 
 
 class DutchingController:
@@ -222,7 +229,7 @@ class DutchingController:
                     "selectionId": int(item["selectionId"]),
                     "price": float(item["price"]),
                     "stake": float(item["stake"]),
-                    "side": str(item.get("side", "BACK")).upper(),
+                    "side": _side(item.get("side")),
                 }
                 for item in results
             ],
@@ -459,7 +466,7 @@ class DutchingController:
         lo ricalcola. Fail-safe su campi mancanti/non numerici => 0.0 (nessun falso
         blocco).
         """
-        side = str(item.get("side", "BACK")).upper()
+        side = _side(item.get("side"))
         try:
             stake = float(item.get("stake", 0.0) or 0.0)
             price = float(item.get("price", 0.0) or 0.0)
@@ -588,7 +595,7 @@ class DutchingController:
             return None
         if stake <= 0.0:
             return None
-        side = str(item.get("side") or "BACK").upper()
+        side = _side(item.get("side"))
         try:
             price = float(item.get("price", 1.0) or 1.0)
         except (TypeError, ValueError):
@@ -704,7 +711,7 @@ class DutchingController:
         return 0.0
 
     def _compute_order_exposure(self, item: Dict[str, Any]) -> float:
-        side = str(item.get("side", "BACK")).upper()
+        side = _side(item.get("side"))
         stake = float(item.get("stake", 0.0) or 0.0)
         price = float(item.get("price", 0.0) or 0.0)
 
@@ -751,6 +758,31 @@ class DutchingController:
 
         return int(table.table_id)
 
+    def _admit_entries(self, orders: List[Dict[str, Any]], batch_id: str = "") -> str:
+        """#523: ammissione delle gambe Dutching e dell'ordine manuale tramite il RuntimeController: barriera
+        cashout e fence d'ammissione per ogni ordine, registrati sotto un'unica presa del lock (lotto atomico).
+        "" se ammesso, altrimenti il motivo. Runtime senza la barriera => rifiuto (fail-closed)."""
+        admit = getattr(self.runtime, "admit_controller_entries", None)
+        if not callable(admit):
+            return "barriera_cashout_non_disponibile"
+        try:
+            reason = admit(orders, batch_id=batch_id)
+        except Exception:
+            logger.exception("Errore ammissione ingressi controller")
+            return "ammissione_non_verificabile"
+        if not isinstance(reason, str):
+            return "ammissione_non_verificabile"
+        return reason
+
+    def _withdraw_entries(self, orders: List[Dict[str, Any]]) -> None:
+        """Pubblicazione fallita dopo l'ammissione: registrazioni di fence e lotto scartate."""
+        withdraw = getattr(self.runtime, "withdraw_controller_entries", None)
+        if callable(withdraw):
+            try:
+                withdraw(orders)
+            except Exception:
+                logger.exception("Errore ritiro ingressi controller")
+
     def _release_table_and_key(self, table_id: Optional[int], event_key: str) -> None:
         duplication_guard = self._duplication_guard()
         table_manager = self._table_manager()
@@ -776,11 +808,13 @@ class DutchingController:
         return self.bus is not None and hasattr(self.bus, "publish")
 
     def _normalize_side(self, value: Any) -> str:
-        side = str(value or "BACK").upper().strip()
-        return side if side in {"BACK", "LAY"} else "BACK"
+        return _side(value)
 
     def _resolve_selection_side(self, selection: Dict[str, Any]) -> str:
-        raw = (selection or {}).get("side") or (selection or {}).get("effectiveType") or "BACK"
+        selection = selection or {}
+        raw = selection.get("side")
+        if raw in (None, ""):
+            raw = selection.get("effectiveType")          # alias esplicito gia' usato dal chiamante
         return self._normalize_side(raw)
 
     def _resolve_commission_pct(self, payload: Dict[str, Any]) -> float:
@@ -831,7 +865,7 @@ class DutchingController:
 
     def _dutching_model(self, results: List[Dict[str, Any]]) -> str:
         sides = {
-            self._normalize_side(item.get("side", "BACK"))
+            self._normalize_side(item.get("side"))
             for item in (results or [])
             if isinstance(item, dict)
         }
@@ -843,7 +877,7 @@ class DutchingController:
     def _lay_liability_metrics(self, results: List[Dict[str, Any]]) -> Dict[str, float]:
         liabilities: List[float] = []
         for item in results or []:
-            side = self._normalize_side((item or {}).get("side", "BACK"))
+            side = self._normalize_side((item or {}).get("side"))
             if side != "LAY":
                 continue
             try:
@@ -970,10 +1004,11 @@ class DutchingController:
                         f"Quota {price} sotto il minimo configurato ({min_price}) alla selezione #{idx}"
                     )
 
-                if "side" in selection:
-                    side = self._resolve_selection_side(selection)
-                    if side not in {"BACK", "LAY"}:
-                        return self._fail(f"side non valido alla selezione #{idx}: {side}")
+                # #523: lato obbligatorio; assente o non valido => lotto rifiutato per intero, nessuna gamba
+                try:
+                    self._resolve_selection_side(selection)
+                except ValueError:
+                    return self._fail(f"side non valido alla selezione #{idx}: INVALID_SIDE")
 
             if total_stake <= 0:
                 return self._fail("total_stake non valido")
@@ -1124,7 +1159,7 @@ class DutchingController:
             {
                 "market_id": payload.get("market_id"),
                 "selection_id": item.get("selectionId"),
-                "bet_type": str(item.get("side", "BACK")).upper(),
+                "bet_type": _side(item.get("side")),
                 "price": item.get("price"),
                 "stake": item.get("stake"),
                 "event_name": payload.get("event_name", ""),
@@ -1140,7 +1175,9 @@ class DutchingController:
                 if not duplication_guard.acquire(event_key):
                     return self._fail("Duplicato bloccato", event_key=event_key)
             except Exception:
+                # #523: anti-duplicato non verificabile => nessun ordine (prima si proseguiva, fail-open)
                 logger.exception("Errore duplication_guard.acquire")
+                return self._fail("Anti-duplicato non disponibile: nessun ordine", event_key=event_key)
 
         # MAX_STAKE_PCT (G5) — WARNING opt-in NON-bloccante: segnala se l'esposizione
         # reale di QUESTA operazione (batch_exposure = BACK stake / LAY liability)
@@ -1350,6 +1387,7 @@ class DutchingController:
         orders = []
         published_orders = []
         batch_created = False
+        admitted = False
 
         # PR26-a: identita' delle gambe dagli INPUT della richiesta, non dagli
         # stake calcolati (con quote uguali calculate_dutching assegna il
@@ -1361,7 +1399,7 @@ class DutchingController:
         def _leg_key(item):
             return (
                 int(item["selectionId"]),
-                str(item.get("side", "BACK")).upper(),
+                _side(item.get("side")),
                 float(item["price"]),
             )
 
@@ -1380,7 +1418,7 @@ class DutchingController:
                 order = {
                     "market_id": str(payload["market_id"]),
                     "selection_id": int(item["selectionId"]),
-                    "bet_type": str(item.get("side", "BACK")).upper(),
+                    "bet_type": _side(item.get("side")),
                     "price": float(item["price"]),
                     "stake": float(item["stake"]),
                     "event_name": payload.get("event_name", ""),
@@ -1407,6 +1445,25 @@ class DutchingController:
                     "batch_exposure": float(batch_exposure),
                 }
                 orders.append(order)
+
+            # #523: barriera cashout e fence d'ammissione per TUTTE le gambe prima di pubblicarne una sola:
+            # con un cashout attivo nel loro ambito il lotto e' rifiutato per intero.
+            admission = self._admit_entries(orders, batch_id=batch_id)
+            if admission:
+                self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": admission})
+                if allocated_here:
+                    self._release_table_and_key(table_id, event_key)
+                elif duplication_guard:
+                    duplication_guard.release(event_key)
+                return self._fail(
+                    f"Lotto non ammesso: {admission}",
+                    dry_run=False,
+                    preflight=False,
+                    batch_id=batch_id,
+                    event_key=event_key,
+                    reason=admission,
+                )
+            admitted = True
 
             self._batch_manager_create(batch_id, event_key, payload, orders)
             batch_created = True
@@ -1463,8 +1520,16 @@ class DutchingController:
 
             if batch_created:
                 self._batch_manager_mark_failed(batch_id=batch_id, error=str(exc))
+            if admitted:
+                # gambe non pubblicate: le loro registrazioni non devono restare in memoria
+                self._withdraw_entries([o for o in orders if o not in published_orders])
 
-            if allocated_here:
+            if published_orders:
+                # #523 (PF-EXEC-02): gambe gia' pubblicate possono essere sull'exchange. Tavolo e chiave del
+                # lotto restano trattenuti; le gambe non pubblicate sono gia' contate come chiuse dal runtime
+                # (`withdraw_controller_entries`), quindi il lotto si chiude sugli esiti delle altre.
+                pass
+            elif allocated_here:
                 self._release_table_and_key(table_id, event_key)
             elif duplication_guard:
                 try:
@@ -1493,6 +1558,13 @@ class DutchingController:
                 if key not in payload:
                     return self._fail(f"{key} mancante")
 
+            # #523: lato obbligatorio (bet_type / side / action), stesso contratto dei segnali: mai BACK per
+            # default, alias in conflitto rifiutati.
+            try:
+                side = validators.signal_side(payload)
+            except ValueError:
+                return self._fail("side non valido: INVALID_SIDE")
+
             if not self._runtime_active():
                 return self._fail("Runtime non attivo")
 
@@ -1518,7 +1590,6 @@ class DutchingController:
             # = payout stake*quota; LAY = liability stake*(quota-1) (il RISCHIO reale).
             # Enforce-first opt-in: in modalita' avviso (default) non blocca.
             # Opzionale (rettifica owner 18-19/10/2026): non configurato => nessun controllo.
-            side = str(self._normalize_side(payload.get("bet_type", "BACK"))).upper()
             potential_win = self._leg_potential_win({"side": side, "stake": stake, "price": price})
             try:
                 max_win = self._max_win(config)
@@ -1550,13 +1621,11 @@ class DutchingController:
                     selection_id,
                 )
 
-            if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
-                if not duplication_guard.acquire(event_key):
-                    return self._fail("Duplicato bloccato")
+            # #523: rischio reale dell'ordine (BACK = stake, LAY = liability), lo stesso usato per tavoli e cap.
+            exposure = validators.order_exposure(side, stake, price)
 
             bankroll = self._bankroll_current()
             if bankroll > 0 and config is not None:
-                exposure = stake
                 current_total_exposure = self._table_total_exposure()
                 max_total_exposure = bankroll * (
                     float(getattr(config, "max_total_exposure_pct", 35.0)) / 100.0
@@ -1571,17 +1640,52 @@ class DutchingController:
                 if current_total_exposure + exposure > max_total_exposure + 1e-9:
                     return self._fail("Esposizione globale oltre limite")
 
+            guarded = bool(duplication_guard) and bool(getattr(config, "anti_duplication_enabled", True))
+            if guarded:
+                try:
+                    acquired = duplication_guard.acquire(event_key)
+                except Exception:
+                    logger.exception("Errore duplication_guard.acquire (manual_bet)")
+                    return self._fail("Anti-duplicato non disponibile: nessun ordine")
+                if not acquired:
+                    return self._fail("Duplicato bloccato")
+
+            # #523: l'ordine manuale occupa un tavolo con il suo rischio reale, cosi' entra nelle misure di
+            # mercato, evento e totale come ogni altro ingresso, e viene liberato dagli esiti terminali.
+            table_id = payload.get("table_id")
+            allocated_here = False
+            if not table_id:
+                table_id = self._allocate_table(
+                    event_key=event_key,
+                    batch_exposure=exposure,
+                    meta={
+                        "market_id": market_id,
+                        "event_name": payload.get("event_name", ""),
+                        "event_id": payload.get("event_id"),
+                        "market_name": payload.get("market_name", ""),
+                        "runner_name": payload.get("runner_name", ""),
+                        "bet_type": side,
+                        "price": price,
+                        "type": "manual_bet",
+                    },
+                )
+                allocated_here = table_id is not None
+            if table_id is None and self._table_manager() is not None:
+                if guarded:
+                    duplication_guard.release(event_key)
+                return self._fail("Nessun tavolo disponibile per il bet manuale")
+
             order = {
                 "market_id": market_id,
                 "selection_id": selection_id,
-                "bet_type": self._normalize_side(payload.get("bet_type", "BACK")),
+                "bet_type": side,
                 "price": price,
                 "stake": stake,
                 "event_name": payload.get("event_name", ""),
                 "market_name": payload.get("market_name", ""),
                 "runner_name": payload.get("runner_name", ""),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),
-                "table_id": payload.get("table_id"),
+                "table_id": table_id,
                 "event_key": event_key,
                 # PR26-a: ref a monte preservato; altrimenti ogni manual_bet e'
                 # un intento NUOVO (due click identici = due bet): ref di
@@ -1592,11 +1696,23 @@ class DutchingController:
                 ),
             }
 
+            def _undo():
+                if allocated_here:
+                    self._release_table_and_key(table_id, event_key if guarded else "")
+                elif guarded:
+                    duplication_guard.release(event_key)
+
+            # #523: barriera cashout e fence d'ammissione, come per i segnali.
+            reason = self._admit_entries([order])
+            if reason:
+                _undo()
+                return self._fail(f"Ingresso non ammesso: {reason}", reason=reason)
+
             try:
                 self.bus.publish("CMD_QUICK_BET", order)
             except Exception:
-                if duplication_guard:
-                    duplication_guard.release(event_key)
+                self._withdraw_entries([order])
+                _undo()
                 raise
 
             self._publish_audit("MANUAL_BET_APPROVED", {"order": order})

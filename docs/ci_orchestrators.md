@@ -57,7 +57,7 @@ sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
-36 voci, ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+44 voci (36 della #525, 8 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
 test mirati che devono accorgersene. Le regole, verificate da
 `tests/scripts/test_run_mutation_guardrails_reale.py`:
 
@@ -118,6 +118,11 @@ tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
   file.
 - Run finale: 36 su 36 uccise, punteggio 100%, gate PASS, in circa 44 s in
   locale contro gli oltre 45 minuti di prima.
+- #523: 8 mutazioni nuove su Dutching e bet manuale (lato senza default nel
+  controller e nel middleware, liability LAY del bet manuale, barriera cashout
+  del lotto e runtime senza barriera, gamba AMBIGUOUS che trattiene il lotto,
+  lotto parziale non rilasciato, errore dell'anti-duplicato): 8 su 8 uccise
+  dai test di `tests/acceptance/test_issue523_dutching_manual_bet.py`.
 
 **Gap tracciato, non escluso in silenzio.** Ogni report elenca in
 `summary.spec_modules_without_mutations` i moduli che hanno una specifica in
@@ -126,7 +131,8 @@ tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
   `session_manager`;
 - non ha importatori nel codice di produzione: `core.execution_guard`;
 - senza mutazioni reali per ora: `core.order_router`, `core.risk_desk`,
-  `core.risk_middleware`, `pnl_engine`, `shutdown_manager`;
+  `pnl_engine`, `shutdown_manager` (`core.risk_middleware` ha una mutazione
+  dalla #523: lato della gamba Dutching);
 - Telegram, sospeso: `telegram_listener`, `telegram_sender`,
   `telegram_signal_processor`, `telegram_bet_resolver`.
 

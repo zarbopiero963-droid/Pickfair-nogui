@@ -2342,6 +2342,32 @@
         "tests/scripts/test_run_mutation_guardrails_reale.py"
       ],
       "max_files": 16
+    },
+    "issue523-dutching-manual-bet-gates": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "controllers/dutching_controller.py",
+        "core/risk_middleware.py",
+        "core/runtime_controller.py",
+        "docs/cashout_overview.md",
+        "docs/ci_orchestrators.md",
+        "guardrails/mutation_catalog.json",
+        "scripts/ci_changed_modules.py",
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/chaos/test_dutching_controller_chaos.py",
+        "tests/core/test_dutching_bus_wiring.py",
+        "tests/e2e/test_dutching_controller_e2e.py",
+        "tests/failure/test_dutching_controller_failures.py",
+        "tests/integration/test_dutching_controller_integration.py",
+        "tests/integration/test_dutching_max_win_guard.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/invariant/test_dutching_controller_invariants.py",
+        "tests/unit/test_dutching_controller.py"
+      ],
+      "max_files": 19,
+      "allow_tests": true,
+      "description": "#523 (corsie Dutching e manual_bet, dormienti): lato BACK/LAY obbligatorio senza default, ammissione atomica del lotto sotto la barriera cashout con fence fino all'engine, esposizione reale del bet manuale (liability LAY) su cap e tavolo, dedupe fail-closed, esito del lotto tenuto finche' ogni gamba e' certa con parziale segnalato (PF-EXEC-02, parte implementata; ribilanciamento/copertura e persistenza del lotto DEFERRED). Test esistenti delle corsie adattati al contratto (lato esplicito, API di ammissione nei double). Mutation testing: 8 mutazioni #523 nel catalogo (guardrails/mutation_catalog.json, docs/ci_orchestrators.md) e controllers/dutching_controller.py fra i path che attivano la lane mutation-guardrails (scripts/ci_changed_modules.py)."
     }
   }
 }
