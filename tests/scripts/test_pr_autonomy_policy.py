@@ -841,17 +841,18 @@ def _assessment(kind="CURRENT_DEFECT"):
             "contract_critical": False, **{r: False for r in fix_policy.PROTECTED_RISKS}}
 
 
-def test_cap_fix_loop_resta_cinque_cumulativo():
-    assert fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR == 5
+def test_cap_fix_loop_dieci_cumulativo():
+    # PF-QA-AUTONOMOUS-CONTINUATION-01 (owner 20/10/2026): tetto massimo 10, non obiettivo.
+    assert fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR == 10
 
 
 def test_fix_loop_senza_reset_e_override_limitato(tmp_path):
     ledger = fix_policy.FixLoopLedger(tmp_path / "b.sqlite", "owner/repo", 7)
-    ledger.initialize(5, "storia completa attestata: 5 cicli")
+    ledger.initialize(10, "storia completa attestata: 10 cicli")
     reopened = fix_policy.FixLoopLedger(tmp_path / "b.sqlite", "owner/repo", 7)
     reopened.initialize(0, "nuovo head")  # non azzera la storia
-    assert reopened.status()["completed_count"] == 5
-    stop = reopened.reserve("6", _assessment())
+    assert reopened.status()["completed_count"] == 10
+    stop = reopened.reserve("11", _assessment())
     assert not stop["allowed"] and stop["REASON"] == "fix_loop_budget_exhausted"
     with pytest.raises(ValueError):
         reopened.grant_override({"author": "owner", "repo": "owner/repo", "pr": 7,

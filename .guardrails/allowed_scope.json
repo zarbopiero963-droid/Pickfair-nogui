@@ -2370,6 +2370,20 @@
       "max_files": 21,
       "allow_tests": true,
       "description": "#523 (corsie Dutching e manual_bet, dormienti): lato BACK/LAY obbligatorio senza default, ammissione atomica del lotto sotto la barriera cashout con fence fino all'engine e sotto il lock d'ammissione, esposizione reale del bet manuale (liability LAY) su cap e tavolo, dedupe fail-closed e rilasciato solo se proprio, identificativi storici rifiutati all'ammissione. Esito del lotto (#529, scelta owner F): nessun rilascio da eventi di gamba, lotto trattenuto fino a settlement e riconciliazione (fail-closed). PF-EXEC-02 NON completo: esito, parziale, ribilanciamento, copertura e persistenza del lotto alla PR30. Test esistenti delle corsie adattati al contratto (lato esplicito, API di ammissione nei double). Mutation testing: mutazioni #523 nel catalogo (guardrails/mutation_catalog.json, docs/ci_orchestrators.md) e controllers/dutching_controller.py fra i path che attivano la lane mutation-guardrails (scripts/ci_changed_modules.py). ESTENSIONE DICHIARATA (#529 ciclo A5, decisione owner): +core/validators.py (regola unica validators.leg_side per middleware e controller, funzione nuova, nessun validatore esistente modificato) e +tests/integration/test_dutching_integration.py (test del vecchio contratto 'side vuoto => effectiveType' riscritto: campo presente ma vuoto/None => rifiuto, regola 1 owner A5)."
+    },
+    "issue461-fix-loop-cap-10": {
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "docs/auto_pr_flow_spec.md",
+        "scripts/pr_fix_loop_policy.py",
+        "tests/scripts/test_pr_autonomy_policy.py",
+        "tests/scripts/test_pr_fix_loop_policy.py"
+      ],
+      "max_files": 8,
+      "description": "Mandato owner FIX LOOP POLICY 10 CICLI (20/10/2026), roadmap #461 (sequenza owner c.6278391354), PF-QA-AUTONOMOUS-CONTINUATION-01 (#426 c.6263599189): MAX_FIX_LOOP_ITERATIONS_PER_PR 5 -> 10 come tetto massimo; stop anticipato, REVIEW_CHURN, prenotazione, deroga owner e gate invariati; documenti normativi allineati. PR di policy: merge manuale owner, nessun merge automatico."
     }
   }
 }

@@ -17,7 +17,9 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from typing import Any
 
-MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
+# Tetto massimo, non obiettivo (PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner 20/10/2026): lo stop anticipato
+# (REVIEW_CHURN, nessun nuovo difetto) e tutti i gate restano; oltre il tetto solo deroga owner puntuale.
+MAX_FIX_LOOP_ITERATIONS_PER_PR = 10
 PROTECTED_RISKS = (
     "safety", "security", "credentials", "real_money", "fail_open",
     "data_corruption", "risk_bypass", "runtime_bug", "owner_contract_violation",

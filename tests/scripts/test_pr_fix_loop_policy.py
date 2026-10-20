@@ -9,9 +9,13 @@ from scripts import pr_automation_controller as controller
 from scripts import pr_flow_automation as flow
 from scripts import pr_clean_scope_rebuild as rebuild
 
+# Tetto owner del fix loop (PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner 20/10/2026): 10 e' un MASSIMO,
+# non un obiettivo. Valore letterale, non la costante: il test deve accorgersi se la costante cambia.
+OWNER_CAP = 10
 
-def test_existing_controller_uses_owner_cap_five():
-    assert controller._budget_limits()["max_autofix_commits_per_pr"] == 5
+
+def test_existing_controller_uses_owner_cap_ten():
+    assert controller._budget_limits()["max_autofix_commits_per_pr"] == OWNER_CAP
 
 
 def test_current_correct_contract_mutation_does_not_trigger_existing_patch_route():
@@ -53,16 +57,16 @@ def consume(ledger, name):
     assert ledger.complete(name, f"head-{name}", branch="branch")["completed_count"] >= 1
 
 
-def test_cycles_one_through_five_then_six_stops(ledger, policy):
-    assert policy.MAX_FIX_LOOP_ITERATIONS_PER_PR == 5
-    for number in range(1, 6):
+def test_cycles_one_through_ten_then_eleventh_stops(ledger, policy):
+    assert policy.MAX_FIX_LOOP_ITERATIONS_PER_PR == OWNER_CAP
+    for number in range(1, OWNER_CAP + 1):
         consume(ledger, str(number))
-    assert ledger.status()["completed_count"] == 5
-    stopped = ledger.reserve("6", assessment("CURRENT_DEFECT"))
+    assert ledger.status()["completed_count"] == OWNER_CAP
+    stopped = ledger.reserve("11", assessment("CURRENT_DEFECT"))
     assert not stopped["allowed"]
     assert stopped["AUTO_PR_FLOW_STATUS"] == "NEEDS_MANUAL"
     assert stopped["REASON"] == "fix_loop_budget_exhausted"
-    assert not ledger.authorize("6", current_branch="branch")["allowed"]
+    assert not ledger.authorize("11", current_branch="branch")["allowed"]
 
 
 @pytest.mark.parametrize("change", [
@@ -70,26 +74,26 @@ def test_cycles_one_through_five_then_six_stops(ledger, policy):
     "partial_progress", "new_finding", "cluster", "review_rerun",
 ])
 def test_budget_survives_every_progress_change(ledger, policy, change):
-    for number in range(5):
+    for number in range(OWNER_CAP):
         consume(ledger, str(number))
     reopened = policy.FixLoopLedger(ledger.path, "owner/repo", 495)
     reopened.initialize(0, change)  # initialization cannot overwrite history
-    assert reopened.status()["completed_count"] == 5
+    assert reopened.status()["completed_count"] == OWNER_CAP
     assert not reopened.reserve(change, assessment("CURRENT_DEFECT"))["allowed"]
 
 
 def test_single_owner_override_is_bounded_and_not_replayed(ledger):
-    for number in range(5):
+    for number in range(OWNER_CAP):
         consume(ledger, str(number))
     decision = {
         "repo": "owner/repo", "pr": 495, "author": "owner", "id": "42",
         "html_url": "https://github.com/owner/repo/pull/495#issuecomment-42",
-        "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=5",
+        "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=10",
     }
     ledger.grant_override(decision)
     consume(ledger, "six")
     ledger.grant_override(decision)
-    assert ledger.status()["ceiling"] == 6
+    assert ledger.status()["ceiling"] == OWNER_CAP + 1
     assert not ledger.reserve("seven", assessment("CURRENT_DEFECT"))["allowed"]
 
 
@@ -195,14 +199,14 @@ def test_real_push_persists_once_and_sixth_never_runs(ledger):
     def runner(command, **_kwargs):
         calls.append(command)
         return "new-head" if command[1] == "rev-parse" else ""
-    for number in range(5):
+    for number in range(OWNER_CAP):
         cycle = str(number)
         assert ledger.reserve(cycle, assessment("CURRENT_DEFECT"))["allowed"]
         context = repair_context(ledger, cycle)
         assert controller.can_run_safe_autofix(context)["allowed"]
         assert controller.can_commit_after_post_fix_audit(context)["allowed"]
         assert flow.push_with_retry_once(runner, "owner/repo", "branch", context=context)["ok"]
-    assert ledger.status()["completed_count"] == 5
+    assert ledger.status()["completed_count"] == OWNER_CAP
     count_before = len(calls)
     context = repair_context(ledger, "six")
     assert not controller.can_run_safe_autofix(context)["allowed"]
@@ -314,7 +318,7 @@ def test_verified_mutation_does_not_reenter_legacy_blocking_classification():
 
 
 def test_controller_reports_durable_count_on_new_head_and_resolved_review(ledger, monkeypatch, tmp_path):
-    for number in range(5):
+    for number in range(OWNER_CAP):
         consume(ledger, str(number))
     monkeypatch.setenv("PR_FIX_LOOP_LEDGER", str(ledger.path))
     args = argparse.Namespace(repo="owner/repo", pr="495", output=str(tmp_path / "report.json"))
@@ -322,17 +326,17 @@ def test_controller_reports_durable_count_on_new_head_and_resolved_review(ledger
         decision = {"review": {"unresolved_active": 0}}
         context = controller.NextActionContext(args, {}, [], [], [], [], decision)
         controller.update_decision_state_tracking(args, {"headRefOid": head}, context)
-        assert decision["pr_automation_state"]["autofix_commit_count"] == 5
-        assert decision["fix_loop_budget"]["completed_count"] == 5
+        assert decision["pr_automation_state"]["autofix_commit_count"] == OWNER_CAP
+        assert decision["fix_loop_budget"]["completed_count"] == OWNER_CAP
         # No sixth repair requested: exhausted repair budget does not fabricate
         # a failed final readiness for a genuinely clean PR.
         assert not decision["budget_status"]["exhausted"]
 
 
-def test_normative_docs_keep_policy_classes_and_global_cap_five():
+def test_normative_docs_keep_policy_classes_and_global_cap_ten():
     root = Path(__file__).resolve().parents[2]
     required = (
-        "MAX_FIX_LOOP_ITERATIONS_PER_PR = 5", "CURRENT_DEFECT", "GUARDRAIL_GAP",
+        "MAX_FIX_LOOP_ITERATIONS_PER_PR = 10", "CURRENT_DEFECT", "GUARDRAIL_GAP",
         "THEORETICAL_MUTATION", "KNOWN_LIMITATION_ACCEPTED_BY_OWNER", "REVIEW_CHURN",
     )
     for name in ("AGENTS.md", "CLAUDE.md", "docs/auto_pr_flow_spec.md"):
@@ -436,14 +440,14 @@ def test_controller_unavailable_ledger_stops_manual(monkeypatch, tmp_path, state
 
 
 def test_clean_preflight_at_five_does_not_request_sixth(ledger, monkeypatch, tmp_path):
-    for number in range(5):
+    for number in range(OWNER_CAP):
         consume(ledger, str(number))
     monkeypatch.setenv('PR_FIX_LOOP_LEDGER', str(ledger.path))
     monkeypatch.setattr(flow, 'pr_view', lambda *_: {'headRefName':'branch', 'headRefOid':'head'})
     monkeypatch.setattr(flow, 'split_checks', lambda *_a, **_k: {})
     monkeypatch.setattr(flow, 'sh', lambda *_a, **_k: '')
     monkeypatch.setattr(flow, 'safe_autofix_commits', lambda *_: [])
-    args = argparse.Namespace(repo='owner/repo', pr='495', output='', max_safe_autofix_commits=5,
+    args = argparse.Namespace(repo='owner/repo', pr='495', output='', max_safe_autofix_commits=OWNER_CAP,
                               oscillation_touch_limit=3, comment=False, no_fail=False)
     assert flow.cmd_preflight(args) == 0
 
@@ -543,7 +547,7 @@ def test_accepted_limitation_unknown_risk_is_not_clearance(policy, missing):
 
 
 def test_controller_five_with_nonpatch_thread_is_not_sixth(ledger, monkeypatch, tmp_path):
-    for number in range(5): consume(ledger, str(number))
+    for number in range(OWNER_CAP): consume(ledger, str(number))
     monkeypatch.setenv('PR_FIX_LOOP_LEDGER',str(ledger.path))
     args=argparse.Namespace(repo='owner/repo',pr='495',output=str(tmp_path/'report.json'))
     decision={'review':{'unresolved_active':1},'review_triage':{'decision':'EVIDENCE_RESOLVE'}}
@@ -988,12 +992,12 @@ def test_real_pr_merge_without_ledger_is_not_authorized(monkeypatch):
 
 
 def test_clean_merge_at_five_keeps_existing_guards(ledger):
-    for number in range(5): consume(ledger,str(number))
+    for number in range(OWNER_CAP): consume(ledger,str(number))
     context=merge_context(fix_loop={'path':str(ledger.path),'repo':'owner/repo','pr':495})
     assert controller.can_auto_merge(context)['allowed']
     assert not controller.can_auto_merge({**context,'pending':['CI']})['allowed']
     assert not controller.can_auto_merge({**context,'unresolved_active':1})['allowed']
-    assert ledger.status()['completed_count']==5
+    assert ledger.status()['completed_count']==OWNER_CAP
 
 
 def test_completion_rejects_wrong_branch_and_corrupt_assessment(ledger):
@@ -1115,3 +1119,63 @@ def test_initial_push_refuses_incorporated_unassessed_remote_head(tmp_path,polic
     assert git(remote,'rev-parse','refs/heads/branch')==advanced
     assert ledger.status()['completed_count']==0
     assert ledger.status()['reserved_count']==1
+
+
+# ---- PF-QA-AUTONOMOUS-CONTINUATION-01 (mandato owner 20/10/2026): tetto 10, mai un obiettivo ----
+def test_ten_is_a_ceiling_churn_still_stops_early(ledger):
+    # Stop anticipato invariato: senza nuovo difetto, la stessa area osservata di nuovo => REVIEW_CHURN ben
+    # prima del tetto; le osservazioni non consumano slot.
+    for number in range(2):
+        consume(ledger, str(number))
+    first = ledger.reserve("obs-1", assessment("THEORETICAL_MUTATION", area="risk_gate"))
+    second = ledger.reserve("obs-2", assessment("THEORETICAL_MUTATION", area="risk_gate"))
+    assert not first["allowed"] and first["REASON"] == "theoretical_mutation"
+    assert not second["allowed"] and second["REASON"] == "review_churn"
+    assert second["review_status"] == "REVIEW_CHURN"
+    assert ledger.status()["used_slots"] == 2 < OWNER_CAP
+
+
+def test_override_below_the_new_ceiling_is_rejected(ledger):
+    # Una deroga puntuale vale solo a tetto raggiunto: AT_COUNT=5 non e' piu' una deroga valida.
+    for number in range(5):
+        consume(ledger, str(number))
+    decision = {
+        "repo": "owner/repo", "pr": 495, "author": "owner", "id": "43",
+        "html_url": "https://github.com/owner/repo/pull/495#issuecomment-43",
+        "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=5",
+    }
+    with pytest.raises(ValueError, match="count mismatch"):
+        ledger.grant_override(decision)
+    assert ledger.status()["ceiling"] == OWNER_CAP
+
+
+def test_legacy_grant_below_the_new_ceiling_fails_closed(ledger):
+    # Ledger storico con una deroga registrata sotto il vecchio tetto (AT_COUNT=5, ceiling=6): incoerente con
+    # il tetto 10, il ledger si ferma (fail-closed); mai un budget reinterpretato in silenzio.
+    import json
+    import sqlite3
+    for number in range(5):
+        consume(ledger, str(number))
+    comment = {"repo": "owner/repo", "pr": 495, "author": "owner", "id": "44",
+               "html_url": "https://github.com/owner/repo/pull/495#issuecomment-44",
+               "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=5"}
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("INSERT INTO grants VALUES (?, ?, ?, ?, ?)",
+                           ("owner/repo", 495, "44", 6, json.dumps(comment)))
+    status = ledger.status()
+    assert not status["allowed"] and "invalid_persisted_grant" in status["REASON"]
+    assert not ledger.reserve("next", assessment("CURRENT_DEFECT"))["allowed"]
+
+
+def test_eleventh_cycle_needs_a_bounded_owner_override(ledger):
+    for number in range(OWNER_CAP):
+        consume(ledger, str(number))
+    assert ledger.reserve("11", assessment("CURRENT_DEFECT"))["REASON"] == "fix_loop_budget_exhausted"
+    ledger.grant_override({
+        "repo": "owner/repo", "pr": 495, "author": "owner", "id": "45",
+        "html_url": "https://github.com/owner/repo/pull/495#issuecomment-45",
+        "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=10",
+    })
+    consume(ledger, "11")
+    assert ledger.status()["completed_count"] == OWNER_CAP + 1
+    assert ledger.reserve("12", assessment("CURRENT_DEFECT"))["REASON"] == "fix_loop_budget_exhausted"
