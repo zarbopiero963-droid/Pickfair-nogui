@@ -597,8 +597,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "                    return \"lotto_gia_attivo\"",
-      "mutated": "                    pass",
+      "original": "                return \"lotto_gia_attivo\"",
+      "mutated": "                pass",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -651,6 +651,30 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (#529): Lotto ritirato senza gambe pubblicate: tavolo e chiave rilasciati due volte (runtime e controller)."
+    },
+    {
+      "id": "closed_batch_live_contradiction_ignored",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "                if event_name == \"QUICK_BET_AMBIGUOUS\" or contradicts:",
+      "mutated": "                if event_name == \"QUICK_BET_AMBIGUOUS\":",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Grok su #529): Una gamba di un lotto chiuso senza esposizione risulta viva: nessuna riserva incerta, nuovi ingressi ammessi."
+    },
+    {
+      "id": "single_admission_takes_over_batch_leg",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                    str(o[\"customer_ref\"]) in active_refs for o in orders):",
+      "mutated": "                    False for o in orders):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Grok su #529): Un'ammissione a ordine singolo con il ref di una gamba di un lotto aperto la sovrascrive."
     }
   ]
 }

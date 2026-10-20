@@ -854,3 +854,41 @@ def test_closed_batch_memory_is_bounded(tmp_path, monkeypatch):
             _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
         c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
     assert len(c.rc._entry_batch_closed) <= 4
+
+
+# ============================================================ rilievi Grok su #529
+@pytest.mark.parametrize("late", ["QUICK_BET_FILLED", "QUICK_BET_SUCCESS"])
+def test_live_event_for_a_leg_of_a_batch_closed_without_exposure_holds_the_event(tmp_path, late):
+    # Lotto rilasciato (tutte le gambe FAILED); poi una gamba risulta viva: esito contraddittorio => riserva
+    # incerta e chiave dell'evento ripresa (nessun nuovo ingresso finche' la riconciliazione non chiarisce).
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    for leg in legs:
+        _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
+    assert _busy_tables(c) == [] and c.rc.duplication_guard._active == {}
+
+    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
+
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+    assert legs[0]["event_key"] in c.rc._uncertain_reservations_map()
+
+
+def test_late_filled_after_an_all_live_batch_is_not_a_contradiction(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    for leg in legs:
+        _leg_event(c, leg, "QUICK_BET_SUCCESS", status="SUCCESS")
+    assert c.rc.duplication_guard._active == {}
+    _leg_event(c, legs[0], "QUICK_BET_FILLED", status="FILLED")
+    assert c.rc.duplication_guard._active == {}
+    assert legs[0]["event_key"] not in c.rc._uncertain_reservations_map()
+
+
+def test_single_order_admission_cannot_take_over_an_active_batch_leg(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    single = {**legs[0], "table_id": 77, "batch_id": ""}
+    assert c.rc.admit_controller_entries([single]) == "lotto_gia_attivo"
+    assert c.rc.admit_controller_entries([single], batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
+    other = {**legs[0], "customer_ref": "man-nuovo", "batch_id": ""}
+    assert c.rc.admit_controller_entries([other], batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"

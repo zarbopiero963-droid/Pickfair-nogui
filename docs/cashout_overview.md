@@ -306,8 +306,9 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   un cashout fra ammissione e invio nega le gambe in coda
   (`cashout_invalidation_stale`). Runtime senza questa API, eccezione o esito
   non stringa => rifiuto (`barriera_cashout_non_disponibile` /
-  `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id` (o una sua
-  gamba) non viene sovrascritto (`lotto_gia_attivo`).
+  `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id`, o una sua
+  gamba, non viene sovrascritto da nessuna ammissione, nemmeno a ordine
+  singolo (`lotto_gia_attivo`).
 - **Bet manuale**: esposizione = rischio reale (`validators.order_exposure`:
   BACK stake, LAY stake × (quota − 1)) per `max_single_bet`, `max_total` e il
   tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il
@@ -326,7 +327,11 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   ogni gamba viva si chiude con esito certo (`ROLLBACK_DONE`, cancellazione
   confermata) il lotto viene rilasciato. Una gamba abbinata (FILLED) non viene
   mai declassata; una gamba piazzata (SUCCESS) si chiude solo con
-  `ROLLBACK_DONE`: un esito contraddittorio non la toglie dalle vive. Lettura e chiusura del lotto avvengono sotto
+  `ROLLBACK_DONE`: un esito contraddittorio non la toglie dalle vive. Se una
+  gamba di un lotto già rilasciato senza esposizione (tutte chiuse) risulta poi
+  viva, l'esito è contraddittorio: la riserva dell'evento è marcata incerta, la
+  chiave anti-duplicato dell'evento è ripresa (nessun nuovo ingresso) e serve la
+  riconciliazione. Lettura e chiusura del lotto avvengono sotto
   `_risk_admission_lock` (nessuna corsa fra gambe concorrenti). Un
   `DUPLICATE_BLOCKED` per il ref di una gamba non è un suo esito (il ref è
   già in volo o consumato): il lotto resta trattenuto. Publish fallito a metà lotto: le gambe non pubblicate

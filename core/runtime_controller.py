@@ -3622,13 +3622,12 @@ class RuntimeController:
             return "ingresso_senza_customer_ref"
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
-            if batch_id and len(orders) > 1:
-                # Rilievo Codex #529: un lotto ancora aperto con lo stesso id (o una sua gamba) non viene
-                # sovrascritto: tavolo e gambe del primo resterebbero orfani.
-                active_refs = getattr(self, "_entry_batch_of_ref", None) or {}
-                if str(batch_id) in (getattr(self, "_entry_batches", None) or {}) or any(
-                        str(o["customer_ref"]) in active_refs for o in orders):
-                    return "lotto_gia_attivo"
+            # Rilievi Codex/Grok #529: un lotto ancora aperto con lo stesso id, o una sua gamba, non viene
+            # sovrascritto da nessuna ammissione (lotto o ordine singolo): tavolo e gambe resterebbero orfani.
+            active_refs = getattr(self, "_entry_batch_of_ref", None) or {}
+            if (batch_id and str(batch_id) in (getattr(self, "_entry_batches", None) or {})) or any(
+                    str(o["customer_ref"]) in active_refs for o in orders):
+                return "lotto_gia_attivo"
             fences = []
             for order in orders:
                 fence = self._capture_admission_fence(order)
@@ -3725,10 +3724,24 @@ class RuntimeController:
                     return False
                 # Lotto gia' chiuso a livello di lotto (rilasciato o PARZIALE trattenuto): un evento tardivo di
                 # una sua gamba (es. FILLED dopo SUCCESS) non deve ricadere nel rilascio del singolo ordine.
-                if event_name == "QUICK_BET_AMBIGUOUS":
+                closed_batch, leg_outcome = (closed_batch if isinstance(closed_batch, tuple)
+                                             else (closed_batch, None))
+                contradicts = (event_name in self._BATCH_LEG_LIVE
+                               and leg_outcome is not None and leg_outcome not in self._BATCH_LEG_LIVE)
+                if event_name == "QUICK_BET_AMBIGUOUS" or contradicts:
+                    # Esito incerto tardivo, o gamba chiusa senza esposizione che risulta viva (rilievo Grok #529):
+                    # la riserva dell'evento e' marcata incerta (fail-closed) e il caso e' reso visibile.
                     event_key = str((payload or {}).get("event_key") or "")
-                    if event_key:                # un esito incerto tardivo trattiene comunque (fail-closed)
+                    if event_key:
                         self._mark_uncertain(event_key, (payload or {}).get("table_id"))
+                    if contradicts and event_key and getattr(self, "duplication_guard", None) is not None:
+                        try:                         # nessun nuovo ingresso sull'evento finche' non si riconcilia
+                            self.duplication_guard.acquire(event_key)
+                        except Exception:
+                            logger.exception("Errore riacquisizione chiave anti-duplicato (lotto chiuso)")
+                    if contradicts:
+                        logger.critical("Gamba %s del lotto chiuso %s chiusa come %s ma ora %s: riserva incerta, "
+                                        "riconciliazione necessaria", ref, closed_batch, leg_outcome, event_name)
                 logger.info("Evento %s tardivo della gamba %s del lotto chiuso %s: nessun rilascio",
                             event_name, ref, closed_batch)
                 return True
@@ -3765,7 +3778,7 @@ class RuntimeController:
                     closed_refs = self._entry_batch_closed = {}
                 for leg in batch["refs"]:
                     by_ref.pop(leg, None)
-                    closed_refs[leg] = batch_id  # gli eventi tardivi delle gambe restano del lotto
+                    closed_refs[leg] = (batch_id, outcomes.get(leg))  # eventi tardivi restano del lotto
                 while len(closed_refs) > self._BATCH_CLOSED_REFS_MAX:
                     closed_refs.pop(next(iter(closed_refs)))   # memoria limitata: si scordano i piu' vecchi
                 self._entry_batches.pop(batch_id, None)
