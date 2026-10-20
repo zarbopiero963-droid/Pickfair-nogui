@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 52,
- "updated_at": "2026-10-20T18:25:55.436876+00:00",
+ "seq": 53,
+ "updated_at": "2026-10-20T20:05:15.447509+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -16,8 +16,8 @@
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
-  "main_sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
-  "verified_with": "git fetch origin main + GitHub API (merge #529)"
+  "main_sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+  "verified_with": "git fetch origin main + GitHub API (merge #530)"
  },
  "protected": {
   "pr505_head": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
@@ -456,11 +456,9 @@
    "source": "prompt owner in chat 14/10"
   }
  ],
- "owner_decisions_pending": [
-  "Conferma avvio della prossima voce: allineamento fix loop a 10 cicli (file di policy, merge owner)"
- ],
+ "owner_decisions_pending": [],
  "uncertain_ops": [],
- "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524 -> #525 -> #523 FATTE; prossima voce = allineamento fix loop a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, #426 c.6263599189; scripts/pr_fix_loop_policy.py oggi MAX=5): tocca file di policy => merge manuale owner; poi riconciliazione completa #461. Follow-up aperto #528 (harness F026). Avvio solo dopo conferma owner. NO LIVE",
+ "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524, #525, #523, fix loop 10 FATTE; prossima voce = riconciliazione completa #461 (stato reale delle schede vs PR mergiate, attivita' su issue). Poi PR29/PR30 secondo sequenza vigente. Follow-up #528. NO LIVE",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -469,21 +467,19 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "pr": 529,
-  "issue": 523,
-  "head": "b902b007671ea529b8fd000a3048b383b7a7aee1",
-  "merged_main_sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
-  "status": "MERGED",
-  "hard_verify": "IMPLEMENTED_WITH_NOTE (PF-EXEC-02 NON completo, a PR30/PR31)",
-  "regression": "8650 passed 0 failed (b902b00, tree = 380157a)",
-  "mutation": "67/67 KILLED, gate PASS",
-  "ci": "tutti i check head verdi (test_F026_04 verde al rerun unico, harness #528); post-merge main 13/13 success",
-  "reviews": "Sol e Grok strutturati, nessun bloccante su 9be3003...b902b00; Codex usage-limit (advisory); riesame indipendente: nessun P0/P1, nessun P2 introdotto",
-  "threads": "0 aperti (tutti risolti con prova o DEFERRED_BY_POLICY registrato su #461)"
+  "pr": 530,
+  "head": "2ecc4a4ed9008396f1f48a1d17d9d34506272ff5",
+  "merged_main_sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+  "status": "MERGED (owner manual)",
+  "hard_verify": "FULLY_IMPLEMENTED (perimetro: tetto fix loop 10, freno controller = tetto+3, docs normative)",
+  "regression": "8661 passed 0 failed (2ecc4a4)",
+  "ci": "head: tutti verdi, Merge Readiness PASS; post-merge main 12/12",
+  "reviews": "Sol e Grok strutturati senza bloccanti su 3 range; Codex 2 P1 corretti, poi nessun rilievo; riesame indipendente pulito",
+  "cost_reviews": "$0.21 (6 review, 3 range)"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "e4533abf7befd91189e8fb443928386cae881ff6",
- "lotto_corrente": "#529 MERGED (380157a); post-merge completato; prossima voce di roadmap selezionata, non avviata",
+ "previous_checkpoint_sha": "68e15d0236174510c7787f709d31a01a118cba90",
+ "lotto_corrente": "#530 MERGED (2141031) con approvazione owner; post-merge completato",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -515,7 +511,8 @@
   "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
-  "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi"
+  "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
+  "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -558,18 +555,18 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-DUTCHING-AUTONOMOUS-523 + rettifica roadmap #461 + decisioni owner #529 (F, A, A2, A3, A4, A5)",
+ "mandate_id": "MANDATO OWNER FIX LOOP POLICY 10 CICLI + APPROVAZIONE OWNER MERGE PR #530 (20/10/2026)",
  "code": {
   "branch": "main",
-  "sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
-  "verified_with": "git fetch origin main; tree identico all'head verificato b902b00 della #529 (git diff b902b00 origin/main = 0 righe)"
+  "sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+  "verified_with": "tree identico all'head approvato 2ecc4a4 (git diff = 0 righe)"
  },
  "blocks": [
   "Gate A #506 NON PASS",
   "LIVE NO-GO",
   "BLOCKS_DUTCHING_ACTIVATION: PF-EXEC-02, PF529-A3-R1..R4, cablaggio batch manager (#461 c.6292754293, 6294445741, 6295132960, 6296247545)",
   "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
-  "workflow Grok marca done una review senza sezioni (rilevato su 9be3003): file a merge owner, da segnalare"
+  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato"
  ],
  "owner_authorizations": {
   "live": false,
@@ -590,6 +587,18 @@
   "resolve_fixed_threads": "sì, solo con correzione dimostrata sul commit pubblicato e riferimento alla prova"
  },
  "tests_executed": [
+  {
+   "id": "regression_full_530",
+   "status": "PASS",
+   "sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+   "result": "8661 passed / 0 failed su 2ecc4a4 (tree = 2141031)"
+  },
+  {
+   "id": "ci_post_merge_main_530",
+   "status": "PASS",
+   "sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+   "result": "12 workflow success"
+  },
   {
    "id": "regression_full_529",
    "status": "PASS",

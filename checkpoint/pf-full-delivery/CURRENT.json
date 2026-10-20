@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "main",
-  "sha": "380157a200ae98b8b77034f15c232ed96d61bc79"
+  "sha": "2141031a900f406b6a1b4e0325d26200eca97998"
  },
- "mandate_id": "PF-DUTCHING-AUTONOMOUS-523 + rettifica roadmap #461 + decisioni owner #529 (F, A, A2, A3, A4, A5)",
- "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524 -> #525 -> #523 FATTE; prossima voce = allineamento fix loop a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, #426 c.6263599189; scripts/pr_fix_loop_policy.py oggi MAX=5): tocca file di policy => merge manuale owner; poi riconciliazione completa #461. Follow-up aperto #528 (harness F026). Avvio solo dopo conferma owner. NO LIVE",
- "previous_checkpoint_sha": "e4533abf7befd91189e8fb443928386cae881ff6",
+ "mandate_id": "MANDATO OWNER FIX LOOP POLICY 10 CICLI + APPROVAZIONE OWNER MERGE PR #530 (20/10/2026)",
+ "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524, #525, #523, fix loop 10 FATTE; prossima voce = riconciliazione completa #461 (stato reale delle schede vs PR mergiate, attivita' su issue). Poi PR29/PR30 secondo sequenza vigente. Follow-up #528. NO LIVE",
+ "previous_checkpoint_sha": "68e15d0236174510c7787f709d31a01a118cba90",
  "schema": "pf-current/1",
- "seq": 52
+ "seq": 53
 }

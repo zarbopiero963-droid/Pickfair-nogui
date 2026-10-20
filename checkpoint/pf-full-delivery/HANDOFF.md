@@ -82,3 +82,10 @@ La chat e gli Artifact NON sono la fonte di verità.
 - Prove: regressione 8650/0, mutation 67/67, Sol e Grok senza bloccanti, riesame indipendente pulito, 0 thread aperti.
 - **Prossima voce (sequenza owner #461 c.6278391354):** allineamento fix loop a 10 cicli (`scripts/pr_fix_loop_policy.py` MAX=5 oggi; PF-QA-AUTONOMOUS-CONTINUATION-01). File di policy => merge manuale owner. Poi riconciliazione completa #461. Follow-up #528.
 - NO LIVE.
+
+
+## seq 53 — #530 mergiata (2026-10-20)
+
+- **#530 MERGED** (merge manuale owner, squash `2141031a900f406b6a1b4e0325d26200eca97998`, head `2ecc4a4`, tree identico). CI post-merge 12/12 verdi.
+- `MAX_FIX_LOOP_ITERATIONS_PER_PR = 10` su main; `max_total_controller_runs` = tetto + 3; docs normative allineate.
+- **Prossima voce (sequenza owner #461 c.6278391354):** riconciliazione completa #461. Poi PR29/PR30. Follow-up #528. NO LIVE.

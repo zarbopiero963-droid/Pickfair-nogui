@@ -4,7 +4,7 @@
   "LIVE NO-GO",
   "BLOCKS_DUTCHING_ACTIVATION: PF-EXEC-02, PF529-A3-R1..R4, cablaggio batch manager (#461 c.6292754293, 6294445741, 6295132960, 6296247545)",
   "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
-  "workflow Grok marca done una review senza sezioni (rilevato su 9be3003): file a merge owner, da segnalare"
+  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -43,11 +43,12 @@
   "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
-  "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi"
+  "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
+  "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12"
  ],
- "lotto_corrente": "#529 MERGED (380157a); post-merge completato; prossima voce di roadmap selezionata, non avviata",
- "mandate_id": "PF-DUTCHING-AUTONOMOUS-523 + rettifica roadmap #461 + decisioni owner #529 (F, A, A2, A3, A4, A5)",
- "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524 -> #525 -> #523 FATTE; prossima voce = allineamento fix loop a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, #426 c.6263599189; scripts/pr_fix_loop_policy.py oggi MAX=5): tocca file di policy => merge manuale owner; poi riconciliazione completa #461. Follow-up aperto #528 (harness F026). Avvio solo dopo conferma owner. NO LIVE",
+ "lotto_corrente": "#530 MERGED (2141031) con approvazione owner; post-merge completato",
+ "mandate_id": "MANDATO OWNER FIX LOOP POLICY 10 CICLI + APPROVAZIONE OWNER MERGE PR #530 (20/10/2026)",
+ "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524, #525, #523, fix loop 10 FATTE; prossima voce = riconciliazione completa #461 (stato reale delle schede vs PR mergiate, attivita' su issue). Poi PR29/PR30 secondo sequenza vigente. Follow-up #528. NO LIVE",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
