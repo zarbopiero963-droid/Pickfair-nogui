@@ -57,7 +57,7 @@ sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
-57 voci (36 della #525, 21 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+62 voci (36 della #525, 26 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
 test mirati che devono accorgersene. Le regole, verificate da
 `tests/scripts/test_run_mutation_guardrails_reale.py`:
 

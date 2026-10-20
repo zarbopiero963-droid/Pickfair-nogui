@@ -15,9 +15,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   in conflitto rifiutati); cap, dedupe, tavolo e ammissione sotto il lock d'ammissione dei segnali, con
   barriera cashout atomica sul lotto e fence fino all'engine; bet manuale con esposizione reale (liability
   LAY) su cap e tavolo, che riserva sempre il controller; dedupe acquisito dopo i controlli e rilasciato
-  solo se proprio, errore del dedupe => rifiuto (prima fail-open), preflight senza chiave trattenuta;
-  identificativi storici rifiutati all'ammissione. Esito del lotto (#529, scelta owner F): nessun evento di
-  gamba rilascia tavolo o chiave del lotto, trattenuto fino a settlement e riconciliazione (fail-closed).
+  solo se proprio, errore del dedupe => rifiuto (prima fail-open); chiave del lotto acquisita e fissata
+  solo nella fase di ammissione, `precheck`/preflight privi di effetti permanenti; identificativi del
+  Dutching (mercato, selezioni, quote, stake) validati con i validatori condivisi prima di ogni riserva
+  (una gamba non valida rifiuta il lotto intero); lotto invalidato se una gamba è negata dal fence o una
+  sorella in coda ha il fence stale (nessuna gamba non ancora partita esce, anche con cashout limitato a
+  una selezione); identificativi storici rifiutati all'ammissione. Esito del lotto (#529, scelta owner F):
+  nessun evento di gamba rilascia tavolo o chiave del lotto (fail-closed); il settlement non rilascia la
+  chiave fissata (resta fino al riavvio o a `DuplicationGuard.clear`) e il tavolo solo se attribuibile.
   **PF-EXEC-02 non completo**: esito, parziale, ribilanciamento, copertura e persistenza del lotto sono
   della PR30. Test con catena reale e broker SIM in `tests/acceptance/test_issue523_dutching_manual_bet.py`.
 - **#525 — gli orchestratori CI si avviano di nuovo:** `ci-master-gate` e `ci-dynamic-intelligent`

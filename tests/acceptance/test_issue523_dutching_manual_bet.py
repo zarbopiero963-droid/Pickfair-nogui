@@ -922,3 +922,92 @@ def test_manual_bet_with_an_invalid_identifier_or_amount_takes_no_resource(tmp_p
     res = _dutching(c).manual_bet(_manual(**{field: value}))
     assert res["ok"] is False
     _no_side_effects(c)
+
+
+# ============================================================ #529 ciclo A2 (owner): identificativi, lotto atomico, precheck
+@pytest.mark.parametrize("mutate", [
+    lambda b: b["selections"][1].update(selectionId=0),
+    lambda b: b["selections"][1].update(selectionId=-1),
+    lambda b: b["selections"][1].update(selectionId="abc"),
+    lambda b: b["selections"][1].update(selectionId=20.5),
+    lambda b: b["selections"][1].update(price=float("inf")),
+    lambda b: b["selections"][1].update(price=float("nan")),
+    lambda b: b.update(market_id="   "),
+    lambda b: b.update(total_stake=float("nan")),
+], ids=["sel0", "sel-neg", "sel-str", "sel-float", "price-inf", "price-nan", "market-blank", "total-nan"])
+def test_batch_with_one_engine_invalid_leg_is_rejected_whole(tmp_path, mutate):
+    # Rilievo Codex r4326488228: selectionId=0 passava int(); l'engine rifiutava quella gamba e piazzava le altre.
+    c = _catena(tmp_path)
+    payload = _batch()
+    mutate(payload)
+    res = _dutching(c).submit_dutching(payload)
+    assert res["ok"] is False
+    _no_side_effects(c)
+
+
+@pytest.mark.parametrize("stale_selection", [10, 20])
+def test_selection_scoped_cashout_after_admission_places_no_leg_of_the_batch(tmp_path, stale_selection):
+    # Rilievo Codex r4326488240: il fence di ogni gamba era indipendente; un cashout limitato a una selezione negava
+    # solo quella gamba e l'altra partiva: esposizione su una gamba sola.
+    c = _catena(tmp_path)
+    held, run_queued = _queueing(c)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+    assert len(held) == 2 and c.broker.state.orders == {}
+
+    _barrier(c.rc, {"signal_type": "CASHOUT", "market_id": "1.700", "selection_id": stale_selection})
+    run_queued()
+
+    assert c.broker.state.orders == {}                                   # nessuna gamba piazzata
+    assert len(_busy_tables(c)) == 1                                     # lotto trattenuto (fail-closed)
+
+
+def test_concurrent_delivery_of_legs_after_a_selection_cashout_places_nothing(tmp_path):
+    c = _catena(tmp_path)
+    held, _run = _queueing(c)
+    assert _dutching(c).submit_dutching(_batch(sides=("BACK", "BACK", "BACK"), total_stake=15.0))["ok"] is True
+    _barrier(c.rc, {"signal_type": "CASHOUT", "market_id": "1.700", "selection_id": 30})
+    c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
+    start = threading.Barrier(len(held))
+    errors = []
+
+    def deliver(order):
+        try:
+            start.wait(timeout=5)
+            for handler in list(c.bus.subscribers.get("CMD_QUICK_BET", [])):
+                handler(order)
+        except Exception as exc:                        # pragma: no cover - fallimento del test
+            errors.append(exc)
+
+    threads = [threading.Thread(target=deliver, args=(order,)) for order in held]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert errors == []
+    assert c.broker.state.orders == {}
+
+
+def test_leg_already_sent_before_the_cashout_stays_counted_and_held(tmp_path):
+    c = _catena(tmp_path)
+    held, _run = _queueing(c)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+    c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
+    for handler in list(c.bus.subscribers.get("CMD_QUICK_BET", [])):
+        handler(held[0])                                                 # prima gamba inviata
+    assert len(c.broker.state.orders) == 1
+    _barrier(c.rc, {"signal_type": "CASHOUT", "market_id": "1.700", "selection_id": 20})
+    for handler in list(c.bus.subscribers.get("CMD_QUICK_BET", [])):
+        handler(held[1])                                                 # seconda: negata
+    assert len(c.broker.state.orders) == 1
+    (table,) = _busy_tables(c)
+    assert table.current_exposure > 0                                    # la gamba inviata resta contabilizzata
+
+
+def test_public_precheck_has_no_permanent_side_effect(tmp_path):
+    # Rilievo Codex r4326488216: il precheck pubblico prendeva una chiave fissata mai rilasciata.
+    c = _catena(tmp_path)
+    pre = _dutching(c).precheck(_batch())
+    assert pre["ok"] is True, pre
+    assert c.rc.duplication_guard._active == {} and not c.rc.duplication_guard._pinned
+    assert _busy_tables(c) == []
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True

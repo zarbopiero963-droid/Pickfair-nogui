@@ -3783,6 +3783,25 @@ class RuntimeController:
                 conflicts.discard(ref)
             if in_conflict:
                 return "customer_ref_in_conflitto"
+            # #529 ciclo A2 (rilievo Codex r4326488240): il lotto e' atomico anche dopo l'ammissione. Una gamba non
+            # ancora partita di un lotto invalidato non parte; e alla verifica di una gamba si controllano anche i
+            # fence delle gambe sorelle ancora in coda: uno solo stale (es. cashout limitato a una selezione)
+            # invalida il lotto. Le gambe gia' inviate o incerte restano contabilizzate e trattenute.
+            leg = (getattr(self, "_held_batch_legs", None) or {}).get(ref)
+            if leg is not None:
+                invalidated = getattr(self, "_invalidated_batches", None)
+                if invalidated is None:
+                    invalidated = self._invalidated_batches = set()
+                if leg["batch_id"] in invalidated:
+                    return "lotto_invalidato"
+                siblings = [entry[0] for other in leg["refs"] if other != ref
+                            for entry in (queued.get(other) or [])]
+                if not RuntimeController._admission_fence_valid(self, fence) or any(
+                        not RuntimeController._admission_fence_valid(self, f) for f in siblings):
+                    invalidated.add(leg["batch_id"])
+                    logger.warning("Lotto %s invalidato prima dell'invio (cashout nel suo ambito): nessuna gamba "
+                                   "non ancora partita viene piazzata", leg["batch_id"])
+                    return "lotto_invalidato"
             if not RuntimeController._admission_fence_valid(self, fence):
                 return "cashout_invalidation_stale"
             # Ingresso ammesso e in invio (verifica owner pre-merge #522): finche' l'engine non ha l'esito

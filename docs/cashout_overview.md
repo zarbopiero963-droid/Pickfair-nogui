@@ -291,10 +291,12 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
   anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
   `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`.
-  La chiave anti-duplicato del lotto si acquisisce dopo tutti i controlli che
-  possono rifiutarlo e si rilascia solo se acquisita da quel lotto (con
-  l'anti-duplicato disattivato la chiave dell'evento non è sua). Il preflight
-  non la trattiene. Un lotto che fallisce prima di pubblicare una gamba è tolto
+  La chiave anti-duplicato del lotto si acquisisce nella fase controllata di
+  ammissione (sotto il lock, dopo tutti i controlli che possono rifiutarlo) e si
+  rilascia solo se acquisita da quel lotto (con l'anti-duplicato disattivato la
+  chiave dell'evento non è sua). Il `precheck` pubblico (e il preflight) è
+  **privo di effetti permanenti**: controlla in sola lettura che la chiave non
+  sia già attiva, non acquisisce né fissa nulla. Un lotto che fallisce prima di pubblicare una gamba è tolto
   dal registro senza rilascio e il controller libera tavolo e chiave una sola
   volta.
 - **Identificativi storici**: gli ordini il cui intento è già consumato
@@ -308,11 +310,23 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   (`cashout_invalidation_active`, `DUTCHING_BATCH_REJECTED`) e nessun fence
   resta registrato. Le gambe ammesse portano il fence fino all'engine (§7.1):
   un cashout fra ammissione e invio nega le gambe in coda
-  (`cashout_invalidation_stale`). Runtime senza questa API, eccezione o esito
+  (`cashout_invalidation_stale`). **Il lotto resta atomico anche dopo
+  l'ammissione** (#529 ciclo A2): alla verifica di una gamba l'engine controlla
+  anche i fence delle gambe sorelle ancora in coda; se uno solo è stale (per
+  esempio un cashout limitato alla selezione di un'altra gamba) il lotto è
+  invalidato (`lotto_invalidato`) e nessuna gamba non ancora partita viene
+  piazzata, anche con consegne concorrenti. Le gambe già inviate o incerte
+  restano contabilizzate e trattenute. Runtime senza questa API, eccezione o esito
   non stringa => rifiuto (`barriera_cashout_non_disponibile` /
   `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id`, o una sua
   gamba, non viene sovrascritto da nessuna ammissione, nemmeno a ordine
   singolo (`lotto_gia_attivo`).
+- **Identificativi del Dutching** (#529 ciclo A2): `market_id`, ogni
+  `selectionId`, ogni quota e lo stake totale passano dai validatori condivisi
+  (`validators.order_market_id` / `order_selection_id` / `order_price` /
+  `order_stake`, gli stessi della normalizzazione dell'engine) prima di
+  qualunque acquisizione, riserva o pubblicazione: una sola gamba non valida
+  rifiuta l'intero lotto, mai un piazzamento parziale.
 - **Bet manuale**: `market_id`, `selection_id`, quota e stake sono validati
   con i validatori condivisi prima di ogni acquisizione (un ordine che l'engine
   rifiuterebbe non occupa un tavolo). Esposizione = rischio reale (`validators.order_exposure`:
@@ -339,8 +353,17 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   ordine singolo. Anche lo sweep F028 (ordini annullati/decaduti senza
   abbinato) salta le gambe di un lotto: una gamba sola non libera il tavolo
   condiviso. La chiave anti-duplicato del lotto è **fissata** (non scade col
-  TTL): la rilasciano solo i rollback prima della pubblicazione e il
-  settlement del tavolo (`RUNTIME_CLOSE_POSITION`). Limiti noti, fail-closed:
+  TTL): la rilasciano soltanto i rollback prima della pubblicazione. Il
+  settlement **non** la rilascia: `RUNTIME_CLOSE_POSITION` libera la chiave del
+  proprio payload, e i settlement reali portano `cleared:<mercato>` o
+  `sim:<mercato>:<ref>`, mai la chiave del lotto; la chiave resta fissata fino
+  al riavvio o a un reset esplicito della guardia (`DuplicationGuard.clear`; stesso evento => sempre
+  `Duplicato bloccato`). Nemmeno il tavolo del lotto è liberato da un
+  settlement per bet: con più gambe sullo stesso mercato il P&L della gamba non
+  è il netto del tavolo e `_release_settled_tables` non rilascia (il mercato è
+  solo marcato regolato per l'auto-reset); lo libera un settlement con
+  `table_id`, uno di mercato SIM con tavolo univoco e certo, l'auto-reset o il
+  riavvio. Limiti noti, fail-closed:
   il registro in memoria non si chiude al settlement (lo stesso lotto resta
   `lotto_gia_attivo` fino al riavvio) e un'incertezza marcata da un AMBIGUOUS
   resta fino a riavvio o riconciliazione. **PF-EXEC-02 non è completo**: esito del lotto, segnalazione

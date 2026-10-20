@@ -537,12 +537,12 @@
       "module": "controllers.dutching_controller",
       "area": "dedupe",
       "file": "controllers/dutching_controller.py",
-      "original": "                return self._fail(\"Anti-duplicato non disponibile: nessun ordine\", event_key=event_key)",
+      "original": "                return self._fail(\"Anti-duplicato non disponibile: nessun ordine\", **rejected)",
       "mutated": "                pass",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
-      "rationale": "#523: Un errore dell'anti-duplicato lascia proseguire il lotto."
+      "rationale": "#523 (#529 ciclo A2): Un errore dell'anti-duplicato nella fase di ammissione lascia proseguire il lotto."
     },
     {
       "id": "manual_bet_admission_not_atomic",
@@ -585,12 +585,12 @@
       "module": "controllers.dutching_controller",
       "area": "dedupe",
       "file": "controllers/dutching_controller.py",
-      "original": "        owned_key = event_key if pre.get(\"dedupe_acquired\") else \"\"",
-      "mutated": "        owned_key = event_key",
+      "original": "            owned_key = event_key",
+      "mutated": "            pass",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
-      "rationale": "#523 (#529): Un lotto rifiutato rilascia una chiave anti-duplicato che non ha acquisito (anti-duplicato disattivato)."
+      "rationale": "#523 (#529 ciclo A2): La chiave del lotto non risulta acquisita da questo lotto: un rifiuto successivo la lascia fissata per sempre (o, invertito, si rilascia una chiave altrui)."
     },
     {
       "id": "historical_leg_identifier_readmitted",
@@ -723,6 +723,66 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (#529 ciclo A, decisione owner): Bet manuale con selection_id non valido riserva un tavolo che l'engine non liberera' mai."
+    },
+    {
+      "id": "dutching_selection_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                    selection_id = validators.order_selection_id(selection[\"selectionId\"])",
+      "mutated": "                    selection_id = int(selection[\"selectionId\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Una gamba Dutching con selectionId che l'engine rifiuta passa la validazione: lotto piazzato a meta'."
+    },
+    {
+      "id": "dutching_market_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                validators.order_market_id(market_id)",
+      "mutated": "                str(market_id)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Lotto Dutching con market_id non valido riserva tavoli e chiave che l'engine rifiutera'."
+    },
+    {
+      "id": "dutching_precheck_acquires_key",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "                if callable(is_duplicate) and is_duplicate(event_key):",
+      "mutated": "                if not self._acquire_pinned(duplication_guard, event_key):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Il precheck pubblico fissa la chiave del lotto: effetto permanente fuori dalla fase di ammissione."
+    },
+    {
+      "id": "invalidated_batch_leg_still_placed",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                if leg[\"batch_id\"] in invalidated:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Dopo che una gamba del lotto e' negata dalla fence, le gambe successive escono comunque."
+    },
+    {
+      "id": "batch_sibling_fence_not_checked",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                siblings = [entry[0] for other in leg[\"refs\"] if other != ref",
+      "mutated": "                siblings = [entry[0] for other in () if other != ref",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Una gamba consegnata prima di quella invalidata ignora la fence delle sorelle: lotto parziale dopo un cashout selettivo."
     }
   ]
 }

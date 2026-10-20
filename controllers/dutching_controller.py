@@ -1014,6 +1014,13 @@ class DutchingController:
 
             if not market_id:
                 return self._fail("market_id mancante")
+            # #529 ciclo A2 (rilievo Codex r4326488228): identificativi validati con i validatori condivisi (gli
+            # stessi della normalizzazione dell'engine) prima di calcolo e acquisizioni: una gamba che l'engine
+            # rifiuterebbe blocca l'intero lotto, mai un piazzamento parziale.
+            try:
+                validators.order_market_id(market_id)
+            except ValueError:
+                return self._fail("market_id non valido: INVALID_MARKET_ID")
 
             if not isinstance(selections, list) or not selections:
                 return self._fail("Nessuna selezione")
@@ -1034,8 +1041,8 @@ class DutchingController:
                     return self._fail(f"price mancante alla selezione #{idx}")
 
                 try:
-                    selection_id = int(selection["selectionId"])
-                except Exception:
+                    selection_id = validators.order_selection_id(selection["selectionId"])
+                except ValueError:
                     return self._fail(f"selectionId non valido alla selezione #{idx}")
 
                 if selection_id in seen_selection_ids:
@@ -1043,8 +1050,8 @@ class DutchingController:
                 seen_selection_ids.add(selection_id)
 
                 try:
-                    price = float(selection["price"])
-                except Exception:
+                    price = validators.order_price(selection["price"])
+                except ValueError:
                     return self._fail(f"price non valido alla selezione #{idx}")
 
                 if price <= 1.01:
@@ -1061,7 +1068,9 @@ class DutchingController:
                 except ValueError:
                     return self._fail(f"side non valido alla selezione #{idx}: INVALID_SIDE")
 
-            if total_stake <= 0:
+            try:
+                validators.order_stake(total_stake)        # finito e > 0 (NaN/inf rifiutati)
+            except ValueError:
                 return self._fail("total_stake non valido")
 
             return self._ok()
@@ -1299,26 +1308,22 @@ class DutchingController:
                     violations=too_large,
                 )
 
-        # #523 (rilievo Codex #529): la chiave anti-duplicato si acquisisce DOPO tutti i controlli che possono
-        # rifiutare il lotto (prima un rifiuto per cap la lasciava presa), e si dichiara se e' di questo lotto:
-        # con l'anti-duplicato disattivato la chiave non e' nostra e non va mai rilasciata qui.
-        dedupe_acquired = False
+        # #529 ciclo A2 (rilievo Codex r4326488216): il precheck e' PRIVO di effetti permanenti: controlla soltanto
+        # (in lettura) che la chiave non sia gia' attiva. L'acquisizione, fissata, avviene nella fase controllata
+        # di ammissione (`_execute_reserved`, sotto il lock d'ammissione). Errore della guardia => rifiuto.
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
-                # #529 (rilievo Codex r4325985989): chiave PINNATA per la durata del lotto trattenuto, non scade
-                # col TTL; la rilasciano solo i rollback (rifiuto, ritiro prima di pubblicare) e il settlement.
-                if not self._acquire_pinned(duplication_guard, event_key):
+                is_duplicate = getattr(duplication_guard, "is_duplicate", None)
+                # controllo informativo: il gate vero e' l'acquisizione all'ammissione (sempre eseguita)
+                if callable(is_duplicate) and is_duplicate(event_key):
                     return self._fail("Duplicato bloccato", event_key=event_key)
             except Exception:
-                # #523: anti-duplicato non verificabile => nessun ordine (prima si proseguiva, fail-open)
-                logger.exception("Errore duplication_guard.acquire")
+                logger.exception("Errore duplication_guard.is_duplicate")
                 return self._fail("Anti-duplicato non disponibile: nessun ordine", event_key=event_key)
-            dedupe_acquired = True
 
         return self._ok(
             preflight=True,
             dry_run=False,
-            dedupe_acquired=dedupe_acquired,
             results=results,
             avg_profit=float(avg_profit),
             avg_profit_net=float(avg_net_profit),
@@ -1371,12 +1376,7 @@ class DutchingController:
             return out
 
         if preflight:
-            out = self.precheck(payload)
-            if out.get("dedupe_acquired"):
-                # #523 (riesame #529): il preflight controlla soltanto, non riserva la chiave anti-duplicato
-                # (prima restava presa e il submit reale successivo usciva «Duplicato bloccato»).
-                self._release_table_and_key(None, out.get("event_key", ""))
-                out["dedupe_acquired"] = False
+            out = self.precheck(payload)              # senza effetti: nessuna chiave riservata
             out.setdefault("dry_run", False)
             out.setdefault("preflight", True)
             return out
@@ -1408,8 +1408,6 @@ class DutchingController:
             return pre
 
         if not self._bus_available():
-            if pre.get("dedupe_acquired"):     # nessun ordine: chiave del lotto rilasciata
-                self._release_table_and_key(None, pre.get("event_key", ""))
             return self._fail(
                 "EventBus non disponibile",
                 dry_run=False,
@@ -1426,8 +1424,21 @@ class DutchingController:
         batch_exposure = float(pre["batch_exposure"] or 0.0)
 
         duplication_guard = self._duplication_guard()
-        # Chiave anti-duplicato da rilasciare nei rifiuti: solo se acquisita da QUESTO lotto (rilievo Codex #529).
-        owned_key = event_key if pre.get("dedupe_acquired") else ""
+        # Fase controllata di ammissione (sotto il lock): la chiave anti-duplicato del lotto si acquisisce qui,
+        # FISSATA per la durata del lotto trattenuto (rilievo Codex r4325985989). Si rilascia nei rifiuti solo se
+        # acquisita da QUESTO lotto: con l'anti-duplicato disattivato la chiave non e' sua.
+        owned_key = ""
+        if duplication_guard and bool(getattr(self._config(), "anti_duplication_enabled", True)):
+            rejected = {"dry_run": False, "preflight": False, "batch_id": batch_id, "event_key": event_key}
+            try:
+                if not self._acquire_pinned(duplication_guard, event_key):
+                    self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": "duplicate"})
+                    return self._fail("Duplicato bloccato", **rejected)
+            except Exception:
+                # anti-duplicato non verificabile => nessun ordine (mai fail-open)
+                logger.exception("Errore duplication_guard.acquire")
+                return self._fail("Anti-duplicato non disponibile: nessun ordine", **rejected)
+            owned_key = event_key
         # #523 (rilievo Codex #529): il tavolo e' sempre riservato qui con l'esposizione del lotto; un
         # `table_id` del chiamante non viene usato (non riserverebbe nulla e non entrerebbe nelle misure).
         if payload.get("table_id"):
