@@ -3604,6 +3604,143 @@ class RuntimeController:
                 conflicts.add(ref)
                 logger.critical("customer_ref %s con piu' ingressi in coda: tutti negati (fail-closed)", ref)
 
+    # ---- #523: ingressi delle corsie del DutchingController (gambe Dutching, ordine manuale) ----
+
+    def admit_controller_entries(self, orders: list, *, batch_id: str = "") -> str:
+        """Ammissione di ingressi costruiti fuori dal percorso dei segnali (DutchingController).
+
+        Sotto un'unica presa del lock d'ammissione: per ogni ordine si fotografa il fence (stesso ambito dei
+        segnali: globale, evento, mercato, selezione); con una barriera cashout attiva nel suo ambito l'intero
+        lotto e' rifiutato ("cashout_invalidation_active") e nulla viene registrato. Altrimenti ogni ordine
+        registra il fence per il suo customer_ref, cosi' il TradingEngine lo ricontrolla subito prima del
+        piazzamento (`admission_fence_verdict`) e un cashout iniziato nel frattempo nega le gambe in coda.
+        Le gambe di un lotto (`batch_id`) sono registrate come trattenute (`_hold_batch_leg`): nessun evento di
+        ciclo di vita ne rilascia tavolo o chiave (#529, scelta owner F; esito del lotto: PR30 / PF-EXEC-02).
+        Ritorna "" se ammesso, altrimenti il motivo del rifiuto.
+        """
+        orders = [o for o in (orders or []) if isinstance(o, dict)]
+        if not orders or any(not str(o.get("customer_ref") or "") for o in orders):
+            return "ingresso_senza_customer_ref"
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            # Un lotto gia' registrato con lo stesso id, o una sua gamba, non viene riammesso da nessuna
+            # ammissione (lotto o ordine singolo): tavolo e gambe resterebbero orfani (rilievi Codex/Grok #529).
+            held_legs = getattr(self, "_held_batch_legs", None) or {}
+            if (batch_id and str(batch_id) in (getattr(self, "_held_batch_ids", None) or set())) or any(
+                    str(o["customer_ref"]) in held_legs for o in orders):
+                return "lotto_gia_attivo"
+            # Un identificativo storico (intento gia' consumato, persistito nel DB e quindi valido anche dopo
+            # un riavvio) non viene riammesso: l'engine lo bloccherebbe come duplicato senza esito di gamba.
+            # Errore della verifica => rifiuto (fail-closed).
+            consumed = getattr(getattr(self, "db", None), "is_order_intent_consumed", None)
+            if callable(consumed):
+                try:
+                    if any(consumed(str(o["customer_ref"])) for o in orders):
+                        return "ingresso_gia_eseguito"
+                except Exception:
+                    logger.exception("Verifica intenti consumati fallita: ingresso non ammesso")
+                    return "ammissione_non_verificabile"
+            fences = []
+            for order in orders:
+                fence = self._capture_admission_fence(order)
+                if not RuntimeController._admission_fence_valid(self, fence):
+                    return "cashout_invalidation_active"
+                fences.append(fence)
+            for order, fence in zip(orders, fences):
+                RuntimeController._register_queued_entry_fence(self, order, fence)
+            if batch_id:
+                ids = getattr(self, "_held_batch_ids", None)
+                if ids is None:
+                    ids = self._held_batch_ids = set()
+                legs = getattr(self, "_held_batch_legs", None)
+                if legs is None:
+                    legs = self._held_batch_legs = {}
+                ids.add(str(batch_id))
+                for order in orders:
+                    legs[str(order["customer_ref"])] = {
+                        "batch_id": str(batch_id),
+                        "refs": [str(o["customer_ref"]) for o in orders],
+                        "event_key": str(order.get("event_key") or ""),
+                        "table_id": order.get("table_id"),
+                    }
+        return ""
+
+    def withdraw_controller_entries(self, orders: list) -> None:
+        """Pubblicazione fallita dopo l'ammissione: il fence di ogni ordine non partito e' scartato.
+
+        Se TUTTE le gambe di un lotto sono ritirate (nessuna pubblicata, nessun ordine partito), il lotto esce
+        dal registro e tavolo e chiave li rilascia il chiamante, una volta sola. Se almeno una gamba e' stata
+        pubblicata il lotto resta trattenuto per intero (fail-closed, #529 scelta owner F)."""
+        orders = [o for o in (orders or []) if isinstance(o, dict)]
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            legs = getattr(self, "_held_batch_legs", None) or {}
+            ids = getattr(self, "_held_batch_ids", None) or set()
+            withdrawn = {str(o.get("customer_ref") or "") for o in orders}
+            for ref in list(withdrawn):
+                leg = legs.get(ref)
+                if leg is not None and set(leg["refs"]) <= withdrawn:
+                    for other in leg["refs"]:
+                        legs.pop(other, None)
+                    ids.discard(leg["batch_id"])
+        for order in orders:
+            self.admission_fence_discard(order)
+
+    #: Prefisso dei customer_ref delle gambe Dutching (`derive_customer_ref("dut", ...)` nel controller).
+    _DUTCHING_LEG_REF_PREFIX = "dut-"
+
+    def _persisted_dutching_leg(self, ref: str):
+        """(trattenere, table_id) per un ref "dut-" fuori registro: si trattiene se l'ultimo ordine persistito per
+        quel ref porta un `batch_id`. DB illeggibile => si trattiene, senza tavolo (fail-closed)."""
+        db = getattr(self, "db", None)
+        if db is None or not hasattr(db, "_execute"):
+            return True, None
+        try:
+            row = db._execute("SELECT payload_json FROM orders WHERE customer_ref = ? ORDER BY id DESC LIMIT 1",
+                              (ref,), fetchone=True, commit=False)
+            persisted = json.loads(dict(row).get("payload_json") or "{}") if row else {}
+        except Exception:
+            logger.exception("Origine della gamba %s non verificabile: trattenuta", ref)
+            return True, None
+        if not isinstance(persisted, dict) or not persisted.get("batch_id"):
+            return False, None
+        return True, persisted.get("table_id")
+
+    def _hold_batch_leg(self, payload: dict, *, event_name: str) -> bool:
+        """#523 / #529 (scelta owner F): una gamba di un lotto Dutching non rilascia mai tavolo, esposizione o
+        chiave anti-duplicato per un evento di ciclo di vita, qualunque sia l'esito (SUCCESS, FILLED, FAILED,
+        ROLLBACK_DONE, AMBIGUOUS, eventi tardivi o contraddittori): le gambe condividono tavolo e chiave e lo
+        stato terminale del lotto non e' provato dal singolo esito. Il lotto resta trattenuto fino a
+        settlement e riconciliazione; un AMBIGUOUS marca la riserva incerta. Esito del lotto, ribilanciamento,
+        copertura e rilascio a livello di lotto: PR30 / PF-EXEC-02 (non implementati qui).
+
+        Registro in memoria per la durata del processo, scritto solo da `admit_controller_entries` (non
+        falsificabile dal chiamante). Dopo un riavvio valgono la ricostruzione F018 e la riconciliazione.
+
+        True se l'evento appartiene a una gamba registrata (trattenuta), False altrimenti."""
+        ref = str((payload or {}).get("customer_ref") or "")
+        if not ref:
+            return False
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            leg = (getattr(self, "_held_batch_legs", None) or {}).get(ref)
+            if leg is None and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):
+                # Fuori registro (tipicamente dopo un riavvio): l'ordine persistito con `batch_id` indica una gamba
+                # Dutching, che si trattiene. Un ref "dut-" senza `batch_id` resta un ordine singolo. Il campo si
+                # puo' falsificare (un segnale lo inoltra), ma l'effetto e' solo trattenere QUEL ordine: mai un
+                # rilascio senza prova dello stato terminale (fail-closed).
+                held, table_id = RuntimeController._persisted_dutching_leg(self, ref)
+                if held:
+                    leg = {"batch_id": "?", "event_key": str((payload or {}).get("event_key") or ""),
+                           "table_id": table_id}
+            if leg is None:
+                return False
+            if event_name == "QUICK_BET_AMBIGUOUS" and leg["event_key"]:
+                self._mark_uncertain(leg["event_key"], leg["table_id"])
+        logger.warning("Esito %s della gamba %s del lotto %s: lotto trattenuto fino a settlement e "
+                       "riconciliazione (nessun rilascio da eventi)", event_name, ref, leg["batch_id"])
+        return True
+
     def admission_fence_discard(self, request: dict) -> None:
         """L'engine ha rifiutato la richiesta prima di controllarne il fence (lockdown, normalizzazione fallita):
         si scarta il suo fence in coda, nessun ordine e' partito. Il conflitto resta finche' la coda del ref non
@@ -3646,6 +3783,25 @@ class RuntimeController:
                 conflicts.discard(ref)
             if in_conflict:
                 return "customer_ref_in_conflitto"
+            # #529 ciclo A2 (rilievo Codex r4326488240): il lotto e' atomico anche dopo l'ammissione. Una gamba non
+            # ancora partita di un lotto invalidato non parte; e alla verifica di una gamba si controllano anche i
+            # fence delle gambe sorelle ancora in coda: uno solo stale (es. cashout limitato a una selezione)
+            # invalida il lotto. Le gambe gia' inviate o incerte restano contabilizzate e trattenute.
+            leg = (getattr(self, "_held_batch_legs", None) or {}).get(ref)
+            if leg is not None:
+                invalidated = getattr(self, "_invalidated_batches", None)
+                if invalidated is None:
+                    invalidated = self._invalidated_batches = set()
+                if leg["batch_id"] in invalidated:
+                    return "lotto_invalidato"
+                siblings = [entry[0] for other in leg["refs"] if other != ref
+                            for entry in (queued.get(other) or [])]
+                if not RuntimeController._admission_fence_valid(self, fence) or any(
+                        not RuntimeController._admission_fence_valid(self, f) for f in siblings):
+                    invalidated.add(leg["batch_id"])
+                    logger.warning("Lotto %s invalidato prima dell'invio (cashout nel suo ambito): nessuna gamba "
+                                   "non ancora partita viene piazzata", leg["batch_id"])
+                    return "lotto_invalidato"
             if not RuntimeController._admission_fence_valid(self, fence):
                 return "cashout_invalidation_stale"
             # Ingresso ammesso e in invio (verifica owner pre-merge #522): finche' l'engine non ha l'esito
@@ -4329,6 +4485,8 @@ class RuntimeController:
     def _release_if_terminal(self, payload: dict, *, event_name: str) -> None:
         if event_name not in TERMINAL_LIFECYCLE_EVENTS:
             return
+        if RuntimeController._hold_batch_leg(self, payload, event_name=event_name):
+            return                           # #523/#529: gamba di un lotto Dutching, trattenuta (fail-closed)
         payload = dict(payload or {})
         event_key = str(payload.get("event_key") or "")
         table_id = payload.get("table_id")
@@ -4472,6 +4630,8 @@ class RuntimeController:
                 "stake": p.get("stake"),
                 "price": p.get("price"),
                 "bet_id": bet_id,
+                # #529: gamba di un lotto Dutching (batch_id persistito), esclusa dai rilasci per singolo ordine
+                "batch_id": str(p.get("batch_id") or ""),
                 # event_id/event_identity (#505): identita' dell'evento per il cap evento dopo il riavvio;
                 # assenti negli ordini salvati prima => None, resta il confronto per nome.
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
@@ -4547,7 +4707,12 @@ class RuntimeController:
         except Exception as exc:
             logger.warning("F028: ordini del bot illeggibili (%s): nessun rilascio", exc)
             return []
-        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]]
+        held_legs = getattr(self, "_held_batch_legs", None) or {}
+        # #529 (scelta owner F, riesame su 922bde3): una gamba di un lotto Dutching non libera il tavolo CONDIVISO
+        # del lotto quando da sola risulta annullata/decaduta senza abbinato: le altre gambe possono essere vive.
+        # Il lotto resta trattenuto fino a settlement e riconciliazione (rilascio a livello di lotto: PR30).
+        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]
+                    and not c.get("batch_id") and c["customer_ref"] not in held_legs]
         if not eligible:
             return []
         final = self._final_unmatched_bets(sorted({c["market_id"] for c in eligible}),

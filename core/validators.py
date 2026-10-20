@@ -191,6 +191,38 @@ def signal_side(signal, *, default=None) -> str:
     return side
 
 
+LEG_SIDE_FIELDS = ("side", "effectiveType", "bet_type")
+
+
+def leg_side(leg, *, default=None) -> str:
+    """Lato di UNA gamba Dutching (#529 ciclo A5, decisione owner). Regola unica per il RiskMiddleware e il
+    DutchingController:
+
+    - un campo di lato della gamba (`side`, `effectiveType`, `bet_type`) PRESENTE conta come esplicito,
+      qualunque valore abbia: deve essere BACK o LAY (maiuscole/spazi esterni normalizzati). Vuoto, soli
+      spazi, None, non stringa o sconosciuto => INVALID_SIDE, mai ereditato dal lotto;
+    - piu' campi espliciti discordanti della stessa gamba => INVALID_SIDE, mai una scelta arbitraria;
+    - solo se NESSUN campo e' presente vale il `default` (il lato del lotto), anch'esso BACK/LAY valido;
+      altrimenti INVALID_SIDE (nessun BACK per default).
+    """
+    if not isinstance(leg, dict):
+        raise ValueError("INVALID_SIDE")
+    sides = []
+    for key in LEG_SIDE_FIELDS:
+        if key in leg:
+            value = leg[key]
+            if not isinstance(value, str) or value.strip().upper() not in ("BACK", "LAY"):
+                raise ValueError("INVALID_SIDE")
+            sides.append(value.strip().upper())
+    if sides:
+        if len(set(sides)) > 1:
+            raise ValueError("INVALID_SIDE")
+        return sides[0]
+    if isinstance(default, str) and default.strip().upper() in ("BACK", "LAY"):
+        return default.strip().upper()
+    raise ValueError("INVALID_SIDE")
+
+
 def order_exposure_or_inf(side, stake, price) -> float:
     """Come `order_exposure`, ma un ordine non stimabile vale inf (fail-closed)."""
     try:

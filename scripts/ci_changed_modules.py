@@ -193,6 +193,7 @@ MODULE_RULES = [
             "scripts/run_mutation_guardrails.py",
             "database.py",
             "dutching.py",
+            "controllers/dutching_controller.py",  # #523: mutazioni del catalogo su Dutching e bet manuale
             "cashout_executor.py",
             "cashout_residual_handler.py",
             "scripts/live_gate.py",

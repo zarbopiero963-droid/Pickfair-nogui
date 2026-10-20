@@ -272,6 +272,138 @@ Limiti noti:
 - l'attesa degli ingressi in invio occupa il thread che instrada il cashout
   (worker del bus o poller dei settlement) fino all'esito dell'invio.
 
+### 7.2 Dutching e bet manuale davanti alla barriera (#523)
+
+Le corsie Dutching (`REQ_PLACE_DUTCHING`) e `manual_bet` restano **dormienti**
+(nessun produttore in produzione, `tests/guardrails/test_dutching_lane_dormant_523.py`
+invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
+
+- **Lato obbligatorio**: ogni gamba e ogni bet manuale passano da
+  `validators.signal_side` (stessa normalizzazione dei segnali: `"back "` →
+  BACK). Lato assente, vuoto, non BACK/LAY o alias in conflitto => rifiuto
+  (`INVALID_SIDE`), nessun ordine, nessun BACK per default. Il `RiskMiddleware`
+  inoltra il lato esplicito o `None`, mai un default.
+- **Ingresso atomico**: controlli di cap, dedupe, riserva del tavolo e
+  ammissione di un lotto o di un bet manuale avvengono sotto
+  `_risk_admission_lock` (lo stesso dei segnali); la pubblicazione avviene dopo,
+  fuori dal lock. Due ingressi concorrenti non leggono la stessa esposizione né
+  riservano lo stesso tavolo. Il tavolo è sempre riservato dal controller (un
+  `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
+  anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
+  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`. Regola unica
+  `validators.leg_side` (#529 cicli A4/A5), la stessa nel `RiskMiddleware`
+  (`REQ_PLACE_DUTCHING`) e nel `DutchingController`: ogni campo di lato della
+  gamba **presente** (`side`, `effectiveType`, `bet_type`) è esplicito, qualunque
+  valore abbia, e deve essere BACK o LAY; vuoto, soli spazi, `None`, `"None"`,
+  non stringa o sconosciuto => `INVALID_SIDE`, mai ereditato dal lotto; campi
+  espliciti discordanti => `INVALID_SIDE`, mai una scelta arbitraria. Il lato
+  esplicito della gamba prevale sul `bet_type` del lotto, che vale solo come
+  fallback per una gamba **senza alcun campo di lato**; un `bet_type` del lotto
+  presente (non `None`) deve essere a sua volta BACK/LAY. Sul bus il lotto non
+  valido è rifiutato già dal middleware (`DUTCHING_FAILED`, nessun comando né
+  ordine); `_payload_da_cmd` inoltra al controller solo i campi di lato presenti.
+  La chiave anti-duplicato del lotto si acquisisce nella fase controllata di
+  ammissione (sotto il lock, dopo tutti i controlli che possono rifiutarlo) e si
+  rilascia solo se acquisita da quel lotto (con l'anti-duplicato disattivato la
+  chiave dell'evento non è sua). Il `precheck` pubblico (e il preflight) è
+  **privo di effetti permanenti**: controlla in sola lettura che la chiave non
+  sia già attiva, non acquisisce né fissa nulla. Un lotto che fallisce prima di pubblicare una gamba è tolto
+  dal registro senza rilascio e il controller libera tavolo e chiave una sola
+  volta.
+- **Identificativi storici**: gli ordini il cui intento è già consumato
+  (`consumed_order_intents`, persistito nel DB e valido anche dopo il riavvio)
+  sono rifiutati all'ammissione (`ingresso_gia_eseguito`); verifica del DB in
+  errore => rifiuto (`ammissione_non_verificabile`).
+- **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
+  `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
+  `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
+  cade in un ambito con cashout attivo, il lotto intero è rifiutato
+  (`cashout_invalidation_active`, `DUTCHING_BATCH_REJECTED`) e nessun fence
+  resta registrato. Le gambe ammesse portano il fence fino all'engine (§7.1):
+  un cashout fra ammissione e invio nega le gambe in coda
+  (`cashout_invalidation_stale`). **Il lotto resta atomico anche dopo
+  l'ammissione** (#529 ciclo A2): alla verifica di una gamba l'engine controlla
+  anche i fence delle gambe sorelle ancora in coda; se uno solo è stale (per
+  esempio un cashout limitato alla selezione di un'altra gamba) il lotto è
+  invalidato (`lotto_invalidato`) e nessuna gamba non ancora partita viene
+  piazzata, anche con consegne concorrenti. Le gambe già inviate o incerte
+  restano contabilizzate e trattenute. Runtime senza questa API, eccezione o esito
+  non stringa => rifiuto (`barriera_cashout_non_disponibile` /
+  `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id`, o una sua
+  gamba, non viene sovrascritto da nessuna ammissione, nemmeno a ordine
+  singolo (`lotto_gia_attivo`).
+- **Identificativi del Dutching** (#529 ciclo A2): `market_id`, ogni
+  `selectionId`, ogni quota e lo stake totale passano dai validatori condivisi
+  (`validators.order_market_id` / `order_selection_id` / `order_price` /
+  `order_stake`, gli stessi della normalizzazione dell'engine) prima di
+  qualunque acquisizione, riserva o pubblicazione: una sola gamba non valida
+  rifiuta l'intero lotto, mai un piazzamento parziale. Ciclo A3: anche lo
+  **stake calcolato di ogni gamba** passa da `validators.order_stake` (il
+  riparto può produrre stake nulli o negativi: totale 0.05 su quote 2/3/50 dà
+  0.10/0.10/−0.15); una gamba con stake nullo, negativo o non finito rifiuta
+  il lotto in `precheck`, preflight e dry-run, senza chiavi, tavoli, esposizione
+  né ordini.
+- **Bet manuale**: `market_id`, `selection_id`, quota e stake sono validati
+  con i validatori condivisi prima di ogni acquisizione (un ordine che l'engine
+  rifiuterebbe non occupa un tavolo). Esposizione = rischio reale (`validators.order_exposure`:
+  BACK stake, LAY stake × (quota − 1)) per `max_single_bet`, `max_total` e il
+  tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il
+  dedupe si acquisisce dopo i controlli; un errore del dedupe rifiuta
+  (prima era fail-open), anche nel `precheck` del Dutching.
+- **Esito del lotto: trattenuto, mai rilasciato da eventi (#529, scelta owner
+  F)**: le gambe di un lotto condividono tavolo e chiave anti-duplicato e lo
+  stato terminale del lotto non è provato dal singolo esito. Nessun evento di
+  ciclo di vita di una gamba (SUCCESS, FILLED, FAILED, ROLLBACK_DONE, AMBIGUOUS,
+  tardivo o contraddittorio, `DUPLICATE_BLOCKED`) rilascia tavolo, esposizione o
+  chiave del lotto (`_hold_batch_leg`): il lotto resta trattenuto fino a
+  settlement e riconciliazione, anche con tutte le gambe fallite. Un AMBIGUOUS
+  marca incerta la riserva sul tavolo del lotto. Unico rilascio: un lotto che
+  fallisce **prima** di pubblicare qualunque gamba (nessun ordine partito) esce
+  dal registro e il controller libera tavolo e chiave una sola volta; con
+  almeno una gamba pubblicata il lotto resta trattenuto per intero. Il registro
+  delle gambe è in memoria per la durata del processo e lo scrive solo
+  `admit_controller_entries`; dopo un riavvio una gamba `dut-` fuori registro è
+  trattenuta se l'ordine persistito porta `batch_id` o se il DB è illeggibile
+  (un `batch_id` inoltrato da un segnale può solo trattenere quell'ordine, mai
+  far rilasciare qualcosa). Un ref a monte `dut-…` senza `batch_id` resta un
+  ordine singolo. Anche lo sweep F028 (ordini annullati/decaduti senza
+  abbinato) salta le gambe di un lotto: una gamba sola non libera il tavolo
+  condiviso. La chiave anti-duplicato del lotto è **fissata** (non scade col
+  TTL): nel percorso Dutching la rilasciano soltanto i rollback prima della
+  pubblicazione. I settlement dal poller **non** la rilasciano:
+  `RUNTIME_CLOSE_POSITION` libera la chiave del proprio payload, e quei
+  settlement portano `cleared:<mercato>`, `cleared:<mercato>:<ref>` o
+  `sim:<mercato>:<ref>`, mai la chiave del lotto. **Eccezione nota, preesistente
+  e dormiente**: con `auto_close_enabled` attivo (default `False`) la chiusura
+  mark-to-market del `PnLEngine` pubblica `RUNTIME_CLOSE_POSITION` con
+  l'`event_key` della posizione, che per una gamba è la chiave del lotto, e
+  quindi libera chiave e tavolo anche con altre gambe aperte; non va attivata
+  insieme alle corsie Dutching ed è trasferita a PR30. Fuori da quel percorso la chiave resta fissata fino
+  al riavvio o a un reset esplicito della guardia (`DuplicationGuard.clear`; stesso evento => sempre
+  `Duplicato bloccato`). Nemmeno il tavolo del lotto è liberato da un
+  settlement per bet: con più gambe sullo stesso mercato il P&L della gamba non
+  è il netto del tavolo e `_release_settled_tables` non rilascia (il mercato è
+  solo marcato regolato per l'auto-reset); lo libera un settlement con
+  `table_id`, uno di mercato SIM con tavolo univoco e certo, l'auto-reset o il
+  riavvio. Limiti noti, fail-closed:
+  il registro in memoria non si chiude al settlement (lo stesso lotto resta
+  `lotto_gia_attivo` fino al riavvio) e un'incertezza marcata da un AMBIGUOUS
+  resta fino a riavvio o riconciliazione. **PF-EXEC-02 non è completo**: esito del lotto, segnalazione
+  del parziale, ribilanciamento, copertura e rilascio a livello di lotto sono
+  della PR30.
+
+**DEFERRED a PR30** (non in questa PR): PF-EXEC-02 completo (esito del lotto
+dagli eventi, segnalazione del parziale, ribilanciamento e copertura con miglior
+prezzo dinamico e Microstake, rilascio a livello di lotto), persistenza e
+riconciliazione del lotto al riavvio (PF-EXEC-06; oggi il controller cerca
+`runtime.dutching_batch_manager`, che il runtime non definisce). Costo noto del
+fail-closed: un lotto con tutte le gambe fallite trattiene il tavolo fino a
+settlement, riconciliazione o riavvio. Le corsie restano dormienti finché PR30
+non è completa. Al riavvio valgono la dedupe e la riconciliazione per
+singolo ordine: una gamba incerta resta incerta e nessuna gamba viene
+ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
+(parità SIM/LIVE, tracciato a parte).
+
 **Sim-broadcast guard**: un cashout eseguito in **simulazione** non fa broadcast
 del `MASTER_CASHOUT` ai follower reali (il flag `sim` è catturato al piazzamento,
 non riletto dopo, per evitare uno switch SIM/LIVE in volo).

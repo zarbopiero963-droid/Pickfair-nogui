@@ -65,11 +65,25 @@ class _DupGuard:
 
 
 class _TableManager:
+    def __init__(self):
+        self.activated = []
+        self.unlocked = []
+
     def total_exposure(self):
         return 0.0
 
     def find_by_event_key(self, event_key):
         return None
+
+    # #523: manual_bet ora occupa un tavolo (allocate/activate) con il rischio reale dell'ordine
+    def allocate(self, event_key=None, allow_recovery=True):
+        return SimpleNamespace(table_id=1)
+
+    def activate(self, **kwargs):
+        self.activated.append(kwargs)
+
+    def force_unlock(self, table_id):
+        self.unlocked.append(table_id)
 
 
 class _Bus:
@@ -88,6 +102,13 @@ class _Runtime:
         self.duplication_guard = _DupGuard()
         self.table_manager = _TableManager()
         self.dutching_batch_manager = None
+
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette gli ingressi tramite il runtime; "" = ammesso
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        return None
 
 
 def _payload():
@@ -383,6 +404,8 @@ def test_manual_bet_lay_liability_under_cap_passes():
     res = ctrl.manual_bet(_manual_payload(5.0, 100.0, bet_type="LAY"))
     assert res["ok"] is True, res
     assert any(topic == "CMD_QUICK_BET" for topic, _ in bus.published)
+    # #523: il tavolo del bet manuale LAY porta la liability reale 100*(5-1)=400, non lo stake
+    assert [a["exposure"] for a in ctrl.runtime.table_manager.activated] == [400.0]
 
 
 # ==========================================================================

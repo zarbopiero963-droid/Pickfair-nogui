@@ -34,6 +34,13 @@ class FakeRuntime:
         self.table_manager = None
         self.dutching_batch_manager = None
 
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette le gambe tramite il runtime; "" = ammesso
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        return None
+
 
 @pytest.mark.invariant
 def test_return_contract_preview_precheck_execute(monkeypatch):
@@ -61,8 +68,8 @@ def test_return_contract_preview_precheck_execute(monkeypatch):
         "total_stake": 100.0,
         "simulation_mode": True,
         "selections": [
-            {"selectionId": 1, "price": 2.0},
-            {"selectionId": 2, "price": 3.0},
+            {"selectionId": 1, "price": 2.0, "side": "BACK"},  # #523: side esplicito obbligatorio
+            {"selectionId": 2, "price": 3.0, "side": "BACK"},  # #523: side esplicito obbligatorio
         ],
     }
 
@@ -110,8 +117,8 @@ def test_output_stable_structure(monkeypatch):
         "total_stake": 100.0,
         "simulation_mode": True,
         "selections": [
-            {"selectionId": 7, "price": 2.2},
-            {"selectionId": 8, "price": 2.8},
+            {"selectionId": 7, "price": 2.2, "side": "BACK"},  # #523: side esplicito obbligatorio
+            {"selectionId": 8, "price": 2.8, "side": "BACK"},  # #523: side esplicito obbligatorio
         ],
     }
 

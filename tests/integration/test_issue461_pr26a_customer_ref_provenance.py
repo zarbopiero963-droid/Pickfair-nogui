@@ -531,6 +531,13 @@ class _DutchRuntime:
         self.table_manager = self._Tables()
         self.dutching_batch_manager = None
 
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette gli ingressi tramite il runtime; "" = ammesso
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        return None
+
 
 def _dutching_payload():
     return {

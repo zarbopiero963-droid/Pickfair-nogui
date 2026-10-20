@@ -64,6 +64,13 @@ class FakeDuplicationGuard:
         self.released.append(key)
         self.keys.discard(key)
 
+    def acquire(self, key):
+        # #523: acquire mancante/eccezione ora rifiuta (prima fail-open): il double espone la API reale
+        if key in self.keys:
+            return False
+        self.keys.add(key)
+        return True
+
 
 class FakeTableManager:
     def __init__(self):
@@ -110,6 +117,17 @@ class FakeRuntime:
         self.duplication_guard = FakeDuplicationGuard()
         self.table_manager = FakeTableManager()
         self.dutching_batch_manager = FakeBatchManager()
+        self.admitted = []
+        self.withdrawn = []
+
+    def admit_controller_entries(self, orders, *, batch_id=""):
+        # #523: il controller ammette le gambe tramite il runtime; "" = ammesso
+        self.admitted.append((batch_id, list(orders)))
+        return ""
+
+    def withdraw_controller_entries(self, orders):
+        # #523: gambe non pubblicate ritirate dopo un publish fallito
+        self.withdrawn.extend(orders)
 
 
 def _payload():
@@ -157,9 +175,13 @@ def test_rollback_clean_on_first_publish_failure(monkeypatch):
     assert result["ok"] is False
     assert result["published_count"] == 0
     assert result["total_count"] == 2
+    # #523: nessuna gamba pubblicata => tavolo e chiave rilasciati come prima
     assert runtime.table_manager.unlocked == [9]
     assert len(runtime.dutching_batch_manager.failed) == 1
     assert len(runtime.duplication_guard.released) == 1
+    # #523: entrambe le gambe ammesse insieme e, non pubblicate, entrambe ritirate
+    assert len(runtime.admitted) == 1 and len(runtime.admitted[0][1]) == 2
+    assert [o["selection_id"] for o in runtime.withdrawn] == [1, 2]
 
     event_names = [name for name, _ in bus.events]
     assert "DUTCHING_BATCH_APPROVED" in event_names
@@ -182,9 +204,13 @@ def test_rollback_clean_on_intermediate_failure(monkeypatch):
     assert result["ok"] is False
     assert result["published_count"] == 1
     assert result["total_count"] == 2
-    assert runtime.table_manager.unlocked == [9]
+    # #523: una gamba gia' pubblicata puo' essere viva: tavolo e chiave del lotto NON rilasciati
+    # (il runtime chiude il lotto sugli esiti delle gambe)
+    assert runtime.table_manager.unlocked == []
     assert len(runtime.dutching_batch_manager.failed) == 1
-    assert len(runtime.duplication_guard.released) == 1
+    assert runtime.duplication_guard.released == []
+    # #523: solo la gamba non pubblicata viene ritirata dal runtime
+    assert [o["selection_id"] for o in runtime.withdrawn] == [2]
 
     event_names = [name for name, _ in bus.events]
     assert "DUTCHING_BATCH_APPROVED" in event_names
@@ -209,8 +235,8 @@ def test_error_contract_is_coherent(monkeypatch):
         "market_id": "1.400",
         "total_stake": 100.0,
         "selections": [
-            {"selectionId": 1, "price": 2.0},
-            {"selectionId": 2, "price": 3.0},
+            {"selectionId": 1, "price": 2.0, "side": "BACK"},  # #523: side esplicito obbligatorio
+            {"selectionId": 2, "price": 3.0, "side": "BACK"},  # #523: side esplicito obbligatorio
         ],
     }
 

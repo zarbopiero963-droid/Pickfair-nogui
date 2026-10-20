@@ -471,6 +471,385 @@
         "tests/scripts/test_live_gate.py"
       ],
       "rationale": "Il gate di checklist LIVE passa con controlli non spuntati."
+    },
+    {
+      "id": "dutching_side_default_back",
+      "module": "controllers.dutching_controller",
+      "area": "side",
+      "file": "controllers/dutching_controller.py",
+      "original": "    return validators.leg_side(selection)",
+      "mutated": "    return validators.leg_side(selection, default=\"BACK\")",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5): Una selezione Dutching senza alcun campo di lato diventa BACK per default nel controller."
+    },
+    {
+      "id": "middleware_dutching_side_default_back",
+      "module": "core.risk_middleware",
+      "area": "side",
+      "file": "core/risk_middleware.py",
+      "original": "                side = validators.leg_side(r, default=batch_side)",
+      "mutated": "                side = validators.leg_side(r, default=batch_side or \"BACK\")",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5): Gamba senza lato e lotto senza lato diventano BACK per default nel middleware."
+    },
+    {
+      "id": "manual_bet_lay_exposure_is_stake",
+      "module": "controllers.dutching_controller",
+      "area": "lay_liability",
+      "file": "controllers/dutching_controller.py",
+      "original": "            exposure = validators.order_exposure(side, stake, price)",
+      "mutated": "            exposure = float(stake)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Il bet manuale LAY misura lo stake invece della liability su cap e tavolo."
+    },
+    {
+      "id": "controller_admission_fence_ignored",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                if not RuntimeController._admission_fence_valid(self, fence):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un lotto Dutching viene ammesso dentro un ambito con cashout attivo."
+    },
+    {
+      "id": "controller_admission_missing_api_allowed",
+      "module": "controllers.dutching_controller",
+      "area": "cashout",
+      "file": "controllers/dutching_controller.py",
+      "original": "            return \"barriera_cashout_non_disponibile\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523: Un runtime senza barriera cashout ammette il lotto (fail-open)."
+    },
+    {
+      "id": "dutching_dedupe_error_fail_open",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "                return self._fail(\"Anti-duplicato non disponibile: nessun ordine\", **rejected)",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2): Un errore dell'anti-duplicato nella fase di ammissione lascia proseguire il lotto."
+    },
+    {
+      "id": "manual_bet_admission_not_atomic",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        return self._locked_entry(self._manual_bet_reserved, payload)",
+      "mutated": "        return self._manual_bet_reserved(payload, lambda: None)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Codex su #529): Cap e tavolo del bet manuale decisi fuori dal lock d'ammissione: due ingressi concorrenti superano il cap totale."
+    },
+    {
+      "id": "controller_active_batch_overwritten",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                return \"lotto_gia_attivo\"",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Codex su #529): Un lotto ancora aperto viene sovrascritto da un'ammissione con lo stesso id: tavolo e gambe orfani."
+    },
+    {
+      "id": "dutching_side_alias_conflict_ignored",
+      "module": "controllers.dutching_controller",
+      "area": "side",
+      "file": "controllers/dutching_controller.py",
+      "original": "    return validators.leg_side(selection)",
+      "mutated": "    return validators.signal_side({\"side\": selection.get(\"side\") or selection.get(\"effectiveType\")})",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5): Il controller torna alla risoluzione per primo campo: alias in conflitto ignorato, campo vuoto ripiegato."
+    },
+    {
+      "id": "dutching_releases_foreign_dedupe_key",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "            owned_key = event_key",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2): La chiave del lotto non risulta acquisita da questo lotto: un rifiuto successivo la lascia fissata per sempre (o, invertito, si rilascia una chiave altrui)."
+    },
+    {
+      "id": "historical_leg_identifier_readmitted",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "                    if any(consumed(str(o[\"customer_ref\"])) for o in orders):",
+      "mutated": "                    if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 6 #529, deroga owner): Un identificativo storico (intento consumato nel DB) viene riammesso: tavolo trattenuto per sempre."
+    },
+    {
+      "id": "upstream_dut_ref_treated_as_dutching_leg",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if not isinstance(persisted, dict) or not persisted.get(\"batch_id\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 7 #529, deroga owner): Un ref a monte che inizia per dut- (bet manuale, segnale) viene assorbito come gamba Dutching: tavolo e chiave trattenuti per sempre."
+    },
+    {
+      "id": "batch_leg_released_by_lifecycle_event",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            if leg is None:",
+      "mutated": "            if True:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523/#529 (scelta owner F): Una gamba di un lotto Dutching rilascia tavolo e chiave del lotto con il proprio esito (primo FAILED/SUCCESS)."
+    },
+    {
+      "id": "batch_ambiguous_leg_not_marked_uncertain",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            if event_name == \"QUICK_BET_AMBIGUOUS\" and leg[\"event_key\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523/#529 (scelta owner F): Una gamba AMBIGUOUS non marca incerta la riserva del lotto."
+    },
+    {
+      "id": "batch_withdrawn_released_twice",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "                if leg is not None and set(leg[\"refs\"]) <= withdrawn:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523/#529 (scelta owner F): Lotto ritirato senza gambe pubblicate: resta registrato (riammissione bloccata) dopo il rilascio del controller."
+    },
+    {
+      "id": "single_admission_takes_over_batch_leg",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                    str(o[\"customer_ref\"]) in held_legs for o in orders):",
+      "mutated": "                    False for o in orders):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523/#529 (scelta owner F): Un'ammissione (anche a ordine singolo) con il ref di una gamba registrata la sovrascrive."
+    },
+    {
+      "id": "unregistered_dutching_leg_released_after_restart",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            if leg is None and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523/#529 (scelta owner F): Dopo un riavvio una gamba Dutching fuori registro ricade nel rilascio del singolo ordine."
+    },
+    {
+      "id": "f028_releases_shared_batch_table",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                    and not c.get(\"batch_id\") and c[\"customer_ref\"] not in held_legs]",
+      "mutated": "                    ]",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Lo sweep F028 libera il tavolo condiviso del lotto per una sola gamba annullata senza abbinato."
+    },
+    {
+      "id": "batch_dedupe_key_not_pinned",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "            return duplication_guard.acquire(event_key, pin=True)",
+      "mutated": "            return duplication_guard.acquire(event_key)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Chiave del lotto trattenuto soggetta al TTL: lo stesso evento con prezzo diverso piazza un secondo lotto."
+    },
+    {
+      "id": "manual_bet_market_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                market_id = validators.order_market_id(payload[\"market_id\"])",
+      "mutated": "                market_id = str(payload[\"market_id\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Bet manuale con market_id vuoto riserva un tavolo che l'engine non liberera' mai."
+    },
+    {
+      "id": "manual_bet_selection_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                selection_id = validators.order_selection_id(payload[\"selection_id\"])",
+      "mutated": "                selection_id = int(payload[\"selection_id\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Bet manuale con selection_id non valido riserva un tavolo che l'engine non liberera' mai."
+    },
+    {
+      "id": "dutching_selection_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                    selection_id = validators.order_selection_id(selection[\"selectionId\"])",
+      "mutated": "                    selection_id = int(selection[\"selectionId\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Una gamba Dutching con selectionId che l'engine rifiuta passa la validazione: lotto piazzato a meta'."
+    },
+    {
+      "id": "dutching_market_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                validators.order_market_id(market_id)",
+      "mutated": "                str(market_id)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Lotto Dutching con market_id non valido riserva tavoli e chiave che l'engine rifiutera'."
+    },
+    {
+      "id": "dutching_precheck_acquires_key",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "                if callable(is_duplicate) and is_duplicate(event_key):",
+      "mutated": "                if not self._acquire_pinned(duplication_guard, event_key):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Il precheck pubblico fissa la chiave del lotto: effetto permanente fuori dalla fase di ammissione."
+    },
+    {
+      "id": "invalidated_batch_leg_still_placed",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                if leg[\"batch_id\"] in invalidated:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Dopo che una gamba del lotto e' negata dalla fence, le gambe successive escono comunque."
+    },
+    {
+      "id": "batch_sibling_fence_not_checked",
+      "module": "core.runtime_controller",
+      "area": "cashout",
+      "file": "core/runtime_controller.py",
+      "original": "                siblings = [entry[0] for other in leg[\"refs\"] if other != ref",
+      "mutated": "                siblings = [entry[0] for other in () if other != ref",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A2, decisione owner): Una gamba consegnata prima di quella invalidata ignora la fence delle sorelle: lotto parziale dopo un cashout selettivo."
+    },
+    {
+      "id": "dutching_leg_stake_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "                validators.order_stake((item or {}).get(\"stake\"))",
+      "mutated": "                float((item or {}).get(\"stake\") or 0)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A3, decisione owner): Una gamba con stake calcolato nullo/negativo/non finito passa: l'engine la rifiuta e le altre gambe partono (lotto parziale, stake eseguito diverso dal richiesto)."
+    },
+    {
+      "id": "middleware_batch_side_overrides_leg_alias",
+      "module": "core.validators",
+      "area": "side",
+      "file": "core/validators.py",
+      "original": "    if sides:",
+      "mutated": "    if sides and default is None:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A4/A5, decisione owner): Il lato del lotto prevale sul lato esplicito della gamba."
+    },
+    {
+      "id": "middleware_leg_side_takes_batch_default",
+      "module": "core.risk_middleware",
+      "area": "side",
+      "file": "core/risk_middleware.py",
+      "original": "                batch_side = validators.leg_side({\"side\": raw_batch_side})",
+      "mutated": "                batch_side = raw_batch_side if raw_batch_side in (\"BACK\", \"LAY\") else None",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5, decisione owner): Un bet_type del lotto presente ma invalido viene ignorato invece di rifiutare il lotto."
+    },
+    {
+      "id": "leg_side_empty_field_treated_as_absent",
+      "module": "core.validators",
+      "area": "side",
+      "file": "core/validators.py",
+      "original": "        if key in leg:",
+      "mutated": "        if leg.get(key) not in (None, \"\"):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5, decisione owner): Un campo di lato presente ma vuoto/None e' trattato come assente e la gamba eredita il lato del lotto."
+    },
+    {
+      "id": "leg_side_conflicting_fields_accepted",
+      "module": "core.validators",
+      "area": "side",
+      "file": "core/validators.py",
+      "original": "        if len(set(sides)) > 1:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5, decisione owner): Campi di lato discordanti della stessa gamba accettati (scelta arbitraria del primo)."
     }
   ]
 }
