@@ -783,6 +783,18 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (#529 ciclo A2, decisione owner): Una gamba consegnata prima di quella invalidata ignora la fence delle sorelle: lotto parziale dopo un cashout selettivo."
+    },
+    {
+      "id": "dutching_leg_stake_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "                validators.order_stake((item or {}).get(\"stake\"))",
+      "mutated": "                float((item or {}).get(\"stake\") or 0)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A3, decisione owner): Una gamba con stake calcolato nullo/negativo/non finito passa: l'engine la rifiuta e le altre gambe partono (lotto parziale, stake eseguito diverso dal richiesto)."
     }
   ]
 }

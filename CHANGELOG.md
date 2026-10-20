@@ -17,12 +17,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   LAY) su cap e tavolo, che riserva sempre il controller; dedupe acquisito dopo i controlli e rilasciato
   solo se proprio, errore del dedupe => rifiuto (prima fail-open); chiave del lotto acquisita e fissata
   solo nella fase di ammissione, `precheck`/preflight privi di effetti permanenti; identificativi del
-  Dutching (mercato, selezioni, quote, stake) validati con i validatori condivisi prima di ogni riserva
-  (una gamba non valida rifiuta il lotto intero); lotto invalidato se una gamba è negata dal fence o una
+  Dutching (mercato, selezioni, quote, stake totale e stake calcolato di ogni gamba) validati con i
+  validatori condivisi prima di ogni riserva (una gamba non valida, anche con stake nullo o negativo dal
+  riparto, rifiuta il lotto intero: zero ordini); lotto invalidato se una gamba è negata dal fence o una
   sorella in coda ha il fence stale (nessuna gamba non ancora partita esce, anche con cashout limitato a
   una selezione); identificativi storici rifiutati all'ammissione. Esito del lotto (#529, scelta owner F):
-  nessun evento di gamba rilascia tavolo o chiave del lotto (fail-closed); il settlement non rilascia la
-  chiave fissata (resta fino al riavvio o a `DuplicationGuard.clear`) e il tavolo solo se attribuibile.
+  nessun evento di gamba rilascia tavolo o chiave del lotto (fail-closed); i settlement dal poller non
+  rilasciano la chiave fissata (resta fino al riavvio o a `DuplicationGuard.clear`) e il tavolo solo se
+  attribuibile; eccezione preesistente e dormiente: la chiusura mark-to-market (`auto_close_enabled`,
+  default off) li libera con altre gambe aperte, trasferita a PR30.
   **PF-EXEC-02 non completo**: esito, parziale, ribilanciamento, copertura e persistenza del lotto sono
   della PR30. Test con catena reale e broker SIM in `tests/acceptance/test_issue523_dutching_manual_bet.py`.
 - **#525 — gli orchestratori CI si avviano di nuovo:** `ci-master-gate` e `ci-dynamic-intelligent`

@@ -1011,3 +1011,88 @@ def test_public_precheck_has_no_permanent_side_effect(tmp_path):
     assert c.rc.duplication_guard._active == {} and not c.rc.duplication_guard._pinned
     assert _busy_tables(c) == []
     assert _dutching(c).submit_dutching(_batch())["ok"] is True
+
+
+# ============================================================ #529 ciclo A3 (owner): stake calcolato di ogni gamba
+def _no_side_effects_at_all(c):
+    """Rifiuto del lotto: zero ordini, nessuna chiave (attiva o fissata), nessun tavolo, nessuna gamba registrata."""
+    _no_side_effects(c)
+    assert not c.rc.duplication_guard._pinned
+    assert not (getattr(c.rc, "_held_batch_legs", None) or {})
+    assert not (getattr(c.rc, "_held_batch_ids", None) or set())
+    assert not (getattr(c.rc, "_queued_entry_fences", None) or {})
+
+
+def test_negative_leg_stake_from_the_real_split_rejects_the_whole_batch(tmp_path):
+    # Riesame indipendente su dbd01ec: totale 0.05 su quote 2/3/50 => stake 0.10/0.10/-0.15. L'engine rifiutava la
+    # gamba negativa e piazzava le altre due (0.20 eseguiti su 0.05 richiesti, submit ok=True).
+    c = _catena(tmp_path)
+    payload = {"market_id": "1.700", "event_name": EVENT, "market_name": "Match Odds",
+               "total_stake": 0.05, "simulation_mode": True,
+               "selections": [{"selectionId": 10, "price": 2.0, "side": "BACK"},
+                              {"selectionId": 20, "price": 3.0, "side": "BACK"},
+                              {"selectionId": 30, "price": 50.0, "side": "BACK"}]}
+    res = _dutching(c).submit_dutching(payload)
+    assert res["ok"] is False and "INVALID_SIZE" in str(res.get("error")), res
+    _no_side_effects_at_all(c)
+
+
+@pytest.fixture
+def _leg_stake(monkeypatch):
+    """Riparto reale, poi lo stake di alcune gambe sostituito: il controllo vale qualunque cosa produca il calcolo."""
+    import controllers.dutching_controller as dc
+    real = dc.calculate_dutching
+
+    def install(bad):
+        def fake(selections, total_stake, *args, **kwargs):
+            out = real(selections, total_stake, *args, **kwargs)
+            results = [dict(r) for r in out[0]]
+            for idx, value in bad.items():
+                results[idx]["stake"] = value
+            return (results,) + tuple(out[1:])
+        monkeypatch.setattr(dc, "calculate_dutching", fake)
+    return install
+
+
+@pytest.mark.parametrize("bad", [
+    {1: 0.0}, {1: -0.01}, {1: float("nan")}, {1: float("inf")}, {1: float("-inf")}, {1: None}, {1: "abc"},
+    {0: 0.0, 1: 5.0},                    # misto: prima gamba invalida, seconda valida
+    {0: 5.0, 1: -2.0},                   # misto: prima valida, ultima invalida
+], ids=["zero", "negative", "nan", "inf", "-inf", "none", "str", "mixed-first", "mixed-last"])
+def test_invalid_leg_stake_rejects_the_whole_batch_with_no_residue(tmp_path, _leg_stake, bad):
+    c = _catena(tmp_path)
+    _leg_stake(bad)
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False and "INVALID_SIZE" in str(res.get("error")), res
+    _no_side_effects_at_all(c)
+
+
+@pytest.mark.parametrize("mode", ["precheck", "preflight", "dry_run"])
+def test_invalid_leg_stake_is_rejected_by_every_entry_point(tmp_path, _leg_stake, mode):
+    c = _catena(tmp_path)
+    _leg_stake({1: -1.0})
+    d = _dutching(c)
+    if mode == "precheck":
+        res = d.precheck(_batch())
+    elif mode == "preflight":
+        res = d.submit_dutching(_batch(), preflight=True)
+    else:
+        res = d.submit_dutching(_batch(), dry_run=True)
+    assert res["ok"] is False and "INVALID_SIZE" in str(res.get("error")), res
+    _no_side_effects_at_all(c)
+
+
+def test_valid_batch_after_an_invalid_one_is_placed_exactly(tmp_path, _leg_stake, monkeypatch):
+    # Il rifiuto non lascia chiavi: lo stesso lotto, corretto, passa e piazza esattamente gli stake richiesti.
+    import controllers.dutching_controller as dc
+    real = dc.calculate_dutching
+    c = _catena(tmp_path)
+    _leg_stake({1: 0.0})
+    assert _dutching(c).submit_dutching(_batch())["ok"] is False
+    monkeypatch.setattr(dc, "calculate_dutching", real)
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is True, res
+    placed = sorted(round(float(o.size if hasattr(o, "size") else o["size"]), 2)
+                    for o in c.broker.state.orders.values()) if c.broker.state.orders else []
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 2
+    assert placed == sorted(round(float(o["stake"]), 2) for o in res["orders"])

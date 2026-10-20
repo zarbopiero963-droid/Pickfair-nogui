@@ -729,6 +729,19 @@ class DutchingController:
 
         return max(0.0, stake)
 
+    @staticmethod
+    def _invalid_leg_stake(results: List[Dict[str, Any]]) -> Optional[str]:
+        """#529 ciclo A3 (decisione owner): lo stake CALCOLATO di ogni gamba passa dal validatore finanziario
+        condiviso (`validators.order_stake`, lo stesso della normalizzazione dell'engine). Il riparto puo'
+        produrre stake nulli o negativi (es. totale 0.05 su quote 2/3/50 => 0.10/0.10/-0.15): una sola gamba
+        non valida rifiuta l'intero lotto prima di chiavi, tavoli, esposizione e pubblicazione."""
+        for idx, item in enumerate(results):
+            try:
+                validators.order_stake((item or {}).get("stake"))
+            except (ValueError, TypeError, AttributeError):        # gamba malformata => rifiuto, mai eccezione
+                return f"stake non valido alla gamba #{idx} (selezione {(item or {}).get('selectionId')}): INVALID_SIZE"
+        return None
+
     def _compute_batch_exposure(self, results: List[Dict[str, Any]]) -> float:
         return sum(self._compute_order_exposure(item) for item in results)
 
@@ -1092,6 +1105,9 @@ class DutchingController:
 
             if not isinstance(results, list):
                 return self._fail("Risultato dutching non valido")
+            invalid_stake = self._invalid_leg_stake(results)
+            if invalid_stake:
+                return self._fail(invalid_stake)
 
             event_key = self._build_event_key(payload, results)
             batch_id = self._build_batch_id(payload, results)
@@ -1139,6 +1155,10 @@ class DutchingController:
 
         if not results:
             return self._fail("Dutching vuoto")
+
+        invalid_stake = self._invalid_leg_stake(results)
+        if invalid_stake:
+            return self._fail(invalid_stake)
 
         event_key = self._build_event_key(payload, results)
         batch_id = self._build_batch_id(payload, results)

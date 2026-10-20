@@ -326,7 +326,12 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   (`validators.order_market_id` / `order_selection_id` / `order_price` /
   `order_stake`, gli stessi della normalizzazione dell'engine) prima di
   qualunque acquisizione, riserva o pubblicazione: una sola gamba non valida
-  rifiuta l'intero lotto, mai un piazzamento parziale.
+  rifiuta l'intero lotto, mai un piazzamento parziale. Ciclo A3: anche lo
+  **stake calcolato di ogni gamba** passa da `validators.order_stake` (il
+  riparto può produrre stake nulli o negativi: totale 0.05 su quote 2/3/50 dà
+  0.10/0.10/−0.15); una gamba con stake nullo, negativo o non finito rifiuta
+  il lotto in `precheck`, preflight e dry-run, senza chiavi, tavoli, esposizione
+  né ordini.
 - **Bet manuale**: `market_id`, `selection_id`, quota e stake sono validati
   con i validatori condivisi prima di ogni acquisizione (un ordine che l'engine
   rifiuterebbe non occupa un tavolo). Esposizione = rischio reale (`validators.order_exposure`:
@@ -353,10 +358,16 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   ordine singolo. Anche lo sweep F028 (ordini annullati/decaduti senza
   abbinato) salta le gambe di un lotto: una gamba sola non libera il tavolo
   condiviso. La chiave anti-duplicato del lotto è **fissata** (non scade col
-  TTL): la rilasciano soltanto i rollback prima della pubblicazione. Il
-  settlement **non** la rilascia: `RUNTIME_CLOSE_POSITION` libera la chiave del
-  proprio payload, e i settlement reali portano `cleared:<mercato>` o
-  `sim:<mercato>:<ref>`, mai la chiave del lotto; la chiave resta fissata fino
+  TTL): nel percorso Dutching la rilasciano soltanto i rollback prima della
+  pubblicazione. I settlement dal poller **non** la rilasciano:
+  `RUNTIME_CLOSE_POSITION` libera la chiave del proprio payload, e quei
+  settlement portano `cleared:<mercato>`, `cleared:<mercato>:<ref>` o
+  `sim:<mercato>:<ref>`, mai la chiave del lotto. **Eccezione nota, preesistente
+  e dormiente**: con `auto_close_enabled` attivo (default `False`) la chiusura
+  mark-to-market del `PnLEngine` pubblica `RUNTIME_CLOSE_POSITION` con
+  l'`event_key` della posizione, che per una gamba è la chiave del lotto, e
+  quindi libera chiave e tavolo anche con altre gambe aperte; non va attivata
+  insieme alle corsie Dutching ed è trasferita a PR30. Fuori da quel percorso la chiave resta fissata fino
   al riavvio o a un reset esplicito della guardia (`DuplicationGuard.clear`; stesso evento => sempre
   `Duplicato bloccato`). Nemmeno il tavolo del lotto è liberato da un
   settlement per bet: con più gambe sullo stesso mercato il P&L della gamba non
