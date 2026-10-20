@@ -1057,8 +1057,8 @@ sono diagnostica, **non** il contatore autorevole.
 
 `PR_FIX_LOOP_LEDGER` indica il medesimo ledger ai preflight/report del controller.
 Il controller si ferma in `NEEDS_MANUAL` anche quando il ledger è assente o
-il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 5 non
-richiede un override: il limite blocca la prenotazione del sesto repair.
+il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 10 non
+richiede un override: il limite blocca la prenotazione dell'undicesimo repair.
 Preflight/controller generali si fermano anche davanti a un ciclo incompiuto:
 non pianificano altro lavoro o merge sulla sola leggibilità del ledger. Il
 worker già titolare della capability usa i propri gate di fase, non quel
@@ -1070,7 +1070,7 @@ sia snapshot incompleti/incompiuti. Ogni autorizzazione richiede identità PR co
 sempre il ledger autorevole prima di consentire il merge. Una
 cache verde non può nascondere un ciclo incompiuto o un ledger assente.
 Una nuova lettura verde non cancella uno stop manuale esplicito già nel
-contesto. Restano richiesti tutti i normali gate di merge; count=5 con nessun
+contesto. Restano richiesti tutti i normali gate di merge; count=10 con nessun
 ciclo incompiuto non richiede una deroga per la sola readiness.
 Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
 Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
@@ -1120,7 +1120,8 @@ repository, PR e URL. Con count=10, abilita esattamente l'undicesimo ciclo;
 ceiling=11. La dodicesima iterazione richiede una **nuova** decisione puntuale.
 Una deroga vale solo a tetto raggiunto (`AT_COUNT` ≥ tetto): un ledger con una
 deroga storica registrata sotto il tetto 10 (es. `AT_COUNT=5`) non è più
-coerente e si ferma (`invalid_persisted_grant`, fail-closed).
+coerente e si ferma (`invalid_persisted_grant`, o `invalid_persisted_grant_bounds`
+se il ceiling supera 10 ma `AT_COUNT` è sotto il tetto; fail-closed).
 Commento e ceiling restano registrati in `grants`; rigiocare l'ID non aggiunge
 budget. Nessuna modifica del cap globale 10, nessun reset, nessuna trasferibilità
 ad altra PR, nessun `IGNORE_FIX_LOOP_LIMIT=true`.

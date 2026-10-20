@@ -15,7 +15,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   non un obiettivo: stop anticipato per `REVIEW_CHURN`, prenotazione prima della patch, nessun reset,
   deroga owner puntuale oltre il tetto e tutti i gate invariati. Una deroga storica registrata sotto il
   nuovo tetto (es. `AT_COUNT=5`) rende il ledger di quella PR non valido (fail-closed). Allineati
-  CLAUDE.md, AGENTS.md e `docs/auto_pr_flow_spec.md` (§0.15, §11–§13).
+  CLAUDE.md, AGENTS.md (anche il blocco «Normative owner repair limit»), `docs/auto_pr_flow_spec.md`
+  (§0.15, §11–§13) e `docs/hard_verify_spec.md`; un test rifiuta ogni copia normativa ancora a 5.
 
 ### Fixed
 

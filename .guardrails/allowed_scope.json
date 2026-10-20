@@ -2378,12 +2378,13 @@
         "CHANGELOG.md",
         "CLAUDE.md",
         "docs/auto_pr_flow_spec.md",
+        "docs/hard_verify_spec.md",
         "scripts/pr_fix_loop_policy.py",
         "tests/scripts/test_pr_autonomy_policy.py",
         "tests/scripts/test_pr_fix_loop_policy.py"
       ],
-      "max_files": 8,
-      "description": "Mandato owner FIX LOOP POLICY 10 CICLI (20/10/2026), roadmap #461 (sequenza owner c.6278391354), PF-QA-AUTONOMOUS-CONTINUATION-01 (#426 c.6263599189): MAX_FIX_LOOP_ITERATIONS_PER_PR 5 -> 10 come tetto massimo; stop anticipato, REVIEW_CHURN, prenotazione, deroga owner e gate invariati; documenti normativi allineati. PR di policy: merge manuale owner, nessun merge automatico."
+      "max_files": 9,
+      "description": "Mandato owner FIX LOOP POLICY 10 CICLI (20/10/2026), roadmap #461 (sequenza owner c.6278391354), PF-QA-AUTONOMOUS-CONTINUATION-01 (#426 c.6263599189): MAX_FIX_LOOP_ITERATIONS_PER_PR 5 -> 10 come tetto massimo; stop anticipato, REVIEW_CHURN, prenotazione, deroga owner e gate invariati; documenti normativi allineati. PR di policy: merge manuale owner, nessun merge automatico. ESTENSIONE DICHIARATA (rilievo Codex r4328857741 + riesame indipendente): +docs/hard_verify_spec.md (§ PR-flow dichiarava ancora cap 5 / sesto tentativo; con la regola della piu' severa avrebbe annullato il tetto 10)."
     }
   }
 }

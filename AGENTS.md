@@ -2030,8 +2030,9 @@ For automated PR repair loops:
 Normative owner repair limit (not per check state):
 
 ```text
-MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
-Cumulative per PR; bounded explicit owner override only.
+MAX_FIX_LOOP_ITERATIONS_PER_PR = 10
+Cumulative per PR; a ceiling, not a target (early REVIEW_CHURN stop remains);
+bounded explicit owner override only (PF-QA-AUTONOMOUS-CONTINUATION-01).
 ```
 
 If another PATCH_REQUIRED cycle would exceed the allowed cumulative budget:

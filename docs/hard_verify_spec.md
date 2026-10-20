@@ -359,8 +359,9 @@ PASS+BLOCK sui gate reali. Fonte normativa: `auto_pr_flow_spec.md` §11–13;
 `AGENTS.md`/`CLAUDE.md` danno il rinvio sintetico; `scripts/pr_*` applicano
 la policy; `tests/scripts/test_pr_fix_loop_policy.py` ne prova l'enforcement.
 
-Verificare cap globale 5, contatore persistente cumulativo per PR, blocco prima
-di patch/commit/push al sesto tentativo, deroga owner scoped/bounded non
+Verificare cap globale 10 (tetto, non obiettivo; PF-QA-AUTONOMOUS-CONTINUATION-01),
+contatore persistente cumulativo per PR, blocco prima di patch/commit/push
+all'undicesimo tentativo, deroga owner scoped/bounded non
 rigiocabile, ripristino da restart senza reset. Provare nuove mutation con
 contratto corrente corretto: nessun push illimitato; un current defect reale
 rimane bloccante. Accepted limitation senza owner/head/prove/check settled

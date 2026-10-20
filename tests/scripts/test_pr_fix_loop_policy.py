@@ -346,6 +346,22 @@ def test_normative_docs_keep_policy_classes_and_global_cap_ten():
         assert "Maximum automatic attempts per PR/check state: 3" not in text
 
 
+# Rilievo Codex r4328857741 (#530): con la regola «vale la piu' severa», una sola copia normativa ancora a 5
+# fermerebbe gli agenti a 5 cicli. Ogni documento normativo deve RIFIUTARE il vecchio limite, non solo
+# contenere il nuovo.
+_STALE_CAP_PHRASES = (
+    "MAX_FIX_LOOP_ITERATIONS_PER_PR = 5", "cap globale 5", "Cap 5,", "fix loop 5 ", "conteggio 5",
+    "count=5", "sesto ciclo", "sesto repair", "sesto tentativo", "cinque cicli", "Massimo cinque",
+)
+
+
+@pytest.mark.parametrize("name", ["AGENTS.md", "CLAUDE.md", "docs/auto_pr_flow_spec.md", "docs/hard_verify_spec.md"])
+def test_normative_docs_reject_the_old_cap_five(name):
+    text = (Path(__file__).resolve().parents[2] / name).read_text(encoding="utf-8")
+    stale = [phrase for phrase in _STALE_CAP_PHRASES if phrase in text]
+    assert not stale, f"{name}: limite storico ancora dichiarato: {stale}"
+
+
 @pytest.mark.parametrize("kind", ["CURRENT_DEFECT", "THEORETICAL_MUTATION"])
 @pytest.mark.parametrize("reviewer", ["Sol", "Grok", "Codex", "unknown"])
 def test_reviewer_identity_does_not_choose_verified_finding_class(kind, reviewer):
@@ -1179,3 +1195,20 @@ def test_eleventh_cycle_needs_a_bounded_owner_override(ledger):
     consume(ledger, "11")
     assert ledger.status()["completed_count"] == OWNER_CAP + 1
     assert ledger.reserve("12", assessment("CURRENT_DEFECT"))["REASON"] == "fix_loop_budget_exhausted"
+
+
+def test_legacy_grant_above_the_new_ceiling_but_below_the_cap_count_fails_closed(ledger):
+    # Ramo `_bounds`: deroga storica con ceiling > 10 ma AT_COUNT sotto il tetto (5 + 7 = 12) => ledger fermo.
+    import json
+    import sqlite3
+    for number in range(5):
+        consume(ledger, str(number))
+    comment = {"repo": "owner/repo", "pr": 495, "author": "owner", "id": "46",
+               "html_url": "https://github.com/owner/repo/pull/495#issuecomment-46",
+               "body": "OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=7 AT_COUNT=5"}
+    with sqlite3.connect(ledger.path) as connection:
+        connection.execute("INSERT INTO grants VALUES (?, ?, ?, ?, ?)",
+                           ("owner/repo", 495, "46", 12, json.dumps(comment)))
+    status = ledger.status()
+    assert not status["allowed"] and "invalid_persisted_grant_bounds" in status["REASON"]
+    assert not ledger.reserve("next", assessment("CURRENT_DEFECT"))["allowed"]
