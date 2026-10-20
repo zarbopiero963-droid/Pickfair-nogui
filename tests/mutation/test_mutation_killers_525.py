@@ -137,3 +137,27 @@ def test_al_riavvio_il_motore_ricarica_le_chiavi_in_volo(tmp_path):
     assert engine._repopulate_inflight_from_db() is True
     assert "REF-VIVO" in engine._inflight_keys
     assert "CID-VIVO" in engine._seen_correlation_ids
+
+
+# ---------------------------------------------------------------------------
+# safety_cashout_price_unchecked
+# Il safety layer rifiuta un cashout con quota <= 1 (nessun hedge a prezzo
+# impossibile arriva all'exchange).
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("price", [1.0, 0.5])
+def test_il_safety_layer_rifiuta_un_cashout_con_quota_non_valida(price):
+    from core.safety_layer import MarketSanityError, SafetyLayer
+
+    payload = {"market_id": "1.234", "selection_id": 11, "side": "LAY",
+               "stake": 2.0, "price": price, "green_up": 0.5}
+    with pytest.raises(MarketSanityError, match="price <= 1"):
+        SafetyLayer().validate_cashout_request(payload)
+
+
+def test_il_safety_layer_accetta_un_cashout_valido():
+    from core.safety_layer import SafetyLayer
+
+    payload = {"market_id": "1.234", "selection_id": 11, "side": "LAY",
+               "stake": 2.0, "price": 2.5, "green_up": 0.5}
+    assert SafetyLayer().validate_cashout_request(payload) is True

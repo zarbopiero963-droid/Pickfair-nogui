@@ -188,7 +188,14 @@ MODULE_RULES = [
         "name": "mutation-guardrails",
         "paths": [
             "guardrails/mutations/",
+            # #525: il catalogo e i file che muta sono la fonte del mutation testing reale
+            "guardrails/mutation_catalog.json",
             "scripts/run_mutation_guardrails.py",
+            "database.py",
+            "dutching.py",
+            "cashout_executor.py",
+            "cashout_residual_handler.py",
+            "scripts/live_gate.py",
             "tests/",
             "core/",
             "order_manager.py",

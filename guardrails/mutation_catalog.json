@@ -10,7 +10,8 @@
     "reconciliation",
     "cashout",
     "funds",
-    "money_management"
+    "money_management",
+    "live_safety"
   ],
   "optional_areas": [],
   "mutations": [
@@ -409,6 +410,67 @@
         "tests/core/test_money_management_rectification_20261017.py"
       ],
       "rationale": "Stake sotto il minimo configurato non piu' rifiutato."
+    },
+    {
+      "id": "live_gate_kill_switch_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if bool(kill_switch):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "Il kill switch non blocca piu' il LIVE."
+    },
+    {
+      "id": "live_gate_live_enabled_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if not bool(live_enabled):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "LIVE concesso anche con live_enabled=False."
+    },
+    {
+      "id": "live_gate_readiness_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if not bool(live_readiness_ok):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "LIVE concesso con readiness non OK."
+    },
+    {
+      "id": "safety_cashout_price_unchecked",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "            raise MarketSanityError(\"CASHOUT_REQUEST: price <= 1\")",
+      "mutated": "            pass",
+      "tests": [
+        "tests/unit/test_cashout_executor.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Il safety layer accetta un cashout con quota <= 1."
+    },
+    {
+      "id": "live_gate_checklist_missing_check_ignored",
+      "module": "live_gate",
+      "area": "live_safety",
+      "file": "scripts/live_gate.py",
+      "original": "            failed_checks.append(check)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_live_gate.py"
+      ],
+      "rationale": "Il gate di checklist LIVE passa con controlli non spuntati."
     }
   ]
 }

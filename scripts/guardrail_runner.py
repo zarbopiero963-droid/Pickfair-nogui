@@ -182,8 +182,10 @@ def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dic
 
     summary = payload.get("summary", {}) if isinstance(payload, dict) else {}
     total = summary.get("total")
-    killed = summary.get("killed")
-    survived = summary.get("survived")
+    # #525: il runner a livello sorgente mette i conteggi in summary.counts
+    counts = summary.get("counts") if isinstance(summary.get("counts"), dict) else {}
+    killed = counts.get("KILLED", summary.get("killed"))
+    survived = counts.get("SURVIVED", summary.get("survived"))
     score = summary.get("score")
 
     result.update({"total": total, "killed": killed, "survived": survived, "score": score})
@@ -199,11 +201,15 @@ def run_mutation_delegate(module: str, timeout_sec: int, repo_root: Path) -> dic
         return result
 
     result["fatal"] = False
-    result["ok"] = True
-    if proc.returncode != 0:
-        result["warning"] = (
-            "Mutation delegate returned non-zero exit; tolerated because total>0 and summary parse succeeded"
+    # #525: un gate di mutazione fallito non e' mai un PASS. Prima un exit
+    # non zero veniva "tollerato" se il report aveva total>0.
+    if proc.returncode != 0 or summary.get("gate_passed") is not True:
+        result["error"] = (
+            f"Mutation gate failed (rc={proc.returncode}, gate_passed={summary.get('gate_passed')!r}): "
+            + "; ".join(str(f) for f in summary.get("gate_failures", []) or [])
         )
+        return result
+    result["ok"] = True
     return result
 
 
@@ -212,7 +218,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module", required=True)
     parser.add_argument("--guardrails-root", default="guardrails")
     parser.add_argument("--run-mutations", action="store_true")
-    parser.add_argument("--mutation-timeout-sec", type=int, default=1)
+    parser.add_argument("--mutation-timeout-sec", type=int, default=180)
     parser.add_argument("--output")
     parser.add_argument("--fail-on-missing-tests", default="true", choices=["true", "false"])
     return parser

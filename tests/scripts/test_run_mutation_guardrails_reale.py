@@ -204,3 +204,76 @@ def test_il_catalogo_reale_e_applicabile_e_copre_le_aree_critiche():
             assert (ROOT / test.split("::")[0]).exists(), f"{entry['id']}: test mancante {test}"
         covered.add(entry["area"])
     assert required <= covered
+
+
+def test_al_timeout_non_restano_processi_orfani(tmp_path):
+    import os
+    import time
+
+    pidfile = tmp_path / "child.pid"
+    orfano = (
+        "import os, subprocess, time\n"
+        "def test_figlio():\n"
+        "    if os.path.exists('MUTATED'):\n"
+        f"        p = subprocess.Popen(['sleep', '60'])\n"
+        f"        open({str(pidfile)!r}, 'w').write(str(p.pid))\n"
+        "        time.sleep(60)\n"
+    )
+    repo = _repo(tmp_path, [_mut("liab_child", LIAB, "    open('MUTATED', 'w').close(); return stake * (price - 1.0)")],
+                 test_src=TEST_FORTE + "\n" + orfano)
+    out = tmp_path / "report.json"
+    rc = runner.main(["--repo-root", str(repo), "--output", str(out), "--timeout-sec", "4"])
+    assert rc == 1
+    pid = int(pidfile.read_text())
+    time.sleep(0.5)
+    try:
+        os.kill(pid, 0)
+        vivo = True
+    except ProcessLookupError:
+        vivo = False
+    if vivo:  # zombie gia' terminato ma non raccolto: controlla lo stato
+        stato = Path(f"/proc/{pid}/stat").read_text().split()[2] if Path(f"/proc/{pid}/stat").exists() else "X"
+        vivo = stato not in ("Z", "X")
+    assert not vivo, "il processo lanciato dal test e' sopravvissuto al timeout"
+
+
+def test_un_run_che_fallisce_non_lascia_un_vecchio_report_pass(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    out = tmp_path / "report.json"
+    out.write_text(json.dumps({"summary": {"gate_passed": True}}), encoding="utf-8")
+    with pytest.raises(runner.MutationRunnerError):
+        runner.main(["--repo-root", str(repo), "--output", str(out)])  # catalogo assente
+    assert json.loads(out.read_text(encoding="utf-8"))["summary"]["gate_passed"] is False
+
+
+def test_il_report_elenca_i_moduli_con_specifica_ma_senza_mutazioni(tmp_path):
+    repo = _repo(tmp_path, [_mut("liab_stake", LIAB, "    return stake")])
+    (repo / "guardrails" / "mutations").mkdir()
+    (repo / "guardrails" / "mutations" / "pnl_engine.json").write_text(json.dumps({"module": "pnl_engine"}), encoding="utf-8")
+    (repo / "guardrails" / "mutations" / "calc.json").write_text(json.dumps({"module": "calc"}), encoding="utf-8")
+    rc, report = _run(repo, tmp_path)
+    assert rc == 0
+    assert report["summary"]["spec_modules_without_mutations"] == ["pnl_engine"]
+
+
+@pytest.mark.parametrize("campo,valore", [
+    ("file", "/etc/hostname"), ("file", "../fuori.py"), ("file", "sub/../../fuori.py"),
+    ("tests", ["/tmp/test_x.py"]), ("tests", ["../tests/test_x.py::test_a"]),
+])
+def test_percorsi_fuori_dal_repository_sono_rifiutati(tmp_path, campo, valore):
+    entry = _mut("liab_stake", LIAB, "    return stake")
+    entry[campo] = valore
+    repo = _repo(tmp_path, [entry])
+    with pytest.raises(runner.MutationRunnerError, match="outside the repository"):
+        runner.main(["--repo-root", str(repo), "--output", str(tmp_path / "r.json")])
+
+
+def test_il_catalogo_attiva_la_lane_mutation_nel_dynamic():
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import ci_changed_modules  # noqa: E402
+
+    paths = next(r["paths"] for r in ci_changed_modules.MODULE_RULES if r["name"] == "mutation-guardrails")
+    catalog = runner.load_catalog(ROOT)
+    for f in {"guardrails/mutation_catalog.json", *(e["file"] for e in catalog["mutations"])}:
+        assert any(f.startswith(p) for p in paths), f"{f} non attiva mutation-guardrails"

@@ -9,7 +9,7 @@ dell'agente (HTTP 403) e resta da verificare dall'owner.
 
 | Workflow | Trigger | Cosa chiama |
 |---|---|---|
-| `ci-dynamic-intelligent.yml` | `pull_request`, `workflow_dispatch`, `workflow_call` | `detect` (`scripts/ci_changed_modules.py origin/main`), poi sempre `noise-free-pr-gate`, `repo-guardrails-extended`, `merge-simulation-hard`; solo se `detect` le segnala toccate le 15 lane di modulo e `mutation-guardrails` (quest'ultima per diff su `guardrails/mutations/`, `scripts/run_mutation_guardrails.py`, `tests/`, `core/` o i moduli in radice elencati in `ci_changed_modules.py`) |
+| `ci-dynamic-intelligent.yml` | `pull_request`, `workflow_dispatch`, `workflow_call` | `detect` (`scripts/ci_changed_modules.py origin/main`), poi sempre `noise-free-pr-gate`, `repo-guardrails-extended`, `merge-simulation-hard`; solo se `detect` le segnala toccate le 15 lane di modulo e `mutation-guardrails` (quest'ultima per diff su `guardrails/mutations/`, `guardrails/mutation_catalog.json`, `scripts/run_mutation_guardrails.py`, `tests/`, `core/` o i file mutati dal catalogo e gli altri moduli in radice elencati in `ci_changed_modules.py`) |
 | `ci-master-gate.yml` | `pull_request`, `workflow_dispatch` | `ci-dynamic-intelligent`, più **senza condizioni** 11 lane di modulo (`trading-engine`, `order-manager`, `execution-guard`, `risk-middleware`, `runtime-controller`, `money-management`, `telegram-listener`, `copy-engine`, `simulation-broker`, `session-manager`, `rate-limiter`), `live-gate`, `chaos-critical`, `mutation-guardrails`, `merge-simulation-hard`. **`dutching` e `pnl-engine` non sono chiamate direttamente**: il master le raggiunge solo attraverso `ci-dynamic-intelligent`, quindi solo quando `detect` le segnala toccate; un run del master non le valida per diff fuori dai loro path |
 
 Le lane di modulo chiamano `_module-ultra-check.yml`: esistenza del modulo e
@@ -57,7 +57,7 @@ sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
-31 voci, ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+36 voci, ciascuna con una riga intera del sorgente, la sua variante dannosa e i
 test mirati che devono accorgersene. Le regole, verificate da
 `tests/scripts/test_run_mutation_guardrails_reale.py`:
 
@@ -86,7 +86,19 @@ casi seguenti:
 
 Senza mutazioni selezionate esce con 2. Le aree obbligatorie sono: `side`,
 `lay_liability`, `exposure`, `dedupe`, `ambiguous`, `recovery`,
-`reconciliation`, `cashout`, `funds`, `money_management`.
+`reconciliation`, `cashout`, `funds`, `money_management`, `live_safety`
+(kill switch, `live_enabled`, readiness, checklist del gate LIVE, quota del
+cashout nel safety layer).
+
+Il report di `mutation-guardrails.yml` si carica come `mutation-guardrails-report-<check_run_id>`: il master lancia la lane due volte nello stesso run (direttamente e tramite dynamic), e `upload-artifact@v4` rifiuta un secondo artifact con lo stesso nome. Ogni `file` e `tests` del catalogo deve essere un percorso relativo senza `..`, altrimenti il catalogo è rifiutato: la sandbox non si può scavalcare.
+
+Al timeout il runner termina l'intero gruppo di processi del pytest, anche ciò
+che i test hanno lanciato. All'avvio scrive un report FAIL, così un run
+interrotto non lascia valido il report di un run precedente.
+`scripts/guardrail_runner.py --run-mutations` considera riuscito il delegato
+solo con exit 0 e `gate_passed: true`. Prima un exit diverso da zero veniva
+tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
+180 secondi.
 
 **Risultati.**
 - Primo run: 24 mutazioni uccise su 31, punteggio 77,42%, gate FAIL.
@@ -99,8 +111,32 @@ Senza mutazioni selezionate esce con 2. Le aree obbligatorie sono: `side`,
   - lato diverso da BACK/LAY accettato dall'order manager;
   - cap di esposizione che ignora l'esposizione già aperta.
 - I test che le uccidono stanno in `tests/mutation/test_mutation_killers_525.py`.
-- Run successivo: 31 su 31 uccise, punteggio 100%, gate PASS, in circa 40 s in
+- Run successivo: 31 su 31 uccise.
+- Review indipendente: chiede di coprire anche il safety layer e il gate LIVE.
+  Ho aggiunto 5 mutazioni `live_safety`; una sopravviveva (quota del cashout
+  ≤ 1 accettata dal safety layer) ed è uccisa da un nuovo test nello stesso
+  file.
+- Run finale: 36 su 36 uccise, punteggio 100%, gate PASS, in circa 44 s in
   locale contro gli oltre 45 minuti di prima.
+
+**Gap tracciato, non escluso in silenzio.** Ogni report elenca in
+`summary.spec_modules_without_mutations` i moduli che hanno una specifica in
+`guardrails/mutations/` ma nessuna mutazione reale nel catalogo:
+- non esistono nel repository: `copy_engine`, `rate_limiter`,
+  `session_manager`;
+- non ha importatori nel codice di produzione: `core.execution_guard`;
+- senza mutazioni reali per ora: `core.order_router`, `core.risk_desk`,
+  `core.risk_middleware`, `pnl_engine`, `shutdown_manager`;
+- Telegram, sospeso: `telegram_listener`, `telegram_sender`,
+  `telegram_signal_processor`, `telegram_bet_resolver`.
+
+Le aree finanziarie critiche richieste dall'owner (BACK/LAY, responsabilità,
+esposizione, dedupe, AMBIGUOUS, recovery, riconciliazione, cashout) sono
+coperte; per i moduli qui sopra la copertura resta da estendere.
+
+Un limite noto del criterio: rc 1 indica qualunque test fallito, non solo
+un'asserzione. La review indipendente ha controllato le uccisioni reali e
+ognuna viene da un'asserzione sul contratto.
 
 I file `guardrails/mutations/*.json` restano specifiche per modulo, validate da
 `scripts/guardrail_runner.py` e `scripts/validate_guardrails.py`, ma non sono

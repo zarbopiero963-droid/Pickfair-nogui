@@ -37,6 +37,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -113,6 +114,11 @@ def load_catalog(repo_root: Path) -> dict[str, Any]:
             raise MutationRunnerError(f"{entry['id']}: 'mutated' equals 'original'")
         if not isinstance(entry["tests"], list) or not entry["tests"]:
             raise MutationRunnerError(f"{entry['id']}: 'tests' must be a non-empty list")
+        # i percorsi restano dentro la sandbox: niente assoluti, niente '..'
+        for rel in [entry["file"], *(str(t).split("::")[0] for t in entry["tests"])]:
+            rel_path = Path(str(rel))
+            if not str(rel) or rel_path.is_absolute() or ".." in rel_path.parts:
+                raise MutationRunnerError(f"{entry['id']}: path outside the repository: {rel!r}")
         if entry["area"] not in required_areas and not entry.get("equivalent"):
             # aree fuori elenco sono ammesse, ma vanno dichiarate: niente refusi silenziosi
             if entry["area"] not in catalog.get("optional_areas", []):
@@ -153,13 +159,22 @@ def _run_pytest(sandbox: Path, tests: list[str], pytest_args: list[str], timeout
     env["PYTHONPATH"] = str(sandbox) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests, *pytest_args]
     start = time.monotonic()
+    # gruppo di processi proprio: al timeout si termina anche cio' che i test
+    # hanno lanciato, che altrimenti sopravviverebbe alla sandbox
+    proc = subprocess.Popen(
+        cmd, cwd=str(sandbox), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
+    )
     try:
-        proc = subprocess.run(
-            cmd, cwd=str(sandbox), env=env, capture_output=True, text=True, timeout=timeout_sec
-        )
-    except subprocess.TimeoutExpired as exc:
-        return None, time.monotonic() - start, _tail(exc.stdout)
-    return proc.returncode, time.monotonic() - start, _tail(proc.stdout + proc.stderr)
+        out, _ = proc.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        out, _ = proc.communicate()
+        return None, time.monotonic() - start, _tail(out)
+    return proc.returncode, time.monotonic() - start, _tail(out)
 
 
 def _status_from_rc(rc: int | None) -> str:
@@ -331,6 +346,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo_root = Path(args.repo_root).resolve()
     output_path = Path(args.output).resolve()
+    # un report di un run precedente non deve sopravvivere a un run interrotto
+    _write_report(output_path, [], {"gate_passed": False, "gate_failures": ["run not completed"]})
     catalog = load_catalog(repo_root)
     entries = catalog["mutations"]
     required_areas = list(catalog.get("required_areas", []))
@@ -362,7 +379,19 @@ def main(argv: list[str] | None = None) -> int:
         raise MutationRunnerError("repository files changed during the mutation run")
 
     summary = summarize(results, required_areas, args.fail_under)
+    # Moduli con una specifica in guardrails/mutations/ ma nessuna mutazione
+    # reale nel catalogo: elencati in ogni report, mai esclusi in silenzio.
+    spec_modules = set()
+    for spec in sorted((repo_root / "guardrails" / "mutations").glob("*.json")):
+        try:
+            spec_modules.add(str(json.loads(spec.read_text(encoding="utf-8")).get("module") or spec.stem))
+        except (OSError, ValueError):
+            spec_modules.add(spec.stem)
+    summary["spec_modules_without_mutations"] = sorted(spec_modules - {e["module"] for e in catalog["mutations"]})
     _print_report(results, summary)
+    if summary["spec_modules_without_mutations"]:
+        print("Modules with a spec but no source mutation (tracked gap): "
+              + ", ".join(summary["spec_modules_without_mutations"]))
     _write_report(output_path, results, summary)
     print(f"JSON report written to: {output_path}")
     return 0 if summary["gate_passed"] else 1
