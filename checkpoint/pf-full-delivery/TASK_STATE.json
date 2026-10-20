@@ -4,7 +4,9 @@
   "LIVE NO-GO",
   "BLOCKS_DUTCHING_ACTIVATION: PF-EXEC-02, PF529-A3-R1..R4, cablaggio batch manager (#461 c.6292754293, 6294445741, 6295132960, 6296247545)",
   "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
-  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato"
+  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato",
+  "G7 (#532): SimulationBroker non riserva fondi; parita' SIM/LIVE sui fondi NON certificata (decisione owner #531)",
+  "Dutching/manual_bet: gate fondi assente, corsie disattivate (PR30)"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -47,8 +49,8 @@
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12"
  ],
  "lotto_corrente": "#530 MERGED (2141031) con approvazione owner; post-merge completato",
- "mandate_id": "MANDATO OWNER FIX LOOP POLICY 10 CICLI + APPROVAZIONE OWNER MERGE PR #530 (20/10/2026)",
- "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524, #525, #523, fix loop 10 FATTE; prossima voce = riconciliazione completa #461 (stato reale delle schede vs PR mergiate, attivita' su issue). Poi PR29/PR30 secondo sequenza vigente. Follow-up #528. NO LIVE",
+ "mandate_id": "PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026) + decisioni owner #531 (Q10, G7)",
+ "next_atomic_action": "#531 MERGED f334946 (PR28-e gate fondi, CI main 13/13); Q10 ratificata (#426), G7 aperto non certificato (#532, M6). Prossima scheda: PR29 riserva durevole cross-process secondo sequenza #461; debito #516-#521/#528 per dipendenze. NO LIVE",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

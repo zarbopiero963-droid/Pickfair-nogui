@@ -1,3 +1,10 @@
+## Seq 54 — 20/10/2026
+
+- #531 PR28-e gate esplicito dei fondi MERGED `f3349467ee7b` (autonomo, safety-critical; fix loop 4/10; CI main 13/13).
+- Q10 ratificata dall'owner (hedge/cashout/uscite protettive fuori dal gate), registrata #426 c.6304341575.
+- G7 aperto e NON certificato: #532 (RED xfail strict in tests/acceptance/test_g7_sim_funds_reservation.py), fase M6.
+- Aggiornate #461 (c.6304343807), #506, #453. Prossima scheda: PR29 (riserva durevole cross-process). NO LIVE.
+
 # HANDOFF — seq 12 (PF-CROSS-AGENT-HANDOFF-A06-01)
 
 ChatGPT Work ha ripreso da clone/checkpoint remoto senza cronologia Claude: bootstrap `READY`, verifica `VALID`,

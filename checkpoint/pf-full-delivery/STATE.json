@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 53,
+ "seq": 54,
  "updated_at": "2026-10-20T20:05:15.447509+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
@@ -458,7 +458,7 @@
  ],
  "owner_decisions_pending": [],
  "uncertain_ops": [],
- "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524, #525, #523, fix loop 10 FATTE; prossima voce = riconciliazione completa #461 (stato reale delle schede vs PR mergiate, attivita' su issue). Poi PR29/PR30 secondo sequenza vigente. Follow-up #528. NO LIVE",
+ "next_atomic_action": "#531 MERGED f334946 (PR28-e gate fondi, CI main 13/13); Q10 ratificata (#426), G7 aperto non certificato (#532, M6). Prossima scheda: PR29 riserva durevole cross-process secondo sequenza #461; debito #516-#521/#528 per dipendenze. NO LIVE",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -478,7 +478,7 @@
   "cost_reviews": "$0.21 (6 review, 3 range)"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "68e15d0236174510c7787f709d31a01a118cba90",
+ "previous_checkpoint_sha": "dffdcbe612cf8a3be4ec719384206641a564971d",
  "lotto_corrente": "#530 MERGED (2141031) con approvazione owner; post-merge completato",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -555,10 +555,10 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "MANDATO OWNER FIX LOOP POLICY 10 CICLI + APPROVAZIONE OWNER MERGE PR #530 (20/10/2026)",
+ "mandate_id": "PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026) + decisioni owner #531 (Q10, G7)",
  "code": {
   "branch": "main",
-  "sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+  "sha": "f3349467ee7b320d8ecfca7b9729b1272e025def",
   "verified_with": "tree identico all'head approvato 2ecc4a4 (git diff = 0 righe)"
  },
  "blocks": [
@@ -566,7 +566,9 @@
   "LIVE NO-GO",
   "BLOCKS_DUTCHING_ACTIVATION: PF-EXEC-02, PF529-A3-R1..R4, cablaggio batch manager (#461 c.6292754293, 6294445741, 6295132960, 6296247545)",
   "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
-  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato"
+  "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato",
+  "G7 (#532): SimulationBroker non riserva fondi; parita' SIM/LIVE sui fondi NON certificata (decisione owner #531)",
+  "Dutching/manual_bet: gate fondi assente, corsie disattivate (PR30)"
  ],
  "owner_authorizations": {
   "live": false,
