@@ -1212,3 +1212,36 @@ def test_legacy_grant_above_the_new_ceiling_but_below_the_cap_count_fails_closed
     status = ledger.status()
     assert not status["allowed"] and "invalid_persisted_grant_bounds" in status["REASON"]
     assert not ledger.reserve("next", assessment("CURRENT_DEFECT"))["allowed"]
+
+
+def _controller_run(ledger, tmp_path, head):
+    args = argparse.Namespace(repo="owner/repo", pr="495", output=str(tmp_path / "report.json"))
+    decision = {"review": {"unresolved_active": 0}}
+    context = controller.NextActionContext(args, {}, [], [], [], [], decision)
+    controller.update_decision_state_tracking(args, {"headRefOid": head}, context)
+    return decision
+
+
+def test_controller_survives_all_ten_cycles_through_merge(ledger, monkeypatch, tmp_path):
+    # Rilievo Codex r4328857781 (#530): il budget ausiliario delle esecuzioni del controller era fisso a 8
+    # (pensato per il tetto 5): con 10 cicli, dalla nona esecuzione merge_budget_gate vedeva uno stop manuale.
+    monkeypatch.setenv("PR_FIX_LOOP_LEDGER", str(ledger.path))
+    for number in range(OWNER_CAP):
+        consume(ledger, str(number))
+        decision = _controller_run(ledger, tmp_path, f"head-{number}")
+        assert not decision["budget_status"]["exhausted"], (number, decision["budget_status"])
+    decision = _controller_run(ledger, tmp_path, "clean-head")          # undicesima esecuzione: verifica finale
+    assert not decision["budget_status"]["exhausted"], decision["budget_status"]
+    context = merge_context(budget_status=decision["budget_status"], fix_loop_budget=decision["fix_loop_budget"],
+                            fix_loop={"path": str(ledger.path), "repo": "owner/repo", "pr": 495})
+    assert controller.can_auto_merge(context)["allowed"]
+
+
+def test_controller_run_budget_still_stops_a_runaway_loop(ledger, monkeypatch, tmp_path):
+    # Il freno contro i loop resta: margine fisso di 3 esecuzioni oltre il tetto (8 col tetto 5, 13 col tetto 10).
+    monkeypatch.setenv("PR_FIX_LOOP_LEDGER", str(ledger.path))
+    assert controller._budget_limits()["max_total_controller_runs"] == OWNER_CAP + 3
+    for run in range(OWNER_CAP + 2):
+        assert not _controller_run(ledger, tmp_path, f"h{run}")["budget_status"]["exhausted"]
+    stopped = _controller_run(ledger, tmp_path, "runaway")["budget_status"]
+    assert stopped["exhausted"] and stopped["reason"] == "controller_run_count>=max_total_controller_runs"

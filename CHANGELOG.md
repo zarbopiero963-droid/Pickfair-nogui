@@ -17,6 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   nuovo tetto (es. `AT_COUNT=5`) rende il ledger di quella PR non valido (fail-closed). Allineati
   CLAUDE.md, AGENTS.md (anche il blocco «Normative owner repair limit»), `docs/auto_pr_flow_spec.md`
   (§0.15, §11–§13) e `docs/hard_verify_spec.md`; un test rifiuta ogni copia normativa ancora a 5.
+  Il freno anti-loop sulle esecuzioni del controller (`max_total_controller_runs`, fisso a 8) è ora il
+  tetto + 3 (13): con 8 i cicli 9–10 non arrivavano al merge.
 
 ### Fixed
 

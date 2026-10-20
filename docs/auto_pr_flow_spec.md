@@ -1059,6 +1059,9 @@ sono diagnostica, **non** il contatore autorevole.
 Il controller si ferma in `NEEDS_MANUAL` anche quando il ledger è assente o
 il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 10 non
 richiede un override: il limite blocca la prenotazione dell'undicesimo repair.
+Il freno anti-loop sulle esecuzioni del controller (`max_total_controller_runs`)
+vale il tetto più un margine fisso di 3 (13 con il tetto 10): i cicli concessi
+dal ledger restano raggiungibili fino al merge, un loop senza fine si ferma.
 Preflight/controller generali si fermano anche davanti a un ciclo incompiuto:
 non pianificano altro lavoro o merge sulla sola leggibilità del ledger. Il
 worker già titolare della capability usa i propri gate di fase, non quel
