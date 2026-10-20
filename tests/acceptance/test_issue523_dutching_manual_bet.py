@@ -272,6 +272,38 @@ def test_partial_batch_is_signalled_and_keeps_its_table_and_key(tmp_path):
     assert legs[0]["event_key"] in c.rc.duplication_guard._active
 
 
+@pytest.mark.parametrize("late", ["QUICK_BET_FILLED", "QUICK_BET_SUCCESS", "QUICK_BET_FAILED",
+                                  "QUICK_BET_AMBIGUOUS"])
+def test_late_event_of_a_leg_after_a_partial_batch_does_not_release_it(tmp_path, late):
+    # Rilievo GPT-6.1 Sol su #529: SUCCESS(A) -> FAILED(B) -> ... chiude il lotto PARZIALE; un evento successivo
+    # della gamba viva A non deve ricadere nel rilascio ordinario di tavolo e chiave.
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
+    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
+    _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
+
+    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
+
+    (table,) = _busy_tables(c)
+    assert table.current_exposure > 0
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
+
+
+def test_late_success_after_an_all_filled_batch_does_not_release_its_table(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    for leg in legs:
+        _leg_event(c, leg, "QUICK_BET_FILLED", status="FILLED")
+    assert len(_busy_tables(c)) == 1                               # FILLED: tavolo fino al settlement
+
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
+
+    assert len(_busy_tables(c)) == 1
+
+
 def test_ambiguous_leg_is_not_cleared_by_another_legs_certain_outcome(tmp_path):
     c = _catena(tmp_path)
     legs = _held_batch(c)

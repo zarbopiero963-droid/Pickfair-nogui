@@ -567,6 +567,18 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523: Un errore dell'anti-duplicato lascia proseguire il lotto."
+    },
+    {
+      "id": "batch_late_leg_event_released",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            if closed_batch:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Sol su #529): un evento tardivo di una gamba di un lotto gia' chiuso ricade nel rilascio del singolo ordine."
     }
   ]
 }

@@ -3678,6 +3678,17 @@ class RuntimeController:
         by_ref = getattr(self, "_entry_batch_of_ref", None) or {}
         batch_id = by_ref.get(ref)
         if not batch_id:
+            closed_batch = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
+            if closed_batch:
+                # Lotto gia' chiuso a livello di lotto (rilasciato o PARZIALE trattenuto): un evento tardivo di
+                # una sua gamba (es. FILLED dopo SUCCESS) non deve ricadere nel rilascio del singolo ordine.
+                if event_name == "QUICK_BET_AMBIGUOUS":
+                    event_key = str((payload or {}).get("event_key") or "")
+                    if event_key:                # un esito incerto tardivo trattiene comunque (fail-closed)
+                        self._mark_uncertain(event_key, (payload or {}).get("table_id"))
+                logger.info("Evento %s tardivo della gamba %s del lotto chiuso %s: nessun rilascio",
+                            event_name, ref, closed_batch)
+                return True
             return False
         status = str((payload or {}).get("status") or "").strip().upper()
         if event_name != "QUICK_BET_AMBIGUOUS" and status == "DUPLICATE_BLOCKED":
@@ -3698,8 +3709,12 @@ class RuntimeController:
             outcomes = batch["outcomes"]
             if len(outcomes) < len(batch["refs"]) or "QUICK_BET_AMBIGUOUS" in outcomes.values():
                 return True                  # gambe ancora aperte o incerte: nulla si rilascia
+            closed_refs = getattr(self, "_entry_batch_closed", None)
+            if closed_refs is None:
+                closed_refs = self._entry_batch_closed = {}
             for leg in batch["refs"]:
                 by_ref.pop(leg, None)
+                closed_refs[leg] = batch_id  # gli eventi tardivi delle gambe restano del lotto
             self._entry_batches.pop(batch_id, None)
             live = [leg for leg in batch["refs"] if outcomes[leg] in self._BATCH_LEG_LIVE]
             closed = [leg for leg in batch["refs"] if outcomes[leg] not in self._BATCH_LEG_LIVE]
