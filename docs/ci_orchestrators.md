@@ -10,7 +10,7 @@ dell'agente (HTTP 403) e resta da verificare dall'owner.
 | Workflow | Trigger | Cosa chiama |
 |---|---|---|
 | `ci-dynamic-intelligent.yml` | `pull_request`, `workflow_dispatch`, `workflow_call` | `detect` (`scripts/ci_changed_modules.py origin/main`), poi sempre `noise-free-pr-gate`, `repo-guardrails-extended`, `merge-simulation-hard`; solo se `detect` le segnala toccate le 15 lane di modulo e `mutation-guardrails` (quest'ultima per diff su `guardrails/mutations/`, `scripts/run_mutation_guardrails.py`, `tests/`, `core/` o i moduli in radice elencati in `ci_changed_modules.py`) |
-| `ci-master-gate.yml` | `pull_request`, `workflow_dispatch` | `ci-dynamic-intelligent` più tutte le lane di modulo **senza condizioni**, `live-gate`, `chaos-critical`, `mutation-guardrails`, `merge-simulation-hard` |
+| `ci-master-gate.yml` | `pull_request`, `workflow_dispatch` | `ci-dynamic-intelligent`, più **senza condizioni** 11 lane di modulo (`trading-engine`, `order-manager`, `execution-guard`, `risk-middleware`, `runtime-controller`, `money-management`, `telegram-listener`, `copy-engine`, `simulation-broker`, `session-manager`, `rate-limiter`), `live-gate`, `chaos-critical`, `mutation-guardrails`, `merge-simulation-hard`. **`dutching` e `pnl-engine` non sono chiamate direttamente**: il master le raggiunge solo attraverso `ci-dynamic-intelligent`, quindi solo quando `detect` le segnala toccate; un run del master non le valida per diff fuori dai loro path |
 
 Le lane di modulo chiamano `_module-ultra-check.yml`: esistenza del modulo e
 dei file guardrail, validazione JSON, `scripts/guardrail_runner.py`, test
