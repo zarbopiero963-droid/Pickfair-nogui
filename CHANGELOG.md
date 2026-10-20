@@ -35,7 +35,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   incompleti (senza `exposure`) o con errore => `fondi_non_verificabili`, nessuna entrata (prima restava il
   bankroll di ripiego, PF-CAP-19); `BetfairService.get_account_funds` marca ora con `error` gli zeri di
   ripiego (lettura fallita o nessun client), che prima sembravano un conto vuoto letto. In SIM il saldo è
-  quello del `SimulationBroker`.
+  quello del `SimulationBroker`, che però non riserva fondi sugli ordini (**G7, aperto**, difetto
+  finanziario confermato dall'owner, fase M6): in SIM il gate non vede gli ordini aperti e la parità
+  SIM/LIVE sui fondi non è certificata. Riproduzione RED in `tests/acceptance/test_g7_sim_funds_reservation.py`
+  (`xfail(strict=True)`).
   Il segnale legge il conto fuori dal lock, nella stessa finestra di rete della best price; l'auto-next usa
   lo snapshot del settlement. Hedge e uscite protettive esclusi (PF-EXEC-03). Le corsie dormienti
   Dutching/bet manuale non sono ancora coperte: blocca la loro attivazione. Fixture di test allineate

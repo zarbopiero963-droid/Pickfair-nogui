@@ -324,6 +324,8 @@ def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
 # ---------------------------------------------------------------- verifiche owner prima del merge (#531)
 def test_sim_usa_il_saldo_simulato_senza_fondi_reali(tmp_path):
     # Punto 1 owner: in SIM il gate legge il saldo del SimulationBroker; nessun client LIVE coinvolto.
+    # Verifica SOLO la fonte del saldo: NON certifica la parita' finanziaria SIM/LIVE, che resta aperta finche'
+    # il SimulationBroker non riserva i fondi sugli ordini (G7, tests/acceptance/test_g7_sim_funds_reservation.py).
     from simulation_broker import SimulationBroker
 
     class _LiveVietato:
