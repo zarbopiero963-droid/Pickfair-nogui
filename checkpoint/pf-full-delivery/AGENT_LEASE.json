@@ -3,7 +3,7 @@
  "expires_at": null,
  "fencing_token": null,
  "owner": null,
- "released_at": "2026-10-20T05:29:51+00:00",
+ "released_at": "2026-10-20T10:24:12+00:00",
  "released_by": "claude-code",
  "schema": "pf-lease/1"
 }

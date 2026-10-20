@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 50,
+ "seq": 51,
  "updated_at": "2026-10-19T21:09:18.122519+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
@@ -460,7 +460,7 @@
   "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Leggere esito run dispatch su a6961c2; correggere eventuali difetti reali; poi aprire PR #525 (merge owner, NO merge, NO LIVE)",
+ "next_atomic_action": "Avviare #523 (Dutching/manual_bet) da main e694e39, una PR alla volta; NO LIVE",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -469,20 +469,19 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "pr": null,
+  "pr": 527,
   "issue": 525,
-  "head": "a6961c2",
-  "status": "IN_PROGRESS",
-  "prev_merged": "#526 squash ac2064c (merge owner 20/10, ratifica c.6284058607); #524 chiusa FIXED perimetro AMBIGUOUS->FAILED",
-  "root_cause_1": "dutching/pnl-engine/live-gate senza workflow_call -> startup failure",
-  "suspect_2": "artifact con nome duplicato nello stesso run (upload-artifact v4)",
-  "dispatch_runs": [
-   "39375135892",
-   "39375138250"
-  ]
+  "head": "1b7ca9a",
+  "merged_main_sha": "e694e39",
+  "status": "MERGED",
+  "regression": "8444 passed 0 failed (1b7ca9a)",
+  "mutation": "36/36 KILLED, 100%, gate PASS (CI ~55s)",
+  "ci": "ci-master-gate 39400329646 success, ci-dynamic 39400329482 success, Merge readiness PASS",
+  "followups": "#528 F026 harness sleep; CLAUDE.md/AGENTS.md allineamento merge (owner merge); PR30; fix loop 10",
+  "branch_protection": "ruleset PICKFAIR-MAIN-PROTECTION attivo, nessun required status check"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "d612c58e54546c107246e0a6d85b103ec7cf39e6",
+ "previous_checkpoint_sha": "7c297d52a3feb3068d237a7383d6c7df120dd604",
  "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -560,12 +559,12 @@
  "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
  "code": {
   "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "a6961c2c048e68f0c75ecb3c855d8ad2c97043b7",
+  "sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
   "verified_with": "git push + git ls-remote",
   "patch": {
-   "head": "a6961c2c048e68f0c75ecb3c855d8ad2c97043b7",
-   "tree": "161058f4ce7e7f791ba727239040776f52ceaaf1",
-   "captured_at": "2026-10-20T05:29:51+00:00",
+   "head": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
+   "tree": "6483588ff4e1c74bb9b4a8634d3f867b35b3c299",
+   "captured_at": "2026-10-20T10:24:12+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -573,8 +572,8 @@
    ],
    "skipped_symlinks": {}
   },
-  "merged_main_sha": "ac2064c99d6c79734458b6637ff06b6ddf2eb2ca",
-  "base_main": "ac2064c99d6c79734458b6637ff06b6ddf2eb2ca"
+  "merged_main_sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
+  "base_main": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f"
  },
  "blocks": [
   "Gate A #506 NON PASS",
