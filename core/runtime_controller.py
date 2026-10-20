@@ -3675,11 +3675,18 @@ class RuntimeController:
         True se l'evento appartiene a una gamba registrata (gestito qui), False altrimenti.
         """
         ref = str((payload or {}).get("customer_ref") or "")
-        by_ref = getattr(self, "_entry_batch_of_ref", None) or {}
-        batch_id = by_ref.get(ref)
-        if not batch_id:
-            closed_batch = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
-            if closed_batch:
+        if not ref:
+            return False
+        status = str((payload or {}).get("status") or "").strip().upper()
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:                           # lettura e chiusura del lotto sotto lo stesso lock (nessuna corsa)
+            by_ref = getattr(self, "_entry_batch_of_ref", None) or {}
+            batch_id = by_ref.get(ref)
+            batch = (getattr(self, "_entry_batches", None) or {}).get(batch_id) if batch_id else None
+            if batch is None:
+                closed_batch = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
+                if not closed_batch:
+                    return False
                 # Lotto gia' chiuso a livello di lotto (rilasciato o PARZIALE trattenuto): un evento tardivo di
                 # una sua gamba (es. FILLED dopo SUCCESS) non deve ricadere nel rilascio del singolo ordine.
                 if event_name == "QUICK_BET_AMBIGUOUS":
@@ -3689,15 +3696,10 @@ class RuntimeController:
                 logger.info("Evento %s tardivo della gamba %s del lotto chiuso %s: nessun rilascio",
                             event_name, ref, closed_batch)
                 return True
-            return False
-        status = str((payload or {}).get("status") or "").strip().upper()
-        if event_name != "QUICK_BET_AMBIGUOUS" and status == "DUPLICATE_BLOCKED":
-            return True                      # rifiuto di un'ALTRA richiesta con lo stesso ref: non e' l'esito della gamba
-        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
-        with lock:
-            batch = (getattr(self, "_entry_batches", None) or {}).get(batch_id)
-            if batch is None:
-                return False
+            if event_name != "QUICK_BET_AMBIGUOUS" and status == "DUPLICATE_BLOCKED":
+                # Rifiuto pre-invio di una richiesta con lo stesso ref: non prova che la gamba non sia viva
+                # (il ref e' gia' in volo o consumato). Nessun esito registrato: il lotto resta trattenuto.
+                return True
             event_key, table_id = batch["event_key"], batch["table_id"]
             if event_name == "QUICK_BET_AMBIGUOUS":
                 batch["outcomes"][ref] = event_name

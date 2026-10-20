@@ -573,8 +573,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "            if closed_batch:",
-      "mutated": "            if False:",
+      "original": "                if not closed_batch:",
+      "mutated": "                if True:",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],

@@ -14,6 +14,9 @@ Requisiti della #523:
 """
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from tests.acceptance.test_issue437_pr27 import _catena
@@ -292,6 +295,30 @@ def test_late_event_of_a_leg_after_a_partial_batch_does_not_release_it(tmp_path,
     assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
 
 
+def test_late_leg_event_racing_with_the_batch_closing_does_not_release_it(tmp_path):
+    # Rilievo Grok 4.7 su #529: l'indice delle gambe era letto fuori dal lock. Un evento tardivo di A letto prima
+    # che il lotto si chiuda (PARZIALE) e servito dopo non trovava piu' il lotto e rilasciava come ordine singolo.
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
+    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
+
+    lock = c.rc._risk_admission_lock
+    with lock:                                   # RLock: il thread principale chiude il lotto mentre T aspetta
+        late = threading.Thread(target=_leg_event, args=(c, legs[0], "QUICK_BET_FILLED"),
+                                kwargs={"status": "FILLED"})
+        late.start()
+        time.sleep(0.3)                          # T e' fermo sul lock
+        _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
+    late.join(5)
+    assert not late.is_alive()
+
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
+    (table,) = _busy_tables(c)
+    assert table.current_exposure > 0
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+
+
 def test_late_success_after_an_all_filled_batch_does_not_release_its_table(tmp_path):
     c = _catena(tmp_path)
     legs = _held_batch(c)
@@ -560,8 +587,6 @@ def test_restart_with_legs_live_and_one_uncertain_keeps_every_leg_held(tmp_path)
 
 # ============================================================ concorrenza
 def test_leg_outcomes_from_concurrent_threads_settle_the_batch_once(tmp_path):
-    import threading
-
     c = _catena(tmp_path)
     legs = _held_batch(c)
     start = threading.Barrier(len(legs))
@@ -588,8 +613,6 @@ def test_leg_outcomes_from_concurrent_threads_settle_the_batch_once(tmp_path):
 
 
 def test_same_batch_from_two_threads_is_sent_once(tmp_path):
-    import threading
-
     c = _catena(tmp_path)
     ctl = _dutching(c)
     start = threading.Barrier(2)

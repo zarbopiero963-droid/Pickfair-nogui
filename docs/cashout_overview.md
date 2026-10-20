@@ -307,7 +307,10 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   e chiuse, rischio residuo segnalato, tavolo e chiave trattenuti (nuove
   esposizioni sospese). Chiuso il lotto, un evento tardivo di una sua gamba (es. FILLED
   dopo SUCCESS) non ricade nel rilascio del singolo ordine; un AMBIGUOUS
-  tardivo marca comunque la riserva incerta. Publish fallito a metà lotto: le gambe non pubblicate
+  tardivo marca comunque la riserva incerta. Lettura e chiusura del lotto avvengono sotto
+  `_risk_admission_lock` (nessuna corsa fra gambe concorrenti). Un
+  `DUPLICATE_BLOCKED` per il ref di una gamba non è un suo esito (il ref è
+  già in volo o consumato): il lotto resta trattenuto. Publish fallito a metà lotto: le gambe non pubblicate
   sono ritirate (`withdraw_controller_entries`) e il lotto resta aperto sulle
   gambe pubblicate.
 
