@@ -10,6 +10,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#525 — gli orchestratori CI si avviano di nuovo:** `ci-master-gate` e `ci-dynamic-intelligent`
+  richiamavano `dutching.yml`, `pnl-engine.yml` e `live-gate.yml`, che non dichiaravano
+  `on: workflow_call`; GitHub rifiutava l'intero workflow all'avvio (0 job, 100 run su 100 falliti).
+  Aggiunto `workflow_call` senza togliere i trigger diretti; test statico sul grafo delle chiamate e
+  sullo smart skip delle lane di modulo. Limite noto, documentato in `docs/ci_orchestrators.md`:
+  `mutation-guardrails` non muta il codice e va in timeout, quindi gli orchestratori restano non verdi
+  finché l'owner non decide.
 - **#524 — un ordine forse inviato non diventa mai FAILED senza prova del rifiuto (BLOCKS_LIVE):** con esito
   ignoto e transizione DB `INFLIGHT→AMBIGUOUS` fallita, il controllo di finalizzazione sollevava
   `FINALIZE_ON_NON_TERMINAL_DB_STATE` e l'`except` esterno dell'engine marcava l'ordine FAILED, liberando tavolo,

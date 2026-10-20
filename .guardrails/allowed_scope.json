@@ -2324,13 +2324,15 @@
     "issue525-ci-orchestrators-recovery": {
       "description": "#525: ripristino degli orchestratori CI ci-master-gate e ci-dynamic-intelligent (workflow richiamati senza workflow_call). PR a merge owner (.github/workflows/).",
       "files": [
-        ".guardrails/allowed_scope.json",
         ".github/workflows/dutching.yml",
         ".github/workflows/live-gate.yml",
         ".github/workflows/pnl-engine.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_orchestrators.md",
         "tests/guardrails/test_orchestratori_ci_525.py"
       ],
-      "max_files": 5
+      "max_files": 7
     }
   }
 }
