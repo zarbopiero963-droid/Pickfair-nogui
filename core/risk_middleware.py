@@ -20,17 +20,10 @@ import threading
 import time
 from typing import Any, Dict
 
+from core import validators
 from core.order_identity import normalize_upstream_customer_ref
 
 logger = logging.getLogger(__name__)
-
-
-def _explicit_side(*candidates):
-    """#523: primo lato esplicito fra i candidati, maiuscolo; None se nessuno. Nessun default."""
-    for value in candidates:
-        if value not in (None, ""):
-            return str(value).strip().upper()
-    return None
 
 
 class RiskMiddleware:
@@ -197,25 +190,26 @@ class RiskMiddleware:
 
         try:
             normalized_results = []
-            batch_side = _explicit_side(payload.get("bet_type"))
+            # #529 cicli A4/A5 (decisioni owner, rilievo Codex r4326860426): il lato esplicito della gamba ha
+            # precedenza sul `bet_type` del lotto, che e' solo il fallback per una gamba SENZA campi di lato.
+            # Regola unica `validators.leg_side`: campo presente ma vuoto/spazi/None/sconosciuto o campi
+            # discordanti => INVALID_SIDE e lotto intero rifiutato qui (DUTCHING_FAILED, nessun comando).
+            # Un `bet_type` del lotto presente (non None) deve essere a sua volta BACK/LAY valido.
+            raw_batch_side = payload.get("bet_type")
+            batch_side = None
+            if raw_batch_side is not None:
+                batch_side = validators.leg_side({"side": raw_batch_side})
             for r in payload.get("results", []) or []:
-                # #529 ciclo A4 (decisione owner, rilievo Codex r4326860426): il lato ESPLICITO della gamba
-                # (`side` o il suo alias `effectiveType`) ha precedenza sul lato del lotto; il `bet_type` del
-                # lotto e' solo il fallback quando la gamba non ne specifica alcuno. Due campi espliciti
-                # discordanti della stessa gamba viaggiano entrambi com'erano: il DutchingController li
-                # rifiuta (INVALID_SIDE), mai una scelta arbitraria.
-                leg_side = _explicit_side(r.get("side"))
-                leg_alias = _explicit_side(r.get("effectiveType"))
+                side = validators.leg_side(r, default=batch_side)
                 normalized_results.append(
                     {
                         "selectionId": int(r.get("selectionId")),
                         "runnerName": str(r.get("runnerName", "")),
                         "price": float(r.get("price", 0.0)),
                         "stake": float(r.get("stake", 0.0)),
-                        # #523: nessun BACK inventato qui. Lato assente ovunque o invalido => il
-                        # DutchingController rifiuta il lotto intero.
-                        "side": leg_side or leg_alias or batch_side,
-                        "effectiveType": leg_alias or leg_side or batch_side,
+                        # #523: nessun BACK inventato qui; lato gia' risolto e coerente sui due campi.
+                        "side": side,
+                        "effectiveType": side,
                     }
                 )
 
@@ -225,7 +219,7 @@ class RiskMiddleware:
                 "event_name": str(payload.get("event_name", "")),
                 "market_name": str(payload.get("market_name", "")),
                 "results": normalized_results,
-                "bet_type": _explicit_side(payload.get("bet_type")),
+                "bet_type": batch_side,
                 "total_stake": float(payload.get("total_stake", 0.0)),
                 "use_best_price": bool(payload.get("use_best_price", False)),
                 "simulation_mode": bool(payload.get("simulation_mode", False)),

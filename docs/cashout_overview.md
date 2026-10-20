@@ -290,12 +290,18 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   riservano lo stesso tavolo. Il tavolo è sempre riservato dal controller (un
   `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
   anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
-  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`. Sulla corsia
-  bus (`REQ_PLACE_DUTCHING`, #529 ciclo A4) il lato esplicito della gamba
-  (`side` o `effectiveType`) ha precedenza sul `bet_type` del lotto, che vale
-  solo come fallback per le gambe senza lato; due campi espliciti discordanti
-  della stessa gamba sono rifiutati, mai scelti arbitrariamente; un lato
-  esplicito invalido non viene sostituito dal lato del lotto.
+  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`. Regola unica
+  `validators.leg_side` (#529 cicli A4/A5), la stessa nel `RiskMiddleware`
+  (`REQ_PLACE_DUTCHING`) e nel `DutchingController`: ogni campo di lato della
+  gamba **presente** (`side`, `effectiveType`, `bet_type`) è esplicito, qualunque
+  valore abbia, e deve essere BACK o LAY; vuoto, soli spazi, `None`, `"None"`,
+  non stringa o sconosciuto => `INVALID_SIDE`, mai ereditato dal lotto; campi
+  espliciti discordanti => `INVALID_SIDE`, mai una scelta arbitraria. Il lato
+  esplicito della gamba prevale sul `bet_type` del lotto, che vale solo come
+  fallback per una gamba **senza alcun campo di lato**; un `bet_type` del lotto
+  presente (non `None`) deve essere a sua volta BACK/LAY. Sul bus il lotto non
+  valido è rifiutato già dal middleware (`DUTCHING_FAILED`, nessun comando né
+  ordine); `_payload_da_cmd` inoltra al controller solo i campi di lato presenti.
   La chiave anti-duplicato del lotto si acquisisce nella fase controllata di
   ammissione (sotto il lock, dopo tutti i controlli che possono rifiutarlo) e si
   rilascia solo se acquisita da quel lotto (con l'anti-duplicato disattivato la

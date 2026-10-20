@@ -477,24 +477,26 @@
       "module": "controllers.dutching_controller",
       "area": "side",
       "file": "controllers/dutching_controller.py",
-      "original": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")})",
-      "mutated": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")}, default=\"BACK\")",
+      "original": "    return validators.leg_side(selection)",
+      "mutated": "    return validators.leg_side(selection, default=\"BACK\")",
       "tests": [
-        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
       ],
-      "rationale": "#523: Una selezione Dutching senza lato (ne' side ne' effectiveType) diventa BACK per default."
+      "rationale": "#523 (#529 A5): Una selezione Dutching senza alcun campo di lato diventa BACK per default nel controller."
     },
     {
       "id": "middleware_dutching_side_default_back",
       "module": "core.risk_middleware",
       "area": "side",
       "file": "core/risk_middleware.py",
-      "original": "                        \"effectiveType\": leg_alias or leg_side or batch_side,",
-      "mutated": "                        \"effectiveType\": leg_alias or leg_side or batch_side or \"BACK\",",
+      "original": "                side = validators.leg_side(r, default=batch_side)",
+      "mutated": "                side = validators.leg_side(r, default=batch_side or \"BACK\")",
       "tests": [
-        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
       ],
-      "rationale": "#523: Il RiskMiddleware torna a inventare BACK per una gamba senza lato."
+      "rationale": "#523 (#529 A5): Gamba senza lato e lotto senza lato diventano BACK per default nel middleware."
     },
     {
       "id": "manual_bet_lay_exposure_is_stake",
@@ -573,12 +575,13 @@
       "module": "controllers.dutching_controller",
       "area": "side",
       "file": "controllers/dutching_controller.py",
-      "original": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")})",
+      "original": "    return validators.leg_side(selection)",
       "mutated": "    return validators.signal_side({\"side\": selection.get(\"side\") or selection.get(\"effectiveType\")})",
       "tests": [
-        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
       ],
-      "rationale": "#523 (rilievo Codex su #529): Alias di lato in conflitto (side BACK, effectiveType LAY) ignorato: si piazza il lato opposto."
+      "rationale": "#523 (#529 A5): Il controller torna alla risoluzione per primo campo: alias in conflitto ignorato, campo vuoto ripiegato."
     },
     {
       "id": "dutching_releases_foreign_dedupe_key",
@@ -798,27 +801,55 @@
     },
     {
       "id": "middleware_batch_side_overrides_leg_alias",
-      "module": "core.risk_middleware",
+      "module": "core.validators",
       "area": "side",
-      "file": "core/risk_middleware.py",
-      "original": "                        \"side\": leg_side or leg_alias or batch_side,",
-      "mutated": "                        \"side\": leg_side or batch_side or leg_alias,",
+      "file": "core/validators.py",
+      "original": "    if sides:",
+      "mutated": "    if sides and default is None:",
       "tests": [
-        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
       ],
-      "rationale": "#523 (#529 ciclo A4, decisione owner): Il lato del lotto prevale sull'alias esplicito della gamba (effectiveType): gamba rifiutata o lato sbagliato."
+      "rationale": "#523 (#529 A4/A5, decisione owner): Il lato del lotto prevale sul lato esplicito della gamba."
     },
     {
       "id": "middleware_leg_side_takes_batch_default",
       "module": "core.risk_middleware",
       "area": "side",
       "file": "core/risk_middleware.py",
-      "original": "                leg_alias = _explicit_side(r.get(\"effectiveType\"))",
-      "mutated": "                leg_alias = _explicit_side(r.get(\"effectiveType\"), payload.get(\"bet_type\"))",
+      "original": "                batch_side = validators.leg_side({\"side\": raw_batch_side})",
+      "mutated": "                batch_side = raw_batch_side if raw_batch_side in (\"BACK\", \"LAY\") else None",
       "tests": [
-        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
       ],
-      "rationale": "#523 (#529 ciclo A4, decisione owner): L'alias della gamba assente diventa il lato del lotto e confligge con il lato esplicito della gamba."
+      "rationale": "#523 (#529 A5, decisione owner): Un bet_type del lotto presente ma invalido viene ignorato invece di rifiutare il lotto."
+    },
+    {
+      "id": "leg_side_empty_field_treated_as_absent",
+      "module": "core.validators",
+      "area": "side",
+      "file": "core/validators.py",
+      "original": "        if key in leg:",
+      "mutated": "        if leg.get(key) not in (None, \"\"):",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5, decisione owner): Un campo di lato presente ma vuoto/None e' trattato come assente e la gamba eredita il lato del lotto."
+    },
+    {
+      "id": "leg_side_conflicting_fields_accepted",
+      "module": "core.validators",
+      "area": "side",
+      "file": "core/validators.py",
+      "original": "        if len(set(sides)) > 1:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py",
+        "tests/integration/test_dutching_integration.py"
+      ],
+      "rationale": "#523 (#529 A5, decisione owner): Campi di lato discordanti della stessa gamba accettati (scelta arbitraria del primo)."
     }
   ]
 }

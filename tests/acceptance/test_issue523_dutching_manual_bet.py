@@ -371,8 +371,9 @@ def test_bus_lane_with_a_leg_without_side_places_nothing(tmp_path):
     c.bus.publish("REQ_PLACE_DUTCHING", {
         "market_id": "1.700", "event_name": EVENT, "total_stake": 10.0, "simulation_mode": True,
         "results": [{"selectionId": 10, "price": 2.0, "side": "BACK"}, {"selectionId": 20, "price": 3.0}]})
-    (cmd,) = c.bus.payloads("CMD_PLACE_DUTCHING")
-    assert [r["side"] for r in cmd["results"]] == ["BACK", None]
+    # #529 A5: il lotto e' rifiutato gia' dal middleware (regola unica validators.leg_side), nessun comando.
+    assert c.bus.payloads("CMD_PLACE_DUTCHING") == []
+    assert c.bus.payloads("DUTCHING_FAILED")
     _no_side_effects(c)
 
 
@@ -1144,8 +1145,8 @@ def test_conflicting_explicit_fields_of_one_leg_reject_the_whole_batch(tmp_path,
     c = _catena(tmp_path)
     _bus_lane(c)
     _bus_batch(c, [leg, {"side": leg["side"]}], bet_type=batch_side)
-    (cmd,) = c.bus.payloads("CMD_PLACE_DUTCHING")
-    assert (cmd["results"][0]["side"], cmd["results"][0]["effectiveType"]) == (leg["side"], leg["effectiveType"])
+    assert c.bus.payloads("CMD_PLACE_DUTCHING") == []              # #529 A5: rifiuto nel middleware
+    assert c.bus.payloads("DUTCHING_FAILED")
     _no_side_effects(c)
 
 
@@ -1171,3 +1172,97 @@ def test_no_side_anywhere_is_still_rejected(tmp_path):
     _bus_lane(c)
     _bus_batch(c, [{}, {}])
     _no_side_effects(c)
+
+
+# ============================================================ #529 ciclo A5 (owner): campo presente ma vuoto/invalido
+_BAD_SIDE_VALUES = ["", "   ", None, "None", "PUNT", 1, True]
+_BAD_IDS = ["empty", "spaces", "none", "str-None", "unknown", "int", "bool"]
+
+
+def _rejected_by_middleware(c):
+    assert c.bus.payloads("CMD_PLACE_DUTCHING") == []
+    assert c.bus.payloads("DUTCHING_FAILED")
+    _no_side_effects(c)
+
+
+@pytest.mark.parametrize("value", _BAD_SIDE_VALUES, ids=_BAD_IDS)
+@pytest.mark.parametrize("field", ["side", "effectiveType", "bet_type"])
+@pytest.mark.parametrize("batch_side", ["BACK", "LAY"])
+def test_present_but_empty_or_invalid_leg_side_never_inherits_the_batch_side(tmp_path, field, value, batch_side):
+    # Riesame indipendente su 9be3003: `side: "  "` ereditava il lato del lotto (2 ordini LAY piazzati).
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{field: value}, {}], bet_type=batch_side)
+    _rejected_by_middleware(c)
+
+
+@pytest.mark.parametrize("value", _BAD_SIDE_VALUES, ids=_BAD_IDS)
+def test_empty_or_invalid_field_beside_a_valid_one_rejects_the_batch(tmp_path, value):
+    # Un campo valido non «copre» un altro campo presente ma vuoto/invalido della stessa gamba.
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{"side": value, "effectiveType": "LAY"}, {"effectiveType": "LAY"}], bet_type="LAY")
+    _rejected_by_middleware(c)
+
+
+@pytest.mark.parametrize("leg", [
+    {"side": "BACK", "bet_type": "LAY"},
+    {"effectiveType": "LAY", "bet_type": "BACK"},
+    {"side": "LAY", "effectiveType": "LAY", "bet_type": "BACK"},
+], ids=["side-vs-bet_type", "alias-vs-bet_type", "two-vs-one"])
+def test_leg_bet_type_is_an_explicit_field_and_conflicts_are_rejected(tmp_path, leg):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [leg, {}], bet_type="LAY")
+    _rejected_by_middleware(c)
+
+
+def test_leg_bet_type_alone_overrides_the_batch_side(tmp_path):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{"bet_type": "lay"}, {"bet_type": "LAY"}], bet_type="BACK")
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]
+    assert {o.side for o in c.broker.state.orders.values()} == {"LAY"}
+
+
+@pytest.mark.parametrize("batch_value", ["", "   ", "PUNT", "None", 1], ids=["empty", "spaces", "unknown", "str-None", "int"])
+def test_present_but_invalid_batch_side_rejects_the_batch(tmp_path, batch_value):
+    # Un `bet_type` del lotto presente deve essere BACK/LAY: mai ignorato, mai un fallback ambiguo.
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{"side": "BACK"}, {"side": "BACK"}], bet_type=batch_value)
+    _rejected_by_middleware(c)
+
+
+def test_legitimate_fallback_when_no_leg_field_is_present(tmp_path):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{}, {"side": "LAY"}], bet_type="LAY")
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]
+    assert len(c.broker.state.orders) == 2
+
+
+@pytest.mark.parametrize("value", _BAD_SIDE_VALUES, ids=_BAD_IDS)
+def test_direct_controller_path_applies_the_same_rule(tmp_path, value):
+    # Stessa regola sul percorso diretto (submit_dutching senza middleware): nessuna divergenza.
+    c = _catena(tmp_path)
+    payload = _batch(sides=("BACK", "BACK"))
+    payload["selections"][0]["side"] = value
+    res = _dutching(c).submit_dutching(payload)
+    assert res["ok"] is False and "INVALID_SIDE" in str(res.get("error")), res
+    _no_side_effects(c)
+
+
+def test_leg_side_rule_matrix():
+    from core import validators
+    ok = [({"side": " back "}, None, "BACK"), ({"effectiveType": "LAY"}, None, "LAY"), ({"bet_type": "LAY"}, "BACK", "LAY"),
+          ({"side": "LAY", "effectiveType": "lay", "bet_type": "LAY "}, "BACK", "LAY"), ({}, "lay", "LAY"),
+          ({"selectionId": 1}, "BACK", "BACK")]
+    for leg, default, expected in ok:
+        assert validators.leg_side(leg, default=default) == expected, (leg, default)
+    bad = [({}, None), ({}, ""), ({}, "  "), ({}, "PUNT"), ({"side": ""}, "BACK"), ({"side": None}, "BACK"),
+           ({"effectiveType": "  "}, "LAY"), ({"side": "BACK", "effectiveType": "LAY"}, None),
+           ({"side": "BACK", "bet_type": "LAY"}, "BACK"), ("BACK", "BACK"), (None, "BACK")]
+    for leg, default in bad:
+        with pytest.raises(ValueError, match="INVALID_SIDE"):
+            validators.leg_side(leg, default=default)

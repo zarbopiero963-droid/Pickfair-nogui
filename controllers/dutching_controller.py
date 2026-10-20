@@ -73,9 +73,10 @@ def _side(value: Any) -> str:
 
 
 def _selection_side(selection: Dict[str, Any]) -> str:
-    """#523: lato di una selezione da `side` o dall'alias `effectiveType`; entrambi presenti e diversi =>
-    INVALID_SIDE (rilievo Codex #529: l'alias in conflitto non va ignorato)."""
-    return validators.signal_side({"side": selection.get("side"), "bet_type": selection.get("effectiveType")})
+    """#523 / #529 ciclo A5: lato di una selezione con la regola unica `validators.leg_side` (la stessa del
+    RiskMiddleware): ogni campo di lato presente (`side`, `effectiveType`, `bet_type`) deve essere BACK/LAY,
+    campi discordanti o vuoti => INVALID_SIDE. Il controller non ha un lato di lotto: nessun default."""
+    return validators.leg_side(selection)
 
 
 class DutchingController:
@@ -179,13 +180,16 @@ class DutchingController:
             k: v for k, v in payload.items() if k not in ("results", "selections")
         }
         adattato["selections"] = [
-            {
-                "selectionId": r.get("selectionId"),
-                "price": r.get("price"),
-                "side": r.get("side"),
-                "effectiveType": r.get("effectiveType"),   # #523: alias conservato, conflitto rifiutato
-                "runnerName": r.get("runnerName", ""),
-            }
+            dict(
+                {
+                    "selectionId": r.get("selectionId"),
+                    "price": r.get("price"),
+                    "runnerName": r.get("runnerName", ""),
+                },
+                # #523 / #529 ciclo A5: solo i campi di lato PRESENTI (anche vuoti) viaggiano, cosi' il
+                # controller distingue «assente» da «presente ma vuoto» (validators.leg_side).
+                **{k: r[k] for k in validators.LEG_SIDE_FIELDS if k in r},
+            )
             for r in gambe
             if isinstance(r, dict)
         ]
