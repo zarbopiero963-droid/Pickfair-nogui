@@ -471,6 +471,18 @@
         "tests/scripts/test_live_gate.py"
       ],
       "rationale": "Il gate di checklist LIVE passa con controlli non spuntati."
+    },
+    {
+      "id": "INIEZIONE_TEMPORANEA_525",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "# riga che non esiste: fallimento iniettato #525",
+      "mutated": "pass",
+      "tests": [
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Commit temporaneo: prova reale che un esito NOT_APPLICABLE fa fallire il gate e la CI. Rimosso dal commit successivo."
     }
   ]
 }
