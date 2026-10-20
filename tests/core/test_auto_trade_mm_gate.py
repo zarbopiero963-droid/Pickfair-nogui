@@ -64,7 +64,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0}
+            return {"available": 0.0, "exposure": 0.0}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -140,7 +140,7 @@ def _legacy_non_canonical_close_payload(**overrides):
 
 
 def test_auto_trade_disabled_by_default():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -152,7 +152,7 @@ def test_auto_trade_disabled_by_default():
 
 
 def test_auto_trade_rejects_non_canonical_settlement_payload():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -169,7 +169,7 @@ def test_auto_trade_rejects_non_canonical_settlement_payload():
 
 
 def test_auto_trade_happy_path_submits_exactly_one_trade():
-    rc, bus = _make_controller(responses=[{"available": 150.0}, {"available": 999.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 999.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     payload = _close_payload(auto_trade_enabled=True, cycle_executor_enabled=True)
@@ -194,7 +194,7 @@ def test_auto_trade_skips_on_bankroll_sync_failed():
 
 
 def test_auto_trade_skips_when_mm_blocks_progression():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -215,7 +215,7 @@ def test_auto_trade_skips_when_mm_blocks_progression():
 
 
 def test_auto_trade_skips_invalid_next_stake(monkeypatch):
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -235,7 +235,7 @@ def test_auto_trade_skips_invalid_next_stake(monkeypatch):
 
 
 def test_auto_trade_skips_when_risk_rejects_runtime_not_active():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.STOPPED
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -246,7 +246,7 @@ def test_auto_trade_skips_when_risk_rejects_runtime_not_active():
 
 
 def test_auto_trade_skips_on_existing_inflight_conflict():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     rc.table_manager.activate(
@@ -274,7 +274,7 @@ def test_auto_trade_skips_on_existing_inflight_conflict():
 
 
 def test_auto_trade_submit_failure_returns_structured_status():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 

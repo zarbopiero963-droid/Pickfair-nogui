@@ -639,21 +639,30 @@ class BetfairService:
     def get_account_funds(self) -> dict:
         broker = self.get_client()
         if not broker:
+            # `error` (#461 PR28-e): gli zeri qui non sono un saldo letto. Il gate dei fondi delle nuove
+            # entrate li tratta come fondi non verificabili (PF-CAP-19), non come un conto vuoto.
             return {
                 "available": 0.0,
                 "exposure": 0.0,
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
+                "error": "no_client",
             }
 
         try:
             funds = broker.get_account_funds() or {}
-            return {
+            out = {
                 "available": float(funds.get("available", 0.0) or 0.0),
                 "exposure": float(funds.get("exposure", 0.0) or 0.0),
                 "total": float(funds.get("total", 0.0) or 0.0),
                 "simulated": bool(funds.get("simulated", self.simulation_mode)),
             }
+            # #461 PR28-e: un campo assente dal broker non vale 0 (OD-PF-RECON-02): il default resta per i
+            # chiamanti esistenti, ma `error` rende il payload fondi non verificabili per il gate.
+            missing = [k for k in ("available", "exposure") if funds.get(k) is None]
+            if missing:
+                out["error"] = "BALANCE_FIELD_MISSING:" + ",".join(missing)
+            return out
         except Exception as exc:
             error_text = str(exc)
             self.last_error = error_text
@@ -669,6 +678,7 @@ class BetfairService:
                 "exposure": 0.0,
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
+                "error": error_text or type(exc).__name__,
             }
 
     def list_current_orders(

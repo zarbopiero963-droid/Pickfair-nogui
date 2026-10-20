@@ -64,7 +64,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0, "ok": True}
+            return {"available": 0.0, "exposure": 0.0, "ok": True}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -115,7 +115,7 @@ def _canonical_close_payload(**overrides):
 
 
 def test_cycle_executor_result_event_contains_contract_fields():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
@@ -142,7 +142,7 @@ def test_cycle_executor_result_event_contains_contract_fields():
 
 
 def test_cycle_executor_disabled_keeps_submission_off_and_status_snapshot_available():
-    rc, bus = _make_controller(responses=[{"available": 140.0}])
+    rc, bus = _make_controller(responses=[{"available": 140.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
@@ -162,7 +162,7 @@ def test_cycle_executor_disabled_keeps_submission_off_and_status_snapshot_availa
 
 
 def test_cycle_executor_max_steps_with_valid_cycle_id_allows_below_limit():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(

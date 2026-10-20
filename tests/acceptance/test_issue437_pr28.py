@@ -347,7 +347,7 @@ from tests.integration.test_runtime_controller_cycle_executor import (  # noqa: 
 
 
 def _auto_next(next_signal, *, cap=None):
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.config.max_open_exposure = cap
     rc._on_close_position(
@@ -398,7 +398,7 @@ def test_block_auto_next_conta_l_esposizione_dell_evento():
     """It used to pass `event_current_exposure=0.0`: an event that is already
     open with 175 (cap 18% of 1000 = 180) plus a LAY with liability 10 must
     stop."""
-    rc, bus = _make_controller(responses=[{"available": 1000.0}])
+    rc, bus = _make_controller(responses=[{"available": 1000.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     segnale = {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY",
                "event": "Alpha v Beta"}

@@ -227,7 +227,7 @@ def test_pass_reset_dopo_ricontrollo_pulito_riapre(tmp_path):
 
 def _avvia(c):
     c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
-    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
     return c.rc.start(execution_mode="SIMULATION")
 
 
@@ -617,7 +617,7 @@ def test_block_start_non_riapre_se_la_posizione_resta_aperta(tmp_path):
     c.rc.config.max_exposure_stop = 0.01
     c.rc.risk_stop("exposure_stop_reached:test")    # cashout chain not wired
     c.rc.betfair_service.connect = lambda **_k: {"session": "sim"}
-    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0}
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
     c.rc.settings_service.load_roserpina_config = lambda: c.rc.config
 
     c.rc.start(execution_mode="SIMULATION")

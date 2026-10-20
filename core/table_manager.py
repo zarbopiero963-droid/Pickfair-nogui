@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import time
 
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -43,8 +44,14 @@ class TableManager:
         2) tavolo già in recovery se allow_recovery=True
     """
 
+    #: #461 PR28-e: per quanto una riserva gia' a mercato e poi rilasciata resta addebitata alle letture del
+    #: conto iniziate prima del suo piazzamento. Costante tecnica (non monetaria): il gate dei fondi rifiuta
+    #: come non verificabile ogni lettura piu' vecchia di questo intervallo, cosi' la potatura non apre buchi.
+    PLACED_TOMBSTONE_TTL_S = 120.0
+
     def __init__(self, table_count: int = 5):
         self._lock = RLock()
+        self._placed_tombstones: List[tuple] = []        # (placed_at, exposure) delle riserve a mercato rilasciate
         self.table_count = max(1, int(table_count or 1))
         self._tables: Dict[int, TableState] = {
             idx: TableState(table_id=idx)
@@ -56,6 +63,14 @@ class TableManager:
     # =========================================================
     def _touch(self, table: TableState) -> None:
         table.updated_at = datetime.utcnow().isoformat()
+
+    def _tombstone_if_placed(self, table: TableState) -> None:
+        """#461 PR28-e: una riserva confermata a mercato che viene rilasciata lascia una traccia: le letture del
+        conto iniziate PRIMA del suo piazzamento non la riflettono e devono continuare a vederla addebitata."""
+        placed_at = (table.meta or {}).get("placed_at")
+        if placed_at is None:
+            return
+        self._placed_tombstones.append((float(placed_at), float(table.current_exposure)))
 
     def _get(self, table_id: int) -> Optional[TableState]:
         return self._tables.get(int(table_id))
@@ -180,6 +195,7 @@ class TableManager:
                     table.in_recovery = True
                     table.status = "RECOVERY"
 
+            self._tombstone_if_placed(table)
             table.current_event_key = ""
             table.current_exposure = 0.0
             table.market_id = ""
@@ -194,6 +210,7 @@ class TableManager:
             if not table:
                 return
 
+            self._tombstone_if_placed(table)
             table.current_event_key = ""
             table.current_exposure = 0.0
             table.market_id = ""
@@ -283,6 +300,62 @@ class TableManager:
                 total += max(0.0, exp)
             return float(total)
 
+    def mark_placed(self, table_id: int, event_key: str, *, at: float, customer_ref: str = "") -> bool:
+        """#461 PR28-e: l'ordine della riserva ``event_key`` sul tavolo e' confermato a mercato (primo esito,
+        istante monotonic ``at``). La marca vive in ``meta``, che ogni rilascio/riattivazione azzera: non
+        sopravvive alla riserva. Vale il primo esito. Se la riserva porta il ``customer_ref`` del suo ordine,
+        l'esito deve portare lo stesso ref (un esito tardivo di un ordine precedente sullo stesso tavolo non
+        marca la nuova riserva). True se marcata."""
+        with self._lock:
+            table = self._get(int(table_id))
+            if not table or not event_key or table.current_event_key != str(event_key):
+                return False
+            reserved_ref = str((table.meta or {}).get("customer_ref") or "")
+            if reserved_ref and reserved_ref != str(customer_ref or ""):
+                return False
+            table.meta.setdefault("placed_at", float(at))
+            return True
+
+    def mark_placed_by_ref(self, customer_ref: str, *, at: float) -> bool:
+        """#461 PR28-e: come `mark_placed` per un esito senza ``table_id`` (CMD_QUICK_BET dell'auto-next): si marca
+        il solo tavolo la cui riserva porta questo ``customer_ref``. Nessuna corrispondenza (riserva gia'
+        rilasciata, ordine di un altro tavolo) o piu' di una => nessuna marca (restano addebitate, prudente)."""
+        with self._lock:
+            ref = str(customer_ref or "")
+            matches = [t for t in self._tables.values()
+                       if ref and t.current_event_key and str((t.meta or {}).get("customer_ref") or "") == ref]
+            if len(matches) != 1:
+                return False
+            matches[0].meta.setdefault("placed_at", float(at))
+            return True
+
+    def pending_exposure(self, *, since: Optional[float], now: Optional[float] = None) -> float:
+        """#461 PR28-e: esposizione delle riserve il cui ordine NON risulta a mercato prima dell'istante
+        monotonic ``since`` (inizio della lettura del conto): sono quelle che il disponibile letto non
+        riflette ancora. Comprende le riserve gia' a mercato e poi rilasciate (SUCCESS, settlement) se piazzate
+        dopo ``since``: la lettura e' precedente al loro piazzamento. ``since`` None => tutte pendenti. Come
+        `total_exposure`: NaN/inf => inf, negativi a 0 (mai sotto-stima). Le tracce piu' vecchie di
+        `PLACED_TOMBSTONE_TTL_S` rispetto a ``now`` sono potate."""
+        with self._lock:
+            now = time.monotonic() if now is None else float(now)
+            self._placed_tombstones = [(at, exp) for at, exp in self._placed_tombstones
+                                       if at >= now - self.PLACED_TOMBSTONE_TTL_S]
+            total = 0.0
+            for placed_at, exp in self._placed_tombstones:
+                if not math.isfinite(exp):
+                    return float("inf")
+                if since is None or placed_at > float(since):
+                    total += max(0.0, exp)
+            for t in self._tables.values():
+                exp = t.current_exposure
+                if not math.isfinite(exp):
+                    return float("inf")
+                placed_at = (t.meta or {}).get("placed_at")
+                if since is not None and placed_at is not None and float(placed_at) <= float(since):
+                    continue
+                total += max(0.0, exp)
+            return float(total)
+
     # =========================================================
     # RESET / SNAPSHOT
     # =========================================================
@@ -294,6 +367,7 @@ class TableManager:
             for table in self._tables.values():
                 if table.table_id in keep:
                     continue
+                self._tombstone_if_placed(table)
                 table.status = "FREE"
                 table.current_event_key = ""
                 table.current_exposure = 0.0

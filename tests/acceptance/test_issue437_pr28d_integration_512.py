@@ -109,7 +109,7 @@ def _auto_next_result(bus):
 
 
 def test_auto_next_fetches_liquidity_book_outside_admission_lock():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     owned = []
@@ -122,7 +122,7 @@ def test_auto_next_fetches_liquidity_book_outside_admission_lock():
 
 
 def test_auto_next_cashout_during_liquidity_fetch_blocks_the_entry():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 
@@ -232,7 +232,7 @@ def test_outside_admission_lock_releases_single_hold_but_never_a_reentrant_one()
 
 
 def test_auto_next_payload_carries_event_identity():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     close = _auto_next_close()
@@ -247,7 +247,7 @@ def test_auto_next_payload_carries_event_identity():
 
 
 def test_auto_next_cashout_invalidation_checkpoints_the_cycle_as_not_attempted():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     checkpoints = []
@@ -323,7 +323,7 @@ def test_config_reload_during_network_window_blocks_the_entry(tmp_path):
 
 
 def test_auto_next_config_reload_during_network_window_blocks_the_entry():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     _wrap_book(rc, rc.reload_config)
@@ -960,7 +960,7 @@ def test_engine_denies_the_order_when_the_fence_check_is_not_verifiable(tmp_path
 
 
 def test_auto_next_entry_registers_its_fence_for_the_engine():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
 

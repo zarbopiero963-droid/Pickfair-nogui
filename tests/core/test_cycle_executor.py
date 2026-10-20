@@ -58,7 +58,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0, "ok": True}
+            return {"available": 0.0, "exposure": 0.0, "ok": True}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -123,7 +123,7 @@ def _close_payload(**overrides):
 
 
 def test_cycle_executor_disabled_by_default():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc._on_close_position(_close_payload(cycle_executor_enabled=False))
 
@@ -132,7 +132,7 @@ def test_cycle_executor_disabled_by_default():
 
 
 def test_cycle_executor_happy_path_single_step_submit():
-    rc, bus = _make_controller(responses=[{"available": 150.0}, {"available": 175.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 175.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(_close_payload())
@@ -153,7 +153,7 @@ def test_cycle_executor_skips_sync_failed():
 
 
 def test_cycle_executor_skips_mm_blocked():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
@@ -172,7 +172,7 @@ def test_cycle_executor_skips_mm_blocked():
 
 
 def test_cycle_executor_skips_invalid_next_stake(monkeypatch):
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     class _Decision:
@@ -191,7 +191,7 @@ def test_cycle_executor_skips_invalid_next_stake(monkeypatch):
 
 
 def test_cycle_executor_stops_on_kill_switch():
-    rc, _ = _make_controller(responses=[{"available": 150.0}], safe_mode=_SafeMode(enabled=True))
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}], safe_mode=_SafeMode(enabled=True))
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(_close_payload())
@@ -201,7 +201,7 @@ def test_cycle_executor_stops_on_kill_switch():
 
 
 def test_cycle_executor_stops_on_max_steps_limit():
-    rc, _ = _make_controller(responses=[{"available": 150.0}, {"available": 160.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 160.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(_close_payload())
@@ -225,7 +225,7 @@ def test_cycle_executor_stops_on_max_steps_limit():
 
 
 def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_missing():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
@@ -246,7 +246,7 @@ def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_missing():
 
 
 def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_empty():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
 
     rc._on_close_position(
@@ -268,7 +268,7 @@ def test_cycle_executor_fails_closed_when_max_steps_set_and_cycle_id_empty():
 
 
 def test_cycle_executor_skips_risk_rejected_runtime_inactive():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.STOPPED
 
     rc._on_close_position(_close_payload())
@@ -277,7 +277,7 @@ def test_cycle_executor_skips_risk_rejected_runtime_inactive():
 
 
 def test_cycle_executor_skips_inflight_conflict():
-    rc, _ = _make_controller(responses=[{"available": 150.0}])
+    rc, _ = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.table_manager.activate(table_id=2, event_key="evt-open", exposure=1.0, market_id="1.999", selection_id=1)
 
@@ -297,7 +297,7 @@ def test_cycle_executor_skips_inflight_conflict():
 
 
 def test_cycle_executor_duplicate_settlement_idempotency():
-    rc, bus = _make_controller(responses=[{"available": 150.0}, {"available": 180.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}, {"available": 180.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     payload = _close_payload()
 

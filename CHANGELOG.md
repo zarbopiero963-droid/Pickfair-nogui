@@ -22,6 +22,34 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**
+  un segnale o un auto-next con esposizione (BACK = stake, LAY = liability) oltre i fondi del conto viene
+  rifiutato con `fondi_insufficienti:...`, mai ridimensionato; prima partiva se stava nel bankroll interno
+  anche con meno fondi sul conto. Regola, sotto il lock d'ammissione: le riserve dei tavoli il cui ordine
+  non è confermato a mercato prima dell'inizio della lettura del conto, compresa la nuova entrata, devono
+  stare nel disponibile. Il tavolo registra il primo esito a mercato (ACCEPTED/PARTIAL/FILLED/SUCCESS,
+  `TableManager.mark_placed`, correlato all'ordine tramite il `customer_ref` registrato sulla riserva;
+  senza `table_id`, come nell'auto-next, `mark_placed_by_ref`; un esito tardivo di un ordine rilasciato non
+  marca un'altra riserva; marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
+  le riserve non ancora riflesse, comprese quelle già a mercato e poi rilasciate se piazzate dopo l'inizio
+  della lettura (tracce con TTL tecnico `PLACED_TOMBSTONE_TTL_S`; una lettura più vecchia del TTL è fondi non
+  verificabili). Lo snapshot del settlement conserva l'`error` del servizio; un auto-next senza tavolo è
+  rifiutato (`riserva_tavolo_mancante`). Gli ordini già a mercato non contano due volte; l'impegnato del conto non
+  copre nulla, perché può essere di posizioni esterne al bot (rilievo Sol su #531). Ordini ricostruiti al
+  riavvio (F018) e confermati vivi = già a mercato; esiti incerti restano addebitati. Fondi illeggibili,
+  incompleti (senza `exposure`) o con errore => `fondi_non_verificabili`, nessuna entrata (prima restava il
+  bankroll di ripiego, PF-CAP-19); `BetfairService.get_account_funds` marca ora con `error` gli zeri di
+  ripiego (lettura fallita o nessun client) e le risposte del broker senza `available` o `exposure`, che
+  prima sembravano un conto letto. In SIM il saldo è
+  quello del `SimulationBroker`, che però non riserva fondi sugli ordini (**G7, aperto**, difetto
+  finanziario confermato dall'owner, fase M6): in SIM il gate non vede gli ordini aperti e la parità
+  SIM/LIVE sui fondi non è certificata. Riproduzione RED in `tests/acceptance/test_g7_sim_funds_reservation.py`
+  (`xfail(strict=True)`).
+  Il segnale legge il conto fuori dal lock, nella stessa finestra di rete della best price; l'auto-next usa
+  lo snapshot del settlement. Hedge e uscite protettive esclusi (PF-EXEC-03). Le corsie dormienti
+  Dutching/bet manuale non sono ancora coperte: blocca la loro attivazione. Fixture di test allineate
+  alla forma reale di `BetfairService.get_account_funds` (sempre con `exposure`).
+
 - **#523 — Dutching e bet manuale conformi ai gate (corsie ancora dormienti):** lato BACK/LAY
   obbligatorio su ogni gamba e sul bet manuale (mai BACK per default, anche nel `RiskMiddleware`; alias
   in conflitto rifiutati; il lato esplicito della gamba prevale sul `bet_type` del lotto, usato solo come

@@ -29,7 +29,7 @@ Copertura misurata sull'head `6371030` della #522, da un inventario in sola lett
 
 | ID | Invariante | Verifiche esistenti principali | M1 | M2 | M3 | M4 | M5 | M6 | Copertura |
 |---|---|---|---|---|---|---|---|---|---|
-| I1 | Nessuna esposizione oltre i fondi verificati | `tests/test_microstake_engine_native.py` (fondi e headroom), `tests/f026/test_f026_units.py::test_account_invalid_or_incomplete_funds_fail_closed` | ✓ | – | – | – | – | parziale | **P**: controllo esplicito solo sul Microstake; `SimulationBroker` non rifiuta per fondi insufficienti |
+| I1 | Nessuna esposizione oltre i fondi verificati | `tests/test_microstake_engine_native.py` (fondi e headroom), `tests/f026/test_f026_units.py::test_account_invalid_or_incomplete_funds_fail_closed`, `tests/acceptance/test_issue461_pr28e_funds_gate.py` (gate fondi su segnale e auto-next) | ✓ | – | – | – | – | parziale | **P**: gate esplicito sul Microstake e sulle nuove entrate da segnale/auto-next (#461 PR28-e: riserve non ancora a mercato contro il disponibile); corsie dormienti Dutching/bet manuale non coperte; `SimulationBroker` non rifiuta per fondi insufficienti |
 | I2 | Liability LAY calcolata e coperta | `tests/acceptance/test_issue437_pr28.py` (LAY), `tests/integration/test_top30_math_gaps_part2.py::test_lay_liability_never_understated_and_monotonic`, `F026_02` | ✓ | – | – | – | – | ✓ | **F** su esempi; monotonia solo a campione |
 | I3 | Nessuna doppia prenotazione | `tests/test_microstake_safe_recovery.py::test_concurrent_tables_reserve_atomically_and_never_exceed_cap`, `tests/acceptance/test_issue437_pr28d.py::test_concurrent_orders_cannot_bypass_total_cap` | ✓ | – | – | – | – | – | **P**: gare tra thread a campione |
 | I4 | Nessun duplicato dopo timeout, crash o risposta persa | `tests/f001/test_b_red_f001.py::test_B_RED_09`, `::test_B_RED_12` (`os._exit`), `tests/acceptance/test_issue437_pr26.py` | ✓ | – | ✓ | – | – | ✓ | **F** |
@@ -61,7 +61,7 @@ Altri fatti rilevati:
 | G4 | C2, C3 | esplorazione deterministica degli interleaving sul codice reale: scheduler a punti di sincronizzazione nei test del `RuntimeController` (ammissione, finestra di rete, cashout, esito dell'hedge) | M4 sul codice |
 | G5 | I7, C5 | crash a ogni passo di persistenza e durante il cashout: `os._exit` parametrico su ogni commit SQLite e su ogni passo di router, bridge ed executor, riusando `tests/f026/child_f026.py` | M3 + M6 |
 | G6 | C4 | sequenze di eventi (settlement, FILLED, CANCELLED, CASHOUT_*) riordinate e duplicate, generate con seed, verificate contro l'oracolo F026 | M2 + M6 |
-| G7 | I1 | parità SIM/LIVE sui fondi: il `SimulationBroker` deve poter rifiutare per fondi insufficienti come l'exchange; test E2E che lo dimostra | M6 |
+| G7 | I1 | parità SIM/LIVE sui fondi: il `SimulationBroker` deve riservare e rilasciare i fondi come l'exchange (BACK/LAY, non abbinati, abbinati, parziali, cancellati, rifiutati, incerti, senza doppie contabilizzazioni) e rifiutare per fondi insufficienti; test E2E che lo dimostra. **Aperto, difetto finanziario confermato dall'owner (#531, 20/10/2026)**: riproduzione RED `tests/acceptance/test_g7_sim_funds_reservation.py` (`xfail(strict=True)`); parità SIM/LIVE NON certificata finché resta aperto | M6 |
 | G8 | I1 – I11 | mutation testing sul sorgente dei moduli monetari (`core/money_management.py`, `core/validators.py`, `core/table_manager.py`, percorsi ordine del `RuntimeController`) con soglia di uccisione dichiarata | M1 (qualità) |
 | G9 | I2, I10 | `mypy --strict` sui moduli monetari, come gate in CI | M5 |
 

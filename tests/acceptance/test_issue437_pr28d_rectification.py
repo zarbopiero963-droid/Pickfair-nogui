@@ -53,6 +53,8 @@ def _catena_reale(tmp_path, *, bankroll=100.0, **persisted):
     c.rc.reload_config()  # passa da load_roserpina_config() vero
     c.rc.risk_desk.bankroll_current = bankroll
     c.rc.risk_desk.equity_peak = bankroll
+    # Conto coerente col bankroll: il gate fondi PR28-e verifica il disponibile reale.
+    c.rc.betfair_service.get_account_funds = lambda: {"available": bankroll, "exposure": 0.0}
     c.db_settings = db
     return c
 
@@ -155,7 +157,7 @@ def test_invalid_present_persisted_value_blocks_new_orders(tmp_path, field, bad)
 
 @pytest.mark.parametrize("field", _CAPS)
 def test_invalid_present_value_blocks_auto_next_trade(field):
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     setattr(rc.config, field, 0.0)
@@ -173,7 +175,7 @@ def test_invalid_present_value_blocks_auto_next_trade(field):
 
 
 def test_auto_next_trade_with_no_caps_configured_is_risk_approved():
-    rc, bus = _make_controller(responses=[{"available": 150.0}])
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
     rc.mode = RuntimeMode.ACTIVE
     rc.risk_desk.sync_bankroll(100.0)
     for field in _CAPS:

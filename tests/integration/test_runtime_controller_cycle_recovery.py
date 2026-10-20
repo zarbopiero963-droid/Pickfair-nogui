@@ -49,7 +49,7 @@ class _Betfair:
 
     def get_account_funds(self):
         if not self._responses:
-            return {"available": 0.0, "ok": True}
+            return {"available": 0.0, "exposure": 0.0, "ok": True}
         item = self._responses.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -112,7 +112,7 @@ def _make_controller(*, db, responses):
 def test_runtime_controller_cycle_recovery_checkpoint_roundtrip_and_restore_only():
     with tempfile.TemporaryDirectory() as td:
         db = Database(str(Path(td) / "db.sqlite"))
-        rc, bus = _make_controller(db=db, responses=[{"available": 150.0}])
+        rc, bus = _make_controller(db=db, responses=[{"available": 150.0, "exposure": 0.0}])
         payload = _close_payload()
 
         rc._on_close_position(payload)
@@ -130,7 +130,7 @@ def test_runtime_controller_cycle_recovery_checkpoint_roundtrip_and_restore_only
 def test_runtime_controller_cycle_recovery_ambiguous_checkpoint_fails_closed_no_submit():
     with tempfile.TemporaryDirectory() as td:
         db = Database(str(Path(td) / "db.sqlite"))
-        rc, bus = _make_controller(db=db, responses=[{"available": 150.0}])
+        rc, bus = _make_controller(db=db, responses=[{"available": 150.0, "exposure": 0.0}])
         payload = _close_payload(correlation_id="corr-it-amb", event_key="evt-it-amb", batch_id="batch-it-amb")
         key = rc._build_bankroll_sync_key(payload)
         db.upsert_cycle_recovery_checkpoint(
@@ -164,7 +164,7 @@ def test_runtime_controller_cycle_recovery_ambiguous_checkpoint_fails_closed_no_
 def test_runtime_controller_cycle_reentry_preserves_submit_confirmed_checkpoint():
     with tempfile.TemporaryDirectory() as td:
         db = Database(str(Path(td) / "db.sqlite"))
-        rc, bus = _make_controller(db=db, responses=[{"available": 999.0}])
+        rc, bus = _make_controller(db=db, responses=[{"available": 999.0, "exposure": 0.0}])
         payload = _close_payload(correlation_id="corr-it-confirmed", event_key="evt-it-confirmed", batch_id="batch-it-confirmed")
         key = rc._build_bankroll_sync_key(payload)
         db.upsert_cycle_recovery_checkpoint(
@@ -201,7 +201,7 @@ def test_runtime_controller_cycle_reentry_preserves_submit_confirmed_checkpoint(
 def test_runtime_controller_recovery_resume_submit_enabled_submits_one_step():
     with tempfile.TemporaryDirectory() as td:
         db = Database(str(Path(td) / "db.sqlite"))
-        rc, bus = _make_controller(db=db, responses=[{"available": 150.0}])
+        rc, bus = _make_controller(db=db, responses=[{"available": 150.0, "exposure": 0.0}])
         payload = _close_payload(
             correlation_id="corr-it-resume",
             event_key="evt-it-resume",

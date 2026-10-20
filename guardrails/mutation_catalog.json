@@ -850,6 +850,186 @@
         "tests/integration/test_dutching_integration.py"
       ],
       "rationale": "#523 (#529 A5, decisione owner): Campi di lato discordanti della stessa gamba accettati (scelta arbitraria del primo)."
+    },
+    {
+      "id": "funds_gate_signal_ignored",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if funds_reason:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: il segnale parte anche con fondi insufficienti o non verificabili (PF-EXEC-04)."
+    },
+    {
+      "id": "funds_gate_pending_ignored",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if validators.exceeds_cap(pending_exposure, available):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: le riserve non ancora a mercato non vengono confrontate col disponibile."
+    },
+    {
+      "id": "funds_gate_unverifiable_passes",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if not parsed.get(\"ok\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (PF-CAP-19): fondi illeggibili o non validi lasciano passare la nuova entrata."
+    },
+    {
+      "id": "funds_gate_auto_next_ignores_reserved",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                        getattr(self, \"_account_snapshot\", None), pending + order_exposure,",
+      "mutated": "                        getattr(self, \"_account_snapshot\", None), order_exposure,",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: l'auto-next ignora le riserve pendenti degli altri tavoli."
+    },
+    {
+      "id": "funds_gate_stale_funds_read",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            entry_funds.update(self._read_funds_for_entry())       # PR28-e: fondi, fuori dal lock",
+      "mutated": "            entry_funds.update({\"funds\": {\"available\": 1e12, \"exposure\": 0.0}, \"read_at\": None})",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: il gate del segnale non legge il conto reale."
+    },
+    {
+      "id": "funds_gate_ack_not_marked",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic(), customer_ref=customer_ref)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: l'ACK a mercato non marca il tavolo: l'ordine gia' fuori dal disponibile conta due volte."
+    },
+    {
+      "id": "funds_gate_placed_double_counted",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "                if since is not None and placed_at is not None and float(placed_at) <= float(since):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: una riserva gia' a mercato prima della lettura viene riaddebitata al disponibile."
+    },
+    {
+      "id": "funds_gate_late_ack_trusted",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "                if since is not None and placed_at is not None and float(placed_at) <= float(since):",
+      "mutated": "                if placed_at is not None:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Sol #531): un ACK arrivato dopo l'inizio della lettura viene creduto gia' nel disponibile."
+    },
+    {
+      "id": "funds_gate_success_by_ref_not_marked",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                self.table_manager.mark_placed_by_ref(customer_ref, at=time.monotonic())",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Codex #531): il SUCCESS dell'auto-next (senza table_id) non marca la riserva del suo ordine: l'ordine gia' a mercato resta addebitato."
+    },
+    {
+      "id": "funds_gate_ref_correlation_ignored",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "                       if ref and t.current_event_key and str((t.meta or {}).get(\"customer_ref\") or \"\") == ref]",
+      "mutated": "                       if ref and t.current_event_key]",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Sol #531): un SUCCESS tardivo senza table_id marca la riserva di un altro ordine (ancora pendente)."
+    },
+    {
+      "id": "funds_gate_stale_outcome_marks_new_reservation",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "            if reserved_ref and reserved_ref != str(customer_ref or \"\"):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Sol #531): l'esito tardivo di un ordine precedente sullo stesso tavolo marca la nuova riserva."
+    },
+    {
+      "id": "funds_gate_released_placed_forgotten",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "        self._placed_tombstones.append((float(placed_at), float(table.current_exposure)))",
+      "mutated": "        pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): una riserva a mercato rilasciata sparisce per le letture iniziate prima del suo piazzamento: due entrate passano sullo stesso disponibile."
+    },
+    {
+      "id": "funds_gate_stale_read_accepted",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if read_at is not None and time.monotonic() - float(read_at) > TableManager.PLACED_TOMBSTONE_TTL_S:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: una lettura del conto piu' vecchia delle tracce delle riserve rilasciate viene accettata."
+    },
+    {
+      "id": "funds_gate_snapshot_error_ignored",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            parsed = account if not account.get(\"error\") else {\"ok\": False}",
+      "mutated": "            parsed = account",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): lo snapshot del settlement con errore del servizio alimenta l'auto-next."
+    },
+    {
+      "id": "funds_gate_auto_next_without_table",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                        risk_reason = \"riserva_tavolo_mancante\"",
+      "mutated": "                        pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): un auto-next senza tavolo parte senza riserva, invisibile al gate delle entrate concorrenti."
     }
   ]
 }
