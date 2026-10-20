@@ -549,8 +549,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "        if live and closed:",
-      "mutated": "        if False:",
+      "original": "            signal_partial = bool(live and closed)",
+      "mutated": "            signal_partial = False",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -615,6 +615,42 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (rilievo Codex su #529): Alias di lato in conflitto (side BACK, effectiveType LAY) ignorato: si piazza il lato opposto."
+    },
+    {
+      "id": "batch_live_leg_downgraded",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            return event_name != \"QUICK_BET_FILLED\"",
+      "mutated": "            return False",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529): Una gamba abbinata (FILLED) viene declassata da un esito successivo contraddittorio e il lotto si libera."
+    },
+    {
+      "id": "dutching_releases_foreign_dedupe_key",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "        owned_key = event_key if pre.get(\"dedupe_acquired\") else \"\"",
+      "mutated": "        owned_key = event_key",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529): Un lotto rifiutato rilascia una chiave anti-duplicato che non ha acquisito (anti-duplicato disattivato)."
+    },
+    {
+      "id": "batch_withdrawn_released_twice",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "                if batch is not None and not batch[\"outcomes\"] and set(batch[\"refs\"]) <= withdrawn:",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529): Lotto ritirato senza gambe pubblicate: tavolo e chiave rilasciati due volte (runtime e controller)."
     }
   ]
 }

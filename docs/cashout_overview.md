@@ -291,6 +291,12 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
   anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
   `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`.
+  La chiave anti-duplicato del lotto si acquisisce dopo tutti i controlli che
+  possono rifiutarlo e si rilascia solo se acquisita da quel lotto (con
+  l'anti-duplicato disattivato la chiave dell'evento non è sua). Il preflight
+  non la trattiene. Un lotto che fallisce prima di pubblicare una gamba è tolto
+  dal registro senza rilascio e il controller libera tavolo e chiave una sola
+  volta. Il registro ricorda al più 4096 gambe di lotti chiusi.
 - **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
   `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
   `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
@@ -316,7 +322,11 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   e chiuse, rischio residuo segnalato, tavolo e chiave trattenuti (nuove
   esposizioni sospese). Chiuso il lotto, un evento tardivo di una sua gamba (es. FILLED
   dopo SUCCESS) non ricade nel rilascio del singolo ordine; un AMBIGUOUS
-  tardivo marca comunque la riserva incerta. Lettura e chiusura del lotto avvengono sotto
+  tardivo marca comunque la riserva incerta. Il lotto PARZIALE resta nel registro: quando
+  ogni gamba viva si chiude con esito certo (`ROLLBACK_DONE`, cancellazione
+  confermata) il lotto viene rilasciato. Una gamba abbinata (FILLED) non viene
+  mai declassata; una gamba piazzata (SUCCESS) si chiude solo con
+  `ROLLBACK_DONE`: un esito contraddittorio non la toglie dalle vive. Lettura e chiusura del lotto avvengono sotto
   `_risk_admission_lock` (nessuna corsa fra gambe concorrenti). Un
   `DUPLICATE_BLOCKED` per il ref di una gamba non è un suo esito (il ref è
   già in volo o consumato): il lotto resta trattenuto. Publish fallito a metà lotto: le gambe non pubblicate

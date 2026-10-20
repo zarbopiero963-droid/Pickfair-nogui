@@ -95,6 +95,7 @@ def _leg_event(c, order, event_name, **extra):
     handler = {
         "QUICK_BET_SUCCESS": c.rc._on_quick_bet_success, "QUICK_BET_FAILED": c.rc._on_quick_bet_failed,
         "QUICK_BET_AMBIGUOUS": c.rc._on_quick_bet_ambiguous, "QUICK_BET_FILLED": c.rc._on_quick_bet_filled,
+        "QUICK_BET_ROLLBACK_DONE": c.rc._on_quick_bet_rollback_done,
     }[event_name]
     handler({"customer_ref": order["customer_ref"], "event_key": order["event_key"],
              "table_id": order["table_id"], "market_id": order["market_id"], **extra})
@@ -609,7 +610,9 @@ def test_leg_outcomes_from_concurrent_threads_settle_the_batch_once(tmp_path):
     assert errors == []
     assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1      # un solo esito di lotto
     assert len(_busy_tables(c)) == 1
-    assert getattr(c.rc, "_entry_batches", {}) == {}
+    # rilievo Codex #529: il lotto PARZIALE resta nel registro (aggiornabile) finche' ha gambe vive
+    (batch,) = c.rc._entry_batches.values()
+    assert batch["partial"] is True
 
 
 def test_same_batch_from_two_threads_is_sent_once(tmp_path):
@@ -734,3 +737,120 @@ def test_dutching_selection_side_from_alias_alone_is_accepted(tmp_path):
     res = _dutching(c).submit_dutching(payload)
     assert res["ok"] is True, res
     assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]
+
+
+# ============================================================ rilievi Codex su #529 (ace631a)
+def _partial(c):
+    legs = _held_batch(c)
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
+    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
+    _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
+    return legs
+
+
+def test_partial_batch_is_released_once_every_live_leg_is_cancelled(tmp_path):
+    c = _catena(tmp_path)
+    legs = _partial(c)
+    _leg_event(c, legs[0], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
+    assert len(_busy_tables(c)) == 1                               # una gamba ancora viva
+    _leg_event(c, legs[2], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
+    assert _busy_tables(c) == []
+    assert c.rc.duplication_guard._active == {}
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1      # nessun nuovo segnale
+
+
+@pytest.mark.parametrize("late", ["QUICK_BET_ROLLBACK_DONE", "QUICK_BET_FAILED", "QUICK_BET_SUCCESS"])
+def test_a_matched_leg_of_a_partial_batch_is_never_downgraded(tmp_path, late):
+    c = _catena(tmp_path)
+    legs = _partial(c)
+    _leg_event(c, legs[0], "QUICK_BET_FILLED", status="FILLED")
+    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
+    _leg_event(c, legs[2], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
+    (table,) = _busy_tables(c)                                     # la gamba abbinata resta esposta
+    assert table.current_exposure > 0
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+
+
+def test_a_contradictory_failed_after_success_does_not_close_a_leg(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
+    _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")
+    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
+    _leg_event(c, legs[2], "QUICK_BET_FAILED", status="FAILED")
+    assert len(_busy_tables(c)) == 1                               # A piazzata: lotto PARZIALE, non rilasciato
+    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
+
+
+def test_rejected_batch_never_releases_a_key_it_did_not_acquire(tmp_path):
+    # anti-duplicato disattivato: la chiave dell'evento appartiene a un'altra posizione e non va rilasciata.
+    c = _catena(tmp_path, anti_duplication_enabled=False)
+    event_key = _dutching(c).precheck(_batch())["event_key"]
+    assert c.rc.duplication_guard.acquire(event_key)
+    _barrier(c.rc, _signal(event=EVENT))
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False
+    assert event_key in c.rc.duplication_guard._active
+
+
+def test_batch_rejected_by_a_cap_does_not_keep_the_dedupe_key(tmp_path):
+    c = _catena(tmp_path)
+    res = _dutching(c).submit_dutching(_batch(total_stake=400.0))   # 400 > cap totale 350 su bankroll 1000
+    assert res["ok"] is False
+    assert "oltre limite" in res["error"]
+    assert c.rc.duplication_guard._active == {}
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+
+
+def test_manual_bet_table_records_its_selection(tmp_path):
+    c = _catena(tmp_path)
+    res = _dutching(c).manual_bet(_manual(selection_id=11))
+    assert res["ok"] is True, res
+    (table,) = _busy_tables(c)
+    assert str(table.selection_id) == "11"
+
+
+# ============================================================ riesame indipendente su #529 (ace631a)
+def test_batch_failing_before_any_publish_releases_table_and_key_once(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    releases, unlocks = [], []
+    real_release, real_unlock = c.rc.duplication_guard.release, c.rc.table_manager.force_unlock
+    monkeypatch.setattr(c.rc.duplication_guard, "release", lambda k: (releases.append(k), real_release(k)))
+    monkeypatch.setattr(c.rc.table_manager, "force_unlock",
+                        lambda t, *a, **k: (unlocks.append(t), real_unlock(t, *a, **k))[1])
+    original = c.bus.publish
+
+    def publish(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            raise RuntimeError("bus KO")
+        return original(topic, payload)
+
+    c.bus.publish = publish
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False
+    assert len(releases) == 1 and len(unlocks) <= 1               # una sola volta (prima: runtime + controller)
+    _no_side_effects(c)
+    assert getattr(c.rc, "_entry_batches", {}) == {}
+
+
+def test_preflight_does_not_keep_the_dedupe_key(tmp_path):
+    c = _catena(tmp_path)
+    pre = _dutching(c).submit_dutching(_batch(), preflight=True)
+    assert pre["ok"] is True, pre
+    assert c.rc.duplication_guard._active == {}
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+
+
+def test_closed_batch_memory_is_bounded(tmp_path, monkeypatch):
+    from core.runtime_controller import RuntimeController
+
+    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 4)
+    c = _catena(tmp_path)
+    for market in ("1.801", "1.802", "1.803"):
+        held, _run = _queueing(c)
+        assert _dutching(c).submit_dutching(_batch(market_id=market))["ok"] is True
+        for leg in held:
+            _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
+        c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
+    assert len(c.rc._entry_batch_closed) <= 4

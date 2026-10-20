@@ -737,6 +737,7 @@ class DutchingController:
         event_key: str,
         batch_exposure: float,
         meta: Dict[str, Any],
+        selection_id: Optional[int] = None,
     ) -> Optional[int]:
         table_manager = self._table_manager()
         config = self._config()
@@ -760,7 +761,7 @@ class DutchingController:
                     event_key=event_key,
                     exposure=float(batch_exposure),
                     market_id=str(meta.get("market_id") or ""),
-                    selection_id=None,
+                    selection_id=selection_id,      # bet manuale: selezione singola (lotto Dutching: None)
                     meta=meta,
                 )
             except Exception:
@@ -1212,15 +1213,6 @@ class DutchingController:
         if cap_reason:
             return self._fail(f"Cap assoluto: {cap_reason}", cap_reason=cap_reason)
 
-        if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
-            try:
-                if not duplication_guard.acquire(event_key):
-                    return self._fail("Duplicato bloccato", event_key=event_key)
-            except Exception:
-                # #523: anti-duplicato non verificabile => nessun ordine (prima si proseguiva, fail-open)
-                logger.exception("Errore duplication_guard.acquire")
-                return self._fail("Anti-duplicato non disponibile: nessun ordine", event_key=event_key)
-
         # MAX_STAKE_PCT (G5) — WARNING opt-in NON-bloccante: segnala se l'esposizione
         # reale di QUESTA operazione (batch_exposure = BACK stake / LAY liability)
         # supera una frazione del bankroll (default 30%). Distinto dai gate cumulativi
@@ -1299,9 +1291,24 @@ class DutchingController:
                     violations=too_large,
                 )
 
+        # #523 (rilievo Codex #529): la chiave anti-duplicato si acquisisce DOPO tutti i controlli che possono
+        # rifiutare il lotto (prima un rifiuto per cap la lasciava presa), e si dichiara se e' di questo lotto:
+        # con l'anti-duplicato disattivato la chiave non e' nostra e non va mai rilasciata qui.
+        dedupe_acquired = False
+        if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
+            try:
+                if not duplication_guard.acquire(event_key):
+                    return self._fail("Duplicato bloccato", event_key=event_key)
+            except Exception:
+                # #523: anti-duplicato non verificabile => nessun ordine (prima si proseguiva, fail-open)
+                logger.exception("Errore duplication_guard.acquire")
+                return self._fail("Anti-duplicato non disponibile: nessun ordine", event_key=event_key)
+            dedupe_acquired = True
+
         return self._ok(
             preflight=True,
             dry_run=False,
+            dedupe_acquired=dedupe_acquired,
             results=results,
             avg_profit=float(avg_profit),
             avg_profit_net=float(avg_net_profit),
@@ -1355,6 +1362,11 @@ class DutchingController:
 
         if preflight:
             out = self.precheck(payload)
+            if out.get("dedupe_acquired"):
+                # #523 (riesame #529): il preflight controlla soltanto, non riserva la chiave anti-duplicato
+                # (prima restava presa e il submit reale successivo usciva «Duplicato bloccato»).
+                self._release_table_and_key(None, out.get("event_key", ""))
+                out["dedupe_acquired"] = False
             out.setdefault("dry_run", False)
             out.setdefault("preflight", True)
             return out
@@ -1386,6 +1398,8 @@ class DutchingController:
             return pre
 
         if not self._bus_available():
+            if pre.get("dedupe_acquired"):     # nessun ordine: chiave del lotto rilasciata
+                self._release_table_and_key(None, pre.get("event_key", ""))
             return self._fail(
                 "EventBus non disponibile",
                 dry_run=False,
@@ -1402,6 +1416,8 @@ class DutchingController:
         batch_exposure = float(pre["batch_exposure"] or 0.0)
 
         duplication_guard = self._duplication_guard()
+        # Chiave anti-duplicato da rilasciare nei rifiuti: solo se acquisita da QUESTO lotto (rilievo Codex #529).
+        owned_key = event_key if pre.get("dedupe_acquired") else ""
         # #523 (rilievo Codex #529): il tavolo e' sempre riservato qui con l'esposizione del lotto; un
         # `table_id` del chiamante non viene usato (non riserverebbe nulla e non entrerebbe nelle misure).
         if payload.get("table_id"):
@@ -1422,17 +1438,14 @@ class DutchingController:
         except Exception as exc:
             # #523 (rilievo Codex #529): nessun ordine pubblicato => chiave anti-duplicato rilasciata
             logger.exception("Errore riserva tavolo batch dutching")
-            if duplication_guard:
-                try:
-                    duplication_guard.release(event_key)
-                except Exception:
-                    logger.exception("Errore release duplication key after table failure")
+            self._release_table_and_key(None, owned_key)
             return self._fail(f"Riserva tavolo fallita: {exc}", dry_run=False, preflight=False,
                               batch_id=batch_id, event_key=event_key)
         allocated_here = table_id is not None
 
         if table_id is None and self._table_manager() is not None:
             msg = "Nessun tavolo disponibile per batch dutching"
+            self._release_table_and_key(None, owned_key)   # nessun ordine: chiave del lotto rilasciata
             self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": msg})
             return self._fail(
                 msg,
@@ -1509,10 +1522,7 @@ class DutchingController:
             admission = self._admit_entries(orders, batch_id=batch_id)
             if admission:
                 self._publish_audit("DUTCHING_BATCH_REJECTED", {"payload": payload, "reason": admission})
-                if allocated_here:
-                    self._release_table_and_key(table_id, event_key)
-                elif duplication_guard:
-                    duplication_guard.release(event_key)
+                self._release_table_and_key(table_id if allocated_here else None, owned_key)
                 return self._fail(
                     f"Lotto non ammesso: {admission}",
                     dry_run=False,
@@ -1588,13 +1598,8 @@ class DutchingController:
                 # lotto restano trattenuti; le gambe non pubblicate sono gia' contate come chiuse dal runtime
                 # (`withdraw_controller_entries`), quindi il lotto si chiude sugli esiti delle altre.
                 pass
-            elif allocated_here:
-                self._release_table_and_key(table_id, event_key)
-            elif duplication_guard:
-                try:
-                    duplication_guard.release(event_key)
-                except Exception:
-                    logger.exception("Errore release duplication key after failure")
+            else:
+                self._release_table_and_key(table_id if allocated_here else None, owned_key)
 
             return self._fail(
                 str(exc),
@@ -1733,6 +1738,7 @@ class DutchingController:
                         "price": price,
                         "type": "manual_bet",
                     },
+                    selection_id=selection_id,   # rilievo Codex #529: settlement e SL/TP riconoscono la posizione
                 )
             except Exception as exc:
                 # nessun ordine pubblicato => chiave anti-duplicato rilasciata, retry sicuro (rilievo Codex)

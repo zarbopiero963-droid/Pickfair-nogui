@@ -3657,16 +3657,45 @@ class RuntimeController:
 
     def withdraw_controller_entries(self, orders: list) -> None:
         """Pubblicazione fallita dopo l'ammissione: il fence dell'ordine e' scartato e, se l'ordine e' una
-        gamba di un lotto, la gamba e' contata come chiusa senza invio (nessun ordine e' partito)."""
-        for order in orders or []:
-            if not isinstance(order, dict):
-                continue
+        gamba di un lotto, la gamba e' contata come chiusa senza invio (nessun ordine e' partito).
+
+        Se TUTTE le gambe di un lotto senza esiti sono ritirate (nessuna pubblicata), il lotto e' tolto dal
+        registro senza rilascio: tavolo e chiave li rilascia il chiamante, una volta sola (riesame #529)."""
+        orders = [o for o in (orders or []) if isinstance(o, dict)]
+        lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
+        with lock:
+            by_ref = getattr(self, "_entry_batch_of_ref", None) or {}
+            batches = getattr(self, "_entry_batches", None) or {}
+            withdrawn = {str(o.get("customer_ref") or "") for o in orders}
+            dropped = set()
+            for batch_id in {by_ref.get(ref) for ref in withdrawn} - {None}:
+                batch = batches.get(batch_id)
+                if batch is not None and not batch["outcomes"] and set(batch["refs"]) <= withdrawn:
+                    for leg in batch["refs"]:
+                        by_ref.pop(leg, None)
+                    batches.pop(batch_id, None)
+                    dropped.update(batch["refs"])
+        for order in orders:
             self.admission_fence_discard(order)
-            RuntimeController._settle_batch_leg(
-                self, {**order, "status": "NOT_SENT"}, event_name="QUICK_BET_FAILED")
+            if str(order.get("customer_ref") or "") not in dropped:
+                RuntimeController._settle_batch_leg(
+                    self, {**order, "status": "NOT_SENT"}, event_name="QUICK_BET_FAILED")
 
     #: Esiti certi di una gamba: viva (puo' essere sull'exchange) o chiusa senza esposizione.
     _BATCH_LEG_LIVE = frozenset({"QUICK_BET_SUCCESS", "QUICK_BET_FILLED"})
+    #: Gambe di lotti chiusi ricordate per assorbire gli eventi tardivi (le piu' vecchie si scordano).
+    _BATCH_CLOSED_REFS_MAX = 4096
+
+    @staticmethod
+    def _batch_leg_downgrade(previous, event_name: str) -> bool:
+        """True se `event_name` toglierebbe impropriamente una gamba dalle vive: una gamba abbinata (FILLED)
+        resta viva; una gamba piazzata (SUCCESS) si chiude solo con una cancellazione certa (ROLLBACK_DONE) o
+        diventa FILLED. Un esito contraddittorio non la declassa (fail-closed)."""
+        if previous == "QUICK_BET_FILLED":
+            return event_name != "QUICK_BET_FILLED"
+        if previous == "QUICK_BET_SUCCESS":
+            return event_name not in ("QUICK_BET_FILLED", "QUICK_BET_ROLLBACK_DONE", "QUICK_BET_SUCCESS")
+        return False
 
     def _settle_batch_leg(self, payload: dict, *, event_name: str) -> bool:
         """#523 (PF-EXEC-02): rilascio a livello di lotto per le gambe Dutching.
@@ -3708,26 +3737,39 @@ class RuntimeController:
                 # (il ref e' gia' in volo o consumato). Nessun esito registrato: il lotto resta trattenuto.
                 return True
             event_key, table_id = batch["event_key"], batch["table_id"]
+            previous = batch["outcomes"].get(ref)
             if event_name == "QUICK_BET_AMBIGUOUS":
-                batch["outcomes"][ref] = event_name
+                if previous not in self._BATCH_LEG_LIVE:
+                    batch["outcomes"][ref] = event_name      # una gamba gia' viva resta viva
                 if event_key:
                     self._mark_uncertain(event_key, table_id)
                 logger.warning("Gamba %s del lotto %s con esito incerto: lotto trattenuto", ref, batch_id)
                 return True
-            batch["outcomes"][ref] = event_name
+            if not RuntimeController._batch_leg_downgrade(previous, event_name):
+                batch["outcomes"][ref] = event_name
             outcomes = batch["outcomes"]
             if len(outcomes) < len(batch["refs"]) or "QUICK_BET_AMBIGUOUS" in outcomes.values():
                 return True                  # gambe ancora aperte o incerte: nulla si rilascia
-            closed_refs = getattr(self, "_entry_batch_closed", None)
-            if closed_refs is None:
-                closed_refs = self._entry_batch_closed = {}
-            for leg in batch["refs"]:
-                by_ref.pop(leg, None)
-                closed_refs[leg] = batch_id  # gli eventi tardivi delle gambe restano del lotto
-            self._entry_batches.pop(batch_id, None)
             live = [leg for leg in batch["refs"] if outcomes[leg] in self._BATCH_LEG_LIVE]
             closed = [leg for leg in batch["refs"] if outcomes[leg] not in self._BATCH_LEG_LIVE]
-        if live and closed:
+            if live and closed and batch.get("partial"):
+                return True                  # PARZIALE gia' segnalato: resta trattenuto finche' ci sono gambe vive
+            signal_partial = bool(live and closed)
+            if signal_partial:
+                # Rilievo Codex #529: il lotto PARZIALE resta nel registro, cosi' la chiusura certa delle gambe
+                # vive (ROLLBACK_DONE / FAILED) lo rilascia; finche' una gamba e' viva tavolo e chiave restano.
+                batch["partial"] = True
+            else:
+                closed_refs = getattr(self, "_entry_batch_closed", None)
+                if closed_refs is None:
+                    closed_refs = self._entry_batch_closed = {}
+                for leg in batch["refs"]:
+                    by_ref.pop(leg, None)
+                    closed_refs[leg] = batch_id  # gli eventi tardivi delle gambe restano del lotto
+                while len(closed_refs) > self._BATCH_CLOSED_REFS_MAX:
+                    closed_refs.pop(next(iter(closed_refs)))   # memoria limitata: si scordano i piu' vecchi
+                self._entry_batches.pop(batch_id, None)
+        if signal_partial:
             if event_key:
                 self._clear_uncertain(event_key, table_id)    # gli esiti sono certi; la chiave resta trattenuta
             logger.critical("Lotto Dutching %s PARZIALE: gambe vive %s, chiuse %s; nuove esposizioni sospese",
