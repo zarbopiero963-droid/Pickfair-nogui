@@ -87,6 +87,42 @@ def test_ogni_workflow_richiamato_esiste(orchestratore):
     assert not assenti, f"workflow richiamati inesistenti: {assenti}"
 
 
+# Lane di modulo con "smart skip": se il file del modulo manca, il job di test
+# viene saltato e al suo posto passa un `skipped-report` verde. Oggi e'
+# legittimo solo per questi tre moduli, assenti dal repository (Copy Trading
+# e moduli mai scritti). Per ogni altro modulo l'assenza deve far fallire un
+# test: un rename o una cancellazione non deve diventare un verde silenzioso.
+MODULI_ASSENTI_NOTI = {"session_manager.py", "rate_limiter.py", "copy_engine.py"}
+
+
+def _lane_con_smart_skip() -> list[tuple[str, str]]:
+    lane = []
+    for percorso in sorted(WORKFLOWS.glob("*.yml")):
+        testo = percorso.read_text(encoding="utf-8")
+        if "smart skip" not in testo:
+            continue
+        modulo = (_carica(percorso.name)["jobs"]["ultra-check"]["with"]["module_path"])
+        lane.append((percorso.name, modulo))
+    return lane
+
+
+def test_le_lane_con_smart_skip_sono_quelle_attese():
+    lane = _lane_con_smart_skip()
+    assert len(lane) == 11, lane
+
+
+@pytest.mark.parametrize("workflow,modulo", _lane_con_smart_skip())
+def test_lo_smart_skip_non_nasconde_un_modulo_esistente_sparito(workflow, modulo):
+    if modulo in MODULI_ASSENTI_NOTI:
+        assert not (ROOT / modulo).exists(), (
+            f"{modulo} ora esiste: togliilo da MODULI_ASSENTI_NOTI, la sua lane deve girare davvero"
+        )
+    else:
+        assert (ROOT / modulo).is_file(), (
+            f"{workflow}: {modulo} manca, la lane passerebbe verde con lo smart skip"
+        )
+
+
 @pytest.mark.parametrize("nome", ["dutching.yml", "pnl-engine.yml", "live-gate.yml"])
 def test_i_tre_workflow_restano_avviabili_anche_da_soli(nome):
     # La correzione aggiunge `workflow_call` senza togliere i trigger diretti:
