@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#525 — gli orchestratori CI si avviano di nuovo:** `ci-master-gate` e `ci-dynamic-intelligent`
+  richiamavano `dutching.yml`, `pnl-engine.yml` e `live-gate.yml`, che non dichiaravano
+  `on: workflow_call`; GitHub rifiutava l'intero workflow all'avvio (0 job, 100 run su 100 falliti).
+  Aggiunto `workflow_call` senza togliere i trigger diretti; test statico sul grafo delle chiamate e
+  sullo smart skip delle lane di modulo.
+- **#525 — `mutation-guardrails` muta davvero il codice:** il runner precedente scriveva metadati nei
+  JSON di `guardrails/mutations/` che nessuno leggeva, rilanciava l'intera suite per 120 voci e andava
+  in timeout dopo 45 minuti. Il nuovo `scripts/run_mutation_guardrails.py` applica le 36 mutazioni
+  sorgente di `guardrails/mutation_catalog.json` in una copia isolata, con test mirati, ripristino
+  verificato e nessun PASS su esiti inconcludenti, non applicabili o non compilabili. La soglia resta
+  all'80% e le 11 aree (finanziarie e gate LIVE) sono obbligatorie. `guardrail_runner --run-mutations` non
+  tollera più un gate fallito; il catalogo e i file che muta attivano la lane nel dynamic; nome dell'artifact
+  unico per job; percorsi del catalogo confinati alla sandbox. Le 7 mutazioni sopravvissute al primo run (timeout,
+  errore ambiguo, INFLIGHT al riavvio, chiavi in volo, FAILED dell'exchange, lato non valido,
+  esposizione già aperta), più la quota del cashout ≤ 1 nel safety layer, ora sono uccise dai test di
+  `tests/mutation/test_mutation_killers_525.py`.
 - **#524 — un ordine forse inviato non diventa mai FAILED senza prova del rifiuto (BLOCKS_LIVE):** con esito
   ignoto e transizione DB `INFLIGHT→AMBIGUOUS` fallita, il controllo di finalizzazione sollevava
   `FINALIZE_ON_NON_TERMINAL_DB_STATE` e l'`except` esterno dell'engine marcava l'ordine FAILED, liberando tavolo,

@@ -1,0 +1,476 @@
+{
+  "description": "Mutazioni reali a livello sorgente sulle aree finanziarie critiche. Ogni 'original' e' una riga intera che deve comparire esattamente una volta nel file; 'mutated' la sostituisce. Usato da scripts/run_mutation_guardrails.py.",
+  "required_areas": [
+    "side",
+    "lay_liability",
+    "exposure",
+    "dedupe",
+    "ambiguous",
+    "recovery",
+    "reconciliation",
+    "cashout",
+    "funds",
+    "money_management",
+    "live_safety"
+  ],
+  "optional_areas": [],
+  "mutations": [
+    {
+      "id": "side_match_back_lay_inverted",
+      "module": "simulation_broker",
+      "area": "side",
+      "file": "simulation_broker.py",
+      "original": "            can_match = order.price <= best_price",
+      "mutated": "            can_match = order.price >= best_price",
+      "tests": [
+        "tests/integration/test_simulation_broker_position_ledger_integration.py",
+        "tests/f026/test_f028_units.py"
+      ],
+      "rationale": "Il matching del broker simulato confronta il prezzo dal lato sbagliato."
+    },
+    {
+      "id": "side_counter_book_swapped",
+      "module": "simulation_broker",
+      "area": "side",
+      "file": "simulation_broker.py",
+      "original": "            best_counter = backs[0] if backs else None",
+      "mutated": "            best_counter = lays[0] if lays else None",
+      "tests": [
+        "tests/integration/test_simulation_broker_position_ledger_integration.py",
+        "tests/f026/test_f028_units.py"
+      ],
+      "rationale": "Il lato opposto del book viene preso dal lato sbagliato."
+    },
+    {
+      "id": "side_discordant_aliases_accepted",
+      "module": "core.trading_engine",
+      "area": "side",
+      "file": "core/trading_engine.py",
+      "original": "        if len(lati) != 1 or not lati <= {\"BACK\", \"LAY\"}:",
+      "mutated": "        if len(lati) < 1 or not lati <= {\"BACK\", \"LAY\"}:",
+      "tests": [
+        "tests/unit/test_simulation_broker_side_parity.py"
+      ],
+      "rationale": "Alias BACK e LAY discordanti accettati invece che rifiutati."
+    },
+    {
+      "id": "side_bet_type_unchecked",
+      "module": "order_manager",
+      "area": "side",
+      "file": "order_manager.py",
+      "original": "        if payload[\"bet_type\"] not in (\"BACK\", \"LAY\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_order_manager_contracts.py",
+        "tests/unit/test_betfair_client_quota_non_finita.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Il lato dell'ordine non viene piu' validato."
+    },
+    {
+      "id": "side_cashout_side_unchecked",
+      "module": "cashout_executor",
+      "area": "side",
+      "file": "cashout_executor.py",
+      "original": "        if str(payload.get(\"side\", \"\")).upper() not in cls._VALID_SIDES:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_cashout_executor.py"
+      ],
+      "rationale": "Il cashout accetta un lato mancante o invalido."
+    },
+    {
+      "id": "lay_liability_is_stake",
+      "module": "core.validators",
+      "area": "lay_liability",
+      "file": "core/validators.py",
+      "original": "    return importo * (order_price(price) - 1.0)",
+      "mutated": "    return importo",
+      "tests": [
+        "tests/acceptance/test_issue437_pr28.py",
+        "tests/f026/test_f018_rebuild_units.py"
+      ],
+      "rationale": "La responsabilita' LAY diventa lo stake invece di stake*(quota-1)."
+    },
+    {
+      "id": "lay_liability_dutching_is_stake",
+      "module": "dutching",
+      "area": "lay_liability",
+      "file": "dutching.py",
+      "original": "            item[\"liability\"] = round(stake_f * max(0.0, float(item[\"price\"]) - 1.0), 2)",
+      "mutated": "            item[\"liability\"] = round(stake_f, 2)",
+      "tests": [
+        "tests/unit/test_dutching.py"
+      ],
+      "rationale": "Dutching LAY: liability calcolata come stake."
+    },
+    {
+      "id": "exposure_total_ignored",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "    if exceeds_cap(total_exposure + order_risk, cap):",
+      "mutated": "    if exceeds_cap(order_risk, cap):",
+      "tests": [
+        "tests/acceptance/test_issue437_pr28.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Il cap di esposizione ignora l'esposizione gia' aperta."
+    },
+    {
+      "id": "exposure_mm_total_ignored",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
+      "mutated": "        if validators.exceeds_cap(exposure, max_total):",
+      "tests": [
+        "tests/core/test_money_management_caps_and_malformed.py"
+      ],
+      "rationale": "Money management: esposizione totale gia' aperta ignorata."
+    },
+    {
+      "id": "exposure_mm_event_cap_removed",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(event_current_exposure + exposure, max_event):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_money_management_caps_and_malformed.py"
+      ],
+      "rationale": "Money management: cap per evento disattivato."
+    },
+    {
+      "id": "exposure_rebuild_zero",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "            exposure = validators.order_exposure_or_inf(c[\"side\"], c[\"stake\"], c[\"price\"])",
+      "mutated": "            exposure = 0.0",
+      "tests": [
+        "tests/f026/test_f018_rebuild_units.py"
+      ],
+      "rationale": "Al riavvio i tavoli vengono ricostruiti con esposizione zero."
+    },
+    {
+      "id": "dedupe_inflight_check_removed",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "        return ctx.customer_ref in self._inflight_keys or ctx.correlation_id in self._seen_correlation_ids",
+      "mutated": "        return False",
+      "tests": [
+        "tests/chaos/test_trading_engine_chaos.py",
+        "tests/mutation/test_trading_engine_mutation_killers.py"
+      ],
+      "rationale": "Il controllo anti-duplicato in volo non blocca nulla."
+    },
+    {
+      "id": "dedupe_restart_keys_not_reloaded",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "                            self._inflight_keys.add(str(ref))",
+      "mutated": "                            pass",
+      "tests": [
+        "tests/chaos/test_resilience_duplicate_guard_after_restart.py",
+        "tests/integration/test_trading_engine_db_contract.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Al riavvio le chiavi in volo persistite non vengono ricaricate."
+    },
+    {
+      "id": "ambiguous_marked_failed",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "            self._transition_order(ctx, audit, order_id, STATUS_INFLIGHT, STATUS_AMBIGUOUS,",
+      "mutated": "            self._transition_order(ctx, audit, order_id, STATUS_INFLIGHT, STATUS_FAILED,",
+      "tests": [
+        "tests/acceptance/test_issue524_ambiguous_never_failed.py",
+        "tests/reconciliation/test_reconciliation_ambiguity_intake.py"
+      ],
+      "rationale": "Esito ignoto registrato come FAILED (difetto #524)."
+    },
+    {
+      "id": "ambiguous_timeout_not_ambiguous",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "        if isinstance(exc, TimeoutError) or \"timeout\" in str(exc).lower():",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/mutation/test_trading_engine_mutation_killers.py",
+        "tests/unit/test_betfair_client_lato.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Un timeout non viene classificato come esito ambiguo."
+    },
+    {
+      "id": "ambiguous_error_type_ignored",
+      "module": "core.trading_engine",
+      "area": "ambiguous",
+      "file": "core/trading_engine.py",
+      "original": "        if getattr(exc, \"error_type\", None) == ERROR_AMBIGUOUS:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_betfair_client_quota_non_finita.py",
+        "tests/acceptance/test_issue524_ambiguous_never_failed.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Errore esplicitamente ambiguo del client trattato come certo."
+    },
+    {
+      "id": "ambiguous_runtime_releases_table",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "_NO_RELEASE_UNCERTAIN_EVENTS = frozenset({\"QUICK_BET_AMBIGUOUS\"})",
+      "mutated": "_NO_RELEASE_UNCERTAIN_EVENTS = frozenset()",
+      "tests": [
+        "tests/f026/test_f026_units.py",
+        "tests/f001/test_f001_release_and_wait_units.py"
+      ],
+      "rationale": "Il runtime rilascia tavolo e chiave su QUICK_BET_AMBIGUOUS."
+    },
+    {
+      "id": "recovery_inflight_not_reloaded",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "            \"SELECT customer_ref FROM orders WHERE status IN ('INFLIGHT', 'SUBMITTED') ORDER BY id ASC\",",
+      "mutated": "            \"SELECT customer_ref FROM orders WHERE status IN ('SUBMITTED') ORDER BY id ASC\",",
+      "tests": [
+        "tests/integration/test_trading_engine_db_contract.py",
+        "tests/chaos/test_resilience_duplicate_guard_after_restart.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Al riavvio le righe INFLIGHT non vengono ricaricate dal DB."
+    },
+    {
+      "id": "recovery_live_bets_inverted",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                if c[\"bet_id\"] and c[\"bet_id\"] in live_bets:",
+      "mutated": "                if c[\"bet_id\"] and c[\"bet_id\"] not in live_bets:",
+      "tests": [
+        "tests/f026/test_f018_rebuild_units.py",
+        "tests/test_pr512_recovery_fixes.py"
+      ],
+      "rationale": "Ricostruzione al riavvio: ordini vivi e non vivi invertiti."
+    },
+    {
+      "id": "reconcile_partial_as_matched",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if size_matched > 0 and size_remaining > 0:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/unit/test_reconcile_merge_policy.py",
+        "tests/reconciliation/test_reconciliation_determinism.py"
+      ],
+      "rationale": "Un ordine parziale viene riconciliato come completamente abbinato."
+    },
+    {
+      "id": "reconcile_unknown_grace_inverted",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if local_status == \"UNKNOWN\" and age > self.cfg.unknown_grace_secs:",
+      "mutated": "            if local_status == \"UNKNOWN\" and age < self.cfg.unknown_grace_secs:",
+      "tests": [
+        "tests/unit/test_reconcile_merge_policy.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "rationale": "Lo stato UNKNOWN viene chiuso prima della finestra di grazia."
+    },
+    {
+      "id": "reconcile_failed_not_terminal",
+      "module": "core.reconciliation_engine",
+      "area": "reconciliation",
+      "file": "core/reconciliation_engine.py",
+      "original": "        if status in {\"FAILED\", \"REJECTED\"}:",
+      "mutated": "        if status in {\"REJECTED\"}:",
+      "tests": [
+        "tests/unit/test_reconcile_merge_policy.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "FAILED dall'exchange non e' piu' terminale."
+    },
+    {
+      "id": "cashout_unknown_as_failure",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if result.get(\"order_unknown\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_cashout_executor.py"
+      ],
+      "rationale": "Esito ignoto dell'hedge riportato come fallimento (ritentabile)."
+    },
+    {
+      "id": "cashout_unmatched_as_success",
+      "module": "cashout_executor",
+      "area": "cashout",
+      "file": "cashout_executor.py",
+      "original": "        if matched <= 0.0:",
+      "mutated": "        if matched < 0.0:",
+      "tests": [
+        "tests/unit/test_cashout_executor.py"
+      ],
+      "rationale": "Hedge non abbinato riportato come successo."
+    },
+    {
+      "id": "cashout_residual_cancel_without_identity",
+      "module": "cashout_residual_handler",
+      "area": "cashout",
+      "file": "cashout_residual_handler.py",
+      "original": "        if not (bet_id and market_id):      # cancel SOLO con l'identità dell'ordine",
+      "mutated": "        if not (bet_id or market_id):      # cancel SOLO con l'identità dell'ordine",
+      "tests": [
+        "tests/unit/test_cashout_residual_handler.py"
+      ],
+      "rationale": "Cancel del residuo senza identita' completa dell'ordine."
+    },
+    {
+      "id": "cashout_partial_residual_ignored",
+      "module": "cashout_residual_handler",
+      "area": "cashout",
+      "file": "cashout_residual_handler.py",
+      "original": "        if not isinstance(payload, dict) or payload.get(\"partial\") is False:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/unit/test_cashout_residual_handler.py"
+      ],
+      "rationale": "Il residuo di un hedge parziale non viene mai gestito."
+    },
+    {
+      "id": "cashout_ambiguous_cancelled",
+      "module": "cashout_residual_handler",
+      "area": "cashout",
+      "file": "cashout_residual_handler.py",
+      "original": "        if status == \"UNMATCHED\":",
+      "mutated": "        if status in (\"UNMATCHED\", \"AMBIGUOUS\"):",
+      "tests": [
+        "tests/unit/test_cashout_residual_handler.py"
+      ],
+      "rationale": "Un hedge AMBIGUOUS viene cancellato alla cieca."
+    },
+    {
+      "id": "funds_microstake_check_removed",
+      "module": "core.microstake_safe",
+      "area": "funds",
+      "file": "core/microstake_safe.py",
+      "original": "            if self.total_exposure() + exposure > self._state[\"balance\"]:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/test_microstake_safe_recovery.py"
+      ],
+      "rationale": "Fondi insufficienti non bloccano il microstake."
+    },
+    {
+      "id": "funds_insufficient_transient",
+      "module": "order_manager",
+      "area": "funds",
+      "file": "order_manager.py",
+      "original": "    \"INSUFFICIENT_FUNDS\": ErrorClass.PERMANENT,",
+      "mutated": "    \"INSUFFICIENT_FUNDS\": ErrorClass.TRANSIENT,",
+      "tests": [
+        "tests/unit/test_order_manager_contracts.py",
+        "tests/failure/test_order_manager_failures.py"
+      ],
+      "rationale": "Fondi insufficienti trattati come errore ritentabile."
+    },
+    {
+      "id": "mm_single_bet_cap_removed",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(exposure, max_single):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_money_management_caps_and_malformed.py"
+      ],
+      "rationale": "Tetto del singolo ordine disattivato."
+    },
+    {
+      "id": "mm_min_stake_check_removed",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        if recommended < min_stake and not math.isclose(recommended, min_stake, rel_tol=0.0, abs_tol=1e-9):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/core/test_min_stake_single_source.py",
+        "tests/core/test_money_management_rectification_20261017.py"
+      ],
+      "rationale": "Stake sotto il minimo configurato non piu' rifiutato."
+    },
+    {
+      "id": "live_gate_kill_switch_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if bool(kill_switch):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "Il kill switch non blocca piu' il LIVE."
+    },
+    {
+      "id": "live_gate_live_enabled_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if not bool(live_enabled):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "LIVE concesso anche con live_enabled=False."
+    },
+    {
+      "id": "live_gate_readiness_ignored",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "    if not bool(live_readiness_ok):",
+      "mutated": "    if False:",
+      "tests": [
+        "tests/safety/test_live_gate_fail_closed_matrix.py"
+      ],
+      "rationale": "LIVE concesso con readiness non OK."
+    },
+    {
+      "id": "safety_cashout_price_unchecked",
+      "module": "core.safety_layer",
+      "area": "live_safety",
+      "file": "core/safety_layer.py",
+      "original": "            raise MarketSanityError(\"CASHOUT_REQUEST: price <= 1\")",
+      "mutated": "            pass",
+      "tests": [
+        "tests/unit/test_cashout_executor.py",
+        "tests/mutation/test_mutation_killers_525.py"
+      ],
+      "rationale": "Il safety layer accetta un cashout con quota <= 1."
+    },
+    {
+      "id": "live_gate_checklist_missing_check_ignored",
+      "module": "live_gate",
+      "area": "live_safety",
+      "file": "scripts/live_gate.py",
+      "original": "            failed_checks.append(check)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/scripts/test_live_gate.py"
+      ],
+      "rationale": "Il gate di checklist LIVE passa con controlli non spuntati."
+    }
+  ]
+}

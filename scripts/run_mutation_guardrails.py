@@ -1,269 +1,315 @@
 # scripts/run_mutation_guardrails.py
+"""Mutation testing reale sul codice sorgente (#525 / PF-CI-MUTATION-RECOVERY).
+
+Il runner precedente scriveva un blocco ``_mutation_meta`` nei JSON di
+``guardrails/mutations/`` e rilanciava l'intera suite: nessun file leggeva quei
+valori, quindi il codice non veniva mai mutato e ogni "mutazione" sopravviveva.
+
+Questo runner applica mutazioni concrete, elencate in
+``guardrails/mutation_catalog.json``: ogni voce sostituisce una riga esatta di
+un file sorgente con una variante dannosa e indica i test che devono
+accorgersene. Regole:
+
+- il repository non viene mai toccato: ogni mutazione gira in una copia
+  isolata dei file tracciati, e il file mutato viene ripristinato e
+  ricontrollato (sha256) prima della mutazione successiva;
+- la riga originale deve comparire ESATTAMENTE una volta, altrimenti la
+  mutazione e' NOT_APPLICABLE: il catalogo non puo' smettere in silenzio di
+  colpire codice che e' stato cambiato;
+- il sorgente mutato deve compilare (INVALID altrimenti): un errore di sintassi
+  farebbe fallire i test e passerebbe per una mutazione intercettata;
+- i test di ogni mutazione girano prima sul codice originale: se sono gia'
+  rossi, l'esito e' INCONCLUSIVE;
+- pytest rc 1 = KILLED, rc 0 = SURVIVED, ogni altro rc (collezione fallita,
+  nessun test, interruzione) o timeout = INCONCLUSIVE;
+- le mutazioni equivalenti sono dichiarate nel catalogo con la motivazione,
+  restano nel report e non entrano nel punteggio.
+
+Il punteggio si calcola solo su KILLED / (KILLED + SURVIVED). Il gate fallisce
+se: nessuna mutazione valutabile, punteggio sotto ``--fail-under``, almeno un
+esito INCONCLUSIVE, NOT_APPLICABLE o INVALID, oppure un'area obbligatoria del
+catalogo (``required_areas``) senza nessuna mutazione valutabile.
+"""
 from __future__ import annotations
 
 import argparse
-import copy
+import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass
+import time
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+CATALOG_RELATIVE_PATH = Path("guardrails") / "mutation_catalog.json"
 
-@dataclass
-class MutationResult:
-    module: str
-    mutation_id: str
-    expected_failure: str
-    killed: bool
-    return_code: int
-    stdout_tail: str
-    stderr_tail: str
-    error: str = ""
+KILLED = "KILLED"
+SURVIVED = "SURVIVED"
+INCONCLUSIVE = "INCONCLUSIVE"
+NOT_APPLICABLE = "NOT_APPLICABLE"
+INVALID = "INVALID"
+EQUIVALENT = "EQUIVALENT"
+
+_REQUIRED_KEYS = ("id", "module", "area", "file", "original", "mutated", "tests", "rationale")
+_COPY_IGNORE = {".git", "__pycache__", ".pytest_cache", ".venv", "venv", "node_modules"}
 
 
 class MutationRunnerError(Exception):
     pass
 
 
-def _load_json(path: Path) -> dict[str, Any]:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+@dataclass
+class MutationResult:
+    mutation_id: str
+    module: str
+    area: str
+    file: str
+    status: str
+    return_code: int | None = None
+    duration_sec: float = 0.0
+    detail: str = ""
+    stdout_tail: str = ""
+    tests: list[str] = field(default_factory=list)
 
 
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+def _tail(text: str | bytes | None, limit: int = 3000) -> str:
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    return text if len(text) <= limit else text[-limit:]
 
 
-def _tail(text: str, limit: int = 4000) -> str:
-    if len(text) <= limit:
-        return text
-    return text[-limit:]
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _default_test_paths(module_name: str) -> list[str]:
-    mapping = {
-        "core.trading_engine": ["tests"],
-        "order_manager": ["tests"],
-        "core.reconciliation_engine": ["tests"],
-        "core.execution_guard": ["tests"],
-        "core.risk_middleware": ["tests"],
-        "core.runtime_controller": ["tests"],
-        "core.money_management": ["tests"],
-        "dutching": ["tests"],
-        "pnl_engine": ["tests"],
-        "telegram_listener": ["tests"],
-        "copy_engine": ["tests"],
-        "simulation_broker": ["tests"],
-        "session_manager": ["tests"],
-        "rate_limiter": ["tests"],
-        "live_gate": ["tests"],
-    }
-    return mapping.get(module_name, ["tests"])
+def load_catalog(repo_root: Path) -> dict[str, Any]:
+    path = repo_root / CATALOG_RELATIVE_PATH
+    if not path.is_file():
+        raise MutationRunnerError(f"Missing mutation catalog: {path}")
+    with path.open("r", encoding="utf-8") as fh:
+        catalog = json.load(fh)
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("mutations"), list):
+        raise MutationRunnerError("mutation catalog must be an object with a 'mutations' list")
+    required_areas = catalog.get("required_areas", [])
+    if not isinstance(required_areas, list) or not all(isinstance(a, str) for a in required_areas):
+        raise MutationRunnerError("'required_areas' must be a list of strings")
+    seen: set[str] = set()
+    for idx, entry in enumerate(catalog["mutations"]):
+        if not isinstance(entry, dict):
+            raise MutationRunnerError(f"mutation[{idx}] is not an object")
+        missing = [k for k in _REQUIRED_KEYS if k not in entry]
+        if missing:
+            raise MutationRunnerError(f"mutation[{idx}] missing keys: {missing}")
+        if entry["id"] in seen:
+            raise MutationRunnerError(f"duplicate mutation id: {entry['id']}")
+        seen.add(entry["id"])
+        if entry["original"] == entry["mutated"]:
+            raise MutationRunnerError(f"{entry['id']}: 'mutated' equals 'original'")
+        if not isinstance(entry["tests"], list) or not entry["tests"]:
+            raise MutationRunnerError(f"{entry['id']}: 'tests' must be a non-empty list")
+        # i percorsi restano dentro la sandbox: niente assoluti, niente '..'
+        for rel in [entry["file"], *(str(t).split("::")[0] for t in entry["tests"])]:
+            rel_path = Path(str(rel))
+            if not str(rel) or rel_path.is_absolute() or ".." in rel_path.parts:
+                raise MutationRunnerError(f"{entry['id']}: path outside the repository: {rel!r}")
+        if entry["area"] not in required_areas and not entry.get("equivalent"):
+            # aree fuori elenco sono ammesse, ma vanno dichiarate: niente refusi silenziosi
+            if entry["area"] not in catalog.get("optional_areas", []):
+                raise MutationRunnerError(f"{entry['id']}: unknown area {entry['area']!r}")
+    return catalog
 
 
-def _sanitize_name(value: str) -> str:
-    return value.replace("/", "_").replace("\\", "_").replace(".", "_").replace(" ", "_")
+def _tracked_files(repo_root: Path) -> list[str] | None:
+    try:
+        proc = subprocess.run(
+            ["git", "ls-files", "-z"], cwd=str(repo_root), capture_output=True, check=True
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return [p for p in proc.stdout.decode("utf-8", errors="replace").split("\0") if p]
 
 
-def _discover_mutation_files(root: Path, modules: list[str] | None) -> list[Path]:
-    base = root / "guardrails" / "mutations"
-    if not base.exists():
-        raise MutationRunnerError(f"Missing mutations directory: {base}")
-
-    files = sorted(base.rglob("*.json"))
-    if not modules:
-        return files
-
-    wanted = set(modules)
-    selected: list[Path] = []
-    for path in files:
-        payload = _load_json(path)
-        module = str(payload.get("module", "")).strip()
-        if module in wanted:
-            selected.append(path)
-    return selected
+def build_sandbox(repo_root: Path, dest: Path) -> None:
+    """Copia i file tracciati (o tutto, senza cache e .git) in ``dest``."""
+    tracked = _tracked_files(repo_root)
+    if tracked is None:
+        shutil.copytree(
+            repo_root, dest, ignore=shutil.ignore_patterns(*_COPY_IGNORE), dirs_exist_ok=True
+        )
+        return
+    for rel in tracked:
+        src = repo_root / rel
+        if not src.is_file() or src.is_symlink():
+            continue
+        target = dest / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, target)
 
 
-def _patch_for_mutation(
-    payload: dict[str, Any],
-    mutation: dict[str, Any],
-) -> dict[str, Any]:
-    mutated = copy.deepcopy(payload)
-    mutated["_mutation_meta"] = {
-        "active": True,
-        "id": mutation.get("id", "unknown"),
-        "type": mutation.get("type", "unknown"),
-        "target": mutation.get("target", ""),
-        "expected_failure": mutation.get("expected_failure", "tests"),
-    }
-    return mutated
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """Termina pytest e cio' che ha lanciato. Su POSIX l'intero gruppo di
+    processi; dove `killpg` non esiste (Windows) `taskkill /T`, e in ultima
+    istanza il solo processo."""
+    killpg = getattr(os, "killpg", None)
+    if killpg is not None and hasattr(signal, "SIGKILL"):
+        try:
+            killpg(proc.pid, signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError):
+            pass
+    elif os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False
+        )
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
 
 
-def _run_pytest(
-    repo_root: Path,
-    module_name: str,
-    mutation_id: str,
-    test_paths: list[str],
-    pytest_args: list[str],
-    timeout_sec: int,
-) -> tuple[int, str, str]:
+def _run_pytest(sandbox: Path, tests: list[str], pytest_args: list[str], timeout_sec: int):
     env = os.environ.copy()
-    env["PICKFAIR_MUTATION_MODE"] = "1"
-    env["PICKFAIR_MUTATION_MODULE"] = module_name
-    env["PICKFAIR_MUTATION_ID"] = mutation_id
-
-    cmd = [sys.executable, "-m", "pytest", "-q", "-x", *test_paths, *pytest_args]
-    proc = subprocess.run(
-        cmd,
-        cwd=str(repo_root),
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=timeout_sec,
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(sandbox) + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    cmd = [sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *tests, *pytest_args]
+    start = time.monotonic()
+    # gruppo di processi proprio: al timeout si termina anche cio' che i test
+    # hanno lanciato, che altrimenti sopravviverebbe alla sandbox
+    proc = subprocess.Popen(
+        cmd, cwd=str(sandbox), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, start_new_session=True,
     )
-    return proc.returncode, proc.stdout, proc.stderr
+    try:
+        out, _ = proc.communicate(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        _kill_process_tree(proc)
+        out, _ = proc.communicate()
+        return None, time.monotonic() - start, _tail(out)
+    return proc.returncode, time.monotonic() - start, _tail(out)
 
 
-def _run_one_mutation(
-    repo_root: Path,
-    mutation_file: Path,
-    mutation: dict[str, Any],
+def _status_from_rc(rc: int | None) -> str:
+    if rc == 1:
+        return KILLED
+    if rc == 0:
+        return SURVIVED
+    return INCONCLUSIVE
+
+
+def run_mutation(
+    entry: dict[str, Any],
+    sandbox: Path,
+    baseline: dict[tuple[str, ...], int | None],
     pytest_args: list[str],
     timeout_sec: int,
 ) -> MutationResult:
-    payload = _load_json(mutation_file)
-    module_name = str(payload.get("module", mutation_file.stem))
-    mutation_id = str(mutation.get("id", "unknown"))
-    expected_failure = str(mutation.get("expected_failure", "tests"))
+    tests = list(entry["tests"])
+    result = MutationResult(
+        mutation_id=entry["id"], module=entry["module"], area=entry["area"],
+        file=entry["file"], status=INCONCLUSIVE, tests=tests,
+    )
+    target = sandbox / entry["file"]
+    if not target.is_file():
+        result.status = NOT_APPLICABLE
+        result.detail = "target file not found"
+        return result
+    original_bytes = target.read_bytes()
+    original_hash = hashlib.sha256(original_bytes).hexdigest()
+    source = original_bytes.decode("utf-8")
+    occurrences = source.count(entry["original"])
+    if occurrences != 1:
+        result.status = NOT_APPLICABLE
+        result.detail = f"original snippet found {occurrences} times (expected exactly 1)"
+        return result
 
-    mutated_payload = _patch_for_mutation(payload, mutation)
-    _write_json(mutation_file, mutated_payload)
+    if entry.get("equivalent"):
+        result.status = EQUIVALENT
+        result.detail = str(entry["equivalent"])
+        return result
+
+    mutated_source = source.replace(entry["original"], entry["mutated"], 1)
+    try:
+        compile(mutated_source, entry["file"], "exec")
+    except SyntaxError as exc:
+        result.status = INVALID
+        result.detail = f"mutated source does not compile: {exc}"
+        return result
+
+    key = tuple(tests)
+    if key not in baseline:
+        rc, _, out = _run_pytest(sandbox, tests, pytest_args, timeout_sec)
+        baseline[key] = rc
+        if rc != 0:
+            print(f"     baseline NOT green for {tests} (rc={rc})\n{_indent(out[-1500:], 6)}")
+    if baseline[key] != 0:
+        result.status = INCONCLUSIVE
+        result.detail = f"baseline tests not green on original code (rc={baseline[key]})"
+        return result
 
     try:
-        rc, stdout, stderr = _run_pytest(
-            repo_root=repo_root,
-            module_name=module_name,
-            mutation_id=mutation_id,
-            test_paths=_default_test_paths(module_name),
-            pytest_args=pytest_args,
-            timeout_sec=timeout_sec,
-        )
-        killed = rc != 0
-        return MutationResult(
-            module=module_name,
-            mutation_id=mutation_id,
-            expected_failure=expected_failure,
-            killed=killed,
-            return_code=rc,
-            stdout_tail=_tail(stdout),
-            stderr_tail=_tail(stderr),
-        )
-    except subprocess.TimeoutExpired as exc:
-        return MutationResult(
-            module=module_name,
-            mutation_id=mutation_id,
-            expected_failure=expected_failure,
-            killed=False,
-            return_code=124,
-            stdout_tail=_tail(exc.stdout or ""),
-            stderr_tail=_tail(exc.stderr or ""),
-            error=f"timeout after {timeout_sec}s",
-        )
+        target.write_text(mutated_source, encoding="utf-8")
+        rc, duration, out = _run_pytest(sandbox, tests, pytest_args, timeout_sec)
     finally:
-        _write_json(mutation_file, payload)
+        target.write_bytes(original_bytes)
+    if _sha256(target) != original_hash:
+        raise MutationRunnerError(f"{entry['id']}: failed to restore {entry['file']} in sandbox")
+
+    result.return_code = rc
+    result.duration_sec = round(duration, 2)
+    result.stdout_tail = out
+    result.status = _status_from_rc(rc)
+    if rc is None:
+        result.detail = f"timeout after {timeout_sec}s"
+    elif result.status == INCONCLUSIVE:
+        result.detail = f"pytest rc={rc} (not a test failure)"
+    return result
 
 
-def _summarize(results: list[MutationResult]) -> dict[str, Any]:
-    total = len(results)
-    killed = sum(1 for r in results if r.killed)
-    survived = total - killed
-    score = round((killed / total) * 100, 2) if total else 0.0
-
-    by_module: dict[str, dict[str, Any]] = {}
+def summarize(results: list[MutationResult], required_areas: list[str], fail_under: float) -> dict[str, Any]:
+    counts = {s: 0 for s in (KILLED, SURVIVED, INCONCLUSIVE, NOT_APPLICABLE, INVALID, EQUIVALENT)}
     for r in results:
-        bucket = by_module.setdefault(
-            r.module,
-            {"total": 0, "killed": 0, "survived": 0, "score": 0.0, "survivors": []},
-        )
-        bucket["total"] += 1
-        if r.killed:
-            bucket["killed"] += 1
-        else:
-            bucket["survived"] += 1
-            bucket["survivors"].append(
-                {
-                    "mutation_id": r.mutation_id,
-                    "expected_failure": r.expected_failure,
-                    "return_code": r.return_code,
-                    "error": r.error,
-                }
-            )
+        counts[r.status] += 1
+    valid = counts[KILLED] + counts[SURVIVED]
+    score = round(counts[KILLED] / valid * 100, 2) if valid else 0.0
 
-    for module_name, bucket in by_module.items():
-        total_mod = int(bucket["total"])
-        killed_mod = int(bucket["killed"])
-        bucket["score"] = round((killed_mod / total_mod) * 100, 2) if total_mod else 0.0
+    areas: dict[str, dict[str, int]] = {}
+    for r in results:
+        bucket = areas.setdefault(r.area, {s: 0 for s in counts})
+        bucket[r.status] += 1
+    uncovered = [
+        a for a in required_areas
+        if (areas.get(a, {}).get(KILLED, 0) + areas.get(a, {}).get(SURVIVED, 0)) == 0
+    ]
+
+    failures: list[str] = []
+    if valid == 0:
+        failures.append("no valid (KILLED/SURVIVED) mutation executed")
+    if score < fail_under:
+        failures.append(f"mutation score {score}% below threshold {fail_under}%")
+    for status in (INCONCLUSIVE, NOT_APPLICABLE, INVALID):
+        if counts[status]:
+            failures.append(f"{counts[status]} mutation(s) {status}")
+    if uncovered:
+        failures.append(f"required areas without a valid mutation: {uncovered}")
 
     return {
-        "total": total,
-        "killed": killed,
-        "survived": survived,
+        "total": len(results),
+        "counts": counts,
+        "valid": valid,
         "score": score,
-        "by_module": by_module,
+        "fail_under": fail_under,
+        "areas": areas,
+        "uncovered_required_areas": uncovered,
+        "gate_passed": not failures,
+        "gate_failures": failures,
     }
-
-
-def _print_console_report(results: list[MutationResult], summary: dict[str, Any]) -> None:
-    print("=" * 80)
-    print("MUTATION GUARDRAILS REPORT")
-    print("=" * 80)
-    print(
-        f"Total: {summary['total']} | "
-        f"Killed: {summary['killed']} | "
-        f"Survived: {summary['survived']} | "
-        f"Score: {summary['score']}%"
-    )
-    print()
-
-    for module_name, bucket in summary["by_module"].items():
-        print(
-            f"[{module_name}] "
-            f"total={bucket['total']} "
-            f"killed={bucket['killed']} "
-            f"survived={bucket['survived']} "
-            f"score={bucket['score']}%"
-        )
-        for survivor in bucket["survivors"]:
-            print(
-                f"  - SURVIVED: {survivor['mutation_id']} "
-                f"(expected_failure={survivor['expected_failure']}, "
-                f"rc={survivor['return_code']}, error={survivor['error']})"
-            )
-        print()
-
-    survivors = [r for r in results if not r.killed]
-    if survivors:
-        print("SURVIVOR DETAILS")
-        print("-" * 80)
-        for r in survivors:
-            print(f"{r.module} :: {r.mutation_id}")
-            if r.error:
-                print(f"  error: {r.error}")
-            if r.stdout_tail:
-                print("  stdout tail:")
-                print(_indent(r.stdout_tail, 4))
-            if r.stderr_tail:
-                print("  stderr tail:")
-                print(_indent(r.stderr_tail, 4))
-            print()
 
 
 def _indent(text: str, spaces: int) -> str:
@@ -271,113 +317,102 @@ def _indent(text: str, spaces: int) -> str:
     return "\n".join(prefix + line for line in text.splitlines())
 
 
-def _write_report(output_path: Path, results: list[MutationResult], summary: dict[str, Any]) -> None:
-    payload = {
-        "summary": summary,
-        "results": [
-            {
-                "module": r.module,
-                "mutation_id": r.mutation_id,
-                "expected_failure": r.expected_failure,
-                "killed": r.killed,
-                "return_code": r.return_code,
-                "error": r.error,
-                "stdout_tail": r.stdout_tail,
-                "stderr_tail": r.stderr_tail,
-            }
-            for r in results
-        ],
-    }
-    _write_json(output_path, payload)
+def _print_report(results: list[MutationResult], summary: dict[str, Any]) -> None:
+    print("=" * 80)
+    print("MUTATION GUARDRAILS REPORT (source-level)")
+    print("=" * 80)
+    c = summary["counts"]
+    print(
+        f"Total: {summary['total']} | Valid: {summary['valid']} | Killed: {c[KILLED]} | "
+        f"Survived: {c[SURVIVED]} | Inconclusive: {c[INCONCLUSIVE]} | "
+        f"Not applicable: {c[NOT_APPLICABLE]} | Invalid: {c[INVALID]} | "
+        f"Equivalent: {c[EQUIVALENT]} | Score: {summary['score']}%"
+    )
+    for area, bucket in sorted(summary["areas"].items()):
+        print(f"  [{area}] " + " ".join(f"{k.lower()}={v}" for k, v in bucket.items() if v))
+    for r in results:
+        if r.status != KILLED:
+            print(f"  - {r.status}: {r.mutation_id} ({r.file}) {r.detail}")
+            if r.status == SURVIVED and r.stdout_tail:
+                print(_indent(r.stdout_tail[-800:], 6))
+    print("GATE: " + ("PASS" if summary["gate_passed"] else "FAIL -> " + "; ".join(summary["gate_failures"])))
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run mutation guardrails against pytest.")
-    parser.add_argument(
-        "--repo-root",
-        default=".",
-        help="Repository root containing guardrails/ and tests/ (default: current dir)",
-    )
-    parser.add_argument(
-        "--module",
-        action="append",
-        default=[],
-        help="Run only specific module(s), e.g. --module core.trading_engine",
-    )
-    parser.add_argument(
-        "--output",
-        default="mutation_guardrails_report.json",
-        help="Write JSON report to this path",
-    )
-    parser.add_argument(
-        "--timeout-sec",
-        type=int,
-        default=180,
-        help="Per-mutation pytest timeout in seconds",
-    )
-    parser.add_argument(
-        "--pytest-arg",
-        action="append",
-        default=[],
-        help="Extra pytest arg, repeatable, e.g. --pytest-arg=-k --pytest-arg=trading_engine",
-    )
-    parser.add_argument(
-        "--fail-under",
-        type=float,
-        default=80.0,
-        help="Exit non-zero if global mutation score is below this threshold",
-    )
-    return parser.parse_args()
+def _write_report(path: Path, results: list[MutationResult], summary: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"summary": summary, "results": [asdict(r) for r in results]}
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
-def main() -> int:
-    args = parse_args()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run source-level mutation guardrails against pytest.")
+    parser.add_argument("--repo-root", default=".", help="Repository root (default: current dir)")
+    parser.add_argument(
+        "--module", action="append", default=[],
+        help="Run only mutations of these module(s), e.g. --module core.trading_engine",
+    )
+    parser.add_argument("--output", default="mutation_guardrails_report.json", help="JSON report path")
+    parser.add_argument("--timeout-sec", type=int, default=180, help="Per-mutation pytest timeout (s)")
+    parser.add_argument(
+        "--pytest-arg", action="append", default=[], help="Extra argument passed to pytest (repeatable)"
+    )
+    parser.add_argument("--fail-under", type=float, default=80.0, help="Minimum mutation score (percent)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     repo_root = Path(args.repo_root).resolve()
     output_path = Path(args.output).resolve()
-
-    mutation_files = _discover_mutation_files(repo_root, args.module or None)
-    if not mutation_files:
-        print("No mutation JSON files found for selection.", file=sys.stderr)
+    # un report di un run precedente non deve sopravvivere a un run interrotto
+    _write_report(output_path, [], {"gate_passed": False, "gate_failures": ["run not completed"]})
+    catalog = load_catalog(repo_root)
+    entries = catalog["mutations"]
+    required_areas = list(catalog.get("required_areas", []))
+    if args.module:
+        wanted = set(args.module)
+        entries = [e for e in entries if e["module"] in wanted]
+        # con un filtro per modulo l'obbligo di copertura vale solo per le aree selezionate
+        required_areas = sorted({e["area"] for e in entries if e["area"] in required_areas})
+    if not entries:
+        print("No mutations selected: refusing to report a PASS without executing anything.", file=sys.stderr)
         return 2
 
-    all_results: list[MutationResult] = []
+    watched = {e["file"] for e in entries}
+    before = {f: _sha256(repo_root / f) for f in watched if (repo_root / f).is_file()}
 
-    for mutation_file in mutation_files:
-        payload = _load_json(mutation_file)
-        module_name = str(payload.get("module", mutation_file.stem))
-        mutations = payload.get("mutations", [])
-        if not isinstance(mutations, list):
-            raise MutationRunnerError(f"'mutations' must be a list in {mutation_file}")
+    results: list[MutationResult] = []
+    with tempfile.TemporaryDirectory(prefix="pf_mutation_") as tmp:
+        sandbox = Path(tmp) / "repo"
+        build_sandbox(repo_root, sandbox)
+        baseline: dict[tuple[str, ...], int | None] = {}
+        for entry in entries:
+            print(f"-> {entry['id']} [{entry['area']}] {entry['file']}")
+            result = run_mutation(entry, sandbox, baseline, args.pytest_arg, args.timeout_sec)
+            print(f"   {result.status} (rc={result.return_code}, {result.duration_sec}s) {result.detail}")
+            results.append(result)
 
-        print(f"\n>>> MODULE: {module_name} ({mutation_file})")
-        for mutation in mutations:
-            if not isinstance(mutation, dict):
-                raise MutationRunnerError(f"Invalid mutation entry in {mutation_file}: {mutation!r}")
-            mutation_id = str(mutation.get("id", "unknown"))
-            print(f"  -> running mutation: {mutation_id}")
-            result = _run_one_mutation(
-                repo_root=repo_root,
-                mutation_file=mutation_file,
-                mutation=mutation,
-                pytest_args=args.pytest_arg,
-                timeout_sec=args.timeout_sec,
-            )
-            status = "KILLED" if result.killed else "SURVIVED"
-            print(f"     {status} (rc={result.return_code})")
-            all_results.append(result)
+    after = {f: _sha256(repo_root / f) for f in before}
+    if after != before:
+        raise MutationRunnerError("repository files changed during the mutation run")
 
-    summary = _summarize(all_results)
-    _print_console_report(all_results, summary)
-    _write_report(output_path, all_results, summary)
+    summary = summarize(results, required_areas, args.fail_under)
+    # Moduli con una specifica in guardrails/mutations/ ma nessuna mutazione
+    # reale nel catalogo: elencati in ogni report, mai esclusi in silenzio.
+    spec_modules = set()
+    for spec in sorted((repo_root / "guardrails" / "mutations").glob("*.json")):
+        try:
+            spec_modules.add(str(json.loads(spec.read_text(encoding="utf-8")).get("module") or spec.stem))
+        except (OSError, ValueError):
+            spec_modules.add(spec.stem)
+    summary["spec_modules_without_mutations"] = sorted(spec_modules - {e["module"] for e in catalog["mutations"]})
+    _print_report(results, summary)
+    if summary["spec_modules_without_mutations"]:
+        print("Modules with a spec but no source mutation (tracked gap): "
+              + ", ".join(summary["spec_modules_without_mutations"]))
+    _write_report(output_path, results, summary)
     print(f"JSON report written to: {output_path}")
-
-    if float(summary["score"]) < float(args.fail_under):
-        print(
-            f"Mutation score {summary['score']}% is below threshold {args.fail_under}%",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
+    return 0 if summary["gate_passed"] else 1
 
 
 if __name__ == "__main__":

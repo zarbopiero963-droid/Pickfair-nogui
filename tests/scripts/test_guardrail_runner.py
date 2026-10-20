@@ -276,18 +276,40 @@ def test_delegate_invalid_json_output(monkeypatch: object) -> None:
     assert "Failed reading mutation delegate output" in res["error"]
 
 
-def test_delegate_nonzero_exit_with_total_is_warning(monkeypatch: object) -> None:
+def _fake_delegate(summary: dict, returncode: int):
     def fake_run(*args: object, **kwargs: object):
         out = Path(args[0][-1])
-        out.write_text(json.dumps({"summary": {"total": 2, "killed": 1, "survived": 1, "score": 50.0}}), encoding="utf-8")
-        class R: returncode = 1; stdout = ""; stderr = "threshold"
+        out.write_text(json.dumps({"summary": summary}), encoding="utf-8")
+        class R: pass
+        R.returncode = returncode; R.stdout = ""; R.stderr = "threshold"
         return R()
+    return fake_run
 
-    monkeypatch.setattr(guardrail_runner.subprocess, "run", fake_run)
+
+def test_delegate_nonzero_exit_is_a_failed_gate_never_a_pass(monkeypatch: object) -> None:
+    # #525: prima un exit non zero era "tollerato" se total>0: un gate di
+    # mutazione fallito passava per ok=True.
+    monkeypatch.setattr(guardrail_runner.subprocess, "run", _fake_delegate(
+        {"total": 2, "counts": {"KILLED": 1, "SURVIVED": 1}, "score": 50.0,
+         "gate_passed": False, "gate_failures": ["mutation score 50.0% below threshold 80.0%"]}, 1))
     res = guardrail_runner.run_mutation_delegate("telegram_signal_processor", 1, guardrail_runner.find_repo_root())
-    assert res["ok"] is True
-    assert res["total"] == 2
-    assert "warning" in res
+    assert res["ok"] is False
+    assert res["total"] == 2 and res["killed"] == 1 and res["survived"] == 1
+    assert "Mutation gate failed" in res["error"] and "below threshold" in res["error"]
+
+
+def test_delegate_exit_zero_without_gate_passed_is_not_a_pass(monkeypatch: object) -> None:
+    monkeypatch.setattr(guardrail_runner.subprocess, "run", _fake_delegate(
+        {"total": 2, "counts": {"KILLED": 2, "SURVIVED": 0}, "score": 100.0}, 0))
+    res = guardrail_runner.run_mutation_delegate("telegram_signal_processor", 1, guardrail_runner.find_repo_root())
+    assert res["ok"] is False
+
+
+def test_delegate_passed_gate_is_ok(monkeypatch: object) -> None:
+    monkeypatch.setattr(guardrail_runner.subprocess, "run", _fake_delegate(
+        {"total": 3, "counts": {"KILLED": 3, "SURVIVED": 0}, "score": 100.0, "gate_passed": True}, 0))
+    res = guardrail_runner.run_mutation_delegate("telegram_signal_processor", 1, guardrail_runner.find_repo_root())
+    assert res["ok"] is True and res["killed"] == 3
 
 
 def test_no_repo_root_mutation_artifact(tmp_path: Path) -> None:

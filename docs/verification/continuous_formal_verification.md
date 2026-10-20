@@ -49,7 +49,7 @@ Copertura misurata sull'head `6371030` della #522, da un inventario in sola lett
 
 Altri fatti rilevati:
 - **Strumenti assenti:** Hypothesis, TLA+/Apalache, CrossHair/z3 e `mypy --strict` non esistono oggi nel repository.
-- **Mutation testing:** `scripts/run_mutation_guardrails.py` muta le specifiche JSON in `guardrails/`, non il codice Python. La capacità dei test di accorgersi di un bug nel sorgente non è misurata.
+- **Mutation testing:** fino alla #525 `scripts/run_mutation_guardrails.py` mutava le specifiche JSON in `guardrails/`, non il codice Python. Dalla #525 applica mutazioni reali al sorgente da `guardrails/mutation_catalog.json`: 36 mutazioni su 11 aree obbligatorie (finanziarie e gate LIVE), soglia all'80%, nessun PASS su esiti inconcludenti o non applicabili. Dettagli in `docs/ci_orchestrators.md`.
 
 ## 3. Gap reali e verifiche da aggiungere
 
