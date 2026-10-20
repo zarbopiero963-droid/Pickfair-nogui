@@ -313,7 +313,9 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id`, o una sua
   gamba, non viene sovrascritto da nessuna ammissione, nemmeno a ordine
   singolo (`lotto_gia_attivo`).
-- **Bet manuale**: esposizione = rischio reale (`validators.order_exposure`:
+- **Bet manuale**: `market_id`, `selection_id`, quota e stake sono validati
+  con i validatori condivisi prima di ogni acquisizione (un ordine che l'engine
+  rifiuterebbe non occupa un tavolo). Esposizione = rischio reale (`validators.order_exposure`:
   BACK stake, LAY stake × (quota − 1)) per `max_single_bet`, `max_total` e il
   tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il
   dedupe si acquisisce dopo i controlli; un errore del dedupe rifiuta
@@ -334,7 +336,14 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   trattenuta se l'ordine persistito porta `batch_id` o se il DB è illeggibile
   (un `batch_id` inoltrato da un segnale può solo trattenere quell'ordine, mai
   far rilasciare qualcosa). Un ref a monte `dut-…` senza `batch_id` resta un
-  ordine singolo. **PF-EXEC-02 non è completo**: esito del lotto, segnalazione
+  ordine singolo. Anche lo sweep F028 (ordini annullati/decaduti senza
+  abbinato) salta le gambe di un lotto: una gamba sola non libera il tavolo
+  condiviso. La chiave anti-duplicato del lotto è **fissata** (non scade col
+  TTL): la rilasciano solo i rollback prima della pubblicazione e il
+  settlement del tavolo (`RUNTIME_CLOSE_POSITION`). Limiti noti, fail-closed:
+  il registro in memoria non si chiude al settlement (lo stesso lotto resta
+  `lotto_gia_attivo` fino al riavvio) e un'incertezza marcata da un AMBIGUOUS
+  resta fino a riavvio o riconciliazione. **PF-EXEC-02 non è completo**: esito del lotto, segnalazione
   del parziale, ribilanciamento, copertura e rilascio a livello di lotto sono
   della PR30.
 

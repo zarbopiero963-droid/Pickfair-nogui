@@ -14,6 +14,7 @@ Requisiti della #523:
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -858,3 +859,66 @@ def test_unregistered_leg_with_an_unreadable_db_is_held(tmp_path, monkeypatch):
     _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")
     assert len(_busy_tables(c)) == 1
 
+
+
+# ============================================================ #529 ciclo A (owner): F028, chiave pinnata, identificativi
+def test_f028_sweep_never_releases_the_shared_table_of_a_batch_for_one_unmatched_leg(tmp_path, monkeypatch):
+    # Riesame su 922bde3: una gamba annullata/decaduta senza abbinato liberava il tavolo CONDIVISO del lotto,
+    # togliendo dai cap l'esposizione delle gambe ancora vive.
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True          # gambe SUBMITTED con betId (SIM)
+    rows = [dict(r) for r in c.db._execute("SELECT customer_ref, response_json FROM orders", fetch=True,
+                                           commit=False)]
+    first_bet = json.loads(rows[0]["response_json"])["instructionReports"][0]["betId"]
+    monkeypatch.setattr(c.rc, "_final_unmatched_bets", lambda markets, bets: {str(first_bet)})
+    (table,) = _busy_tables(c)
+    exposure = table.current_exposure
+
+    assert c.rc._release_final_unmatched_orders() == []
+
+    (table,) = _busy_tables(c)
+    assert table.current_exposure == pytest.approx(exposure)
+
+
+def test_f028_sweep_still_releases_a_single_unmatched_order(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal())
+    (row,) = [dict(r) for r in c.db._execute("SELECT customer_ref, response_json FROM orders", fetch=True,
+                                             commit=False)]
+    bet = json.loads(row["response_json"])["instructionReports"][0]["betId"]
+    monkeypatch.setattr(c.rc, "_final_unmatched_bets", lambda markets, bets: {str(bet)})
+    assert c.rc._release_final_unmatched_orders() == [row["customer_ref"]]
+    assert _busy_tables(c) == []
+
+
+def test_batch_dedupe_key_is_pinned_while_the_batch_is_held(tmp_path):
+    # Rilievo Codex r4325985989: scaduto il TTL della chiave, lo stesso evento con un prezzo diverso (stesso
+    # event_key, altro batch_id e altri ref) piazzava un secondo lotto mentre il primo era trattenuto.
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+    c.rc.duplication_guard.ttl = 0                                      # TTL scaduto per ogni chiave non fissata
+    changed = _batch()
+    changed["selections"][0]["price"] = 2.2
+    again = _dutching(c).submit_dutching(changed)
+    assert again["ok"] is False and again["error"] == "Duplicato bloccato"
+    assert len(_busy_tables(c)) == 1
+
+
+def test_pinned_batch_key_is_released_by_a_rollback_before_publishing(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    monkeypatch.setattr(c.rc.table_manager, "activate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("KO")))
+    assert _dutching(c).submit_dutching(_batch())["ok"] is False
+    assert c.rc.duplication_guard._active == {}
+    assert not c.rc.duplication_guard._pinned
+
+
+@pytest.mark.parametrize("field,value", [("market_id", ""), ("market_id", None), ("selection_id", 0),
+                                         ("selection_id", -3), ("selection_id", "abc"), ("selection_id", 5.5),
+                                         ("stake", float("nan")), ("price", float("inf"))])
+def test_manual_bet_with_an_invalid_identifier_or_amount_takes_no_resource(tmp_path, field, value):
+    # Rilievo Codex r4325986004: il tavolo veniva riservato prima della validazione; l'engine rifiutava in
+    # normalizzazione con un FAILED senza table_id e il tavolo restava occupato.
+    c = _catena(tmp_path)
+    res = _dutching(c).manual_bet(_manual(**{field: value}))
+    assert res["ok"] is False
+    _no_side_effects(c)

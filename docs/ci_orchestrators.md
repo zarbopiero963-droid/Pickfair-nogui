@@ -57,7 +57,7 @@ sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
-53 voci (36 della #525, 17 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+57 voci (36 della #525, 21 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
 test mirati che devono accorgersene. Le regole, verificate da
 `tests/scripts/test_run_mutation_guardrails_reale.py`:
 
@@ -118,14 +118,16 @@ tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
   file.
 - Run finale: 36 su 36 uccise, punteggio 100%, gate PASS, in circa 44 s in
   locale contro gli oltre 45 minuti di prima.
-- #523: 17 mutazioni nuove su Dutching e bet manuale (lato senza default nel
+- #523: 21 mutazioni nuove su Dutching e bet manuale (lato senza default nel
   controller e nel middleware, alias di lato in conflitto, liability LAY del bet
   manuale, barriera cashout del lotto e runtime senza barriera, ammissione fuori dal
   lock, errore e chiave altrui dell'anti-duplicato, identificativo storico
   riammesso, gamba di un lotto registrato sovrascritta, gamba rilasciata dal
   proprio esito, AMBIGUOUS non marcato, lotto ritirato non tolto dal registro,
-  gamba fuori registro dopo un riavvio, ref a monte "dut-" scambiato per una gamba):
-  17 su 17 uccise dai test di `tests/acceptance/test_issue523_dutching_manual_bet.py`.
+  gamba fuori registro dopo un riavvio, ref a monte "dut-" scambiato per una gamba,
+  sweep F028 sul tavolo del lotto, chiave del lotto non fissata, identificativi del
+  bet manuale non validati):
+  21 su 21 uccise dai test di `tests/acceptance/test_issue523_dutching_manual_bet.py`.
 
 **Gap tracciato, non escluso in silenzio.** Ogni report elenca in
 `summary.spec_modules_without_mutations` i moduli che hanno una specifica in

@@ -4611,6 +4611,8 @@ class RuntimeController:
                 "stake": p.get("stake"),
                 "price": p.get("price"),
                 "bet_id": bet_id,
+                # #529: gamba di un lotto Dutching (batch_id persistito), esclusa dai rilasci per singolo ordine
+                "batch_id": str(p.get("batch_id") or ""),
                 # event_id/event_identity (#505): identita' dell'evento per il cap evento dopo il riavvio;
                 # assenti negli ordini salvati prima => None, resta il confronto per nome.
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
@@ -4686,7 +4688,12 @@ class RuntimeController:
         except Exception as exc:
             logger.warning("F028: ordini del bot illeggibili (%s): nessun rilascio", exc)
             return []
-        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]]
+        held_legs = getattr(self, "_held_batch_legs", None) or {}
+        # #529 (scelta owner F, riesame su 922bde3): una gamba di un lotto Dutching non libera il tavolo CONDIVISO
+        # del lotto quando da sola risulta annullata/decaduta senza abbinato: le altre gambe possono essere vive.
+        # Il lotto resta trattenuto fino a settlement e riconciliazione (rilascio a livello di lotto: PR30).
+        eligible = [c for c in candidates if c["event_key"] in held and c["status"] == "SUBMITTED" and c["bet_id"]
+                    and not c.get("batch_id") and c["customer_ref"] not in held_legs]
         if not eligible:
             return []
         final = self._final_unmatched_bets(sorted({c["market_id"] for c in eligible}),

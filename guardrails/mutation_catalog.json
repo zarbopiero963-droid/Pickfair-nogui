@@ -675,6 +675,54 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523/#529 (scelta owner F): Dopo un riavvio una gamba Dutching fuori registro ricade nel rilascio del singolo ordine."
+    },
+    {
+      "id": "f028_releases_shared_batch_table",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                    and not c.get(\"batch_id\") and c[\"customer_ref\"] not in held_legs]",
+      "mutated": "                    ]",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Lo sweep F028 libera il tavolo condiviso del lotto per una sola gamba annullata senza abbinato."
+    },
+    {
+      "id": "batch_dedupe_key_not_pinned",
+      "module": "controllers.dutching_controller",
+      "area": "dedupe",
+      "file": "controllers/dutching_controller.py",
+      "original": "            return duplication_guard.acquire(event_key, pin=True)",
+      "mutated": "            return duplication_guard.acquire(event_key)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Chiave del lotto trattenuto soggetta al TTL: lo stesso evento con prezzo diverso piazza un secondo lotto."
+    },
+    {
+      "id": "manual_bet_market_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                market_id = validators.order_market_id(payload[\"market_id\"])",
+      "mutated": "                market_id = str(payload[\"market_id\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Bet manuale con market_id vuoto riserva un tavolo che l'engine non liberera' mai."
+    },
+    {
+      "id": "manual_bet_selection_id_not_validated",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "                selection_id = validators.order_selection_id(payload[\"selection_id\"])",
+      "mutated": "                selection_id = int(payload[\"selection_id\"])",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A, decisione owner): Bet manuale con selection_id non valido riserva un tavolo che l'engine non liberera' mai."
     }
   ]
 }

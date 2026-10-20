@@ -788,6 +788,14 @@ class DutchingController:
             lock = DutchingController._fallback_entry_lock
         return lock
 
+    @staticmethod
+    def _acquire_pinned(duplication_guard, event_key: str) -> bool:
+        """Acquisisce la chiave fissata (nessuna scadenza per TTL); guardia senza `pin` => acquisizione semplice."""
+        try:
+            return duplication_guard.acquire(event_key, pin=True)
+        except TypeError:
+            return duplication_guard.acquire(event_key)
+
     def _locked_entry(self, body, payload: Dict[str, Any]) -> Dict[str, Any]:
         lock = self._admission_lock()
         lock.acquire()
@@ -1297,7 +1305,9 @@ class DutchingController:
         dedupe_acquired = False
         if duplication_guard and bool(getattr(config, "anti_duplication_enabled", True)):
             try:
-                if not duplication_guard.acquire(event_key):
+                # #529 (rilievo Codex r4325985989): chiave PINNATA per la durata del lotto trattenuto, non scade
+                # col TTL; la rilasciano solo i rollback (rifiuto, ritiro prima di pubblicare) e il settlement.
+                if not self._acquire_pinned(duplication_guard, event_key):
                     return self._fail("Duplicato bloccato", event_key=event_key)
             except Exception:
                 # #523: anti-duplicato non verificabile => nessun ordine (prima si proseguiva, fail-open)
@@ -1638,10 +1648,15 @@ class DutchingController:
             if not self._bus_available():
                 return self._fail("EventBus non disponibile")
 
-            market_id = str(payload["market_id"])
-            selection_id = int(payload["selection_id"])
-            price = float(payload["price"])
-            stake = float(payload["stake"])
+            # #529 (rilievo Codex r4325986004): identificativi validati PRIMA di ogni acquisizione (dedupe, tavolo):
+            # un ordine che l'engine rifiuterebbe in normalizzazione non deve occupare un tavolo.
+            try:
+                market_id = validators.order_market_id(payload["market_id"])
+                selection_id = validators.order_selection_id(payload["selection_id"])
+                price = validators.order_price(payload["price"])
+                stake = validators.order_stake(payload["stake"])
+            except ValueError as exc:
+                return self._fail(f"Ordine non valido: {exc}")
 
             if price <= 1.01:
                 return self._fail("Quota non valida")
