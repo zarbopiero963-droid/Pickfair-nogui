@@ -402,3 +402,51 @@ def test_settlement_concorrente_durante_la_lettura_non_apre_il_gate(tmp_path):
     c.rc._on_signal_received(_signal())
     assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
     assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+# ---------------------------------------------------------------- rilievi Codex su 17f5e53
+def test_auto_next_success_marca_a_mercato_la_riserva_anche_senza_table_id():
+    # Rilievo Codex r4330530577: il CMD_QUICK_BET dell'auto-next non porta table_id (il tavolo viene da
+    # mm_context), quindi SUCCESS non rilascia il tavolo. L'ordine e' gia' fuori dal disponibile: non deve
+    # restare addebitato come pendente alle entrate successive.
+    import time as _time
+    rc, bus, esito = _auto_next(
+        {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
+        funds={"available": 150.0, "exposure": 0.0},
+    )
+    (cmd,) = [p for name, p in bus.events if name == "CMD_QUICK_BET"]
+    assert "table_id" not in cmd
+    assert rc.table_manager.pending_exposure(since=_time.monotonic()) == pytest.approx(10.0)
+    rc._on_quick_bet_success({**cmd, "status": "PLACED", "outcome": "SUCCESS"})
+    assert rc.table_manager.pending_exposure(since=_time.monotonic()) == 0.0
+
+
+def test_success_senza_table_id_con_riserva_ambigua_per_evento_non_marca_nulla():
+    # Due tavoli con la stessa event_key (anti-duplicazione disattivata): senza table_id non si sa quale
+    # ordine e' a mercato => nessuna marca (resta tutto addebitato, prudente).
+    from core.table_manager import TableManager
+    tm = TableManager(table_count=2)
+    for tid in (1, 2):
+        tm.activate(table_id=tid, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1)
+    assert tm.mark_placed_by_event("e1", at=0.0) is False
+    assert tm.pending_exposure(since=5.0) == 20.0
+    tm.force_unlock(2)
+    assert tm.mark_placed_by_event("e1", at=0.0) is True
+    assert tm.pending_exposure(since=5.0) == 0.0
+
+
+@pytest.mark.parametrize("risposta", [{"available": 100.0}, {"exposure": 0.0}, {}],
+                         ids=["senza-exposure", "senza-available", "vuota"])
+def test_risposta_incompleta_del_broker_e_fondi_non_verificabili(tmp_path, risposta):
+    # Rilievo Codex r4330530594: BetfairService riempiva i campi mancanti con 0.0 senza errore.
+    class _Broker:
+        def get_account_funds(self):
+            return dict(risposta)
+
+    funds = _servizio_reale(_Broker()).get_account_funds()
+    assert funds.get("error"), funds
+    c = _chain(tmp_path, stake=4.0, anti_duplication=True)
+    c.rc.betfair_service.get_account_funds = lambda: dict(funds)
+    c.rc._on_signal_received(_signal())
+    assert "fondi_non_verificabili" in _rifiuti(c), _rifiuti(c)
+    _nessun_effetto(c)

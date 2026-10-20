@@ -27,14 +27,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rifiutato con `fondi_insufficienti:...`, mai ridimensionato; prima partiva se stava nel bankroll interno
   anche con meno fondi sul conto. Regola, sotto il lock d'ammissione: le riserve dei tavoli il cui ordine
   non è confermato a mercato prima dell'inizio della lettura del conto, compresa la nuova entrata, devono
-  stare nel disponibile. Il tavolo registra il primo ACK a mercato (ACCEPTED/PARTIAL/FILLED,
-  `TableManager.mark_placed`, marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
+  stare nel disponibile. Il tavolo registra il primo esito a mercato (ACCEPTED/PARTIAL/FILLED/SUCCESS,
+  `TableManager.mark_placed`; senza `table_id`, come nell'auto-next, per `event_key` solo se un unico tavolo
+  porta la riserva; marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
   le riserve non ancora riflesse. Gli ordini già a mercato non contano due volte; l'impegnato del conto non
   copre nulla, perché può essere di posizioni esterne al bot (rilievo Sol su #531). Ordini ricostruiti al
   riavvio (F018) e confermati vivi = già a mercato; esiti incerti restano addebitati. Fondi illeggibili,
   incompleti (senza `exposure`) o con errore => `fondi_non_verificabili`, nessuna entrata (prima restava il
   bankroll di ripiego, PF-CAP-19); `BetfairService.get_account_funds` marca ora con `error` gli zeri di
-  ripiego (lettura fallita o nessun client), che prima sembravano un conto vuoto letto. In SIM il saldo è
+  ripiego (lettura fallita o nessun client) e le risposte del broker senza `available` o `exposure`, che
+  prima sembravano un conto letto. In SIM il saldo è
   quello del `SimulationBroker`, che però non riserva fondi sugli ordini (**G7, aperto**, difetto
   finanziario confermato dall'owner, fase M6): in SIM il gate non vede gli ordini aperti e la parità
   SIM/LIVE sui fondi non è certificata. Riproduzione RED in `tests/acceptance/test_g7_sim_funds_reservation.py`

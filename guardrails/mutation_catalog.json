@@ -946,6 +946,30 @@
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
       "rationale": "#461 PR28-e (rilievo Sol #531): un ACK arrivato dopo l'inizio della lettura viene creduto gia' nel disponibile."
+    },
+    {
+      "id": "funds_gate_success_by_event_not_marked",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            self.table_manager.mark_placed_by_event(event_key, at=time.monotonic())",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Codex #531): il SUCCESS dell'auto-next (senza table_id) non marca la riserva: l'ordine gia' a mercato resta addebitato."
+    },
+    {
+      "id": "funds_gate_ambiguous_event_marked",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "            if len(matches) != 1:",
+      "mutated": "            if not matches:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: con piu' tavoli sulla stessa event_key un SUCCESS senza table_id marca a mercato una riserva forse ancora pendente."
     }
   ]
 }

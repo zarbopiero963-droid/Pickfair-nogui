@@ -5457,19 +5457,23 @@ class RuntimeController:
         return (peak - equity) / peak * 100.0
 
     def _mark_table_placed(self, payload: dict) -> None:
-        """#461 PR28-e: ACK a mercato (ACCEPTED / PARTIAL / FILLED) => il tavolo della riserva e' marcato a
-        mercato da ora: le letture del conto iniziate dopo lo riflettono nel disponibile. Mai su AMBIGUOUS.
-        Oggi questi eventi arrivano solo dal percorso OrderManager; quello del TradingEngine pubblica
-        QUICK_BET_SUCCESS, che rilascia il tavolo (`_release_if_terminal`): la posizione esce dalle riserve."""
+        """#461 PR28-e: ordine a mercato (ACCEPTED / PARTIAL / FILLED dal percorso OrderManager, SUCCESS dal
+        TradingEngine) => il tavolo della riserva e' marcato a mercato da ora: le letture del conto iniziate dopo
+        lo riflettono nel disponibile. Mai su AMBIGUOUS. SUCCESS di norma rilascia anche il tavolo; quando il
+        payload non porta ``table_id`` (CMD_QUICK_BET dell'auto-next, tavolo da mm_context) il tavolo resta
+        occupato e va marcato per ``event_key`` (solo se un unico tavolo porta quella riserva)."""
         payload = payload or {}
         table_id = payload.get("table_id")
         event_key = str(payload.get("event_key") or "")
-        if table_id is None or not event_key:
+        if not event_key:
+            return
+        if table_id is None:
+            self.table_manager.mark_placed_by_event(event_key, at=time.monotonic())
             return
         try:
             self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic())
         except (TypeError, ValueError):
-            logger.warning("ACK a mercato con table_id non valido %r: riserva resta pendente", table_id)
+            logger.warning("Ordine a mercato con table_id non valido %r: riserva resta pendente", table_id)
 
     def _on_quick_bet_failed(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
@@ -5491,6 +5495,7 @@ class RuntimeController:
         self._release_if_terminal(payload, event_name="QUICK_BET_FILLED")
 
     def _on_quick_bet_success(self, payload: dict) -> None:
+        self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
         self._release_if_terminal(payload, event_name="QUICK_BET_SUCCESS")
 

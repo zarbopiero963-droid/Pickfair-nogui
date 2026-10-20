@@ -294,6 +294,18 @@ class TableManager:
             table.meta.setdefault("placed_at", float(at))
             return True
 
+    def mark_placed_by_event(self, event_key: str, *, at: float) -> bool:
+        """#461 PR28-e: come `mark_placed` per un esito senza ``table_id`` (CMD_QUICK_BET dell'auto-next). Si marca
+        solo se UN SOLO tavolo porta la riserva ``event_key``: con piu' tavoli (anti-duplicazione disattivata) non
+        si sa quale ordine e' a mercato e nessuno viene marcato (restano addebitati, prudente)."""
+        with self._lock:
+            event_key = str(event_key or "")
+            matches = [t for t in self._tables.values() if event_key and t.current_event_key == event_key]
+            if len(matches) != 1:
+                return False
+            matches[0].meta.setdefault("placed_at", float(at))
+            return True
+
     def pending_exposure(self, *, since: Optional[float]) -> float:
         """#461 PR28-e: esposizione delle riserve il cui ordine NON risulta a mercato prima dell'istante
         monotonic ``since`` (inizio della lettura del conto): sono quelle che il disponibile letto non
