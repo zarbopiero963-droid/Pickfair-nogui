@@ -2549,7 +2549,7 @@ class RuntimeController:
             )
             raise
         self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
-        self._record_account_snapshot(funds, source="start")          # PF-ALL-F026
+        self._record_account_snapshot(funds, source="start", read_at=start_funds)  # PF-ALL-F026
         if not self._load_expansion_baseline():                       # F032: primo avvio => apre il ciclo
             self._start_expansion_cycle("first_start", funds=funds)
 
@@ -4298,7 +4298,7 @@ class RuntimeController:
         def _network_window() -> bool:
             attempted = self._apply_direct_best_price(payload)
             self._attach_single_entry_liquidity(payload)
-            entry_funds["funds"] = self._read_funds_for_entry()     # PR28-e: fondi, fuori dal lock
+            entry_funds.update(self._read_funds_for_entry())       # PR28-e: fondi, fuori dal lock
             return attempted
 
         config_before = self.config
@@ -4322,11 +4322,11 @@ class RuntimeController:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason="esposizione_cresciuta_dopo_best_price")
             return
-        # #461 PR28-e (PF-CAP-09/19, PF-EXEC-04): fondi verificati sotto il lock, al netto di TUTTE le riserve
-        # sui tavoli (che includono gia' questo ingresso e quelli concorrenti). Fondi insufficienti o non
-        # verificabili => nessun ordine, risorse rilasciate (ritentabile), mai ridimensionamento.
-        funds_reason = self._entry_funds_reason(entry_funds.get("funds"), self.table_manager.total_exposure(),
-                                                order_exposure)
+        # #461 PR28-e (PF-CAP-09/19, PF-EXEC-04): fondi verificati sotto il lock contro TUTTE le riserve non
+        # ancora a mercato (questo ingresso e quelli concorrenti). Fondi insufficienti o non verificabili =>
+        # nessun ordine, risorse rilasciate (ritentabile), mai ridimensionamento.
+        funds_reason = self._entry_funds_reason(
+            entry_funds.get("funds"), self.table_manager.pending_exposure(since=entry_funds.get("read_at")))
         if funds_reason:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=funds_reason)
@@ -4853,6 +4853,9 @@ class RuntimeController:
                 self._mark_uncertain(c["event_key"], table_id)
                 result["uncertain"].append(c["customer_ref"])
             else:
+                # #461 PR28-e: ordine vivo sull'exchange prima di qualunque lettura del conto di questo processo
+                # (gia' nel disponibile). Un esito incerto resta invece pendente (addebitato al disponibile).
+                self.table_manager.mark_placed(table_id, c["event_key"], at=float("-inf"))
                 result["rebuilt"].append(c["customer_ref"])
         if current is None and not result["reason"]:
             result.update(ok=False, reason="EXCHANGE_ORDERS_UNAVAILABLE")
@@ -5142,9 +5145,10 @@ class RuntimeController:
         out.update(ok=True, available=available, committed=committed, cash_equity=available + committed)
         return out
 
-    def _read_funds_for_entry(self) -> Any:
+    def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
-        lock d'ammissione (rete). Qualunque errore => None => fondi non verificabili (fail-closed)."""
+        lock d'ammissione (rete). ``{"funds", "read_at"}``: ``read_at`` e' l'istante monotonic d'inizio lettura.
+        Qualunque errore => funds None => fondi non verificabili (fail-closed)."""
         started_at = time.monotonic()
         try:
             funds = self.betfair_service.get_account_funds()
@@ -5152,26 +5156,21 @@ class RuntimeController:
             self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=False,
                                     error=str(exc))
             logger.warning("PR28-e: fondi illeggibili all'ingresso (%s): nessuna nuova entrata", exc)
-            return None
+            return {"funds": None, "read_at": started_at}
         error = funds.get("error") if isinstance(funds, dict) else None
         self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=not error,
                                 error=str(error or ""))
-        return funds
+        return {"funds": funds, "read_at": started_at}
 
-    def _entry_funds_reason(self, account: Any, reserved_exposure: float, order_exposure: float) -> str:
-        """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se la nuova entrata e' coperta dai fondi del conto,
-        altrimenti il motivo del rifiuto. Due condizioni, entrambe obbligatorie:
+    def _entry_funds_reason(self, account: Any, pending_exposure: float) -> str:
+        """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
+        nuova entrata, stanno nel ``available`` del conto; altrimenti il motivo del rifiuto.
 
-        1. l'esposizione della nuova entrata (BACK = stake, LAY = liability) sta nel ``available`` del conto;
-        2. l'esposizione riservata su TUTTI i tavoli, compresa la nuova entrata e le riserve concorrenti, sta nei
-           fondi gia' impegnati a mercato piu' il disponibile (``available + committed``): le riserve gia'
-           piazzate sono nel ``committed`` e non contano due volte, quelle non ancora a mercato consumano il
-           disponibile.
-
-        La (1) impedisce che i fondi impegnati da posizioni esterne al bot finanzino da soli la nuova entrata.
-        Limite noto (residuo, PR29): i tavoli non registrano se il loro ordine e' gia' a mercato, quindi con
-        impegnato esterno e riserve concorrenti non ancora piazzate la (2) puo' sovrastimare la copertura; in
-        quel caso il rifiuto arriva dall'exchange (fondi insufficienti), non da questo gate.
+        ``pending_exposure`` (`TableManager.pending_exposure`) somma le riserve il cui ordine non risulta
+        confermato a mercato prima dell'inizio della lettura del conto: sono quelle che il disponibile letto
+        non riflette ancora. Gli ordini gia' a mercato sono gia' fuori dal disponibile e non contano due volte;
+        un ACK arrivato durante o dopo la lettura resta addebitato (prudente). I fondi impegnati (``exposure``
+        del conto) NON coprono nulla: possono essere di posizioni esterne al bot (rilievo Sol su #531).
         Solo NUOVE entrate (segnale, auto-next): mai hedge o uscite protettive (PF-EXEC-03). `account` e' il
         payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
         => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""
@@ -5184,20 +5183,18 @@ class RuntimeController:
         if not parsed.get("ok"):
             return "fondi_non_verificabili"
         available = float(parsed["available"])
-        covered = available + float(parsed["committed"])
-        order_exposure = float(order_exposure)
-        reserved_exposure = float(reserved_exposure)
-        if validators.exceeds_cap(order_exposure, available):
-            return f"fondi_insufficienti:ordine={order_exposure:.2f}€,disponibile={available:.2f}€"
-        if validators.exceeds_cap(reserved_exposure, covered):
-            return f"fondi_insufficienti:esposizione={reserved_exposure:.2f}€,coperta={covered:.2f}€"
+        pending_exposure = float(pending_exposure)
+        if validators.exceeds_cap(pending_exposure, available):
+            return f"fondi_insufficienti:riserve_pendenti={pending_exposure:.2f}€,disponibile={available:.2f}€"
         return ""
 
-    def _record_account_snapshot(self, funds: Any, *, source: str) -> dict:
-        """Registra lo snapshot del conto e il picco dell'equity di cassa (solo dati validi)."""
+    def _record_account_snapshot(self, funds: Any, *, source: str, read_at: Optional[float] = None) -> dict:
+        """Registra lo snapshot del conto e il picco dell'equity di cassa (solo dati validi). ``read_at``: istante
+        monotonic d'inizio della lettura (#461 PR28-e: le riserve confermate a mercato dopo restano pendenti)."""
         account = self._account_from_funds(funds)
         account["source"] = source
         self._account_snapshot = dict(account)
+        self._account_snapshot_read_at = read_at
         if account["ok"]:
             peak = float(getattr(self, "_cash_equity_peak", 0.0) or 0.0)
             if account["cash_equity"] > peak:
@@ -5459,19 +5456,37 @@ class RuntimeController:
             return 0.0
         return (peak - equity) / peak * 100.0
 
+    def _mark_table_placed(self, payload: dict) -> None:
+        """#461 PR28-e: ACK a mercato (ACCEPTED / PARTIAL / FILLED) => il tavolo della riserva e' marcato a
+        mercato da ora: le letture del conto iniziate dopo lo riflettono nel disponibile. Mai su AMBIGUOUS.
+        Oggi questi eventi arrivano solo dal percorso OrderManager; quello del TradingEngine pubblica
+        QUICK_BET_SUCCESS, che rilascia il tavolo (`_release_if_terminal`): la posizione esce dalle riserve."""
+        payload = payload or {}
+        table_id = payload.get("table_id")
+        event_key = str(payload.get("event_key") or "")
+        if table_id is None or not event_key:
+            return
+        try:
+            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic())
+        except (TypeError, ValueError):
+            logger.warning("ACK a mercato con table_id non valido %r: riserva resta pendente", table_id)
+
     def _on_quick_bet_failed(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_FAILED")
         self._release_if_terminal(payload, event_name="QUICK_BET_FAILED")
 
     def _on_quick_bet_accepted(self, payload: dict) -> None:
+        self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_ACCEPTED")
         self._release_if_terminal(payload, event_name="QUICK_BET_ACCEPTED")
 
     def _on_quick_bet_partial(self, payload: dict) -> None:
+        self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_PARTIAL")
         self._release_if_terminal(payload, event_name="QUICK_BET_PARTIAL")
 
     def _on_quick_bet_filled(self, payload: dict) -> None:
+        self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_FILLED")
         self._release_if_terminal(payload, event_name="QUICK_BET_FILLED")
 
@@ -6214,7 +6229,7 @@ class RuntimeController:
         result["balance_source"] = "exchange_available"
         # PF-ALL-F026: grandezze del conto registrate SEPARATAMENTE. La base dello stake e dei
         # limiti (bankroll_current = disponibile) NON cambia.
-        account = self._record_account_snapshot(funds, source="settlement")
+        account = self._record_account_snapshot(funds, source="settlement", read_at=started_at)
         result["available_balance"] = account["available"]
         result["committed_funds"] = account["committed"]
         result["cash_equity"] = account["cash_equity"] if account["ok"] else None
@@ -6555,11 +6570,11 @@ class RuntimeController:
                                 risk_reason = "risk_approved"
                 if risk_reason == "risk_approved":
                     # #461 PR28-e: l'auto-next e' una nuova entrata; fondi dallo snapshot appena registrato dal
-                    # settlement (nessuna rete sotto il lock), al netto delle riserve sui tavoli.
+                    # settlement (nessuna rete sotto il lock) contro le riserve non ancora a mercato + l'ordine.
+                    pending = self.table_manager.pending_exposure(
+                        since=getattr(self, "_account_snapshot_read_at", None))
                     risk_reason = self._entry_funds_reason(
-                        getattr(self, "_account_snapshot", None),
-                        self.table_manager.total_exposure() + order_exposure,
-                        order_exposure,
+                        getattr(self, "_account_snapshot", None), pending + order_exposure,
                     ) or "risk_approved"
             except (TypeError, ValueError):
                 risk_reason = "ordine_auto_trade_non_verificabile"

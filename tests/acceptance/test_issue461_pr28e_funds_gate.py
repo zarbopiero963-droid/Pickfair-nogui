@@ -5,10 +5,10 @@ registro cap PF-CAP-REGISTER-20261018 + addendum (#426 c.6250526960): gate sulle
 mai su hedge/uscite protettive (PF-EXEC-03), sotto `_risk_admission_lock`, al netto dell'esposizione
 gia' riservata sui tavoli.
 
-Due condizioni, entrambe obbligatorie: (1) l'esposizione della nuova entrata sta nel disponibile del
-conto; (2) l'esposizione riservata su tutti i tavoli (compresa la nuova entrata) sta nel disponibile piu'
-l'impegnato a mercato, cosi' gli ordini gia' piazzati non contano due volte e quelli riservati ma non
-ancora a mercato consumano il disponibile. La (1) copre l'impegnato da posizioni esterne al bot.
+Regola: le riserve il cui ordine non risulta confermato a mercato (ACK) prima dell'inizio della lettura del
+conto, COMPRESA la nuova entrata, devono stare nel disponibile. Gli ordini gia' a mercato sono gia' fuori dal
+disponibile e non contano due volte; un ACK arrivato durante/dopo la lettura resta addebitato (prudente).
+L'impegnato del conto non copre nulla: puo' essere di posizioni esterne al bot (rilievo Sol su #531).
 Fondi illeggibili/non validi => nessuna nuova entrata.
 """
 from __future__ import annotations
@@ -91,6 +91,8 @@ def test_ordine_gia_piazzato_non_e_contato_due_volte(tmp_path):
     c = _chain(tmp_path, stake=60.0, anti_duplication=True)
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
+    (primo,) = c.bus.payloads("CMD_QUICK_BET")
+    c.rc._on_quick_bet_accepted(dict(primo))        # ACK a mercato del primo ordine (gestore reale)
     _con_fondi(c, 40.0, exposure=60.0)
     c.rc.mm.calculate = _decision(40.0)
     c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
@@ -104,7 +106,7 @@ def test_impegnato_esterno_al_bot_non_gonfia_i_fondi(tmp_path):
     c = _chain(tmp_path, stake=50.0, anti_duplication=True)
     _con_fondi(c, 10.0, exposure=100.0)
     c.rc._on_signal_received(_signal())
-    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti:ordine=")], _rifiuti(c)
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti:riserve_pendenti=")], _rifiuti(c)
     _nessun_effetto(c)
 
 
@@ -248,3 +250,131 @@ def test_lettura_riuscita_del_servizio_reale_non_porta_errore():
     funds = _servizio_reale(_Broker()).get_account_funds()
     assert "error" not in funds
     assert funds["available"] == 50.0 and funds["exposure"] == -5.0
+
+
+# ---------------------------------------------------------------- riserve pendenti vs ordini a mercato
+def _riserva_pendente(c, exposure, table_id=2):
+    # Un ingresso concorrente ammesso (tavolo riservato) il cui ordine non e' ancora confermato a mercato.
+    c.rc.table_manager.activate(table_id=table_id, event_key="evt-concorrente", exposure=exposure,
+                                market_id="1.77", selection_id=7)
+
+
+def test_impegnato_esterno_non_copre_le_riserve_concorrenti_non_piazzate(tmp_path):
+    # Rilievo Sol su #531: disponibile 100, impegnato esterno 100, due ingressi pendenti da 80. Le riserve non
+    # ancora a mercato (80 + 80 = 160) vanno addebitate al disponibile (100): il secondo e' rifiutato.
+    c = _chain(tmp_path, stake=80.0, anti_duplication=True)
+    _riserva_pendente(c, 80.0)
+    _con_fondi(c, 100.0, exposure=100.0)
+    c.rc._on_signal_received(_signal())
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+
+
+def test_ordine_confermato_a_mercato_prima_della_lettura_non_conta_due_volte(tmp_path):
+    # Il tavolo 2 ha l'ordine confermato (ACK) prima della lettura: il conto lo riflette gia' (disponibile 40
+    # dopo 60 impegnati), quindi l'ingresso da 40 sta nei fondi.
+    c = _chain(tmp_path, stake=40.0, anti_duplication=True)
+    _riserva_pendente(c, 60.0)
+    c.rc.table_manager.mark_placed(2, "evt-concorrente", at=0.0)
+    _con_fondi(c, 40.0, exposure=60.0)
+    c.rc._on_signal_received(_signal())
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1, _rifiuti(c)
+
+
+def test_ordine_confermato_dopo_la_lettura_resta_pendente(tmp_path):
+    # ACK arrivato DOPO l'inizio della lettura del conto: la lettura puo' non rifletterlo => resta addebitato
+    # al disponibile (prudente). 60 pendente + 60 nuovo > 100.
+    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    _riserva_pendente(c, 60.0)
+    c.rc.table_manager.mark_placed(2, "evt-concorrente", at=float("inf"))
+    _con_fondi(c, 100.0)
+    c.rc._on_signal_received(_signal())
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+
+
+def test_ack_a_mercato_marca_il_tavolo_della_riserva_e_il_rilascio_lo_azzera():
+    from core.table_manager import TableManager
+    tm = TableManager(table_count=2)
+    tm.activate(table_id=1, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1)
+    assert tm.pending_exposure(since=5.0) == 10.0
+    assert tm.mark_placed(1, "altro-evento", at=1.0) is False        # riserva diversa: nessuna marca
+    assert tm.mark_placed(1, "e1", at=1.0) is True
+    tm.mark_placed(1, "e1", at=9.0)                                  # vale il primo ACK
+    assert tm.pending_exposure(since=5.0) == 0.0
+    assert tm.pending_exposure(since=0.5) == 10.0
+    assert tm.pending_exposure(since=None) == 10.0                   # lettura senza istante: tutto pendente
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="e1", exposure=7.0, market_id="1.1", selection_id=1)
+    assert tm.pending_exposure(since=5.0) == 7.0                     # nuova riserva: la vecchia marca non vale
+
+
+def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
+    # Snapshot del settlement: 100 disponibili + 100 impegnati esterni; tavolo 2 pendente da 95. LAY 2@6
+    # (liability 10): 95 + 10 = 105 > 100 disponibili.
+    rc, bus, esito = _auto_next(
+        {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
+        funds={"available": 100.0, "exposure": 100.0},
+        riservato=95.0,
+        pct_totale=200.0,
+    )
+    assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
+    assert esito["reason"].startswith("fondi_insufficienti"), esito
+
+
+# ---------------------------------------------------------------- verifiche owner prima del merge (#531)
+def test_sim_usa_il_saldo_simulato_senza_fondi_reali(tmp_path):
+    # Punto 1 owner: in SIM il gate legge il saldo del SimulationBroker; nessun client LIVE coinvolto.
+    from simulation_broker import SimulationBroker
+
+    class _LiveVietato:
+        def get_account_funds(self):
+            raise AssertionError("in SIM non si leggono fondi reali Betfair")
+
+    svc = BetfairService(settings_service=None)
+    svc.simulation_mode = True
+    svc.simulation_broker = SimulationBroker(starting_balance=120.0)
+    svc.client = _LiveVietato()
+    funds = svc.get_account_funds()
+    assert funds["available"] == 120.0 and funds["simulated"] is True and "error" not in funds
+    c = _chain(tmp_path, stake=100.0, anti_duplication=True)
+    c.rc.betfair_service.get_account_funds = svc.get_account_funds
+    c.rc._on_signal_received(_signal())
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1, _rifiuti(c)
+    svc.simulation_broker = SimulationBroker(starting_balance=50.0)
+    c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
+                                     received_at="2026-10-08T10:05:00.000000+00:00"))
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+
+
+def test_esito_incerto_non_e_rifiuto_definitivo_e_la_riserva_resta_addebitata(tmp_path):
+    # Punto 2 owner: un AMBIGUOUS (timeout / risposta persa) non rilascia tavolo e chiave e non marca l'ordine
+    # a mercato: la riserva resta e continua a consumare il disponibile per le nuove entrate.
+    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    _con_fondi(c, 100.0)
+    c.rc._on_signal_received(_signal())
+    (primo,) = c.bus.payloads("CMD_QUICK_BET")
+    c.rc._on_quick_bet_ambiguous(dict(primo))
+    assert len(_tavoli_occupati(c)) == 1                    # riserva trattenuta, nessun rilascio
+    assert c.rc.table_manager.pending_exposure(since=float("inf")) == 60.0
+    assert "placed_at" not in c.rc.table_manager.get_table(primo["table_id"]).meta
+    c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
+                                     received_at="2026-10-08T10:05:00.000000+00:00"))
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+
+
+def test_percorso_di_produzione_success_rilascia_e_non_addebita_due_volte(tmp_path):
+    # Il TradingEngine pubblica QUICK_BET_SUCCESS dopo un piazzamento riuscito (nessun ACCEPTED: l'OrderManager
+    # non e' cablato). SUCCESS rilascia il tavolo: la posizione esce dalle riserve e resta solo nel conto.
+    # Conto dopo il piazzamento: 40 disponibili + 60 impegnati; il secondo ingresso da 40 sta nei fondi.
+    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    _con_fondi(c, 100.0)
+    c.rc._on_signal_received(_signal())
+    (primo,) = c.bus.payloads("CMD_QUICK_BET")
+    c.rc._on_quick_bet_success({**primo, "status": "PLACED", "outcome": "SUCCESS"})
+    assert _tavoli_occupati(c) == []
+    _con_fondi(c, 40.0, exposure=60.0)
+    c.rc.mm.calculate = _decision(40.0)
+    c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
+                                     received_at="2026-10-08T10:05:00.000000+00:00"))
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 2, _rifiuti(c)

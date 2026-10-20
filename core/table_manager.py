@@ -283,6 +283,34 @@ class TableManager:
                 total += max(0.0, exp)
             return float(total)
 
+    def mark_placed(self, table_id: int, event_key: str, *, at: float) -> bool:
+        """#461 PR28-e: l'ordine della riserva ``event_key`` sul tavolo e' confermato a mercato (primo ACK,
+        istante monotonic ``at``). La marca vive in ``meta``, che ogni rilascio/riattivazione azzera: non
+        sopravvive alla riserva. Vale il primo ACK. True se il tavolo porta ancora quella riserva."""
+        with self._lock:
+            table = self._get(int(table_id))
+            if not table or not event_key or table.current_event_key != str(event_key):
+                return False
+            table.meta.setdefault("placed_at", float(at))
+            return True
+
+    def pending_exposure(self, *, since: Optional[float]) -> float:
+        """#461 PR28-e: esposizione delle riserve il cui ordine NON risulta a mercato prima dell'istante
+        monotonic ``since`` (inizio della lettura del conto): sono quelle che il disponibile letto non
+        riflette ancora. ``since`` None => tutte pendenti. Come `total_exposure`: NaN/inf => inf,
+        negativi a 0 (mai sotto-stima)."""
+        with self._lock:
+            total = 0.0
+            for t in self._tables.values():
+                exp = t.current_exposure
+                if not math.isfinite(exp):
+                    return float("inf")
+                placed_at = (t.meta or {}).get("placed_at")
+                if since is not None and placed_at is not None and float(placed_at) <= float(since):
+                    continue
+                total += max(0.0, exp)
+            return float(total)
+
     # =========================================================
     # RESET / SNAPSHOT
     # =========================================================
