@@ -3628,6 +3628,17 @@ class RuntimeController:
             if (batch_id and str(batch_id) in (getattr(self, "_entry_batches", None) or {})) or any(
                     str(o["customer_ref"]) in active_refs for o in orders):
                 return "lotto_gia_attivo"
+            # Ciclo 6 #529 (deroga owner): un identificativo storico (intento gia' consumato, persistito nel DB e
+            # quindi valido anche dopo un riavvio) non viene riammesso: l'engine lo bloccherebbe come duplicato
+            # e il lotto resterebbe trattenuto senza esito. Errore della verifica => rifiuto (fail-closed).
+            consumed = getattr(getattr(self, "db", None), "is_order_intent_consumed", None)
+            if callable(consumed):
+                try:
+                    if any(consumed(str(o["customer_ref"])) for o in orders):
+                        return "ingresso_gia_eseguito"
+                except Exception:
+                    logger.exception("Verifica intenti consumati fallita: ingresso non ammesso")
+                    return "ammissione_non_verificabile"
             fences = []
             for order in orders:
                 fence = self._capture_admission_fence(order)
@@ -3636,7 +3647,7 @@ class RuntimeController:
                 fences.append(fence)
             for order, fence in zip(orders, fences):
                 RuntimeController._register_queued_entry_fence(self, order, fence)
-            if batch_id and len(orders) > 1:
+            if batch_id:                     # lotto di qualunque ampiezza: rilascio a livello di lotto
                 batches = getattr(self, "_entry_batches", None)
                 if batches is None:
                     batches = self._entry_batches = {}
@@ -3682,8 +3693,13 @@ class RuntimeController:
 
     #: Esiti certi di una gamba: viva (puo' essere sull'exchange) o chiusa senza esposizione.
     _BATCH_LEG_LIVE = frozenset({"QUICK_BET_SUCCESS", "QUICK_BET_FILLED"})
-    #: Gambe di lotti chiusi ricordate per assorbire gli eventi tardivi (le piu' vecchie si scordano).
+    #: Gambe di lotti chiusi ricordate per riconoscere gli esiti contraddittori tardivi. E' una cache di
+    #: PRECISIONE, non di sicurezza: una gamba dimenticata (o precedente a un riavvio) non viene mai rilasciata
+    #: come ordine singolo (prefisso dei ref Dutching) e gli identificativi storici sono rifiutati
+    #: all'ammissione dagli intenti consumati persistiti nel DB. Le piu' vecchie si scordano oltre il limite.
     _BATCH_CLOSED_REFS_MAX = 4096
+    #: Prefisso dei customer_ref delle gambe Dutching (`derive_customer_ref("dut", ...)` nel controller).
+    _DUTCHING_LEG_REF_PREFIX = "dut-"
 
     @staticmethod
     def _batch_leg_downgrade(previous, event_name: str) -> bool:
@@ -3720,6 +3736,17 @@ class RuntimeController:
             batch = (getattr(self, "_entry_batches", None) or {}).get(batch_id) if batch_id else None
             if batch is None:
                 closed_batch = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
+                if not closed_batch and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):
+                    # Ciclo 6 #529: gamba Dutching non piu' (o non ancora) nel registro — dimenticata dalla cache
+                    # dei lotti chiusi o precedente a un riavvio. Non si rilascia MAI come ordine singolo: tavolo e
+                    # chiave del lotto li governano settlement e riconciliazione; un esito incerto la marca.
+                    if event_name == "QUICK_BET_AMBIGUOUS":
+                        unknown_key = str((payload or {}).get("event_key") or "")
+                        if unknown_key:
+                            self._mark_uncertain(unknown_key, (payload or {}).get("table_id"))
+                    logger.warning("Evento %s di una gamba Dutching %s fuori registro: nessun rilascio singolo",
+                                   event_name, ref)
+                    return True
                 if not closed_batch:
                     return False
                 # Lotto gia' chiuso a livello di lotto (rilasciato o PARZIALE trattenuto): un evento tardivo di

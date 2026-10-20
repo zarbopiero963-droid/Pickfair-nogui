@@ -892,3 +892,114 @@ def test_single_order_admission_cannot_take_over_an_active_batch_leg(tmp_path):
     assert c.rc.admit_controller_entries([single], batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
     other = {**legs[0], "customer_ref": "man-nuovo", "batch_id": ""}
     assert c.rc.admit_controller_entries([other], batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
+
+
+# ============================================================ ciclo 6 #529 (deroga owner): cache dei lotti chiusi
+def _record_releases(c, monkeypatch):
+    calls = []
+    for name in ("force_unlock", "force_unlock_if_event"):
+        if hasattr(c.rc.table_manager, name):
+            real = getattr(c.rc.table_manager, name)
+            monkeypatch.setattr(c.rc.table_manager, name,
+                                lambda *a, _n=name, _r=real, **k: (calls.append(_n), _r(*a, **k))[1])
+    real_release = c.rc.duplication_guard.release
+    monkeypatch.setattr(c.rc.duplication_guard, "release",
+                        lambda k: (calls.append("release"), real_release(k))[1])
+    return calls
+
+
+@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FAILED", "QUICK_BET_FILLED"])
+def test_leg_forgotten_past_the_cache_limit_is_never_released_as_a_single_order(tmp_path, monkeypatch, late):
+    # Rilievo Sol #529: oltre il limite la cache espelle le gambe di lotti chiusi ancora esposti; un loro
+    # evento tardivo ricadeva nel rilascio del singolo ordine (tavolo/chiave di un ingresso nuovo).
+    from core.runtime_controller import RuntimeController
+
+    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 3)
+    c = _catena(tmp_path)
+    first = _held_batch(c)
+    for leg in first:
+        _leg_event(c, leg, "QUICK_BET_SUCCESS", status="SUCCESS")       # lotto tutto vivo, rilasciato
+    c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
+    for market in ("1.811", "1.812"):                                   # 6 gambe dopo: le prime 3 espulse
+        held, _run = _queueing(c)
+        assert _dutching(c).submit_dutching(_batch(market_id=market))["ok"] is True
+        for leg in held:
+            _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
+        c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
+    assert not any(leg["customer_ref"] in c.rc._entry_batch_closed for leg in first)
+
+    calls = _record_releases(c, monkeypatch)
+    _leg_event(c, first[0], late, status=late.rsplit("_", 1)[1])
+    assert calls == []                                                  # nessun rilascio singolo
+
+
+def test_leg_event_after_a_restart_never_releases_the_rebuilt_table(tmp_path):
+    from core.duplication_guard import DuplicationGuard
+    from core.runtime_controller import RuntimeController
+    from core.table_manager import TableManager
+
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True          # SIM reale: gambe piazzate
+    legs = c.bus.payloads("CMD_QUICK_BET")
+
+    restarted = RuntimeController.__new__(RuntimeController)            # processo nuovo: solo DB ed exchange
+    restarted.db = c.db
+    restarted.betfair_service = c.rc.betfair_service
+    restarted.table_manager = TableManager(table_count=5)
+    restarted.duplication_guard = DuplicationGuard()
+    restarted._rebuild_open_positions()
+    held = [t for t in restarted.table_manager._tables.values() if t.status != "FREE"]
+    assert held
+
+    for leg in legs:                                                   # esiti tardivi delle gambe pre-riavvio
+        restarted._release_if_terminal({"customer_ref": leg["customer_ref"], "event_key": leg["event_key"],
+                                        "table_id": held[0].table_id, "status": "SUCCESS"},
+                                       event_name="QUICK_BET_SUCCESS")
+    assert [t for t in restarted.table_manager._tables.values() if t.status != "FREE"] == held
+
+
+def test_same_batch_resubmitted_is_blocked_by_the_dedupe_key_first(tmp_path):
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+    again = _dutching(c).submit_dutching(_batch())
+    assert again["ok"] is False and again["error"] == "Duplicato bloccato"
+
+
+def test_historical_batch_identifiers_are_rejected_at_admission_even_after_a_restart(tmp_path):
+    # Con l'anti-duplicato disattivato nessuna chiave ferma il lotto ripetuto: i ref storici arrivavano
+    # all'engine, che li bloccava come duplicati senza esito di gamba => tavolo nuovo trattenuto per sempre.
+    from core.runtime_controller import RuntimeController
+
+    c = _catena(tmp_path, anti_duplication_enabled=False)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True          # gambe piazzate sul broker SIM
+    legs = c.bus.payloads("CMD_QUICK_BET")
+    for leg in legs:                                                     # lotto chiuso: identificativi storici
+        _leg_event(c, leg, "QUICK_BET_FILLED", status="FILLED")
+    assert legs[0]["batch_id"] not in c.rc._entry_batches
+    tables_before = [(t.table_id, t.current_exposure) for t in _busy_tables(c)]
+    keys_before = dict(c.rc.duplication_guard._active)
+
+    again = _dutching(c).submit_dutching(_batch())                       # stesso lotto: stessi ref storici
+    assert again["ok"] is False
+    assert "ingresso_gia_eseguito" in again["error"]
+    # nessun tavolo nuovo trattenuto per sempre, chiavi come prima, nessun ordine in piu'
+    assert [(t.table_id, t.current_exposure) for t in _busy_tables(c)] == tables_before
+    assert dict(c.rc.duplication_guard._active) == keys_before
+    assert len(c.broker.state.orders) == len(legs)
+
+    restarted = RuntimeController.__new__(RuntimeController)
+    restarted.db = c.db
+    assert restarted.admit_controller_entries(legs, batch_id=legs[0]["batch_id"]) == "ingresso_gia_eseguito"
+
+
+def test_admission_is_rejected_when_consumed_intents_cannot_be_verified(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+
+    def boom(_ref):
+        raise RuntimeError("db KO")
+
+    monkeypatch.setattr(c.db, "is_order_intent_consumed", boom)
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False
+    assert "ammissione_non_verificabile" in res["error"]
+    _no_side_effects(c)

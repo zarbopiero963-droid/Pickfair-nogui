@@ -675,6 +675,30 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (rilievo Grok su #529): Un'ammissione a ordine singolo con il ref di una gamba di un lotto aperto la sovrascrive."
+    },
+    {
+      "id": "forgotten_dutching_leg_released_as_single",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                if not closed_batch and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):",
+      "mutated": "                if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 6 #529, deroga owner): Una gamba Dutching fuori registro (espulsa dalla cache o precedente a un riavvio) viene rilasciata come ordine singolo."
+    },
+    {
+      "id": "historical_leg_identifier_readmitted",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "                    if any(consumed(str(o[\"customer_ref\"])) for o in orders):",
+      "mutated": "                    if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 6 #529, deroga owner): Un identificativo storico (intento consumato nel DB) viene riammesso: tavolo trattenuto per sempre."
     }
   ]
 }

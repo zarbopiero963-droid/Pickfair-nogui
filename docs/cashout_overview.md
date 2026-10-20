@@ -296,7 +296,19 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   l'anti-duplicato disattivato la chiave dell'evento non è sua). Il preflight
   non la trattiene. Un lotto che fallisce prima di pubblicare una gamba è tolto
   dal registro senza rilascio e il controller libera tavolo e chiave una sola
-  volta. Il registro ricorda al più 4096 gambe di lotti chiusi.
+  volta.
+- **Retention del registro dei lotti (ciclo 6 #529)**: il registro delle gambe
+  di lotti chiusi è una cache di *precisione* (riconosce gli esiti
+  contraddittori tardivi), limitata a 4096 gambe; la sicurezza non dipende da
+  lei. Una gamba Dutching (ref `dut-`) che non è nel registro, perché espulsa o
+  perché precedente a un riavvio, non viene mai rilasciata come ordine singolo:
+  tavolo e chiave del lotto li governano settlement e riconciliazione, e un suo
+  AMBIGUOUS marca la riserva incerta. Gli identificativi storici sono rifiutati
+  all'ammissione (`ingresso_gia_eseguito`) leggendo gli intenti consumati
+  persistiti nel DB (`consumed_order_intents`), validi anche dopo il riavvio:
+  lo stesso lotto ripetuto non arriva all'engine e non trattiene tavoli. Verifica
+  del DB in errore => rifiuto (`ammissione_non_verificabile`). Un lotto si
+  registra per il rilascio a livello di lotto qualunque sia il numero di gambe.
 - **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
   `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
   `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
