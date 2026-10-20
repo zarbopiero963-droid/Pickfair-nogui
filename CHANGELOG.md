@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#524 — un ordine forse inviato non diventa mai FAILED senza prova del rifiuto (BLOCKS_LIVE):** con esito
+  ignoto e transizione DB `INFLIGHT→AMBIGUOUS` fallita, il controllo di finalizzazione sollevava
+  `FINALIZE_ON_NON_TERMINAL_DB_STATE` e l'`except` esterno dell'engine marcava l'ordine FAILED, liberando tavolo,
+  chiavi anti-duplicato e fence su un ordine che poteva essere vivo su Betfair. Lo stesso accadeva a qualunque
+  eccezione arrivata dopo l'avvio dell'invio (transizione `SUBMITTED` fallita, crash nella costruzione
+  dell'esito). Ora l'esito resta AMBIGUOUS non terminale (`AMBIGUOUS_NOT_PERSISTED` / `ENGINE_FATAL_AFTER_SEND`,
+  `is_terminal=False`, `lifecycle_stage="degraded"`): nessun rilascio, `QUICK_BET_AMBIGUOUS` (tavolo trattenuto,
+  cashout nell'ambito incerto), riconciliazione accodata; la riga `INFLIGHT` su DB la ritrovano dedupe e
+  riconciliazione al riavvio. Un rifiuto certo resta FAILED. Test RED→GREEN in
+  `tests/acceptance/test_issue524_ambiguous_never_failed.py` (catena reale runtime + engine + sqlite + broker
+  SIM, fault injection DB/timeout/crash, riavvio, multi-tavolo concorrente).
+
 - **#505 ripresa sopra la #512 (PF-505-RECOVERY-INTEGRATION-01, fase D di PF-PR-SEQUENCE-RECOVERY-01):** il
   lavoro della #505 (chiusa temporaneamente, conservato in `archive/pf-505-pre-512` `618884e` e
   `archive/pf-505-cap-reconciliation-prep` `022ee9d`) è integrato su `main` `f8bbbe9`. Restano in vigore la

@@ -971,6 +971,7 @@ class TradingEngine:
         self._copy_best_price_meta(audit, extra_fields)
 
         order_id: Optional[Any] = None
+        send_started = False      # #524: da qui in poi l'ordine puo' essere partito verso l'exchange
 
         if normalization_error is not None:
             self._emit(ctx, audit, "VALIDATION_FAILED",
@@ -1023,10 +1024,24 @@ class TradingEngine:
                 self._emit_critical(ctx, audit, "PERSIST_INFLIGHT",
                                     {"order_id": order_id}, category="persistence")
                 self._publish_bus_event(ctx, "QUICK_BET_ROUTED", order_id=order_id)
+                send_started = True
                 return self._atomic_submit(ctx, audit, order_id, normalized, extra_fields)
 
         except Exception as exc:
             logger.exception("Fatal error in trading engine")
+
+            # #524: dall'avvio dell'invio in poi un errore non prova che l'ordine non sia partito. Mai FAILED:
+            # AMBIGUOUS + riconciliazione (chiavi e tavolo trattenuti), anche se il DB e' in errore.
+            if send_started and order_id is not None and not audit.get("_certain_failure"):
+                try:
+                    return self._resolve_ambiguity(ctx, audit, order_id,
+                                                   ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+                                                   trigger_event="ENGINE_FATAL_AFTER_SEND",
+                                                   trigger_error=str(exc), extra_fields=extra_fields)
+                except Exception:
+                    logger.exception("Risoluzione AMBIGUOUS fallita per order_id=%s", order_id)
+                    return self._build_degraded_ambiguous_result(ctx, audit, order_id, AMBIGUITY_SUBMIT_UNKNOWN,
+                                                                 str(exc), extra_fields)
 
             # [FIX 1] HARD FIX: degraded se DB non aggiornabile
             marked_failed = False
@@ -1385,19 +1400,67 @@ class TradingEngine:
                    {"order_id": order_id, "error": trigger_error,
                     "ambiguity_reason": ambiguity_reason}, category="ambiguity")
 
+        persisted = True
         try:
             self._transition_order(ctx, audit, order_id, STATUS_INFLIGHT, STATUS_AMBIGUOUS,
                                    extra={"ambiguity_reason": ambiguity_reason, "last_error": trigger_error})
         except Exception:
+            persisted = False
             logger.exception("Failed to transition to AMBIGUOUS for order_id=%s", order_id)
 
         # [G] Single enqueue - always called exactly once
         self._enqueue_reconcile(ctx, audit, order_id, ambiguity_reason, extra_fields)
 
-        return self._complete_order_lifecycle(
-            ctx, audit, order_id=order_id,
-            status=STATUS_AMBIGUOUS, ambiguity_reason=ambiguity_reason,
-            extra_fields=extra_fields)
+        # #524: l'ambiguita' non persistita (DB in errore) non passa dal finalize, che sul DB ancora INFLIGHT
+        # solleverebbe e farebbe marcare l'ordine FAILED. Resta AMBIGUOUS: chiavi e tavolo trattenuti, la riga
+        # INFLIGHT su DB la ritrovano dedupe e riconciliazione al riavvio.
+        if not persisted:
+            return self._build_degraded_ambiguous_result(ctx, audit, order_id, ambiguity_reason,
+                                                         trigger_error, extra_fields)
+        try:
+            return self._complete_order_lifecycle(
+                ctx, audit, order_id=order_id,
+                status=STATUS_AMBIGUOUS, ambiguity_reason=ambiguity_reason,
+                extra_fields=extra_fields)
+        except Exception as exc:
+            logger.exception("Finalize AMBIGUOUS fallito per order_id=%s: resta AMBIGUOUS", order_id)
+            return self._build_degraded_ambiguous_result(ctx, audit, order_id, ambiguity_reason,
+                                                         str(exc), extra_fields)
+
+    def _build_degraded_ambiguous_result(self, ctx: _ExecutionContext, audit: Dict[str, Any],
+                                         order_id: Optional[Any], ambiguity_reason: str, error: str,
+                                         extra_fields: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Esito ignoto che il DB non ha registrato come AMBIGUOUS (#524).
+
+        Mai FAILED: l'ordine puo' essere vivo su Betfair. Nessun rilascio di chiavi anti-duplicato, nessun
+        ``QUICK_BET_FAILED`` (il runtime tratterrebbe libero il tavolo): si pubblica ``QUICK_BET_AMBIGUOUS``, che
+        trattiene tavolo e fence fino alla riconciliazione. ``is_terminal=False``: la verita' la decide la
+        riconciliazione con l'exchange.
+        """
+        self._assert_valid_ctx(ctx)
+        self._emit(ctx, audit, "AMBIGUOUS_NOT_PERSISTED",
+                   {"order_id": order_id, "ambiguity_reason": ambiguity_reason, "error": error},
+                   category="ambiguity")
+        try:
+            self._publish_terminal_event(ctx, OUTCOME_AMBIGUOUS, STATUS_AMBIGUOUS, order_id=order_id)
+        except Exception:
+            logger.exception("Publish QUICK_BET_AMBIGUOUS fallito per order_id=%s", order_id)
+        result = self._build_result(
+            ctx, audit,
+            status=STATUS_AMBIGUOUS,
+            outcome=OUTCOME_AMBIGUOUS,
+            order_id=order_id,
+            reason="AMBIGUOUS_NOT_PERSISTED",
+            error=error,
+            ambiguity_reason=ambiguity_reason,
+            response=None,
+            extra_fields=extra_fields,
+            is_terminal=False,
+        )
+        result["lifecycle_stage"] = "degraded"
+        result["finalization_persisted"] = False
+        self._metric_inc("finalization_degraded_total")
+        return result
 
     # ==================================================================
     # SUBMIT EXCEPTION HANDLER
@@ -1425,6 +1488,9 @@ class TradingEngine:
                                            extra_fields=extra_fields)
 
         payload = {"order_id": order_id, "error": str(exc), "error_type": error_type}
+        # #524: rifiuto gia' classificato certo. Se il finalize solleva dopo, l'except esterno resta sul FAILED
+        # degradato invece di renderlo AMBIGUOUS (nessuna incertezza da propagare a cashout e fence).
+        audit["_certain_failure"] = True
         self._emit(ctx, audit, "SUBMIT_FAILED", payload, category="failure")
         marked_failed = self._safe_mark_failed(
             ctx,
