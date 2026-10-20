@@ -300,10 +300,18 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
 - **Retention del registro dei lotti (ciclo 6 #529)**: il registro delle gambe
   di lotti chiusi è una cache di *precisione* (riconosce gli esiti
   contraddittori tardivi), limitata a 4096 gambe; la sicurezza non dipende da
-  lei. Una gamba Dutching (ref `dut-`) che non è nel registro, perché espulsa o
-  perché precedente a un riavvio, non viene mai rilasciata come ordine singolo:
-  tavolo e chiave del lotto li governano settlement e riconciliazione, e un suo
-  AMBIGUOUS marca la riserva incerta. Gli identificativi storici sono rifiutati
+  lei. Una gamba Dutching che non è nel registro, perché espulsa o perché
+  precedente a un riavvio, non viene mai rilasciata come ordine singolo: tavolo
+  e chiave del lotto li governano settlement e riconciliazione. L'origine
+  Dutching è provata dall'ordine persistito (`batch_id` nel payload, scritto
+  solo dal `DutchingController`), non dal prefisso `dut-` del ref: un ref a
+  monte che inizia per `dut-` (bet manuale, segnale, `REQ_QUICK_BET` 1:1) segue
+  il percorso dell'ordine singolo e viene rilasciato all'esito (ciclo 7 #529). DB
+  illeggibile => nessun rilascio singolo. Un AMBIGUOUS, o un esito vivo
+  (SUCCESS/FILLED) di una gamba dimenticata il cui stato è ignoto, marca
+  incerta la riserva sul tavolo del lotto (ricordato o persistito, mai quello
+  dell'evento tardivo, che potrebbe essere stato riassegnato) e, per l'esito
+  vivo, riprende la chiave dell'evento. Gli identificativi storici sono rifiutati
   all'ammissione (`ingresso_gia_eseguito`) leggendo gli intenti consumati
   persistiti nel DB (`consumed_order_intents`), validi anche dopo il riavvio:
   lo stesso lotto ripetuto non arriva all'engine e non trattiene tavoli. Verifica

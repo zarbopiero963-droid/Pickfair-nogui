@@ -3701,6 +3701,24 @@ class RuntimeController:
     #: Prefisso dei customer_ref delle gambe Dutching (`derive_customer_ref("dut", ...)` nel controller).
     _DUTCHING_LEG_REF_PREFIX = "dut-"
 
+    def _persisted_dutching_leg(self, ref: str):
+        """(provata, table_id) per un ref fuori registro: provata solo se l'ordine persistito per quel ref porta
+        un `batch_id` (lo scrive soltanto il DutchingController; l'inoltro REQ_QUICK_BET, il bet manuale e i
+        segnali non lo portano). DB illeggibile => provata, senza tavolo: mai un rilascio singolo (fail-closed)."""
+        db = getattr(self, "db", None)
+        if db is None or not hasattr(db, "_execute"):
+            return True, None
+        try:
+            row = db._execute("SELECT payload_json FROM orders WHERE customer_ref = ? ORDER BY id DESC LIMIT 1",
+                              (ref,), fetchone=True, commit=False)
+            persisted = json.loads(dict(row).get("payload_json") or "{}") if row else {}
+        except Exception:
+            logger.exception("Origine della gamba %s non verificabile: nessun rilascio singolo", ref)
+            return True, None
+        if not isinstance(persisted, dict) or not persisted.get("batch_id"):
+            return False, None
+        return True, persisted.get("table_id")
+
     @staticmethod
     def _batch_leg_downgrade(previous, event_name: str) -> bool:
         """True se `event_name` toglierebbe impropriamente una gamba dalle vive: una gamba abbinata (FILLED)
@@ -3735,41 +3753,41 @@ class RuntimeController:
             batch_id = by_ref.get(ref)
             batch = (getattr(self, "_entry_batches", None) or {}).get(batch_id) if batch_id else None
             if batch is None:
-                closed_batch = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
-                if not closed_batch and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):
-                    # Ciclo 6 #529: gamba Dutching non piu' (o non ancora) nel registro — dimenticata dalla cache
-                    # dei lotti chiusi o precedente a un riavvio. Non si rilascia MAI come ordine singolo: tavolo e
-                    # chiave del lotto li governano settlement e riconciliazione; un esito incerto la marca.
-                    if event_name == "QUICK_BET_AMBIGUOUS":
-                        unknown_key = str((payload or {}).get("event_key") or "")
-                        if unknown_key:
-                            self._mark_uncertain(unknown_key, (payload or {}).get("table_id"))
-                    logger.warning("Evento %s di una gamba Dutching %s fuori registro: nessun rilascio singolo",
-                                   event_name, ref)
-                    return True
-                if not closed_batch:
+                cached = (getattr(self, "_entry_batch_closed", None) or {}).get(ref)
+                if cached:
+                    # Lotto gia' chiuso a livello di lotto: esito della gamba e tavolo del lotto ricordati.
+                    closed_batch, leg_outcome, leg_table = (tuple(cached) + (None, None))[:3]
+                    forgotten = False
+                elif ref.startswith(self._DUTCHING_LEG_REF_PREFIX):
+                    # Cicli 6-7 #529: ref Dutching fuori registro (dimenticato dalla cache o precedente a un
+                    # riavvio). Si assorbe SOLO se l'ordine persistito prova l'origine Dutching (batch_id nel
+                    # payload, scritto solo dal DutchingController): un ref a monte che inizia per "dut-" ma non
+                    # e' una gamba segue il percorso dell'ordine singolo (rilievo del riesame su 6e0e63a).
+                    proven, leg_table = RuntimeController._persisted_dutching_leg(self, ref)
+                    if not proven:
+                        return False
+                    closed_batch, leg_outcome, forgotten = "?", None, True
+                else:
                     return False
-                # Lotto gia' chiuso a livello di lotto (rilasciato o PARZIALE trattenuto): un evento tardivo di
-                # una sua gamba (es. FILLED dopo SUCCESS) non deve ricadere nel rilascio del singolo ordine.
-                closed_batch, leg_outcome = (closed_batch if isinstance(closed_batch, tuple)
-                                             else (closed_batch, None))
-                contradicts = (event_name in self._BATCH_LEG_LIVE
-                               and leg_outcome is not None and leg_outcome not in self._BATCH_LEG_LIVE)
+                # Esito vivo su una gamba chiusa senza esposizione (rilievo Grok), o su una gamba dimenticata il
+                # cui stato e' ignoto (rilievo Sol su 6e0e63a): contraddizione da riconciliare (fail-closed).
+                contradicts = event_name in self._BATCH_LEG_LIVE and (
+                    forgotten or (leg_outcome is not None and leg_outcome not in self._BATCH_LEG_LIVE))
                 if event_name == "QUICK_BET_AMBIGUOUS" or contradicts:
-                    # Esito incerto tardivo, o gamba chiusa senza esposizione che risulta viva (rilievo Grok #529):
-                    # la riserva dell'evento e' marcata incerta (fail-closed) e il caso e' reso visibile.
                     event_key = str((payload or {}).get("event_key") or "")
                     if event_key:
-                        self._mark_uncertain(event_key, (payload or {}).get("table_id"))
+                        # tavolo del lotto (ricordato o persistito), mai quello dell'evento tardivo: potrebbe
+                        # essere stato riassegnato a un altro ingresso (rilievo del riesame su 6e0e63a)
+                        self._mark_uncertain(event_key, leg_table)
                     if contradicts and event_key and getattr(self, "duplication_guard", None) is not None:
                         try:                         # nessun nuovo ingresso sull'evento finche' non si riconcilia
                             self.duplication_guard.acquire(event_key)
                         except Exception:
                             logger.exception("Errore riacquisizione chiave anti-duplicato (lotto chiuso)")
                     if contradicts:
-                        logger.critical("Gamba %s del lotto chiuso %s chiusa come %s ma ora %s: riserva incerta, "
+                        logger.critical("Gamba %s del lotto %s (esito %s) ora %s: riserva incerta, "
                                         "riconciliazione necessaria", ref, closed_batch, leg_outcome, event_name)
-                logger.info("Evento %s tardivo della gamba %s del lotto chiuso %s: nessun rilascio",
+                logger.info("Evento %s tardivo della gamba %s del lotto chiuso %s: nessun rilascio singolo",
                             event_name, ref, closed_batch)
                 return True
             if event_name != "QUICK_BET_AMBIGUOUS" and status == "DUPLICATE_BLOCKED":
@@ -3805,7 +3823,7 @@ class RuntimeController:
                     closed_refs = self._entry_batch_closed = {}
                 for leg in batch["refs"]:
                     by_ref.pop(leg, None)
-                    closed_refs[leg] = (batch_id, outcomes.get(leg))  # eventi tardivi restano del lotto
+                    closed_refs[leg] = (batch_id, outcomes.get(leg), table_id)  # eventi tardivi: del lotto
                 while len(closed_refs) > self._BATCH_CLOSED_REFS_MAX:
                     closed_refs.pop(next(iter(closed_refs)))   # memoria limitata: si scordano i piu' vecchi
                 self._entry_batches.pop(batch_id, None)

@@ -908,29 +908,88 @@ def _record_releases(c, monkeypatch):
     return calls
 
 
-@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FAILED", "QUICK_BET_FILLED"])
-def test_leg_forgotten_past_the_cache_limit_is_never_released_as_a_single_order(tmp_path, monkeypatch, late):
-    # Rilievo Sol #529: oltre il limite la cache espelle le gambe di lotti chiusi ancora esposti; un loro
-    # evento tardivo ricadeva nel rilascio del singolo ordine (tavolo/chiave di un ingresso nuovo).
+def _placed_batch(c, market_id, outcome):
+    """Lotto piazzato davvero (engine + broker SIM, ordini persistiti) e chiuso con l'esito dato per ogni gamba."""
+    before = len(c.bus.payloads("CMD_QUICK_BET"))
+    assert _dutching(c).submit_dutching(_batch(market_id=market_id))["ok"] is True
+    legs = c.bus.payloads("CMD_QUICK_BET")[before:]
+    for leg in legs:
+        _leg_event(c, leg, outcome, status=outcome.rsplit("_", 1)[1])
+    assert legs[0]["batch_id"] not in c.rc._entry_batches
+    return legs
+
+
+def _evict(c, monkeypatch, legs):
     from core.runtime_controller import RuntimeController
 
-    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 3)
+    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 2)
+    _placed_batch(c, "1.811", "QUICK_BET_FAILED")                      # 2 gambe dopo: le prime espulse
+    assert not any(leg["customer_ref"] in c.rc._entry_batch_closed for leg in legs)
+
+
+@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FAILED", "QUICK_BET_FILLED"])
+def test_leg_forgotten_past_the_cache_limit_is_never_released_as_a_single_order(tmp_path, monkeypatch, late):
+    # Rilievo Sol #529: oltre il limite la cache espelle le gambe di lotti chiusi; un loro evento tardivo
+    # ricadeva nel rilascio del singolo ordine (tavolo/chiave di un ingresso nuovo).
     c = _catena(tmp_path)
-    first = _held_batch(c)
-    for leg in first:
-        _leg_event(c, leg, "QUICK_BET_SUCCESS", status="SUCCESS")       # lotto tutto vivo, rilasciato
-    c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
-    for market in ("1.811", "1.812"):                                   # 6 gambe dopo: le prime 3 espulse
-        held, _run = _queueing(c)
-        assert _dutching(c).submit_dutching(_batch(market_id=market))["ok"] is True
-        for leg in held:
-            _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
-        c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
-    assert not any(leg["customer_ref"] in c.rc._entry_batch_closed for leg in first)
+    first = _placed_batch(c, "1.801", "QUICK_BET_SUCCESS")              # lotto tutto vivo, chiuso
+    _evict(c, monkeypatch, first)
 
     calls = _record_releases(c, monkeypatch)
     _leg_event(c, first[0], late, status=late.rsplit("_", 1)[1])
     assert calls == []                                                  # nessun rilascio singolo
+
+
+@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FILLED"])
+def test_live_event_of_a_forgotten_leg_of_a_failed_batch_holds_the_event(tmp_path, monkeypatch, late):
+    # Rilievo Sol su 6e0e63a: lotto chiuso tutto FAILED, dimenticato dalla cache; una gamba risulta poi viva.
+    # Stato ignoto => riserva incerta sul tavolo del LOTTO e chiave dell'evento ripresa (nessun nuovo ingresso).
+    c = _catena(tmp_path)
+    first = _placed_batch(c, "1.801", "QUICK_BET_FAILED")
+    _evict(c, monkeypatch, first)
+    event_key = first[0]["event_key"]
+    assert event_key not in c.rc.duplication_guard._active
+
+    _leg_event(c, {**first[0], "table_id": 99}, late, status=late.rsplit("_", 1)[1])   # tavolo dell'evento stantio
+
+    assert event_key in c.rc.duplication_guard._active
+    assert c.rc._uncertain_tables.get(event_key) == {first[0]["table_id"]}
+
+
+@pytest.mark.parametrize("path", ["manual_bet", "signal"])
+def test_upstream_ref_with_the_dutching_prefix_is_released_like_any_single_order(tmp_path, path):
+    # Riesame su 6e0e63a: un ref a monte "dut-..." (bet manuale, segnale, REQ_QUICK_BET 1:1) non e' una gamba
+    # Dutching e non deve trattenere tavolo e chiave per sempre.
+    c = _catena(tmp_path)
+    if path == "manual_bet":
+        res = _dutching(c).manual_bet(_manual(customer_ref="dut-upstream-ref-1"))
+        assert res["ok"] is True, res
+    else:
+        c.rc._on_signal_received(_signal(customer_ref="dut-upstream-ref-2"))
+    (order,) = c.bus.payloads("CMD_QUICK_BET")
+    assert order["customer_ref"].startswith("dut-")
+    assert len(_busy_tables(c)) == 1
+    c.rc._on_quick_bet_failed({"customer_ref": order["customer_ref"], "event_key": order["event_key"],
+                               "table_id": order["table_id"], "status": "FAILED"})
+    assert _busy_tables(c) == []
+    assert c.rc.duplication_guard._active == {}
+
+
+def test_forgotten_leg_with_an_unreadable_db_is_never_released_as_a_single_order(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    first = _placed_batch(c, "1.801", "QUICK_BET_SUCCESS")
+    _evict(c, monkeypatch, first)
+    real = c.db._execute
+
+    def unreadable(sql, *a, **k):
+        if "FROM orders WHERE customer_ref" in sql:
+            raise RuntimeError("db KO")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(c.db, "_execute", unreadable)
+    calls = _record_releases(c, monkeypatch)
+    _leg_event(c, first[0], "QUICK_BET_FAILED", status="FAILED")
+    assert calls == []
 
 
 def test_leg_event_after_a_restart_never_releases_the_rebuilt_table(tmp_path):

@@ -573,8 +573,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "                if not closed_batch:",
-      "mutated": "                if True:",
+      "original": "                if cached:",
+      "mutated": "                if False:",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -681,8 +681,8 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "                if not closed_batch and ref.startswith(self._DUTCHING_LEG_REF_PREFIX):",
-      "mutated": "                if False:",
+      "original": "                elif ref.startswith(self._DUTCHING_LEG_REF_PREFIX):",
+      "mutated": "                elif False:",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -699,6 +699,30 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (ciclo 6 #529, deroga owner): Un identificativo storico (intento consumato nel DB) viene riammesso: tavolo trattenuto per sempre."
+    },
+    {
+      "id": "upstream_dut_ref_treated_as_dutching_leg",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if not isinstance(persisted, dict) or not persisted.get(\"batch_id\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 7 #529, deroga owner): Un ref a monte che inizia per dut- (bet manuale, segnale) viene assorbito come gamba Dutching: tavolo e chiave trattenuti per sempre."
+    },
+    {
+      "id": "forgotten_leg_live_event_ignored",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "                    forgotten or (leg_outcome is not None and leg_outcome not in self._BATCH_LEG_LIVE))",
+      "mutated": "                    False or (leg_outcome is not None and leg_outcome not in self._BATCH_LEG_LIVE))",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (ciclo 7 #529, deroga owner): Esito vivo di una gamba dimenticata dalla cache (stato ignoto) ignorato: nessuna riserva incerta, nuovi ingressi ammessi."
     }
   ]
 }
