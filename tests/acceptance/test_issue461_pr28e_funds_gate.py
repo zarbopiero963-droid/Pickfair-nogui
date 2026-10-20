@@ -378,3 +378,25 @@ def test_percorso_di_produzione_success_rilascia_e_non_addebita_due_volte(tmp_pa
     c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
                                      received_at="2026-10-08T10:05:00.000000+00:00"))
     assert len(c.bus.payloads("CMD_QUICK_BET")) == 2, _rifiuti(c)
+
+
+def test_settlement_concorrente_durante_la_lettura_non_apre_il_gate(tmp_path):
+    # Rilievo Codex su 9e6dc05: tra la lettura dei fondi (fuori dal lock) e il controllo un settlement in
+    # perdita chiude una posizione e ne rilascia il tavolo, mentre il conto letto conta ancora il suo
+    # impegnato. Il gate confronta solo le riserve pendenti col disponibile, che una perdita non cambia
+    # (saldo ed esposizione scendono insieme): l'impegnato stantio non apre margine.
+    # Disponibile 30; posizione a mercato da 50 (tavolo 2); riserva concorrente non piazzata da 20 (tavolo 3);
+    # nuova entrata 20 => 40 pendenti > 30 => rifiutata (con 9e6dc05 passava: 40 <= 30 + 50).
+    c = _chain(tmp_path, stake=20.0, anti_duplication=True)
+    _riserva_pendente(c, 50.0)
+    c.rc.table_manager.mark_placed(2, "evt-concorrente", at=float("-inf"))
+    _riserva_pendente(c, 20.0, table_id=3)
+
+    def _lettura_con_settlement_concorrente():
+        c.rc.table_manager.force_unlock(2)              # settlement concorrente: tavolo rilasciato
+        return {"available": 30.0, "exposure": 50.0}     # conto letto prima del settlement
+
+    c.rc.betfair_service.get_account_funds = _lettura_con_settlement_concorrente
+    c.rc._on_signal_received(_signal())
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+    assert c.bus.payloads("CMD_QUICK_BET") == []
