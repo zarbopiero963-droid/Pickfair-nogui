@@ -421,18 +421,44 @@ def test_auto_next_success_marca_a_mercato_la_riserva_anche_senza_table_id():
     assert rc.table_manager.pending_exposure(since=_time.monotonic()) == 0.0
 
 
-def test_success_senza_table_id_con_riserva_ambigua_per_evento_non_marca_nulla():
-    # Due tavoli con la stessa event_key (anti-duplicazione disattivata): senza table_id non si sa quale
-    # ordine e' a mercato => nessuna marca (resta tutto addebitato, prudente).
+def test_success_tardivo_senza_table_id_non_marca_un_altra_riserva_dello_stesso_evento():
+    # Rilievo Sol su 3110228: anti-duplicazione disattivata, due tavoli sullo stesso evento (ordini A e B).
+    # A viene rilasciato; un SUCCESS tardivo di A senza table_id NON deve marcare B (ancora pendente):
+    # l'esito si correla all'ordine (customer_ref), non all'unicita' corrente dell'evento.
     from core.table_manager import TableManager
     tm = TableManager(table_count=2)
-    for tid in (1, 2):
-        tm.activate(table_id=tid, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1)
-    assert tm.mark_placed_by_event("e1", at=0.0) is False
-    assert tm.pending_exposure(since=5.0) == 20.0
-    tm.force_unlock(2)
-    assert tm.mark_placed_by_event("e1", at=0.0) is True
+    tm.activate(table_id=1, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1,
+                meta={"customer_ref": "ref-A"})
+    tm.activate(table_id=2, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1,
+                meta={"customer_ref": "ref-B"})
+    tm.force_unlock(1)
+    assert tm.mark_placed_by_ref("ref-A", at=0.0) is False
+    assert tm.pending_exposure(since=5.0) == 10.0                  # B resta pendente
+    assert tm.mark_placed_by_ref("ref-B", at=0.0) is True
     assert tm.pending_exposure(since=5.0) == 0.0
+
+
+def test_esito_tardivo_con_table_id_non_marca_la_nuova_riserva_dello_stesso_tavolo():
+    # Tavolo 1 rilasciato e riattivato per un nuovo ordine (ref-C) sulla stessa event_key: l'esito tardivo del
+    # vecchio ordine (ref-A) con table_id non deve marcarlo.
+    from core.table_manager import TableManager
+    tm = TableManager(table_count=1)
+    tm.activate(table_id=1, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1,
+                meta={"customer_ref": "ref-A"})
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="e1", exposure=10.0, market_id="1.1", selection_id=1,
+                meta={"customer_ref": "ref-C"})
+    assert tm.mark_placed(1, "e1", at=0.0, customer_ref="ref-A") is False
+    assert tm.mark_placed(1, "e1", at=0.0) is False                # esito senza ref su riserva con ref: no
+    assert tm.pending_exposure(since=5.0) == 10.0
+    assert tm.mark_placed(1, "e1", at=0.0, customer_ref="ref-C") is True
+
+
+def test_la_riserva_del_segnale_porta_il_customer_ref_dell_ordine(tmp_path):
+    c = _chain(tmp_path, stake=10.0, anti_duplication=True)
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    assert c.rc.table_manager.get_table(cmd["table_id"]).meta["customer_ref"] == cmd["customer_ref"]
 
 
 @pytest.mark.parametrize("risposta", [{"available": 100.0}, {"exposure": 0.0}, {}],

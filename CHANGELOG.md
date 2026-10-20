@@ -28,8 +28,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   anche con meno fondi sul conto. Regola, sotto il lock d'ammissione: le riserve dei tavoli il cui ordine
   non è confermato a mercato prima dell'inizio della lettura del conto, compresa la nuova entrata, devono
   stare nel disponibile. Il tavolo registra il primo esito a mercato (ACCEPTED/PARTIAL/FILLED/SUCCESS,
-  `TableManager.mark_placed`; senza `table_id`, come nell'auto-next, per `event_key` solo se un unico tavolo
-  porta la riserva; marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
+  `TableManager.mark_placed`, correlato all'ordine tramite il `customer_ref` registrato sulla riserva;
+  senza `table_id`, come nell'auto-next, `mark_placed_by_ref`; un esito tardivo di un ordine rilasciato non
+  marca un'altra riserva; marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
   le riserve non ancora riflesse. Gli ordini già a mercato non contano due volte; l'impegnato del conto non
   copre nulla, perché può essere di posizioni esterne al bot (rilievo Sol su #531). Ordini ricostruiti al
   riavvio (F018) e confermati vivi = già a mercato; esiti incerti restano addebitati. Fondi illeggibili,

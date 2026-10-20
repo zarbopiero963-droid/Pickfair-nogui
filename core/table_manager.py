@@ -283,24 +283,30 @@ class TableManager:
                 total += max(0.0, exp)
             return float(total)
 
-    def mark_placed(self, table_id: int, event_key: str, *, at: float) -> bool:
-        """#461 PR28-e: l'ordine della riserva ``event_key`` sul tavolo e' confermato a mercato (primo ACK,
+    def mark_placed(self, table_id: int, event_key: str, *, at: float, customer_ref: str = "") -> bool:
+        """#461 PR28-e: l'ordine della riserva ``event_key`` sul tavolo e' confermato a mercato (primo esito,
         istante monotonic ``at``). La marca vive in ``meta``, che ogni rilascio/riattivazione azzera: non
-        sopravvive alla riserva. Vale il primo ACK. True se il tavolo porta ancora quella riserva."""
+        sopravvive alla riserva. Vale il primo esito. Se la riserva porta il ``customer_ref`` del suo ordine,
+        l'esito deve portare lo stesso ref (un esito tardivo di un ordine precedente sullo stesso tavolo non
+        marca la nuova riserva). True se marcata."""
         with self._lock:
             table = self._get(int(table_id))
             if not table or not event_key or table.current_event_key != str(event_key):
                 return False
+            reserved_ref = str((table.meta or {}).get("customer_ref") or "")
+            if reserved_ref and reserved_ref != str(customer_ref or ""):
+                return False
             table.meta.setdefault("placed_at", float(at))
             return True
 
-    def mark_placed_by_event(self, event_key: str, *, at: float) -> bool:
-        """#461 PR28-e: come `mark_placed` per un esito senza ``table_id`` (CMD_QUICK_BET dell'auto-next). Si marca
-        solo se UN SOLO tavolo porta la riserva ``event_key``: con piu' tavoli (anti-duplicazione disattivata) non
-        si sa quale ordine e' a mercato e nessuno viene marcato (restano addebitati, prudente)."""
+    def mark_placed_by_ref(self, customer_ref: str, *, at: float) -> bool:
+        """#461 PR28-e: come `mark_placed` per un esito senza ``table_id`` (CMD_QUICK_BET dell'auto-next): si marca
+        il solo tavolo la cui riserva porta questo ``customer_ref``. Nessuna corrispondenza (riserva gia'
+        rilasciata, ordine di un altro tavolo) o piu' di una => nessuna marca (restano addebitate, prudente)."""
         with self._lock:
-            event_key = str(event_key or "")
-            matches = [t for t in self._tables.values() if event_key and t.current_event_key == event_key]
+            ref = str(customer_ref or "")
+            matches = [t for t in self._tables.values()
+                       if ref and t.current_event_key and str((t.meta or {}).get("customer_ref") or "") == ref]
             if len(matches) != 1:
                 return False
             matches[0].meta.setdefault("placed_at", float(at))

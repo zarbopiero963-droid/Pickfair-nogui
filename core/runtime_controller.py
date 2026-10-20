@@ -4281,6 +4281,7 @@ class RuntimeController:
                 "bet_type": payload["bet_type"],
                 "price": payload["price"],
                 "simulation_mode": payload["simulation_mode"],
+                "customer_ref": payload["customer_ref"],          # #461 PR28-e: correlazione esito-riserva
             },
         )
         # B6.2 — best price DIRECT (flag globale default-OFF). Lo snapshot e' un
@@ -4855,7 +4856,8 @@ class RuntimeController:
             else:
                 # #461 PR28-e: ordine vivo sull'exchange prima di qualunque lettura del conto di questo processo
                 # (gia' nel disponibile). Un esito incerto resta invece pendente (addebitato al disponibile).
-                self.table_manager.mark_placed(table_id, c["event_key"], at=float("-inf"))
+                self.table_manager.mark_placed(table_id, c["event_key"], at=float("-inf"),
+                                               customer_ref=str((c.get("meta") or {}).get("customer_ref") or ""))
                 result["rebuilt"].append(c["customer_ref"])
         if current is None and not result["reason"]:
             result.update(ok=False, reason="EXCHANGE_ORDERS_UNAVAILABLE")
@@ -5461,17 +5463,20 @@ class RuntimeController:
         TradingEngine) => il tavolo della riserva e' marcato a mercato da ora: le letture del conto iniziate dopo
         lo riflettono nel disponibile. Mai su AMBIGUOUS. SUCCESS di norma rilascia anche il tavolo; quando il
         payload non porta ``table_id`` (CMD_QUICK_BET dell'auto-next, tavolo da mm_context) il tavolo resta
-        occupato e va marcato per ``event_key`` (solo se un unico tavolo porta quella riserva)."""
+        occupato e va marcato. L'esito si correla all'ORDINE (``customer_ref`` registrato sulla riserva), mai
+        alla sola event_key: un esito tardivo di un ordine rilasciato non marca un'altra riserva."""
         payload = payload or {}
         table_id = payload.get("table_id")
         event_key = str(payload.get("event_key") or "")
+        customer_ref = str(payload.get("customer_ref") or "")
+        if table_id is None:
+            if customer_ref:
+                self.table_manager.mark_placed_by_ref(customer_ref, at=time.monotonic())
+            return
         if not event_key:
             return
-        if table_id is None:
-            self.table_manager.mark_placed_by_event(event_key, at=time.monotonic())
-            return
         try:
-            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic())
+            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic(), customer_ref=customer_ref)
         except (TypeError, ValueError):
             logger.warning("Ordine a mercato con table_id non valido %r: riserva resta pendente", table_id)
 
@@ -6677,6 +6682,7 @@ class RuntimeController:
                     "price": float(submit_payload.get("price") or 0.0),
                     "simulation_mode": bool(submit_payload.get("simulation_mode", self.simulation_mode)),
                     "auto_trade_source": submit_payload.get("auto_trade_source") or "",
+                    "customer_ref": str(submit_payload.get("customer_ref") or ""),  # PR28-e: esito-riserva
                 },
             )
 

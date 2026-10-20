@@ -916,7 +916,7 @@
       "module": "core.runtime_controller",
       "area": "funds",
       "file": "core/runtime_controller.py",
-      "original": "            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic())",
+      "original": "            self.table_manager.mark_placed(int(table_id), event_key, at=time.monotonic(), customer_ref=customer_ref)",
       "mutated": "            pass",
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
@@ -948,28 +948,40 @@
       "rationale": "#461 PR28-e (rilievo Sol #531): un ACK arrivato dopo l'inizio della lettura viene creduto gia' nel disponibile."
     },
     {
-      "id": "funds_gate_success_by_event_not_marked",
+      "id": "funds_gate_success_by_ref_not_marked",
       "module": "core.runtime_controller",
       "area": "funds",
       "file": "core/runtime_controller.py",
-      "original": "            self.table_manager.mark_placed_by_event(event_key, at=time.monotonic())",
-      "mutated": "            pass",
+      "original": "                self.table_manager.mark_placed_by_ref(customer_ref, at=time.monotonic())",
+      "mutated": "                pass",
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "rationale": "#461 PR28-e (rilievo Codex #531): il SUCCESS dell'auto-next (senza table_id) non marca la riserva: l'ordine gia' a mercato resta addebitato."
+      "rationale": "#461 PR28-e (rilievo Codex #531): il SUCCESS dell'auto-next (senza table_id) non marca la riserva del suo ordine: l'ordine gia' a mercato resta addebitato."
     },
     {
-      "id": "funds_gate_ambiguous_event_marked",
+      "id": "funds_gate_ref_correlation_ignored",
       "module": "core.table_manager",
       "area": "funds",
       "file": "core/table_manager.py",
-      "original": "            if len(matches) != 1:",
-      "mutated": "            if not matches:",
+      "original": "                       if ref and t.current_event_key and str((t.meta or {}).get(\"customer_ref\") or \"\") == ref]",
+      "mutated": "                       if ref and t.current_event_key]",
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "rationale": "#461 PR28-e: con piu' tavoli sulla stessa event_key un SUCCESS senza table_id marca a mercato una riserva forse ancora pendente."
+      "rationale": "#461 PR28-e (rilievo Sol #531): un SUCCESS tardivo senza table_id marca la riserva di un altro ordine (ancora pendente)."
+    },
+    {
+      "id": "funds_gate_stale_outcome_marks_new_reservation",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "            if reserved_ref and reserved_ref != str(customer_ref or \"\"):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (rilievo Sol #531): l'esito tardivo di un ordine precedente sullo stesso tavolo marca la nuova riserva."
     }
   ]
 }
