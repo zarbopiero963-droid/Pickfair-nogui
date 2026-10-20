@@ -42,22 +42,69 @@ fallisce se uno degli altri moduli sparisce (rename o cancellazione), così lo
 skip non diventa un verde silenzioso; e fallisce se uno dei tre assenti
 compare, perché da quel momento la sua lane deve girare davvero.
 
-## Limite noto: `mutation-guardrails` non è un mutation test
+## `mutation-guardrails`: mutation testing reale sul sorgente
 
-`scripts/run_mutation_guardrails.py` legge le 120 mutazioni di
-`guardrails/mutations/*.json`, per ciascuna scrive un blocco `_mutation_meta`
-nel JSON, imposta `PICKFAIR_MUTATION_*` e rilancia l'intera suite. Nessun file
-del prodotto o dei test legge quei valori: il codice non viene mutato. Ogni
-mutazione lascia quindi la suite verde e risulta «sopravvissuta», il punteggio
-sarebbe 0% contro una soglia dell'80%, e 120 esecuzioni della suite completa
-non stanno nei 45 minuti del job, che viene interrotto (`cancelled`).
+**Il difetto (fino a `adcf208`).** Il vecchio `scripts/run_mutation_guardrails.py`
+leggeva le 120 voci di `guardrails/mutations/*.json`. Per ciascuna scriveva un
+blocco `_mutation_meta` nel JSON, impostava `PICKFAIR_MUTATION_*` e rilanciava
+l'intera suite. Nessun file del prodotto o dei test leggeva quei valori, quindi
+il codice non veniva mai mutato. Solo 19 bersagli su 120 corrispondevano a
+funzioni esistenti. Ogni voce lasciava la suite verde e risultava
+«sopravvissuta», con punteggio 0% contro una soglia dell'80%. Inoltre 120 suite
+complete non stavano nei 45 minuti del job, che veniva interrotto
+(`cancelled`): nei run 39386046315, 39386046149, 39387530346 e 39387530343
+sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
+misurava nulla.
 
-È rosso per costruzione, non un falso verde, ma non è una misura attendibile.
-Finché l'owner non decide come trattarlo (vedi #525), `ci-master-gate`, che lo
-chiama senza condizioni, resta non verde anche su un head sano;
-`ci-dynamic-intelligent` resta non verde solo quando il diff tocca i path che
-attivano la lane (ad esempio `tests/` o `core/`), mentre un diff di sola
-documentazione o di soli workflow può chiudersi verde.
+**Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
+31 voci, ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+test mirati che devono accorgersene. Le regole, verificate da
+`tests/scripts/test_run_mutation_guardrails_reale.py`:
+
+- ogni mutazione gira in una copia isolata dei file tracciati: il repository non
+  viene mai toccato, e il file mutato viene ripristinato e ricontrollato con
+  sha256 prima della mutazione successiva;
+- la riga originale deve comparire esattamente una volta, altrimenti l'esito è
+  `NOT_APPLICABLE`: se il codice cambia, il catalogo non può smettere in
+  silenzio di colpirlo;
+- se il sorgente mutato non compila, l'esito è `INVALID` e non conta come
+  mutazione uccisa;
+- i test mirati girano prima sul codice originale: se sono già rossi, l'esito è
+  `INCONCLUSIVE`;
+- pytest con rc 1 dà `KILLED`, rc 0 dà `SURVIVED`; qualunque altro rc
+  (collezione fallita, nessun test, interruzione) o il timeout danno
+  `INCONCLUSIVE`;
+- le mutazioni equivalenti si dichiarano nel catalogo con la motivazione e non
+  entrano nel punteggio.
+
+Il punteggio è `KILLED / (KILLED + SURVIVED)`. Il gate fallisce (exit 1) nei
+casi seguenti:
+- nessuna mutazione valutabile;
+- punteggio sotto `--fail-under 80`, soglia invariata;
+- almeno un esito `INCONCLUSIVE`, `NOT_APPLICABLE` o `INVALID`;
+- un'area di `required_areas` senza nessuna mutazione valutabile.
+
+Senza mutazioni selezionate esce con 2. Le aree obbligatorie sono: `side`,
+`lay_liability`, `exposure`, `dedupe`, `ambiguous`, `recovery`,
+`reconciliation`, `cashout`, `funds`, `money_management`.
+
+**Risultati.**
+- Primo run: 24 mutazioni uccise su 31, punteggio 77,42%, gate FAIL.
+- Sette sopravvissute senza nessun test che se ne accorgesse:
+  - un `TimeoutError` non classificato come esito incerto;
+  - un errore `ERROR_AMBIGUOUS` del client ignorato;
+  - righe INFLIGHT non ricaricate dal DB al riavvio;
+  - chiavi in volo non ripopolate nel motore;
+  - FAILED/REJECTED dell'exchange mappato a UNKNOWN;
+  - lato diverso da BACK/LAY accettato dall'order manager;
+  - cap di esposizione che ignora l'esposizione già aperta.
+- I test che le uccidono stanno in `tests/mutation/test_mutation_killers_525.py`.
+- Run successivo: 31 su 31 uccise, punteggio 100%, gate PASS, in circa 40 s in
+  locale contro gli oltre 45 minuti di prima.
+
+I file `guardrails/mutations/*.json` restano specifiche per modulo, validate da
+`scripts/guardrail_runner.py` e `scripts/validate_guardrails.py`, ma non sono
+più la fonte delle mutazioni eseguite.
 
 ## Artifact `ultra-check-cache`
 
@@ -67,8 +114,7 @@ il secondo caricamento con lo stesso nome. Oggi non succede: in tutti i job
 `ultra-check` dei run qui sotto lo step scrive «No files were found with the
 provided path: .pytest_cache. No artifacts will be uploaded», e l'unico
 artifact del run è `changed-modules`. Il conflitto è latente: diventerebbe
-reale solo se la suite tornasse a scrivere `.pytest_cache`. Il mutation
-testing reale delle PR resta quello eseguito dall'agente sul codice mutato.
+reale solo se la suite tornasse a scrivere `.pytest_cache`.
 
 ## Prove su run reali
 
