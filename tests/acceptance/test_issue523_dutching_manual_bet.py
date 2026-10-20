@@ -188,9 +188,8 @@ def test_queued_legs_are_never_placed_after_a_cashout_started_in_their_scope(tmp
     assert c.broker.state.orders == {}
     failed = c.bus.payloads("QUICK_BET_FAILED")
     assert [p["status"] for p in failed] == ["DENIED", "DENIED"]
-    # nessuna gamba viva: tavolo e chiave del lotto liberati
-    assert _busy_tables(c) == []
-    assert c.rc.duplication_guard._active == {}
+    # #529 scelta owner F: nessun rilascio del lotto da eventi, anche con gambe negate (fail-closed, PR30)
+    assert len(_busy_tables(c)) == 1
 
 
 def test_queued_manual_bet_is_never_placed_after_a_cashout_started(tmp_path):
@@ -244,145 +243,12 @@ def test_failed_manual_bet_releases_its_table(tmp_path):
     assert _busy_tables(c) == []
 
 
-# ============================================================ 4. lotto parziale (PF-EXEC-02)
+# ============================================================ 4. esito del lotto: trattenuto (#529, scelta owner F)
 def _held_batch(c):
     held, _run = _queueing(c)
     assert _dutching(c).submit_dutching(_batch(sides=("BACK", "BACK", "BACK"), total_stake=15.0))["ok"] is True
     assert len(held) == 3
     return held
-
-
-def test_one_failed_leg_does_not_release_the_batch_while_other_legs_are_open(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")
-    (table,) = _busy_tables(c)
-    assert table.current_exposure > 0
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-
-
-def test_partial_batch_is_signalled_and_keeps_its_table_and_key(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
-
-    (partial,) = c.bus.payloads("DUTCHING_BATCH_PARTIAL")
-    assert partial["batch_id"] == legs[0]["batch_id"]
-    assert sorted(partial["live_legs"]) == sorted([legs[0]["customer_ref"], legs[2]["customer_ref"]])
-    assert partial["failed_legs"] == [legs[1]["customer_ref"]]
-    assert len(_busy_tables(c)) == 1                               # nuove esposizioni sospese
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-
-
-@pytest.mark.parametrize("late", ["QUICK_BET_FILLED", "QUICK_BET_SUCCESS", "QUICK_BET_FAILED",
-                                  "QUICK_BET_AMBIGUOUS"])
-def test_late_event_of_a_leg_after_a_partial_batch_does_not_release_it(tmp_path, late):
-    # Rilievo GPT-6.1 Sol su #529: SUCCESS(A) -> FAILED(B) -> ... chiude il lotto PARZIALE; un evento successivo
-    # della gamba viva A non deve ricadere nel rilascio ordinario di tavolo e chiave.
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
-
-    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
-
-    (table,) = _busy_tables(c)
-    assert table.current_exposure > 0
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
-
-
-def test_late_leg_event_racing_with_the_batch_closing_does_not_release_it(tmp_path):
-    # Rilievo Grok 4.7 su #529: l'indice delle gambe era letto fuori dal lock. Un evento tardivo di A letto prima
-    # che il lotto si chiuda (PARZIALE) e servito dopo non trovava piu' il lotto e rilasciava come ordine singolo.
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-
-    lock = c.rc._risk_admission_lock
-    with lock:                                   # RLock: il thread principale chiude il lotto mentre T aspetta
-        late = threading.Thread(target=_leg_event, args=(c, legs[0], "QUICK_BET_FILLED"),
-                                kwargs={"status": "FILLED"})
-        late.start()
-        time.sleep(0.3)                          # T e' fermo sul lock
-        _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
-    late.join(5)
-    assert not late.is_alive()
-
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
-    (table,) = _busy_tables(c)
-    assert table.current_exposure > 0
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-
-
-def test_late_success_after_an_all_filled_batch_does_not_release_its_table(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_FILLED", status="FILLED")
-    assert len(_busy_tables(c)) == 1                               # FILLED: tavolo fino al settlement
-
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-
-    assert len(_busy_tables(c)) == 1
-
-
-def test_ambiguous_leg_is_not_cleared_by_another_legs_certain_outcome(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_AMBIGUOUS", status="AMBIGUOUS")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[2], "QUICK_BET_FAILED", status="FAILED")
-
-    assert len(_busy_tables(c)) == 1
-    assert legs[0]["event_key"] in c.rc._uncertain_reservations_map()
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-    assert c.bus.payloads("DUTCHING_BATCH_PARTIAL") == []
-
-
-def test_ambiguous_leg_resolved_later_completes_the_batch(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_AMBIGUOUS", status="AMBIGUOUS")
-    for leg in legs[1:]:
-        _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")       # esito certo dalla riconciliazione
-    assert _busy_tables(c) == []
-    assert c.rc.duplication_guard._active == {}
-    assert c.rc._uncertain_reservations_map() == {}
-
-
-def test_all_legs_failed_releases_the_batch(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
-    assert _busy_tables(c) == []
-    assert c.rc.duplication_guard._active == {}
-    assert c.bus.payloads("DUTCHING_BATCH_PARTIAL") == []
-
-
-def test_all_legs_filled_keeps_the_position_open(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_FILLED", status="FILLED")
-    (table,) = _busy_tables(c)                                   # posizione abbinata: il tavolo resta
-    assert table.current_exposure > 0
-    assert c.rc.duplication_guard._active == {}                  # come un singolo FILLED: chiave rilasciata
-
-
-def test_duplicate_blocked_outcome_is_not_a_leg_outcome(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_FAILED", status="DUPLICATE_BLOCKED")
-    assert len(_busy_tables(c)) == 1
 
 
 # ============================================================ duplicati, fondi, broker SIM reale
@@ -439,30 +305,6 @@ def test_runtime_without_the_barrier_api_rejects_the_batch(tmp_path):
     res = ctl.submit_dutching(_batch())
     assert res["ok"] is False and "barriera_cashout_non_disponibile" in res["error"]
     assert c.bus.payloads("CMD_QUICK_BET") == []
-
-
-def test_publish_failure_mid_batch_keeps_the_batch_until_the_published_legs_close(tmp_path):
-    c = _catena(tmp_path)
-    original = c.bus.publish
-    sent = []
-
-    def flaky(topic, payload=None):
-        if topic == "CMD_QUICK_BET":
-            if sent:
-                raise RuntimeError("bus giu' dopo la prima gamba")
-            sent.append(payload)
-            c.bus.events.append((topic, dict(payload)))
-            return None
-        return original(topic, payload)
-
-    c.bus.publish = flaky
-    res = _dutching(c).submit_dutching(_batch())
-    assert res["ok"] is False and res["published_count"] == 1
-    assert len(_busy_tables(c)) == 1                           # la gamba pubblicata puo' essere viva
-    c.bus.publish = original
-    _leg_event(c, sent[0], "QUICK_BET_FAILED", status="FAILED")  # unica gamba partita: chiusa
-    assert _busy_tables(c) == []                               # la gamba mai pubblicata e' gia' contata chiusa
-    assert c.rc.duplication_guard._active == {}
 
 
 def test_lost_broker_response_on_one_leg_keeps_the_batch_uncertain(tmp_path):
@@ -587,34 +429,6 @@ def test_restart_with_legs_live_and_one_uncertain_keeps_every_leg_held(tmp_path)
 
 
 # ============================================================ concorrenza
-def test_leg_outcomes_from_concurrent_threads_settle_the_batch_once(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    start = threading.Barrier(len(legs))
-    errors = []
-
-    def deliver(leg, name, status):
-        try:
-            start.wait(timeout=5)
-            _leg_event(c, leg, name, status=status)
-        except Exception as exc:                        # pragma: no cover - fallimento del test
-            errors.append(exc)
-
-    threads = [threading.Thread(target=deliver, args=(legs[0], "QUICK_BET_SUCCESS", "SUCCESS")),
-               threading.Thread(target=deliver, args=(legs[1], "QUICK_BET_FAILED", "FAILED")),
-               threading.Thread(target=deliver, args=(legs[2], "QUICK_BET_SUCCESS", "SUCCESS"))]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(timeout=10)
-    assert errors == []
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1      # un solo esito di lotto
-    assert len(_busy_tables(c)) == 1
-    # rilievo Codex #529: il lotto PARZIALE resta nel registro (aggiornabile) finche' ha gambe vive
-    (batch,) = c.rc._entry_batches.values()
-    assert batch["partial"] is True
-
-
 def test_same_batch_from_two_threads_is_sent_once(tmp_path):
     c = _catena(tmp_path)
     ctl = _dutching(c)
@@ -708,16 +522,6 @@ def test_dutching_table_failure_releases_the_dedupe_key(tmp_path, monkeypatch):
     assert _dutching(c).submit_dutching(_batch())["ok"] is True
 
 
-def test_admission_of_an_already_active_batch_id_is_rejected(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    copies = [{**leg, "customer_ref": leg["customer_ref"] + "-bis", "table_id": 77} for leg in legs]
-    assert c.rc.admit_controller_entries(copies, batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
-    assert c.rc.admit_controller_entries(legs, batch_id="altro") == "lotto_gia_attivo"
-    batch = c.rc._entry_batches[legs[0]["batch_id"]]
-    assert batch["table_id"] == legs[0]["table_id"]                  # il primo lotto non e' sovrascritto
-
-
 @pytest.mark.parametrize("side,alias", [("BACK", "LAY"), ("LAY", "BACK")])
 def test_dutching_selection_with_conflicting_side_aliases_is_rejected(tmp_path, side, alias):
     c = _catena(tmp_path)
@@ -740,49 +544,6 @@ def test_dutching_selection_side_from_alias_alone_is_accepted(tmp_path):
 
 
 # ============================================================ rilievi Codex su #529 (ace631a)
-def _partial(c):
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[2], "QUICK_BET_SUCCESS", status="SUCCESS")
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
-    return legs
-
-
-def test_partial_batch_is_released_once_every_live_leg_is_cancelled(tmp_path):
-    c = _catena(tmp_path)
-    legs = _partial(c)
-    _leg_event(c, legs[0], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
-    assert len(_busy_tables(c)) == 1                               # una gamba ancora viva
-    _leg_event(c, legs[2], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
-    assert _busy_tables(c) == []
-    assert c.rc.duplication_guard._active == {}
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1      # nessun nuovo segnale
-
-
-@pytest.mark.parametrize("late", ["QUICK_BET_ROLLBACK_DONE", "QUICK_BET_FAILED", "QUICK_BET_SUCCESS"])
-def test_a_matched_leg_of_a_partial_batch_is_never_downgraded(tmp_path, late):
-    c = _catena(tmp_path)
-    legs = _partial(c)
-    _leg_event(c, legs[0], "QUICK_BET_FILLED", status="FILLED")
-    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
-    _leg_event(c, legs[2], "QUICK_BET_ROLLBACK_DONE", status="ROLLBACK_DONE")
-    (table,) = _busy_tables(c)                                     # la gamba abbinata resta esposta
-    assert table.current_exposure > 0
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-
-
-def test_a_contradictory_failed_after_success_does_not_close_a_leg(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    _leg_event(c, legs[0], "QUICK_BET_SUCCESS", status="SUCCESS")
-    _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[1], "QUICK_BET_FAILED", status="FAILED")
-    _leg_event(c, legs[2], "QUICK_BET_FAILED", status="FAILED")
-    assert len(_busy_tables(c)) == 1                               # A piazzata: lotto PARZIALE, non rilasciato
-    assert len(c.bus.payloads("DUTCHING_BATCH_PARTIAL")) == 1
-
-
 def test_rejected_batch_never_releases_a_key_it_did_not_acquire(tmp_path):
     # anti-duplicato disattivato: la chiave dell'evento appartiene a un'altra posizione e non va rilasciata.
     c = _catena(tmp_path, anti_duplication_enabled=False)
@@ -831,7 +592,7 @@ def test_batch_failing_before_any_publish_releases_table_and_key_once(tmp_path, 
     assert res["ok"] is False
     assert len(releases) == 1 and len(unlocks) <= 1               # una sola volta (prima: runtime + controller)
     _no_side_effects(c)
-    assert getattr(c.rc, "_entry_batches", {}) == {}
+    assert getattr(c.rc, "_held_batch_legs", {}) == {}                 # lotto ritirato: fuori dal registro
 
 
 def test_preflight_does_not_keep_the_dedupe_key(tmp_path):
@@ -842,48 +603,7 @@ def test_preflight_does_not_keep_the_dedupe_key(tmp_path):
     assert _dutching(c).submit_dutching(_batch())["ok"] is True
 
 
-def test_closed_batch_memory_is_bounded(tmp_path, monkeypatch):
-    from core.runtime_controller import RuntimeController
-
-    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 4)
-    c = _catena(tmp_path)
-    for market in ("1.801", "1.802", "1.803"):
-        held, _run = _queueing(c)
-        assert _dutching(c).submit_dutching(_batch(market_id=market))["ok"] is True
-        for leg in held:
-            _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
-        c.bus.publish = c.bus.__class__.publish.__get__(c.bus)
-    assert len(c.rc._entry_batch_closed) <= 4
-
-
 # ============================================================ rilievi Grok su #529
-@pytest.mark.parametrize("late", ["QUICK_BET_FILLED", "QUICK_BET_SUCCESS"])
-def test_live_event_for_a_leg_of_a_batch_closed_without_exposure_holds_the_event(tmp_path, late):
-    # Lotto rilasciato (tutte le gambe FAILED); poi una gamba risulta viva: esito contraddittorio => riserva
-    # incerta e chiave dell'evento ripresa (nessun nuovo ingresso finche' la riconciliazione non chiarisce).
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_FAILED", status="FAILED")
-    assert _busy_tables(c) == [] and c.rc.duplication_guard._active == {}
-
-    _leg_event(c, legs[0], late, status=late.rsplit("_", 1)[1])
-
-    assert legs[0]["event_key"] in c.rc.duplication_guard._active
-    assert legs[0]["event_key"] in c.rc._uncertain_reservations_map()
-
-
-def test_late_filled_after_an_all_live_batch_is_not_a_contradiction(tmp_path):
-    c = _catena(tmp_path)
-    legs = _held_batch(c)
-    for leg in legs:
-        _leg_event(c, leg, "QUICK_BET_SUCCESS", status="SUCCESS")
-    assert c.rc.duplication_guard._active == {}
-    _leg_event(c, legs[0], "QUICK_BET_FILLED", status="FILLED")
-    assert c.rc.duplication_guard._active == {}
-    assert legs[0]["event_key"] not in c.rc._uncertain_reservations_map()
-
-
 def test_single_order_admission_cannot_take_over_an_active_batch_leg(tmp_path):
     c = _catena(tmp_path)
     legs = _held_batch(c)
@@ -908,54 +628,6 @@ def _record_releases(c, monkeypatch):
     return calls
 
 
-def _placed_batch(c, market_id, outcome):
-    """Lotto piazzato davvero (engine + broker SIM, ordini persistiti) e chiuso con l'esito dato per ogni gamba."""
-    before = len(c.bus.payloads("CMD_QUICK_BET"))
-    assert _dutching(c).submit_dutching(_batch(market_id=market_id))["ok"] is True
-    legs = c.bus.payloads("CMD_QUICK_BET")[before:]
-    for leg in legs:
-        _leg_event(c, leg, outcome, status=outcome.rsplit("_", 1)[1])
-    assert legs[0]["batch_id"] not in c.rc._entry_batches
-    return legs
-
-
-def _evict(c, monkeypatch, legs):
-    from core.runtime_controller import RuntimeController
-
-    monkeypatch.setattr(RuntimeController, "_BATCH_CLOSED_REFS_MAX", 2)
-    _placed_batch(c, "1.811", "QUICK_BET_FAILED")                      # 2 gambe dopo: le prime espulse
-    assert not any(leg["customer_ref"] in c.rc._entry_batch_closed for leg in legs)
-
-
-@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FAILED", "QUICK_BET_FILLED"])
-def test_leg_forgotten_past_the_cache_limit_is_never_released_as_a_single_order(tmp_path, monkeypatch, late):
-    # Rilievo Sol #529: oltre il limite la cache espelle le gambe di lotti chiusi; un loro evento tardivo
-    # ricadeva nel rilascio del singolo ordine (tavolo/chiave di un ingresso nuovo).
-    c = _catena(tmp_path)
-    first = _placed_batch(c, "1.801", "QUICK_BET_SUCCESS")              # lotto tutto vivo, chiuso
-    _evict(c, monkeypatch, first)
-
-    calls = _record_releases(c, monkeypatch)
-    _leg_event(c, first[0], late, status=late.rsplit("_", 1)[1])
-    assert calls == []                                                  # nessun rilascio singolo
-
-
-@pytest.mark.parametrize("late", ["QUICK_BET_SUCCESS", "QUICK_BET_FILLED"])
-def test_live_event_of_a_forgotten_leg_of_a_failed_batch_holds_the_event(tmp_path, monkeypatch, late):
-    # Rilievo Sol su 6e0e63a: lotto chiuso tutto FAILED, dimenticato dalla cache; una gamba risulta poi viva.
-    # Stato ignoto => riserva incerta sul tavolo del LOTTO e chiave dell'evento ripresa (nessun nuovo ingresso).
-    c = _catena(tmp_path)
-    first = _placed_batch(c, "1.801", "QUICK_BET_FAILED")
-    _evict(c, monkeypatch, first)
-    event_key = first[0]["event_key"]
-    assert event_key not in c.rc.duplication_guard._active
-
-    _leg_event(c, {**first[0], "table_id": 99}, late, status=late.rsplit("_", 1)[1])   # tavolo dell'evento stantio
-
-    assert event_key in c.rc.duplication_guard._active
-    assert c.rc._uncertain_tables.get(event_key) == {first[0]["table_id"]}
-
-
 @pytest.mark.parametrize("path", ["manual_bet", "signal"])
 def test_upstream_ref_with_the_dutching_prefix_is_released_like_any_single_order(tmp_path, path):
     # Riesame su 6e0e63a: un ref a monte "dut-..." (bet manuale, segnale, REQ_QUICK_BET 1:1) non e' una gamba
@@ -973,23 +645,6 @@ def test_upstream_ref_with_the_dutching_prefix_is_released_like_any_single_order
                                "table_id": order["table_id"], "status": "FAILED"})
     assert _busy_tables(c) == []
     assert c.rc.duplication_guard._active == {}
-
-
-def test_forgotten_leg_with_an_unreadable_db_is_never_released_as_a_single_order(tmp_path, monkeypatch):
-    c = _catena(tmp_path)
-    first = _placed_batch(c, "1.801", "QUICK_BET_SUCCESS")
-    _evict(c, monkeypatch, first)
-    real = c.db._execute
-
-    def unreadable(sql, *a, **k):
-        if "FROM orders WHERE customer_ref" in sql:
-            raise RuntimeError("db KO")
-        return real(sql, *a, **k)
-
-    monkeypatch.setattr(c.db, "_execute", unreadable)
-    calls = _record_releases(c, monkeypatch)
-    _leg_event(c, first[0], "QUICK_BET_FAILED", status="FAILED")
-    assert calls == []
 
 
 def test_leg_event_after_a_restart_never_releases_the_rebuilt_table(tmp_path):
@@ -1032,15 +687,14 @@ def test_historical_batch_identifiers_are_rejected_at_admission_even_after_a_res
     c = _catena(tmp_path, anti_duplication_enabled=False)
     assert _dutching(c).submit_dutching(_batch())["ok"] is True          # gambe piazzate sul broker SIM
     legs = c.bus.payloads("CMD_QUICK_BET")
-    for leg in legs:                                                     # lotto chiuso: identificativi storici
+    for leg in legs:
         _leg_event(c, leg, "QUICK_BET_FILLED", status="FILLED")
-    assert legs[0]["batch_id"] not in c.rc._entry_batches
     tables_before = [(t.table_id, t.current_exposure) for t in _busy_tables(c)]
     keys_before = dict(c.rc.duplication_guard._active)
 
     again = _dutching(c).submit_dutching(_batch())                       # stesso lotto: stessi ref storici
     assert again["ok"] is False
-    assert "ingresso_gia_eseguito" in again["error"]
+    assert "lotto_gia_attivo" in again["error"] or "ingresso_gia_eseguito" in again["error"]
     # nessun tavolo nuovo trattenuto per sempre, chiavi come prima, nessun ordine in piu'
     assert [(t.table_id, t.current_exposure) for t in _busy_tables(c)] == tables_before
     assert dict(c.rc.duplication_guard._active) == keys_before
@@ -1062,3 +716,145 @@ def test_admission_is_rejected_when_consumed_intents_cannot_be_verified(tmp_path
     assert res["ok"] is False
     assert "ammissione_non_verificabile" in res["error"]
     _no_side_effects(c)
+
+
+# ============================================================ #529 scelta owner F: lotto trattenuto, mai rilasciato da eventi
+TERMINAL = ["QUICK_BET_SUCCESS", "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_ROLLBACK_DONE",
+            "QUICK_BET_AMBIGUOUS"]
+
+
+def _status(event_name):
+    return event_name.rsplit("_", 1)[1]
+
+
+@pytest.mark.parametrize("event_name", TERMINAL)
+def test_no_lifecycle_event_of_a_leg_releases_the_batch(tmp_path, event_name):
+    # Su main il primo FAILED/SUCCESS di una gamba liberava tavolo e chiave dell'intero lotto.
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    _leg_event(c, legs[0], event_name, status=_status(event_name))
+    (table,) = _busy_tables(c)
+    assert table.current_exposure > 0
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+
+
+@pytest.mark.parametrize("event_name", TERMINAL)
+def test_every_leg_with_the_same_outcome_still_does_not_release_the_batch(tmp_path, event_name):
+    # Anche tutte FAILED: lo stato terminale del lotto non e' provato dagli eventi (PF-EXEC-02 -> PR30).
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    for leg in legs:
+        _leg_event(c, leg, event_name, status=_status(event_name))
+    assert len(_busy_tables(c)) == 1
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+
+
+@pytest.mark.parametrize("sequence", [
+    ["SUCCESS", "FAILED", "SUCCESS", "SUCCESS:1"],          # Codex r4325463093: SUCCESS tardivo su gamba FAILED
+    ["FILLED", "FAILED", "FAILED"],                          # Codex r4325463111: parziale con gamba abbinata
+    ["FAILED", "FAILED", "FAILED", "AMBIGUOUS:0"],           # Codex r4325463120: AMBIGUOUS tardivo
+    ["SUCCESS", "SUCCESS", "SUCCESS", "FAILED:0", "ROLLBACK_DONE:1"],
+])
+def test_mixed_late_and_contradictory_outcomes_keep_the_batch_held(tmp_path, sequence):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    for idx, step in enumerate(sequence):
+        status, _, which = step.partition(":")
+        leg = legs[int(which)] if which else legs[idx]
+        _leg_event(c, leg, f"QUICK_BET_{status}", status=status)
+    assert len(_busy_tables(c)) == 1
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+    assert c.bus.payloads("DUTCHING_BATCH_PARTIAL") == []                # nessun esito di lotto dichiarato
+
+
+def test_ambiguous_leg_marks_the_reservation_uncertain_on_the_batch_table(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    _leg_event(c, {**legs[1], "table_id": 99}, "QUICK_BET_AMBIGUOUS", status="AMBIGUOUS")
+    assert c.rc._uncertain_tables.get(legs[1]["event_key"]) == {legs[1]["table_id"]}
+
+
+def test_publish_failure_mid_batch_keeps_the_whole_batch_held(tmp_path):
+    c = _catena(tmp_path)
+    original = c.bus.publish
+    sent = []
+
+    def flaky(topic, payload=None):
+        if topic == "CMD_QUICK_BET":
+            if sent:
+                raise RuntimeError("bus giu' dopo la prima gamba")
+            sent.append(payload)
+            c.bus.events.append((topic, dict(payload)))
+            return None
+        return original(topic, payload)
+
+    c.bus.publish = flaky
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False and res["published_count"] == 1
+    c.bus.publish = original
+    _leg_event(c, sent[0], "QUICK_BET_FAILED", status="FAILED")
+    assert len(_busy_tables(c)) == 1                                    # una gamba e' partita: trattenuto
+    assert sent[0]["event_key"] in c.rc.duplication_guard._active
+
+
+def test_concurrent_leg_outcomes_never_release_the_batch(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    start = threading.Barrier(len(legs))
+    errors = []
+
+    def deliver(leg, name):
+        try:
+            start.wait(timeout=5)
+            _leg_event(c, leg, name, status=_status(name))
+        except Exception as exc:                        # pragma: no cover - fallimento del test
+            errors.append(exc)
+
+    threads = [threading.Thread(target=deliver, args=(leg, name))
+               for leg, name in zip(legs, ["QUICK_BET_SUCCESS", "QUICK_BET_FAILED", "QUICK_BET_AMBIGUOUS"])]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert errors == []
+    assert len(_busy_tables(c)) == 1
+    assert legs[0]["event_key"] in c.rc.duplication_guard._active
+
+
+def test_admission_of_an_already_registered_batch_is_rejected(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    copies = [{**leg, "customer_ref": leg["customer_ref"] + "-bis", "table_id": 77} for leg in legs]
+    assert c.rc.admit_controller_entries(copies, batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
+    assert c.rc.admit_controller_entries(legs, batch_id="altro") == "lotto_gia_attivo"
+    assert c.rc._held_batch_legs[legs[0]["customer_ref"]]["table_id"] == legs[0]["table_id"]
+
+
+def test_a_forged_batch_id_on_a_dut_signal_can_only_hold_its_own_order(tmp_path):
+    # Un segnale puo' inoltrare un batch_id (rilievo F1 del riesame): con la scelta F l'effetto e' solo trattenere
+    # quell'ordine fino a settlement/riconciliazione, mai rilasciare qualcosa senza prova.
+    c = _catena(tmp_path)
+    c.rc._on_signal_received(_signal(customer_ref="dut-forged-1", batch_id="falso"))
+    (order,) = c.bus.payloads("CMD_QUICK_BET")
+    c.rc._on_quick_bet_failed({"customer_ref": order["customer_ref"], "event_key": order["event_key"],
+                               "table_id": order["table_id"], "status": "FAILED"})
+    assert len(_busy_tables(c)) == 1                                    # trattenuto: fail-closed
+    assert c.broker.state.orders and len(c.broker.state.orders) == 1
+
+
+def test_unregistered_leg_with_an_unreadable_db_is_held(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+    legs = c.bus.payloads("CMD_QUICK_BET")
+    c.rc._held_batch_legs.clear()                                       # come dopo un riavvio
+    real = c.db._execute
+
+    def unreadable(sql, *a, **k):
+        if "FROM orders WHERE customer_ref" in sql:
+            raise RuntimeError("db KO")
+        return real(sql, *a, **k)
+
+    monkeypatch.setattr(c.db, "_execute", unreadable)
+    _leg_event(c, legs[0], "QUICK_BET_FAILED", status="FAILED")
+    assert len(_busy_tables(c)) == 1
+

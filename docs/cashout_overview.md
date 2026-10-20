@@ -297,26 +297,10 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   non la trattiene. Un lotto che fallisce prima di pubblicare una gamba è tolto
   dal registro senza rilascio e il controller libera tavolo e chiave una sola
   volta.
-- **Retention del registro dei lotti (ciclo 6 #529)**: il registro delle gambe
-  di lotti chiusi è una cache di *precisione* (riconosce gli esiti
-  contraddittori tardivi), limitata a 4096 gambe; la sicurezza non dipende da
-  lei. Una gamba Dutching che non è nel registro, perché espulsa o perché
-  precedente a un riavvio, non viene mai rilasciata come ordine singolo: tavolo
-  e chiave del lotto li governano settlement e riconciliazione. L'origine
-  Dutching è provata dall'ordine persistito (`batch_id` nel payload, scritto
-  solo dal `DutchingController`), non dal prefisso `dut-` del ref: un ref a
-  monte che inizia per `dut-` (bet manuale, segnale, `REQ_QUICK_BET` 1:1) segue
-  il percorso dell'ordine singolo e viene rilasciato all'esito (ciclo 7 #529). DB
-  illeggibile => nessun rilascio singolo. Un AMBIGUOUS, o un esito vivo
-  (SUCCESS/FILLED) di una gamba dimenticata il cui stato è ignoto, marca
-  incerta la riserva sul tavolo del lotto (ricordato o persistito, mai quello
-  dell'evento tardivo, che potrebbe essere stato riassegnato) e, per l'esito
-  vivo, riprende la chiave dell'evento. Gli identificativi storici sono rifiutati
-  all'ammissione (`ingresso_gia_eseguito`) leggendo gli intenti consumati
-  persistiti nel DB (`consumed_order_intents`), validi anche dopo il riavvio:
-  lo stesso lotto ripetuto non arriva all'engine e non trattiene tavoli. Verifica
-  del DB in errore => rifiuto (`ammissione_non_verificabile`). Un lotto si
-  registra per il rilascio a livello di lotto qualunque sia il numero di gambe.
+- **Identificativi storici**: gli ordini il cui intento è già consumato
+  (`consumed_order_intents`, persistito nel DB e valido anche dopo il riavvio)
+  sono rifiutati all'ammissione (`ingresso_gia_eseguito`); verifica del DB in
+  errore => rifiuto (`ammissione_non_verificabile`).
 - **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
   `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
   `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
@@ -334,35 +318,34 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il
   dedupe si acquisisce dopo i controlli; un errore del dedupe rifiuta
   (prima era fail-open), anche nel `precheck` del Dutching.
-- **Esito del lotto (PF-EXEC-02, parte implementata)**: l'esito di una gamba
-  non libera più tavolo e chiave dell'intero lotto. `_settle_batch_leg`
-  trattiene il lotto finché **ogni** gamba ha un esito certo; AMBIGUOUS lo
-  tiene incerto (`_mark_uncertain`) e un'altra gamba non lo azzera. Poi:
-  tutte fallite => rilascio; tutte vive => stesso rilascio di un ordine
-  singolo (SUCCESS/FILLED); miste => `DUTCHING_BATCH_PARTIAL` con gambe vive
-  e chiuse, rischio residuo segnalato, tavolo e chiave trattenuti (nuove
-  esposizioni sospese). Chiuso il lotto, un evento tardivo di una sua gamba (es. FILLED
-  dopo SUCCESS) non ricade nel rilascio del singolo ordine; un AMBIGUOUS
-  tardivo marca comunque la riserva incerta. Il lotto PARZIALE resta nel registro: quando
-  ogni gamba viva si chiude con esito certo (`ROLLBACK_DONE`, cancellazione
-  confermata) il lotto viene rilasciato. Una gamba abbinata (FILLED) non viene
-  mai declassata; una gamba piazzata (SUCCESS) si chiude solo con
-  `ROLLBACK_DONE`: un esito contraddittorio non la toglie dalle vive. Se una
-  gamba di un lotto già rilasciato senza esposizione (tutte chiuse) risulta poi
-  viva, l'esito è contraddittorio: la riserva dell'evento è marcata incerta, la
-  chiave anti-duplicato dell'evento è ripresa (nessun nuovo ingresso) e serve la
-  riconciliazione. Lettura e chiusura del lotto avvengono sotto
-  `_risk_admission_lock` (nessuna corsa fra gambe concorrenti). Un
-  `DUPLICATE_BLOCKED` per il ref di una gamba non è un suo esito (il ref è
-  già in volo o consumato): il lotto resta trattenuto. Publish fallito a metà lotto: le gambe non pubblicate
-  sono ritirate (`withdraw_controller_entries`) e il lotto resta aperto sulle
-  gambe pubblicate.
+- **Esito del lotto: trattenuto, mai rilasciato da eventi (#529, scelta owner
+  F)**: le gambe di un lotto condividono tavolo e chiave anti-duplicato e lo
+  stato terminale del lotto non è provato dal singolo esito. Nessun evento di
+  ciclo di vita di una gamba (SUCCESS, FILLED, FAILED, ROLLBACK_DONE, AMBIGUOUS,
+  tardivo o contraddittorio, `DUPLICATE_BLOCKED`) rilascia tavolo, esposizione o
+  chiave del lotto (`_hold_batch_leg`): il lotto resta trattenuto fino a
+  settlement e riconciliazione, anche con tutte le gambe fallite. Un AMBIGUOUS
+  marca incerta la riserva sul tavolo del lotto. Unico rilascio: un lotto che
+  fallisce **prima** di pubblicare qualunque gamba (nessun ordine partito) esce
+  dal registro e il controller libera tavolo e chiave una sola volta; con
+  almeno una gamba pubblicata il lotto resta trattenuto per intero. Il registro
+  delle gambe è in memoria per la durata del processo e lo scrive solo
+  `admit_controller_entries`; dopo un riavvio una gamba `dut-` fuori registro è
+  trattenuta se l'ordine persistito porta `batch_id` o se il DB è illeggibile
+  (un `batch_id` inoltrato da un segnale può solo trattenere quell'ordine, mai
+  far rilasciare qualcosa). Un ref a monte `dut-…` senza `batch_id` resta un
+  ordine singolo. **PF-EXEC-02 non è completo**: esito del lotto, segnalazione
+  del parziale, ribilanciamento, copertura e rilascio a livello di lotto sono
+  della PR30.
 
-**DEFERRED** (non in questa PR): ribilanciamento e copertura del parziale con
-miglior prezzo dinamico e Microstake (PF-BEST-EXECUTION-DYNAMIC-01 non
-implementata), persistenza e riconciliazione del lotto al riavvio (PR30,
-PF-EXEC-06; oggi il controller cerca `runtime.dutching_batch_manager`, che il
-runtime non definisce). Al riavvio valgono la dedupe e la riconciliazione per
+**DEFERRED a PR30** (non in questa PR): PF-EXEC-02 completo (esito del lotto
+dagli eventi, segnalazione del parziale, ribilanciamento e copertura con miglior
+prezzo dinamico e Microstake, rilascio a livello di lotto), persistenza e
+riconciliazione del lotto al riavvio (PF-EXEC-06; oggi il controller cerca
+`runtime.dutching_batch_manager`, che il runtime non definisce). Costo noto del
+fail-closed: un lotto con tutte le gambe fallite trattiene il tavolo fino a
+settlement, riconciliazione o riavvio. Le corsie restano dormienti finché PR30
+non è completa. Al riavvio valgono la dedupe e la riconciliazione per
 singolo ordine: una gamba incerta resta incerta e nessuna gamba viene
 ripiazzata. Limite noto: il broker SIM non verifica i fondi su nessuna corsia
 (parità SIM/LIVE, tracciato a parte).

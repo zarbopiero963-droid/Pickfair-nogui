@@ -1594,9 +1594,8 @@ class DutchingController:
                 self._withdraw_entries([o for o in orders if o not in published_orders])
 
             if published_orders:
-                # #523 (PF-EXEC-02): gambe gia' pubblicate possono essere sull'exchange. Tavolo e chiave del
-                # lotto restano trattenuti; le gambe non pubblicate sono gia' contate come chiuse dal runtime
-                # (`withdraw_controller_entries`), quindi il lotto si chiude sugli esiti delle altre.
+                # #523/#529: gambe gia' pubblicate possono essere sull'exchange. Tavolo e chiave del lotto
+                # restano trattenuti fino a settlement e riconciliazione (fail-closed; esito del lotto: PR30).
                 pass
             else:
                 self._release_table_and_key(table_id if allocated_here else None, owned_key)
