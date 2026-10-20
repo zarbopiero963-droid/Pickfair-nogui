@@ -28,8 +28,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   anche con meno fondi sul conto. Due condizioni sotto il lock d'ammissione: l'entrata sta nel disponibile,
   e le riserve su tutti i tavoli (compresa l'entrata) stanno in disponibile + impegnato a mercato. Così gli
   ordini già piazzati non contano due volte, le riserve non ancora a mercato consumano il disponibile e
-  l'impegnato esterno al bot non gonfia i fondi. Fondi illeggibili, incompleti (senza `exposure`) o con
-  errore => `fondi_non_verificabili`, nessuna entrata (prima restava il bankroll di ripiego, PF-CAP-19).
+  l'impegnato esterno al bot da solo non finanzia l'entrata. Fondi illeggibili, incompleti (senza
+  `exposure`) o con errore => `fondi_non_verificabili`, nessuna entrata (prima restava il bankroll di
+  ripiego, PF-CAP-19); `BetfairService.get_account_funds` marca ora con `error` gli zeri di ripiego
+  (lettura fallita o nessun client), che prima sembravano un conto vuoto letto. Limite residuo (PR29): i
+  tavoli non sanno se il loro ordine è già a mercato, quindi con impegnato esterno e riserve concorrenti
+  non ancora piazzate l'eccedenza la respinge l'exchange, non il gate.
   Il segnale legge il conto fuori dal lock, nella stessa finestra di rete della best price; l'auto-next usa
   lo snapshot del settlement. Hedge e uscite protettive esclusi (PF-EXEC-03). Le corsie dormienti
   Dutching/bet manuale non sono ancora coperte: blocca la loro attivazione. Fixture di test allineate

@@ -5153,7 +5153,9 @@ class RuntimeController:
                                     error=str(exc))
             logger.warning("PR28-e: fondi illeggibili all'ingresso (%s): nessuna nuova entrata", exc)
             return None
-        self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=True)
+        error = funds.get("error") if isinstance(funds, dict) else None
+        self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=not error,
+                                error=str(error or ""))
         return funds
 
     def _entry_funds_reason(self, account: Any, reserved_exposure: float, order_exposure: float) -> str:
@@ -5166,7 +5168,10 @@ class RuntimeController:
            piazzate sono nel ``committed`` e non contano due volte, quelle non ancora a mercato consumano il
            disponibile.
 
-        La (1) copre i fondi impegnati da posizioni esterne al bot, che nella (2) gonfierebbero il margine.
+        La (1) impedisce che i fondi impegnati da posizioni esterne al bot finanzino da soli la nuova entrata.
+        Limite noto (residuo, PR29): i tavoli non registrano se il loro ordine e' gia' a mercato, quindi con
+        impegnato esterno e riserve concorrenti non ancora piazzate la (2) puo' sovrastimare la copertura; in
+        quel caso il rifiuto arriva dall'exchange (fondi insufficienti), non da questo gate.
         Solo NUOVE entrate (segnale, auto-next): mai hedge o uscite protettive (PF-EXEC-03). `account` e' il
         payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
         => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""

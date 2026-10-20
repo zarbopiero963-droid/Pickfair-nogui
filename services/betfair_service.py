@@ -639,11 +639,14 @@ class BetfairService:
     def get_account_funds(self) -> dict:
         broker = self.get_client()
         if not broker:
+            # `error` (#461 PR28-e): gli zeri qui non sono un saldo letto. Il gate dei fondi delle nuove
+            # entrate li tratta come fondi non verificabili (PF-CAP-19), non come un conto vuoto.
             return {
                 "available": 0.0,
                 "exposure": 0.0,
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
+                "error": "no_client",
             }
 
         try:
@@ -669,6 +672,7 @@ class BetfairService:
                 "exposure": 0.0,
                 "total": 0.0,
                 "simulated": bool(self.simulation_mode),
+                "error": error_text or type(exc).__name__,
             }
 
     def list_current_orders(

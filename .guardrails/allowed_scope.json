@@ -2388,7 +2388,7 @@
       "description": "Mandato owner FIX LOOP POLICY 10 CICLI (20/10/2026), roadmap #461 (sequenza owner c.6278391354), PF-QA-AUTONOMOUS-CONTINUATION-01 (#426 c.6263599189): MAX_FIX_LOOP_ITERATIONS_PER_PR 5 -> 10 come tetto massimo; stop anticipato, REVIEW_CHURN, prenotazione, deroga owner e gate invariati; documenti normativi allineati. PR di policy: merge manuale owner, nessun merge automatico. ESTENSIONE DICHIARATA (rilievo Codex r4328857741 + riesame indipendente): +docs/hard_verify_spec.md (§ PR-flow dichiarava ancora cap 5 / sesto tentativo; con la regola della piu' severa avrebbe annullato il tetto 10). ESTENSIONE DICHIARATA (rilievo Codex r4328857781): +scripts/pr_automation_controller.py (max_total_controller_runs da 8 fisso a MAX_FIX_LOOP_ITERATIONS_PER_PR + 3: con 8 i cicli 9-10 non raggiungevano il merge)."
     },
     "issue461-pr28e-funds-gate": {
-      "description": "Mandato owner PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026), roadmap #461 PR28 (registro cap PF-CAP-REGISTER-20261018 passo 4, addendum #426 c.6250526960): gate esplicito dei fondi sulle nuove entrate (segnale, auto-next) sotto il lock d'ammissione; PF-CAP-09 / PF-CAP-19, PF-EXEC-04; hedge e uscite protettive esclusi (PF-EXEC-03, Q10). Fixture di test allineate alla forma reale dei fondi (sempre con exposure).",
+      "description": "Mandato owner PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026), roadmap #461 PR28 (registro cap PF-CAP-REGISTER-20261018 passo 4, addendum #426 c.6250526960): gate esplicito dei fondi sulle nuove entrate (segnale, auto-next) sotto il lock d'ammissione; PF-CAP-09 / PF-CAP-19, PF-EXEC-04; hedge e uscite protettive esclusi (PF-EXEC-03, Q10). Fixture di test allineate alla forma reale dei fondi (sempre con exposure). ESTENSIONE DICHIARATA (revisione anticipata indipendente, rilievo P3): +services/betfair_service.py (gli zeri di ripiego di get_account_funds portano `error`, cosi' una lettura fallita e' fondi_non_verificabili e non un conto vuoto).",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
@@ -2396,6 +2396,7 @@
         "docs/traceability/requirements.json",
         "docs/verification/continuous_formal_verification.md",
         "guardrails/mutation_catalog.json",
+        "services/betfair_service.py",
         "tests/acceptance/test_issue437_pr28.py",
         "tests/acceptance/test_issue437_pr28c.py",
         "tests/acceptance/test_issue437_pr28d_integration_512.py",
@@ -2411,7 +2412,7 @@
         "tests/integration/test_runtime_controller_live_sim_parity.py",
         "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
-      "max_files": 20
+      "max_files": 21
     }
   }
 }

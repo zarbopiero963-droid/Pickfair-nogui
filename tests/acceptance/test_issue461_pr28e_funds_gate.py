@@ -209,3 +209,42 @@ def test_auto_next_con_fondi_non_validi_e_rifiutato():
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
     assert esito["reason"] == "fondi_non_verificabili", esito
+
+
+# ---------------------------------------------------------------- servizio reale: lettura fallita
+from services.betfair_service import BetfairService  # noqa: E402
+
+
+class _BrokerGuasto:
+    def get_account_funds(self):
+        raise RuntimeError("API down")
+
+
+def _servizio_reale(client):
+    svc = BetfairService(settings_service=None)
+    svc.simulation_mode = False
+    svc.client = client
+    return svc
+
+
+@pytest.mark.parametrize("client", [_BrokerGuasto(), None], ids=["lettura-che-solleva", "nessun-client"])
+def test_lettura_fallita_del_servizio_reale_e_fondi_non_verificabili(tmp_path, client):
+    # BetfairService intercetta l'errore e restituisce zeri: il payload deve dirlo (`error`), cosi' il gate
+    # risponde fondi_non_verificabili (PF-CAP-19) e non "fondi insufficienti" con un disponibile 0 inventato.
+    funds = _servizio_reale(client).get_account_funds()
+    assert funds.get("error"), funds
+    c = _chain(tmp_path, stake=4.0, anti_duplication=True)
+    c.rc.betfair_service.get_account_funds = lambda: dict(funds)
+    c.rc._on_signal_received(_signal())
+    assert "fondi_non_verificabili" in _rifiuti(c), _rifiuti(c)
+    _nessun_effetto(c)
+
+
+def test_lettura_riuscita_del_servizio_reale_non_porta_errore():
+    class _Broker:
+        def get_account_funds(self):
+            return {"available": 50.0, "exposure": -5.0, "total": 55.0}
+
+    funds = _servizio_reale(_Broker()).get_account_funds()
+    assert "error" not in funds
+    assert funds["available"] == 50.0 and funds["exposure"] == -5.0

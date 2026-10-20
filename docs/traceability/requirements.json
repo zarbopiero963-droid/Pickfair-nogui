@@ -677,6 +677,7 @@
    "gate": "A #506",
    "limitations": [
     "stake economico oltre i fondi: bloccato su segnale e auto-next (#461 PR28-e); Dutching e bet manuale (corsie dormienti) non ancora coperti dal gate dei fondi",
+    "con impegnato esterno al bot e riserve concorrenti non ancora a mercato il gate puo' sovrastimare la copertura (i tavoli non registrano il piazzamento): rifiuto dall'exchange, non dal gate; PR29",
     "codici di errore fondi vs provider: PLANNED"
    ]
   },
