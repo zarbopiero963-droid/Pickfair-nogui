@@ -57,7 +57,7 @@ sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
-63 voci (36 della #525, 27 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
+65 voci (36 della #525, 29 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i
 test mirati che devono accorgersene. Le regole, verificate da
 `tests/scripts/test_run_mutation_guardrails_reale.py`:
 
@@ -118,7 +118,7 @@ tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
   file.
 - Run finale: 36 su 36 uccise, punteggio 100%, gate PASS, in circa 44 s in
   locale contro gli oltre 45 minuti di prima.
-- #523: 27 mutazioni nuove su Dutching e bet manuale (lato senza default nel
+- #523: 29 mutazioni nuove su Dutching e bet manuale (lato senza default nel
   controller e nel middleware, alias di lato in conflitto, liability LAY del bet
   manuale, barriera cashout del lotto e runtime senza barriera, ammissione fuori dal
   lock, errore e chiave altrui dell'anti-duplicato, identificativo storico
@@ -129,9 +129,10 @@ tollerato se `total > 0`. Il default di `--mutation-timeout-sec` passa da 1 a
   bet manuale non validati; ciclo A2: `market_id` e `selectionId` del Dutching non
   validati, `precheck` che fissa la chiave, gamba di un lotto invalidato piazzata,
   fence delle gambe sorelle non controllati; ciclo A3: stake calcolato della gamba
-  non validato):
-  27 su 27 uccise dai test di `tests/acceptance/test_issue523_dutching_manual_bet.py`
-  (catalogo completo: 63 su 63).
+  non validato; ciclo A4: lato del lotto che prevale sul lato esplicito della gamba
+  nel middleware, due varianti):
+  29 su 29 uccise dai test di `tests/acceptance/test_issue523_dutching_manual_bet.py`
+  (catalogo completo: 65 su 65).
 
 **Gap tracciato, non escluso in silenzio.** Ogni report elenca in
 `summary.spec_modules_without_mutations` i moduli che hanno una specifica in

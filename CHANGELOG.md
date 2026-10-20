@@ -12,7 +12,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 - **#523 — Dutching e bet manuale conformi ai gate (corsie ancora dormienti):** lato BACK/LAY
   obbligatorio su ogni gamba e sul bet manuale (mai BACK per default, anche nel `RiskMiddleware`; alias
-  in conflitto rifiutati); cap, dedupe, tavolo e ammissione sotto il lock d'ammissione dei segnali, con
+  in conflitto rifiutati; il lato esplicito della gamba prevale sul `bet_type` del lotto, usato solo come
+  fallback); cap, dedupe, tavolo e ammissione sotto il lock d'ammissione dei segnali, con
   barriera cashout atomica sul lotto e fence fino all'engine; bet manuale con esposizione reale (liability
   LAY) su cap e tavolo, che riserva sempre il controller; dedupe acquisito dopo i controlli e rilasciato
   solo se proprio, errore del dedupe => rifiuto (prima fail-open); chiave del lotto acquisita e fissata

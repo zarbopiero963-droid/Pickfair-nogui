@@ -1096,3 +1096,78 @@ def test_valid_batch_after_an_invalid_one_is_placed_exactly(tmp_path, _leg_stake
                     for o in c.broker.state.orders.values()) if c.broker.state.orders else []
     assert len(c.bus.payloads("CMD_QUICK_BET")) == 2
     assert placed == sorted(round(float(o["stake"]), 2) for o in res["orders"])
+
+
+# ============================================================ #529 ciclo A4 (owner): lato della gamba > lato del lotto
+def _bus_batch(c, legs, bet_type=None):
+    payload = {"market_id": "1.700", "event_name": EVENT, "total_stake": 10.0, "simulation_mode": True,
+               "results": [dict({"selectionId": 10 * (i + 1), "price": (2.0, 3.0)[i]}, **leg)
+                           for i, leg in enumerate(legs)]}
+    if bet_type is not None:
+        payload["bet_type"] = bet_type
+    c.bus.publish("REQ_PLACE_DUTCHING", payload)
+
+
+@pytest.mark.parametrize("fields", [("effectiveType", "effectiveType"), ("side", "side"), ("effectiveType", "side")],
+                         ids=["alias-alias", "side-side", "alias-side"])
+@pytest.mark.parametrize("leg_side, batch_side", [("LAY", "BACK"), ("BACK", "LAY")])
+def test_explicit_leg_side_overrides_the_batch_side(tmp_path, fields, leg_side, batch_side):
+    # Rilievo Codex r4326860426: con solo `effectiveType` sulla gamba il middleware sintetizzava `side` dal
+    # lotto, e la gamba era rifiutata per alias in conflitto (su main era piazzata col lato del lotto).
+    # (Il riparto non supporta lotti misti BACK/LAY: tutte le gambe hanno qui lo stesso lato esplicito.)
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{fields[0]: leg_side}, {fields[1]: leg_side}], bet_type=batch_side)
+    (cmd,) = c.bus.payloads("CMD_PLACE_DUTCHING")
+    assert [(r["side"], r["effectiveType"]) for r in cmd["results"]] == [(leg_side, leg_side)] * 2
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == [leg_side, leg_side]
+    assert len(c.broker.state.orders) == 2
+    assert {o.side for o in c.broker.state.orders.values()} == {leg_side}
+
+
+def test_batch_side_is_only_the_fallback_for_legs_without_a_side(tmp_path):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{}, {}], bet_type="lay ")
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]
+    assert len(c.broker.state.orders) == 2
+
+
+@pytest.mark.parametrize("leg", [
+    {"side": "BACK", "effectiveType": "LAY"},
+    {"side": "LAY", "effectiveType": "BACK"},
+], ids=["back-vs-lay", "lay-vs-back"])
+@pytest.mark.parametrize("batch_side", [None, "BACK", "LAY"])
+def test_conflicting_explicit_fields_of_one_leg_reject_the_whole_batch(tmp_path, leg, batch_side):
+    # Due campi espliciti discordanti della stessa gamba: rifiuto, mai una scelta arbitraria (neppure col lato
+    # del lotto che coincide con uno dei due).
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [leg, {"side": leg["side"]}], bet_type=batch_side)
+    (cmd,) = c.bus.payloads("CMD_PLACE_DUTCHING")
+    assert (cmd["results"][0]["side"], cmd["results"][0]["effectiveType"]) == (leg["side"], leg["effectiveType"])
+    _no_side_effects(c)
+
+
+def test_agreeing_explicit_fields_of_one_leg_are_accepted(tmp_path):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{"side": "lay", "effectiveType": "LAY"}, {"effectiveType": "LAY"}], bet_type="BACK")
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]
+    assert len(c.broker.state.orders) == 2
+
+
+@pytest.mark.parametrize("leg", [{"effectiveType": "PUNT"}, {"side": "X"}], ids=["alias-invalid", "side-invalid"])
+def test_invalid_explicit_leg_side_is_not_replaced_by_the_batch_side(tmp_path, leg):
+    # Un lato esplicito invalido non diventa il lato del lotto: lotto rifiutato per intero.
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [leg, {"side": "BACK"}], bet_type="BACK")
+    _no_side_effects(c)
+
+
+def test_no_side_anywhere_is_still_rejected(tmp_path):
+    c = _catena(tmp_path)
+    _bus_lane(c)
+    _bus_batch(c, [{}, {}])
+    _no_side_effects(c)

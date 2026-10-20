@@ -489,8 +489,8 @@
       "module": "core.risk_middleware",
       "area": "side",
       "file": "core/risk_middleware.py",
-      "original": "                        \"side\": _explicit_side(r.get(\"side\"), payload.get(\"bet_type\")),",
-      "mutated": "                        \"side\": _explicit_side(r.get(\"side\"), payload.get(\"bet_type\"), \"BACK\"),",
+      "original": "                        \"effectiveType\": leg_alias or leg_side or batch_side,",
+      "mutated": "                        \"effectiveType\": leg_alias or leg_side or batch_side or \"BACK\",",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
@@ -795,6 +795,30 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (#529 ciclo A3, decisione owner): Una gamba con stake calcolato nullo/negativo/non finito passa: l'engine la rifiuta e le altre gambe partono (lotto parziale, stake eseguito diverso dal richiesto)."
+    },
+    {
+      "id": "middleware_batch_side_overrides_leg_alias",
+      "module": "core.risk_middleware",
+      "area": "side",
+      "file": "core/risk_middleware.py",
+      "original": "                        \"side\": leg_side or leg_alias or batch_side,",
+      "mutated": "                        \"side\": leg_side or batch_side or leg_alias,",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A4, decisione owner): Il lato del lotto prevale sull'alias esplicito della gamba (effectiveType): gamba rifiutata o lato sbagliato."
+    },
+    {
+      "id": "middleware_leg_side_takes_batch_default",
+      "module": "core.risk_middleware",
+      "area": "side",
+      "file": "core/risk_middleware.py",
+      "original": "                leg_alias = _explicit_side(r.get(\"effectiveType\"))",
+      "mutated": "                leg_alias = _explicit_side(r.get(\"effectiveType\"), payload.get(\"bet_type\"))",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (#529 ciclo A4, decisione owner): L'alias della gamba assente diventa il lato del lotto e confligge con il lato esplicito della gamba."
     }
   ]
 }

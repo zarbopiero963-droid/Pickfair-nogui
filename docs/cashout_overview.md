@@ -290,7 +290,12 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   riservano lo stesso tavolo. Il tavolo è sempre riservato dal controller (un
   `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
   anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
-  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`.
+  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`. Sulla corsia
+  bus (`REQ_PLACE_DUTCHING`, #529 ciclo A4) il lato esplicito della gamba
+  (`side` o `effectiveType`) ha precedenza sul `bet_type` del lotto, che vale
+  solo come fallback per le gambe senza lato; due campi espliciti discordanti
+  della stessa gamba sono rifiutati, mai scelti arbitrariamente; un lato
+  esplicito invalido non viene sostituito dal lato del lotto.
   La chiave anti-duplicato del lotto si acquisisce nella fase controllata di
   ammissione (sotto il lock, dopo tutti i controlli che possono rifiutarlo) e si
   rilascia solo se acquisita da quel lotto (con l'anti-duplicato disattivato la

@@ -197,19 +197,25 @@ class RiskMiddleware:
 
         try:
             normalized_results = []
+            batch_side = _explicit_side(payload.get("bet_type"))
             for r in payload.get("results", []) or []:
+                # #529 ciclo A4 (decisione owner, rilievo Codex r4326860426): il lato ESPLICITO della gamba
+                # (`side` o il suo alias `effectiveType`) ha precedenza sul lato del lotto; il `bet_type` del
+                # lotto e' solo il fallback quando la gamba non ne specifica alcuno. Due campi espliciti
+                # discordanti della stessa gamba viaggiano entrambi com'erano: il DutchingController li
+                # rifiuta (INVALID_SIDE), mai una scelta arbitraria.
+                leg_side = _explicit_side(r.get("side"))
+                leg_alias = _explicit_side(r.get("effectiveType"))
                 normalized_results.append(
                     {
                         "selectionId": int(r.get("selectionId")),
                         "runnerName": str(r.get("runnerName", "")),
                         "price": float(r.get("price", 0.0)),
                         "stake": float(r.get("stake", 0.0)),
-                        # #523: il lato della gamba viaggia com'e' (gamba, altrimenti il bet_type esplicito
-                        # del lotto); nessun BACK inventato qui. Lato assente o invalido => il
+                        # #523: nessun BACK inventato qui. Lato assente ovunque o invalido => il
                         # DutchingController rifiuta il lotto intero.
-                        "side": _explicit_side(r.get("side"), payload.get("bet_type")),
-                        "effectiveType": _explicit_side(
-                            r.get("effectiveType"), r.get("side"), payload.get("bet_type")),
+                        "side": leg_side or leg_alias or batch_side,
+                        "effectiveType": leg_alias or leg_side or batch_side,
                     }
                 )
 
