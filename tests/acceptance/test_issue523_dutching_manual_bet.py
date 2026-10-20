@@ -638,3 +638,99 @@ def test_two_batches_on_different_events_are_independent(tmp_path):
     assert ctl.submit_dutching(_batch(market_id="1.701", event_name="Epsilon v Zeta"))["ok"] is True
     assert len(c.broker.state.orders) == 4
     assert len(_busy_tables(c)) == 2
+
+
+# ============================================================ rilievi Codex su #529 (0cef6b4)
+def test_concurrent_manual_bets_cannot_exceed_the_total_exposure_cap_together(tmp_path):
+    # bankroll 1000: max_single_bet 18% = 180, max_total 35% = 350. LAY 90 a quota 3 = liability 180 ciascuno:
+    # uno solo passa, due insieme (360) superano il cap. Prima i due leggevano la stessa esposizione.
+    c = _catena(tmp_path)
+    ctrl = _dutching(c)
+    results = {}
+    with c.rc._risk_admission_lock:              # RLock: T resta fermo finche' il primo non ha riservato
+        late = threading.Thread(target=lambda: results.setdefault("late", ctrl.manual_bet(
+            _manual(bet_type="LAY", price=3.0, stake=90.0, selection_id=22, event_name="Eta v Theta"))))
+        late.start()
+        time.sleep(0.3)
+        assert _busy_tables(c) == []             # T non ha riservato nulla fuori dal lock
+        first = ctrl.manual_bet(_manual(bet_type="LAY", price=3.0, stake=90.0))
+    late.join(5)
+    assert first["ok"] is True, first
+    assert results["late"]["ok"] is False
+    assert "Esposizione globale oltre limite" in results["late"]["error"]
+    assert len(_busy_tables(c)) == 1
+    assert c.rc.table_manager.total_exposure() == pytest.approx(180.0)
+
+
+def test_manual_bet_reserves_its_own_table_even_with_a_caller_table_id(tmp_path):
+    c = _catena(tmp_path)
+    res = _dutching(c).manual_bet(_manual(table_id=999, bet_type="LAY", price=3.0))
+    assert res["ok"] is True, res
+    (table,) = _busy_tables(c)
+    assert res["order"]["table_id"] == table.table_id != 999
+    assert table.current_exposure == pytest.approx(8.0)
+
+
+def test_dutching_reserves_its_own_table_even_with_a_caller_table_id(tmp_path):
+    c = _catena(tmp_path)
+    res = _dutching(c).submit_dutching(_batch(table_id=999))
+    assert res["ok"] is True, res
+    (table,) = _busy_tables(c)
+    assert res["table_id"] == table.table_id != 999
+    assert table.current_exposure > 0
+
+
+@pytest.mark.parametrize("failing", ["allocate", "activate"])
+def test_manual_bet_table_failure_releases_the_dedupe_key(tmp_path, monkeypatch, failing):
+    c = _catena(tmp_path)
+
+    def boom(*a, **k):
+        raise RuntimeError("tavolo KO")
+
+    monkeypatch.setattr(c.rc.table_manager, failing, boom)
+    res = _dutching(c).manual_bet(_manual())
+    assert res["ok"] is False
+    _no_side_effects(c)                          # chiave rilasciata, nessun tavolo, nessun ordine
+    monkeypatch.undo()
+    assert _dutching(c).manual_bet(_manual())["ok"] is True   # retry sicuro
+
+
+def test_dutching_table_failure_releases_the_dedupe_key(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    monkeypatch.setattr(c.rc.table_manager, "activate", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("KO")))
+    res = _dutching(c).submit_dutching(_batch())
+    assert res["ok"] is False
+    _no_side_effects(c)
+    monkeypatch.undo()
+    assert _dutching(c).submit_dutching(_batch())["ok"] is True
+
+
+def test_admission_of_an_already_active_batch_id_is_rejected(tmp_path):
+    c = _catena(tmp_path)
+    legs = _held_batch(c)
+    copies = [{**leg, "customer_ref": leg["customer_ref"] + "-bis", "table_id": 77} for leg in legs]
+    assert c.rc.admit_controller_entries(copies, batch_id=legs[0]["batch_id"]) == "lotto_gia_attivo"
+    assert c.rc.admit_controller_entries(legs, batch_id="altro") == "lotto_gia_attivo"
+    batch = c.rc._entry_batches[legs[0]["batch_id"]]
+    assert batch["table_id"] == legs[0]["table_id"]                  # il primo lotto non e' sovrascritto
+
+
+@pytest.mark.parametrize("side,alias", [("BACK", "LAY"), ("LAY", "BACK")])
+def test_dutching_selection_with_conflicting_side_aliases_is_rejected(tmp_path, side, alias):
+    c = _catena(tmp_path)
+    payload = _batch(sides=(side, side))
+    payload["selections"][0]["effectiveType"] = alias
+    res = _dutching(c).submit_dutching(payload)
+    assert res["ok"] is False
+    assert "INVALID_SIDE" in res["error"]
+    _no_side_effects(c)
+
+
+def test_dutching_selection_side_from_alias_alone_is_accepted(tmp_path):
+    c = _catena(tmp_path)
+    payload = _batch(sides=(None, None))
+    for sel in payload["selections"]:
+        sel["effectiveType"] = "LAY"
+    res = _dutching(c).submit_dutching(payload)
+    assert res["ok"] is True, res
+    assert [leg["bet_type"] for leg in c.bus.payloads("CMD_QUICK_BET")] == ["LAY", "LAY"]

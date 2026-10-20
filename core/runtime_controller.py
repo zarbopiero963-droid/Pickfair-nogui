@@ -3622,6 +3622,13 @@ class RuntimeController:
             return "ingresso_senza_customer_ref"
         lock = getattr(self, "_risk_admission_lock", RuntimeController._fallback_risk_admission_lock)
         with lock:
+            if batch_id and len(orders) > 1:
+                # Rilievo Codex #529: un lotto ancora aperto con lo stesso id (o una sua gamba) non viene
+                # sovrascritto: tavolo e gambe del primo resterebbero orfani.
+                active_refs = getattr(self, "_entry_batch_of_ref", None) or {}
+                if str(batch_id) in (getattr(self, "_entry_batches", None) or {}) or any(
+                        str(o["customer_ref"]) in active_refs for o in orders):
+                    return "lotto_gia_attivo"
             fences = []
             for order in orders:
                 fence = self._capture_admission_fence(order)

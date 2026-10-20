@@ -477,12 +477,12 @@
       "module": "controllers.dutching_controller",
       "area": "side",
       "file": "controllers/dutching_controller.py",
-      "original": "    return validators.signal_side({\"side\": value})",
-      "mutated": "    return validators.signal_side({\"side\": value}, default=\"BACK\")",
+      "original": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")})",
+      "mutated": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")}, default=\"BACK\")",
       "tests": [
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
-      "rationale": "#523: Una gamba Dutching senza lato diventa BACK per default."
+      "rationale": "#523: Una selezione Dutching senza lato (ne' side ne' effectiveType) diventa BACK per default."
     },
     {
       "id": "middleware_dutching_side_default_back",
@@ -579,6 +579,42 @@
         "tests/acceptance/test_issue523_dutching_manual_bet.py"
       ],
       "rationale": "#523 (rilievo Sol su #529): un evento tardivo di una gamba di un lotto gia' chiuso ricade nel rilascio del singolo ordine."
+    },
+    {
+      "id": "manual_bet_admission_not_atomic",
+      "module": "controllers.dutching_controller",
+      "area": "exposure",
+      "file": "controllers/dutching_controller.py",
+      "original": "        return self._locked_entry(self._manual_bet_reserved, payload)",
+      "mutated": "        return self._manual_bet_reserved(payload, lambda: None)",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Codex su #529): Cap e tavolo del bet manuale decisi fuori dal lock d'ammissione: due ingressi concorrenti superano il cap totale."
+    },
+    {
+      "id": "controller_active_batch_overwritten",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                    return \"lotto_gia_attivo\"",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Codex su #529): Un lotto ancora aperto viene sovrascritto da un'ammissione con lo stesso id: tavolo e gambe orfani."
+    },
+    {
+      "id": "dutching_side_alias_conflict_ignored",
+      "module": "controllers.dutching_controller",
+      "area": "side",
+      "file": "controllers/dutching_controller.py",
+      "original": "    return validators.signal_side({\"side\": selection.get(\"side\"), \"bet_type\": selection.get(\"effectiveType\")})",
+      "mutated": "    return validators.signal_side({\"side\": selection.get(\"side\") or selection.get(\"effectiveType\")})",
+      "tests": [
+        "tests/acceptance/test_issue523_dutching_manual_bet.py"
+      ],
+      "rationale": "#523 (rilievo Codex su #529): Alias di lato in conflitto (side BACK, effectiveType LAY) ignorato: si piazza il lato opposto."
     }
   ]
 }

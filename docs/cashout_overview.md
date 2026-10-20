@@ -283,6 +283,14 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   BACK). Lato assente, vuoto, non BACK/LAY o alias in conflitto => rifiuto
   (`INVALID_SIDE`), nessun ordine, nessun BACK per default. Il `RiskMiddleware`
   inoltra il lato esplicito o `None`, mai un default.
+- **Ingresso atomico**: controlli di cap, dedupe, riserva del tavolo e
+  ammissione di un lotto o di un bet manuale avvengono sotto
+  `_risk_admission_lock` (lo stesso dei segnali); la pubblicazione avviene dopo,
+  fuori dal lock. Due ingressi concorrenti non leggono la stessa esposizione né
+  riservano lo stesso tavolo. Il tavolo è sempre riservato dal controller (un
+  `table_id` del chiamante è ignorato); se la riserva fallisce la chiave
+  anti-duplicato è rilasciata (retry sicuro). Lato da `side` o dall'alias
+  `effectiveType`: entrambi presenti e diversi => `INVALID_SIDE`.
 - **Ammissione atomica del lotto**: prima di pubblicare il controller chiama
   `RuntimeController.admit_controller_entries(orders, batch_id=...)`. Sotto
   `_risk_admission_lock` cattura un fence per ogni gamba: se anche una sola
@@ -292,7 +300,8 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   un cashout fra ammissione e invio nega le gambe in coda
   (`cashout_invalidation_stale`). Runtime senza questa API, eccezione o esito
   non stringa => rifiuto (`barriera_cashout_non_disponibile` /
-  `ammissione_non_verificabile`).
+  `ammissione_non_verificabile`). Un lotto ancora aperto con lo stesso `batch_id` (o una sua
+  gamba) non viene sovrascritto (`lotto_gia_attivo`).
 - **Bet manuale**: esposizione = rischio reale (`validators.order_exposure`:
   BACK stake, LAY stake × (quota − 1)) per `max_single_bet`, `max_total` e il
   tavolo, che ora il bet manuale occupa (nessun tavolo libero => rifiuto). Il

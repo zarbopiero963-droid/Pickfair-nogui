@@ -41,7 +41,7 @@ except ImportError:
 
         results = []
         for idx, selection in enumerate(selections):
-            side = _side(selection.get("side") or selection.get("effectiveType"))
+            side = _selection_side(selection)
             item = {
                 "selectionId": int(selection["selectionId"]),
                 "price": float(selection["price"]),
@@ -70,6 +70,12 @@ def _side(value: Any) -> str:
     """#523: lato BACK/LAY esplicito, con lo stesso contratto dei segnali (`validators.signal_side`).
     Assente o non valido => ValueError("INVALID_SIDE"): un ordine non diventa mai BACK per default."""
     return validators.signal_side({"side": value})
+
+
+def _selection_side(selection: Dict[str, Any]) -> str:
+    """#523: lato di una selezione da `side` o dall'alias `effectiveType`; entrambi presenti e diversi =>
+    INVALID_SIDE (rilievo Codex #529: l'alias in conflitto non va ignorato)."""
+    return validators.signal_side({"side": selection.get("side"), "bet_type": selection.get("effectiveType")})
 
 
 class DutchingController:
@@ -176,7 +182,8 @@ class DutchingController:
             {
                 "selectionId": r.get("selectionId"),
                 "price": r.get("price"),
-                "side": r.get("side") or r.get("effectiveType"),
+                "side": r.get("side"),
+                "effectiveType": r.get("effectiveType"),   # #523: alias conservato, conflitto rifiutato
                 "runnerName": r.get("runnerName", ""),
             }
             for r in gambe
@@ -747,16 +754,53 @@ class DutchingController:
             return None
 
         if hasattr(table_manager, "activate"):
-            table_manager.activate(
-                table_id=table.table_id,
-                event_key=event_key,
-                exposure=float(batch_exposure),
-                market_id=str(meta.get("market_id") or ""),
-                selection_id=None,
-                meta=meta,
-            )
+            try:
+                table_manager.activate(
+                    table_id=table.table_id,
+                    event_key=event_key,
+                    exposure=float(batch_exposure),
+                    market_id=str(meta.get("market_id") or ""),
+                    selection_id=None,
+                    meta=meta,
+                )
+            except Exception:
+                # #523: tavolo preso ma non attivato => liberato, l'errore risale al chiamante (rollback)
+                if hasattr(table_manager, "force_unlock"):
+                    try:
+                        table_manager.force_unlock(table.table_id)
+                    except Exception:
+                        logger.exception("Errore force_unlock dopo activate fallita")
+                raise
 
         return int(table.table_id)
+
+    #: Lock di riserva se il runtime non espone il proprio (double nei test); l'ammissione resta comunque
+    #: rifiutata senza `admit_controller_entries`.
+    _fallback_entry_lock = threading.RLock()
+
+    def _admission_lock(self):
+        """#523 (rilievo Codex #529): cap, tavolo e fence di un ingresso si decidono sotto lo stesso lock
+        d'ammissione dei segnali (RLock del runtime), cosi' due ingressi concorrenti non leggono la stessa
+        esposizione e non riservano lo stesso tavolo. La pubblicazione avviene fuori dal lock."""
+        lock = getattr(self.runtime, "_risk_admission_lock", None)
+        if lock is None or not hasattr(lock, "acquire"):
+            lock = DutchingController._fallback_entry_lock
+        return lock
+
+    def _locked_entry(self, body, payload: Dict[str, Any]) -> Dict[str, Any]:
+        lock = self._admission_lock()
+        lock.acquire()
+        held = [True]
+
+        def unlock():
+            if held[0]:
+                held[0] = False
+                lock.release()
+
+        try:
+            return body(payload, unlock)
+        finally:
+            unlock()
 
     def _admit_entries(self, orders: List[Dict[str, Any]], batch_id: str = "") -> str:
         """#523: ammissione delle gambe Dutching e dell'ordine manuale tramite il RuntimeController: barriera
@@ -811,11 +855,9 @@ class DutchingController:
         return _side(value)
 
     def _resolve_selection_side(self, selection: Dict[str, Any]) -> str:
+        """`side` o il suo alias `effectiveType`: entrambi presenti e diversi => INVALID_SIDE (rilievo Codex)."""
         selection = selection or {}
-        raw = selection.get("side")
-        if raw in (None, ""):
-            raw = selection.get("effectiveType")          # alias esplicito gia' usato dal chiamante
-        return self._normalize_side(raw)
+        return _selection_side(selection or {})
 
     def _resolve_commission_pct(self, payload: Dict[str, Any]) -> float:
         if "commission" in payload:
@@ -1326,6 +1368,10 @@ class DutchingController:
     # EXECUTE
     # =========================================================
     def _execute_impl(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._locked_entry(self._execute_reserved, payload)
+
+    def _execute_reserved(self, payload: Dict[str, Any], unlock) -> Dict[str, Any]:
+        """Controlli, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare."""
         pre = self.precheck(payload)
         if not pre["ok"]:
             self._publish_audit(
@@ -1356,10 +1402,12 @@ class DutchingController:
         batch_exposure = float(pre["batch_exposure"] or 0.0)
 
         duplication_guard = self._duplication_guard()
-        table_id = payload.get("table_id")
-        allocated_here = False
-
-        if not table_id:
+        # #523 (rilievo Codex #529): il tavolo e' sempre riservato qui con l'esposizione del lotto; un
+        # `table_id` del chiamante non viene usato (non riserverebbe nulla e non entrerebbe nelle misure).
+        if payload.get("table_id"):
+            logger.warning("table_id %r del chiamante ignorato: tavolo riservato dal controller",
+                           payload.get("table_id"))
+        try:
             table_id = self._allocate_table(
                 event_key=event_key,
                 batch_exposure=batch_exposure,
@@ -1371,7 +1419,17 @@ class DutchingController:
                     "batch_id": batch_id,
                 },
             )
-            allocated_here = table_id is not None
+        except Exception as exc:
+            # #523 (rilievo Codex #529): nessun ordine pubblicato => chiave anti-duplicato rilasciata
+            logger.exception("Errore riserva tavolo batch dutching")
+            if duplication_guard:
+                try:
+                    duplication_guard.release(event_key)
+                except Exception:
+                    logger.exception("Errore release duplication key after table failure")
+            return self._fail(f"Riserva tavolo fallita: {exc}", dry_run=False, preflight=False,
+                              batch_id=batch_id, event_key=event_key)
+        allocated_here = table_id is not None
 
         if table_id is None and self._table_manager() is not None:
             msg = "Nessun tavolo disponibile per batch dutching"
@@ -1464,6 +1522,7 @@ class DutchingController:
                     reason=admission,
                 )
             admitted = True
+            unlock()                     # ingresso riservato: la pubblicazione non trattiene il lock
 
             self._batch_manager_create(batch_id, event_key, payload, orders)
             batch_created = True
@@ -1552,6 +1611,10 @@ class DutchingController:
     # MANUAL BET
     # =========================================================
     def manual_bet(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self._locked_entry(self._manual_bet_reserved, payload)
+
+    def _manual_bet_reserved(self, payload: Dict[str, Any], unlock) -> Dict[str, Any]:
+        """Cap, dedupe, tavolo e ammissione sotto il lock d'ammissione; `unlock()` prima di pubblicare."""
         try:
             required = ["market_id", "selection_id", "price", "stake"]
             for key in required:
@@ -1651,10 +1714,12 @@ class DutchingController:
                     return self._fail("Duplicato bloccato")
 
             # #523: l'ordine manuale occupa un tavolo con il suo rischio reale, cosi' entra nelle misure di
-            # mercato, evento e totale come ogni altro ingresso, e viene liberato dagli esiti terminali.
-            table_id = payload.get("table_id")
-            allocated_here = False
-            if not table_id:
+            # mercato, evento e totale come ogni altro ingresso, e viene liberato dagli esiti terminali. Il
+            # tavolo e' sempre riservato qui: un `table_id` del chiamante non riserverebbe nulla (rilievo Codex).
+            if payload.get("table_id"):
+                logger.warning("table_id %r del chiamante ignorato: tavolo riservato dal controller",
+                               payload.get("table_id"))
+            try:
                 table_id = self._allocate_table(
                     event_key=event_key,
                     batch_exposure=exposure,
@@ -1669,7 +1734,13 @@ class DutchingController:
                         "type": "manual_bet",
                     },
                 )
-                allocated_here = table_id is not None
+            except Exception as exc:
+                # nessun ordine pubblicato => chiave anti-duplicato rilasciata, retry sicuro (rilievo Codex)
+                logger.exception("Errore riserva tavolo (manual_bet)")
+                if guarded:
+                    duplication_guard.release(event_key)
+                return self._fail(f"Riserva tavolo fallita: {exc}")
+            allocated_here = table_id is not None
             if table_id is None and self._table_manager() is not None:
                 if guarded:
                     duplication_guard.release(event_key)
@@ -1707,6 +1778,7 @@ class DutchingController:
             if reason:
                 _undo()
                 return self._fail(f"Ingresso non ammesso: {reason}", reason=reason)
+            unlock()                     # ingresso riservato: la pubblicazione non trattiene il lock
 
             try:
                 self.bus.publish("CMD_QUICK_BET", order)
