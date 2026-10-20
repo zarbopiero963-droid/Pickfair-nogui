@@ -476,3 +476,84 @@ def test_risposta_incompleta_del_broker_e_fondi_non_verificabili(tmp_path, rispo
     c.rc._on_signal_received(_signal())
     assert "fondi_non_verificabili" in _rifiuti(c), _rifiuti(c)
     _nessun_effetto(c)
+
+
+# ---------------------------------------------------------------- rilievi Codex su 887d578
+def test_auto_next_senza_tavolo_e_rifiutato():
+    # Codex r4330918409: mm_context senza table/table_id => l'ordine partirebbe senza riserva, invisibile al
+    # gate per le entrate concorrenti. Fail-closed: nessun auto-next senza riserva di tavolo.
+    rc, bus = _make_controller(responses=[{"available": 150.0, "exposure": 0.0}])
+    rc.mode = RuntimeMode.ACTIVE
+    rc._on_close_position(_canonical_close_payload(
+        auto_trade_enabled=True, cycle_executor_enabled=True,
+        mm_context={"cycle_active": True, "cycle_id": "cycle-senza-tavolo",
+                    "next_signal": {"market_id": "1.2", "selection_id": 2, "price": 2.0, "stake": 2.0,
+                                    "bet_type": "BACK"}},
+    ))
+    esito = [e for e in bus.events if e[0] == "AUTO_TRADE_MM_RESULT"][0][1]
+    assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
+    assert esito["reason"] == "riserva_tavolo_mancante", esito
+
+
+def test_auto_next_con_snapshot_del_settlement_in_errore_e_rifiutato():
+    # Codex r4330918407: risposta del broker senza exposure => BetfairService aggiunge `error`; lo snapshot del
+    # settlement deve conservarlo e l'auto-next rifiutare (fondi non verificabili).
+    rc, bus, esito = _auto_next(
+        {"market_id": "1.2", "selection_id": 2, "price": 2.0, "stake": 2.0, "bet_type": "BACK"},
+        funds={"available": 150.0, "exposure": 0.0, "error": "BALANCE_FIELD_MISSING:exposure"},
+    )
+    assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
+    assert esito["reason"] == "fondi_non_verificabili", esito
+
+
+def test_lettura_iniziata_prima_del_success_vede_ancora_la_riserva_rilasciata(tmp_path):
+    # Codex r4330918417: B inizia a leggere il conto, poi arriva il SUCCESS di A (60) che rilascia il tavolo;
+    # la lettura di B restituisce il disponibile PRIMA del piazzamento (100). A va ancora addebitato a B:
+    # 60 + 60 > 100 => B rifiutato.
+    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    _con_fondi(c, 100.0)
+    c.rc._on_signal_received(_signal())
+    (primo,) = c.bus.payloads("CMD_QUICK_BET")
+
+    def _lettura_durante_il_success():
+        c.rc._on_quick_bet_success({**primo, "status": "PLACED", "outcome": "SUCCESS"})
+        return {"available": 100.0, "exposure": 0.0}       # saldo letto prima del piazzamento di A
+
+    c.rc.betfair_service.get_account_funds = _lettura_durante_il_success
+    c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",
+                                     received_at="2026-10-08T10:05:00.000000+00:00"))
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1, _rifiuti(c)
+    assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
+
+
+def test_riserva_a_mercato_rilasciata_resta_per_le_letture_precedenti_e_scade():
+    from core.table_manager import TableManager
+    tm = TableManager(table_count=1)
+    tm.activate(table_id=1, event_key="e1", exposure=60.0, market_id="1.1", selection_id=1,
+                meta={"customer_ref": "ref-A"})
+    tm.mark_placed(1, "e1", at=10.0, customer_ref="ref-A")
+    tm.force_unlock(1)
+    assert tm.pending_exposure(since=5.0, now=11.0) == 60.0     # lettura iniziata prima del piazzamento
+    assert tm.pending_exposure(since=12.0, now=13.0) == 0.0     # lettura successiva: gia' nel disponibile
+    late = 10.0 + TableManager.PLACED_TOMBSTONE_TTL_S + 1.0
+    assert tm.pending_exposure(since=late - 0.5, now=late) == 0.0   # traccia scaduta e potata
+
+
+def test_lettura_dei_fondi_piu_vecchia_del_ttl_e_non_verificabile(tmp_path):
+    # Le tracce delle riserve rilasciate durano PLACED_TOMBSTONE_TTL_S: una lettura piu' vecchia non e'
+    # confrontabile in sicurezza => fondi non verificabili.
+    import time as _time
+    from core.table_manager import TableManager
+    c = _chain(tmp_path, stake=10.0, anti_duplication=True)
+    real_read = c.rc._read_funds_for_entry
+
+    def _lettura_vecchia():
+        out = real_read()
+        out["read_at"] = _time.monotonic() - TableManager.PLACED_TOMBSTONE_TTL_S - 1.0
+        return out
+
+    c.rc._read_funds_for_entry = _lettura_vecchia
+    _con_fondi(c, 100.0)
+    c.rc._on_signal_received(_signal())
+    assert "fondi_non_verificabili" in _rifiuti(c), _rifiuti(c)
+    assert c.bus.payloads("CMD_QUICK_BET") == []

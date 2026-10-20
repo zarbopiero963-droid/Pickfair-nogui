@@ -4327,7 +4327,8 @@ class RuntimeController:
         # ancora a mercato (questo ingresso e quelli concorrenti). Fondi insufficienti o non verificabili =>
         # nessun ordine, risorse rilasciate (ritentabile), mai ridimensionamento.
         funds_reason = self._entry_funds_reason(
-            entry_funds.get("funds"), self.table_manager.pending_exposure(since=entry_funds.get("read_at")))
+            entry_funds.get("funds"), self.table_manager.pending_exposure(since=entry_funds.get("read_at")),
+            read_at=entry_funds.get("read_at"))
         if funds_reason:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=funds_reason)
@@ -5164,7 +5165,7 @@ class RuntimeController:
                                 error=str(error or ""))
         return {"funds": funds, "read_at": started_at}
 
-    def _entry_funds_reason(self, account: Any, pending_exposure: float) -> str:
+    def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
         nuova entrata, stanno nel ``available`` del conto; altrimenti il motivo del rifiuto.
 
@@ -5177,12 +5178,15 @@ class RuntimeController:
         payload del conto o uno snapshot (`_account_from_funds`); un payload con `error`, non valido o assente
         => fondi non verificabili. Nessun ridimensionamento: rifiuto esplicito con gli importi."""
         if isinstance(account, dict) and "cash_equity" in account and "ok" in account:
-            parsed = account
+            parsed = account if not account.get("error") else {"ok": False}
         elif isinstance(account, dict) and not account.get("error"):
             parsed = self._account_from_funds(account)
         else:
             parsed = {"ok": False}
         if not parsed.get("ok"):
+            return "fondi_non_verificabili"
+        if read_at is not None and time.monotonic() - float(read_at) > TableManager.PLACED_TOMBSTONE_TTL_S:
+            # Lettura piu' vecchia delle tracce delle riserve rilasciate: non confrontabile in sicurezza.
             return "fondi_non_verificabili"
         available = float(parsed["available"])
         pending_exposure = float(pending_exposure)
@@ -5195,6 +5199,10 @@ class RuntimeController:
         monotonic d'inizio della lettura (#461 PR28-e: le riserve confermate a mercato dopo restano pendenti)."""
         account = self._account_from_funds(funds)
         account["source"] = source
+        if isinstance(funds, dict) and funds.get("error"):
+            # #461 PR28-e: errore del servizio (lettura fallita, campo mancante): lo snapshot lo conserva e il gate
+            # dei fondi dell'auto-next lo tratta come fondi non verificabili.
+            account["error"] = str(funds.get("error"))
         self._account_snapshot = dict(account)
         self._account_snapshot_read_at = read_at
         if account["ok"]:
@@ -6585,7 +6593,13 @@ class RuntimeController:
                         since=getattr(self, "_account_snapshot_read_at", None))
                     risk_reason = self._entry_funds_reason(
                         getattr(self, "_account_snapshot", None), pending + order_exposure,
+                        read_at=getattr(self, "_account_snapshot_read_at", None),
                     ) or "risk_approved"
+                    if risk_reason == "risk_approved" and decision.table_id is None and (signal or {}).get(
+                            "table_id") is None:
+                        # #461 PR28-e (Codex #531): senza tavolo l'ordine partirebbe senza riserva, invisibile al
+                        # gate dei fondi delle entrate concorrenti. Fail-closed.
+                        risk_reason = "riserva_tavolo_mancante"
             except (TypeError, ValueError):
                 risk_reason = "ordine_auto_trade_non_verificabile"
             risk_allowed = risk_reason == "risk_approved"

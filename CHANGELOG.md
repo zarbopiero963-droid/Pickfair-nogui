@@ -31,7 +31,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `TableManager.mark_placed`, correlato all'ordine tramite il `customer_ref` registrato sulla riserva;
   senza `table_id`, come nell'auto-next, `mark_placed_by_ref`; un esito tardivo di un ordine rilasciato non
   marca un'altra riserva; marca azzerata a ogni rilascio; mai su AMBIGUOUS); `pending_exposure` somma
-  le riserve non ancora riflesse. Gli ordini già a mercato non contano due volte; l'impegnato del conto non
+  le riserve non ancora riflesse, comprese quelle già a mercato e poi rilasciate se piazzate dopo l'inizio
+  della lettura (tracce con TTL tecnico `PLACED_TOMBSTONE_TTL_S`; una lettura più vecchia del TTL è fondi non
+  verificabili). Lo snapshot del settlement conserva l'`error` del servizio; un auto-next senza tavolo è
+  rifiutato (`riserva_tavolo_mancante`). Gli ordini già a mercato non contano due volte; l'impegnato del conto non
   copre nulla, perché può essere di posizioni esterne al bot (rilievo Sol su #531). Ordini ricostruiti al
   riavvio (F018) e confermati vivi = già a mercato; esiti incerti restano addebitati. Fondi illeggibili,
   incompleti (senza `exposure`) o con errore => `fondi_non_verificabili`, nessuna entrata (prima restava il

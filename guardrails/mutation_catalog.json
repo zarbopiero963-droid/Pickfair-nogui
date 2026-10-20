@@ -880,8 +880,8 @@
       "module": "core.runtime_controller",
       "area": "funds",
       "file": "core/runtime_controller.py",
-      "original": "            return \"fondi_non_verificabili\"",
-      "mutated": "            return \"\"",
+      "original": "        if not parsed.get(\"ok\"):",
+      "mutated": "        if False:",
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
@@ -982,6 +982,54 @@
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
       "rationale": "#461 PR28-e (rilievo Sol #531): l'esito tardivo di un ordine precedente sullo stesso tavolo marca la nuova riserva."
+    },
+    {
+      "id": "funds_gate_released_placed_forgotten",
+      "module": "core.table_manager",
+      "area": "funds",
+      "file": "core/table_manager.py",
+      "original": "        self._placed_tombstones.append((float(placed_at), float(table.current_exposure)))",
+      "mutated": "        pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): una riserva a mercato rilasciata sparisce per le letture iniziate prima del suo piazzamento: due entrate passano sullo stesso disponibile."
+    },
+    {
+      "id": "funds_gate_stale_read_accepted",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if read_at is not None and time.monotonic() - float(read_at) > TableManager.PLACED_TOMBSTONE_TTL_S:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e: una lettura del conto piu' vecchia delle tracce delle riserve rilasciate viene accettata."
+    },
+    {
+      "id": "funds_gate_snapshot_error_ignored",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "            parsed = account if not account.get(\"error\") else {\"ok\": False}",
+      "mutated": "            parsed = account",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): lo snapshot del settlement con errore del servizio alimenta l'auto-next."
+    },
+    {
+      "id": "funds_gate_auto_next_without_table",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "                        risk_reason = \"riserva_tavolo_mancante\"",
+      "mutated": "                        pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py"
+      ],
+      "rationale": "#461 PR28-e (Codex #531): un auto-next senza tavolo parte senza riserva, invisibile al gate delle entrate concorrenti."
     }
   ]
 }
