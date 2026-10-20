@@ -2320,6 +2320,17 @@
       "max_files": 5,
       "allow_tests": true,
       "description": "#524 (PF-POST522-ENGINE-RECOVERY-01, BLOCKS_LIVE): un ordine forse inviato non diventa mai FAILED senza prova del rifiuto. Ambiguita' non persistita (transizione DB INFLIGHT->AMBIGUOUS fallita) e ogni eccezione dopo l'avvio dell'invio restano AMBIGUOUS non terminale: chiavi anti-duplicato e tavolo trattenuti, QUICK_BET_AMBIGUOUS, riga INFLIGHT ritrovata da dedupe e riconciliazione al riavvio."
+    },
+    "issue525-ci-orchestrators-recovery": {
+      "description": "#525: ripristino degli orchestratori CI ci-master-gate e ci-dynamic-intelligent (workflow richiamati senza workflow_call). PR a merge owner (.github/workflows/).",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        ".github/workflows/dutching.yml",
+        ".github/workflows/live-gate.yml",
+        ".github/workflows/pnl-engine.yml",
+        "tests/guardrails/test_orchestratori_ci_525.py"
+      ],
+      "max_files": 5
     }
   }
 }

@@ -3,6 +3,7 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 on:
+  workflow_call:
   pull_request:
     paths:
       - "ops/paper_trading_gate.md"

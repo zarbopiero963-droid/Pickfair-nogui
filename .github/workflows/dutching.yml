@@ -1,6 +1,7 @@
 name: dutching
 
 on:
+  workflow_call:
   push:
     paths:
       - "dutching.py"
