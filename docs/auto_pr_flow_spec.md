@@ -297,8 +297,8 @@ RESUME (contratto §Contratti prodotto vigenti, P38); Telegram rinviabile non
 rimosso; master/copy/follow non via MCP; UX per nome; una PR per repository
 (#426/6026322035); superficie Betfair personale completa (#426/6043516714);
 vendor/developer/subscription esclusi (#426/6043516714); P35 attesa/nessuna sostituzione; Void P39; solo calcio
-P40; limiti di denaro P37/P02; Sol + Grok (P41); fix loop 5 (CLAUDE.md
-§PR-flow, #496); limitazioni #471/#472 (registri di limite noto/rischio
+P40; limiti di denaro P37/P02; Sol + Grok (P41); fix loop: tetto 10 (CLAUDE.md
+§PR-flow, #496, PF-QA-AUTONOMOUS-CONTINUATION-01); limitazioni #471/#472 (registri di limite noto/rischio
 accettato, #489); nessun costo senza owner (#497).
 
 **Aperte** (mai inventarle): MANUAL via MCP; updater Caso B; nuove semantiche
@@ -324,9 +324,11 @@ soddisfatta riceve evidenza, non una PR artificiale.
 
 ### 0.15 Fix loop
 
-Cap 5, cumulativo per PR, nessun reset (§12, invariato). `REVIEW_CHURN` non
-riceve patch artificiali. Cap esaurito → STOP. Deroga owner solo per quella
-PR e limitata; mai un cambio globale 5→6/7.
+Cap 10 (tetto massimo, non obiettivo; PF-QA-AUTONOMOUS-CONTINUATION-01, mandato
+owner 20/10/2026, unico cambio globale autorizzato 5→10), cumulativo per PR,
+nessun reset (§12). `REVIEW_CHURN` non riceve patch artificiali e può fermare
+prima del tetto. Cap esaurito → STOP. Deroga owner solo per quella PR e
+limitata; nessun altro cambio globale del cap senza nuovo mandato owner.
 
 ---
 
@@ -971,10 +973,12 @@ Poi riparte da:
 ### Budget definitivo e persistenza
 
 ```text
-MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
+MAX_FIX_LOOP_ITERATIONS_PER_PR = 10
 ```
 
-Massimo cinque passaggi **patch → push** originati da `PATCH_REQUIRED` per PR.
+Massimo dieci passaggi **patch → push** originati da `PATCH_REQUIRED` per PR
+(PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner 20/10/2026; prima 5). È un
+tetto, non un obiettivo: l'anti-churn sotto può fermare prima.
 Conteggio cumulativo: nuovo commit/head, finding risolti, reviewer/provider,
 CI verde, progresso, cluster o rerun non lo azzerano. La pubblicazione iniziale
 di un nuovo task non è un ciclo di riparazione. Un push di un cluster consuma
@@ -1053,8 +1057,11 @@ sono diagnostica, **non** il contatore autorevole.
 
 `PR_FIX_LOOP_LEDGER` indica il medesimo ledger ai preflight/report del controller.
 Il controller si ferma in `NEEDS_MANUAL` anche quando il ledger è assente o
-il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 5 non
-richiede un override: il limite blocca la prenotazione del sesto repair.
+il suo snapshot è respinto. Un semplice preflight/readiness a conteggio 10 non
+richiede un override: il limite blocca la prenotazione dell'undicesimo repair.
+Il freno anti-loop sulle esecuzioni del controller (`max_total_controller_runs`)
+vale il tetto più un margine fisso di 3 (13 con il tetto 10): i cicli concessi
+dal ledger restano raggiungibili fino al merge, un loop senza fine si ferma.
 Preflight/controller generali si fermano anche davanti a un ciclo incompiuto:
 non pianificano altro lavoro o merge sulla sola leggibilità del ledger. Il
 worker già titolare della capability usa i propri gate di fase, non quel
@@ -1066,7 +1073,7 @@ sia snapshot incompleti/incompiuti. Ogni autorizzazione richiede identità PR co
 sempre il ledger autorevole prima di consentire il merge. Una
 cache verde non può nascondere un ciclo incompiuto o un ledger assente.
 Una nuova lettura verde non cancella uno stop manuale esplicito già nel
-contesto. Restano richiesti tutti i normali gate di merge; count=5 con nessun
+contesto. Restano richiesti tutti i normali gate di merge; count=10 con nessun
 ciclo incompiuto non richiede una deroga per la sola readiness.
 Il contesto di riparazione porta `fix_loop = {path, repo, pr, cycle_id}` ai gate
 Phase 0/patch, autofix, post-fix audit/commit e push. Per un task già associato
@@ -1076,7 +1083,7 @@ passano dai gate; il vecchio launcher del supervisor, assente su main, non
 viene dispatchato né riattivato perché privo di enforcement del nuovo budget.
 La pianificazione passiva/dry-run non concede permessi di mutazione.
 
-Al tentativo del sesto ciclo:
+Al tentativo dell'undicesimo ciclo:
 
 ```text
 AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
@@ -1084,7 +1091,7 @@ REASON=fix_loop_budget_exhausted
 ```
 
 Vietati nuova patch, commit, push, resolve che finga una correzione e merge
-automatico del problema ancora aperto. Cinque cicli completati senza finding
+automatico del problema ancora aperto. Dieci cicli completati senza finding
 residui non invalidano le prove né bypassano/alterano Merge Readiness.
 
 ### Anti-churn
@@ -1092,7 +1099,7 @@ residui non invalidano le prove né bypassano/alterano Merge Readiness.
 Contratto/codice corretto + nuove mutation equivalenti nella stessa area senza
 nuovo current defect = `REVIEW_CHURN`; niente altro fix-loop automatico.
 Il ledger conserva osservazioni per area, anche tra run/head differenti.
-Può fermarsi in `NEEDS_MANUAL` prima del quinto ciclo. A budget esaurito:
+Può fermarsi in `NEEDS_MANUAL` prima del decimo ciclo. A budget esaurito:
 
 ```text
 AUTO_PR_FLOW_STATUS=NEEDS_MANUAL
@@ -1108,14 +1115,18 @@ L'owner della repository deve scrivere nella PR un commento dedicato contenente
 soltanto questa riga esplicita (niente esempi citati o testo aggiuntivo):
 
 ```text
-OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=5
+OWNER_FIX_LOOP_OVERRIDE PR=495 ADDITIONAL=1 AT_COUNT=10
 ```
 
 L'ID commento viene letto via API GitHub autenticata; verificare autore owner,
-repository, PR e URL. Con count=5, abilita esattamente il sesto ciclo;
-ceiling=6. La settima iterazione richiede una **nuova** decisione puntuale.
+repository, PR e URL. Con count=10, abilita esattamente l'undicesimo ciclo;
+ceiling=11. La dodicesima iterazione richiede una **nuova** decisione puntuale.
+Una deroga vale solo a tetto raggiunto (`AT_COUNT` ≥ tetto): un ledger con una
+deroga storica registrata sotto il tetto 10 (es. `AT_COUNT=5`) non è più
+coerente e si ferma (`invalid_persisted_grant`, o `invalid_persisted_grant_bounds`
+se il ceiling supera 10 ma `AT_COUNT` è sotto il tetto; fail-closed).
 Commento e ceiling restano registrati in `grants`; rigiocare l'ID non aggiunge
-budget. Nessuna modifica del cap globale 5, nessun reset, nessuna trasferibilità
+budget. Nessuna modifica del cap globale 10, nessun reset, nessuna trasferibilità
 ad altra PR, nessun `IGNORE_FIX_LOOP_LIMIT=true`.
 
 CLI operativa (`--ledger`, `--repo`, `--pr` obbligatori):

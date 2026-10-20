@@ -21,12 +21,15 @@ espressamente sospesi. Resta il merge manuale owner per i file-policy esclusi.
 
 ## PR-flow — budget e triage owner (07/10/2026)
 
-`MAX_FIX_LOOP_ITERATIONS_PER_PR = 5`: cinque cicli **patch → push** da
-`PATCH_REQUIRED`, cumulativi per PR. Head, reviewer/provider, thread risolti,
-CI verde, progresso, cluster o rerun non azzerano il contatore. Il sesto ciclo
-si ferma **prima della patch/commit/push**: `NEEDS_MANUAL`,
-`fix_loop_budget_exhausted`. Una deroga owner deve autorizzare quella PR e un
-numero preciso di cicli aggiuntivi; non cambia il cap globale né il contatore.
+`MAX_FIX_LOOP_ITERATIONS_PER_PR = 10`: al massimo dieci cicli **patch → push**
+da `PATCH_REQUIRED`, cumulativi per PR (PF-QA-AUTONOMOUS-CONTINUATION-01,
+mandato owner 20/10/2026). Dieci è un **tetto, non un obiettivo**: lo stop
+anticipato (`REVIEW_CHURN`, nessun nuovo difetto) resta. Head,
+reviewer/provider, thread risolti, CI verde, progresso, cluster o rerun non
+azzerano il contatore. L'undicesimo ciclo si ferma **prima della
+patch/commit/push**: `NEEDS_MANUAL`, `fix_loop_budget_exhausted`. Una deroga
+owner deve autorizzare quella PR e un numero preciso di cicli aggiuntivi; non
+cambia il cap globale né il contatore.
 
 Distinguere `CURRENT_DEFECT`, `GUARDRAIL_GAP` e `THEORETICAL_MUTATION` sulla
 base delle prove sul current head, indipendentemente dal reviewer. Nuove
@@ -2027,8 +2030,9 @@ For automated PR repair loops:
 Normative owner repair limit (not per check state):
 
 ```text
-MAX_FIX_LOOP_ITERATIONS_PER_PR = 5
-Cumulative per PR; bounded explicit owner override only.
+MAX_FIX_LOOP_ITERATIONS_PER_PR = 10
+Cumulative per PR; a ceiling, not a target (early REVIEW_CHURN stop remains);
+bounded explicit owner override only (PF-QA-AUTONOMOUS-CONTINUATION-01).
 ```
 
 If another PATCH_REQUIRED cycle would exceed the allowed cumulative budget:

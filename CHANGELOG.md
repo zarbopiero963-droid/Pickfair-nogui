@@ -8,6 +8,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Fix loop: tetto per PR portato da 5 a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner
+  20/10/2026):** `MAX_FIX_LOOP_ITERATIONS_PER_PR = 10` in `scripts/pr_fix_loop_policy.py`. È un massimo,
+  non un obiettivo: stop anticipato per `REVIEW_CHURN`, prenotazione prima della patch, nessun reset,
+  deroga owner puntuale oltre il tetto e tutti i gate invariati. Una deroga storica registrata sotto il
+  nuovo tetto (es. `AT_COUNT=5`) rende il ledger di quella PR non valido (fail-closed). Allineati
+  CLAUDE.md, AGENTS.md (anche il blocco «Normative owner repair limit»), `docs/auto_pr_flow_spec.md`
+  (§0.15, §11–§13) e `docs/hard_verify_spec.md`; un test rifiuta ogni copia normativa ancora a 5.
+  Il freno anti-loop sulle esecuzioni del controller (`max_total_controller_runs`, fisso a 8) è ora il
+  tetto + 3 (13): con 8 i cicli 9–10 non arrivavano al merge.
+
 ### Fixed
 
 - **#523 — Dutching e bet manuale conformi ai gate (corsie ancora dormienti):** lato BACK/LAY

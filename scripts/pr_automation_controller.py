@@ -6120,7 +6120,10 @@ def _budget_limits() -> dict[str, int]:
     return {
         "max_autofix_commits_per_pr": fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR,
         "max_same_blocker_attempts": 2,
-        "max_total_controller_runs": 8,
+        # Freno anti-loop sulle esecuzioni: margine fisso di 3 oltre il tetto del fix loop (era 8 = 5 + 3).
+        # Legato alla costante, cosi' i cicli consentiti dal ledger restano raggiungibili fino al merge
+        # (rilievo Codex r4328857781, #530).
+        "max_total_controller_runs": fix_policy.MAX_FIX_LOOP_ITERATIONS_PER_PR + 3,
         "max_codacy_oscillation_rounds": 1,
         "max_stale_check_reruns": 3,
     }
