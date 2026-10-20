@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f"
+  "branch": "main",
+  "sha": "380157a200ae98b8b77034f15c232ed96d61bc79"
  },
- "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
- "next_atomic_action": "Avviare #523 (Dutching/manual_bet) da main e694e39, una PR alla volta; NO LIVE",
- "previous_checkpoint_sha": "7c297d52a3feb3068d237a7383d6c7df120dd604",
+ "mandate_id": "PF-DUTCHING-AUTONOMOUS-523 + rettifica roadmap #461 + decisioni owner #529 (F, A, A2, A3, A4, A5)",
+ "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524 -> #525 -> #523 FATTE; prossima voce = allineamento fix loop a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, #426 c.6263599189; scripts/pr_fix_loop_policy.py oggi MAX=5): tocca file di policy => merge manuale owner; poi riconciliazione completa #461. Follow-up aperto #528 (harness F026). Avvio solo dopo conferma owner. NO LIVE",
+ "previous_checkpoint_sha": "e4533abf7befd91189e8fb443928386cae881ff6",
  "schema": "pf-current/1",
- "seq": 51
+ "seq": 52
 }

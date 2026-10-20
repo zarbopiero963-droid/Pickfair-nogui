@@ -73,3 +73,12 @@ La chat e gli Artifact NON sono la fonte di verità.
 
 ## seq 6 (f6ee25e) — chiusura sessione al 97% budget
 - Pendenti: mutation MD6 (conferma), MD10, MD11 su f6ee25e; regressione completa su f6ee25e NOT VERIFIED.
+
+
+## seq 52 — #529 mergiata (2026-10-20)
+
+- **#529 (#523) MERGED:** squash `380157a200ae98b8b77034f15c232ed96d61bc79` dall'head `b902b00`; tree identico (diff 0). CI post-merge main 13/13 verdi.
+- Hard verify: **IMPLEMENTED_WITH_NOTE**. PF-EXEC-02 NON completo (PR30/PR31). `BLOCKS_DUTCHING_ACTIVATION` resta: corsie Dutching/manual_bet dormienti.
+- Prove: regressione 8650/0, mutation 67/67, Sol e Grok senza bloccanti, riesame indipendente pulito, 0 thread aperti.
+- **Prossima voce (sequenza owner #461 c.6278391354):** allineamento fix loop a 10 cicli (`scripts/pr_fix_loop_policy.py` MAX=5 oggi; PF-QA-AUTONOMOUS-CONTINUATION-01). File di policy => merge manuale owner. Poi riconciliazione completa #461. Follow-up #528.
+- NO LIVE.

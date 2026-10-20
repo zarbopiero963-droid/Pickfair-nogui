@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 51,
- "updated_at": "2026-10-19T21:09:18.122519+00:00",
+ "seq": 52,
+ "updated_at": "2026-10-20T18:25:55.436876+00:00",
  "agent": "claude-code (modello cambiato dall'owner a claude-opus-5-5 dopo esaurimento crediti)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -16,8 +16,8 @@
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
-  "main_sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
-  "verified_with": "git ls-remote"
+  "main_sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+  "verified_with": "git fetch origin main + GitHub API (merge #529)"
  },
  "protected": {
   "pr505_head": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
@@ -457,10 +457,10 @@
   }
  ],
  "owner_decisions_pending": [
-  "#512: autorizzazione ciclo 12 limitato ai due P1 Codex r4311806874 e r4311806886 (patch piccole RED->GREEN, regressione completa, riesame indipendente, push unico)"
+  "Conferma avvio della prossima voce: allineamento fix loop a 10 cicli (file di policy, merge owner)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Avviare #523 (Dutching/manual_bet) da main e694e39, una PR alla volta; NO LIVE",
+ "next_atomic_action": "Sequenza owner (#461 c.6278391354): #524 -> #525 -> #523 FATTE; prossima voce = allineamento fix loop a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, #426 c.6263599189; scripts/pr_fix_loop_policy.py oggi MAX=5): tocca file di policy => merge manuale owner; poi riconciliazione completa #461. Follow-up aperto #528 (harness F026). Avvio solo dopo conferma owner. NO LIVE",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -469,20 +469,21 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "pr": 527,
-  "issue": 525,
-  "head": "1b7ca9a",
-  "merged_main_sha": "e694e39",
+  "pr": 529,
+  "issue": 523,
+  "head": "b902b007671ea529b8fd000a3048b383b7a7aee1",
+  "merged_main_sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
   "status": "MERGED",
-  "regression": "8444 passed 0 failed (1b7ca9a)",
-  "mutation": "36/36 KILLED, 100%, gate PASS (CI ~55s)",
-  "ci": "ci-master-gate 39400329646 success, ci-dynamic 39400329482 success, Merge readiness PASS",
-  "followups": "#528 F026 harness sleep; CLAUDE.md/AGENTS.md allineamento merge (owner merge); PR30; fix loop 10",
-  "branch_protection": "ruleset PICKFAIR-MAIN-PROTECTION attivo, nessun required status check"
+  "hard_verify": "IMPLEMENTED_WITH_NOTE (PF-EXEC-02 NON completo, a PR30/PR31)",
+  "regression": "8650 passed 0 failed (b902b00, tree = 380157a)",
+  "mutation": "67/67 KILLED, gate PASS",
+  "ci": "tutti i check head verdi (test_F026_04 verde al rerun unico, harness #528); post-merge main 13/13 success",
+  "reviews": "Sol e Grok strutturati, nessun bloccante su 9be3003...b902b00; Codex usage-limit (advisory); riesame indipendente: nessun P0/P1, nessun P2 introdotto",
+  "threads": "0 aperti (tutti risolti con prova o DEFERRED_BY_POLICY registrato su #461)"
  },
  "mandate_current": "PF-MASTER-CERTIFICATION-351",
- "previous_checkpoint_sha": "7c297d52a3feb3068d237a7383d6c7df120dd604",
- "lotto_corrente": "ripresa dopo interruzione per crediti: correzione E1-a #505 (worktree isolato), poi ciclo 9 #512",
+ "previous_checkpoint_sha": "e4533abf7befd91189e8fb443928386cae881ff6",
+ "lotto_corrente": "#529 MERGED (380157a); post-merge completato; prossima voce di roadmap selezionata, non avviata",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -513,7 +514,8 @@
   "ciclo 6 PR #512 f62f0e3 (seq 21)",
   "D-G issue #513, D-H #508 chiusa con verdetto per ID, D-J oracle J1 (seq 21)",
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
-  "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)"
+  "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
+  "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -556,34 +558,18 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION-20261018 + PF-MM-STRATEGY-PRESERVATION-AUTONOMOUS-CONTINUATION-01 (owner 18/10, chat) sopra PF-AUTONOMOUS-CERTIFICATION-01 e PF-PR512-CYCLE7-AUTHORIZATION",
+ "mandate_id": "PF-DUTCHING-AUTONOMOUS-523 + rettifica roadmap #461 + decisioni owner #529 (F, A, A2, A3, A4, A5)",
  "code": {
-  "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
-  "verified_with": "git push + git ls-remote",
-  "patch": {
-   "head": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
-   "tree": "6483588ff4e1c74bb9b4a8634d3f867b35b3c299",
-   "captured_at": "2026-10-20T10:24:12+00:00",
-   "modified": [],
-   "untracked": [],
-   "files": [
-    "code_patch/BASELINE.json"
-   ],
-   "skipped_symlinks": {}
-  },
-  "merged_main_sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
-  "base_main": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f"
+  "branch": "main",
+  "sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+  "verified_with": "git fetch origin main; tree identico all'head verificato b902b00 della #529 (git diff b902b00 origin/main = 0 righe)"
  },
  "blocks": [
   "Gate A #506 NON PASS",
-  "PR #505 protetta",
   "LIVE NO-GO",
-  "nessun merge autorizzato (PF-PR-RECOVERY-DECISIONS-02 §4/§10)",
-  "overlap-check rosso (tre PR aperte)",
-  "default cap-ordine 1 EUR della #505 incompatibile con la Decisione 1: da riconciliare nella #505",
-  "CI 5ef61da: tutto verde tranne overlap-check (3 PR aperte) e Merge readiness (18 thread aperti + UNSTABLE): attesi, dichiarati",
-  "fix loop PR #512: 6 cicli (5 + deroga owner A1) usati; nuovi PATCH_REQUIRED da review => NEEDS_MANUAL salvo nuova deroga o PR 10 cicli"
+  "BLOCKS_DUTCHING_ACTIVATION: PF-EXEC-02, PF529-A3-R1..R4, cablaggio batch manager (#461 c.6292754293, 6294445741, 6295132960, 6296247545)",
+  "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
+  "workflow Grok marca done una review senza sezioni (rilevato su 9be3003): file a merge owner, da segnalare"
  ],
  "owner_authorizations": {
   "live": false,
@@ -604,6 +590,24 @@
   "resolve_fixed_threads": "sì, solo con correzione dimostrata sul commit pubblicato e riferimento alla prova"
  },
  "tests_executed": [
+  {
+   "id": "regression_full_529",
+   "status": "PASS",
+   "sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+   "result": "8650 passed / 0 failed / 14 skipped / 1 xfailed su b902b00 (tree identico a 380157a)"
+  },
+  {
+   "id": "mutation_catalog_529",
+   "status": "PASS",
+   "sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+   "result": "67/67 KILLED, gate PASS"
+  },
+  {
+   "id": "ci_post_merge_main",
+   "status": "PASS",
+   "sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+   "result": "13 workflow success"
+  },
   {
    "id": "regression_full",
    "status": "PASS",
@@ -1190,5 +1194,6 @@
   "prep_tree_verified": "aaa60bc78d1ef656a737e60ff47f2e159c5d4a27",
   "archive_dir": "results/pf505_archive",
   "mandate": "PF-PR-SEQUENCE-RECOVERY-01 (owner 19/10)"
- }
+ },
+ "code_divergence_note": "checkpoint seq 51 puntava a e694e39; main avanzato a 380157a dal merge #529 (riconciliato qui)"
 }
