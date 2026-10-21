@@ -1106,11 +1106,11 @@
     },
     {
       "id": "external_duplicate_releases_foreign_reservation",
-      "module": "core.runtime_controller",
+      "module": "core.table_manager",
       "area": "exposure",
-      "file": "core/runtime_controller.py",
-      "original": "                or str(meta.get(\"customer_ref\") or \"\") != ref or \"placed_at\" in meta):",
-      "mutated": "                or \"placed_at\" in meta):",
+      "file": "core/table_manager.py",
+      "original": "            if (not table or table.current_event_key != key or str(meta.get(\"customer_ref\") or \"\") != ref",
+      "mutated": "            if (not table or table.current_event_key != key",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
@@ -1133,8 +1133,8 @@
       "module": "core.runtime_controller",
       "area": "exposure",
       "file": "core/runtime_controller.py",
-      "original": "                     else self.table_manager.find_by_customer_ref(ref))",
-      "mutated": "                     else None)",
+      "original": "                found = self.table_manager.find_by_customer_ref(ref)",
+      "mutated": "                found = None",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],

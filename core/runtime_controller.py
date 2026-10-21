@@ -5483,27 +5483,31 @@ class RuntimeController:
         processo (``duplicate_in_process`` False: altro processo sullo stesso DB). La riserva di QUESTO comando non
         e' mai partita da qui: si rilascia, come per un esito certo di non-invio, solo se il tavolo porta ancora
         proprio quella riserva (tavolo, evento e customer_ref) e non risulta a mercato. Replay nello stesso
-        processo (True) o dato assente => nulla (la riserva viva dell'originale si conserva, PF-C29-01.03)."""
+        processo (True) o dato assente => nulla (la riserva viva dell'originale si conserva, PF-C29-01.03).
+        Verifica dell'identita' e rilascio del tavolo sono un'unica operazione atomica del TableManager: un tavolo
+        liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca (rilievo Codex su #533)."""
         payload = dict(payload or {})
         if payload.get("duplicate_in_process") is not False:
             return
+        if RuntimeController._hold_batch_leg(self, payload, event_name="QUICK_BET_FAILED"):
+            return                           # gamba di un lotto Dutching: trattenuta come per ogni esito (#529)
         table_id, event_key = payload.get("table_id"), str(payload.get("event_key") or "")
         ref = str(payload.get("customer_ref") or "")
         try:
-            # L'auto-next non copia table_id nel CMD (rilievo Codex su #533): il tavolo si risolve dal customer_ref.
-            table = (self.table_manager.get_table(int(table_id)) if table_id is not None
-                     else self.table_manager.find_by_customer_ref(ref))
+            if table_id is None:
+                # L'auto-next non copia table_id nel CMD (rilievo Codex su #533): il tavolo si risolve dal ref.
+                found = self.table_manager.find_by_customer_ref(ref)
+                table_id = found.table_id if found is not None else None
+            released = table_id is not None and self.table_manager.force_unlock_if_unplaced_reservation(
+                int(table_id), event_key, ref)
         except (TypeError, ValueError):
-            table = None
-        if table is not None and table_id is None:
-            table_id = payload["table_id"] = table.table_id
-        meta = (table.meta or {}) if table is not None else {}
-        if (table is None or not event_key or not ref or table.current_event_key != event_key
-                or str(meta.get("customer_ref") or "") != ref or "placed_at" in meta):
+            released = False
+        if not released:
             return
         logger.warning("Doppione esterno per %s: riserva mai inviata da questo processo rilasciata (tavolo %s)",
                        ref, table_id)
-        self._release_if_terminal(payload, event_name="QUICK_BET_FAILED")
+        if not self._clear_uncertain(event_key, table_id):
+            self.duplication_guard.release(event_key)
 
     def _consumed_intent_reason(self, customer_ref: str) -> str:
         """#461 PR29-a: '' se l'intento non risulta gia' consegnato al trasporto (DB durevole, valido anche dopo un

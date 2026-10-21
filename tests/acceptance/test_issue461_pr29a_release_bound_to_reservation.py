@@ -165,6 +165,39 @@ def test_doppione_esterno_senza_table_id_risolve_il_tavolo_dal_customer_ref(tmp_
     assert _tavoli_occupati(b) == [], "la riserva senza table_id del processo perdente resta bloccata"
     assert _tavoli_occupati(a) == [cmd["table_id"]]
 
+
+def test_doppione_esterno_tardivo_non_rilascia_un_tavolo_riassegnato_a_meta_operazione(tmp_path):
+    # Rilievo Codex su #533 (P1): fra la verifica dell'identita' e il rilascio un reset/sweep libera il tavolo e una
+    # nuova ammissione lo riusa per lo STESSO event_key con un altro intento. Il rilascio non deve colpirla:
+    # verifica e rilascio sono una sola operazione atomica del TableManager.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    tm, tid = c.rc.table_manager, cmd["table_id"]
+    stato = {"fatto": False}
+
+    def riassegna():
+        if not stato["fatto"]:
+            stato["fatto"] = True
+            tm.force_unlock(tid)
+            _riserva_manuale(c, table_id=tid, ref="sig-nuovo-intento", event_key=cmd["event_key"])
+
+    get_table, atomico = tm.get_table, tm.force_unlock_if_unplaced_reservation
+
+    def get_table_poi_riassegna(table_id):
+        copia = get_table(table_id)
+        riassegna()                                   # la copia letta e' gia' stantia
+        return copia
+
+    def riassegna_poi_atomico(*a, **kw):
+        riassegna()
+        return atomico(*a, **kw)
+
+    tm.get_table, tm.force_unlock_if_unplaced_reservation = get_table_poi_riassegna, riassegna_poi_atomico
+    c.rc._on_quick_bet_duplicate({**cmd, "duplicate_in_process": False})
+    assert stato["fatto"]
+    tavolo = get_table(tid)
+    assert tavolo.current_event_key == cmd["event_key"], "la nuova riserva sullo stesso evento e' stata liberata"
+    assert tavolo.meta.get("customer_ref") == "sig-nuovo-intento"
+
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402
 
