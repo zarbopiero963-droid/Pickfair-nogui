@@ -1090,3 +1090,41 @@ def test_r18_effetto_non_registrato_poi_riavvio_riconsegna_una_volta(tmp_path, m
     c.rc._on_close_position(_cleared(bet, -10.0))
     assert _perdite(c) == 10.0 and _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
     assert c.rc.table_manager.find_by_event_key(CHIAVE_A) is None
+
+
+def test_r19_ritento_riuscito_marca_il_realizzato_nessun_doppio_dopo_il_riavvio(tmp_path, monkeypatch):
+    # Codex su e3fe4d7: il realizzato applicato alla consegna resta dichiarato nella riga creata dal ritento
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    prima = float(c.rc.risk_desk.realized_pnl)
+    _non_registrato(c, monkeypatch, bet)
+    assert float(c.rc.risk_desk.realized_pnl) == prima - 10.0
+    c.rc._poll_cleared_settlements()
+    assert c.rc.db.get_settlement_effect(f"cleared:{MERCATO}:{bet}")["realized_applied"]
+    _riavvio(c)                                          # nuovo processo: set in memoria vuoto
+    c.rc._on_close_position(_cleared(bet, -10.0))        # il poller riconsegna (nessun checkpoint)
+    assert float(c.rc.risk_desk.realized_pnl) == prima - 10.0, "perdita realizzata contata due volte"
+    assert _perdite(c) == 10.0
+
+
+def test_r20_held_per_lettura_fallita_ritentato_dal_poller(tmp_path):
+    # Codex su e3fe4d7: held transitorio (exchange illeggibile) riconciliato nel processo, non solo all'avvio
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    lettura = c.rc.betfair_service.list_cleared_orders
+
+    def _illeggibile(*_a, **_k):
+        raise RuntimeError("exchange non raggiungibile")
+
+    c.rc.betfair_service.list_cleared_orders = _illeggibile
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    assert c.rc.db.get_settlement_effect(f"cleared:{MERCATO}:{bet}")["outcome"] == "held"
+    assert _tavolo(c, cmd["table_id"]).current_event_key == CHIAVE_A
+    c.rc._poll_cleared_settlements()                     # exchange ancora giu': resta in coda, nessun effetto
+    assert c.rc._unrecorded_settlements and _perdite(c) == 0.0
+    c.rc.betfair_service.list_cleared_orders = lettura
+    c.rc._poll_cleared_settlements()
+    assert _tavolo(c, cmd["table_id"]).current_event_key == "" and _perdite(c) == 10.0
+    assert not c.rc._unrecorded_settlements
+    c.rc._poll_cleared_settlements()
+    assert _perdite(c) == 10.0

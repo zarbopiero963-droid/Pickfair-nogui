@@ -52,7 +52,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   rispetto alla vista del processo, sommate dentro la transazione (anche due processi sullo stesso tavolo).
   Review su c6d2338: un solo runtime attivo per database (lock esclusivo del sistema operativo all'avvio,
   rifiuto `RUNTIME_INSTANCE_ACTIVE`, lock rilasciato da STOP e da un avvio non riuscito, START/STOP serializzati); chiave della chiusura di posizione con identità canonica (`customer_ref`,
-  `reservation_id` solo in sua assenza) ed effetti non registrati ritentati a ogni giro del poller. **Semantica cambiata,
+  `reservation_id` solo in sua assenza) ed effetti non registrati (e held per lettura fallita) ritentati a ogni giro del poller, con il realizzato marcato;
+  avvio fallito smontato prima del rilascio del lock. **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
   anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva

@@ -302,3 +302,41 @@ def test_stop_concorrente_attende_l_avvio_in_corso_e_il_lock_resta_coerente(tmp_
         via.set()
         rc.reload_config = originale
         app.stop()
+
+
+def test_avvio_fallito_dopo_la_connessione_smonta_i_servizi_prima_del_lock(tmp_path, monkeypatch):
+    # Codex su e3fe4d7: niente lock libero con una sessione Betfair o un listener Telegram ancora vivi
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "parziale.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    smontati = []
+    rc.telegram_service.stop = lambda *a, **k: smontati.append("telegram")
+    disconnetti = rc.betfair_service.disconnect
+    rc.betfair_service.disconnect = lambda *a, **k: (smontati.append("betfair"), disconnetti(*a, **k))[1]
+
+    def _telegram_guasto(*_a, **_k):
+        raise RuntimeError("listener Telegram non avviabile")   # dopo connect() e lettura dei fondi
+
+    rc.telegram_service.start = _telegram_guasto
+    with pytest.raises(RuntimeError):
+        rc.start(execution_mode="SIMULATION")
+    assert "telegram" in smontati and "betfair" in smontati
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+
+
+def test_smontaggio_fallito_dopo_un_avvio_fallito_trattiene_il_lock(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "trattenuto.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("guasto")
+
+    rc.telegram_service.start = _guasto
+    monkeypatch.setattr(rc.betfair_service, "disconnect", _guasto)
+    with pytest.raises(RuntimeError):
+        rc.start(execution_mode="SIMULATION")
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database", \
+        "lock liberato con una sessione Betfair forse ancora viva"

@@ -1744,6 +1744,42 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c (Sol su e3fe4d7): STOP in parallelo con uno start() in corso chiude il lock che lo start riusa (due runtime sullo stesso DB)."
+    },
+    {
+      "id": "retry_does_not_mark_realized",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._mark_settlement_realized(key)\n                self._unrecorded_settlements.pop(key, None)",
+      "mutated": "                    pass\n                self._unrecorded_settlements.pop(key, None)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): dopo un ritento riuscito la riga non dichiara il realizzato e un riavvio conta la perdita due volte."
+    },
+    {
+      "id": "transient_held_not_retried_in_process",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if unrecorded or (effect[\"outcome\"] == \"held\" and effect.get(\"transient\")):",
+      "mutated": "        if unrecorded:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): un held per lettura fallita resta senza effetto fino al riavvio."
+    },
+    {
+      "id": "failed_start_releases_lock_without_teardown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()",
+      "mutated": "            if True:\n                self._release_runtime_instance_lock_if_stopped()",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): un avvio fallito libera il lock con una sessione Betfair o Telegram ancora viva."
     }
   ]
 }

@@ -136,7 +136,8 @@ restava per sempre (S9).
 - **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
   `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto finché il runtime non è fermo: lo rilasciano
   `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
-  secondo `start()` fallito); `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
+  secondo `start()` fallito); un avvio fallito dopo la connessione smonta prima i servizi già avviati (poller, feed, Telegram,
+  Betfair) e, se lo smontaggio fallisce, trattiene il lock; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
   chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
   per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
   permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
@@ -146,7 +147,10 @@ restava per sempre (S9).
 - **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
   bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
   in coda nel processo e si ritenta a ogni giro del poller (`_retry_unrecorded_settlements`, anche in ACTIVE),
-  oltre che in `reconcile_held_settlements()`; dopo un riavvio lo riconsegna il poller.
+  oltre che in `reconcile_held_settlements()`; dopo un riavvio lo riconsegna il poller. Un ritento riuscito marca
+  il realizzato già applicato alla consegna (`realized_applied`), così la riconsegna dopo un riavvio non lo riconta.
+  Anche un settlement `held` per una lettura fallita (ordini, exchange) entra nella stessa coda e si riconcilia nel
+  processo appena la lettura torna disponibile.
 - **F018** ricostruisce la riserva viva dell'auto-next sul suo `reservation_table_id`.
 - **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
   stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata

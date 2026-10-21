@@ -2439,7 +2439,10 @@ class RuntimeController:
                                                     execution_mode=execution_mode, live_enabled=live_enabled,
                                                     live_readiness_ok=live_readiness_ok)
         except BaseException:
-            self._release_runtime_instance_lock_if_stopped()
+            # Codex su e3fe4d7: un avvio fallito dopo connect()/telegram.start() smonta prima i servizi gia' partiti;
+            # smontaggio non riuscito => il lock resta preso (nessun secondo runtime con una sessione ancora viva).
+            if self._teardown_failed_start():
+                self._release_runtime_instance_lock_if_stopped()
             raise
         if not (result or {}).get("started"):
             self._release_runtime_instance_lock_if_stopped()
@@ -2711,6 +2714,25 @@ class RuntimeController:
             return "runtime_already_active_on_database"
         self._instance_lock_fh = handle
         return ""
+
+    def _teardown_failed_start(self) -> bool:
+        """Smonta i servizi eventualmente avviati da uno `start()` fallito (runtime rimasto fermo). True se tutto e'
+        stato smontato; False (lock da trattenere) se uno smontaggio solleva o il runtime non e' fermo."""
+        if getattr(self, "mode", RuntimeMode.STOPPED) is not RuntimeMode.STOPPED:
+            return False
+        ok = True
+        for name, step in (("settlement poller", getattr(self, "_stop_settlement_poller", None)),
+                           ("market data feed", getattr(self, "_stop_market_data_feed", None)),
+                           ("telegram", getattr(getattr(self, "telegram_service", None), "stop", None)),
+                           ("betfair", getattr(getattr(self, "betfair_service", None), "disconnect", None))):
+            if not callable(step):
+                continue
+            try:
+                step()
+            except Exception:
+                ok = False
+                logger.exception("Avvio fallito: smontaggio di %s non riuscito, lock di istanza trattenuto", name)
+        return ok
 
     def _release_runtime_instance_lock_if_stopped(self) -> None:
         """Rilascia il lock di istanza se il runtime e' fermo (STOP o avvio non riuscito); mai mentre e' attivo."""
@@ -5180,10 +5202,14 @@ class RuntimeController:
             with self._settlement_consumer_lock():
                 effect = self._release_settled_tables(item["payload"], table_id=item["payload"].get("table_id"),
                                                       pnl=item["pnl"], settlement_key=key)
-            if effect.get("outcome") == "unverifiable":
-                result["pending"].append(key)
-                result["still_held"].append(key)
+            if effect.get("outcome") == "unverifiable" or effect.get("transient"):
+                result["pending"].append(key)          # ancora non registrabile o non attribuibile per una lettura
+                result["still_held"].append(key)       # fallita: resta in coda per il giro successivo
             else:
+                if key in (getattr(self, "_processed_realized_pnl_keys", None) or ()):
+                    # Codex su e3fe4d7: il realizzato (perdita) e' stato applicato alla consegna; la riga creata ora
+                    # lo dichiara, cosi' la riconsegna dopo un riavvio non lo applica una seconda volta.
+                    self._mark_settlement_realized(key)
                 self._unrecorded_settlements.pop(key, None)
                 (result["reconciled"] if effect.get("applied") else result["still_held"]).append(key)
         return result
@@ -5202,8 +5228,11 @@ class RuntimeController:
         except Exception:
             logger.exception("Riconciliazione dei settlement trattenuti: registro illeggibile")
             return {**result, "ok": False}
+        queued = set(result["reconciled"]) | set(result["still_held"])
         for row in rows:
             key, payload = str(row.get("settlement_key") or ""), dict(row.get("payload") or {})
+            if key and key in queued:
+                continue                                 # gia' rivalutato dalla coda del processo, sopra
             if not key or not payload:
                 result["still_held"].append(key)
                 continue
@@ -6465,7 +6494,9 @@ class RuntimeController:
         retry_persist = (getattr(self, "_recovery_persist_failed", False)
                          or getattr(self, "_pending_cycle_reset", None) is not None)
         unrecorded = effect["outcome"] == "unverifiable"
-        if unrecorded:
+        if unrecorded or (effect["outcome"] == "held" and effect.get("transient")):
+            # Codex su e3fe4d7: anche un held per lettura fallita (ordini, exchange) si ritenta nel processo a ogni
+            # giro del poller, non solo all'avvio: il suo checkpoint ferma la riconsegna, non la riconciliazione.
             self._remember_unrecorded_settlement(settlement_key, payload, pnl)
         if (effect["outcome"] in ("held", "unverifiable") and retry_persist
                 and not self._persist_recovery_tables()):   # RSR-12
