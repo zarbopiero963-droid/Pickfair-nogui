@@ -860,16 +860,16 @@ def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato
     c = _catena(tmp_path)
     cmd, bet = _con_bet(c)
     db = c.rc.db
-    originale = db.merge_recovery_map
+    originale = db.save_settings
     fermo, entrato = threading.Event(), threading.Event()
 
-    def salva_lento(*args, **kwargs):
-        if not entrato.is_set():
+    def salva_lento(payload):
+        if RuntimeController._RECOVERY_KEY in payload and not entrato.is_set():
             entrato.set()
             fermo.wait(5)                                     # snapshot vecchio preparato, scrittura in ritardo
-        return originale(*args, **kwargs)
+        return originale(payload)
 
-    db.merge_recovery_map = salva_lento
+    db.save_settings = salva_lento
     persistenza = threading.Thread(target=c.rc._persist_recovery_tables)
     persistenza.start()
     assert entrato.wait(5)
@@ -879,7 +879,7 @@ def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato
     fermo.set()
     persistenza.join(5)
     settlement.join(5)
-    db.merge_recovery_map = originale
+    db.save_settings = originale
     assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0, "perdita registrata sovrascritta"
 
 

@@ -5775,14 +5775,15 @@ class RuntimeController:
                 return False
             payload, context = prepared
             try:
-                merger = getattr(self.db, "merge_recovery_map", None)
-                if callable(merger):
-                    # differenza rispetto a cio' che questo processo ha scritto (Sol su 7a4f2c3): nessuna voce di
-                    # un altro processo sullo stesso DB viene cancellata da una scrittura ordinaria o di ritentativo
+                if getattr(self.db, "supports_recovery_delta", False):
+                    # variazioni rispetto a cio' che questo processo ha scritto (Sol su 7a4f2c3): nessuna voce di
+                    # un altro processo sullo stesso DB viene cancellata da una scrittura ordinaria o di ritentativo.
+                    # Stessa chiave e stessa `save_settings` di prima: marker di reset, baseline e stato tavoli
+                    # restano UNA transazione.
+                    from database import RecoveryDelta
                     updates, deletes = self._recovery_diff()[1:]
-                    merger(self._RECOVERY_KEY, updates, deletes, self._recovery_extra_settings(payload))
-                else:
-                    self.db.save_settings(payload)                  # DB senza la primitiva (doppi di test)
+                    payload = dict(payload, **{self._RECOVERY_KEY: RecoveryDelta(updates, deletes)})
+                self.db.save_settings(payload)
             except Exception as exc:
                 self._recovery_persist_aborted(context, exc)
                 return False

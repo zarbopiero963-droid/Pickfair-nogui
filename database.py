@@ -63,6 +63,21 @@ _RELEASE_NESTED_SAVEPOINT_SQL = "RELEASE SAVEPOINT sp_nested_tx"
 _ROLLBACK_NESTED_SAVEPOINT_SQL = "ROLLBACK TO SAVEPOINT sp_nested_tx"
 
 
+
+class RecoveryDelta:
+    """#461 PR29-c: variazioni dello stato dei tavoli di recovery ({tavolo: variazione}, tavoli chiusi) da sommare
+    alla mappa persistita dentro la transazione di `Database.save_settings` (mai una sostituzione dell'intera mappa:
+    con piu' processi sullo stesso file nessuno cancella le perdite registrate dagli altri)."""
+
+    __slots__ = ("updates", "deletes")
+
+    def __init__(self, updates: Dict[str, float], deletes: List[str]):
+        self.updates = dict(updates or {})
+        self.deletes = list(deletes or [])
+
+    def __repr__(self) -> str:
+        return f"RecoveryDelta(updates={self.updates!r}, deletes={self.deletes!r})"
+
 class Database:
     def __init__(self, db_path: str = "pickfair.db"):
         self.db_path = str(db_path)
@@ -443,7 +458,20 @@ class Database:
             val = self._cipher.decrypt(val)
         return val
 
+    #: #461 PR29-c: `save_settings` accetta un `RecoveryDelta` come valore (stato dei tavoli di recovery scritto come
+    #: variazioni, vedi `_settlement_transaction`).
+    supports_recovery_delta = True
+
     def save_settings(self, data: Dict[str, Any]) -> None:
+        deltas = [(k, v) for k, v in (data or {}).items() if isinstance(v, RecoveryDelta)]
+        if deltas:
+            if len(deltas) != 1:
+                raise ValueError("save_settings: al piu' un RecoveryDelta per scrittura")
+            merge_key, delta = deltas[0]
+            others = {k: v for k, v in data.items() if k != merge_key}
+            self._settlement_transaction(str(merge_key), None, others or None, "save_settings",
+                                         recovery_merge=(merge_key, delta.updates, delta.deletes))
+            return
         with self.transaction():
             for key, value in (data or {}).items():
                 self._set_setting(str(key), value)
@@ -1869,13 +1897,6 @@ class Database:
                 raise
             finally:
                 self._set_tx_depth(0)
-
-    def merge_recovery_map(self, merge_key: str, updates: Dict[str, float], deletes: List[str],
-                           settings: Optional[Dict[str, Any]] = None) -> bool:
-        """Scrittura ordinaria dello stato dei tavoli di recovery come differenza (vedi `_settlement_transaction`):
-        impostazioni e voci cambiate in una transazione ``BEGIN IMMEDIATE``."""
-        return self._settlement_transaction(str(merge_key), None, settings, "merge_recovery_map",
-                                            recovery_merge=(merge_key, updates, deletes))
 
     def list_held_settlement_effects(self) -> List[Dict[str, Any]]:
         """Settlement registrati ``held`` (in attesa di riconciliazione), con il payload originale."""
