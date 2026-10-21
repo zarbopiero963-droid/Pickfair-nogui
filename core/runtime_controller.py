@@ -5572,7 +5572,26 @@ class RuntimeController:
         completamento marca soltanto la riserva come a mercato; quello di un doppione non tocca nulla."""
         if str((payload or {}).get("status") or "").upper() != "DUPLICATE_BLOCKED":
             self._mark_table_placed(payload)
+            self._resolve_uncertain_on_completion(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
+
+    def _resolve_uncertain_on_completion(self, payload: dict) -> None:
+        """#461 PR29-a (rilievo Codex su #533): un SUCCESS di completamento rende certo l'esito della PROPRIA
+        riserva (stesso tavolo, evento e customer_ref): l'incertezza AMBIGUOUS si chiude, ma tavolo, esposizione
+        e chiave anti-duplicato restano (la posizione e' viva fino al settlement). Un esito di un altro ordine
+        o di un tavolo riassegnato non chiude nulla."""
+        payload = payload or {}
+        event_key, ref = str(payload.get("event_key") or ""), str(payload.get("customer_ref") or "")
+        table_id = payload.get("table_id")
+        try:
+            table = (self.table_manager.get_table(int(table_id)) if table_id is not None
+                     else self.table_manager.find_by_customer_ref(ref))
+        except (TypeError, ValueError):
+            return
+        if (table is None or not event_key or table.current_event_key != event_key
+                or str((table.meta or {}).get("customer_ref") or "") != ref):
+            return
+        self._clear_uncertain(event_key, table.table_id)
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_AMBIGUOUS")

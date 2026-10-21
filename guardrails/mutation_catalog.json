@@ -1151,6 +1151,30 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex #533): le chiavi ripopolate dal DB condiviso rendono 'propria' la riserva mai inviata di un altro processo, trattenuta per sempre."
+    },
+    {
+      "id": "foreign_context_clears_local_ownership",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "        if self._local_inflight_keys.get(ctx.customer_ref) is ctx:",
+      "mutated": "        if ctx.customer_ref in self._local_inflight_keys:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): una richiesta negata prima del dedup scarica la proprieta' locale dell'originale in volo."
+    },
+    {
+      "id": "completion_success_keeps_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            self._resolve_uncertain_on_completion(payload)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): un SUCCESS di completamento dopo AMBIGUOUS lascia la riserva marcata incerta."
     }
   ]
 }

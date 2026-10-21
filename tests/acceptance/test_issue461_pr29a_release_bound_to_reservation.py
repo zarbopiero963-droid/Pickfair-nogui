@@ -219,6 +219,45 @@ def test_chiavi_ripopolate_dal_db_condiviso_non_rendono_propria_la_riserva_di_un
     assert _tavoli_occupati(b) == [], "la riserva mai inviata di B resta bloccata dalle chiavi recuperate dal DB"
     assert _tavoli_occupati(a) == [cmd["table_id"]]
 
+
+def test_richiesta_negata_prima_del_dedup_non_cancella_la_proprieta_locale_dell_originale(tmp_path):
+    # Rilievo Codex su #533 (P1): un comando con lo stesso customer_ref negato PRIMA del dedup (safe mode) non ha
+    # registrato chiavi, ma il suo percorso terminale scaricava la proprieta' locale dell'originale ancora in volo:
+    # il replay successivo risultava "esterno" e la riserva viva dell'originale poteva essere sbloccata.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    eng = c.engine
+    assert cmd["customer_ref"] in eng._local_inflight_keys
+    eng._is_safe_mode_enabled = lambda: True
+    eng.submit_quick_bet({k: v for k, v in cmd.items() if k != "table_id"})      # negata, nessun evento al runtime
+    del eng._is_safe_mode_enabled
+    assert cmd["customer_ref"] in eng._local_inflight_keys, "la proprieta' locale dell'originale e' stata scaricata"
+    c.bus.publish("CMD_QUICK_BET", dict(cmd))
+    (dup,) = c.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is True, dup
+    assert _tavoli_occupati(c) == [cmd["table_id"]]
+
+
+def test_success_di_completamento_chiude_l_incertezza_senza_rilasciare(tmp_path):
+    # Rilievo Codex su #533: AMBIGUOUS poi SUCCESS di completamento dello stesso ordine. La riserva resta (a mercato),
+    # ma l'esito ora e' certo: l'incertezza va chiusa (prima la chiudeva solo il rilascio, rimosso da PR29-a).
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    c.rc._on_quick_bet_ambiguous(dict(cmd))
+    assert cmd["event_key"] in c.rc._uncertain_reservations_map()
+    c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED"})
+    assert cmd["event_key"] not in c.rc._uncertain_reservations_map()
+    assert not c.rc._uncertain_tables.get(cmd["event_key"])
+    assert _tavoli_occupati(c) == [cmd["table_id"]]                       # nessun rilascio
+    assert c.rc.duplication_guard._active                                # chiave della posizione viva trattenuta
+    tavolo = c.rc.table_manager.get_table(cmd["table_id"])
+    assert "placed_at" in tavolo.meta
+
+
+def test_success_di_un_altro_ordine_non_chiude_l_incertezza_della_riserva(tmp_path):
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    c.rc._on_quick_bet_ambiguous(dict(cmd))
+    c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED", "customer_ref": "sig-un-altro-ordine"})
+    assert cmd["event_key"] in c.rc._uncertain_reservations_map()
+
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402
 

@@ -38,7 +38,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   condiviso al recovery, che possono essere di un altro processo; un doppione nato dal solo `correlation_id` di un altro ordine
   rilascia la propria riserva), e un CMD senza `table_id` (auto-next) risolve il tavolo dal `customer_ref`. Verifica
   dell'identità e rilascio sono un'unica operazione atomica (`TableManager.force_unlock_if_unplaced_reservation`):
-  un tavolo liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca. Il rilascio resta
+  un tavolo liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca. La proprietà locale la
+  scarica solo il contesto che l'ha registrata, mai una richiesta con lo stesso ref negata prima del dedup. Un
+  SUCCESS di completamento chiude l'incertezza AMBIGUOUS della propria riserva senza rilasciarla. Il rilascio resta
   a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
 
 - **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**

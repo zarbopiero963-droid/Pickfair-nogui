@@ -238,9 +238,10 @@ class TradingEngine:
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
-        # #461 PR29-a: customer_ref ammessi dal dedup di QUESTO processo (mai ripopolati dal DB condiviso):
-        # decidono la proprieta' della riserva di un doppione (rilievo Codex su #533).
-        self._local_inflight_keys: Set[str] = set()
+        # #461 PR29-a: customer_ref ammessi dal dedup di QUESTO processo (mai ripopolati dal DB condiviso) ->
+        # contesto che li ha registrati: decidono la proprieta' della riserva di un doppione e li scarica solo quel
+        # contesto, mai una richiesta con lo stesso ref che non ha registrato nulla (rilievi Codex su #533).
+        self._local_inflight_keys: Dict[str, _ExecutionContext] = {}
         self._seen_correlation_ids: Set[str] = set()
         self._seen_cid_order: Deque[str] = deque()
         self._max_seen_cid_size: int = 50_000
@@ -1880,7 +1881,7 @@ class TradingEngine:
 
     def _register_dedup_keys(self, ctx: _ExecutionContext) -> None:
         self._inflight_keys.add(ctx.customer_ref)
-        self._local_inflight_keys.add(ctx.customer_ref)
+        self._local_inflight_keys[ctx.customer_ref] = ctx
         self._seen_correlation_ids.add(ctx.correlation_id)
         self._seen_cid_order.append(ctx.correlation_id)
 
@@ -1893,7 +1894,8 @@ class TradingEngine:
     def _release_customer_ref_if_terminal(self, ctx: _ExecutionContext) -> None:
         self._assert_valid_ctx(ctx)
         self._inflight_keys.discard(ctx.customer_ref)
-        self._local_inflight_keys.discard(ctx.customer_ref)
+        if self._local_inflight_keys.get(ctx.customer_ref) is ctx:
+            del self._local_inflight_keys[ctx.customer_ref]
 
     def _find_duplicate_reference(self, ctx: _ExecutionContext) -> Optional[str]:
         fn = getattr(self.db, "find_duplicate_order", None)
