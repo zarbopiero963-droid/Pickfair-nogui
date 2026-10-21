@@ -5490,9 +5490,13 @@ class RuntimeController:
         table_id, event_key = payload.get("table_id"), str(payload.get("event_key") or "")
         ref = str(payload.get("customer_ref") or "")
         try:
-            table = self.table_manager.get_table(int(table_id)) if table_id is not None else None
+            # L'auto-next non copia table_id nel CMD (rilievo Codex su #533): il tavolo si risolve dal customer_ref.
+            table = (self.table_manager.get_table(int(table_id)) if table_id is not None
+                     else self.table_manager.find_by_customer_ref(ref))
         except (TypeError, ValueError):
             table = None
+        if table is not None and table_id is None:
+            table_id = payload["table_id"] = table.table_id
         meta = (table.meta or {}) if table is not None else {}
         if (table is None or not event_key or not ref or table.current_event_key != event_key
                 or str(meta.get("customer_ref") or "") != ref or "placed_at" in meta):

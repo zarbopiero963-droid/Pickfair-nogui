@@ -1085,7 +1085,7 @@
       "module": "core.trading_engine",
       "area": "exposure",
       "file": "core/trading_engine.py",
-      "original": "        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
       "mutated": "        duplicate_in_process = True",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
@@ -1115,6 +1115,30 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a: un doppione esterno rilascia la riserva di un altro ordine sullo stesso tavolo."
+    },
+    {
+      "id": "correlation_only_duplicate_keeps_foreign_reservation",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
+      "mutated": "        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): un doppione nato solo dal correlation_id trattiene per sempre la riserva mai inviata di un altro intento."
+    },
+    {
+      "id": "tableless_external_duplicate_never_released",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                     else self.table_manager.find_by_customer_ref(ref))",
+      "mutated": "                     else None)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): la riserva auto-next (CMD senza table_id) del processo perdente non viene mai rilasciata."
     }
   ]
 }

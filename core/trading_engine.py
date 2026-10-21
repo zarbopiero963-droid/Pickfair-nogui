@@ -759,11 +759,13 @@ class TradingEngine:
 
         duplicate_extra_fields = dict(extra_fields)
         duplicate_extra_fields["duplicate_of"] = duplicate_ref
-        # #461 PR29-a: l'originale e' in volo in QUESTO processo (memoria del motore, ripopolata dal DB al riavvio)?
-        # Si' => la riserva del comando e' quella viva dell'originale (replay) e va conservata; no => l'intento e'
-        # stato preso altrove (altro processo sullo stesso DB): la riserva di questo comando non e' mai partita da
-        # qui. Con un guard esterno non si puo' sapere: True (si conserva, prudente). Deciso sotto self._lock.
-        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)
+        # #461 PR29-a: lo STESSO intento (customer_ref) e' in volo in QUESTO processo (memoria del motore,
+        # ripopolata dal DB al riavvio)? Si' => la riserva del comando e' quella viva dell'originale (replay) e va
+        # conservata; no => l'intento e' stato preso altrove (altro processo sullo stesso DB) o il doppione nasce
+        # solo dal correlation_id di un altro ordine: la riserva di questo comando non e' mai partita da qui. Solo
+        # il customer_ref decide la proprieta' della riserva (rilievo Codex su #533). Con un guard esterno non si
+        # puo' sapere: True (si conserva, prudente). Deciso sotto self._lock.
+        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys
         self._publish_bus_event(
             ctx,
             "QUICK_BET_DUPLICATE",

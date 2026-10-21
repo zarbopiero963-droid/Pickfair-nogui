@@ -33,7 +33,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (`ingresso_gia_eseguito`, verifica fallita => `ammissione_non_verificabile`), anche nell'auto-next. Con più processi
   sullo stesso DB, `QUICK_BET_DUPLICATE` riporta `duplicate_in_process` (deciso sotto il lock del motore): se
   l'intento è stato preso da un altro processo, la riserva mai inviata di questo processo si rilascia (stesso
-  tavolo, evento e `customer_ref`, non a mercato); un replay nello stesso processo la conserva. Il rilascio resta
+  tavolo, evento e `customer_ref`, non a mercato); un replay nello stesso processo la conserva. La proprietà della
+  riserva la decide solo il `customer_ref` in volo (un doppione nato dal solo `correlation_id` di un altro ordine
+  rilascia la propria riserva), e un CMD senza `table_id` (auto-next) risolve il tavolo dal `customer_ref`. Il rilascio resta
   a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
 
 - **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**

@@ -125,6 +125,46 @@ def test_doppione_esterno_non_rilascia_una_riserva_di_un_altro_ordine(tmp_path):
     assert _tavoli_occupati(c) == [cmd["table_id"]]
 
 
+
+def _riserva_manuale(c, *, table_id, ref, event_key):
+    # Riserva come la crea l'auto-next: tavolo attivato col customer_ref nel meta, CMD SENZA table_id.
+    c.rc.table_manager.activate(table_id=table_id, event_key=event_key, exposure=10.0, market_id="1.234",
+                                selection_id=11, meta={"customer_ref": ref})
+
+
+def test_doppione_solo_per_correlation_id_rilascia_la_riserva_di_un_altro_intento(tmp_path):
+    # Rilievo Codex su #533: un comando nuovo (customer_ref diverso) che riusa il correlation_id di un ordine in
+    # volo e' bloccato come doppione, ma la sua riserva e' sua e non e' mai partita: va rilasciata. La proprieta'
+    # della riserva la decide il customer_ref, non il predicato combinato del dedup.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    (cid,) = c.engine._seen_correlation_ids
+    _riserva_manuale(c, table_id=2, ref="at-altro-intento", event_key="1.234:11:BACK:altro")
+    c.bus.publish("CMD_QUICK_BET", {**cmd, "table_id": 2, "customer_ref": "at-altro-intento",
+                                    "event_key": "1.234:11:BACK:altro", "correlation_id": cid})
+    (dup,) = c.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is False, dup
+    assert _tavoli_occupati(c) == [cmd["table_id"]], "la riserva mai inviata dell'altro intento resta bloccata"
+    assert len(c.broker.state.orders) == 1
+
+
+def test_doppione_esterno_senza_table_id_risolve_il_tavolo_dal_customer_ref(tmp_path):
+    # Rilievo Codex su #533: il CMD dell'auto-next non porta table_id. Due runtime sullo stesso SQLite: A invia
+    # l'intento, B (che ha riservato un tavolo per lo stesso intento come fa l'auto-next) lo vede consumato dal
+    # motore e deve rilasciare la propria riserva risolvendo il tavolo dal customer_ref.
+    a = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    b = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    for c in (a, b):
+        c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
+    a.rc._on_signal_received(_signal())
+    (cmd,) = a.bus.payloads("CMD_QUICK_BET")
+    _riserva_manuale(b, table_id=3, ref=cmd["customer_ref"], event_key=cmd["event_key"])
+    b.bus.publish("CMD_QUICK_BET", {k: v for k, v in cmd.items() if k != "table_id"})
+    (dup,) = b.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is False and dup.get("table_id") is None, dup
+    assert b.broker.state.orders == {}
+    assert _tavoli_occupati(b) == [], "la riserva senza table_id del processo perdente resta bloccata"
+    assert _tavoli_occupati(a) == [cmd["table_id"]]
+
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402
 
