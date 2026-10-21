@@ -51,7 +51,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   scrittura della mappa di recovery (anche ordinaria, di ritentativo o di reset) è un insieme di variazioni
   rispetto alla vista del processo, sommate dentro la transazione (anche due processi sullo stesso tavolo).
   Review su c6d2338: un solo runtime attivo per database (lock esclusivo del sistema operativo all'avvio,
-  rifiuto `RUNTIME_INSTANCE_ACTIVE`); chiave della chiusura di posizione con identità canonica (`customer_ref`,
+  rifiuto `RUNTIME_INSTANCE_ACTIVE`, lock rilasciato da STOP e da un avvio non riuscito); chiave della chiusura di posizione con identità canonica (`customer_ref`,
   `reservation_id` solo in sua assenza) ed effetti non registrati ritentati a ogni giro del poller. **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave

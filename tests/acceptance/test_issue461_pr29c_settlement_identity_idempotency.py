@@ -687,7 +687,7 @@ def test_avvio_riconcilia_i_held_solo_dopo_una_ricostruzione_riuscita(tmp_path):
     esito = c.rc._reconcile_held_after_rebuild({"ok": True})
     assert esito["ok"] and esito["held_settlements"]["reconciled"] == [f"cleared:{MERCATO}:{bet}"]
     assert _perdite(c) == 10.0
-    assert "self._reconcile_held_after_rebuild(rebuild)" in inspect.getsource(RuntimeController.start)
+    assert "self._reconcile_held_after_rebuild(rebuild)" in inspect.getsource(RuntimeController._start_with_instance_lock)
 
 
 def test_esito_senza_identita_non_libera_tavolo_ne_chiave_della_riserva(tmp_path):
@@ -812,6 +812,10 @@ def test_r5_la_chiave_del_settlement_e_la_stessa_in_ogni_fase():
     assert RuntimeController._build_bankroll_sync_key({**base, "reservation_id": "X"}) == "E|1|X"
     assert RuntimeController._build_bankroll_sync_key({"event_key": "cleared:1.1:B", "customer_ref": "R"}) == \
         "cleared:1.1:B", "un settlement per bet non cambia chiave"
+    # Owner (c6d2338, punto 1): la chiave canonica non fonde effetti distinti dello stesso intento (bet, lotto)
+    k = RuntimeController._build_bankroll_sync_key
+    assert k({**base, "customer_ref": "R", "bet_id": "B1"}) != k({**base, "customer_ref": "R", "bet_id": "B2"})
+    assert k({**base, "customer_ref": "R", "batch_id": "L1"}) != k({**base, "customer_ref": "R", "batch_id": "L2"})
     # Grok su 70821fd: chiusura di posizione SENZA table_id (auto-next) => identita' della riserva nella chiave
     assert RuntimeController._build_bankroll_sync_key({"event_key": "E", "customer_ref": "R1"}) != \
         RuntimeController._build_bankroll_sync_key({"event_key": "E", "customer_ref": "R2"})
@@ -1027,3 +1031,62 @@ def test_r15_settlement_non_registrato_ritentato_dal_giro_del_poller(tmp_path, m
     assert not c.rc._unrecorded_settlements
     c.rc._poll_cleared_settlements()
     assert _perdite(c) == 10.0, "ritento applicato due volte"
+
+
+def _non_registrato(c, monkeypatch, bet):
+    with monkeypatch.context() as m:
+        m.setattr(c.rc, "_prepare_recovery_persist", lambda *a, **k: None)
+        c.rc._on_close_position(_cleared(bet, -10.0))
+    assert c.rc._unrecorded_settlements
+
+
+def test_r16_ritento_e_riconsegna_concorrenti_un_solo_effetto(tmp_path, monkeypatch):
+    # Owner (c6d2338, punto 2): ritento del poller e riconsegna del bus in concorrenza
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    _non_registrato(c, monkeypatch, bet)
+    rilasci = _contatore_rilasci(c)
+    fn = iter([c.rc._poll_cleared_settlements, lambda: c.rc._on_close_position(_cleared(bet, -10.0))] * 4)
+    lock = threading.Lock()
+
+    def uno():
+        with lock:
+            f = next(fn)
+        f()
+
+    _concorrenti(uno, 8)
+    assert len(rilasci) == 1 and _perdite(c) == 10.0
+    assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
+    assert c.rc.db.get_settlement_effect(f"cleared:{MERCATO}:{bet}")["outcome"] == "released"
+    c.rc._poll_cleared_settlements()
+    assert len(rilasci) == 1 and _perdite(c) == 10.0 and not c.rc._unrecorded_settlements
+
+
+def test_r17_ritento_senza_identita_non_libera_nulla(tmp_path, monkeypatch):
+    # Owner (c6d2338, punto 3): il ritento rivaluta l'identita'; non dimostrabile => held, niente si libera
+    c = _catena(tmp_path)
+    cmd, _ = _con_bet(c)
+    with monkeypatch.context() as m:                     # registro illeggibile => effetto non registrato, in coda
+        m.setattr(c.rc, "_settlement_effect", _guasto)
+        c.rc._on_close_position(_cleared("BET-SCONOSCIUTA", -10.0))
+    assert c.rc._unrecorded_settlements
+    c.rc._poll_cleared_settlements()
+    t = _tavolo(c, cmd["table_id"])
+    assert t.current_event_key == CHIAVE_A and t.current_exposure == 10.0 and _perdite(c) == 0.0
+    assert c.rc.duplication_guard.is_duplicate(CHIAVE_A), "chiave anti-duplicato liberata senza identita'"
+    assert c.rc.db.get_settlement_effect(f"cleared:{MERCATO}:BET-SCONOSCIUTA")["outcome"] == "held"
+    assert not c.rc._unrecorded_settlements
+
+
+def test_r18_effetto_non_registrato_poi_riavvio_riconsegna_una_volta(tmp_path, monkeypatch):
+    # Owner (c6d2338, punto 2): la coda in memoria si perde col crash; nessun checkpoint => il poller riconsegna
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    _non_registrato(c, monkeypatch, bet)
+    assert c.rc.db.get_cycle_recovery_checkpoint(f"cleared:{MERCATO}:{bet}") is None
+    c.rc._unrecorded_settlements = {}                    # crash: la coda del processo e' persa
+    _riavvio(c)
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    assert _perdite(c) == 10.0 and _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
+    assert c.rc.table_manager.find_by_event_key(CHIAVE_A) is None

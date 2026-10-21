@@ -134,8 +134,11 @@ restava per sempre (S9).
   le perdite registrate dagli altri (marker di reset e baseline viaggiano a parte). Un settlement senza effetto
   non riscrive lo stato salvo per ritentare una scrittura fallita.
 - **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
-  `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto per la vita del processo e liberato dal
-  sistema anche in caso di crash. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
+  `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto finché il runtime non è fermo: lo rilasciano
+  `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
+  secondo `start()` fallito); il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
+  per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
+  permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
   (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli vivono in memoria per processo e due copie
   attive divergerebbero su operazioni globali come il reset di ciclo. Ledger exactly-once e scritture a variazioni
   restano come seconda difesa (crash, riavvio, processi di servizio).

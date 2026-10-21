@@ -2410,8 +2410,9 @@ class RuntimeController:
     ) -> dict:
         # #461 PR29-c (Sol su c6d2338): un solo runtime attivo per database. I tavoli di recovery vivono in memoria
         # per processo; due runtime sullo stesso file divergerebbero su operazioni globali (reset di ciclo) in modi
-        # che nessuna fusione delle scritture rende coerenti. Lock esclusivo del sistema operativo, rilasciato da
-        # solo alla fine del processo (anche per crash). Lock non ottenibile => avvio rifiutato (fail-closed).
+        # che nessuna fusione delle scritture rende coerenti. Lock esclusivo del sistema operativo, tenuto finche' il
+        # runtime non e' fermo: rilasciato da `stop()` e da un avvio non riuscito, e dal sistema alla fine del
+        # processo (anche per crash). Lock non ottenibile => avvio rifiutato (fail-closed).
         instance_block = self._acquire_runtime_instance_lock()
         if instance_block:
             logger.critical("Avvio rifiutato: %s", instance_block)
@@ -2419,6 +2420,25 @@ class RuntimeController:
                                                        "reason": instance_block})
             return {"ok": False, "started": False, "refused": True, "reason": instance_block,
                     "reason_code": "RUNTIME_INSTANCE_ACTIVE", "status": self._safe_status_snapshot()}
+        try:
+            result = self._start_with_instance_lock(password=password, simulation_mode=simulation_mode,
+                                                    execution_mode=execution_mode, live_enabled=live_enabled,
+                                                    live_readiness_ok=live_readiness_ok)
+        except BaseException:
+            self._release_runtime_instance_lock_if_stopped()
+            raise
+        if not (result or {}).get("started"):
+            self._release_runtime_instance_lock_if_stopped()
+        return result
+
+    def _start_with_instance_lock(
+        self,
+        password: Optional[str] = None,
+        simulation_mode: Optional[bool] = None,
+        execution_mode: Optional[str] = None,
+        live_enabled: Optional[bool] = None,
+        live_readiness_ok: Optional[bool] = None,
+    ) -> dict:
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
         self._session_loss_alerted = False
@@ -2678,6 +2698,17 @@ class RuntimeController:
         self._instance_lock_fh = handle
         return ""
 
+    def _release_runtime_instance_lock_if_stopped(self) -> None:
+        """Rilascia il lock di istanza se il runtime e' fermo (STOP o avvio non riuscito); mai mentre e' attivo."""
+        handle = getattr(self, "_instance_lock_fh", None)
+        if handle is None or getattr(self, "mode", RuntimeMode.STOPPED) is not RuntimeMode.STOPPED:
+            return
+        self._instance_lock_fh = None
+        try:
+            handle.close()                       # chiudere il descrittore rilascia flock/msvcrt
+        except OSError:
+            logger.exception("Lock di istanza: chiusura fallita")
+
     def stop(self) -> dict:
         # Il runtime smette di essere attivo PRIMA di smontare i servizi
         # (#461 PR04): la disconnessione di Telegram puo' durare secondi, e un
@@ -2692,7 +2723,10 @@ class RuntimeController:
             self._stop_market_data_feed()
             self.telegram_service.stop()
         finally:
-            self.betfair_service.disconnect()
+            try:
+                self.betfair_service.disconnect()
+            finally:
+                self._release_runtime_instance_lock_if_stopped()   # #461 PR29-c: dopo lo smontaggio dei servizi
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {

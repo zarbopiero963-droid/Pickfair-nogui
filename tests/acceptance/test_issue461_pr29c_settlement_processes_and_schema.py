@@ -12,6 +12,7 @@ import os
 import pytest
 import sqlite3
 import subprocess
+import time
 import sys
 
 from database import Database
@@ -188,10 +189,79 @@ def test_processo_os_che_tiene_il_lock_blocca_l_avvio_e_alla_sua_fine_lo_libera(
     assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
 
 
-def test_start_rifiutato_se_un_altro_runtime_e_attivo(tmp_path):
-    import inspect
-    from core.runtime_controller import RuntimeController
+def _app_su(percorso, monkeypatch):
+    """HeadlessApp reale (SIM) sullo stesso file di database."""
+    import headless_main
 
-    sorgente = inspect.getsource(RuntimeController.start)
-    assert sorgente.index("_acquire_runtime_instance_lock") < sorgente.index("self.reload_config(reset_session=True)")
-    assert '"reason_code": "RUNTIME_INSTANCE_ACTIVE"' in sorgente
+    monkeypatch.setattr(headless_main, "Database", lambda: Database(percorso))
+    app = headless_main.HeadlessApp()
+    app.build(start_services=False)
+    app.telegram_service.start = lambda *a, **k: {"started": False, "stub": True}
+    app.telegram_service.stop = lambda *a, **k: None
+    return app
+
+
+def test_start_rifiutato_se_un_altro_runtime_e_attivo_e_riammesso_dopo_lo_stop(tmp_path, monkeypatch):
+    # Owner (PR29-c FINAL VALIDATION, punto 4): vincolo applicato da start() reale, non solo dal sorgente
+    from core.system_state import RuntimeMode
+
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "unico_app.db")
+    primo, secondo = _app_su(percorso, monkeypatch), _app_su(percorso, monkeypatch)
+    rifiuti = []
+    secondo.bus.subscribe("RUNTIME_START_REFUSED", lambda p: rifiuti.append(dict(p)))
+    connessioni = []
+    originale = secondo.runtime.betfair_service.connect
+    secondo.runtime.betfair_service.connect = lambda *a, **k: (connessioni.append(1), originale(*a, **k))[1]
+    try:
+        assert primo.runtime.start(execution_mode="SIMULATION").get("started") is True
+        esito = secondo.runtime.start(execution_mode="SIMULATION")
+        assert esito["started"] is False and esito["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+        assert secondo.runtime.mode is RuntimeMode.STOPPED and connessioni == []
+        fine = time.monotonic() + 5.0                                  # il bus consegna in modo asincrono
+        while not rifiuti and time.monotonic() < fine:
+            time.sleep(0.02)
+        assert rifiuti and rifiuti[0]["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+        primo.runtime.stop()                                          # STOP pulito: il lock si libera
+        assert secondo.runtime.start(execution_mode="SIMULATION").get("started") is True
+        assert primo.runtime.start(execution_mode="SIMULATION")["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+    finally:
+        for app in (secondo, primo):
+            try:
+                app.stop()
+            except Exception:
+                pass
+
+
+def test_avvio_non_riuscito_rilascia_il_lock(tmp_path, monkeypatch):
+    percorso = str(tmp_path / "avvio_fallito.db")
+    app = _app_su(percorso, monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("guasto all'avvio")
+
+    monkeypatch.setattr(app.runtime, "reload_config", _guasto)
+    with pytest.raises(RuntimeError):
+        app.runtime.start(execution_mode="SIMULATION")
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "", "avvio fallito ha trattenuto il lock"
+
+
+def test_avvio_ripetuto_fallito_non_libera_il_lock_di_un_runtime_attivo(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "attivo.db")
+    app = _app_su(percorso, monkeypatch)
+    try:
+        assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+
+        def _guasto(*_a, **_k):
+            raise RuntimeError("guasto al secondo avvio")
+
+        monkeypatch.setattr(app.runtime, "reload_config", _guasto)
+        with pytest.raises(RuntimeError):
+            app.runtime.start(execution_mode="SIMULATION")
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database", \
+            "un avvio ripetuto fallito ha liberato il lock del runtime attivo"
+    finally:
+        monkeypatch.undo()
+        app.stop()

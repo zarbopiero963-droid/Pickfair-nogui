@@ -1696,6 +1696,42 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Codex su c6d2338): un effetto non registrato resta non applicato fino al riavvio."
+    },
+    {
+      "id": "instance_lock_kept_after_stop",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                self._release_runtime_instance_lock_if_stopped()   # #461 PR29-c: dopo lo smontaggio dei servizi",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: dopo STOP il lock resta preso e nessun runtime (riavvio nello stesso processo) puo' piu' partire."
+    },
+    {
+      "id": "instance_lock_kept_after_failed_start",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        except BaseException:\n            self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "mutated": "        except BaseException:\n            raise",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: un avvio non riuscito trattiene il lock e blocca ogni avvio successivo."
+    },
+    {
+      "id": "instance_lock_released_while_active",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if handle is None or getattr(self, \"mode\", RuntimeMode.STOPPED) is not RuntimeMode.STOPPED:",
+      "mutated": "        if handle is None:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: il lock si rilascia anche con il runtime attivo (un secondo avvio fallito libera il lock del primo)."
     }
   ]
 }
