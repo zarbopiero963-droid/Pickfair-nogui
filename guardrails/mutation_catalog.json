@@ -1251,40 +1251,28 @@
       "rationale": "#461 PR29-b: il rilascio di un lotto libera la chiave anti-duplicato di una riserva che non gli appartiene."
     },
     {
-      "id": "freed_batch_table_keeps_dedup_key_forever",
+      "id": "batch_release_frees_unproven_key_on_free_table",
       "module": "core.dutching_batch_manager",
       "area": "dedupe",
       "file": "core/dutching_batch_manager.py",
-      "original": "                    stale_pin = outcome in (\"free\", \"foreign\") and table_manager.find_by_event_key(event_key) is None",
-      "mutated": "                    stale_pin = False",
+      "original": "                    owns_key = outcome == \"released\"",
+      "mutated": "                    owns_key = outcome in (\"released\", \"free\")",
       "tests": [
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
-      "rationale": "#461 PR29-b (review anticipata): tavolo del lotto gia' libero e nessuna riserva sull'evento: la chiave appuntata resta per sempre."
+      "rationale": "#461 PR29-b (review Sol): tavolo del lotto gia' libero, chiave acquisita e appuntata da un nuovo intento prima dell'attivazione del suo tavolo: il cleanup del vecchio lotto la cancella, ordini duplicati."
     },
     {
-      "id": "reassigned_batch_table_keeps_dedup_key_forever",
+      "id": "batch_release_frees_unproven_key_on_reassigned_table",
       "module": "core.dutching_batch_manager",
       "area": "dedupe",
       "file": "core/dutching_batch_manager.py",
-      "original": "                    stale_pin = outcome in (\"free\", \"foreign\") and table_manager.find_by_event_key(event_key) is None",
-      "mutated": "                    stale_pin = outcome == \"free\" and table_manager.find_by_event_key(event_key) is None",
+      "original": "                    owns_key = outcome == \"released\"",
+      "mutated": "                    owns_key = outcome in (\"released\", \"foreign\")",
       "tests": [
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
-      "rationale": "#461 PR29-b (review Grok): tavolo del lotto riassegnato a un altro evento e nessuna riserva sull'evento del lotto: la chiave appuntata resta per sempre."
-    },
-    {
-      "id": "stale_batch_pin_deletes_unowned_dedup_key",
-      "module": "core.dutching_batch_manager",
-      "area": "dedupe",
-      "file": "core/dutching_batch_manager.py",
-      "original": "                duplication_guard.unpin(event_key)",
-      "mutated": "                duplication_guard.release(event_key)",
-      "tests": [
-        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
-      ],
-      "rationale": "#461 PR29-b (review Sol): il cleanup del vecchio lotto cancella la chiave acquisita da un nuovo intento prima dell'attivazione del suo tavolo: ordini duplicati sullo stesso evento."
+      "rationale": "#461 PR29-b (review Sol): tavolo del lotto riassegnato, chiave di un nuovo intento sullo stesso evento cancellata dal cleanup del vecchio lotto."
     },
     {
       "id": "batch_pnl_dropped_on_freed_table",

@@ -30,9 +30,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   chiave si liberano solo se il tavolo porta ancora la riserva del lotto, cioe' event_key e batch_id nel meta
   (`TableManager.release_batch_reservation`, atomico); un tavolo riassegnato o riusato per lo stesso evento da un'altra
   riserva non si tocca, ma il P&L del lotto entra comunque nel suo recovery; su un tavolo gia' libero il P&L del lotto resta
-  contabilizzato. Su un tavolo gia' libero o riassegnato a un altro evento la chiave del lotto non si cancella (un nuovo
-  intento la acquisisce prima di attivare il suo tavolo): se nessuna riserva porta piu' l'evento e la chiave e'
-  appuntata, torna alla scadenza normale per TTL (`DuplicationGuard.unpin`), cosi' l'evento non resta bloccato. Dutching resta dormiente (decisione owner #531).
+  contabilizzato. Su un tavolo gia' libero o riassegnato a un altro evento la chiave del lotto non si tocca (ne' release
+  ne' unpin): un nuovo intento la acquisisce e la appunta prima di attivare il suo tavolo, e senza identita' della
+  registrazione non si distingue da quella del vecchio lotto. Limite dichiarato (fail-closed): una chiave appuntata
+  rimasta orfana blocca l'evento fino al riavvio. Dutching resta dormiente (decisione owner #531).
 
 - **#461 PR29-a — il rilascio segue la riserva, mai un esito che non la chiude (PF-C29-01.03, .13):**
   `QUICK_BET_SUCCESS` non rilascia più tavolo, esposizione o chiave anti-duplicato. In produzione l'engine lo

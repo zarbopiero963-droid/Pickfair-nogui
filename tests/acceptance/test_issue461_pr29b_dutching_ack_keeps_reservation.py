@@ -64,13 +64,11 @@ def _tavolo(tm):
     return tm.get_table(1)
 
 
-def _chiave_torna_al_ttl(guard):
-    # Chiave appuntata del lotto senza piu' tavoli sull'evento: torna alla scadenza normale per TTL (mai rimossa
-    # subito: potrebbe appartenere a un nuovo intento, review Sol su #534) e quindi scade, l'evento non resta
-    # bloccato per sempre.
-    assert not guard.is_pinned(EVENT_KEY), "chiave dell'evento trattenuta per sempre"
-    guard._active[EVENT_KEY] -= guard.ttl + 1
-    assert not guard.is_duplicate(EVENT_KEY)
+def _chiave_non_toccata(guard):
+    # Tavolo del lotto gia' libero o riassegnato: la chiave appuntata non e' provata come del lotto (potrebbe essere
+    # di un nuovo intento, appuntata prima dell'attivazione del suo tavolo), quindi resta intatta fino al riavvio.
+    # Fail-closed: liveness ceduta alla sicurezza (review Sol su #534, supera la review anticipata e Grok 2).
+    assert guard.is_pinned(EVENT_KEY), "chiave non provata del lotto sbloccata"
 
 
 def test_gambe_a_mercato_non_abbinate_mantengono_l_intera_riserva(tmp_path):
@@ -199,16 +197,16 @@ def test_rilascio_del_lotto_non_libera_la_chiave_di_una_nuova_riserva_sullo_stes
     assert EVENT_KEY in guard._active, "liberata la chiave anti-duplicato della nuova riserva"
 
 
-def test_chiave_liberata_se_il_tavolo_del_lotto_era_gia_libero_e_nessuno_porta_l_evento(tmp_path):
-    # Review anticipata (P2): tavolo del lotto gia' liberato da un reset e non riassegnato; il controller ha preso la
-    # chiave dell'evento appuntata (mai scaduta per TTL). Il lotto chiude senza rischio: nessuna riserva porta piu'
-    # l'evento, la chiave va liberata (altrimenti l'evento resta bloccato fino al riavvio).
+def test_chiave_appuntata_resta_se_il_tavolo_del_lotto_era_gia_libero(tmp_path):
+    # Tavolo del lotto gia' liberato da un reset e non riassegnato, chiave appuntata. Il lotto chiude senza rischio:
+    # la chiave non e' provata come sua e resta fino al riavvio (fail-closed; la review anticipata ne chiedeva il
+    # rilascio, superata dalla race indicata da Sol su #534).
     engine, bm, tm, guard, client = _lotto(tmp_path)
     guard.acquire(EVENT_KEY, pin=True)
     tm.force_unlock(1)
     _annullate(client)
     engine.reconcile_batch("B-29B")
-    _chiave_torna_al_ttl(guard)
+    _chiave_non_toccata(guard)
 
 
 def test_settlement_su_tavolo_gia_libero_registra_la_perdita(tmp_path):
@@ -248,10 +246,10 @@ def test_perdita_del_lotto_su_tavolo_riassegnato_entra_nel_recovery_senza_libera
     assert t.loss_amount == 5.0 and t.in_recovery, "perdita del vecchio lotto non contabilizzata"
 
 
-def test_chiave_liberata_se_il_tavolo_del_lotto_e_riassegnato_a_un_altro_evento(tmp_path):
-    # Review Grok su #534: tavolo del lotto riassegnato a un ALTRO evento, chiave del lotto appuntata. Il lotto
-    # chiude senza rischio e nessuna riserva porta piu' il suo evento: la chiave va liberata, quella dell'altro
-    # evento resta.
+def test_chiave_appuntata_resta_se_il_tavolo_del_lotto_e_riassegnato_a_un_altro_evento(tmp_path):
+    # Tavolo del lotto riassegnato a un ALTRO evento, chiave appuntata. Il lotto chiude senza rischio: la chiave non
+    # e' provata come sua e resta fino al riavvio, quella dell'altro evento resta (fail-closed; Grok ne chiedeva il
+    # rilascio, superato dalla race indicata da Sol su #534).
     engine, bm, tm, guard, client = _lotto(tmp_path)
     guard.acquire(EVENT_KEY, pin=True)
     tm.force_unlock(1)
@@ -259,7 +257,7 @@ def test_chiave_liberata_se_il_tavolo_del_lotto_e_riassegnato_a_un_altro_evento(
     assert guard.acquire("1.888:ALTRO")
     _annullate(client)
     engine.reconcile_batch("B-29B")
-    _chiave_torna_al_ttl(guard)
+    _chiave_non_toccata(guard)
     assert "1.888:ALTRO" in guard._active and _tavolo(tm).current_exposure == 4.0
 
 
@@ -286,3 +284,27 @@ def test_chiave_di_un_nuovo_intento_non_e_cancellata_con_tavolo_riassegnato(tmp_
     _annullate(client)
     engine.reconcile_batch("B-29B")
     assert guard.is_duplicate(EVENT_KEY), "cancellata la chiave del nuovo intento"
+
+
+def test_pin_di_un_nuovo_lotto_senza_tavolo_resta_dopo_il_cleanup_del_vecchio(tmp_path):
+    # Review Sol su #534 (57184af): il DutchingController appunta la chiave all'acquisizione, PRIMA di attivare il
+    # tavolo. Il cleanup del vecchio lotto in quella finestra non ne toglie il pin: la chiave non scade per TTL
+    # mentre la nuova riserva e' viva.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    guard.release(EVENT_KEY)
+    assert guard.acquire(EVENT_KEY, pin=True)                       # nuovo lotto, tavolo non ancora attivo
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert guard.is_pinned(EVENT_KEY), "tolto il pin della nuova riserva"
+
+
+def test_pin_di_un_nuovo_lotto_resta_con_tavolo_riassegnato(tmp_path):
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    guard.release(EVENT_KEY)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    assert guard.acquire(EVENT_KEY, pin=True)                       # nuovo lotto, tavolo non ancora attivo
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert guard.is_pinned(EVENT_KEY), "tolto il pin della nuova riserva"
