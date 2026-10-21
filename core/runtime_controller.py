@@ -640,6 +640,10 @@ class RuntimeController:
                 self._release_final_unmatched_orders()   # PF-ALL-F028, dopo i settlement del giro
             except Exception:
                 logger.exception("F028: rilascio ordini non abbinati abortito (nessun rilascio)")
+            try:
+                self._retry_unrecorded_settlements()     # #461 PR29-c (Codex su c6d2338): ritento nel processo
+            except Exception:
+                logger.exception("Settlement non registrati: ritento abortito (restano in coda)")
         finally:
             self._settlement_poll_round_lock.release()
 
@@ -5115,11 +5119,10 @@ class RuntimeController:
             pending = self._unrecorded_settlements = {}
         pending[settlement_key] = {"payload": dict(payload or {}), "pnl": float(pnl)}
 
-    def reconcile_held_settlements(self) -> dict:
-        """#461 PR29-c: rivaluta i settlement registrati ``held`` (identita' allora non dimostrabile) con il payload
-        conservato nel registro. Attribuibili ora => effetto sui tavoli una volta, nessun P&L realizzato ripetuto;
-        ancora non attribuibili => restano held (nessuna perdita di contabilizzazione: riga, P&L e payload restano nel
-        registro). Ritorna i conteggi; registro illeggibile => ``ok=False``."""
+    def _retry_unrecorded_settlements(self) -> dict:
+        """#461 PR29-c (Codex su c6d2338): ritenta l'effetto dei settlement in coda in `_unrecorded_settlements`.
+        Chiamato a ogni giro del poller (non solo all'avvio): un registro tornato leggibile/scrivibile applica
+        l'effetto sui tavoli e il debito di recovery nel processo ACTIVE, una volta per chiave."""
         result = {"ok": True, "reconciled": [], "still_held": [], "pending": []}
         for key, item in list((getattr(self, "_unrecorded_settlements", None) or {}).items()):
             with self._settlement_consumer_lock():
@@ -5131,6 +5134,14 @@ class RuntimeController:
             else:
                 self._unrecorded_settlements.pop(key, None)
                 (result["reconciled"] if effect.get("applied") else result["still_held"]).append(key)
+        return result
+
+    def reconcile_held_settlements(self) -> dict:
+        """#461 PR29-c: rivaluta i settlement registrati ``held`` (identita' allora non dimostrabile) con il payload
+        conservato nel registro. Attribuibili ora => effetto sui tavoli una volta, nessun P&L realizzato ripetuto;
+        ancora non attribuibili => restano held (nessuna perdita di contabilizzazione: riga, P&L e payload restano nel
+        registro). Ritorna i conteggi; registro illeggibile => ``ok=False``."""
+        result = self._retry_unrecorded_settlements()
         lister = getattr(getattr(self, "db", None), "list_held_settlement_effects", None)
         if not callable(lister):
             return result
@@ -6903,7 +6914,12 @@ class RuntimeController:
             # e' un'altra chiusura in OGNI fase (registro degli effetti, P&L realizzato, sync del bankroll,
             # checkpoint del ciclo, auto-next). I settlement dell'exchange (cleared:/sim:) hanno gia' la loro
             # identita' e non cambiano chiave.
-            parts.extend(x for x in (str(payload.get(k) or "").strip() for k in ("customer_ref", "reservation_id")) if x)
+            # Codex su c6d2338: identita' CANONICA, non dipendente dai campi facoltativi presenti. ``customer_ref``
+            # (un intento = una riserva) se c'e'; ``reservation_id`` solo in sua assenza. Una riconsegna della stessa
+            # chiusura che omette ``reservation_id`` resta lo stesso settlement (duplicato, nessun debito ripetuto).
+            ref = str(payload.get("customer_ref") or "").strip() or str(payload.get("reservation_id") or "").strip()
+            if ref:
+                parts.append(ref)
         return "|".join(parts)
 
     def _runtime_not_active_reason(self) -> str:

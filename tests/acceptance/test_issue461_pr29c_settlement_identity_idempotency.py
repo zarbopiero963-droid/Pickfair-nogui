@@ -806,7 +806,10 @@ def test_incertezza_per_riserva_si_chiude_solo_con_l_esito_dello_stesso_intento(
 def test_r5_la_chiave_del_settlement_e_la_stessa_in_ogni_fase():
     base = {"event_key": "E", "table_id": 1}
     assert RuntimeController._build_bankroll_sync_key(base) == "E|1"
-    assert RuntimeController._build_bankroll_sync_key({**base, "customer_ref": "R", "reservation_id": "X"}) == "E|1|R|X"
+    # Codex su c6d2338: identita' canonica, customer_ref se c'e', reservation_id solo in sua assenza
+    assert RuntimeController._build_bankroll_sync_key({**base, "customer_ref": "R", "reservation_id": "X"}) == "E|1|R"
+    assert RuntimeController._build_bankroll_sync_key({**base, "customer_ref": "R"}) == "E|1|R"
+    assert RuntimeController._build_bankroll_sync_key({**base, "reservation_id": "X"}) == "E|1|X"
     assert RuntimeController._build_bankroll_sync_key({"event_key": "cleared:1.1:B", "customer_ref": "R"}) == \
         "cleared:1.1:B", "un settlement per bet non cambia chiave"
     # Grok su 70821fd: chiusura di posizione SENZA table_id (auto-next) => identita' della riserva nella chiave
@@ -995,3 +998,32 @@ def test_r13_due_processi_sullo_stesso_tavolo_sommano_le_perdite(tmp_path):
     c1.rc._on_close_position(_cleared(bet_a, -10.0))
     c2.rc._on_close_position(_cleared(bet_b, -5.0))
     assert _perdite_persistite(c1) == {int(a["table_id"]): 15.0}, _perdite_persistite(c1)
+
+
+def test_r14_riconsegna_senza_reservation_id_e_un_duplicato(tmp_path):
+    # Codex su c6d2338: la stessa chiusura riconsegnata senza reservation_id non e' un secondo settlement
+    c = _catena(tmp_path)
+    a, _ = _piazza(c)
+    c.rc._on_close_position(_chiusura_con_tavolo(a["table_id"], CHIAVE_A, -10.0, customer_ref=a["customer_ref"],
+                                                 reservation_id=a["reservation_id"]))
+    assert _tavolo(c, a["table_id"]).current_event_key == "" and _perdite(c) == 10.0
+    c.rc._on_close_position(_chiusura_con_tavolo(a["table_id"], CHIAVE_A, -10.0, customer_ref=a["customer_ref"]))
+    assert _perdite(c) == 10.0, "riconsegna senza reservation_id contabilizzata come seconda perdita"
+    assert _perdite_persistite(c).get(int(a["table_id"])) == 10.0
+
+
+def test_r15_settlement_non_registrato_ritentato_dal_giro_del_poller(tmp_path, monkeypatch):
+    # Codex su c6d2338: in ACTIVE il ritento non aspetta il riavvio
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    with monkeypatch.context() as m:
+        m.setattr(c.rc, "_prepare_recovery_persist", lambda *a, **k: None)
+        c.rc._on_close_position(_cleared(bet, -10.0))
+    _nessun_effetto(c, cmd)
+    assert c.rc._unrecorded_settlements
+    c.rc._poll_cleared_settlements()
+    assert _tavolo(c, cmd["table_id"]).current_event_key == "" and _perdite(c) == 10.0
+    assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
+    assert not c.rc._unrecorded_settlements
+    c.rc._poll_cleared_settlements()
+    assert _perdite(c) == 10.0, "ritento applicato due volte"

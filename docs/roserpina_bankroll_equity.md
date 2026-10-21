@@ -116,9 +116,11 @@ restava per sempre (S9).
   più righe `orders`, più tavoli SIM, bet non del bot) restano trattenuti senza fermare il runtime.
 - **Stato dei tavoli non scrivibile** (RSR-12 illeggibile, serializzazione fallita): nessuna riga registrata ed
   effetto annullato, così la riconsegna resta applicabile e il debito non si perde dopo un crash.
-- **Chiave della chiusura di posizione** (`table_id`): `_build_bankroll_sync_key` include `customer_ref` e
-  `reservation_id`, in OGNI fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next):
-  lo stesso tavolo riusato per lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay.
+- **Chiave della chiusura di posizione** (`table_id`): `_build_bankroll_sync_key` include l'identità canonica
+  della riserva, `customer_ref` (un intento = una riserva) oppure, solo in sua assenza, `reservation_id`, in OGNI
+  fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next): lo stesso tavolo riusato per
+  lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay; una riconsegna della stessa
+  chiusura che omette `reservation_id` resta un duplicato (nessun debito ripetuto).
 - **Tavolo della riserva assente** (es. riavvio con meno tavoli): il settlement resta `held` in attesa
   (avvio in PAUSED) finché il tavolo non esiste; mai registrato come effetto senza debito.
 - **Auto-next**: la request persistita porta `reservation_table_id` e `reservation_id` (il campo `table_id`
@@ -139,7 +141,8 @@ restava per sempre (S9).
   restano come seconda difesa (crash, riavvio, processi di servizio).
 - **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
   bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
-  in coda nel processo per `reconcile_held_settlements()` e dopo un riavvio lo riconsegna il poller.
+  in coda nel processo e si ritenta a ogni giro del poller (`_retry_unrecorded_settlements`, anche in ACTIVE),
+  oltre che in `reconcile_held_settlements()`; dopo un riavvio lo riconsegna il poller.
 - **F018** ricostruisce la riserva viva dell'auto-next sul suo `reservation_table_id`.
 - **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
   stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata

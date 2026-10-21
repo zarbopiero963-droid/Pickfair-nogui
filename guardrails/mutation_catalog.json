@@ -1672,6 +1672,30 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c (Sol su c6d2338): un secondo runtime parte sullo stesso database e diverge sui tavoli di recovery (reset concorrente)."
+    },
+    {
+      "id": "settlement_key_not_canonical",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            ref = str(payload.get(\"customer_ref\") or \"\").strip() or str(payload.get(\"reservation_id\") or \"\").strip()",
+      "mutated": "            ref = \"|\".join(x for x in (str(payload.get(k) or \"\").strip() for k in (\"customer_ref\", \"reservation_id\")) if x)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su c6d2338): la riconsegna senza reservation_id diventa un secondo settlement e ripete il debito."
+    },
+    {
+      "id": "unrecorded_settlements_not_retried_in_process",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                self._retry_unrecorded_settlements()     # #461 PR29-c (Codex su c6d2338): ritento nel processo",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su c6d2338): un effetto non registrato resta non applicato fino al riavvio."
     }
   ]
 }
