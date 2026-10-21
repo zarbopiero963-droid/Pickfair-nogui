@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "main",
-  "sha": "409bcf9dd9ca6fe86aeaed6808dfabde4f7fa109"
+  "branch": "ccr-bcc81683-ud0hgc",
+  "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818"
  },
- "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + mandato owner PR29-b e chiusura formale PR29-b / Phase 0 PR29-c",
- "next_atomic_action": "PR29-c Phase 0 consegnata (sonde S0-S9 su 409bcf9): attesa autorizzazione owner all'implementazione. Scope 29-c: settlement -> tavolo per identita' (bet_id->customer_ref->tavolo), deduplica PRIMA del rilascio e del recovery, release idempotente per settlement_key, chiave anti-duplicato della riserva identificata (anche appuntata da F018), incertezza per riserva chiusa dal settlement della propria bet. Non anticipare PR30; #505 intatta; Dutching e LIVE disattivati. NO LIVE",
- "previous_checkpoint_sha": "9d2cd0b2f2281293e833b9399d520a501270c5a2",
+ "mandate_id": "PF-PR29-C-FINANCIAL-IDEMPOTENCY-01 + mandato owner PR29-c FINAL VALIDATION (21/10/2026)",
+ "next_atomic_action": "Attendere l'autorizzazione owner al merge di #535 (23237cb). Dopo il merge autorizzato: CI post-merge main, checkpoint seq 58, poi (solo su nuova autorizzazione) PF-POST-PR29C-GLOBAL-RECONCILIATION-01 (#426 c.6322399988) e a seguire PF-POST-PR29C-PARALLEL-FACTORY-01 (#426 c.6322621696). Nessun LIVE. Nessuna PR30 anticipata.",
+ "previous_checkpoint_sha": "3777e8288e28a138563a5150a35b6757e48f87af",
  "schema": "pf-current/1",
- "seq": 56
+ "seq": 57
 }
