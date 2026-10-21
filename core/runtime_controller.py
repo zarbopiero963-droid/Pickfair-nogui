@@ -262,6 +262,7 @@ class RuntimeController:
         self._processed_realized_pnl_keys: set[str] = set()
         # #461 PR29-c: consumo seriale dei settlement nel processo (vedi `_settlement_consumer_lock`)
         self._settlement_lock = threading.RLock()
+        self._lifecycle_lock = threading.RLock()   # #461 PR29-c (Sol su e3fe4d7): start/stop serializzati
         self._processed_auto_trade_keys: set[str] = set()
         self._cycle_step_counts: dict[str, int] = {}
         self._last_bankroll_sync_result: dict[str, Any] = {
@@ -2413,6 +2414,19 @@ class RuntimeController:
         # che nessuna fusione delle scritture rende coerenti. Lock esclusivo del sistema operativo, tenuto finche' il
         # runtime non e' fermo: rilasciato da `stop()` e da un avvio non riuscito, e dal sistema alla fine del
         # processo (anche per crash). Lock non ottenibile => avvio rifiutato (fail-closed).
+        # Sol su e3fe4d7: avvio e arresto serializzati, cosi' il controllo del modo e la chiusura del lock in
+        # `stop()` non si incrociano con un `start()` concorrente che riusa lo stesso handle.
+        with self._runtime_lifecycle_lock():
+            return self._start_serialized(password=password, simulation_mode=simulation_mode,
+                                          execution_mode=execution_mode, live_enabled=live_enabled,
+                                          live_readiness_ok=live_readiness_ok)
+
+    _fallback_lifecycle_lock = threading.RLock()
+
+    def _runtime_lifecycle_lock(self):
+        return getattr(self, "_lifecycle_lock", None) or RuntimeController._fallback_lifecycle_lock
+
+    def _start_serialized(self, *, password, simulation_mode, execution_mode, live_enabled, live_readiness_ok) -> dict:
         instance_block = self._acquire_runtime_instance_lock()
         if instance_block:
             logger.critical("Avvio rifiutato: %s", instance_block)
@@ -2710,6 +2724,10 @@ class RuntimeController:
             logger.exception("Lock di istanza: chiusura fallita")
 
     def stop(self) -> dict:
+        with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()
+            return self._stop_serialized()
+
+    def _stop_serialized(self) -> dict:
         # Il runtime smette di essere attivo PRIMA di smontare i servizi
         # (#461 PR04): la disconnessione di Telegram puo' durare secondi, e un
         # segnale o un cashout differito (grace auto-green) arrivato intanto

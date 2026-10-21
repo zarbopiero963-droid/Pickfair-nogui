@@ -1732,6 +1732,18 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c: il lock si rilascia anche con il runtime attivo (un secondo avvio fallito libera il lock del primo)."
+    },
+    {
+      "id": "stop_not_serialized_with_start",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()\n            return self._stop_serialized()",
+      "mutated": "        return self._stop_serialized()",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su e3fe4d7): STOP in parallelo con uno start() in corso chiude il lock che lo start riusa (due runtime sullo stesso DB)."
     }
   ]
 }

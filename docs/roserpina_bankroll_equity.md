@@ -136,7 +136,8 @@ restava per sempre (S9).
 - **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
   `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto finché il runtime non è fermo: lo rilasciano
   `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
-  secondo `start()` fallito); il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
+  secondo `start()` fallito); `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
+  chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
   per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
   permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
   (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli vivono in memoria per processo e due copie

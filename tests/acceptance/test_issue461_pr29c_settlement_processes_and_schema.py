@@ -265,3 +265,40 @@ def test_avvio_ripetuto_fallito_non_libera_il_lock_di_un_runtime_attivo(tmp_path
     finally:
         monkeypatch.undo()
         app.stop()
+
+
+def test_stop_concorrente_attende_l_avvio_in_corso_e_il_lock_resta_coerente(tmp_path, monkeypatch):
+    # Sol su e3fe4d7: STOP durante uno start() in corso non deve chiudere il lock che lo start sta per usare
+    import threading
+    from core.system_state import RuntimeMode
+
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "corsa.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    dentro, via = threading.Event(), threading.Event()
+    originale = rc.reload_config
+
+    def _lento(*a, **k):
+        dentro.set()
+        via.wait(10)
+        return originale(*a, **k)
+
+    rc.reload_config = _lento
+    avvio = threading.Thread(target=lambda: rc.start(execution_mode="SIMULATION"))
+    arresto_fatto = threading.Event()
+    arresto = threading.Thread(target=lambda: (rc.stop(), arresto_fatto.set()))
+    try:
+        avvio.start()
+        assert dentro.wait(10)
+        arresto.start()
+        assert not arresto_fatto.wait(0.5), "STOP eseguito in parallelo con uno start() in corso"
+        via.set()
+        avvio.join(20)
+        arresto.join(20)
+        assert arresto_fatto.is_set() and rc.mode is RuntimeMode.STOPPED
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == "", "runtime fermo con il lock ancora preso"
+    finally:
+        via.set()
+        rc.reload_config = originale
+        app.stop()
