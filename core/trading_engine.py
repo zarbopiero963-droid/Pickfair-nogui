@@ -238,6 +238,10 @@ class TradingEngine:
 
         # Dedup State
         self._inflight_keys: Set[str] = set()
+        # #461 PR29-a: customer_ref ammessi dal dedup di QUESTO processo (mai ripopolati dal DB condiviso) ->
+        # contesto che li ha registrati: decidono la proprieta' della riserva di un doppione e li scarica solo quel
+        # contesto, mai una richiesta con lo stesso ref che non ha registrato nulla (rilievi Codex su #533).
+        self._local_inflight_keys: Dict[str, _ExecutionContext] = {}
         self._seen_correlation_ids: Set[str] = set()
         self._seen_cid_order: Deque[str] = deque()
         self._max_seen_cid_size: int = 50_000
@@ -759,11 +763,21 @@ class TradingEngine:
 
         duplicate_extra_fields = dict(extra_fields)
         duplicate_extra_fields["duplicate_of"] = duplicate_ref
+        # #461 PR29-a: lo STESSO intento (customer_ref) e' in volo in QUESTO processo (memoria del motore,
+        # ripopolata dal DB al riavvio)? Si' => la riserva del comando e' quella viva dell'originale (replay) e va
+        # conservata; no => l'intento e' stato preso altrove (altro processo sullo stesso DB) o il doppione nasce
+        # solo dal correlation_id di un altro ordine: la riserva di questo comando non e' mai partita da qui. Solo
+        # il customer_ref decide la proprieta' della riserva (rilievo Codex su #533), e solo se ammesso da questo
+        # processo: le chiavi ripopolate dal DB condiviso al recovery possono essere di un altro processo. Le riserve
+        # ricostruite da F018 dopo un riavvio sono a mercato e senza customer_ref nel meta: mai rilasciate da qui.
+        # Con un guard esterno non si puo' sapere: True (si conserva, prudente). Deciso sotto self._lock.
+        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys
         self._publish_bus_event(
             ctx,
             "QUICK_BET_DUPLICATE",
             order_id=duplicate_order_id,
             duplicate_of=duplicate_ref,
+            duplicate_in_process=duplicate_in_process,
         )
 
         return self._complete_order_lifecycle(
@@ -1867,6 +1881,7 @@ class TradingEngine:
 
     def _register_dedup_keys(self, ctx: _ExecutionContext) -> None:
         self._inflight_keys.add(ctx.customer_ref)
+        self._local_inflight_keys[ctx.customer_ref] = ctx
         self._seen_correlation_ids.add(ctx.correlation_id)
         self._seen_cid_order.append(ctx.correlation_id)
 
@@ -1878,7 +1893,15 @@ class TradingEngine:
 
     def _release_customer_ref_if_terminal(self, ctx: _ExecutionContext) -> None:
         self._assert_valid_ctx(ctx)
-        self._inflight_keys.discard(ctx.customer_ref)
+        # #461 PR29-a (rilievi Codex e Sol su #533): una chiave registrata da un ALTRO contesto di questo processo
+        # (originale ancora in volo) non si tocca: una richiesta con lo stesso customer_ref negata prima del dedup
+        # (safe mode, risk gate) riapriva l'intento dell'originale. Senza proprietario locale (chiave ripopolata dal
+        # DB al recovery) resta il rilascio di sempre.
+        owner = self._local_inflight_keys.get(ctx.customer_ref)
+        if owner is ctx:
+            del self._local_inflight_keys[ctx.customer_ref]
+        if owner is None or owner is ctx:
+            self._inflight_keys.discard(ctx.customer_ref)
 
     def _find_duplicate_reference(self, ctx: _ExecutionContext) -> Optional[str]:
         fn = getattr(self.db, "find_duplicate_order", None)

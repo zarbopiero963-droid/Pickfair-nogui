@@ -1030,6 +1030,175 @@
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
       "rationale": "#461 PR28-e (Codex #531): un auto-next senza tavolo parte senza riserva, invisibile al gate delle entrate concorrenti."
+    },
+    {
+      "id": "success_releases_live_reservation",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        self._track_direct_order(payload, event_name=\"QUICK_BET_SUCCESS\")",
+      "mutated": "        self._track_direct_order(payload, event_name=\"QUICK_BET_SUCCESS\"); self._release_if_terminal(payload, event_name=\"QUICK_BET_SUCCESS\")",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (PF-C29-01.03): QUICK_BET_SUCCESS (doppione DUPLICATE_BLOCKED) rilascia tavolo e chiave dell'originale ancora in volo."
+    },
+    {
+      "id": "duplicate_success_marks_placed",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if str((payload or {}).get(\"status\") or \"\").upper() != \"DUPLICATE_BLOCKED\":",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: il SUCCESS di un doppione (mai inviato) marca a mercato la riserva dell'originale."
+    },
+    {
+      "id": "same_intent_second_table_admitted",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        intent_reason = (\"ingresso_gia_in_volo\" if self.table_manager.find_by_customer_ref(",
+      "mutated": "        intent_reason = (\"ingresso_gia_in_volo\" if False and self.table_manager.find_by_customer_ref(",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: lo stesso intento gia' riservato ottiene un secondo tavolo (e un secondo invio bloccato come doppione)."
+    },
+    {
+      "id": "consumed_intent_readmitted",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"ingresso_gia_eseguito\" if consumed(str(customer_ref)) else \"\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "rationale": "#461 PR29-a (review anticipata P1): la riconsegna di un intento gia' consegnato riserva un tavolo che il SUCCESS del doppione non rilascia piu'."
+    },
+    {
+      "id": "duplicate_scope_always_in_process",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
+      "mutated": "        duplicate_in_process = True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): il doppione bloccato da un altro processo e' segnalato come interno: la riserva mai inviata del processo perdente resta bloccata."
+    },
+    {
+      "id": "in_process_duplicate_releases_live_reservation",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if payload.get(\"duplicate_in_process\") is not False:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: un replay nello stesso processo rilascia la riserva viva dell'originale."
+    },
+    {
+      "id": "external_duplicate_releases_foreign_reservation",
+      "module": "core.table_manager",
+      "area": "exposure",
+      "file": "core/table_manager.py",
+      "original": "            if (not table or table.current_event_key != key or str(meta.get(\"customer_ref\") or \"\") != ref",
+      "mutated": "            if (not table or table.current_event_key != key",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: un doppione esterno rilascia la riserva di un altro ordine sullo stesso tavolo."
+    },
+    {
+      "id": "correlation_only_duplicate_keeps_foreign_reservation",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
+      "mutated": "        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): un doppione nato solo dal correlation_id trattiene per sempre la riserva mai inviata di un altro intento."
+    },
+    {
+      "id": "tableless_external_duplicate_never_released",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                found = self.table_manager.find_by_customer_ref(ref)",
+      "mutated": "                found = None",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): la riserva auto-next (CMD senza table_id) del processo perdente non viene mai rilasciata."
+    },
+    {
+      "id": "db_repopulated_keys_claim_foreign_reservation",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
+      "mutated": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): le chiavi ripopolate dal DB condiviso rendono 'propria' la riserva mai inviata di un altro processo, trattenuta per sempre."
+    },
+    {
+      "id": "foreign_context_clears_local_ownership",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "        if owner is ctx:",
+      "mutated": "        if owner is not None:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): una richiesta negata prima del dedup scarica la proprieta' locale dell'originale in volo."
+    },
+    {
+      "id": "foreign_context_reopens_inflight_dedup_key",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "        if owner is None or owner is ctx:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Sol #533): una richiesta negata prima del dedup scarica la chiave di dedup dell'originale in volo; un retry con nuovo correlation_id supera il dedup in memoria."
+    },
+    {
+      "id": "external_duplicate_clears_foreign_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "        if event_key not in self._uncertain_reservations_map():",
+      "mutated": "        if not self._clear_uncertain(event_key, table_id):",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): il rilascio tardivo di un doppione esterno cancella l'incertezza e la chiave di una riserva riassegnata allo stesso evento."
+    },
+    {
+      "id": "completion_success_clears_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            self._mark_table_placed(payload)",
+      "mutated": "            self._mark_table_placed(payload); self._clear_uncertain(str(payload.get(\"event_key\") or \"\"), payload.get(\"table_id\"))",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex P1 #533): un SUCCESS di completamento chiude l'incertezza AMBIGUOUS fuori da un'operazione atomica e puo' cancellare quella di un tavolo riassegnato."
     }
   ]
 }

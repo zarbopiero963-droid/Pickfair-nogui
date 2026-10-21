@@ -365,16 +365,17 @@ def test_esito_incerto_non_e_rifiuto_definitivo_e_la_riserva_resta_addebitata(tm
     assert [r for r in _rifiuti(c) if r.startswith("fondi_insufficienti")], _rifiuti(c)
 
 
-def test_percorso_di_produzione_success_rilascia_e_non_addebita_due_volte(tmp_path):
-    # Il TradingEngine pubblica QUICK_BET_SUCCESS dopo un piazzamento riuscito (nessun ACCEPTED: l'OrderManager
-    # non e' cablato). SUCCESS rilascia il tavolo: la posizione esce dalle riserve e resta solo nel conto.
-    # Conto dopo il piazzamento: 40 disponibili + 60 impegnati; il secondo ingresso da 40 sta nei fondi.
+def test_success_di_completamento_marca_a_mercato_senza_rilasciare_e_non_addebita_due_volte(tmp_path):
+    # #461 PR29-a (PF-C29-01.03): SUCCESS chiude l'invio, non il rischio: il tavolo resta con la sua esposizione
+    # (la premessa precedente di questo test, «SUCCESS rilascia il tavolo», contraddiceva il contratto).
+    # L'ordine e' marcato a mercato: il conto lo riflette gia' (40 disponibili + 60 impegnati) e il secondo
+    # ingresso da 40 sta nei fondi, senza contare due volte il primo.
     c = _chain(tmp_path, stake=60.0, anti_duplication=True)
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     (primo,) = c.bus.payloads("CMD_QUICK_BET")
-    c.rc._on_quick_bet_success({**primo, "status": "PLACED", "outcome": "SUCCESS"})
-    assert _tavoli_occupati(c) == []
+    c.rc._on_quick_bet_success({**primo, "status": "COMPLETED", "outcome": "SUCCESS"})
+    assert _tavoli_occupati(c) == [primo["table_id"]]
     _con_fondi(c, 40.0, exposure=60.0)
     c.rc.mm.calculate = _decision(40.0)
     c.rc._on_signal_received(_signal(market_id="1.999", selection_id=22, event="Gamma v Delta",

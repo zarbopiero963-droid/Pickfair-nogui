@@ -16,6 +16,7 @@ SCENARIO_JSON: {"steps": [...]} con passi:
   {"op": "crash_after_settlement"}                                  os._exit(1) appena il settlement e' contabilizzato
   {"op": "lockdown"} / {"op": "pause"} / {"op": "emergency"}         LOCKDOWN, PAUSED, emergency stop (PF-ALL-F027)
   {"op": "wait", "s": 3}
+  {"op": "replay_cmd", "m": "1.701"}                                ripubblica l'ultimo CMD_QUICK_BET del mercato (PR29-a)
 Ogni passo produce uno snapshot: fondi exchange, bankroll Roserpina, picco, drawdown, realizzato, tavoli,
 ordini (SQLite), eventi. Nessun calcolo atteso qui: l'oracolo vive nei test.
 """
@@ -187,6 +188,12 @@ try:
             app.bus.publish("SIGNAL_RECEIVED", {"signal_type": "CASHOUT", "event_name": f"Ev{st['m']} v X",
                                                 "source": "F026"})
             time.sleep(4)
+        elif op == "replay_cmd":
+            # #461 PR29-a: lo stesso CMD_QUICK_BET di un mercato ripubblicato (replay / doppione dello stesso intento)
+            last = next((d for _, e, d in reversed(EV) if e == "CMD_QUICK_BET" and d.get("market_id") == st["m"]), None)
+            if last is not None:
+                app.bus.publish("CMD_QUICK_BET", dict(last))
+            time.sleep(2)
         elif op == "crash_after_reset":
             CRASH["armed"] = True; continue
         elif op == "book_down":

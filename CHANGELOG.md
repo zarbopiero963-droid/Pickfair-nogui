@@ -22,6 +22,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR29-a — il rilascio segue la riserva, mai un esito che non la chiude (PF-C29-01.03, .13):**
+  `QUICK_BET_SUCCESS` non rilascia più tavolo, esposizione o chiave anti-duplicato. In produzione l'engine lo
+  emette per `DUPLICATE_BLOCKED` (richiesta non inviata perché lo stesso intento è già in volo): un replay dello
+  stesso `CMD_QUICK_BET` liberava la riserva viva dell'originale, lasciando l'esposizione fuori da cap e gate
+  dei fondi (riprodotto sul runtime reale). Un SUCCESS di completamento marca soltanto la riserva come a mercato;
+  quello di un doppione non tocca nulla. Con anti-duplicazione disattivata un segnale identico (stesso
+  `customer_ref`) è rifiutato prima di riservare un secondo tavolo (`ingresso_gia_in_volo`); la riconsegna di un
+  intento già consegnato al trasporto (DB durevole, anche dopo riavvio) è rifiutata prima di riservare un tavolo
+  (`ingresso_gia_eseguito`, verifica fallita => `ammissione_non_verificabile`), anche nell'auto-next. Con più processi
+  sullo stesso DB, `QUICK_BET_DUPLICATE` riporta `duplicate_in_process` (deciso sotto il lock del motore): se
+  l'intento è stato preso da un altro processo, la riserva mai inviata di questo processo si rilascia (stesso
+  tavolo, evento e `customer_ref`, non a mercato); un replay nello stesso processo la conserva. La proprietà della
+  riserva la decide solo il `customer_ref` ammesso dal motore di questo processo (mai le chiavi ripopolate dal DB
+  condiviso al recovery, che possono essere di un altro processo; un doppione nato dal solo `correlation_id` di un altro ordine
+  rilascia la propria riserva), e un CMD senza `table_id` (auto-next) risolve il tavolo dal `customer_ref`. Verifica
+  dell'identità e rilascio sono un'unica operazione atomica (`TableManager.force_unlock_if_unplaced_reservation`):
+  un tavolo liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca. La proprietà locale la
+  scarica solo il contesto che l'ha registrata, mai una richiesta con lo stesso ref negata prima del dedup
+  (vale anche per la chiave di dedup in memoria, preesistente: un retry con nuovo correlation_id resta bloccato). Un
+  SUCCESS di completamento non rilascia e non chiude l'incertezza AMBIGUOUS: resta fino a FAILED o
+  settlement (fail-closed). Il rilascio del doppione
+  esterno non tocca l'incertezza (una riserva mai inviata non è mai incerta) e trattiene la chiave se l'evento è incerto. Il rilascio resta
+  a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
+
 - **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**
   un segnale o un auto-next con esposizione (BACK = stake, LAY = liability) oltre i fondi del conto viene
   rifiutato con `fondi_insufficienti:...`, mai ridimensionato; prima partiva se stava nel bankroll interno

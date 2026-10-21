@@ -1477,6 +1477,7 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_DUPLICATE", self._on_quick_bet_duplicate)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
         # Esito di ogni cashout/hedge (CMD_EXECUTE_CASHOUT resta a consumatore unico: l'executor)
@@ -4242,6 +4243,17 @@ class RuntimeController:
                 "simulation_mode": payload["simulation_mode"],
             },
         )
+        intent_reason = ("ingresso_gia_in_volo" if self.table_manager.find_by_customer_ref(
+            payload["customer_ref"], exclude_table_id=decision.table_id)
+            else self._consumed_intent_reason(payload["customer_ref"]))
+        if intent_reason:
+            # #461 PR29-a: lo stesso intento ha gia' una riserva viva (anti-duplicazione disattivata, stesso
+            # messaggio) o e' gia' stato consegnato al trasporto (riconsegna dopo settlement/FAILED/riavvio).
+            # L'engine lo bloccherebbe come doppione e il suo SUCCESS non rilascia piu' nulla (PF-C29-01.03):
+            # nessun tavolo riservato, nessun invio.
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=intent_reason)
+            return
         routing_contract = signal.get("telegram_routing_contract")
         if isinstance(routing_contract, str) and routing_contract.strip():
             payload["telegram_routing_contract"] = routing_contract.strip()
@@ -5466,13 +5478,61 @@ class RuntimeController:
             return 0.0
         return (peak - equity) / peak * 100.0
 
+    def _on_quick_bet_duplicate(self, payload: dict) -> None:
+        """#461 PR29-a (rilievo Codex su #533): doppione bloccato perche' l'intento e' stato preso FUORI da questo
+        processo (``duplicate_in_process`` False: altro processo sullo stesso DB). La riserva di QUESTO comando non
+        e' mai partita da qui: si rilascia, come per un esito certo di non-invio, solo se il tavolo porta ancora
+        proprio quella riserva (tavolo, evento e customer_ref) e non risulta a mercato. Replay nello stesso
+        processo (True) o dato assente => nulla (la riserva viva dell'originale si conserva, PF-C29-01.03).
+        Verifica dell'identita' e rilascio del tavolo sono un'unica operazione atomica del TableManager: un tavolo
+        liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca (rilievo Codex su #533)."""
+        payload = dict(payload or {})
+        if payload.get("duplicate_in_process") is not False:
+            return
+        if RuntimeController._hold_batch_leg(self, payload, event_name="QUICK_BET_FAILED"):
+            return                           # gamba di un lotto Dutching: trattenuta come per ogni esito (#529)
+        table_id, event_key = payload.get("table_id"), str(payload.get("event_key") or "")
+        ref = str(payload.get("customer_ref") or "")
+        try:
+            if table_id is None:
+                # L'auto-next non copia table_id nel CMD (rilievo Codex su #533): il tavolo si risolve dal ref.
+                found = self.table_manager.find_by_customer_ref(ref)
+                table_id = found.table_id if found is not None else None
+            released = table_id is not None and self.table_manager.force_unlock_if_unplaced_reservation(
+                int(table_id), event_key, ref)
+        except (TypeError, ValueError):
+            released = False
+        if not released:
+            return
+        logger.warning("Doppione esterno per %s: riserva mai inviata da questo processo rilasciata (tavolo %s)",
+                       ref, table_id)
+        # Una riserva mai inviata non e' mai incerta (AMBIGUOUS nasce solo da un invio): l'incertezza non si tocca,
+        # cosi' un tavolo riassegnato nel frattempo allo stesso evento conserva la propria (rilievo Codex su #533).
+        # La chiave si rilascia solo se nessuna riserva dell'evento e' incerta.
+        if event_key not in self._uncertain_reservations_map():
+            self.duplication_guard.release(event_key)
+
+    def _consumed_intent_reason(self, customer_ref: str) -> str:
+        """#461 PR29-a: '' se l'intento non risulta gia' consegnato al trasporto (DB durevole, valido anche dopo un
+        riavvio), altrimenti il motivo del rifiuto. Verifica fallita => rifiuto (fail-closed), come in
+        `admit_controller_entries`."""
+        consumed = getattr(getattr(self, "db", None), "is_order_intent_consumed", None)
+        if not callable(consumed) or not customer_ref:
+            return ""
+        try:
+            return "ingresso_gia_eseguito" if consumed(str(customer_ref)) else ""
+        except Exception:
+            logger.exception("Verifica intento consumato fallita per %s: ingresso non ammesso", customer_ref)
+            return "ammissione_non_verificabile"
+
     def _mark_table_placed(self, payload: dict) -> None:
         """#461 PR28-e: ordine a mercato (ACCEPTED / PARTIAL / FILLED dal percorso OrderManager, SUCCESS dal
         TradingEngine) => il tavolo della riserva e' marcato a mercato da ora: le letture del conto iniziate dopo
-        lo riflettono nel disponibile. Mai su AMBIGUOUS. SUCCESS di norma rilascia anche il tavolo; quando il
-        payload non porta ``table_id`` (CMD_QUICK_BET dell'auto-next, tavolo da mm_context) il tavolo resta
-        occupato e va marcato. L'esito si correla all'ORDINE (``customer_ref`` registrato sulla riserva), mai
-        alla sola event_key: un esito tardivo di un ordine rilasciato non marca un'altra riserva."""
+        lo riflettono nel disponibile. Mai su AMBIGUOUS ne' sul SUCCESS di un doppione. Nessuno di questi esiti
+        rilascia il tavolo (PR29-a, PF-C29-01.03). Senza ``table_id`` (CMD_QUICK_BET dell'auto-next, tavolo da
+        mm_context) il tavolo si trova per ordine. L'esito si correla all'ORDINE (``customer_ref`` registrato
+        sulla riserva), mai alla sola event_key: un esito tardivo di un ordine rilasciato non marca un'altra
+        riserva."""
         payload = payload or {}
         table_id = payload.get("table_id")
         event_key = str(payload.get("event_key") or "")
@@ -5508,9 +5568,17 @@ class RuntimeController:
         self._release_if_terminal(payload, event_name="QUICK_BET_FILLED")
 
     def _on_quick_bet_success(self, payload: dict) -> None:
-        self._mark_table_placed(payload)
+        """#461 PR29-a (PF-C29-01.03): QUICK_BET_SUCCESS chiude l'INVIO, non il rischio. Non rilascia mai tavolo,
+        esposizione o chiave anti-duplicato: li liberano solo un esito certo di non-invio (FAILED), lo sweep F028 o
+        il settlement. In produzione l'engine lo emette per DUPLICATE_BLOCKED, una richiesta NON inviata perche' lo
+        stesso intento e' gia' in volo: rilasciare qui liberava la riserva viva dell'originale. Un SUCCESS di
+        completamento marca soltanto la riserva come a mercato; quello di un doppione non tocca nulla."""
+        if str((payload or {}).get("status") or "").upper() != "DUPLICATE_BLOCKED":
+            # L'incertezza AMBIGUOUS non si chiude qui: resta fino a un esito certo di riconciliazione (FAILED o
+            # settlement), fail-closed. Chiuderla su SUCCESS era un controllo-poi-scrittura non atomico che poteva
+            # cancellare l'incertezza di un tavolo riassegnato allo stesso evento (rilievo Codex P1 su #533).
+            self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
-        self._release_if_terminal(payload, event_name="QUICK_BET_SUCCESS")
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_AMBIGUOUS")
@@ -6709,8 +6777,11 @@ class RuntimeController:
         # Recheck kill-switch daily-loss subito prima della submission auto-trade:
         # _risk_allows_auto_trade e' stato valutato sopra, ma un settlement
         # perdente concorrente puo' aver armato pending/emergency nel frattempo.
+        # PR29-a: intento gia' consegnato (settlement rielaborato dopo un riavvio) => nessun reinvio.
+        intent_block = self._consumed_intent_reason(submit_payload.get("customer_ref"))
         stop_block = ("config_cambiata_durante_ammissione" if self.config is not config_before
                       else "cashout_invalidation_stale" if not self._admission_fence_valid(fence)
+                      else intent_block if intent_block
                       else "emergency_stop_active:pre_submit_recheck" if self._daily_loss_entry_blocked()
                       else self._runtime_not_active_reason()          # PF-ALL-F027: riconciliazione != ingresso
                       or self._loss_block_reason() or self._exposure_stop(

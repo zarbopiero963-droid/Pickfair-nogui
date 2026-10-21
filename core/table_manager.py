@@ -247,6 +247,23 @@ class TableManager:
             self.force_unlock(int(table_id))
             return True
 
+    def force_unlock_if_unplaced_reservation(self, table_id: int, event_key: str, customer_ref: str) -> bool:
+        """#461 PR29-a: rilascia il tavolo SOLO se porta ancora la riserva mai a mercato di quell'intento
+        (``event_key`` e ``customer_ref`` combacianti, nessun ``placed_at``). Controllo e rilascio sotto lo
+        stesso lock: un tavolo liberato e riassegnato nel frattempo (anche allo stesso evento) non si tocca.
+        True solo se ha rilasciato."""
+        key, ref = str(event_key or ""), str(customer_ref or "")
+        if not key or not ref:
+            return False
+        with self._lock:
+            table = self._get(int(table_id))
+            meta = (table.meta or {}) if table else {}
+            if (not table or table.current_event_key != key or str(meta.get("customer_ref") or "") != ref
+                    or "placed_at" in meta):
+                return False
+            self.force_unlock(int(table_id))
+            return True
+
     # =========================================================
     # LOOKUPS
     # =========================================================
@@ -255,6 +272,19 @@ class TableManager:
             event_key = str(event_key or "")
             for table in self._tables.values():
                 if table.current_event_key == event_key:
+                    return TableState(**table.to_dict())
+            return None
+
+    def find_by_customer_ref(self, customer_ref: str, *, exclude_table_id: Any = None) -> Optional[TableState]:
+        """#461 PR29-a: tavolo la cui riserva viva porta il ``customer_ref`` dell'intento (copia), escluso
+        ``exclude_table_id``. None se nessuno."""
+        ref = str(customer_ref or "")
+        if not ref:
+            return None
+        with self._lock:
+            for table in self._tables.values():
+                if (table.current_event_key and table.table_id != exclude_table_id
+                        and str((table.meta or {}).get("customer_ref") or "") == ref):
                     return TableState(**table.to_dict())
             return None
 
