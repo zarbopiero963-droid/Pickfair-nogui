@@ -240,8 +240,8 @@ class TableManager:
         - idempotente: un secondo evento trova ``current_event_key`` vuoto => no-op;
         - sicuro in concorrenza: un tavolo gia' riassegnato a un altro evento non
           viene mai liberato da un evento terminale vecchio.
-        #461 PR29-c: con il ``customer_ref`` dell'esito, un tavolo la cui riserva porta un ALTRO intento (stesso
-        evento) non si libera: l'esito di un intento non chiude la riserva di un altro.
+        #461 PR29-c: un tavolo la cui riserva porta un intento (``customer_ref`` nel meta) si libera solo con
+        l'esito di QUELLO stesso intento: ref diverso o assente (identita' non dimostrata) => nessun rilascio.
         Restituisce True solo se ha rilasciato.
         """
         key, ref = str(event_key or ""), str(customer_ref or "")
@@ -252,7 +252,7 @@ class TableManager:
             if not table or table.current_event_key != key:
                 return False
             reserved = str((table.meta or {}).get("customer_ref") or "")
-            if ref and reserved and reserved != ref:
+            if reserved and reserved != ref:
                 return False
             self.force_unlock(int(table_id))
             return True

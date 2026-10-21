@@ -682,8 +682,96 @@ def test_avvio_riconcilia_i_held_solo_dopo_una_ricostruzione_riuscita(tmp_path):
     c.rc.betfair_service.list_cleared_orders = lambda **_k: (_ for _ in ()).throw(RuntimeError("exchange giu'"))
     c.rc._on_close_position(_cleared(bet, -10.0))
     c.rc.betfair_service.list_cleared_orders = lambda **_k: list(regolate)
-    assert c.rc._reconcile_held_after_rebuild({"ok": False}) is None          # tavoli non affidabili: nulla
+    assert c.rc._reconcile_held_after_rebuild({"ok": False}) == {"ok": False}   # tavoli non affidabili: nulla
     assert _perdite(c) == 0.0
-    assert c.rc._reconcile_held_after_rebuild({"ok": True})["reconciled"] == [f"cleared:{MERCATO}:{bet}"]
+    esito = c.rc._reconcile_held_after_rebuild({"ok": True})
+    assert esito["ok"] and esito["held_settlements"]["reconciled"] == [f"cleared:{MERCATO}:{bet}"]
     assert _perdite(c) == 10.0
     assert "self._reconcile_held_after_rebuild(rebuild)" in inspect.getsource(RuntimeController.start)
+
+
+def test_esito_senza_identita_non_libera_tavolo_ne_chiave_della_riserva(tmp_path):
+    # Grok su e2bb36e: un esito terminale senza customer_ref non dimostra di quale intento sia.
+    c = _catena(tmp_path)
+    a, _ = _piazza(c)
+    senza_ref = {k: v for k, v in a.items() if k != "customer_ref"}
+    c.rc._release_if_terminal({**senza_ref, "status": "FAILED"}, event_name="QUICK_BET_FAILED")
+    c.rc._release_if_terminal({**a, "customer_ref": "sig-altro-intento"}, event_name="QUICK_BET_FAILED")
+    t = _tavolo(c, a["table_id"])
+    assert t.current_event_key == CHIAVE_A and t.current_exposure == 10.0
+    assert c.rc.duplication_guard.is_duplicate(CHIAVE_A), "chiave della riserva viva rilasciata"
+    c.rc._release_if_terminal({**a, "status": "FAILED"}, event_name="QUICK_BET_FAILED")   # esito del suo intento
+    assert _tavolo(c, a["table_id"]).current_event_key == ""
+
+
+# ---------------------------------------------------------------- review Codex/Grok su e2bb36e
+def test_r1_avvio_in_pausa_con_held_in_attesa_di_lettura(tmp_path):
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    c.rc.betfair_service.list_cleared_orders = lambda **_k: (_ for _ in ()).throw(RuntimeError("exchange giu'"))
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    esito = c.rc._reconcile_held_after_rebuild({"ok": True, "reason": ""})        # exchange ancora giu'
+    assert esito["ok"] is False and esito["reason"] == f"HELD_SETTLEMENTS_PENDING:cleared:{MERCATO}:{bet}"
+
+
+def test_r1_held_non_attribuibile_non_ferma_l_avvio(tmp_path):
+    import inspect
+
+    c = _catena(tmp_path)
+    _piazza(c)
+    c.rc._on_close_position(_cleared("BET-SCONOSCIUTA", -10.0))
+    esito = c.rc._reconcile_held_after_rebuild({"ok": True, "reason": ""})
+    assert esito["ok"] is True and esito["held_settlements"]["still_held"] == [f"cleared:{MERCATO}:BET-SCONOSCIUTA"]
+    assert esito["held_settlements"]["pending"] == []
+    assert "self._reconcile_held_after_rebuild(\n                self._gate_rebuild_on_recovery_state(" in \
+        inspect.getsource(RuntimeController.resume)
+
+
+def test_r2_stesso_tavolo_stesso_evento_altra_riserva_e_un_altra_chiusura(tmp_path):
+    c = _catena(tmp_path)
+    a, _ = _piazza(c)
+    c.rc._on_close_position(_chiusura_con_tavolo(a["table_id"], CHIAVE_A, -10.0, customer_ref=a["customer_ref"],
+                                                 reservation_id=a["reservation_id"]))
+    assert _tavolo(c, a["table_id"]).current_event_key == ""
+    # stesso tavolo riusato per lo stesso evento da una nuova riserva (un altro intento)
+    c.rc.table_manager.activate(table_id=int(a["table_id"]), event_key=CHIAVE_A, exposure=10.0, market_id=MERCATO,
+                                selection_id=11, meta={"customer_ref": "sig-seconda-riserva"})
+    seconda = c.rc.table_manager.get_table(int(a["table_id"])).meta["reservation_id"]
+    assert seconda != a["reservation_id"]
+    c.rc._on_close_position(_chiusura_con_tavolo(a["table_id"], CHIAVE_A, -10.0, customer_ref="sig-seconda-riserva",
+                                                 reservation_id=seconda))
+    t = _tavolo(c, a["table_id"])
+    assert t.current_event_key == "", "seconda chiusura reale trattata come replay della prima"
+    assert t.loss_amount == 20.0
+
+
+def test_r3_stato_tavoli_non_scrivibile_nessuna_registrazione_poi_una_volta(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    with monkeypatch.context() as m:
+        m.setattr(c.rc, "_prepare_recovery_persist", lambda *a, **k: None)
+        c.rc._on_close_position(_cleared(bet, -10.0))
+    _nessun_effetto(c, cmd)                       # nessuna riga: la riconsegna non e' un duplicato
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    assert _tavolo(c, cmd["table_id"]).current_event_key == "" and _perdite(c) == 10.0
+    assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
+
+
+def test_r4_ambiguous_senza_tavolo_chiuso_dal_settlement_della_stessa_riserva(tmp_path):
+    c = _catena(tmp_path)
+    a, bet = _piazza(c)
+    c.rc._on_quick_bet_ambiguous({**a, "table_id": None, "status": "AMBIGUOUS", "outcome": "AMBIGUOUS"})
+    assert CHIAVE_A in c.rc._uncertain_reservations_map()
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    assert CHIAVE_A not in c.rc._uncertain_reservations_map(), "incertezza registrata senza tavolo mai chiusa"
+    assert not c.rc.duplication_guard.is_duplicate(CHIAVE_A), "chiave trattenuta dopo il settlement"
+
+
+def test_force_unlock_if_event_richiede_l_identita_della_riserva():
+    tm = TableManager(table_count=2)
+    tm.activate(table_id=1, event_key="EV", exposure=5.0, market_id="1.1", selection_id=7, meta={"customer_ref": "R1"})
+    assert tm.force_unlock_if_event(1, "EV") is False, "esito senza identita' ha liberato la riserva"
+    assert tm.force_unlock_if_event(1, "EV", customer_ref="R2") is False
+    assert tm.force_unlock_if_event(1, "EV", customer_ref="R1") is True
+    tm.activate(table_id=2, event_key="EV2", exposure=5.0, market_id="1.1", selection_id=7)   # riserva senza intento
+    assert tm.force_unlock_if_event(2, "EV2") is True

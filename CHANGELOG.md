@@ -38,7 +38,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   (riga non marcata, registro illeggibile, corsa persa) si applica al realizzato solo una perdita, mai una vincita
   (nessun fail-open dei limiti di perdita); il P&L in memoria non entra nel capitale né nel gate fondi. I
   settlement trattenuti restano nel registro con il loro payload e si riconciliano a una nuova consegna, con
-  `reconcile_held_settlements()` o all'avvio dopo F018. **Semantica cambiata,
+  `reconcile_held_settlements()` o all'avvio dopo F018; all'avvio un `held` in attesa di una lettura fallita
+  tiene il runtime in PAUSED. Review su e2bb36e: nessuna registrazione senza lo stato dei tavoli; chiave della
+  chiusura di posizione con l'identità della riserva; esiti del lifecycle senza identità che non liberano tavolo
+  né chiave; AMBIGUOUS senza tavolo chiuso dal settlement della propria riserva. **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
   anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva

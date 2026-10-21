@@ -110,6 +110,17 @@ restava per sempre (S9).
   una ricostruzione F018 riuscita) lo rivalutano: identità ora dimostrabile => effetto sui tavoli una volta
   (`UPDATE ... WHERE outcome = 'held'` nella stessa transazione dello stato tavoli), nessun realizzato ripetuto;
   ancora non attribuibile => resta `held`. Una lettura fallita (ordini, exchange) non trattiene più per sempre.
+  All'avvio e alla ripresa un `held` ancora in attesa di una lettura fallita (o il registro illeggibile) tiene
+  il runtime in **PAUSED** (`HELD_SETTLEMENTS_PENDING:<chiavi>` / `HELD_SETTLEMENTS_UNREADABLE`): il suo effetto
+  (riserva, debito di recovery) non è ancora applicato. Gli `held` non attribuibili in modo definitivo (hedge,
+  più righe `orders`, più tavoli SIM, bet non del bot) restano trattenuti senza fermare il runtime.
+- **Stato dei tavoli non scrivibile** (RSR-12 illeggibile, serializzazione fallita): nessuna riga registrata ed
+  effetto annullato, così la riconsegna resta applicabile e il debito non si perde dopo un crash.
+- **Chiave della chiusura di posizione** (`table_id`): include `customer_ref` e `reservation_id`, quindi lo
+  stesso tavolo riusato per lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay.
+- **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
+  stesso intento; un esito senza `customer_ref` non libera nulla. Un AMBIGUOUS registrato senza tavolo
+  (auto-next) si chiude con il settlement della stessa riserva.
 - **Replay** di un settlement già registrato: nessun effetto economico (tavolo, recovery, realizzato, ordini);
   restano solo letture informative (sync del saldo, checkpoint del ciclo).
 - **Incertezza per riserva**: l'AMBIGUOUS registra il `customer_ref`; l'esito certo di un altro intento non la

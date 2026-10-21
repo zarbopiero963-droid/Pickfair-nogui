@@ -1413,12 +1413,12 @@
       "module": "core.table_manager",
       "area": "recovery",
       "file": "core/table_manager.py",
-      "original": "            if ref and reserved and reserved != ref:\n                return False",
-      "mutated": "            if False:\n                return False",
+      "original": "            if reserved and reserved != ref:\n                return False",
+      "mutated": "            if ref and reserved and reserved != ref:\n                return False",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
-      "rationale": "#461 PR29-c: l'esito terminale di un intento libera il tavolo di un altro intento sullo stesso evento."
+      "rationale": "#461 PR29-c (Grok su e2bb36e): l'esito terminale senza customer_ref (o di un altro intento) libera il tavolo di una riserva identificata."
     },
     {
       "id": "settlement_lost_race_reapplies_realized",
@@ -1473,12 +1473,72 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "        if not (rebuild or {}).get(\"ok\"):\n            return None\n        try:\n            held = self.reconcile_held_settlements()",
-      "mutated": "        if False:\n            return None\n        try:\n            held = self.reconcile_held_settlements()",
+      "original": "        if not (rebuild or {}).get(\"ok\"):\n            return rebuild\n        try:\n            held = self.reconcile_held_settlements()",
+      "mutated": "        if False:\n            return rebuild\n        try:\n            held = self.reconcile_held_settlements()",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c: all'avvio i held si rivalutano su tavoli non ricostruiti (F018 incompleto)."
+    },
+    {
+      "id": "lifecycle_unproven_outcome_releases_key",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            if held is not None and held.current_event_key == event_key and reserved and reserved != outcome_ref:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e2bb36e): l'esito senza identita' della riserva rilascia la chiave anti-duplicato di una riserva viva."
+    },
+    {
+      "id": "settlement_recorded_without_recovery_state",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                if prepared is None:\n                    # Stato dei tavoli non scrivibile",
+      "mutated": "                if False:\n                    # Stato dei tavoli non scrivibile",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): il settlement e' registrato senza lo stato dei tavoli: dopo un crash il debito e' perso e ogni riconsegna e' un duplicato."
+    },
+    {
+      "id": "position_close_key_without_reservation",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "        if key and p.get(\"table_id\") is not None:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): la chiusura di una nuova riserva sullo stesso tavolo e lo stesso evento e' trattata come replay."
+    },
+    {
+      "id": "tableless_uncertainty_never_cleared",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "        tableless = (table_id is not None and ref and refs.get((event_key, \"None\")) == ref)",
+      "mutated": "        tableless = False",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): un AMBIGUOUS senza table_id resta incerto dopo il settlement della propria riserva: chiave bloccata."
+    },
+    {
+      "id": "held_pending_does_not_pause_startup",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if held[\"pending\"]:\n            return dict(rebuild, ok=False,",
+      "mutated": "        if False:\n            return dict(rebuild, ok=False,",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): un settlement trattenuto per lettura fallita non blocca l'avvio in ACTIVE."
     }
   ]
 }

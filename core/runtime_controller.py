@@ -2598,7 +2598,7 @@ class RuntimeController:
                 f"MICROSTAKE_SAGA_PENDING:{microstake.get('status')}:{','.join(microstake.get('pending') or [])}"
                 if rebuild.get("ok") else rebuild.get("reason")), microstake=microstake)
         rebuild = self._gate_rebuild_on_recovery_state(rebuild)       # RSR-12 illeggibile => PAUSED
-        self._reconcile_held_after_rebuild(rebuild)                   # #461 PR29-c
+        rebuild = self._reconcile_held_after_rebuild(rebuild)         # #461 PR29-c: held in attesa => PAUSED
         self._last_position_rebuild = dict(rebuild)
         self._reconciliation_required = not rebuild["ok"]
         self.bus.publish("STARTUP_POSITIONS_REBUILT", dict(rebuild))
@@ -2702,7 +2702,8 @@ class RuntimeController:
                         "reason": "reconciliation_required:MICROSTAKE_SAGA_PENDING:"
                                   f"{microstake.get('status')}:{','.join(microstake.get('pending') or [])}",
                         "microstake": microstake, "status": self._safe_status_snapshot()}
-            rebuild = self._gate_rebuild_on_recovery_state(self._rebuild_open_positions())
+            rebuild = self._reconcile_held_after_rebuild(
+                self._gate_rebuild_on_recovery_state(self._rebuild_open_positions()))
             self._last_position_rebuild = dict(rebuild)
             if not rebuild["ok"]:
                 return {"resumed": False, "reason": f"reconciliation_required:{rebuild['reason']}",
@@ -4539,8 +4540,20 @@ class RuntimeController:
             )
             return
 
-        if event_key and not self._clear_uncertain(event_key, table_id,
-                                                   customer_ref=str(payload.get("customer_ref") or "")):
+        outcome_ref = str(payload.get("customer_ref") or "")
+        if table_id is not None and event_key:
+            # #461 PR29-c (Grok su e2bb36e): il tavolo dell'esito porta la riserva di un intento diverso (o l'esito
+            # non dice di quale intento e') => nessun rilascio, ne' del tavolo ne' della chiave anti-duplicato.
+            try:
+                held = self.table_manager.get_table(int(table_id))
+            except (TypeError, ValueError):
+                held = None
+            reserved = str(((held.meta if held else None) or {}).get("customer_ref") or "")
+            if held is not None and held.current_event_key == event_key and reserved and reserved != outcome_ref:
+                logger.warning("Esito %s senza identita' della riserva del tavolo %s (evento %s): nessun rilascio",
+                               event_name, table_id, event_key)
+                return
+        if event_key and not self._clear_uncertain(event_key, table_id, customer_ref=outcome_ref):
             # esito certo e nessun altro tavolo dello stesso evento ancora incerto: chiave rilasciata.
             # Con un altro tavolo AMBIGUOUS sullo stesso evento (anti-duplicazione disattivata) la
             # chiave e la marcatura restano: l'esito certo di un ordine non certifica l'altro (riesame c9).
@@ -4554,8 +4567,7 @@ class RuntimeController:
             try:
                 # PF-ALL-F023: rilascia solo il tavolo che porta ancora questa
                 # riserva (idempotente, mai un tavolo riassegnato).
-                released = self.table_manager.force_unlock_if_event(
-                    int(table_id), event_key, customer_ref=str(payload.get("customer_ref") or ""))
+                released = self.table_manager.force_unlock_if_event(int(table_id), event_key, customer_ref=outcome_ref)
                 if not released:
                     logger.info(
                         "Rilascio tavolo non applicato %s: table_id=%s non porta event_key=%s",
@@ -4599,6 +4611,11 @@ class RuntimeController:
         if recorded and ref and recorded != ref:
             return True
         refs.pop((event_key, str(table_id)), None)
+        # #461 PR29-c (Codex su e2bb36e): un AMBIGUOUS senza table_id (auto-next) e' registrato sotto None; l'esito
+        # certo dello STESSO intento sul tavolo risolto lo chiude.
+        tableless = (table_id is not None and ref and refs.get((event_key, "None")) == ref)
+        if tableless:
+            refs.pop((event_key, "None"), None)
         held = tables.get(event_key)
         if held is None and event_key in uncertain:
             held = {uncertain[event_key]}                 # registrato senza registro per tavolo
@@ -4611,7 +4628,7 @@ class RuntimeController:
                 return True
             held = set()
         else:
-            held = {t for t in held if str(t) != str(table_id)}
+            held = {t for t in held if str(t) != str(table_id) and not (tableless and t is None)}
         if held:
             tables[event_key] = held
             uncertain[event_key] = sorted(held, key=str)[0]
@@ -4942,14 +4959,15 @@ class RuntimeController:
         if existing is not None and not upgrade:
             return {"outcome": "duplicate", "applied": False,
                     "realized_already": bool(existing.get("realized_applied"))}
-        owner = self._resolve_settlement_reservation(payload, table_id=table_id)
+        why: list = []
+        owner = self._resolve_settlement_reservation(payload, table_id=table_id, why=why)
         if upgrade:
             # Settlement trattenuto (identita' allora non dimostrabile, anche per una lettura fallita): una nuova
             # consegna o la riconciliazione lo rivalutano. Ancora non attribuibile => resta held, nessun effetto.
             # Attribuibile ora => effetto una volta (UPDATE condizionato ``outcome = 'held'``); il P&L realizzato
             # resta quello applicato alla registrazione (``replayed``).
             if owner is None:
-                return {"outcome": "duplicate", "applied": False,
+                return {"outcome": "duplicate", "applied": False, "transient": bool(why),
                         "realized_already": bool(existing.get("realized_applied"))}
         record = {"market_id": str((payload or {}).get("market_id") or ""), "pnl": float(pnl),
                   "instance_id": self._settlement_instance_id(), "payload": dict(payload or {})}
@@ -4957,7 +4975,7 @@ class RuntimeController:
             created = self._commit_settlement_effect(key, {**record, "outcome": "held"}, None)
             if created is None:
                 return {"outcome": "unverifiable", "applied": False, "realized_already": False}
-            return {"outcome": "held" if created else "duplicate", "applied": False,
+            return {"outcome": "held" if created else "duplicate", "applied": False, "transient": bool(why),
                     "realized_already": not created}
         record.update(owner)
         tm = self.table_manager
@@ -4968,19 +4986,24 @@ class RuntimeController:
                 outcome = tm.release_identified_reservation(
                     tid, ev, identity={"customer_ref": ref, "reservation_id": owner.get("reservation_id")}, pnl=pnl)
                 prepared = self._prepare_recovery_persist()
+                if prepared is None:
+                    # Stato dei tavoli non scrivibile (RSR-12 illeggibile o serializzazione fallita): registrare la
+                    # riga senza lo stato renderebbe ogni riconsegna un duplicato e, dopo un crash, il debito
+                    # aggiornato sarebbe perso per sempre (Codex su e2bb36e). Nessun effetto, ritentabile.
+                    raise RuntimeError("stato dei tavoli di recovery non scrivibile")
             except Exception:
                 tm.restore_table(snapshot)                     # effetto parziale annullato: nulla e' stato registrato
                 logger.exception("Settlement %s: effetto sul tavolo %s fallito, annullato (fail-closed)", key, tid)
                 return {"outcome": "unverifiable", "applied": False, "realized_already": False}
-            created = self._commit_settlement_effect(key, {**record, "outcome": outcome},
-                                                     prepared[0] if prepared else None, upgrade=upgrade)
+            created = self._commit_settlement_effect(key, {**record, "outcome": outcome}, prepared[0],
+                                                     upgrade=upgrade)
             if not created:
                 tm.restore_table(snapshot)                     # nessun effetto: gia' registrato o non registrabile
                 if created is None:
                     return {"outcome": "unverifiable", "applied": False, "realized_already": False}
                 # corsa persa: la riga e' di un altro consumer (altro processo), che applica anche il realizzato
                 return {"outcome": "duplicate", "applied": False, "realized_already": True}
-        if prepared and created != "unpersisted":
+        if created != "unpersisted":
             self._recovery_persisted(prepared[1])
         else:
             self._recovery_persist_failed = True
@@ -4999,28 +5022,36 @@ class RuntimeController:
                     "realized_already": bool(existing.get("realized_applied"))}
         return {"outcome": outcome, "applied": True, "realized_already": False}
 
-    def _reconcile_held_after_rebuild(self, rebuild: dict) -> Optional[dict]:
-        """#461 PR29-c, all'avvio: tavoli ricostruiti (F018 riuscito) => i settlement trattenuti si rivalutano prima
-        dei nuovi ingressi. Ricostruzione incompleta => nessuna rivalutazione (tavoli non affidabili). Un errore lascia
-        le righe held (tavoli trattenuti, fail-closed) e non impedisce l'avvio."""
+    def _reconcile_held_after_rebuild(self, rebuild: dict) -> dict:
+        """#461 PR29-c, all'avvio e alla ripresa: tavoli ricostruiti (F018 riuscito) => i settlement trattenuti si
+        rivalutano prima dei nuovi ingressi. Ricostruzione incompleta => nessuna rivalutazione (tavoli non affidabili).
+        Ritorna ``rebuild``, con ``ok=False`` (=> PAUSED, nessun nuovo ingresso) se il registro e' illeggibile o resta un
+        settlement trattenuto per una lettura fallita (``pending``, Codex su e2bb36e): il suo effetto (riserva, debito
+        di recovery) e' ancora da applicare. I trattenuti non attribuibili in modo definitivo (hedge, piu' righe, piu'
+        tavoli SIM) restano ``held`` senza fermare il runtime: nessun rilascio, nessun effetto, evidenza nel registro."""
         if not (rebuild or {}).get("ok"):
-            return None
+            return rebuild
         try:
             held = self.reconcile_held_settlements()
         except Exception:
-            logger.exception("Riconciliazione dei settlement trattenuti fallita all'avvio")
-            return None
+            logger.exception("Riconciliazione dei settlement trattenuti fallita")
+            held = {"ok": False, "reconciled": [], "still_held": [], "pending": []}
         if held["reconciled"] or held["still_held"] or not held["ok"]:
-            logger.warning("Settlement trattenuti all'avvio: riconciliati=%d, ancora trattenuti=%d, ok=%s",
-                           len(held["reconciled"]), len(held["still_held"]), held["ok"])
-        return held
+            logger.warning("Settlement trattenuti: riconciliati=%d, ancora trattenuti=%d (in attesa di lettura %d), ok=%s",
+                           len(held["reconciled"]), len(held["still_held"]), len(held["pending"]), held["ok"])
+        if not held["ok"]:
+            return dict(rebuild, ok=False, reason="HELD_SETTLEMENTS_UNREADABLE", held_settlements=held)
+        if held["pending"]:
+            return dict(rebuild, ok=False, reason=f"HELD_SETTLEMENTS_PENDING:{','.join(held['pending'])}",
+                        held_settlements=held)
+        return dict(rebuild, held_settlements=held)
 
     def reconcile_held_settlements(self) -> dict:
         """#461 PR29-c: rivaluta i settlement registrati ``held`` (identita' allora non dimostrabile) con il payload
         conservato nel registro. Attribuibili ora => effetto sui tavoli una volta, nessun P&L realizzato ripetuto;
         ancora non attribuibili => restano held (nessuna perdita di contabilizzazione: riga, P&L e payload restano nel
         registro). Ritorna i conteggi; registro illeggibile => ``ok=False``."""
-        result = {"ok": True, "reconciled": [], "still_held": []}
+        result = {"ok": True, "reconciled": [], "still_held": [], "pending": []}
         lister = getattr(getattr(self, "db", None), "list_held_settlement_effects", None)
         if not callable(lister):
             return result
@@ -5037,8 +5068,26 @@ class RuntimeController:
             with self._settlement_consumer_lock():
                 effect = self._release_settled_tables(payload, table_id=payload.get("table_id"),
                                                       pnl=float(row.get("pnl") or 0.0), settlement_key=key)
-            (result["reconciled"] if effect.get("replayed") else result["still_held"]).append(key)
+            if effect.get("replayed"):
+                result["reconciled"].append(key)
+            else:
+                result["still_held"].append(key)
+                if effect.get("transient") or effect.get("outcome") == "unverifiable":
+                    result["pending"].append(key)
         return result
+
+    def _settlement_effect_key(self, payload: dict) -> str:
+        """Chiave del registro ``settlement_effects`` e del P&L realizzato. Per una chiusura di posizione con
+        ``table_id`` include l'intento (``customer_ref``) e la riserva (``reservation_id``): lo stesso tavolo riusato
+        per lo stesso evento da un'altra riserva e' un'altra chiusura, non un replay (Codex su e2bb36e)."""
+        key = self._build_bankroll_sync_key(payload or {})
+        p = payload or {}
+        if key and p.get("table_id") is not None:
+            extra = [str(p.get(k) or "").strip() for k in ("customer_ref", "reservation_id")]
+            extra = [x for x in extra if x]
+            if extra:
+                key = "|".join([key, *extra])
+        return key
 
     #: Lock di riserva per i RuntimeController costruiti senza `__init__` (doppi di test).
     _fallback_settlement_lock = threading.RLock()
@@ -5111,7 +5160,8 @@ class RuntimeController:
             # direzione fail-closed per il limite giornaliero), mai perso.
             logger.exception("Settlement %s: P&L realizzato applicato ma non marcato nel registro", settlement_key)
 
-    def _resolve_settlement_reservation(self, payload: dict, *, table_id: Any) -> Optional[dict]:
+    def _resolve_settlement_reservation(self, payload: dict, *, table_id: Any,
+                                        why: Optional[list] = None) -> Optional[dict]:
         """#461 PR29-c: la riserva del settlement, per identita' durevole. None se non e' dimostrabile.
 
         - Chiusura con ``table_id`` (PnLEngine): vale solo con ``customer_ref`` ed ``event_key`` della posizione;
@@ -5122,7 +5172,9 @@ class RuntimeController:
           il P&L della bet non e' il netto del tavolo: None. Gamba di un lotto Dutching => rilascio a livello di
           lotto (PR29-b / PR30): None.
         - Settlement SIM per mercato (``sim:``): netto di tutte le gambe del bot; attribuibile solo se il mercato
-          ha un solo tavolo e un solo ordine del bot, e quell'ordine e' l'intento che il tavolo porta."""
+          ha un solo tavolo e un solo ordine del bot, e quell'ordine e' l'intento che il tavolo porta.
+        ``why`` riceve ``"transient"`` quando l'identita' non e' dimostrabile per una lettura fallita (ordini,
+        exchange): il settlement trattenuto e' allora riconciliabile e blocca l'avvio finche' non lo e'."""
         p = payload or {}
         market_id = str(p.get("market_id") or "").strip()
         if table_id is not None:
@@ -5134,7 +5186,7 @@ class RuntimeController:
         if not market_id:
             return None
         if str(p.get("event_key") or "").startswith("sim:"):
-            return self._resolve_market_settlement(market_id)
+            return self._resolve_market_settlement(market_id, why=why)
         bet_id = str(p.get("bet_id") or p.get("settlement_ref") or "").strip()
         if not bet_id:
             return None
@@ -5147,6 +5199,8 @@ class RuntimeController:
             rows = finder(bet_id) or []
         except Exception:
             logger.exception("Settlement %s: ordini del bot illeggibili, identita' non dimostrabile", bet_id)
+            if why is not None:
+                why.append("transient")
             return None
         if len(rows) != 1:
             return None
@@ -5155,7 +5209,7 @@ class RuntimeController:
         ev = str(request.get("event_key") or "")
         if (not ref or not ev or request.get("batch_id")
                 or str(request.get("market_id") or "") != market_id
-                or self._market_has_foreign_cleared_legs(market_id)):
+                or self._market_has_foreign_cleared_legs(market_id, why=why)):
             return None
         table = self.table_manager.find_by_customer_ref(ref)
         tid = table.table_id if table is not None else request.get("table_id")
@@ -5166,7 +5220,7 @@ class RuntimeController:
         return {"table_id": tid, "event_key": ev, "customer_ref": ref,
                 "reservation_id": str(request.get("reservation_id") or ""), "bet_id": bet_id}
 
-    def _resolve_market_settlement(self, market_id: str) -> Optional[dict]:
+    def _resolve_market_settlement(self, market_id: str, why: Optional[list] = None) -> Optional[dict]:
         matches = [t for t in self.table_manager.snapshot()
                    if str(t.get("market_id") or "") == market_id and str(t.get("current_event_key") or "")]
         if len(matches) != 1:
@@ -5184,6 +5238,8 @@ class RuntimeController:
                 "WHERE status NOT IN ('FAILED', 'DENIED', 'DUPLICATE_BLOCKED')", fetch=True, commit=False) or []
         except Exception:
             logger.exception("Settlement %s: ordini del bot illeggibili, nessun rilascio", market_id)
+            if why is not None:
+                why.append("transient")
             return None
         on_market = []
         for raw in rows:
@@ -5308,32 +5364,38 @@ class RuntimeController:
             logger.critical("Registro hedge non persistito e sentinella non scrivibile (mercato %s)", market_id,
                             exc_info=True)
 
-    def _market_has_foreign_cleared_legs(self, market_id: str) -> bool:
+    def _market_has_foreign_cleared_legs(self, market_id: str, why: Optional[list] = None) -> bool:
         """Riconciliazione sull'exchange (autorita') prima di un rilascio per mercato da settlement cleared per bet
         (bloccante Sol su 23bdbfe): `listClearedOrders` per il MERCATO, non per i soli bet del bot. Una bet regolata
         che non e' del bot (hedge di cashout senza riga in `orders`, ordine manuale) => il P&L della gamba non e' il
         netto del tavolo. Non dipende da nessuna scrittura locale. Lettura fallita, risposta malformata o vuota =>
-        True (fail-closed: nessun rilascio per mercato)."""
+        True (fail-closed: nessun rilascio per mercato). #461 PR29-c: ogni True che NON e' una bet estranea accertata
+        (lettura fallita/incompleta) aggiunge ``"transient"`` a ``why``: il settlement e' riconciliabile piu' tardi."""
+        def unverified() -> bool:
+            if why is not None:
+                why.append("transient")
+            return True
+
         lister = getattr(self.betfair_service, "list_cleared_orders", None)
         identity = getattr(self.db, "get_bot_active_orders", None)
         if not callable(lister) or not callable(identity):
-            return True
+            return unverified()
         try:
             bot_bets = {str(o.get("bet_id") or "").strip() for o in (identity() or [])
                         if isinstance(o, dict) and str(o.get("market_id") or "").strip() == market_id}
             rows = lister(bet_status="SETTLED", market_ids=[market_id])
         except Exception:
             logger.exception("Settlement %s: ordini regolati del mercato illeggibili, nessun rilascio", market_id)
-            return True
+            return unverified()
         if not isinstance(rows, list) or not rows:
-            return True
+            return unverified()
         settled = set()
         for row in rows:
             if not isinstance(row, dict):
-                return True
+                return unverified()
             bet_id = str(row.get("betId") or row.get("bet_id") or "").strip()
             if not bet_id:
-                return True
+                return unverified()
             settled.add(bet_id)
         foreign = settled - bot_bets
         if foreign:
@@ -6199,7 +6261,7 @@ class RuntimeController:
             self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))
             return
 
-        settlement_key = self._build_bankroll_sync_key(payload)
+        settlement_key = self._settlement_effect_key(payload)
         # PF-ALL-F026 / F2 / #461 PR29-c: effetto sul tavolo della riserva identificata, una sola volta.
         effect = self._release_settled_tables(payload, table_id=table_id, pnl=pnl, settlement_key=settlement_key)
         if effect["outcome"] in ("held", "unverifiable") and not self._persist_recovery_tables():   # RSR-12
