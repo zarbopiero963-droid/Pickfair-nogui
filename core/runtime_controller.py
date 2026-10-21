@@ -4816,7 +4816,9 @@ class RuntimeController:
             if table is None:
                 logger.warning("F028: tavolo dell'ordine %s non attribuibile: nessun rilascio", c["customer_ref"])
                 continue
-            if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"]):
+            # #461 PR29-c: il rilascio porta l'intento dell'ordine finalizzato (mai la riserva di un altro intento)
+            if self.table_manager.force_unlock_if_event(int(table["table_id"]), c["event_key"],
+                                                        customer_ref=str(c.get("customer_ref") or "")):
                 # La chiave resta (dedupe del segnale per il TTL) ma non e' piu' una posizione viva:
                 # se era fissata al riavvio torna a scadere normalmente (riesame indipendente c9).
                 self.duplication_guard.unpin(c["event_key"])

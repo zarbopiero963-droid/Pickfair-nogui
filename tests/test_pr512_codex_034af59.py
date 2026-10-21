@@ -464,6 +464,11 @@ def _c9_occupied(c):
     return [(t["table_id"], t["current_event_key"]) for t in c.rc.table_manager.snapshot() if t.get("current_event_key")]
 
 
+def _c9_ref(c, table_id):
+    """#461 PR29-c: gli esiti portano il customer_ref reale dell'intento che il tavolo riserva."""
+    return c.rc.table_manager.get_table(int(table_id)).meta["customer_ref"]
+
+
 def _c9_expire_ttl(monkeypatch, guard):
     from core import duplication_guard as dg_mod
     base = dg_mod.time.monotonic()
@@ -540,16 +545,17 @@ def test_c9_1_ambiguous_order_stays_protected_when_a_sibling_order_on_the_same_e
     occ = _c9_occupied(c)
     assert len(occ) == 2, occ
     (t1, key), (t2, _) = occ
-    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    ref_a, ref_b = _c9_ref(c, t1), _c9_ref(c, t2)
+    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": ref_b})
     handler = c.rc._on_quick_bet_failed if terminal == "failed" else c.rc._on_quick_bet_success
-    handler({"event_key": key, "table_id": t1, "customer_ref": "A"})
+    handler({"event_key": key, "table_id": t1, "customer_ref": ref_a})
     assert c.rc._uncertain_reservations_map().get(key) == t2, "incertezza di B cancellata dall'esito di A"
     n = len(c.broker.state.orders)
     c.rc._on_signal_received(_c9_signal(price=2.3, received_at="2026-10-08T10:07:00.000000+00:00"))
     assert _c9_rejects(c)[-1] == "evento_gia_in_posizione", _c9_rejects(c)
     assert len(c.broker.state.orders) == n, "nuovo ordine su un evento con un ordine AMBIGUOUS aperto"
     # BLOCK inverso: quando anche B ha un esito certo, l'evento torna libero
-    c.rc._on_quick_bet_failed({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    c.rc._on_quick_bet_failed({"event_key": key, "table_id": t2, "customer_ref": ref_b})
     assert key not in c.rc._uncertain_reservations_map()
 
 
@@ -1248,14 +1254,15 @@ def test_c11_f028_releases_the_finalized_orders_own_table_never_the_live_one(tmp
     assert len(occ) == 2, occ
     t_a, t_b = sorted(occ)
     key = occ[t_a]
-    cand = [{"customer_ref": "A", "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
+    ref_a, ref_b = _c9_ref(c, t_a), _c9_ref(c, t_b)
+    cand = [{"customer_ref": ref_a, "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
              "table_id": t_a},
-            {"customer_ref": "B", "status": "SUBMITTED", "bet_id": "BB", "market_id": "1.234", "event_key": key,
+            {"customer_ref": ref_b, "status": "SUBMITTED", "bet_id": "BB", "market_id": "1.234", "event_key": key,
              "table_id": t_b}]
     c.rc._open_order_candidates = lambda: (cand, [])
     c.rc._final_unmatched_bets = lambda markets, bets: {"BA"}
     c.rc._settlement_reconciliation_allowed = lambda: True
-    assert c.rc._release_final_unmatched_orders() == ["A"]
+    assert c.rc._release_final_unmatched_orders() == [ref_a]
     still = {tid for tid, _ in _c9_occupied(c)}
     assert t_b in still and t_a not in still, ("tavolo dell'ordine vivo liberato", still)
 
