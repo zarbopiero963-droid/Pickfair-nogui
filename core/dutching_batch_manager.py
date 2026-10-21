@@ -687,10 +687,10 @@ class DutchingBatchManager:
                 if hasattr(table_manager, "release_batch_reservation"):
                     outcome = table_manager.release_batch_reservation(int(table_id), event_key, batch_id=str(batch_id),
                                                                          pnl=float(pnl))
-                    # Tavolo gia' libero (reset): la chiave e' del lotto solo se nessuna riserva porta piu' l'evento,
-                    # altrimenti appartiene alla nuova riserva e resta (review anticipata PR29-b).
+                    # Tavolo gia' libero o riassegnato: la chiave e' del lotto solo se nessuna riserva porta piu'
+                    # l'evento, altrimenti appartiene alla nuova riserva e resta (review anticipata e Grok, PR29-b).
                     owns_key = outcome == "released" or (
-                        outcome == "free" and table_manager.find_by_event_key(event_key) is None)
+                        outcome in ("free", "foreign") and table_manager.find_by_event_key(event_key) is None)
                 elif pnl != 0.0 and hasattr(table_manager, "release"):
                     table_manager.release(int(table_id), pnl=float(pnl))
                     owns_key = True

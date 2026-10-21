@@ -237,3 +237,18 @@ def test_perdita_del_lotto_su_tavolo_riassegnato_entra_nel_recovery_senza_libera
     t = _tavolo(tm)
     assert t.current_event_key == "1.888:ALTRO" and t.current_exposure == 4.0
     assert t.loss_amount == 5.0 and t.in_recovery, "perdita del vecchio lotto non contabilizzata"
+
+
+def test_chiave_liberata_se_il_tavolo_del_lotto_e_riassegnato_a_un_altro_evento(tmp_path):
+    # Review Grok su #534: tavolo del lotto riassegnato a un ALTRO evento, chiave del lotto appuntata. Il lotto
+    # chiude senza rischio e nessuna riserva porta piu' il suo evento: la chiave va liberata, quella dell'altro
+    # evento resta.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    guard.acquire(EVENT_KEY, pin=True)
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    assert guard.acquire("1.888:ALTRO")
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert EVENT_KEY not in guard._active, "chiave dell'evento del lotto trattenuta per sempre"
+    assert "1.888:ALTRO" in guard._active and _tavolo(tm).current_exposure == 4.0

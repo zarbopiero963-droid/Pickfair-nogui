@@ -1255,12 +1255,24 @@
       "module": "core.dutching_batch_manager",
       "area": "dedupe",
       "file": "core/dutching_batch_manager.py",
-      "original": "                        outcome == \"free\" and table_manager.find_by_event_key(event_key) is None)",
+      "original": "                        outcome in (\"free\", \"foreign\") and table_manager.find_by_event_key(event_key) is None)",
       "mutated": "                        False)",
       "tests": [
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
       "rationale": "#461 PR29-b (review anticipata): tavolo del lotto gia' libero e nessuna riserva sull'evento: la chiave appuntata resta per sempre."
+    },
+    {
+      "id": "reassigned_batch_table_keeps_dedup_key_forever",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "                        outcome in (\"free\", \"foreign\") and table_manager.find_by_event_key(event_key) is None)",
+      "mutated": "                        outcome == \"free\" and table_manager.find_by_event_key(event_key) is None)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Grok): tavolo del lotto riassegnato a un altro evento e nessuna riserva sull'evento del lotto: la chiave appuntata resta per sempre."
     },
     {
       "id": "batch_pnl_dropped_on_freed_table",
