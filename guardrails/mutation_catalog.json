@@ -1030,6 +1030,55 @@
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
       "rationale": "#461 PR28-e (Codex #531): un auto-next senza tavolo parte senza riserva, invisibile al gate delle entrate concorrenti."
+    },
+    {
+      "id": "success_releases_live_reservation",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        self._track_direct_order(payload, event_name=\"QUICK_BET_SUCCESS\")",
+      "mutated": "        self._track_direct_order(payload, event_name=\"QUICK_BET_SUCCESS\"); self._release_if_terminal(payload, event_name=\"QUICK_BET_SUCCESS\")",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (PF-C29-01.03): QUICK_BET_SUCCESS (doppione DUPLICATE_BLOCKED) rilascia tavolo e chiave dell'originale ancora in volo."
+    },
+    {
+      "id": "duplicate_success_marks_placed",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if str((payload or {}).get(\"status\") or \"\").upper() != \"DUPLICATE_BLOCKED\":",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: il SUCCESS di un doppione (mai inviato) marca a mercato la riserva dell'originale."
+    },
+    {
+      "id": "same_intent_second_table_admitted",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        intent_reason = (\"ingresso_gia_in_volo\" if self.table_manager.find_by_customer_ref(",
+      "mutated": "        intent_reason = (\"ingresso_gia_in_volo\" if False and self.table_manager.find_by_customer_ref(",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: lo stesso intento gia' riservato ottiene un secondo tavolo (e un secondo invio bloccato come doppione)."
+    },
+    {
+      "id": "consumed_intent_readmitted",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"ingresso_gia_eseguito\" if consumed(str(customer_ref)) else \"\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
+      ],
+      "rationale": "#461 PR29-a (review anticipata P1): la riconsegna di un intento gia' consegnato riserva un tavolo che il SUCCESS del doppione non rilascia piu'."
     }
   ]
 }

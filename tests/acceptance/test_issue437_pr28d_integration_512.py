@@ -1374,12 +1374,12 @@ def test_two_queued_entries_with_the_same_ref_place_no_order_through_the_engine(
     c.rc._on_signal_received(_signal(customer_ref="ref-dup", event="Gamma v Delta", market_id="1.777",
                                      received_at="2026-10-08T10:06:00+00:00"))
     c.bus.publish = original_publish
-    assert len(held) == 2, _rifiuti(c)                        # entrambi ammessi e accodati con lo stesso ref
-    for payload in held:
-        _run_queued(c, payload)
-
-    assert c.broker.state.orders == {}                        # nessun ordine con un fence scambiato o assente
-    assert [p["status"] for p in c.bus.payloads("QUICK_BET_FAILED")][-2:] == ["DENIED", "DENIED"]
+    # #461 PR29-a: lo stesso ref e' lo stesso intento: il secondo ingresso e' rifiutato gia' all'ammissione
+    # (riserva viva dell'originale), quindi in coda c'e' un solo ingresso, con il suo fence: nessun conflitto.
+    assert len(held) == 1, _rifiuti(c)
+    assert "ingresso_gia_in_volo" in _rifiuti(c), _rifiuti(c)
+    _run_queued(c, held[0])
+    assert len(c.broker.state.orders) == 1                    # un solo ordine, quello ammesso col proprio fence
 
 
 def test_a_single_queued_entry_is_unaffected_by_the_conflict_rule(tmp_path):

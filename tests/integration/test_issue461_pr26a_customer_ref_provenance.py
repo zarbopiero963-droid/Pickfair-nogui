@@ -223,9 +223,12 @@ def test_pass_signal_redelivery_keeps_identity_and_engine_blocks_duplicate(tmp_p
     c.rc._on_signal_received(dict(signal))
     c.rc._on_signal_received(dict(signal))
 
+    # #461 PR29-a: lo stesso ref (identita' stabile) viene riconosciuto gia' all'ammissione: la riconsegna e'
+    # rifiutata prima di riservare un tavolo, invece di arrivare all'engine come doppione.
     refs = [p.get("customer_ref") for p in c.bus.payloads("CMD_QUICK_BET")]
-    assert len(refs) == 2
-    assert refs[0] and refs[0] == refs[1]
+    assert len(refs) == 1 and refs[0]
+    assert [r for r in c.bus.payloads("SIGNAL_REJECTED") if r.get("reason") in
+            ("ingresso_gia_in_volo", "ingresso_gia_eseguito")], c.bus.payloads("SIGNAL_REJECTED")
     assert _broker_refs(c.broker) == [refs[0]], "la riconsegna ha piazzato un secondo ordine"
 
 
@@ -240,10 +243,31 @@ def test_pass_redelivery_after_restart_with_new_received_at_is_blocked(tmp_path)
     # Restart: processo nuovo, stesso DB e stesso broker (stesso conto).
     second = _chain(tmp_path, db_name="shared.db")
     second.rc.betfair_service.simulation_broker = first.broker
+    seen = _spia_intenti(second)
     second.rc._on_signal_received(_signal(received_at="2026-10-08T10:03:00.900000+00:00"))
 
-    assert second.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    _bloccato_come_gia_eseguito(second, seen, ref)
     assert _broker_refs(first.broker) == [ref], "la riconsegna post-restart ha piazzato un secondo ordine"
+
+
+def _spia_intenti(c):
+    """#461 PR29-a: la riconsegna di un intento gia' consegnato e' fermata all'ammissione (ingresso_gia_eseguito),
+    prima di un CMD_QUICK_BET. I ref controllati sul DB provano che l'identita' ricalcolata e' la stessa."""
+    seen = []
+    real = c.rc.db.is_order_intent_consumed
+
+    def _spy(ref):
+        seen.append(ref)
+        return real(ref)
+
+    c.rc.db.is_order_intent_consumed = _spy
+    return seen
+
+
+def _bloccato_come_gia_eseguito(c, seen, ref):
+    assert c.bus.payloads("CMD_QUICK_BET") == []
+    assert ref in seen, seen
+    assert "ingresso_gia_eseguito" in [p.get("reason") for p in c.bus.payloads("SIGNAL_REJECTED")]
 
 
 def _gui_publish(c, listener_signal, *, stake):
@@ -287,15 +311,16 @@ def test_pass_gui_redelivery_with_nested_received_at_is_blocked(tmp_path):
 
     second = _chain(tmp_path, db_name="gui.db")
     second.rc.betfair_service.simulation_broker = first.broker
+    seen = _spia_intenti(second)
     _gui_publish(second, {**listener, "received_at": "2026-10-08T10:02:30.9+00:00"}, stake=5.0)
 
-    assert second.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    _bloccato_come_gia_eseguito(second, seen, ref)
     assert _broker_refs(first.broker) == [ref], "riconsegna GUI post-restart: secondo ordine piazzato"
 
     # Messaggio diverso nella stessa chat = intento diverso.
     _gui_publish(second, {**listener, "selection_id": 12, "selection": "Under 2.5",
                           "raw_text": "UNDER 2.5 @2.0", "received_at": "2026-10-08T10:03:00+00:00"}, stake=5.0)
-    other = second.bus.payloads("CMD_QUICK_BET")[1].get("customer_ref")
+    other = second.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref")
     assert other and other != ref
 
 
@@ -319,9 +344,10 @@ def test_pass_same_message_same_identity_across_headless_and_gui_entrypoints(tmp
 
     gui = _chain(tmp_path, db_name="entry.db")
     gui.rc.betfair_service.simulation_broker = headless.broker
+    seen = _spia_intenti(gui)
     _gui_publish(gui, {**listener, "received_at": "2026-10-08T10:01:00.2+00:00"}, stake=5.0)
 
-    assert gui.bus.payloads("CMD_QUICK_BET")[0].get("customer_ref") == ref
+    _bloccato_come_gia_eseguito(gui, seen, ref)
     assert _broker_refs(headless.broker) == [ref], "cambio entrypoint: secondo ordine piazzato"
 
 
@@ -341,10 +367,11 @@ def test_pass_upstream_ref_survives_gui_normalization_across_entrypoints(tmp_pat
     )
     gui = _chain(tmp_path, db_name="upref.db")
     gui.rc.betfair_service.simulation_broker = headless.broker
+    seen = _spia_intenti(gui)
     _gui_publish(gui, {**listener, "received_at": "2026-10-08T10:01:00+00:00"}, stake=5.0)
 
     assert headless.bus.payloads("CMD_QUICK_BET")[0]["customer_ref"] == "tg-777"
-    assert gui.bus.payloads("CMD_QUICK_BET")[0]["customer_ref"] == "tg-777"
+    _bloccato_come_gia_eseguito(gui, seen, "tg-777")
     assert _broker_refs(headless.broker) == ["tg-777"]
 
 
@@ -407,7 +434,10 @@ def test_pass_noncompliant_upstream_ref_becomes_stable_compliant_ref(tmp_path):
 
     refs = [p.get("customer_ref") for p in c.bus.payloads("CMD_QUICK_BET")]
     assert refs[0] != bad and BETFAIR_CUSTOMER_REF.fullmatch(refs[0])
-    assert refs[0] == refs[1], "stesso ref a monte = stessa identita'"
+    # #461 PR29-a: stesso ref a monte = stessa identita', riconosciuta gia' all'ammissione (nessun secondo invio).
+    assert len(refs) == 1
+    assert [r for r in c.bus.payloads("SIGNAL_REJECTED") if r.get("reason") in
+            ("ingresso_gia_in_volo", "ingresso_gia_eseguito")], c.bus.payloads("SIGNAL_REJECTED")
     assert _broker_refs(c.broker) == [refs[0]]
 
 

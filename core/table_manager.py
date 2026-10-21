@@ -258,6 +258,19 @@ class TableManager:
                     return TableState(**table.to_dict())
             return None
 
+    def find_by_customer_ref(self, customer_ref: str, *, exclude_table_id: Any = None) -> Optional[TableState]:
+        """#461 PR29-a: tavolo la cui riserva viva porta il ``customer_ref`` dell'intento (copia), escluso
+        ``exclude_table_id``. None se nessuno."""
+        ref = str(customer_ref or "")
+        if not ref:
+            return None
+        with self._lock:
+            for table in self._tables.values():
+                if (table.current_event_key and table.table_id != exclude_table_id
+                        and str((table.meta or {}).get("customer_ref") or "") == ref):
+                    return TableState(**table.to_dict())
+            return None
+
     def get_table(self, table_id: int) -> Optional[TableState]:
         with self._lock:
             table = self._get(table_id)

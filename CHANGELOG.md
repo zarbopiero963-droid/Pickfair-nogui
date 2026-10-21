@@ -22,6 +22,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR29-a — il rilascio segue la riserva, mai un esito che non la chiude (PF-C29-01.03, .13):**
+  `QUICK_BET_SUCCESS` non rilascia più tavolo, esposizione o chiave anti-duplicato. In produzione l'engine lo
+  emette per `DUPLICATE_BLOCKED` (richiesta non inviata perché lo stesso intento è già in volo): un replay dello
+  stesso `CMD_QUICK_BET` liberava la riserva viva dell'originale, lasciando l'esposizione fuori da cap e gate
+  dei fondi (riprodotto sul runtime reale). Un SUCCESS di completamento marca soltanto la riserva come a mercato;
+  quello di un doppione non tocca nulla. Con anti-duplicazione disattivata un segnale identico (stesso
+  `customer_ref`) è rifiutato prima di riservare un secondo tavolo (`ingresso_gia_in_volo`); la riconsegna di un
+  intento già consegnato al trasporto (DB durevole, anche dopo riavvio) è rifiutata prima di riservare un tavolo
+  (`ingresso_gia_eseguito`, verifica fallita => `ammissione_non_verificabile`), anche nell'auto-next. Il rilascio resta
+  a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
+
 - **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**
   un segnale o un auto-next con esposizione (BACK = stake, LAY = liability) oltre i fondi del conto viene
   rifiutato con `fondi_insufficienti:...`, mai ridimensionato; prima partiva se stava nel bankroll interno
