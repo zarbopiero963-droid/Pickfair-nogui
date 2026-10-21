@@ -1509,7 +1509,7 @@
       "module": "core.runtime_controller",
       "area": "dedupe",
       "file": "core/runtime_controller.py",
-      "original": "        if str(payload.get(\"table_id\") or \"\").strip():",
+      "original": "        if (str(payload.get(\"table_id\") or \"\").strip()\n                or not event_key.startswith((\"cleared:\", \"sim:\"))):",
       "mutated": "        if False:",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"

@@ -809,6 +809,17 @@ def test_r5_la_chiave_del_settlement_e_la_stessa_in_ogni_fase():
     assert RuntimeController._build_bankroll_sync_key({**base, "customer_ref": "R", "reservation_id": "X"}) == "E|1|R|X"
     assert RuntimeController._build_bankroll_sync_key({"event_key": "cleared:1.1:B", "customer_ref": "R"}) == \
         "cleared:1.1:B", "un settlement per bet non cambia chiave"
+    # Grok su 70821fd: chiusura di posizione SENZA table_id (auto-next) => identita' della riserva nella chiave
+    assert RuntimeController._build_bankroll_sync_key({"event_key": "E", "customer_ref": "R1"}) != \
+        RuntimeController._build_bankroll_sync_key({"event_key": "E", "customer_ref": "R2"})
+
+
+def test_r9_chiusura_senza_tavolo_di_una_nuova_riserva_conta_il_suo_realizzato(tmp_path):
+    c = _catena(tmp_path)
+    prima = float(c.rc.risk_desk.realized_pnl)
+    for ref in ("sig-riserva-1", "sig-riserva-2"):            # stesso evento, due riserve successive, nessun tavolo
+        c.rc._on_close_position(_chiusura_con_tavolo(None, CHIAVE_A, -10.0, customer_ref=ref))
+    assert round(float(c.rc.risk_desk.realized_pnl) - prima, 2) == -20.0, "realizzato della seconda saltato"
 
 
 def test_r6_tavolo_della_riserva_assente_resta_held_e_si_riconcilia(tmp_path):

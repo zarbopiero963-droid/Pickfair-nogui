@@ -6755,10 +6755,14 @@ class RuntimeController:
         parts = [p for p in parts if p]
         if not parts:
             return ""
-        if str(payload.get("table_id") or "").strip():
-            # #461 PR29-c (Codex su e2bb36e/29903af): una chiusura di posizione con table_id porta l'intento e la
-            # riserva; lo stesso tavolo riusato per lo stesso evento da un'altra riserva e' un'altra chiusura in
-            # OGNI fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next).
+        event_key = str(payload.get("event_key") or "")
+        if (str(payload.get("table_id") or "").strip()
+                or not event_key.startswith(("cleared:", "sim:"))):
+            # #461 PR29-c (Codex su e2bb36e/29903af, Grok su 70821fd): una chiusura di POSIZIONE (con o senza
+            # table_id, es. auto-next) porta l'intento e la riserva; lo stesso evento riaperto da un'altra riserva
+            # e' un'altra chiusura in OGNI fase (registro degli effetti, P&L realizzato, sync del bankroll,
+            # checkpoint del ciclo, auto-next). I settlement dell'exchange (cleared:/sim:) hanno gia' la loro
+            # identita' e non cambiano chiave.
             parts.extend(x for x in (str(payload.get(k) or "").strip() for k in ("customer_ref", "reservation_id")) if x)
         return "|".join(parts)
 
