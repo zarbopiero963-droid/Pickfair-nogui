@@ -1714,8 +1714,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        except BaseException:\n            self._release_runtime_instance_lock_if_stopped()\n            raise",
-      "mutated": "        except BaseException:\n            raise",
+      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "mutated": "            raise",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
