@@ -5085,17 +5085,10 @@ class RuntimeController:
         return result
 
     def _settlement_effect_key(self, payload: dict) -> str:
-        """Chiave del registro ``settlement_effects`` e del P&L realizzato. Per una chiusura di posizione con
-        ``table_id`` include l'intento (``customer_ref``) e la riserva (``reservation_id``): lo stesso tavolo riusato
-        per lo stesso evento da un'altra riserva e' un'altra chiusura, non un replay (Codex su e2bb36e)."""
-        key = self._build_bankroll_sync_key(payload or {})
-        p = payload or {}
-        if key and p.get("table_id") is not None:
-            extra = [str(p.get(k) or "").strip() for k in ("customer_ref", "reservation_id")]
-            extra = [x for x in extra if x]
-            if extra:
-                key = "|".join([key, *extra])
-        return key
+        """Chiave del registro ``settlement_effects`` e del P&L realizzato: la stessa di ogni altra fase del
+        settlement (`_build_bankroll_sync_key`, che per una chiusura con ``table_id`` include ``customer_ref`` e
+        ``reservation_id``: Codex su e2bb36e e 29903af)."""
+        return self._build_bankroll_sync_key(payload or {})
 
     #: Lock di riserva per i RuntimeController costruiti senza `__init__` (doppi di test).
     _fallback_settlement_lock = threading.RLock()
@@ -5189,6 +5182,10 @@ class RuntimeController:
             ref, ev = str(p.get("customer_ref") or ""), str(p.get("event_key") or "")
             if not ref or not ev:
                 return None
+            if self.table_manager.get_table(int(table_id)) is None:
+                if why is not None:
+                    why.append("transient")
+                return None
             return {"table_id": int(table_id), "event_key": ev, "customer_ref": ref,
                     "reservation_id": str(p.get("reservation_id") or ""), "bet_id": str(p.get("bet_id") or "")}
         if not market_id:
@@ -5220,10 +5217,18 @@ class RuntimeController:
                 or self._market_has_foreign_cleared_legs(market_id, why=why)):
             return None
         table = self.table_manager.find_by_customer_ref(ref)
-        tid = table.table_id if table is not None else request.get("table_id")
+        tid = table.table_id if table is not None else (
+            request.get("table_id") if request.get("table_id") is not None else request.get("reservation_table_id"))
         try:
             tid = int(tid)
         except (TypeError, ValueError):
+            return None
+        if self.table_manager.get_table(tid) is None:
+            # Tavolo della riserva non presente (es. riavvio con meno tavoli): nessun luogo dove contabilizzare il
+            # debito. Trattenuto e riconciliabile, mai registrato come effetto (Codex su 29903af).
+            logger.error("Settlement %s: tavolo %s della riserva %s assente, trattenuto", bet_id, tid, ref)
+            if why is not None:
+                why.append("transient")
             return None
         return {"table_id": tid, "event_key": ev, "customer_ref": ref,
                 "reservation_id": str(request.get("reservation_id") or ""), "bet_id": bet_id}
@@ -5722,18 +5727,25 @@ class RuntimeController:
         OGNI scrittura successiva dello stato tavoli finche' una riesce (riesame indipendente ciclo 9 #512):
         altrimenti il settlement seguente scriverebbe le perdite gia' perdonate dal nuovo ciclo accanto alla
         baseline e al marker del ciclo VECCHIO."""
-        prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,
-                                                  expansion_state=expansion_state)
-        if prepared is None:
-            return False
-        payload, context = prepared
-        try:
-            self.db.save_settings(payload)
-        except Exception as exc:
-            self._recovery_persist_aborted(context, exc)
-            return False
+        # #461 PR29-c (Codex su 29903af): snapshot e scrittura sotto il lock dei tavoli, come nella registrazione
+        # di un settlement: uno snapshot vecchio non puo' sovrascrivere la perdita appena registrata da un altro.
+        with self._recovery_write_lock():
+            prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,
+                                                      expansion_state=expansion_state)
+            if prepared is None:
+                return False
+            payload, context = prepared
+            try:
+                self.db.save_settings(payload)
+            except Exception as exc:
+                self._recovery_persist_aborted(context, exc)
+                return False
         self._recovery_persisted(context)
         return True
+
+    def _recovery_write_lock(self):
+        locked = getattr(getattr(self, "table_manager", None), "locked", None)
+        return locked() if callable(locked) else contextlib.nullcontext()
 
     def _prepare_recovery_persist(self, *, cycle_reset: bool = False, reset_ts: Optional[float] = None,
                                   expansion_state: Optional[dict] = None) -> Optional[tuple]:
@@ -6743,6 +6755,11 @@ class RuntimeController:
         parts = [p for p in parts if p]
         if not parts:
             return ""
+        if str(payload.get("table_id") or "").strip():
+            # #461 PR29-c (Codex su e2bb36e/29903af): una chiusura di posizione con table_id porta l'intento e la
+            # riserva; lo stesso tavolo riusato per lo stesso evento da un'altra riserva e' un'altra chiusura in
+            # OGNI fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next).
+            parts.extend(x for x in (str(payload.get(k) or "").strip() for k in ("customer_ref", "reservation_id")) if x)
         return "|".join(parts)
 
     def _runtime_not_active_reason(self) -> str:
@@ -7167,6 +7184,12 @@ class RuntimeController:
                     "customer_ref": str(submit_payload.get("customer_ref") or ""),  # PR28-e: esito-riserva
                 },
             )
+            # #461 PR29-c (Codex su 29903af): il tavolo e la riserva dell'auto-next viaggiano con la request
+            # persistita, cosi' il settlement della bet li ritrova dopo un riavvio. Campi dedicati: ``table_id``
+            # resta assente come prima (nessun cambio della semantica degli esiti del lifecycle).
+            reserved = self.table_manager.get_table(int(table_id))
+            submit_payload["reservation_table_id"] = int(table_id)
+            submit_payload["reservation_id"] = str(((reserved.meta if reserved else None) or {}).get("reservation_id") or "")
 
         # PF-ALL-F030: anche l'ingresso del ciclo. Il fetch del book gira fuori dal lock di ammissione
         # (#505) come sul percorso del segnale; un cashout arrivato nel frattempo invalida l'ingresso.

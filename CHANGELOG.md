@@ -41,7 +41,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `reconcile_held_settlements()` o all'avvio dopo F018; all'avvio un `held` in attesa di una lettura fallita
   tiene il runtime in PAUSED. Review su e2bb36e: nessuna registrazione senza lo stato dei tavoli; chiave della
   chiusura di posizione con l'identità della riserva; esiti del lifecycle senza identità che non liberano tavolo
-  né chiave; AMBIGUOUS senza tavolo chiuso dal settlement della propria riserva. **Semantica cambiata,
+  né chiave; AMBIGUOUS senza tavolo chiuso dal settlement della propria riserva. Review su 29903af: chiave
+  consapevole della riserva in ogni fase; tavolo della riserva assente => held in attesa; auto-next con tavolo e
+  riserva persistiti nella request; snapshot dello stato tavoli scritto sotto il lock dei tavoli; incertezza
+  AMBIGUOUS chiusa solo dall'esito dello stesso intento. **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
   anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva

@@ -743,6 +743,8 @@ def test_r2_stesso_tavolo_stesso_evento_altra_riserva_e_un_altra_chiusura(tmp_pa
     t = _tavolo(c, a["table_id"])
     assert t.current_event_key == "", "seconda chiusura reale trattata come replay della prima"
     assert t.loss_amount == 20.0
+    # Codex su 29903af: la stessa chiave in ogni fase (sync del bankroll compreso)
+    assert c.rc._last_bankroll_sync_result["bankroll_sync_status"] != "SYNC_SKIPPED_DUPLICATE"
 
 
 def test_r3_stato_tavoli_non_scrivibile_nessuna_registrazione_poi_una_volta(tmp_path, monkeypatch):
@@ -798,3 +800,73 @@ def test_incertezza_per_riserva_si_chiude_solo_con_l_esito_dello_stesso_intento(
     assert rc._clear_uncertain("E", 1) is True and "E" in rc._uncertain_reservations_map()       # nessun ref
     assert rc._clear_uncertain("E", 1, customer_ref="R2") is True                                # altro intento
     assert rc._clear_uncertain("E", 1, customer_ref="R1") is False and "E" not in rc._uncertain_reservations_map()
+
+
+
+def test_r5_la_chiave_del_settlement_e_la_stessa_in_ogni_fase():
+    base = {"event_key": "E", "table_id": 1}
+    assert RuntimeController._build_bankroll_sync_key(base) == "E|1"
+    assert RuntimeController._build_bankroll_sync_key({**base, "customer_ref": "R", "reservation_id": "X"}) == "E|1|R|X"
+    assert RuntimeController._build_bankroll_sync_key({"event_key": "cleared:1.1:B", "customer_ref": "R"}) == \
+        "cleared:1.1:B", "un settlement per bet non cambia chiave"
+
+
+def test_r6_tavolo_della_riserva_assente_resta_held_e_si_riconcilia(tmp_path):
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    tm = c.rc.table_manager
+    salvato = tm._tables.pop(int(cmd["table_id"]))           # es. riavvio con meno tavoli
+    c.rc._on_close_position(_cleared(bet, -10.0))
+    chiave = f"cleared:{MERCATO}:{bet}"
+    assert c.rc.db.get_settlement_effect(chiave)["outcome"] == "held", "debito registrato senza un tavolo"
+    esito = c.rc._reconcile_held_after_rebuild({"ok": True})
+    assert esito["ok"] is False and chiave in esito["reason"]
+    tm._tables[int(cmd["table_id"])] = salvato
+    assert c.rc.reconcile_held_settlements()["reconciled"] == [chiave]
+    assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0
+
+
+def test_r7_auto_next_persiste_tavolo_e_riserva_nella_request(tmp_path):
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _close_payload
+
+    c = _chain(tmp_path, db_name="r7.db")
+    c.rc.risk_desk.sync_bankroll(100.0)
+    c.rc._on_close_position(_close_payload("batch-r7"))
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    tavolo = c.rc.table_manager.get_table(int(cmd["reservation_table_id"]))
+    assert cmd.get("table_id") is None, "semantica degli esiti dell'auto-next cambiata"
+    assert cmd["reservation_id"] and tavolo.meta["reservation_id"] == cmd["reservation_id"]
+    riga = c.db._execute("SELECT payload_json FROM orders WHERE customer_ref = ?", (cmd["customer_ref"],),
+                         fetch=True, commit=False)
+    persistita = json.loads(riga[0]["payload_json"])
+    assert persistita["reservation_table_id"] == int(cmd["reservation_table_id"])
+    assert persistita["reservation_id"] == cmd["reservation_id"]
+
+
+def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato(tmp_path):
+    import time
+
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    db = c.rc.db
+    originale = db.save_settings
+    fermo, entrato = threading.Event(), threading.Event()
+
+    def salva_lento(payload):
+        if RuntimeController._RECOVERY_KEY in payload and not entrato.is_set():
+            entrato.set()
+            fermo.wait(5)                                     # snapshot vecchio preparato, scrittura in ritardo
+        return originale(payload)
+
+    db.save_settings = salva_lento
+    persistenza = threading.Thread(target=c.rc._persist_recovery_tables)
+    persistenza.start()
+    assert entrato.wait(5)
+    settlement = threading.Thread(target=lambda: c.rc._on_close_position(_cleared(bet, -10.0)))
+    settlement.start()
+    time.sleep(0.3)
+    fermo.set()
+    persistenza.join(5)
+    settlement.join(5)
+    db.save_settings = originale
+    assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0, "perdita registrata sovrascritta"

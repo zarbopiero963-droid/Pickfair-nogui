@@ -1509,12 +1509,12 @@
       "module": "core.runtime_controller",
       "area": "dedupe",
       "file": "core/runtime_controller.py",
-      "original": "        if key and p.get(\"table_id\") is not None:",
+      "original": "        if str(payload.get(\"table_id\") or \"\").strip():",
       "mutated": "        if False:",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
-      "rationale": "#461 PR29-c (Codex su e2bb36e): la chiusura di una nuova riserva sullo stesso tavolo e lo stesso evento e' trattata come replay."
+      "rationale": "#461 PR29-c (Codex su e2bb36e/29903af): la chiusura di una nuova riserva sullo stesso tavolo e lo stesso evento e' trattata come replay (registro, sync del bankroll, checkpoint, auto-next)."
     },
     {
       "id": "tableless_uncertainty_never_cleared",
@@ -1551,6 +1551,42 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Grok su 29903af): un esito senza tavolo ne' customer_ref chiude l'AMBIGUOUS dell'auto-next e riapre la chiave anti-duplicato."
+    },
+    {
+      "id": "settlement_books_on_missing_table",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if self.table_manager.get_table(tid) is None:\n            # Tavolo della riserva non presente",
+      "mutated": "        if False:\n            # Tavolo della riserva non presente",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): il settlement di una riserva il cui tavolo non esiste e' registrato senza contabilizzare il debito."
+    },
+    {
+      "id": "auto_next_reservation_not_persisted",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            submit_payload[\"reservation_table_id\"] = int(table_id)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): la request dell'auto-next non porta il tavolo della riserva: dopo un riavvio il settlement non e' attribuibile."
+    },
+    {
+      "id": "recovery_snapshot_written_outside_lock",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        with self._recovery_write_lock():\n            prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,",
+      "mutated": "        with contextlib.nullcontext():\n            prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): uno snapshot vecchio dello stato tavoli sovrascrive la perdita appena registrata da un settlement."
     }
   ]
 }

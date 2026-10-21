@@ -116,8 +116,15 @@ restava per sempre (S9).
   più righe `orders`, più tavoli SIM, bet non del bot) restano trattenuti senza fermare il runtime.
 - **Stato dei tavoli non scrivibile** (RSR-12 illeggibile, serializzazione fallita): nessuna riga registrata ed
   effetto annullato, così la riconsegna resta applicabile e il debito non si perde dopo un crash.
-- **Chiave della chiusura di posizione** (`table_id`): include `customer_ref` e `reservation_id`, quindi lo
-  stesso tavolo riusato per lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay.
+- **Chiave della chiusura di posizione** (`table_id`): `_build_bankroll_sync_key` include `customer_ref` e
+  `reservation_id`, in OGNI fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next):
+  lo stesso tavolo riusato per lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay.
+- **Tavolo della riserva assente** (es. riavvio con meno tavoli): il settlement resta `held` in attesa
+  (avvio in PAUSED) finché il tavolo non esiste; mai registrato come effetto senza debito.
+- **Auto-next**: la request persistita porta `reservation_table_id` e `reservation_id` (il campo `table_id`
+  resta assente come prima), così il settlement della bet ritrova la riserva dopo un riavvio.
+- **Scritture dello stato tavoli**: snapshot e scrittura avvengono sotto il lock dei tavoli anche fuori dal
+  settlement, quindi uno snapshot vecchio non sovrascrive una perdita appena registrata.
 - **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
   stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata
   per un intento (nemmeno un esito senza tavolo). Un AMBIGUOUS registrato senza tavolo
