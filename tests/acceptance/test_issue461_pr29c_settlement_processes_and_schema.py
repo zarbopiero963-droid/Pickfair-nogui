@@ -402,3 +402,147 @@ def test_smontaggio_fallito_poi_avvio_rifiutato_non_libera_il_lock_finche_uno_st
     rc.betfair_service.disconnect = disconnetti
     rc.stop()                                                         # smontaggio riuscito: lock libero
     assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+
+
+# ---------------------------------------------------------------- proprieta' del lock (owner, 21/10 sera)
+def test_sequenza_sol_teardown_fallito_riavvio_riuscito_avvio_rifiutato_non_interrompe_la_sessione(tmp_path, monkeypatch):
+    # Sol su f1c070f: dopo un teardown fallito e un riavvio riuscito, un avvio rifiutato NON smonta il runtime attivo
+    from core.system_state import RuntimeMode
+
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "sol_f1c070f.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    disconnetti, tg_start = rc.betfair_service.disconnect, rc.telegram_service.start
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("guasto")
+
+    rc.telegram_service.start = _guasto
+    rc.betfair_service.disconnect = _guasto
+    with pytest.raises(RuntimeError):
+        rc.start(execution_mode="SIMULATION")                       # 1. smontaggio fallito, in sospeso
+    assert rc._instance_teardown_pending is True
+    rc.telegram_service.start, rc.betfair_service.disconnect = tg_start, disconnetti
+    assert rc.start(execution_mode="SIMULATION").get("started") is True    # 2. riavvio riuscito
+    chiamate = []
+    rc.betfair_service.disconnect = lambda *a, **k: chiamate.append("disconnect")
+    rc.telegram_service.stop = lambda *a, **k: chiamate.append("telegram_stop")
+    esito = rc.start(execution_mode="LIVE", live_enabled=False)              # 3. avvio rifiutato
+    assert esito.get("started") is False
+    assert chiamate == [], f"sessione attiva interrotta: {chiamate}"
+    assert rc.mode is not RuntimeMode.STOPPED
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    rc.betfair_service.disconnect = disconnetti
+    rc.stop()                                                                # 4. STOP riuscito
+    assert rc._instance_teardown_pending is False
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+
+
+def test_il_lock_appartiene_al_runtime_attivo_non_al_tentativo_rifiutato(tmp_path, monkeypatch):
+    # Owner, punti 1 e 5: dopo un avvio rifiutato il lock e' del runtime attivo; lo STOP del rifiutato non lo tocca
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "proprieta.db")
+    attivo, rifiutato = _app_su(percorso, monkeypatch), _app_su(percorso, monkeypatch)
+    try:
+        assert attivo.runtime.start(execution_mode="SIMULATION").get("started") is True
+        assert rifiutato.runtime.start(execution_mode="SIMULATION")["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+        assert getattr(rifiutato.runtime, "_instance_lock_fh", None) is None, "il tentativo rifiutato tiene un handle"
+        assert attivo.runtime._instance_lock_fh is not None and not attivo.runtime._instance_lock_fh.closed
+        rifiutato.runtime.stop()                                      # STOP di chi non possiede il lock
+        assert not attivo.runtime._instance_lock_fh.closed, "lo STOP del rifiutato ha chiuso il lock dell'attivo"
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+        attivo.runtime.stop()                                         # STOP del proprietario: lock libero
+        assert attivo.runtime._instance_lock_fh is None
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+    finally:
+        for app in (rifiutato, attivo):
+            try:
+                app.stop()
+            except Exception:
+                pass
+
+
+def test_nessun_lock_orfano_dopo_un_avvio_fallito_senza_runtime_attivo(tmp_path, monkeypatch):
+    # Owner, punto 2: avvio rifiutato prima della connessione e avvio fallito dopo: nessun handle residuo
+    from core.system_state import RuntimeMode
+
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "orfano.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    esito = rc.start(execution_mode="LIVE", live_enabled=False)               # rifiutato dal deploy gate
+    assert esito.get("started") is False and rc.mode is RuntimeMode.STOPPED
+    assert getattr(rc, "_instance_lock_fh", None) is None
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+    tg_start = rc.telegram_service.start
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("guasto dopo la connessione")
+
+    rc.telegram_service.start = _guasto
+    with pytest.raises(RuntimeError):
+        rc.start(execution_mode="SIMULATION")                               # fallito dopo connect()
+    assert rc.mode is RuntimeMode.STOPPED and getattr(rc, "_instance_lock_fh", None) is None
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+    rc.telegram_service.start = tg_start
+    assert rc.start(execution_mode="SIMULATION").get("started") is True      # lo stesso controller riparte
+    app.stop()
+
+
+_RUNTIME_SIM_ATTIVO = """
+import os, sys, time
+import headless_main
+from database import Database
+percorso = sys.argv[1]
+headless_main.Database = lambda: Database(percorso)
+app = headless_main.HeadlessApp()
+app.build(start_services=False)
+app.telegram_service.start = lambda *a, **k: {"started": False, "stub": True}
+app.telegram_service.stop = lambda *a, **k: None
+esito = app.runtime.start(execution_mode="SIMULATION")
+print("ATTIVO" if esito.get("started") else "FERMO:" + str(esito.get("reason")), flush=True)
+time.sleep(60)                                                       # ucciso dal test: crash senza cleanup
+"""
+
+
+@pytest.mark.skipif(os.name == "nt", reason="kill del processo figlio: semantica POSIX")
+def test_processo_os_con_runtime_attivo_esclude_il_secondo_e_il_crash_libera_il_database(tmp_path, monkeypatch):
+    # Owner, punti 3 e 4: runtime SIM reale in un altro processo => start() qui rifiutato; crash => riammesso
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "due_processi.db")
+    Database(percorso)
+    figlio = subprocess.Popen([sys.executable, "-c", _RUNTIME_SIM_ATTIVO, percorso], cwd=ROOT,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    app = _app_su(percorso, monkeypatch)
+    try:
+        assert figlio.stdout.readline().strip() == "ATTIVO"
+        esito = app.runtime.start(execution_mode="SIMULATION")
+        assert esito.get("started") is False and esito["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+        assert getattr(app.runtime, "_instance_lock_fh", None) is None
+    finally:
+        figlio.kill()                                                  # crash del runtime attivo
+        figlio.wait(15)
+    assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    app.stop()
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+
+
+def test_avvio_rifiutato_dal_gate_su_runtime_attivo_non_libera_il_lock(tmp_path, monkeypatch):
+    # Owner, punto 1 (mutation su f1c070f): runtime attivo senza smontaggio in sospeso, secondo start() rifiutato
+    # dal deploy gate (esito started=False, nessuna eccezione) => il lock resta del runtime attivo
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "gate_attivo.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    try:
+        assert rc.start(execution_mode="SIMULATION").get("started") is True
+        assert getattr(rc, "_instance_teardown_pending", False) is False
+        esito = rc.start(execution_mode="LIVE", live_enabled=False)
+        assert esito.get("started") is False and esito.get("reason") == "deploy_gate_no_go"
+        assert rc._instance_lock_fh is not None and not rc._instance_lock_fh.closed, "lock liberato con runtime attivo"
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    finally:
+        app.stop()
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
