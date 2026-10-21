@@ -41,7 +41,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   un tavolo liberato e riassegnato nel frattempo, anche allo stesso evento, non si tocca. La proprietà locale la
   scarica solo il contesto che l'ha registrata, mai una richiesta con lo stesso ref negata prima del dedup
   (vale anche per la chiave di dedup in memoria, preesistente: un retry con nuovo correlation_id resta bloccato). Un
-  SUCCESS di completamento chiude l'incertezza AMBIGUOUS della propria riserva senza rilasciarla. Il rilascio del doppione
+  SUCCESS di completamento non rilascia e non chiude l'incertezza AMBIGUOUS: resta fino a FAILED o
+  settlement (fail-closed). Il rilascio del doppione
   esterno non tocca l'incertezza (una riserva mai inviata non è mai incerta) e trattiene la chiave se l'evento è incerto. Il rilascio resta
   a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
 

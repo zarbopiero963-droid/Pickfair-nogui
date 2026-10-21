@@ -1165,18 +1165,6 @@
       "rationale": "#461 PR29-a (Codex #533): una richiesta negata prima del dedup scarica la proprieta' locale dell'originale in volo."
     },
     {
-      "id": "completion_success_keeps_uncertainty",
-      "module": "core.runtime_controller",
-      "area": "ambiguous",
-      "file": "core/runtime_controller.py",
-      "original": "            self._resolve_uncertain_on_completion(payload)",
-      "mutated": "            pass",
-      "tests": [
-        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
-      ],
-      "rationale": "#461 PR29-a (Codex #533): un SUCCESS di completamento dopo AMBIGUOUS lascia la riserva marcata incerta."
-    },
-    {
       "id": "foreign_context_reopens_inflight_dedup_key",
       "module": "core.trading_engine",
       "area": "dedupe",
@@ -1199,6 +1187,18 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex #533): il rilascio tardivo di un doppione esterno cancella l'incertezza e la chiave di una riserva riassegnata allo stesso evento."
+    },
+    {
+      "id": "completion_success_clears_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            self._mark_table_placed(payload)",
+      "mutated": "            self._mark_table_placed(payload); self._clear_uncertain(str(payload.get(\"event_key\") or \"\"), payload.get(\"table_id\"))",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex P1 #533): un SUCCESS di completamento chiude l'incertezza AMBIGUOUS fuori da un'operazione atomica e puo' cancellare quella di un tavolo riassegnato."
     }
   ]
 }

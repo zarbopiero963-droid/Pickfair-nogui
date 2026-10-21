@@ -241,19 +241,47 @@ def test_richiesta_negata_prima_del_dedup_non_cancella_la_proprieta_locale_dell_
     assert _tavoli_occupati(c) == [cmd["table_id"]]
 
 
-def test_success_di_completamento_chiude_l_incertezza_senza_rilasciare(tmp_path):
-    # Rilievo Codex su #533: AMBIGUOUS poi SUCCESS di completamento dello stesso ordine. La riserva resta (a mercato),
-    # ma l'esito ora e' certo: l'incertezza va chiusa (prima la chiudeva solo il rilascio, rimosso da PR29-a).
+def test_success_di_completamento_dopo_ambiguous_non_rilascia_e_resta_incerto(tmp_path):
+    # AMBIGUOUS poi SUCCESS di completamento: la riserva resta (a mercato) e l'incertezza resta fino a un esito
+    # certo di riconciliazione (FAILED/settlement), fail-closed. Chiuderla qui era un controllo-poi-scrittura non
+    # atomico (rilievo Codex P1 su #533, vedi test sotto); in produzione il motore non emette SUCCESS di completamento.
     c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
     c.rc._on_quick_bet_ambiguous(dict(cmd))
-    assert cmd["event_key"] in c.rc._uncertain_reservations_map()
     c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED"})
-    assert cmd["event_key"] not in c.rc._uncertain_reservations_map()
-    assert not c.rc._uncertain_tables.get(cmd["event_key"])
+    assert cmd["event_key"] in c.rc._uncertain_reservations_map()
     assert _tavoli_occupati(c) == [cmd["table_id"]]                       # nessun rilascio
     assert c.rc.duplication_guard._active                                # chiave della posizione viva trattenuta
     tavolo = c.rc.table_manager.get_table(cmd["table_id"])
     assert "placed_at" in tavolo.meta
+
+
+def test_success_tardivo_non_cancella_l_incertezza_di_una_riserva_riassegnata(tmp_path):
+    # Rilievo Codex su #533 (P1): un SUCCESS di completamento tardivo legge il tavolo; nel frattempo il tavolo e'
+    # liberato e riusato per lo stesso evento da un ordine diventato AMBIGUOUS. L'incertezza del nuovo ordine resta.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    tm, tid = c.rc.table_manager, cmd["table_id"]
+    get_table, stato = tm.get_table, {"fatto": False}
+
+    def riassegna_ambiguo():
+        if not stato["fatto"]:
+            stato["fatto"] = True
+            tm.force_unlock(tid)
+            _riserva_manuale(c, table_id=tid, ref="sig-nuovo-intento", event_key=cmd["event_key"])
+            c.rc._mark_uncertain(cmd["event_key"], tid)
+
+    def get_table_poi_riassegna_ambiguo(table_id):
+        copia = get_table(table_id)
+        riassegna_ambiguo()                           # la copia letta e' gia' stantia
+        return copia
+
+    tm.get_table = get_table_poi_riassegna_ambiguo
+    c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED"})
+    tm.get_table = get_table
+    if not stato["fatto"]:                            # il gestore non legge il tavolo: SUCCESS tardivo dopo il riuso
+        riassegna_ambiguo()
+        c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED"})
+    assert cmd["event_key"] in c.rc._uncertain_reservations_map(), "incertezza della nuova riserva cancellata"
+    assert c.rc._uncertain_tables.get(cmd["event_key"]) == {tid}
 
 
 def test_success_di_un_altro_ordine_non_chiude_l_incertezza_della_riserva(tmp_path):
