@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "main",
-  "sha": "f3349467ee7b320d8ecfca7b9729b1272e025def"
+  "sha": "2f25576ed09e302229f5342c594d3be2b8ec9bd9"
  },
- "mandate_id": "PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026) + decisioni owner #531 (Q10, G7)",
- "next_atomic_action": "#531 MERGED f334946 (PR28-e gate fondi, CI main 13/13); Q10 ratificata (#426), G7 aperto non certificato (#532, M6). Prossima scheda: PR29 riserva durevole cross-process secondo sequenza #461; debito #516-#521/#528 per dipendenze. NO LIVE",
- "previous_checkpoint_sha": "dffdcbe612cf8a3be4ec719384206641a564971d",
+ "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + autorizzazione owner merge #533",
+ "next_atomic_action": "#533 PR29-a MERGED 2f25576 (CI main 13/13, fix loop 7/10, safety-critical). Prossima sotto-PR: 29-b Dutching .17 (Phase 0), poi 29-c (settlement->tavolo per identita' + incertezza per riserva), 29-d..29-h, PR30, PR31; G7 #532 in M6. NO LIVE",
+ "previous_checkpoint_sha": "e33d7fb5411f4a854a169c619644c46c48c93e85",
  "schema": "pf-current/1",
- "seq": 54
+ "seq": 55
 }

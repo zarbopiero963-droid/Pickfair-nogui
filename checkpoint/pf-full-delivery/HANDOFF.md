@@ -1,3 +1,10 @@
+## Seq 55 — 21/10/2026
+
+- #533 PR29-a (PF-C29-01.03/.07/.13) MERGED `2f25576ed09e` (autonomo su autorizzazione owner, safety-critical; fix loop 7/10; CI main 13/13).
+- Sol/Grok puliti sull'head finale 0e9403b; Codex: review completa su 0eac6bb (P1 corretto in 0e9403b), head finale non revisionato per usage limit.
+- Rinvii tracciati in #461: manual_bet customer_ref (PR30), chiusura incertezza per identita' (29-c). Regressione 8723 passed, mutation GATE PASS.
+- Prossima: Phase 0 sotto-PR 29-b (Dutching .17). NO LIVE.
+
 ## Seq 54 — 20/10/2026
 
 - #531 PR28-e gate esplicito dei fondi MERGED `f3349467ee7b` (autonomo, safety-critical; fix loop 4/10; CI main 13/13).

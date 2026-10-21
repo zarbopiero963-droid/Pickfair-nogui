@@ -6,7 +6,9 @@
   "#528 harness F026 (sleep fissi) instabile sotto carico: follow-up aperto",
   "workflow Grok marca done una review senza sezioni (rilevato su #529/9be3003): file a merge owner, segnalato",
   "G7 (#532): SimulationBroker non riserva fondi; parita' SIM/LIVE sui fondi NON certificata (decisione owner #531)",
-  "Dutching/manual_bet: gate fondi assente, corsie disattivate (PR30)"
+  "Dutching/manual_bet: gate fondi assente, corsie disattivate (PR30)",
+  "manual_bet: riserva senza customer_ref nel meta (Codex r4334565545) \u2014 requisito prima del cablaggio (PR30)",
+  "incertezza AMBIGUOUS non chiusa da SUCCESS di completamento (fail-closed) \u2014 chiusura per identita' in 29-c"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -48,9 +50,9 @@
   "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12"
  ],
- "lotto_corrente": "#530 MERGED (2141031) con approvazione owner; post-merge completato",
- "mandate_id": "PF-ROADMAP-AUTONOMOUS-CONTINUATION-02 (20/10/2026) + decisioni owner #531 (Q10, G7)",
- "next_atomic_action": "#531 MERGED f334946 (PR28-e gate fondi, CI main 13/13); Q10 ratificata (#426), G7 aperto non certificato (#532, M6). Prossima scheda: PR29 riserva durevole cross-process secondo sequenza #461; debito #516-#521/#528 per dipendenze. NO LIVE",
+ "lotto_corrente": "#533 PR29-a MERGED (2f25576); post-merge completato",
+ "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + autorizzazione owner merge #533",
+ "next_atomic_action": "#533 PR29-a MERGED 2f25576 (CI main 13/13, fix loop 7/10, safety-critical). Prossima sotto-PR: 29-b Dutching .17 (Phase 0), poi 29-c (settlement->tavolo per identita' + incertezza per riserva), 29-d..29-h, PR30, PR31; G7 #532 in M6. NO LIVE",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
