@@ -1,0 +1,26 @@
+S1 before {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')} bet SIMBET-294413abc15040 guard ['1.234:11:BACK:default']
+S1 after  {1: ('', 0.0, 10.0, 'RECOVERY')} guard ['1.234:11:BACK:default']
+S2 before {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE'), 2: ('1.234:12:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S2 after A {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE'), 2: ('1.234:12:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S2 after B {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE'), 2: ('1.234:12:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S3 ambiguous {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')} uncertain {'1.234:11:BACK:default': 1}
+S3 after settle {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')} uncertain {'1.234:11:BACK:default': 1}
+S4 after 1 {1: ('', 0.0, 10.0, 'RECOVERY')} realized {'cleared:1.234:SIMBET-3e51965a3fba43'}
+S4 new reservation {1: ('', 0.0, 10.0, 'RECOVERY'), 2: ('1.234:12:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S4 after replay {1: ('', 0.0, 10.0, 'RECOVERY'), 2: ('1.234:12:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S5 after stale table_id close {1: ('', 0.0, 10.0, 'RECOVERY')}
+S5 after replay {1: ('', 0.0, 20.0, 'RECOVERY')}
+S6 releases [(1,), (1,), (1,), (1,)] {1: ('', 0.0, 40.0, 'RECOVERY')}
+S0 sync {'correlation_id': 'cleared:1.234:X', 'settlement_detected': True, 'bankroll_before': 0.0, 'bankroll_after': 1000.0, 'bankroll_sync_status': 'SYNC_SUCCESS', 'balance_source': 'exchange_available', 'reason': 'BALANCE_SYNCED_FROM_EXCHANGE', 'recovery_status': 'RECOVERY_SKIPPED_DUPLICATE', 'available_balance': 1000.0, 'committed_funds': 0.0, 'cash_equity': 1000.0}
+S0 tab {1: ('', 0.0, 10.0, 'RECOVERY')}
+S0 LOG WARNING RISK GATE NON CABLATO: TradingEngine sta usando il segnaposto che approva ogni richiesta. Nessun limite di rischio viene applicato. Vedi readiness()['health']['risk_middleware'].
+S0 LOG WARNING F030: book del mercato non leggibile (_BetfairService.get_market_book_snapshot() got an unexpected keyword argument 'include_prices')
+S0 LOG WARNING correlation_id auto-generated=83780c94-8d39-4937-ae01-1129d43d4c27 for customer_ref=sig-1463f0f4dce943a760e27761b535
+S7 pinned before False
+S7 by-market concurrent releases [(1,), (1,), (1,), (1,)] {1: ('', 0.0, 40.0, 'RECOVERY')}
+S7 by-market replay [(1,), (1,), (1,), (1,)] {1: ('', 0.0, 40.0, 'RECOVERY')} realized ['cleared:1.234:SIMBET-f9270c8c8ddb4c']
+S8 new B {1: ('', 0.0, 10.0, 'RECOVERY'), 2: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S8 after replay of A {1: ('', 0.0, 10.0, 'RECOVERY'), 2: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')}
+S9 rebuild {'ok': True, 'rebuilt': ['sig-1463f0f4dce943a760e27761b535'], 'uncertain': [], 'closed': []} {1: ('1.234:11:BACK:default', 10.0, 0.0, 'ACTIVE')} pinned True
+S9 after settle {1: ('', 0.0, 10.0, 'RECOVERY')} pinned True active ['1.234:11:BACK:default']
+10 passed, 308 warnings in 12.18s

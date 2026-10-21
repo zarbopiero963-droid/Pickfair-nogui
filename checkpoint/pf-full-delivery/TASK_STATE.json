@@ -8,7 +8,10 @@
   "G7 (#532): SimulationBroker non riserva fondi; parita' SIM/LIVE sui fondi NON certificata (decisione owner #531)",
   "Dutching/manual_bet: gate fondi assente, corsie disattivate (PR30)",
   "manual_bet: riserva senza customer_ref nel meta (Codex r4334565545) \u2014 requisito prima del cablaggio (PR30)",
-  "incertezza AMBIGUOUS non chiusa da SUCCESS di completamento (fail-closed) \u2014 chiusura per identita' in 29-c"
+  "incertezza AMBIGUOUS non chiusa ne' dal SUCCESS di completamento ne' dal settlement della propria bet (sonda S3) \u2014 chiusura per identita' in 29-c",
+  "PR29-b: lotto EXECUTED con gambe poi annullate resta trattenuto (DEFERRED_BY_POLICY, scelta owner F #529 -> PR30/PF-EXEC-02; #461 c.6317204134)",
+  "PR29-b: chiave anti-duplicato appuntata orfana dopo reset del tavolo di un lotto: evento bloccato fino al riavvio (fail-closed, dichiarato)",
+  "PR29-c Phase 0: S9 chiave appuntata da F018 non rilasciata dal settlement (evento bloccato fino al riavvio, liveness reale); S2 piu' bet sullo stesso mercato senza rilascio per settlement; S7 rilascio e loss_amount non idempotenti nel consumer (4 consegne concorrenti => loss 40 invece di 10; protetto a monte); S5/S6 ramo table_id senza identita' (latente, auto_close off)"
  ],
  "dependencies": {
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -48,11 +51,12 @@
   "lotti D-B/D-D/D-E/D-F + hardening + 6 fix Codex preparati in locale con RED/GREEN (seq 22)",
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
   "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
-  "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12"
+  "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
+  "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)"
  ],
- "lotto_corrente": "#533 PR29-a MERGED (2f25576); post-merge completato",
- "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + autorizzazione owner merge #533",
- "next_atomic_action": "#533 PR29-a MERGED 2f25576 (CI main 13/13, fix loop 7/10, safety-critical). Prossima sotto-PR: 29-b Dutching .17 (Phase 0), poi 29-c (settlement->tavolo per identita' + incertezza per riserva), 29-d..29-h, PR30, PR31; G7 #532 in M6. NO LIVE",
+ "lotto_corrente": "#534 PR29-b MERGED (409bcf9); post-merge CI 14/14; Phase 0 PR29-c avviata (sonde S0-S9 su 409bcf9, nessun codice)",
+ "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + mandato owner PR29-b e chiusura formale PR29-b / Phase 0 PR29-c",
+ "next_atomic_action": "PR29-c Phase 0 consegnata (sonde S0-S9 su 409bcf9): attesa autorizzazione owner all'implementazione. Scope 29-c: settlement -> tavolo per identita' (bet_id->customer_ref->tavolo), deduplica PRIMA del rilascio e del recovery, release idempotente per settlement_key, chiave anti-duplicato della riserva identificata (anche appuntata da F018), incertezza per riserva chiusa dal settlement della propria bet. Non anticipare PR30; #505 intatta; Dutching e LIVE disattivati. NO LIVE",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

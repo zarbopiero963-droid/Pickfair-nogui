@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "main",
-  "sha": "2f25576ed09e302229f5342c594d3be2b8ec9bd9"
+  "sha": "409bcf9dd9ca6fe86aeaed6808dfabde4f7fa109"
  },
- "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + autorizzazione owner merge #533",
- "next_atomic_action": "#533 PR29-a MERGED 2f25576 (CI main 13/13, fix loop 7/10, safety-critical). Prossima sotto-PR: 29-b Dutching .17 (Phase 0), poi 29-c (settlement->tavolo per identita' + incertezza per riserva), 29-d..29-h, PR30, PR31; G7 #532 in M6. NO LIVE",
- "previous_checkpoint_sha": "e33d7fb5411f4a854a169c619644c46c48c93e85",
+ "mandate_id": "PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026) + mandato owner PR29-b e chiusura formale PR29-b / Phase 0 PR29-c",
+ "next_atomic_action": "PR29-c Phase 0 consegnata (sonde S0-S9 su 409bcf9): attesa autorizzazione owner all'implementazione. Scope 29-c: settlement -> tavolo per identita' (bet_id->customer_ref->tavolo), deduplica PRIMA del rilascio e del recovery, release idempotente per settlement_key, chiave anti-duplicato della riserva identificata (anche appuntata da F018), incertezza per riserva chiusa dal settlement della propria bet. Non anticipare PR30; #505 intatta; Dutching e LIVE disattivati. NO LIVE",
+ "previous_checkpoint_sha": "9d2cd0b2f2281293e833b9399d520a501270c5a2",
  "schema": "pf-current/1",
- "seq": 55
+ "seq": 56
 }
