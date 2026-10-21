@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+
+import pytest
 import sqlite3
 import subprocess
 import sys
@@ -142,3 +144,54 @@ def test_tabella_della_versione_precedente_riceve_la_colonna_payload(tmp_path):
     assert [(r["settlement_key"], r["pnl"], r["payload"]) for r in righe] == [("k0", -1.0, {})]
     assert db.upgrade_held_settlement_effect("k0", {"outcome": "released", "table_id": 1}) is True
     assert db.upgrade_held_settlement_effect("k0", {"outcome": "released", "table_id": 1}) is False
+
+
+# ---------------------------------------------------------------- un solo runtime attivo per database (Sol su c6d2338)
+_TIENE_IL_LOCK = """
+import fcntl, sys, time
+fh = open(sys.argv[1] + ".runtime.lock", "a+")
+fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+print("PRESO", flush=True)
+time.sleep(30)
+"""
+
+
+def _controller_su(percorso):
+    from core.runtime_controller import RuntimeController
+
+    rc = RuntimeController.__new__(RuntimeController)
+    rc.db = Database(percorso)
+    return rc
+
+
+def test_secondo_runtime_sullo_stesso_database_non_ottiene_il_lock(tmp_path):
+    percorso = str(tmp_path / "unico.db")
+    primo, secondo = _controller_su(percorso), _controller_su(percorso)
+    assert primo._acquire_runtime_instance_lock() == ""
+    assert primo._acquire_runtime_instance_lock() == ""               # idempotente per lo stesso controller
+    assert secondo._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    altro = _controller_su(str(tmp_path / "altro.db"))
+    assert altro._acquire_runtime_instance_lock() == ""               # un altro database e' indipendente
+
+
+@pytest.mark.skipif(os.name == "nt", reason="il processo figlio usa fcntl (POSIX); il runtime usa msvcrt su Windows")
+def test_processo_os_che_tiene_il_lock_blocca_l_avvio_e_alla_sua_fine_lo_libera(tmp_path):
+    percorso = str(tmp_path / "unico_os.db")
+    Database(percorso)
+    figlio = subprocess.Popen([sys.executable, "-c", _TIENE_IL_LOCK, percorso], stdout=subprocess.PIPE, text=True)
+    try:
+        assert figlio.stdout.readline().strip() == "PRESO"
+        assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    finally:
+        figlio.kill()                                                 # crash: il sistema operativo libera il lock
+        figlio.wait(10)
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""
+
+
+def test_start_rifiutato_se_un_altro_runtime_e_attivo(tmp_path):
+    import inspect
+    from core.runtime_controller import RuntimeController
+
+    sorgente = inspect.getsource(RuntimeController.start)
+    assert sorgente.index("_acquire_runtime_instance_lock") < sorgente.index("self.reload_config(reset_session=True)")
+    assert '"reason_code": "RUNTIME_INSTANCE_ACTIVE"' in sorgente

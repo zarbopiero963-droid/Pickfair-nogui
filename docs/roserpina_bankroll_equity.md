@@ -130,8 +130,13 @@ restava per sempre (S9).
   sommate alla mappa letta dentro la stessa transazione `BEGIN IMMEDIATE`; una voce si rimuove solo se il valore
   risultante è ≤ 0. Con più processi sullo stesso DB, anche sullo stesso tavolo, nessuno cancella o sovrascrive
   le perdite registrate dagli altri (marker di reset e baseline viaggiano a parte). Un settlement senza effetto
-  non riscrive lo stato salvo per ritentare una scrittura fallita. Limite dichiarato: le viste in memoria dei
-  tavoli (riserve, esposizione) restano per processo fino a 29-g1/g2.
+  non riscrive lo stato salvo per ritentare una scrittura fallita.
+- **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
+  `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto per la vita del processo e liberato dal
+  sistema anche in caso di crash. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
+  (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli vivono in memoria per processo e due copie
+  attive divergerebbero su operazioni globali come il reset di ciclo. Ledger exactly-once e scritture a variazioni
+  restano come seconda difesa (crash, riavvio, processi di servizio).
 - **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
   bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
   in coda nel processo per `reconcile_held_settlements()` e dopo un riavvio lo riconsegna il poller.

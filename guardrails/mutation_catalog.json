@@ -1659,6 +1659,18 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Codex su 7a4f2c3): due processi sullo stesso tavolo: la scrittura sostituisce la perdita dell'altro invece di sommarla."
+    },
+    {
+      "id": "second_runtime_instance_allowed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        except OSError:\n            handle.close()\n            return \"runtime_already_active_on_database\"",
+      "mutated": "        except OSError:\n            handle.close()\n            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su c6d2338): un secondo runtime parte sullo stesso database e diverge sui tavoli di recovery (reset concorrente)."
     }
   ]
 }

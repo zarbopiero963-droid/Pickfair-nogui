@@ -2404,6 +2404,17 @@ class RuntimeController:
         live_enabled: Optional[bool] = None,
         live_readiness_ok: Optional[bool] = None,
     ) -> dict:
+        # #461 PR29-c (Sol su c6d2338): un solo runtime attivo per database. I tavoli di recovery vivono in memoria
+        # per processo; due runtime sullo stesso file divergerebbero su operazioni globali (reset di ciclo) in modi
+        # che nessuna fusione delle scritture rende coerenti. Lock esclusivo del sistema operativo, rilasciato da
+        # solo alla fine del processo (anche per crash). Lock non ottenibile => avvio rifiutato (fail-closed).
+        instance_block = self._acquire_runtime_instance_lock()
+        if instance_block:
+            logger.critical("Avvio rifiutato: %s", instance_block)
+            self.bus.publish("RUNTIME_START_REFUSED", {"reason_code": "RUNTIME_INSTANCE_ACTIVE",
+                                                       "reason": instance_block})
+            return {"ok": False, "started": False, "refused": True, "reason": instance_block,
+                    "reason_code": "RUNTIME_INSTANCE_ACTIVE", "status": self._safe_status_snapshot()}
         self.reload_config(reset_session=True)
         self._session_pnl_baseline = float(self.risk_desk.realized_pnl)
         self._session_loss_alerted = False
@@ -2637,6 +2648,31 @@ class RuntimeController:
             "telegram": telegram_result,
             "status": status,
         }
+
+    def _acquire_runtime_instance_lock(self) -> str:
+        """Lock esclusivo ``<db_path>.runtime.lock`` per la vita del processo. '' se ottenuto (o gia' tenuto da questo
+        controller, o DB in memoria); altrimenti il motivo del rifiuto."""
+        if getattr(self, "_instance_lock_fh", None) is not None:
+            return ""
+        path = str(getattr(getattr(self, "db", None), "db_path", "") or "")
+        if not path or path == ":memory:":
+            return ""
+        try:
+            handle = open(path + ".runtime.lock", "a+")
+        except OSError as exc:
+            return f"runtime_lock_unavailable:{exc.__class__.__name__}"
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            handle.close()
+            return "runtime_already_active_on_database"
+        self._instance_lock_fh = handle
+        return ""
 
     def stop(self) -> dict:
         # Il runtime smette di essere attivo PRIMA di smontare i servizi

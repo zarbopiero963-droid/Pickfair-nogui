@@ -49,7 +49,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   tavoli sotto il lock; aggiornamento per tavolo della mappa di recovery dentro la transazione (più processi);
   effetto non registrato senza checkpoint né auto-next e in coda di ritentativo. Review su 7a4f2c3: ogni
   scrittura della mappa di recovery (anche ordinaria, di ritentativo o di reset) è un insieme di variazioni
-  rispetto alla vista del processo, sommate dentro la transazione (anche due processi sullo stesso tavolo). **Semantica cambiata,
+  rispetto alla vista del processo, sommate dentro la transazione (anche due processi sullo stesso tavolo).
+  Review su c6d2338: un solo runtime attivo per database (lock esclusivo del sistema operativo all'avvio,
+  rifiuto `RUNTIME_INSTANCE_ACTIVE`). **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
   anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva
