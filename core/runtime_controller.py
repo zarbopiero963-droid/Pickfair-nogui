@@ -2445,7 +2445,9 @@ class RuntimeController:
                 self._release_runtime_instance_lock_if_stopped()
             raise
         if not (result or {}).get("started"):
-            self._release_runtime_instance_lock_if_stopped()
+            # Sol su ad315ca: uno smontaggio precedente non riuscito si ritenta qui; finche' non riesce il lock resta.
+            if not getattr(self, "_instance_teardown_pending", False) or self._teardown_failed_start():
+                self._release_runtime_instance_lock_if_stopped()
         return result
 
     def _start_with_instance_lock(
@@ -2736,6 +2738,7 @@ class RuntimeController:
             except Exception:
                 ok = False
                 logger.exception("Avvio fallito: smontaggio di %s non riuscito, lock di istanza trattenuto", name)
+        self._instance_teardown_pending = not ok
         return ok
 
     def _release_runtime_instance_lock_if_stopped(self) -> None:
@@ -2743,6 +2746,8 @@ class RuntimeController:
         handle = getattr(self, "_instance_lock_fh", None)
         if handle is None or getattr(self, "mode", RuntimeMode.STOPPED) is not RuntimeMode.STOPPED:
             return
+        if getattr(self, "_instance_teardown_pending", False):
+            return                               # Sol su ad315ca: servizi forse ancora vivi, smontaggio non riuscito
         self._instance_lock_fh = None
         try:
             handle.close()                       # chiudere il descrittore rilascia flock/msvcrt
@@ -2762,15 +2767,23 @@ class RuntimeController:
         # runtime resta comunque fermo e Betfair si disconnette lo stesso;
         # l'errore risale poi al chiamante.
         self.mode = RuntimeMode.STOPPED
+        smontato = False
         try:
             self._stop_settlement_poller()
             self._stop_market_data_feed()
             self.telegram_service.stop()
+            smontato = True
         finally:
             try:
                 self.betfair_service.disconnect()
+            except BaseException:
+                smontato = False
+                raise
             finally:
-                self._release_runtime_instance_lock_if_stopped()   # #461 PR29-c: dopo lo smontaggio dei servizi
+                # #461 PR29-c: lock rilasciato solo dopo uno smontaggio riuscito di tutti i servizi (Sol su ad315ca);
+                # uno STOP successivo riuscito lo rilascia.
+                self._instance_teardown_pending = not smontato
+                self._release_runtime_instance_lock_if_stopped()
         status = self.get_status()
         self.bus.publish("RUNTIME_STOPPED", status)
         return {

@@ -1702,8 +1702,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "                self._release_runtime_instance_lock_if_stopped()   # #461 PR29-c: dopo lo smontaggio dei servizi",
-      "mutated": "                pass",
+      "original": "                self._instance_teardown_pending = not smontato\n                self._release_runtime_instance_lock_if_stopped()",
+      "mutated": "                self._instance_teardown_pending = not smontato",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
@@ -1804,6 +1804,30 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c (Grok su e3fe4d7): su Windows il byte bloccato segue l'offset di append e due processi non collidono."
+    },
+    {
+      "id": "pending_teardown_ignored_on_release",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if getattr(self, \"_instance_teardown_pending\", False):\n            return                               # Sol su ad315ca: servizi forse ancora vivi, smontaggio non riuscito",
+      "mutated": "        if False:\n            return",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su ad315ca): dopo uno smontaggio fallito un avvio rifiutato libera il lock con servizi forse vivi."
+    },
+    {
+      "id": "stop_releases_lock_after_failed_disconnect",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            except BaseException:\n                smontato = False\n                raise",
+      "mutated": "            except BaseException:\n                raise",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su ad315ca): uno STOP con disconnessione Betfair fallita libera il lock."
     }
   ]
 }

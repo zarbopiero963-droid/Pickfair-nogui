@@ -375,3 +375,30 @@ def test_lock_su_windows_blocca_sempre_il_byte_zero(tmp_path, monkeypatch):
     finally:
         monkeypatch.setattr(os, "name", "posix")
     assert posizioni == [0], f"byte bloccato all'offset {posizioni}"
+
+
+def test_smontaggio_fallito_poi_avvio_rifiutato_non_libera_il_lock_finche_uno_stop_riesce(tmp_path, monkeypatch):
+    # Sol su ad315ca: teardown fallito -> nuovo avvio rifiutato -> un altro controller non deve ottenere il lock
+    monkeypatch.chdir(tmp_path)
+    percorso = str(tmp_path / "sequenza.db")
+    app = _app_su(percorso, monkeypatch)
+    rc = app.runtime
+    disconnetti = rc.betfair_service.disconnect
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("guasto")
+
+    rc.telegram_service.start = _guasto
+    rc.betfair_service.disconnect = _guasto
+    with pytest.raises(RuntimeError):
+        rc.start(execution_mode="SIMULATION")
+    esito = rc.start(execution_mode="LIVE", live_enabled=False)      # rifiutato prima della connessione
+    assert esito.get("started") is False
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database", \
+        "avvio rifiutato ha liberato il lock con lo smontaggio ancora non riuscito"
+    with pytest.raises(RuntimeError):
+        rc.stop()                                                     # smontaggio ancora fallito: lock trattenuto
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    rc.betfair_service.disconnect = disconnetti
+    rc.stop()                                                         # smontaggio riuscito: lock libero
+    assert _controller_su(percorso)._acquire_runtime_instance_lock() == ""

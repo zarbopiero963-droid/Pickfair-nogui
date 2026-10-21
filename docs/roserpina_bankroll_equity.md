@@ -138,7 +138,8 @@ restava per sempre (S9).
   lock; fcntl su Linux, msvcrt sul byte 0 su Windows), tenuto finché il runtime non è fermo: lo rilasciano
   `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
   secondo `start()` fallito); un avvio fallito dopo la connessione smonta prima i servizi già avviati (poller, feed, Telegram,
-  Betfair) e, se lo smontaggio fallisce, trattiene il lock; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
+  Betfair) e, se lo smontaggio fallisce, trattiene il lock finché uno smontaggio successivo non riesce (ritentato a
+  un nuovo avvio rifiutato, o da uno `stop()` completo); anche `stop()` lo rilascia solo dopo uno smontaggio riuscito; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
   chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
   per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
   permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
