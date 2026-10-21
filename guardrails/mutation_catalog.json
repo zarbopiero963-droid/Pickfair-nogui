@@ -1502,7 +1502,8 @@
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
-      "rationale": "#461 PR29-c (Codex su e2bb36e): il settlement e' registrato senza lo stato dei tavoli: dopo un crash il debito e' perso e ogni riconsegna e' un duplicato."
+      "rationale": "#461 PR29-c (Codex su e2bb36e): il settlement e' registrato senza lo stato dei tavoli: dopo un crash il debito e' perso e ogni riconsegna e' un duplicato.",
+      "equivalent": "Dal calcolo delle variazioni (c6d2338) il blocco successivo legge prepared[0] dentro un try che, su qualunque errore, ripristina il tavolo e restituisce 'unverifiable': senza il controllo esplicito il risultato osservabile e' identico (nessuna riga, nessun effetto, riconsegna applicabile). Il comportamento resta verificato da test_r3_stato_tavoli_non_scrivibile_nessuna_registrazione_poi_una_volta."
     },
     {
       "id": "position_close_key_without_reservation",
