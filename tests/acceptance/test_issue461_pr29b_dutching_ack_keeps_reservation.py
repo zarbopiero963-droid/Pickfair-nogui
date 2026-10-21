@@ -322,3 +322,32 @@ def test_stato_del_tavolo_riassegnato_coerente_con_il_recovery_contabilizzato(tm
     tm.release_batch_reservation(1, EVENT_KEY, batch_id="B-29B", pnl=5.0)
     t = _tavolo(tm)
     assert t.status == "ACTIVE" and not t.in_recovery and t.current_exposure == 4.0
+
+
+def test_tavolo_ricostruito_al_riavvio_resta_del_suo_lotto():
+    # Review Codex su #534 (1dde4ed): F018 ricostruisce il tavolo di una gamba Dutching viva dopo un riavvio. Il meta
+    # del tavolo porta l'identita' del lotto (batch_id), altrimenti il rilascio del lotto stesso darebbe "foreign" e
+    # tavolo, esposizione e chiave resterebbero trattenuti per sempre.
+    import json
+
+    from core.runtime_controller import RuntimeController
+
+    class _Ordini:
+        def _execute(self, sql, *a, **k):
+            assert "FROM orders" in sql
+            return [{"customer_ref": "dut-REF-A", "status": "SUBMITTED",
+                     "response_json": json.dumps({"instructionReports": [{"betId": "BET-A", "status": "SUCCESS"}]}),
+                     "payload_json": json.dumps({"market_id": "1.777", "selection_id": 11, "event_key": EVENT_KEY,
+                                                 "table_id": 1, "bet_type": "BACK", "stake": 5.0, "price": 2.0,
+                                                 "batch_id": "B-29B"})}]
+
+    class _Exchange:
+        def list_current_orders(self, market_ids=None):
+            return [{"betId": "BET-A", "marketId": "1.777"}]
+
+    rc = RuntimeController.__new__(RuntimeController)
+    rc.db, rc.betfair_service = _Ordini(), _Exchange()
+    rc.table_manager, rc.duplication_guard = TableManager(table_count=3), DuplicationGuard()
+    assert rc._rebuild_open_positions()["rebuilt"] == ["dut-REF-A"]
+    assert rc.table_manager.get_table(1).meta.get("batch_id") == "B-29B"
+    assert rc.table_manager.release_batch_reservation(1, EVENT_KEY, batch_id="B-29B") == "released"

@@ -1287,6 +1287,18 @@
       "rationale": "#461 PR29-b (review Codex): perdita del vecchio lotto contabilizzata su un tavolo riassegnato ma stato ACTIVE: snapshot e UI di rischio mostrano un tavolo pulito con debito di recovery."
     },
     {
+      "id": "rebuilt_batch_table_loses_batch_identity",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "                item[\"meta\"].update(type=\"dutching_batch\", batch_id=item[\"batch_id\"])",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Codex): il tavolo di una gamba Dutching ricostruito al riavvio non porta il batch_id: il rilascio del lotto stesso da' foreign e tavolo, esposizione e chiave restano trattenuti per sempre."
+    },
+    {
       "id": "batch_pnl_dropped_on_freed_table",
       "module": "core.table_manager",
       "area": "money_management",
