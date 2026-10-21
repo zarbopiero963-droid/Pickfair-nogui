@@ -1085,7 +1085,7 @@
       "module": "core.trading_engine",
       "area": "exposure",
       "file": "core/trading_engine.py",
-      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
       "mutated": "        duplicate_in_process = True",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
@@ -1121,7 +1121,7 @@
       "module": "core.trading_engine",
       "area": "exposure",
       "file": "core/trading_engine.py",
-      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
       "mutated": "        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
@@ -1139,6 +1139,18 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex #533): la riserva auto-next (CMD senza table_id) del processo perdente non viene mai rilasciata."
+    },
+    {
+      "id": "db_repopulated_keys_claim_foreign_reservation",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._local_inflight_keys",
+      "mutated": "        duplicate_in_process = self.guard is not None or ctx.customer_ref in self._inflight_keys",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): le chiavi ripopolate dal DB condiviso rendono 'propria' la riserva mai inviata di un altro processo, trattenuta per sempre."
     }
   ]
 }

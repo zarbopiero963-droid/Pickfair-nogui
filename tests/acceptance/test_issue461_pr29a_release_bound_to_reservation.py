@@ -198,6 +198,27 @@ def test_doppione_esterno_tardivo_non_rilascia_un_tavolo_riassegnato_a_meta_oper
     assert tavolo.current_event_key == cmd["event_key"], "la nuova riserva sullo stesso evento e' stata liberata"
     assert tavolo.meta.get("customer_ref") == "sig-nuovo-intento"
 
+
+def test_chiavi_ripopolate_dal_db_condiviso_non_rendono_propria_la_riserva_di_un_altro_processo(tmp_path):
+    # Rilievo Codex su #533: B esegue il recovery (ripopolamento di _inflight_keys dal DB condiviso) mentre A ha
+    # l'intento in volo; il doppione di B non e' "in processo": la riserva mai inviata di B va rilasciata. La
+    # proprieta' locale e' separata dalle chiavi di dedup recuperate dal DB.
+    a = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    b = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    for c in (a, b):
+        c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
+    b.rc._consumed_intent_reason = lambda _ref: ""
+    a.rc._on_signal_received(_signal())
+    (cmd,) = a.bus.payloads("CMD_QUICK_BET")
+    b.engine._repopulate_inflight_from_db()
+    assert cmd["customer_ref"] in b.engine._inflight_keys        # chiave di dedup recuperata dal DB condiviso
+    b.rc._on_signal_received(_signal())
+    (dup,) = b.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is False, dup
+    assert b.broker.state.orders == {}
+    assert _tavoli_occupati(b) == [], "la riserva mai inviata di B resta bloccata dalle chiavi recuperate dal DB"
+    assert _tavoli_occupati(a) == [cmd["table_id"]]
+
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402
 
