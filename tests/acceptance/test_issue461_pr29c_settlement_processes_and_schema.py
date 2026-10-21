@@ -340,3 +340,38 @@ def test_smontaggio_fallito_dopo_un_avvio_fallito_trattiene_il_lock(tmp_path, mo
         rc.start(execution_mode="SIMULATION")
     assert _controller_su(percorso)._acquire_runtime_instance_lock() == "runtime_already_active_on_database", \
         "lock liberato con una sessione Betfair forse ancora viva"
+
+
+def test_due_grafie_dello_stesso_database_prendono_lo_stesso_lock(tmp_path, monkeypatch):
+    # Grok su e3fe4d7: percorso relativo e link simbolico dello stesso file => un solo runtime
+    percorso = str(tmp_path / "canonico.db")
+    Database(percorso)
+    primo = _controller_su(percorso)
+    assert primo._acquire_runtime_instance_lock() == ""
+    monkeypatch.chdir(tmp_path)
+    relativo = _controller_su("canonico.db")
+    assert relativo._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    if os.name != "nt":
+        link = tmp_path / "alias.db"
+        link.symlink_to(percorso)
+        assert _controller_su(str(link))._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+
+
+def test_lock_su_windows_blocca_sempre_il_byte_zero(tmp_path, monkeypatch):
+    # Grok su e3fe4d7: con il file di lock non vuoto l'apertura in append parte dalla fine
+    import types
+
+    percorso = str(tmp_path / "win.db")
+    Database(percorso)
+    with open(percorso + ".runtime.lock", "w") as fh:
+        fh.write("residuo")
+    posizioni = []
+    finto = types.SimpleNamespace(LK_NBLCK=2, locking=lambda fd, mode, n: posizioni.append(os.lseek(fd, 0, os.SEEK_CUR)))
+    monkeypatch.setitem(sys.modules, "msvcrt", finto)
+    rc = _controller_su(percorso)
+    monkeypatch.setattr(os, "name", "nt")
+    try:
+        assert rc._acquire_runtime_instance_lock() == ""
+    finally:
+        monkeypatch.setattr(os, "name", "posix")
+    assert posizioni == [0], f"byte bloccato all'offset {posizioni}"

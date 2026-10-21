@@ -134,7 +134,8 @@ restava per sempre (S9).
   le perdite registrate dagli altri (marker di reset e baseline viaggiano a parte). Un settlement senza effetto
   non riscrive lo stato salvo per ritentare una scrittura fallita.
 - **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
-  `<db_path>.runtime.lock` (fcntl su Linux, msvcrt su Windows), tenuto finché il runtime non è fermo: lo rilasciano
+  `<db_path>.runtime.lock` (percorso canonico: link simbolici, relativi e maiuscole su Windows portano allo stesso
+  lock; fcntl su Linux, msvcrt sul byte 0 su Windows), tenuto finché il runtime non è fermo: lo rilasciano
   `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
   secondo `start()` fallito); un avvio fallito dopo la connessione smonta prima i servizi già avviati (poller, feed, Telegram,
   Betfair) e, se lo smontaggio fallisce, trattiene il lock; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non

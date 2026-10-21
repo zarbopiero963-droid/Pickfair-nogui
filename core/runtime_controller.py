@@ -2698,6 +2698,9 @@ class RuntimeController:
         path = str(getattr(getattr(self, "db", None), "db_path", "") or "")
         if not path or path == ":memory:":
             return ""
+        # Grok su e3fe4d7: percorso canonico (link simbolici, percorsi relativi, maiuscole su Windows), cosi' due
+        # grafie dello stesso database prendono lo stesso lock.
+        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))
         try:
             handle = open(path + ".runtime.lock", "a+")
         except OSError as exc:
@@ -2705,6 +2708,7 @@ class RuntimeController:
         try:
             if os.name == "nt":
                 import msvcrt
+                handle.seek(0)                   # Grok su e3fe4d7: sempre il byte 0, non l'offset di append
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl

@@ -1780,6 +1780,30 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c (Codex su e3fe4d7): un avvio fallito libera il lock con una sessione Betfair o Telegram ancora viva."
+    },
+    {
+      "id": "instance_lock_path_not_canonical",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))",
+      "mutated": "        path = path",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): due grafie dello stesso database prendono due lock diversi (due runtime)."
+    },
+    {
+      "id": "windows_lock_follows_append_offset",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                handle.seek(0)                   # Grok su e3fe4d7: sempre il byte 0, non l'offset di append",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): su Windows il byte bloccato segue l'offset di append e due processi non collidono."
     }
   ]
 }
