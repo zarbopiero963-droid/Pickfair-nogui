@@ -1231,12 +1231,12 @@
       "module": "core.table_manager",
       "area": "exposure",
       "file": "core/table_manager.py",
-      "original": "            if table.current_event_key == key:\n                self.release(int(table_id), pnl=pnl)\n                return \"released\"",
-      "mutated": "            if table.current_event_key:\n                self.release(int(table_id), pnl=pnl)\n                return \"released\"",
+      "original": "            if key and owner and table.current_event_key == key and str(meta.get(\"batch_id\") or \"\") == owner:",
+      "mutated": "            if key and table.current_event_key == key:",
       "tests": [
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
-      "rationale": "#461 PR29-b: il rilascio di un lotto libera un tavolo riassegnato a un'altra riserva."
+      "rationale": "#461 PR29-b (Sol #534): il rilascio di un lotto libera un tavolo riusato per lo stesso evento da un'altra riserva."
     },
     {
       "id": "batch_release_frees_foreign_dedup_key",
@@ -1273,6 +1273,18 @@
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
       "rationale": "#461 PR29-b (review anticipata): il P&L negativo di un lotto su un tavolo gia' libero non entra nel recovery."
+    },
+    {
+      "id": "foreign_batch_pnl_not_booked",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "            self._book_pnl(table, pnl)\n            return \"foreign\"",
+      "mutated": "            return \"foreign\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (Sol #534): la perdita di un lotto su un tavolo riassegnato non entra nel recovery."
     }
   ]
 }

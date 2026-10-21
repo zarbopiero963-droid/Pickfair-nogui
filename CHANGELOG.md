@@ -27,8 +27,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   la posizione e' viva fino al settlement. Il rilascio avviene solo su esito terminale certo e privo di rischio di
   ogni gamba (FAILED, CANCELLED, ROLLED_BACK), una volta sola. Corretto il test invariante che codificava il rilascio
   su ogni terminale. Il rilascio del lotto (riconciliazione e settlement) e' legato alla sua riserva: tavolo e
-  chiave si liberano solo se il tavolo porta ancora l'event_key del lotto (`TableManager.release_batch_reservation`,
-  atomico); un tavolo riassegnato a un'altra riserva non si tocca; su un tavolo gia' libero il P&L del lotto resta
+  chiave si liberano solo se il tavolo porta ancora la riserva del lotto, cioe' event_key e batch_id nel meta
+  (`TableManager.release_batch_reservation`, atomico); un tavolo riassegnato o riusato per lo stesso evento da un'altra
+  riserva non si tocca, ma il P&L del lotto entra comunque nel suo recovery; su un tavolo gia' libero il P&L del lotto resta
   contabilizzato e la chiave si libera solo se nessuna riserva porta piu' l'evento. Dutching resta dormiente (decisione owner #531).
 
 - **#461 PR29-a — il rilascio segue la riserva, mai un esito che non la chiude (PF-C29-01.03, .13):**

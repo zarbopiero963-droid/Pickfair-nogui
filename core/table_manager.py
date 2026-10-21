@@ -247,26 +247,43 @@ class TableManager:
             self.force_unlock(int(table_id))
             return True
 
-    def release_batch_reservation(self, table_id: int, event_key: str, *, pnl: float = 0.0) -> str:
+    def release_batch_reservation(self, table_id: int, event_key: str, *, batch_id: str, pnl: float = 0.0) -> str:
         """#461 PR29-b (PF-C29-01.17): chiusura della riserva di un lotto sul suo tavolo, controllo e rilascio sotto lo
-        stesso lock. Esiti:
-        - ``"released"``: il tavolo portava ancora ``event_key`` => `release` con il P&L;
-        - ``"free"``: il tavolo era gia' libero (reset) => il P&L del lotto resta contabilizzato nel recovery del
-          tavolo (come prima), nessuna riserva toccata;
-        - ``"foreign"``: il tavolo porta un'altra riserva => nulla (P&L non attribuibile, la riserva altrui resta)."""
-        key = str(event_key or "")
+        stesso lock. La riserva del lotto e' identificata da ``event_key`` E dal ``batch_id`` nel meta del tavolo
+        (scritto da `DutchingController._allocate_table`): un tavolo riusato per lo stesso evento da un'altra riserva
+        non e' del lotto (review Sol su #534). Esiti:
+        - ``"released"``: il tavolo porta ancora la riserva del lotto => `release` con il P&L;
+        - ``"free"``: il tavolo era gia' libero (reset) => il P&L resta contabilizzato nel recovery, nessuna riserva
+          toccata;
+        - ``"foreign"``: il tavolo porta un'altra riserva (o un'identita' non verificabile) => la riserva resta; il
+          P&L del lotto entra comunque nel recovery del tavolo (`_book_pnl`), senza liberarlo."""
+        key, owner = str(event_key or ""), str(batch_id or "")
         with self._lock:
             table = self._get(int(table_id))
-            if not table or not key:
+            if not table:
                 return "foreign"
-            if table.current_event_key == key:
+            meta = table.meta or {}
+            if key and owner and table.current_event_key == key and str(meta.get("batch_id") or "") == owner:
                 self.release(int(table_id), pnl=pnl)
                 return "released"
             if not table.current_event_key:
                 if float(pnl or 0.0) != 0.0:
                     self.release(int(table_id), pnl=pnl)
                 return "free"
+            self._book_pnl(table, pnl)
             return "foreign"
+
+    @staticmethod
+    def _book_pnl(table: TableState, pnl: float) -> None:
+        """Contabilizza nel recovery del tavolo il P&L di una posizione gia' chiusa (stessa regola di `release`)
+        senza toccare la riserva corrente del tavolo."""
+        pnl = float(pnl or 0.0)
+        if pnl < 0:
+            table.loss_amount += abs(pnl)
+            table.in_recovery = True
+        elif pnl > 0 and table.loss_amount > 0:
+            table.loss_amount = max(0.0, table.loss_amount - pnl)
+            table.in_recovery = table.loss_amount > 0
 
     def force_unlock_if_unplaced_reservation(self, table_id: int, event_key: str, customer_ref: str) -> bool:
         """#461 PR29-a: rilascia il tavolo SOLO se porta ancora la riserva mai a mercato di quell'intento

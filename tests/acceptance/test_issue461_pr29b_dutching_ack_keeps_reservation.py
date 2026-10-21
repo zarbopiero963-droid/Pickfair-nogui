@@ -41,7 +41,9 @@ def _ordine(ref, sel, *, stato="EXECUTABLE", abbinato=0.0, residuo=5.0, annullat
 def _lotto(tmp_path):
     db = _DB(str(tmp_path / "pr29b.db"))
     bm, tm, guard, client = DutchingBatchManager(db), TableManager(table_count=3), DuplicationGuard(), _Client()
-    tm.activate(table_id=1, event_key=EVENT_KEY, exposure=10.0, market_id="1.777", selection_id=11, meta={})
+    # Come `DutchingController._allocate_table`: il meta del tavolo porta l'identita' del lotto.
+    tm.activate(table_id=1, event_key=EVENT_KEY, exposure=10.0, market_id="1.777", selection_id=11,
+                meta={"type": "dutching_batch", "batch_id": "B-29B"})
     assert guard.acquire(EVENT_KEY)
     bm.create_batch(batch_id="B-29B", event_key=EVENT_KEY, market_id="1.777", table_id=1, total_legs=2,
                     batch_exposure=10.0,
@@ -208,3 +210,30 @@ def test_settlement_su_tavolo_gia_libero_registra_la_perdita(tmp_path):
     engine.finalize_terminal_batch("B-29B", status="EXECUTED", pnl=-5.0)
     t = tm.get_table(1)
     assert t.loss_amount == 5.0 and t.in_recovery, "perdita del lotto non contabilizzata"
+
+
+
+def test_riuso_del_tavolo_per_lo_stesso_evento_non_e_rilasciato_dal_vecchio_lotto(tmp_path):
+    # Review Sol su #534: dopo un reset il tavolo e' riusato per lo STESSO evento da una nuova riserva (altro
+    # intento). La chiusura tardiva del vecchio lotto non la libera: l'identita' e' il batch_id, non l'event_key.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key=EVENT_KEY, exposure=6.0, market_id="1.777", selection_id=11,
+                meta={"customer_ref": "sig-nuovo-intento"})
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    t = _tavolo(tm)
+    assert t.current_event_key == EVENT_KEY and t.current_exposure == 6.0, "liberata la nuova riserva sullo stesso evento"
+    assert EVENT_KEY in guard._active
+
+
+def test_perdita_del_lotto_su_tavolo_riassegnato_entra_nel_recovery_senza_liberarlo(tmp_path):
+    # Review Sol su #534: tavolo riassegnato prima del settlement negativo del vecchio lotto. La perdita entra nel
+    # recovery del tavolo, la riserva corrente resta intatta.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    engine.finalize_terminal_batch("B-29B", status="EXECUTED", pnl=-5.0)
+    t = _tavolo(tm)
+    assert t.current_event_key == "1.888:ALTRO" and t.current_exposure == 4.0
+    assert t.loss_amount == 5.0 and t.in_recovery, "perdita del vecchio lotto non contabilizzata"
