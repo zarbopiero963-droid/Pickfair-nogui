@@ -1225,6 +1225,30 @@
         "tests/invariant/test_reconcile_invariants.py"
       ],
       "rationale": "#461 PR29-b (PF-C29-01.17): un lotto con tutte le gambe annullate/fallite non rilascia mai tavolo e chiave."
+    },
+    {
+      "id": "batch_release_ignores_reservation_identity",
+      "module": "core.table_manager",
+      "area": "exposure",
+      "file": "core/table_manager.py",
+      "original": "            if not table or table.current_event_key != key:\n                return False\n            self.release(int(table_id), pnl=pnl)",
+      "mutated": "            if not table:\n                return False\n            self.release(int(table_id), pnl=pnl)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b: il rilascio di un lotto libera un tavolo riassegnato a un'altra riserva."
+    },
+    {
+      "id": "batch_release_frees_foreign_dedup_key",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "        if duplication_guard and event_key and owns_key:",
+      "mutated": "        if duplication_guard and event_key:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b: il rilascio di un lotto libera la chiave anti-duplicato di una riserva che non gli appartiene."
     }
   ]
 }

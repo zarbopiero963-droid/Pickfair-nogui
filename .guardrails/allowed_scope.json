@@ -2434,16 +2434,18 @@
       "max_files": 11
     },
     "issue461-pr29b-dutching-ack-keeps-reservation": {
-      "description": "Mandato owner PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026), roadmap #461 scheda PR29, sotto-PR 29-b: PF-C29-01.17 (#506 c.6123640661) — un lotto Dutching con gambe a mercato o abbinate (EXECUTED) non libera tavolo/esposizione/chiave nella riconciliazione; rilascio solo su esito terminale privo di rischio di ogni gamba (FAILED/CANCELLED/ROLLED_BACK), una volta sola. Test invariante che codificava il rilascio su EXECUTED corretto.",
+      "description": "Mandato owner PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026), roadmap #461 scheda PR29, sotto-PR 29-b: PF-C29-01.17 (#506 c.6123640661) — un lotto Dutching con gambe a mercato o abbinate (EXECUTED) non libera tavolo/esposizione/chiave nella riconciliazione; rilascio solo su esito terminale privo di rischio di ogni gamba (FAILED/CANCELLED/ROLLED_BACK), una volta sola. Test invariante che codificava il rilascio su EXECUTED corretto. ESTENSIONE DICHIARATA (Phase 0, inventario dei percorsi di rilascio): +core/dutching_batch_manager.py e +core/table_manager.py — release_runtime_artifacts legato alla riserva del lotto (TableManager.release_if_event atomico; chiave anti-duplicato rilasciata solo se il tavolo portava ancora la riserva).",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
+        "core/dutching_batch_manager.py",
         "core/reconciliation_engine.py",
+        "core/table_manager.py",
         "guardrails/mutation_catalog.json",
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
         "tests/invariant/test_reconcile_invariants.py"
       ],
-      "max_files": 6
+      "max_files": 8
     }
   }
 }

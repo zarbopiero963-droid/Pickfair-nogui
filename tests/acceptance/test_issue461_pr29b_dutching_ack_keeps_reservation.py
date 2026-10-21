@@ -92,3 +92,85 @@ def test_gambe_annullate_per_intero_rilasciano_una_volta(tmp_path):
     tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
     engine.reconcile_batch("B-29B")                                 # lotto gia' terminale: nessun secondo rilascio
     assert _tavolo(tm).current_event_key == "1.888:ALTRO"
+
+
+def _annullate(client):
+    client.orders = [_ordine("REF-A", 11, stato="CANCELLED", residuo=0.0, annullato=5.0),
+                     _ordine("REF-B", 12, stato="CANCELLED", residuo=0.0, annullato=5.0)]
+
+
+def test_rilascio_del_lotto_non_colpisce_un_tavolo_riassegnato_a_un_altra_riserva(tmp_path):
+    # Il lotto diventa terminale senza rischio, ma nel frattempo il suo tavolo e' stato liberato e riassegnato a
+    # un'altra riserva (altro evento): il rilascio del lotto non tocca ne' quel tavolo ne' la sua chiave.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    guard.release(EVENT_KEY)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    assert guard.acquire("1.888:ALTRO")
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    t = _tavolo(tm)
+    assert t.current_event_key == "1.888:ALTRO" and t.current_exposure == 4.0, "liberata la riserva di un altro"
+    assert "1.888:ALTRO" in guard._active
+
+
+def test_settlement_del_lotto_non_colpisce_un_tavolo_riassegnato(tmp_path):
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    engine.finalize_terminal_batch("B-29B", status="EXECUTED", pnl=3.0)
+    assert _tavolo(tm).current_event_key == "1.888:ALTRO"
+
+
+def test_gamba_parzialmente_abbinata_mantiene_la_riserva(tmp_path):
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    client.orders = [_ordine("REF-A", 11, abbinato=2.0, residuo=3.0),
+                     _ordine("REF-B", 12, stato="CANCELLED", residuo=0.0, annullato=5.0)]
+    engine.reconcile_batch("B-29B")
+    t = _tavolo(tm)
+    assert t.current_event_key == EVENT_KEY and t.current_exposure == 10.0
+    assert EVENT_KEY in guard._active
+
+
+def test_esito_incerto_di_una_gamba_mantiene_la_riserva(tmp_path):
+    # Una gamba non visibile sull'exchange (esito ignoto) e una annullata: nessun rilascio (fail-closed).
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    client.orders = [_ordine("REF-B", 12, stato="CANCELLED", residuo=0.0, annullato=5.0)]
+    engine.reconcile_batch("B-29B")
+    assert _tavolo(tm).current_event_key == EVENT_KEY
+    assert EVENT_KEY in guard._active
+
+
+def test_riavvio_non_rilascia_due_volte_un_lotto_gia_chiuso(tmp_path):
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert _tavolo(tm).current_event_key == ""
+    tm.activate(table_id=1, event_key=EVENT_KEY, exposure=7.0, market_id="1.777", selection_id=11, meta={})
+    assert guard.acquire(EVENT_KEY)                                # nuova riserva sullo stesso evento
+    riavviato = ReconciliationEngine(db=engine.db, batch_manager=DutchingBatchManager(engine.db),
+                                     client_getter=lambda: client, table_manager=tm, duplication_guard=guard,
+                                     config=engine.cfg)
+    riavviato.reconcile_all_open_batches()
+    riavviato.reconcile_batch("B-29B")
+    assert _tavolo(tm).current_exposure == 7.0 and EVENT_KEY in guard._active
+
+
+def test_riconciliazioni_concorrenti_rilasciano_una_volta(tmp_path):
+    import threading
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    _annullate(client)
+    rilasci = []
+    originale = bm.release_runtime_artifacts
+
+    def conta(**kw):
+        rilasci.append(kw["batch_id"])
+        return originale(**kw)
+
+    bm.release_runtime_artifacts = conta
+    fili = [threading.Thread(target=engine.reconcile_batch, args=("B-29B",)) for _ in range(4)]
+    for f in fili:
+        f.start()
+    for f in fili:
+        f.join()
+    assert rilasci == ["B-29B"]
