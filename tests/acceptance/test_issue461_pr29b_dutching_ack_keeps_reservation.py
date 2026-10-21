@@ -64,6 +64,15 @@ def _tavolo(tm):
     return tm.get_table(1)
 
 
+def _chiave_torna_al_ttl(guard):
+    # Chiave appuntata del lotto senza piu' tavoli sull'evento: torna alla scadenza normale per TTL (mai rimossa
+    # subito: potrebbe appartenere a un nuovo intento, review Sol su #534) e quindi scade, l'evento non resta
+    # bloccato per sempre.
+    assert not guard.is_pinned(EVENT_KEY), "chiave dell'evento trattenuta per sempre"
+    guard._active[EVENT_KEY] -= guard.ttl + 1
+    assert not guard.is_duplicate(EVENT_KEY)
+
+
 def test_gambe_a_mercato_non_abbinate_mantengono_l_intera_riserva(tmp_path):
     engine, bm, tm, guard, client = _lotto(tmp_path)
     client.orders = [_ordine("REF-A", 11), _ordine("REF-B", 12)]
@@ -199,7 +208,7 @@ def test_chiave_liberata_se_il_tavolo_del_lotto_era_gia_libero_e_nessuno_porta_l
     tm.force_unlock(1)
     _annullate(client)
     engine.reconcile_batch("B-29B")
-    assert EVENT_KEY not in guard._active, "chiave dell'evento trattenuta per sempre"
+    _chiave_torna_al_ttl(guard)
 
 
 def test_settlement_su_tavolo_gia_libero_registra_la_perdita(tmp_path):
@@ -250,5 +259,30 @@ def test_chiave_liberata_se_il_tavolo_del_lotto_e_riassegnato_a_un_altro_evento(
     assert guard.acquire("1.888:ALTRO")
     _annullate(client)
     engine.reconcile_batch("B-29B")
-    assert EVENT_KEY not in guard._active, "chiave dell'evento del lotto trattenuta per sempre"
+    _chiave_torna_al_ttl(guard)
     assert "1.888:ALTRO" in guard._active and _tavolo(tm).current_exposure == 4.0
+
+
+def test_chiave_di_un_nuovo_intento_senza_tavolo_non_e_cancellata_dal_vecchio_lotto(tmp_path):
+    # Review Sol su #534: dopo un reset un nuovo intento acquisisce la chiave dell'evento PRIMA di attivare il suo
+    # tavolo (runtime_controller: acquire precede activate). Il cleanup del vecchio lotto (tavolo libero) non la
+    # cancella: niente ordini duplicati sullo stesso evento.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    guard.release(EVENT_KEY)
+    assert guard.acquire(EVENT_KEY)                                 # nuovo intento, tavolo non ancora attivo
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert guard.is_duplicate(EVENT_KEY), "cancellata la chiave del nuovo intento"
+
+
+def test_chiave_di_un_nuovo_intento_non_e_cancellata_con_tavolo_riassegnato(tmp_path):
+    # Come sopra, ma il tavolo del vecchio lotto e' riassegnato a un altro evento (esito foreign).
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    guard.release(EVENT_KEY)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    assert guard.acquire(EVENT_KEY)                                 # nuovo intento, tavolo non ancora attivo
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert guard.is_duplicate(EVENT_KEY), "cancellata la chiave del nuovo intento"

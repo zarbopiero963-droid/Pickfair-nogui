@@ -681,16 +681,19 @@ class DutchingBatchManager:
         # controllo e rilascio atomici nel TableManager (release_batch_reservation). Un tavolo gia' liberato e riassegnato a un'altra riserva
         # non si tocca, e nemmeno la sua chiave anti-duplicato; un secondo rilascio e' un no-op.
         owns_key = True
+        stale_pin = False
         if table_manager and table_id is not None:
             owns_key = False
             try:
                 if hasattr(table_manager, "release_batch_reservation"):
                     outcome = table_manager.release_batch_reservation(int(table_id), event_key, batch_id=str(batch_id),
                                                                          pnl=float(pnl))
-                    # Tavolo gia' libero o riassegnato: la chiave e' del lotto solo se nessuna riserva porta piu'
-                    # l'evento, altrimenti appartiene alla nuova riserva e resta (review anticipata e Grok, PR29-b).
-                    owns_key = outcome == "released" or (
-                        outcome in ("free", "foreign") and table_manager.find_by_event_key(event_key) is None)
+                    owns_key = outcome == "released"
+                    # Tavolo gia' libero o riassegnato e nessuna riserva sull'evento: la chiave non e' provata come
+                    # del lotto (un nuovo intento la acquisisce prima di attivare il tavolo), quindi non si cancella;
+                    # se e' appuntata torna alla scadenza per TTL, cosi' l'evento non resta bloccato per sempre
+                    # (review anticipata, Grok e Sol, PR29-b).
+                    stale_pin = outcome in ("free", "foreign") and table_manager.find_by_event_key(event_key) is None
                 elif pnl != 0.0 and hasattr(table_manager, "release"):
                     table_manager.release(int(table_id), pnl=float(pnl))
                     owns_key = True
@@ -708,6 +711,11 @@ class DutchingBatchManager:
                 duplication_guard.release(event_key)
             except Exception:
                 logger.exception("Errore release duplication guard batch=%s", batch_id)
+        elif duplication_guard and event_key and stale_pin and hasattr(duplication_guard, "unpin"):
+            try:
+                duplication_guard.unpin(event_key)
+            except Exception:
+                logger.exception("Errore unpin duplication guard batch=%s", batch_id)
 
     def register_new_batch_from_results(
         self,
