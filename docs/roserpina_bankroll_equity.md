@@ -125,10 +125,13 @@ restava per sempre (S9).
   resta assente come prima), così il settlement della bet ritrova la riserva dopo un riavvio.
 - **Scritture dello stato tavoli**: snapshot, scrittura ed esito (`_recovery_persisted`) avvengono sotto il lock
   dei tavoli anche fuori dal settlement, quindi uno snapshot vecchio non sovrascrive una perdita appena registrata.
-  La registrazione di un settlement aggiorna, nella stessa transazione, **solo la voce del proprio tavolo** nella
-  mappa persistita (letta dentro la transazione): con più processi sullo stesso DB nessuno cancella le perdite
-  registrate dagli altri. Mappa intera solo con un reset di ciclo in sospeso o dopo una scrittura fallita; un
-  settlement senza effetto non riscrive lo stato salvo per ritentare una scrittura fallita.
+  Ogni scrittura della mappa (registrazione di un settlement, scrittura ordinaria, ritentativo, reset) è una
+  **differenza** rispetto a ciò che questo processo ha ripristinato all'avvio o scritto per ultimo, applicata
+  alla mappa letta dentro la stessa transazione `BEGIN IMMEDIATE`: con più processi sullo stesso DB nessuno
+  cancella le perdite registrate dagli altri (marker di reset e baseline viaggiano a parte). Un settlement senza
+  effetto non riscrive lo stato salvo per ritentare una scrittura fallita. Limite dichiarato: due runtime che
+  usano lo **stesso** tavolo per riserve diverse restano in conflitto per costruzione (tavoli in memoria per
+  processo, 29-g1/g2).
 - **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
   bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
   in coda nel processo per `reconcile_held_settlements()` e dopo un riavvio lo riconsegna il poller.

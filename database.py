@@ -1764,7 +1764,7 @@ class Database:
 
     def record_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
                                  settings: Optional[Dict[str, Any]] = None, *,
-                                 recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
+                                 recovery_merge: Optional[Tuple[str, Dict[str, float], List[str]]] = None) -> bool:
         """Registra l'effetto di un settlement e, nella STESSA transazione ``BEGIN IMMEDIATE``, le impostazioni
         durevoli che lo materializzano (stato dei tavoli di recovery). True solo se questa chiamata ha creato la
         riga; False se il settlement era gia' registrato (da questo o da un altro processo): in quel caso nulla
@@ -1797,7 +1797,7 @@ class Database:
 
     def upgrade_held_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
                                        settings: Optional[Dict[str, Any]] = None, *,
-                                       recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
+                                       recovery_merge: Optional[Tuple[str, Dict[str, float], List[str]]] = None) -> bool:
         """Un settlement registrato ``held`` (identita' non dimostrabile allora) ha ora un effetto: esito e identita'
         aggiornati e stato dei tavoli scritto nella STESSA transazione, solo se la riga e' ancora ``held``. True se
         questa chiamata l'ha aggiornata; False se non e' (piu') ``held`` (gia' riconciliata, anche da un altro
@@ -1822,12 +1822,14 @@ class Database:
                                             recovery_merge=recovery_merge)
 
     def _settlement_transaction(self, settlement_key: str, change, settings: Optional[Dict[str, Any]],
-                                name: str, *, recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
+                                name: str, *, recovery_merge: Optional[Tuple[str, Dict[str, float], List[str]]] = None) -> bool:
         """``change(conn, key)`` e le impostazioni in una transazione ``BEGIN IMMEDIATE``: change False => nulla
         scritto. Un errore annulla tutto e si propaga.
-        ``recovery_merge`` = (chiave, tavolo, perdita|None): aggiorna SOLO la voce di quel tavolo nella mappa JSON
-        persistita, letta dentro la transazione (None = voce rimossa). Con piu' processi sullo stesso file nessuno
-        sovrascrive le voci scritte dagli altri (Codex su 70821fd). Mappa persistita illeggibile => errore."""
+        ``recovery_merge`` = (chiave, aggiornate, rimosse): applica alla mappa JSON persistita, letta DENTRO la
+        transazione, solo le voci cambiate da questo processo (``aggiornate`` {tavolo: perdita}, ``rimosse``
+        [tavolo]). Con piu' processi sullo stesso file nessuno sovrascrive le voci scritte dagli altri (Codex e Sol
+        su 70821fd/7a4f2c3). Mappa persistita illeggibile => errore, nulla scritto. ``change`` None => solo
+        impostazioni e mappa."""
         key = str(settlement_key or "").strip()
         if not key:
             raise ValueError(f"{name} requires settlement_key")
@@ -1838,21 +1840,21 @@ class Database:
             conn.execute("BEGIN IMMEDIATE")
             self._set_tx_depth(1)
             try:
-                if not change(conn, key):
+                if change is not None and not change(conn, key):
                     conn.rollback()
                     return False
                 for setting_key, setting_value in (settings or {}).items():
                     self._set_setting(str(setting_key), setting_value)
                 if recovery_merge is not None:
-                    merge_key, table_key, loss = recovery_merge
+                    merge_key, updates, deletes = recovery_merge
                     row = conn.execute("SELECT value FROM settings WHERE key = ?", (str(merge_key),)).fetchone()
                     raw = row[0] if row else ""
                     current = json.loads(raw) if raw not in (None, "") else {}
                     if not isinstance(current, dict):
                         raise ValueError(f"{name}: stato persistito {merge_key} non valido")
-                    if loss is None:
+                    for table_key in deletes or ():
                         current.pop(str(table_key), None)
-                    else:
+                    for table_key, loss in (updates or {}).items():
                         current[str(table_key)] = float(loss)
                     self._set_setting(str(merge_key), json.dumps(current))
                 conn.commit()
@@ -1865,6 +1867,13 @@ class Database:
                 raise
             finally:
                 self._set_tx_depth(0)
+
+    def merge_recovery_map(self, merge_key: str, updates: Dict[str, float], deletes: List[str],
+                           settings: Optional[Dict[str, Any]] = None) -> bool:
+        """Scrittura ordinaria dello stato dei tavoli di recovery come differenza (vedi `_settlement_transaction`):
+        impostazioni e voci cambiate in una transazione ``BEGIN IMMEDIATE``."""
+        return self._settlement_transaction(str(merge_key), None, settings, "merge_recovery_map",
+                                            recovery_merge=(merge_key, updates, deletes))
 
     def list_held_settlement_effects(self) -> List[Dict[str, Any]]:
         """Settlement registrati ``held`` (in attesa di riconciliazione), con il payload originale."""

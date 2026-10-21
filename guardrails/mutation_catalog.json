@@ -1605,8 +1605,8 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "            self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)\n        return True",
-      "mutated": "        self._recovery_persisted(context)\n        return True",
+      "original": "            self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)\n            self._recovery_view_written()\n        return True",
+      "mutated": "        self._recovery_persisted(context)\n        self._recovery_view_written()\n        return True",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
@@ -1617,8 +1617,8 @@
       "module": "database",
       "area": "recovery",
       "file": "database.py",
-      "original": "                    if loss is None:\n                        current.pop(str(table_key), None)\n                    else:\n                        current[str(table_key)] = float(loss)",
-      "mutated": "                    current = {}\n                    if loss is not None:\n                        current[str(table_key)] = float(loss)",
+      "original": "                    for table_key in deletes or ():\n                        current.pop(str(table_key), None)",
+      "mutated": "                    current = {}",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
@@ -1635,6 +1635,18 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Codex su 70821fd): checkpoint durevole per un effetto non registrato: il poller non lo riconsegna e la perdita resta fuori dal recovery."
+    },
+    {
+      "id": "recovery_write_ignores_process_view",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        updates = {k: v for k, v in current.items() if view.get(k) != v}",
+      "mutated": "        updates = dict(current)\n        deletes = [k for k in view if k not in current]\n        return self._RECOVERY_KEY, updates, deletes + [k for k in (\"1\", \"2\", \"3\") if k not in current]",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su 7a4f2c3): una scrittura di ritentativo o ordinaria cancella le perdite dei tavoli registrate da un altro processo."
     }
   ]
 }

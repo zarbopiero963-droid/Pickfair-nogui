@@ -860,16 +860,16 @@ def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato
     c = _catena(tmp_path)
     cmd, bet = _con_bet(c)
     db = c.rc.db
-    originale = db.save_settings
+    originale = db.merge_recovery_map
     fermo, entrato = threading.Event(), threading.Event()
 
-    def salva_lento(payload):
-        if RuntimeController._RECOVERY_KEY in payload and not entrato.is_set():
+    def salva_lento(*args, **kwargs):
+        if not entrato.is_set():
             entrato.set()
             fermo.wait(5)                                     # snapshot vecchio preparato, scrittura in ritardo
-        return originale(payload)
+        return originale(*args, **kwargs)
 
-    db.save_settings = salva_lento
+    db.merge_recovery_map = salva_lento
     persistenza = threading.Thread(target=c.rc._persist_recovery_tables)
     persistenza.start()
     assert entrato.wait(5)
@@ -879,7 +879,7 @@ def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato
     fermo.set()
     persistenza.join(5)
     settlement.join(5)
-    db.save_settings = originale
+    db.merge_recovery_map = originale
     assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0, "perdita registrata sovrascritta"
 
 
@@ -953,3 +953,30 @@ def test_r12_effetto_non_registrato_nessun_checkpoint_ne_ordine_poi_riconciliato
     assert c.rc.reconcile_held_settlements()["reconciled"] == [chiave]          # ritentativo nel processo
     assert _tavolo(c, cmd["table_id"]).current_event_key == "" and _perdite(c) == 10.0
     assert round(float(c.rc.risk_desk.realized_pnl), 2) == -10.0                 # perdita contata una volta
+
+
+def test_r11b_ritentativo_e_scrittura_ordinaria_non_cancellano_le_perdite_dell_altro_processo(tmp_path):
+    # Sol su 7a4f2c3: con una scrittura precedente fallita (ritentativo) o in una scrittura ordinaria lo stato si
+    # scriveva per intero e cancellava la perdita registrata dall'altro processo.
+    c1 = _catena(tmp_path, db_name="condiviso_r11b.db")
+    a, bet_a = _piazza(c1)
+    c2 = _catena(tmp_path, db_name="condiviso_r11b.db")
+    c2.rc.table_manager.activate(table_id=int(a["table_id"]), event_key="segnaposto", exposure=1.0,
+                                 market_id="9.9", selection_id=1, meta={"customer_ref": "sig-segnaposto"})
+    b, bet_b = _seconda(c2)
+    c1.regolate.append(c2.regolate[-1])
+    c2.regolate.insert(0, c1.regolate[0])
+    c1.rc._on_close_position(_cleared(bet_a, -10.0))
+    c2.rc._recovery_persist_failed = True                  # ritentativo: prima il codice scriveva tutta la mappa
+    c2.rc._on_close_position(_cleared(bet_b, -5.0))
+    assert c2.rc._persist_recovery_tables()                # scrittura ordinaria del secondo processo
+    attese = {int(a["table_id"]): 10.0, int(b["table_id"]): 5.0}
+    assert _perdite_persistite(c1) == attese, _perdite_persistite(c1)
+
+
+def test_r11c_scrittura_non_rimuove_la_voce_di_un_tavolo_sconosciuto(tmp_path):
+    c = _catena(tmp_path)
+    c.rc.db.save_settings({RuntimeController._RECOVERY_KEY: json.dumps({"99": 7.0})})   # tavolo oltre il conteggio
+    assert c.rc._restore_recovery_tables()
+    assert c.rc._persist_recovery_tables()
+    assert _perdite_persistite(c).get(99) == 7.0, "debito di un tavolo non configurato cancellato"

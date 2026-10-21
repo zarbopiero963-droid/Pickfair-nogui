@@ -47,7 +47,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   AMBIGUOUS chiusa solo dall'esito dello stesso intento. Review su 70821fd: identità della riserva nella chiave
   di ogni chiusura di posizione; F018 riusa il tavolo persistito dell'auto-next; esito della scrittura dello stato
   tavoli sotto il lock; aggiornamento per tavolo della mappa di recovery dentro la transazione (più processi);
-  effetto non registrato senza checkpoint né auto-next e in coda di ritentativo. **Semantica cambiata,
+  effetto non registrato senza checkpoint né auto-next e in coda di ritentativo. Review su 7a4f2c3: ogni
+  scrittura della mappa di recovery (anche ordinaria, di ritentativo o di reset) è una differenza rispetto alla
+  vista del processo, applicata dentro la transazione. **Semantica cambiata,
   dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
   tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
   anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva

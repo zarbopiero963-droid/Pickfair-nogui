@@ -5004,14 +5004,16 @@ class RuntimeController:
                 tm.restore_table(snapshot)                     # effetto parziale annullato: nulla e' stato registrato
                 logger.exception("Settlement %s: effetto sul tavolo %s fallito, annullato (fail-closed)", key, tid)
                 return {"outcome": "unverifiable", "applied": False, "realized_already": False}
-            # Codex su 70821fd: con piu' processi sullo stesso DB ognuno ha i propri tavoli in memoria; riscrivere
-            # l'intera mappa sovrascriverebbe le perdite registrate dagli altri. Si aggiorna SOLO la voce del tavolo
-            # di questo settlement, letta e scritta nella transazione. Mappa intera solo se va scritto anche un reset
-            # di ciclo in sospeso (o la baseline) o se una scrittura precedente di questo processo e' fallita.
-            settings, merge = prepared[0], None
-            if (set(settings) == {self._RECOVERY_KEY} and not getattr(self, "_recovery_persist_failed", False)
-                    and getattr(self, "_pending_cycle_reset", None) is None):
-                settings, merge = None, (self._RECOVERY_KEY, str(tid), tm.recovery_state().get(tid))
+            # Codex/Sol su 70821fd e 7a4f2c3: con piu' processi sullo stesso DB ognuno ha i propri tavoli in
+            # memoria; riscrivere l'intera mappa sovrascriverebbe le perdite registrate dagli altri. La mappa si
+            # scrive SEMPRE come differenza rispetto a cio' che questo processo ha scritto (`_recovery_diff`),
+            # applicata alla mappa letta dentro la transazione; marker di reset e baseline viaggiano a parte.
+            try:
+                settings, merge = self._recovery_extra_settings(prepared[0]), self._recovery_diff()
+            except Exception:
+                tm.restore_table(snapshot)                     # vista dello stato illeggibile: nessun effetto
+                logger.exception("Settlement %s: stato dei tavoli di recovery non confrontabile, annullato", key)
+                return {"outcome": "unverifiable", "applied": False, "realized_already": False}
             created = self._commit_settlement_effect(key, {**record, "outcome": outcome}, settings,
                                                      upgrade=upgrade, merge=merge, full_settings=prepared[0])
             if not created:
@@ -5024,6 +5026,7 @@ class RuntimeController:
             # di ciclo concorrente non vede azzerato un proprio stato in sospeso da una scrittura precedente.
             if created != "unpersisted":
                 self._recovery_persisted(prepared[1])
+                self._recovery_view_written()
             else:
                 self._recovery_persist_failed = True
         if created == "unpersisted":
@@ -5772,12 +5775,44 @@ class RuntimeController:
                 return False
             payload, context = prepared
             try:
-                self.db.save_settings(payload)
+                merger = getattr(self.db, "merge_recovery_map", None)
+                if callable(merger):
+                    # differenza rispetto a cio' che questo processo ha scritto (Sol su 7a4f2c3): nessuna voce di
+                    # un altro processo sullo stesso DB viene cancellata da una scrittura ordinaria o di ritentativo
+                    updates, deletes = self._recovery_diff()[1:]
+                    merger(self._RECOVERY_KEY, updates, deletes, self._recovery_extra_settings(payload))
+                else:
+                    self.db.save_settings(payload)                  # DB senza la primitiva (doppi di test)
             except Exception as exc:
                 self._recovery_persist_aborted(context, exc)
                 return False
             self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)
+            self._recovery_view_written()
         return True
+
+    def _recovery_extra_settings(self, payload: dict) -> Optional[dict]:
+        extra = {k: v for k, v in (payload or {}).items() if k != self._RECOVERY_KEY}
+        return extra or None
+
+    def _recovery_view(self) -> dict:
+        """Mappa {tavolo: perdita} che QUESTO processo ha letto all'avvio (`_restore_recovery_tables`) o scritto per
+        ultimo. Nessun ripristino in questo processo => vuota: non ha mai visto ne' scritto voci, quindi non ne
+        rimuove nessuna (le voci degli altri processi restano)."""
+        view = getattr(self, "_persisted_recovery_view", None)
+        if view is None:
+            view = self._persisted_recovery_view = {}
+        return view
+
+    def _recovery_diff(self) -> tuple:
+        """(chiave, aggiornate, rimosse): voci dei tavoli che questo processo ha cambiato rispetto alla sua vista."""
+        current = {str(k): float(v) for k, v in self.table_manager.recovery_state().items()}
+        view = self._recovery_view()
+        updates = {k: v for k, v in current.items() if view.get(k) != v}
+        deletes = [k for k in view if k not in current]
+        return self._RECOVERY_KEY, updates, deletes
+
+    def _recovery_view_written(self) -> None:
+        self._persisted_recovery_view = {str(k): float(v) for k, v in self.table_manager.recovery_state().items()}
 
     def _recovery_write_lock(self):
         locked = getattr(getattr(self, "table_manager", None), "locked", None)
@@ -5853,6 +5888,7 @@ class RuntimeController:
             if not isinstance(state, dict):
                 raise ValueError("stato non dict")
             self.table_manager.restore_recovery_state({int(k): float(v) for k, v in state.items()})
+            self._persisted_recovery_view = {str(k): float(v) for k, v in state.items()}
             return True
         except Exception as exc:
             logger.error("RSR-12: stato dei tavoli di recovery illeggibile (%s): capacita' bloccata", exc)
