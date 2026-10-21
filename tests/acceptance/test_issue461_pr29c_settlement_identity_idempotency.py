@@ -775,3 +775,26 @@ def test_force_unlock_if_event_richiede_l_identita_della_riserva():
     assert tm.force_unlock_if_event(1, "EV", customer_ref="R1") is True
     tm.activate(table_id=2, event_key="EV2", exposure=5.0, market_id="1.1", selection_id=7)   # riserva senza intento
     assert tm.force_unlock_if_event(2, "EV2") is True
+
+
+def test_esito_senza_ref_ne_tavolo_non_chiude_l_incertezza_della_riserva(tmp_path):
+    # Grok su 29903af: AMBIGUOUS dell'auto-next (senza tavolo) e poi un esito certo senza tavolo NE' customer_ref.
+    c = _catena(tmp_path)
+    a, _ = _piazza(c)
+    c.rc._on_quick_bet_ambiguous({**a, "table_id": None, "status": "AMBIGUOUS", "outcome": "AMBIGUOUS"})
+    anonimo = {k: v for k, v in a.items() if k not in ("customer_ref", "table_id")}
+    c.rc._release_if_terminal({**anonimo, "status": "FAILED"}, event_name="QUICK_BET_FAILED")
+    c.rc._release_if_terminal({**anonimo, "customer_ref": "sig-altro", "status": "FAILED"},
+                              event_name="QUICK_BET_FAILED")
+    assert CHIAVE_A in c.rc._uncertain_reservations_map(), "incertezza chiusa da un esito senza identita'"
+    assert c.rc.duplication_guard.is_duplicate(CHIAVE_A), "chiave anti-duplicato riaperta: doppia puntata possibile"
+    c.rc._release_if_terminal({**a, "table_id": None, "status": "FAILED"}, event_name="QUICK_BET_FAILED")
+    assert CHIAVE_A not in c.rc._uncertain_reservations_map()        # esito certo dello stesso intento
+
+
+def test_incertezza_per_riserva_si_chiude_solo_con_l_esito_dello_stesso_intento():
+    rc = RuntimeController.__new__(RuntimeController)
+    rc._mark_uncertain("E", 1, customer_ref="R1")
+    assert rc._clear_uncertain("E", 1) is True and "E" in rc._uncertain_reservations_map()       # nessun ref
+    assert rc._clear_uncertain("E", 1, customer_ref="R2") is True                                # altro intento
+    assert rc._clear_uncertain("E", 1, customer_ref="R1") is False and "E" not in rc._uncertain_reservations_map()

@@ -1377,12 +1377,12 @@
       "module": "core.runtime_controller",
       "area": "ambiguous",
       "file": "core/runtime_controller.py",
-      "original": "        if recorded and ref and recorded != ref:\n            return True",
-      "mutated": "        if False:\n            return True",
+      "original": "            if recorded and recorded != ref:\n                return True",
+      "mutated": "            if recorded and ref and recorded != ref:\n                return True",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
-      "rationale": "#461 PR29-c (S3): l'esito certo di un altro intento chiude l'incertezza AMBIGUOUS di una riserva."
+      "rationale": "#461 PR29-c (S3, Grok su 29903af): l'esito certo di un altro intento, o senza customer_ref, chiude l'incertezza AMBIGUOUS di una riserva."
     },
     {
       "id": "settlement_ambiguous_bet_attribution",
@@ -1539,6 +1539,18 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Codex su e2bb36e): un settlement trattenuto per lettura fallita non blocca l'avvio in ACTIVE."
+    },
+    {
+      "id": "tableless_outcome_clears_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            if recorded_refs and recorded_refs != {ref}:\n                return True",
+      "mutated": "            if False:\n                return True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su 29903af): un esito senza tavolo ne' customer_ref chiude l'AMBIGUOUS dell'auto-next e riapre la chiave anti-duplicato."
     }
   ]
 }

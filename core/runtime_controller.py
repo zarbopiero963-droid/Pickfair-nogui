@@ -4597,8 +4597,9 @@ class RuntimeController:
 
     def _clear_uncertain(self, event_key: str, table_id: Any, *, customer_ref: str = "") -> bool:
         """Esito certo per (evento, tavolo). True se l'evento RESTA incerto su un altro tavolo.
-        #461 PR29-c: se l'incertezza di quel tavolo e' registrata per un intento, l'esito certo di un ALTRO intento
-        (``customer_ref`` diverso) non la chiude: resta incerta (fail-closed)."""
+        #461 PR29-c: se l'incertezza e' registrata per un intento, la chiude solo l'esito certo di QUELLO stesso
+        intento: ``customer_ref`` diverso o assente => resta incerta (fail-closed), anche per un esito senza tavolo
+        (Grok su 29903af)."""
         uncertain = self._uncertain_reservations_map()
         tables = getattr(self, "_uncertain_tables", None)
         if tables is None:
@@ -4606,10 +4607,15 @@ class RuntimeController:
         refs = getattr(self, "_uncertain_refs", None)
         if refs is None:
             refs = self._uncertain_refs = {}
-        recorded = refs.get((event_key, str(table_id)), "") if table_id is not None else ""
         ref = str(customer_ref or "")
-        if recorded and ref and recorded != ref:
-            return True
+        if table_id is not None:
+            recorded = refs.get((event_key, str(table_id)), "")
+            if recorded and recorded != ref:
+                return True
+        else:
+            recorded_refs = {v for (ev, _t), v in refs.items() if ev == event_key and v}
+            if recorded_refs and recorded_refs != {ref}:
+                return True
         refs.pop((event_key, str(table_id)), None)
         # #461 PR29-c (Codex su e2bb36e): un AMBIGUOUS senza table_id (auto-next) e' registrato sotto None; l'esito
         # certo dello STESSO intento sul tavolo risolto lo chiude.

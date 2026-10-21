@@ -119,7 +119,8 @@ restava per sempre (S9).
 - **Chiave della chiusura di posizione** (`table_id`): include `customer_ref` e `reservation_id`, quindi lo
   stesso tavolo riusato per lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay.
 - **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
-  stesso intento; un esito senza `customer_ref` non libera nulla. Un AMBIGUOUS registrato senza tavolo
+  stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata
+  per un intento (nemmeno un esito senza tavolo). Un AMBIGUOUS registrato senza tavolo
   (auto-next) si chiude con il settlement della stessa riserva.
 - **Replay** di un settlement già registrato: nessun effetto economico (tavolo, recovery, realizzato, ordini);
   restano solo letture informative (sync del saldo, checkpoint del ciclo).
