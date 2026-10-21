@@ -186,3 +186,25 @@ def test_rilascio_del_lotto_non_libera_la_chiave_di_una_nuova_riserva_sullo_stes
     engine.reconcile_batch("B-29B")
     assert tm.get_table(2).current_event_key == EVENT_KEY and tm.get_table(2).current_exposure == 6.0
     assert EVENT_KEY in guard._active, "liberata la chiave anti-duplicato della nuova riserva"
+
+
+def test_chiave_liberata_se_il_tavolo_del_lotto_era_gia_libero_e_nessuno_porta_l_evento(tmp_path):
+    # Review anticipata (P2): tavolo del lotto gia' liberato da un reset e non riassegnato; il controller ha preso la
+    # chiave dell'evento appuntata (mai scaduta per TTL). Il lotto chiude senza rischio: nessuna riserva porta piu'
+    # l'evento, la chiave va liberata (altrimenti l'evento resta bloccato fino al riavvio).
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    guard.acquire(EVENT_KEY, pin=True)
+    tm.force_unlock(1)
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert EVENT_KEY not in guard._active, "chiave dell'evento trattenuta per sempre"
+
+
+def test_settlement_su_tavolo_gia_libero_registra_la_perdita(tmp_path):
+    # Review anticipata (P2): il P&L del lotto su un tavolo gia' libero (non riassegnato) resta contabilizzato nel
+    # recovery del tavolo, come prima; solo un tavolo riassegnato a un'altra riserva non si tocca.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    engine.finalize_terminal_batch("B-29B", status="EXECUTED", pnl=-5.0)
+    t = tm.get_table(1)
+    assert t.loss_amount == 5.0 and t.in_recovery, "perdita del lotto non contabilizzata"

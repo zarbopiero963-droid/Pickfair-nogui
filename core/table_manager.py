@@ -247,19 +247,26 @@ class TableManager:
             self.force_unlock(int(table_id))
             return True
 
-    def release_if_event(self, table_id: int, event_key: str, *, pnl: float = 0.0) -> bool:
-        """#461 PR29-b (PF-C29-01.17): `release` (con il P&L) SOLO se il tavolo porta ancora la riserva di
-        ``event_key``. Controllo e rilascio sotto lo stesso lock: un tavolo riassegnato a un'altra riserva non si
-        tocca, un secondo rilascio dello stesso lotto e' un no-op. True solo se ha rilasciato."""
+    def release_batch_reservation(self, table_id: int, event_key: str, *, pnl: float = 0.0) -> str:
+        """#461 PR29-b (PF-C29-01.17): chiusura della riserva di un lotto sul suo tavolo, controllo e rilascio sotto lo
+        stesso lock. Esiti:
+        - ``"released"``: il tavolo portava ancora ``event_key`` => `release` con il P&L;
+        - ``"free"``: il tavolo era gia' libero (reset) => il P&L del lotto resta contabilizzato nel recovery del
+          tavolo (come prima), nessuna riserva toccata;
+        - ``"foreign"``: il tavolo porta un'altra riserva => nulla (P&L non attribuibile, la riserva altrui resta)."""
         key = str(event_key or "")
-        if not key:
-            return False
         with self._lock:
             table = self._get(int(table_id))
-            if not table or table.current_event_key != key:
-                return False
-            self.release(int(table_id), pnl=pnl)
-            return True
+            if not table or not key:
+                return "foreign"
+            if table.current_event_key == key:
+                self.release(int(table_id), pnl=pnl)
+                return "released"
+            if not table.current_event_key:
+                if float(pnl or 0.0) != 0.0:
+                    self.release(int(table_id), pnl=pnl)
+                return "free"
+            return "foreign"
 
     def force_unlock_if_unplaced_reservation(self, table_id: int, event_key: str, customer_ref: str) -> bool:
         """#461 PR29-a: rilascia il tavolo SOLO se porta ancora la riserva mai a mercato di quell'intento

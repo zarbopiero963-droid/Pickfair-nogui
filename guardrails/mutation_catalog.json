@@ -1231,8 +1231,8 @@
       "module": "core.table_manager",
       "area": "exposure",
       "file": "core/table_manager.py",
-      "original": "            if not table or table.current_event_key != key:\n                return False\n            self.release(int(table_id), pnl=pnl)",
-      "mutated": "            if not table:\n                return False\n            self.release(int(table_id), pnl=pnl)",
+      "original": "            if table.current_event_key == key:\n                self.release(int(table_id), pnl=pnl)\n                return \"released\"",
+      "mutated": "            if table.current_event_key:\n                self.release(int(table_id), pnl=pnl)\n                return \"released\"",
       "tests": [
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
@@ -1249,6 +1249,30 @@
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
       "rationale": "#461 PR29-b: il rilascio di un lotto libera la chiave anti-duplicato di una riserva che non gli appartiene."
+    },
+    {
+      "id": "freed_batch_table_keeps_dedup_key_forever",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "                        outcome == \"free\" and table_manager.find_by_event_key(event_key) is None)",
+      "mutated": "                        False)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review anticipata): tavolo del lotto gia' libero e nessuna riserva sull'evento: la chiave appuntata resta per sempre."
+    },
+    {
+      "id": "batch_pnl_dropped_on_freed_table",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "                if float(pnl or 0.0) != 0.0:\n                    self.release(int(table_id), pnl=pnl)\n                return \"free\"",
+      "mutated": "                return \"free\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review anticipata): il P&L negativo di un lotto su un tavolo gia' libero non entra nel recovery."
     }
   ]
 }

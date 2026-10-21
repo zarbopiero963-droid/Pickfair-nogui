@@ -678,14 +678,18 @@ class DutchingBatchManager:
         table_id = batch.get("table_id")
 
         # #461 PR29-b (PF-C29-01.17): il rilascio e' legato alla riserva del lotto (tavolo + event_key), con
-        # controllo e rilascio atomici nel TableManager. Un tavolo gia' liberato e riassegnato a un'altra riserva
+        # controllo e rilascio atomici nel TableManager (release_batch_reservation). Un tavolo gia' liberato e riassegnato a un'altra riserva
         # non si tocca, e nemmeno la sua chiave anti-duplicato; un secondo rilascio e' un no-op.
         owns_key = True
         if table_manager and table_id is not None:
             owns_key = False
             try:
-                if hasattr(table_manager, "release_if_event"):
-                    owns_key = table_manager.release_if_event(int(table_id), event_key, pnl=float(pnl))
+                if hasattr(table_manager, "release_batch_reservation"):
+                    outcome = table_manager.release_batch_reservation(int(table_id), event_key, pnl=float(pnl))
+                    # Tavolo gia' libero (reset): la chiave e' del lotto solo se nessuna riserva porta piu' l'evento,
+                    # altrimenti appartiene alla nuova riserva e resta (review anticipata PR29-b).
+                    owns_key = outcome == "released" or (
+                        outcome == "free" and table_manager.find_by_event_key(event_key) is None)
                 elif pnl != 0.0 and hasattr(table_manager, "release"):
                     table_manager.release(int(table_id), pnl=float(pnl))
                     owns_key = True
