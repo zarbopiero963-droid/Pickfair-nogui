@@ -1893,9 +1893,15 @@ class TradingEngine:
 
     def _release_customer_ref_if_terminal(self, ctx: _ExecutionContext) -> None:
         self._assert_valid_ctx(ctx)
-        self._inflight_keys.discard(ctx.customer_ref)
-        if self._local_inflight_keys.get(ctx.customer_ref) is ctx:
+        # #461 PR29-a (rilievi Codex e Sol su #533): una chiave registrata da un ALTRO contesto di questo processo
+        # (originale ancora in volo) non si tocca: una richiesta con lo stesso customer_ref negata prima del dedup
+        # (safe mode, risk gate) riapriva l'intento dell'originale. Senza proprietario locale (chiave ripopolata dal
+        # DB al recovery) resta il rilascio di sempre.
+        owner = self._local_inflight_keys.get(ctx.customer_ref)
+        if owner is ctx:
             del self._local_inflight_keys[ctx.customer_ref]
+        if owner is None or owner is ctx:
+            self._inflight_keys.discard(ctx.customer_ref)
 
     def _find_duplicate_reference(self, ctx: _ExecutionContext) -> Optional[str]:
         fn = getattr(self.db, "find_duplicate_order", None)

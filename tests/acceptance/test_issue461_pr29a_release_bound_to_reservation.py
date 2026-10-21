@@ -231,8 +231,12 @@ def test_richiesta_negata_prima_del_dedup_non_cancella_la_proprieta_locale_dell_
     eng.submit_quick_bet({k: v for k, v in cmd.items() if k != "table_id"})      # negata, nessun evento al runtime
     del eng._is_safe_mode_enabled
     assert cmd["customer_ref"] in eng._local_inflight_keys, "la proprieta' locale dell'originale e' stata scaricata"
+    assert cmd["customer_ref"] in eng._inflight_keys, "la chiave di dedup dell'originale e' stata scaricata (Sol)"
+    retry = eng.submit_quick_bet({**{k: v for k, v in cmd.items() if k != "table_id"}, "correlation_id": "cid-retry"})
+    assert retry.get("status") == "DUPLICATE_BLOCKED", retry          # nuovo correlation_id: bloccato in memoria
+    assert len(c.broker.state.orders) == 1
     c.bus.publish("CMD_QUICK_BET", dict(cmd))
-    (dup,) = c.bus.payloads("QUICK_BET_DUPLICATE")
+    dup = c.bus.payloads("QUICK_BET_DUPLICATE")[-1]
     assert dup.get("duplicate_in_process") is True, dup
     assert _tavoli_occupati(c) == [cmd["table_id"]]
 
@@ -257,6 +261,27 @@ def test_success_di_un_altro_ordine_non_chiude_l_incertezza_della_riserva(tmp_pa
     c.rc._on_quick_bet_ambiguous(dict(cmd))
     c.rc._on_quick_bet_success({**cmd, "status": "COMPLETED", "customer_ref": "sig-un-altro-ordine"})
     assert cmd["event_key"] in c.rc._uncertain_reservations_map()
+
+
+def test_doppione_esterno_non_cancella_l_incertezza_di_una_riserva_riassegnata_dopo_il_rilascio(tmp_path):
+    # Rilievo Codex su #533 (P1): fra lo sblocco atomico e la pulizia dell'incertezza il tavolo e' riusato per lo
+    # stesso event_key da un ordine che diventa AMBIGUOUS. Il callback tardivo del doppione non deve togliere la
+    # sua incertezza ne' la chiave: la riserva mai inviata non e' mai incerta, quindi non si tocca l'incertezza.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    tm, tid = c.rc.table_manager, cmd["table_id"]
+    atomico = tm.force_unlock_if_unplaced_reservation
+
+    def atomico_poi_riassegna_ambiguo(*a, **kw):
+        ok = atomico(*a, **kw)
+        _riserva_manuale(c, table_id=tid, ref="sig-nuovo-intento", event_key=cmd["event_key"])
+        c.rc._mark_uncertain(cmd["event_key"], tid)
+        return ok
+
+    tm.force_unlock_if_unplaced_reservation = atomico_poi_riassegna_ambiguo
+    c.rc._on_quick_bet_duplicate({**cmd, "duplicate_in_process": False})
+    assert cmd["event_key"] in c.rc._uncertain_reservations_map(), "incertezza della nuova riserva cancellata"
+    assert c.rc._uncertain_tables.get(cmd["event_key"]) == {tid}
+    assert c.rc.duplication_guard._active, "chiave della nuova riserva incerta rilasciata"
 
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402

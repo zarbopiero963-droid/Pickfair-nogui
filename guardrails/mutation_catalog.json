@@ -1157,8 +1157,8 @@
       "module": "core.trading_engine",
       "area": "dedupe",
       "file": "core/trading_engine.py",
-      "original": "        if self._local_inflight_keys.get(ctx.customer_ref) is ctx:",
-      "mutated": "        if ctx.customer_ref in self._local_inflight_keys:",
+      "original": "        if owner is ctx:",
+      "mutated": "        if owner is not None:",
       "tests": [
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
@@ -1175,6 +1175,30 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex #533): un SUCCESS di completamento dopo AMBIGUOUS lascia la riserva marcata incerta."
+    },
+    {
+      "id": "foreign_context_reopens_inflight_dedup_key",
+      "module": "core.trading_engine",
+      "area": "dedupe",
+      "file": "core/trading_engine.py",
+      "original": "        if owner is None or owner is ctx:",
+      "mutated": "        if True:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Sol #533): una richiesta negata prima del dedup scarica la chiave di dedup dell'originale in volo; un retry con nuovo correlation_id supera il dedup in memoria."
+    },
+    {
+      "id": "external_duplicate_clears_foreign_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "        if event_key not in self._uncertain_reservations_map():",
+      "mutated": "        if not self._clear_uncertain(event_key, table_id):",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): il rilascio tardivo di un doppione esterno cancella l'incertezza e la chiave di una riserva riassegnata allo stesso evento."
     }
   ]
 }

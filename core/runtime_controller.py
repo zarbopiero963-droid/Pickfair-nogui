@@ -5506,7 +5506,10 @@ class RuntimeController:
             return
         logger.warning("Doppione esterno per %s: riserva mai inviata da questo processo rilasciata (tavolo %s)",
                        ref, table_id)
-        if not self._clear_uncertain(event_key, table_id):
+        # Una riserva mai inviata non e' mai incerta (AMBIGUOUS nasce solo da un invio): l'incertezza non si tocca,
+        # cosi' un tavolo riassegnato nel frattempo allo stesso evento conserva la propria (rilievo Codex su #533).
+        # La chiave si rilascia solo se nessuna riserva dell'evento e' incerta.
+        if event_key not in self._uncertain_reservations_map():
             self.duplication_guard.release(event_key)
 
     def _consumed_intent_reason(self, customer_ref: str) -> str:
