@@ -273,10 +273,10 @@ class TableManager:
             self._book_pnl(table, pnl)
             return "foreign"
 
-    @staticmethod
-    def _book_pnl(table: TableState, pnl: float) -> None:
+    def _book_pnl(self, table: TableState, pnl: float) -> None:
         """Contabilizza nel recovery del tavolo il P&L di una posizione gia' chiusa (stessa regola di `release`)
-        senza toccare la riserva corrente del tavolo."""
+        senza toccare la riserva corrente del tavolo. Lo stato segue la regola di `activate` per un tavolo occupato:
+        RECOVERY con debito, ACTIVE senza (LOCKED resta LOCKED)."""
         pnl = float(pnl or 0.0)
         if pnl < 0:
             table.loss_amount += abs(pnl)
@@ -284,6 +284,11 @@ class TableManager:
         elif pnl > 0 and table.loss_amount > 0:
             table.loss_amount = max(0.0, table.loss_amount - pnl)
             table.in_recovery = table.loss_amount > 0
+        else:
+            return
+        if table.status != "LOCKED":
+            table.status = "RECOVERY" if table.in_recovery else "ACTIVE"
+        self._touch(table)
 
     def force_unlock_if_unplaced_reservation(self, table_id: int, event_key: str, customer_ref: str) -> bool:
         """#461 PR29-a: rilascia il tavolo SOLO se porta ancora la riserva mai a mercato di quell'intento

@@ -29,7 +29,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   su ogni terminale. Il rilascio del lotto (riconciliazione e settlement) e' legato alla sua riserva: tavolo e
   chiave si liberano solo se il tavolo porta ancora la riserva del lotto, cioe' event_key e batch_id nel meta
   (`TableManager.release_batch_reservation`, atomico); un tavolo riassegnato o riusato per lo stesso evento da un'altra
-  riserva non si tocca, ma il P&L del lotto entra comunque nel suo recovery; su un tavolo gia' libero il P&L del lotto resta
+  riserva non si tocca, ma il P&L del lotto entra comunque nel suo recovery (stato RECOVERY con debito, ACTIVE senza); su un tavolo gia' libero il P&L del lotto resta
   contabilizzato. Su un tavolo gia' libero o riassegnato a un altro evento la chiave del lotto non si tocca (ne' release
   ne' unpin): un nuovo intento la acquisisce e la appunta prima di attivare il suo tavolo, e senza identita' della
   registrazione non si distingue da quella del vecchio lotto. Limite dichiarato (fail-closed): una chiave appuntata

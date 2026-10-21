@@ -1275,6 +1275,18 @@
       "rationale": "#461 PR29-b (review Sol): tavolo del lotto riassegnato, chiave di un nuovo intento sullo stesso evento cancellata dal cleanup del vecchio lotto."
     },
     {
+      "id": "reassigned_table_status_ignores_booked_recovery",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "            table.status = \"RECOVERY\" if table.in_recovery else \"ACTIVE\"",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Codex): perdita del vecchio lotto contabilizzata su un tavolo riassegnato ma stato ACTIVE: snapshot e UI di rischio mostrano un tavolo pulito con debito di recovery."
+    },
+    {
       "id": "batch_pnl_dropped_on_freed_table",
       "module": "core.table_manager",
       "area": "money_management",

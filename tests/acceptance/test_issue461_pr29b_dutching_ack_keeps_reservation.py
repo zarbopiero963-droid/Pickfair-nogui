@@ -308,3 +308,17 @@ def test_pin_di_un_nuovo_lotto_resta_con_tavolo_riassegnato(tmp_path):
     _annullate(client)
     engine.reconcile_batch("B-29B")
     assert guard.is_pinned(EVENT_KEY), "tolto il pin della nuova riserva"
+
+
+def test_stato_del_tavolo_riassegnato_coerente_con_il_recovery_contabilizzato(tmp_path):
+    # Review Codex su #534 (57184af): la perdita del vecchio lotto su un tavolo riassegnato a una riserva pulita lo
+    # porta in RECOVERY (come `activate` per un tavolo occupato con debito); un profitto che lo azzera lo riporta ACTIVE.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    tm.activate(table_id=1, event_key="1.888:ALTRO", exposure=4.0, market_id="1.888", selection_id=1, meta={})
+    assert _tavolo(tm).status == "ACTIVE"
+    engine.finalize_terminal_batch("B-29B", status="EXECUTED", pnl=-5.0)
+    assert _tavolo(tm).status == "RECOVERY" and _tavolo(tm).current_event_key == "1.888:ALTRO"
+    tm.release_batch_reservation(1, EVENT_KEY, batch_id="B-29B", pnl=5.0)
+    t = _tavolo(tm)
+    assert t.status == "ACTIVE" and not t.in_recovery and t.current_exposure == 4.0
