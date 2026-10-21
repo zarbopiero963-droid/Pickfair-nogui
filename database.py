@@ -346,6 +346,36 @@ class Database:
                 conn.execute(stmt)
             self._migrate_signal_pattern_action(conn)
             self._migrate_cycle_recovery_checkpoints(conn)
+            self._migrate_settlement_effects(conn)
+
+    @staticmethod
+    def _migrate_settlement_effects(conn) -> None:
+        """#461 PR29-c: registro durevole degli effetti economici dei settlement (additivo, nessuna colonna
+        esistente toccata). Una riga per ``settlement_key``: la PRIMARY KEY e la transazione BEGIN IMMEDIATE di
+        `record_settlement_effect` fanno si' che lo stesso settlement produca il suo effetto una sola volta,
+        anche fra due processi sullo stesso file SQLite."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settlement_effects (
+                settlement_key TEXT PRIMARY KEY,
+                outcome TEXT NOT NULL DEFAULT '',
+                table_id INTEGER,
+                event_key TEXT NOT NULL DEFAULT '',
+                customer_ref TEXT NOT NULL DEFAULT '',
+                reservation_id TEXT NOT NULL DEFAULT '',
+                bet_id TEXT NOT NULL DEFAULT '',
+                market_id TEXT NOT NULL DEFAULT '',
+                pnl REAL NOT NULL DEFAULT 0.0,
+                instance_id TEXT NOT NULL DEFAULT '',
+                realized_applied INTEGER NOT NULL DEFAULT 0,
+                recorded_at REAL NOT NULL,
+                payload_json TEXT NOT NULL DEFAULT '{}'
+            )
+            """
+        )
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(settlement_effects)").fetchall()}
+        if "payload_json" not in columns:                 # registro creato da una versione precedente della tabella
+            conn.execute("ALTER TABLE settlement_effects ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'")
 
     @staticmethod
     def _migrate_cycle_recovery_checkpoints(conn) -> None:
@@ -1717,6 +1747,143 @@ class Database:
             commit=False,
         )
         return row is not None
+
+    # =========================================================
+    # EFFETTI DEI SETTLEMENT (#461 PR29-c)
+    # =========================================================
+    _SETTLEMENT_EFFECT_FIELDS = ("outcome", "table_id", "event_key", "customer_ref", "reservation_id", "bet_id",
+                                 "market_id", "pnl", "instance_id")
+
+    def get_settlement_effect(self, settlement_key: str) -> Optional[Dict[str, Any]]:
+        key = str(settlement_key or "").strip()
+        if not key:
+            return None
+        row = self._execute("SELECT * FROM settlement_effects WHERE settlement_key = ?", (key,),
+                            fetchone=True, commit=False)
+        return dict(row) if row else None
+
+    def record_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
+                                 settings: Optional[Dict[str, Any]] = None) -> bool:
+        """Registra l'effetto di un settlement e, nella STESSA transazione ``BEGIN IMMEDIATE``, le impostazioni
+        durevoli che lo materializzano (stato dei tavoli di recovery). True solo se questa chiamata ha creato la
+        riga; False se il settlement era gia' registrato (da questo o da un altro processo): in quel caso nulla
+        viene scritto. Un errore annulla tutto (riga e impostazioni) e si propaga."""
+        values = dict(record or {})
+
+        def insert(conn, key):
+            if conn.execute("SELECT 1 FROM settlement_effects WHERE settlement_key = ?", (key,)).fetchone():
+                return False
+            table_id = values.get("table_id")
+            conn.execute(
+                """
+                INSERT INTO settlement_effects(
+                    settlement_key, outcome, table_id, event_key, customer_ref, reservation_id, bet_id,
+                    market_id, pnl, instance_id, realized_applied, recorded_at, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (key, str(values.get("outcome") or ""), int(table_id) if table_id is not None else None,
+                 str(values.get("event_key") or ""), str(values.get("customer_ref") or ""),
+                 str(values.get("reservation_id") or ""), str(values.get("bet_id") or ""),
+                 str(values.get("market_id") or ""), float(values.get("pnl") or 0.0),
+                 str(values.get("instance_id") or ""), float(time.time()),
+                 self._safe_json_dumps(values.get("payload") or {})),
+            )
+            return True
+
+        return self._settlement_transaction(settlement_key, insert, settings, "record_settlement_effect")
+
+    def upgrade_held_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
+                                       settings: Optional[Dict[str, Any]] = None) -> bool:
+        """Un settlement registrato ``held`` (identita' non dimostrabile allora) ha ora un effetto: esito e identita'
+        aggiornati e stato dei tavoli scritto nella STESSA transazione, solo se la riga e' ancora ``held``. True se
+        questa chiamata l'ha aggiornata; False se non e' (piu') ``held`` (gia' riconciliata, anche da un altro
+        processo). ``realized_applied`` non cambia: il P&L realizzato e' stato applicato alla registrazione."""
+        values = dict(record or {})
+
+        def upgrade(conn, key):
+            table_id = values.get("table_id")
+            cursor = conn.execute(
+                """
+                UPDATE settlement_effects SET outcome = ?, table_id = ?, event_key = ?, customer_ref = ?,
+                    reservation_id = ?, bet_id = ?
+                WHERE settlement_key = ? AND outcome = 'held'
+                """,
+                (str(values.get("outcome") or ""), int(table_id) if table_id is not None else None,
+                 str(values.get("event_key") or ""), str(values.get("customer_ref") or ""),
+                 str(values.get("reservation_id") or ""), str(values.get("bet_id") or ""), key),
+            )
+            return cursor.rowcount == 1
+
+        return self._settlement_transaction(settlement_key, upgrade, settings, "upgrade_held_settlement_effect")
+
+    def _settlement_transaction(self, settlement_key: str, change, settings: Optional[Dict[str, Any]],
+                                name: str) -> bool:
+        """``change(conn, key)`` e le impostazioni in una transazione ``BEGIN IMMEDIATE``: change False => nulla
+        scritto. Un errore annulla tutto e si propaga."""
+        key = str(settlement_key or "").strip()
+        if not key:
+            raise ValueError(f"{name} requires settlement_key")
+        with self._write_lock:
+            if self._in_transaction():
+                raise RuntimeError(f"{name}: transazione gia' aperta (atomicita' non garantita)")
+            conn = self._get_connection()
+            conn.execute("BEGIN IMMEDIATE")
+            self._set_tx_depth(1)
+            try:
+                if not change(conn, key):
+                    conn.rollback()
+                    return False
+                for setting_key, setting_value in (settings or {}).items():
+                    self._set_setting(str(setting_key), setting_value)
+                conn.commit()
+                return True
+            except Exception:
+                try:
+                    conn.rollback()
+                except Exception:
+                    logger.exception("Errore rollback %s", name)
+                raise
+            finally:
+                self._set_tx_depth(0)
+
+    def list_held_settlement_effects(self) -> List[Dict[str, Any]]:
+        """Settlement registrati ``held`` (in attesa di riconciliazione), con il payload originale."""
+        rows = self._execute("SELECT * FROM settlement_effects WHERE outcome = 'held' ORDER BY recorded_at ASC",
+                             fetch=True, commit=False)
+        out = []
+        for row in rows or []:
+            item = dict(row)
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            item["payload"] = payload if isinstance(payload, dict) else {}
+            out.append(item)
+        return out
+
+    def mark_settlement_realized(self, settlement_key: str) -> None:
+        """Il P&L realizzato del settlement e' stato applicato (e la perdita giornaliera aggiornata)."""
+        key = str(settlement_key or "").strip()
+        if key:
+            with self._write_lock:
+                self._execute("UPDATE settlement_effects SET realized_applied = 1 WHERE settlement_key = ?", (key,))
+
+    def find_orders_by_bet_id(self, bet_id: str) -> List[Dict[str, Any]]:
+        """Righe ``orders`` il cui ``response_json`` porta questo ``betId`` (identita' durevole bet -> intento):
+        ``customer_ref``, stato e request persistita. Lista vuota se nessuna."""
+        wanted = str(bet_id or "").strip()
+        if not wanted:
+            return []
+        rows = self._execute(
+            "SELECT customer_ref, status, payload_json, response_json FROM orders WHERE response_json LIKE ?",
+            (f"%{wanted}%",), fetch=True, commit=False)
+        out: List[Dict[str, Any]] = []
+        for row in rows or []:
+            item = dict(row)
+            if self._order_bet_id(self._safe_json_loads(item.get("response_json"), {})) != wanted:
+                continue
+            payload = self._safe_json_loads(item.get("payload_json"), {})
+            out.append({"customer_ref": str(item.get("customer_ref") or ""), "status": str(item.get("status") or ""),
+                        "payload": payload if isinstance(payload, dict) else {}})
+        return out
 
     def insert_audit_event(self, event: Dict[str, Any]) -> None:
         self._execute(

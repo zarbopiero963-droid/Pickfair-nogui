@@ -1055,14 +1055,16 @@ def test_runtime_controller_accepted_settlement_still_releases_table_and_updates
         exposure=15.0,
         market_id="1.100",
         selection_id=7,
-        meta={},
+        meta={"customer_ref": "REF-ACCEPT"},
     )
     rc.duplication_guard.acquire("evt-accept-ordering")
 
+    # #461 PR29-c: la chiusura con table_id rilascia solo la riserva identificata (customer_ref della posizione)
     rc._on_close_position(
         {
             "event_key": "evt-accept-ordering",
             "table_id": 1,
+            "customer_ref": "REF-ACCEPT",
             "batch_id": "batch-accept-ordering",
             "correlation_id": "corr-accept-ordering",
             "gross_pnl": 5.0,

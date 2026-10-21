@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import time
+import uuid
 
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -157,6 +158,10 @@ class TableManager:
             table.market_id = str(market_id or "")
             table.selection_id = str(selection_id or "")
             table.meta = dict(meta or {})
+            # #461 PR29-c: identita' della singola riserva (catena bet_id -> customer_ref -> reservation_id ->
+            # table_id). Generata qui se il chiamante non la porta (la ricostruzione F018 porta quella persistita).
+            if not str(table.meta.get("reservation_id") or ""):
+                table.meta["reservation_id"] = uuid.uuid4().hex
 
             if table.loss_amount > 0.0 or table.in_recovery:
                 table.status = "RECOVERY"
@@ -227,7 +232,7 @@ class TableManager:
             self._touch(table)
             self._prune_if_surplus(table)
 
-    def force_unlock_if_event(self, table_id: int, event_key: str) -> bool:
+    def force_unlock_if_event(self, table_id: int, event_key: str, *, customer_ref: str = "") -> bool:
         """Rilascia il tavolo SOLO se occupa ancora la riserva di ``event_key``.
 
         PF-ALL-F023: il rilascio da evento terminale deve colpire l'ordine giusto.
@@ -235,14 +240,19 @@ class TableManager:
         - idempotente: un secondo evento trova ``current_event_key`` vuoto => no-op;
         - sicuro in concorrenza: un tavolo gia' riassegnato a un altro evento non
           viene mai liberato da un evento terminale vecchio.
+        #461 PR29-c: con il ``customer_ref`` dell'esito, un tavolo la cui riserva porta un ALTRO intento (stesso
+        evento) non si libera: l'esito di un intento non chiude la riserva di un altro.
         Restituisce True solo se ha rilasciato.
         """
-        key = str(event_key or "")
+        key, ref = str(event_key or ""), str(customer_ref or "")
         if not key:
             return False
         with self._lock:
             table = self._get(int(table_id))
             if not table or table.current_event_key != key:
+                return False
+            reserved = str((table.meta or {}).get("customer_ref") or "")
+            if ref and reserved and reserved != ref:
                 return False
             self.force_unlock(int(table_id))
             return True
@@ -256,14 +266,32 @@ class TableManager:
         - ``"free"``: il tavolo era gia' libero (reset) => il P&L resta contabilizzato nel recovery, nessuna riserva
           toccata;
         - ``"foreign"``: il tavolo porta un'altra riserva (o un'identita' non verificabile) => la riserva resta; il
-          P&L del lotto entra comunque nel recovery del tavolo (`_book_pnl`), senza liberarlo."""
-        key, owner = str(event_key or ""), str(batch_id or "")
+          P&L del lotto entra comunque nel recovery del tavolo (`_book_pnl`), senza liberarlo.
+        Stesso controllo della riserva identificata di PR29-c, con identita' ``batch_id`` (vuoto => mai rilasciato)."""
+        return self.release_identified_reservation(table_id, event_key, identity={"batch_id": str(batch_id or "")},
+                                                   pnl=pnl)
+
+    def release_identified_reservation(self, table_id: int, event_key: str, *, identity: Dict[str, Any],
+                                       pnl: float = 0.0) -> str:
+        """#461 PR29-c (PF-C29-01 .11/.13/.18): chiusura della riserva identificata da un settlement, controllo e
+        rilascio sotto lo stesso lock. La riserva e' del settlement solo se il tavolo porta ancora ``event_key`` E
+        ogni valore non vuoto di ``identity`` (``customer_ref``, ``reservation_id``, ``batch_id``) coincide col meta
+        del tavolo;
+        senza almeno un valore d'identita' nulla e' dimostrato. Esiti (stessa semantica di
+        `release_batch_reservation`):
+        - ``"released"``: il tavolo porta la riserva => `release` con il P&L;
+        - ``"free"``: il tavolo e' gia' libero => il P&L entra nel recovery del tavolo, nessuna riserva toccata;
+        - ``"foreign"``: il tavolo porta un'altra riserva (anche sullo stesso evento) => la riserva resta, il P&L
+          della posizione chiusa entra nel recovery del tavolo (`_book_pnl`)."""
+        key = str(event_key or "")
+        wanted = {str(k): str(v) for k, v in (identity or {}).items() if str(v or "")}
         with self._lock:
             table = self._get(int(table_id))
             if not table:
                 return "foreign"
             meta = table.meta or {}
-            if key and owner and table.current_event_key == key and str(meta.get("batch_id") or "") == owner:
+            if (key and wanted and table.current_event_key == key
+                    and all(str(meta.get(k) or "") == v for k, v in wanted.items())):
                 self.release(int(table_id), pnl=pnl)
                 return "released"
             if not table.current_event_key:
@@ -272,6 +300,31 @@ class TableManager:
                 return "free"
             self._book_pnl(table, pnl)
             return "foreign"
+
+    def locked(self) -> RLock:
+        """Lock dei tavoli, per comporre un controllo-e-modifica con una scrittura durevole (#461 PR29-c)."""
+        return self._lock
+
+    def snapshot_table(self, table_id: int) -> Optional[Dict[str, Any]]:
+        """Copia profonda dello stato di un tavolo (e delle tracce di `release`: tombstone, potatura), per annullare una
+        modifica la cui registrazione durevole fallisce. Da usare sotto `locked()`."""
+        with self._lock:
+            table = self._get(int(table_id))
+            if not table:
+                return None
+            state = table.to_dict()
+            state["meta"] = dict(table.meta or {})
+            return {"table": state, "tombstones": len(self._placed_tombstones)}
+
+    def restore_table(self, snapshot: Optional[Dict[str, Any]]) -> None:
+        """Ripristina lo stato salvato da `snapshot_table`: nessun effetto parziale se la registrazione fallisce."""
+        if not snapshot:
+            return
+        with self._lock:
+            state = dict(snapshot["table"])
+            state["meta"] = dict(state.get("meta") or {})
+            self._tables[int(state["table_id"])] = TableState(**state)
+            del self._placed_tombstones[int(snapshot["tombstones"]):]
 
     def _book_pnl(self, table: TableState, pnl: float) -> None:
         """Contabilizza nel recovery del tavolo il P&L di una posizione gia' chiusa (stessa regola di `release`)

@@ -483,9 +483,9 @@ def _close_payload(batch_id, **overrides):
     return payload
 
 
-def _auto_trade_ref(c, batch_id):
+def _auto_trade_ref(c, batch_id, **overrides):
     before = len(c.bus.payloads("CMD_QUICK_BET"))
-    c.rc._on_close_position(_close_payload(batch_id))
+    c.rc._on_close_position(_close_payload(batch_id, **overrides))
     cmds = c.bus.payloads("CMD_QUICK_BET")[before:]
     assert len(cmds) == 1, c.rc._last_auto_trade_result
     return cmds[0].get("customer_ref")
@@ -496,7 +496,11 @@ def test_pass_auto_trade_order_identity_bound_to_settlement(tmp_path):
     c.rc.risk_desk.sync_bankroll(100.0)
 
     ref_1 = _auto_trade_ref(c, "batch-pr26a-1")
-    ref_2 = _auto_trade_ref(c, "batch-pr26a-2")
+    # #461 PR29-c: il secondo settlement e' quello della posizione aperta dal primo auto-trade (la sua identita');
+    # un settlement senza identita' non libera piu' la riserva di un altro intento (S5).
+    opened = c.rc.table_manager.get_table(1)
+    assert opened.meta.get("customer_ref") == ref_1
+    ref_2 = _auto_trade_ref(c, "batch-pr26a-2", event_key=opened.current_event_key, customer_ref=ref_1)
 
     assert ref_1 and ref_2
     assert BETFAIR_CUSTOMER_REF.fullmatch(ref_1) and BETFAIR_CUSTOMER_REF.fullmatch(ref_2)

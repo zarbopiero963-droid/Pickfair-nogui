@@ -2447,6 +2447,27 @@
         "tests/invariant/test_reconcile_invariants.py"
       ],
       "max_files": 9
+    },
+    "issue461-pr29c-settlement-identity-idempotency": {
+      "description": "Mandato owner PF-PR29-C-FINANCIAL-IDEMPOTENCY-01 (21/10/2026), roadmap #461 scheda PR29, sotto-PR 29-c: PF-C29-01 .11/.13/.18 — un settlement produce un solo effetto finanziario sulla sola riserva che identifica (replay, concorrenza, due processi, crash, riavvio). Catena d'identita' durevole bet_id -> customer_ref -> reservation_id -> table_id (core/table_manager.py, core/pnl_engine.py, core/runtime_controller.py); registro durevole settlement_effects in database.py (tabella additiva, BEGIN IMMEDIATE con lo stato dei tavoli di recovery); fix S2/S3/S5/S6/S7/S9 riprodotti in Phase 0 su 409bcf9. Test adeguati alla semantica 'identita' obbligatoria' (f026, pr26a, bankroll_sync, pr512 c14/c16/c17); docs di dominio (docs/roserpina_bankroll_equity.md, docs/cashout_overview.md); catalogo mutation con le mutazioni PR29-c. ESTENSIONE DICHIARATA (mandato owner PR29-c FINAL VALIDATION): +tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py (crash di processo reale, due processi OS sullo stesso SQLite, compatibilita' dello schema); regola del realizzato non dimostrato (solo perdite) e riconciliazione dei settlement held.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/pnl_engine.py",
+        "core/runtime_controller.py",
+        "core/table_manager.py",
+        "database.py",
+        "docs/cashout_overview.md",
+        "docs/roserpina_bankroll_equity.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py",
+        "tests/f026/test_f026_units.py",
+        "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+        "tests/integration/test_runtime_controller_bankroll_sync.py",
+        "tests/test_pr512_codex_034af59.py"
+      ],
+      "max_files": 15
     }
   }
 }

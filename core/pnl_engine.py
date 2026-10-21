@@ -237,6 +237,9 @@ class PnLEngine:
                 "stake": float(snap.open_size or 0.0),
                 "table_id": payload.get("table_id"),
                 "batch_id": payload.get("batch_id"),
+                # #461 PR29-c: identita' della riserva, perche' la chiusura liberi solo il tavolo che la porta
+                "customer_ref": payload.get("customer_ref"),
+                "reservation_id": payload.get("reservation_id"),
             }
 
     # =========================================================
@@ -391,6 +394,8 @@ class PnLEngine:
             "market_id": market_id,
             "table_id": pos["table_id"],
             "batch_id": pos["batch_id"],
+            "customer_ref": pos.get("customer_ref"),
+            "reservation_id": pos.get("reservation_id"),
             # legacy alias (net pnl) kept for compatibility
             "pnl": net_pnl,
             "gross_pnl": gross_pnl,

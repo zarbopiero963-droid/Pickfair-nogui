@@ -121,9 +121,10 @@ def test_invalid_snapshot_never_moves_cash_peak():
     assert rc._cash_equity_peak == 100.0
 
 
-def _activate(rc, tid, key, mid, exp=10.0):
+def _activate(rc, tid, key, mid, exp=10.0, ref=""):
     rc.duplication_guard.acquire(key)
-    rc.table_manager.activate(table_id=tid, event_key=key, exposure=exp, market_id=mid, selection_id=7)
+    rc.table_manager.activate(table_id=tid, event_key=key, exposure=exp, market_id=mid, selection_id=7,
+                              meta={"customer_ref": ref} if ref else None)
 
 
 def test_reset_keeps_live_unsettled_positions_and_their_keys():
@@ -173,17 +174,21 @@ class _OrdersDb:
         if self.fail:
             raise RuntimeError("db down")
         if "FROM orders" in sql:
-            return [{"payload_json": json.dumps({k: v for k, v in p.items() if k != "_status"}),
-                     "status": p.get("_status", "SUBMITTED")} for p in self.payloads]
+            return [{"payload_json": json.dumps({k: v for k, v in p.items() if k not in ("_status", "_ref")}),
+                     "status": p.get("_status", "SUBMITTED"), "customer_ref": p.get("_ref", "")}
+                    for p in self.payloads]
         return []
 
 
 def test_settlement_without_table_id_releases_the_unique_table_of_the_market():
+    # #461 PR29-c: il tavolo unico del mercato si libera solo se il suo unico ordine e' l'intento che porta
+    # (customer_ref della riga ordine == customer_ref della riserva) e con la chiave del settlement.
     rc = _rc()
-    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}])
-    _activate(rc, 1, "EV-A", "1.10")
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7, "_ref": "REF-A"}])
+    _activate(rc, 1, "EV-A", "1.10", ref="REF-A")
     _activate(rc, 2, "EV-B", "1.20")
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0,
+                               settlement_key="sim:1.10:S1")
     t = _tables(rc)
     assert t[1]["current_event_key"] == "" and t[1]["current_exposure"] == 0.0
     assert t[1]["status"] == "RECOVERY" and t[1]["loss_amount"] == 10.0, "P&L del tavolo come col table_id"
@@ -215,10 +220,11 @@ def test_settlement_without_table_id_ignores_orders_that_were_never_placed(never
     """Riesame ciclo 10 (F1): un tentativo precedente mai piazzato (FAILED/DENIED/DUPLICATE_BLOCKED) sulla stessa
     posizione non e' una seconda gamba: la puntata singola reale libera il tavolo col proprio P&L."""
     rc = _rc()
-    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "_status": never_placed},
-                       {"market_id": "1.10", "event_key": "EV-A", "_status": "SUBMITTED"}])
-    _activate(rc, 1, "EV-A", "1.10")
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
+    rc.db = _OrdersDb([{"market_id": "1.10", "event_key": "EV-A", "_status": never_placed, "_ref": "REF-OLD"},
+                       {"market_id": "1.10", "event_key": "EV-A", "_status": "SUBMITTED", "_ref": "REF-A"}])
+    _activate(rc, 1, "EV-A", "1.10", ref="REF-A")
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0,
+                               settlement_key="sim:1.10:S1")
     t = _tables(rc)[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0, t
 
@@ -306,8 +312,14 @@ def test_settlement_without_market_and_table_releases_nothing():
     assert _tables(rc)[1]["current_event_key"] == "EV-A"
 
 
-def test_settlement_with_table_id_keeps_previous_behaviour():
+def test_settlement_with_table_id_releases_only_the_identified_reservation():
+    # #461 PR29-c (S5): con il table_id il tavolo si libera solo se porta ancora evento e intento della posizione;
+    # senza identita' (comportamento precedente: rilascio cieco del table_id) nulla viene liberato.
     rc = _rc()
-    _activate(rc, 1, "EV-A", "1.10")
-    rc._release_settled_tables({"market_id": "1.99"}, table_id=1, pnl=2.0)
+    _activate(rc, 1, "EV-A", "1.10", ref="REF-A")
+    rc._release_settled_tables({"market_id": "1.99", "event_key": "EV-A"}, table_id=1, pnl=2.0,
+                               settlement_key="EV-A|1")
+    assert _tables(rc)[1]["current_event_key"] == "EV-A", "rilascio senza identita' dimostrata"
+    rc._release_settled_tables({"market_id": "1.99", "event_key": "EV-A", "customer_ref": "REF-A"}, table_id=1,
+                               pnl=2.0, settlement_key="EV-A|1|REF-A")
     assert _tables(rc)[1]["current_event_key"] == ""
