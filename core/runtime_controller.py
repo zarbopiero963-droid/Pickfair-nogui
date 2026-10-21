@@ -4701,7 +4701,8 @@ class RuntimeController:
                 "market_id": str(p.get("market_id") or ""),
                 "selection_id": p.get("selection_id"),
                 "event_key": str(p.get("event_key") or ""),
-                "table_id": p.get("table_id"),
+                # #461 PR29-c (Codex su 70821fd): l'auto-next persiste il tavolo in ``reservation_table_id``
+                "table_id": p.get("table_id") if p.get("table_id") is not None else p.get("reservation_table_id"),
                 "side": str(p.get("bet_type") or p.get("side") or "").upper(),
                 "stake": p.get("stake"),
                 "price": p.get("price"),
@@ -5003,18 +5004,29 @@ class RuntimeController:
                 tm.restore_table(snapshot)                     # effetto parziale annullato: nulla e' stato registrato
                 logger.exception("Settlement %s: effetto sul tavolo %s fallito, annullato (fail-closed)", key, tid)
                 return {"outcome": "unverifiable", "applied": False, "realized_already": False}
-            created = self._commit_settlement_effect(key, {**record, "outcome": outcome}, prepared[0],
-                                                     upgrade=upgrade)
+            # Codex su 70821fd: con piu' processi sullo stesso DB ognuno ha i propri tavoli in memoria; riscrivere
+            # l'intera mappa sovrascriverebbe le perdite registrate dagli altri. Si aggiorna SOLO la voce del tavolo
+            # di questo settlement, letta e scritta nella transazione. Mappa intera solo se va scritto anche un reset
+            # di ciclo in sospeso (o la baseline) o se una scrittura precedente di questo processo e' fallita.
+            settings, merge = prepared[0], None
+            if (set(settings) == {self._RECOVERY_KEY} and not getattr(self, "_recovery_persist_failed", False)
+                    and getattr(self, "_pending_cycle_reset", None) is None):
+                settings, merge = None, (self._RECOVERY_KEY, str(tid), tm.recovery_state().get(tid))
+            created = self._commit_settlement_effect(key, {**record, "outcome": outcome}, settings,
+                                                     upgrade=upgrade, merge=merge, full_settings=prepared[0])
             if not created:
                 tm.restore_table(snapshot)                     # nessun effetto: gia' registrato o non registrabile
                 if created is None:
                     return {"outcome": "unverifiable", "applied": False, "realized_already": False}
                 # corsa persa: la riga e' di un altro consumer (altro processo), che applica anche il realizzato
                 return {"outcome": "duplicate", "applied": False, "realized_already": True}
-        if created != "unpersisted":
-            self._recovery_persisted(prepared[1])
-        else:
-            self._recovery_persist_failed = True
+            # Codex su 70821fd: esito della scrittura annotato sotto lo stesso lock della scrittura, cosi' un reset
+            # di ciclo concorrente non vede azzerato un proprio stato in sospeso da una scrittura precedente.
+            if created != "unpersisted":
+                self._recovery_persisted(prepared[1])
+            else:
+                self._recovery_persist_failed = True
+        if created == "unpersisted":
             bus = getattr(self, "bus", None)
             if bus is not None:
                 bus.publish("RECOVERY_STATE_PERSIST_FAILED", {"event_key": ev,
@@ -5054,12 +5066,32 @@ class RuntimeController:
                         held_settlements=held)
         return dict(rebuild, held_settlements=held)
 
+    def _remember_unrecorded_settlement(self, settlement_key: str, payload: dict, pnl: float) -> None:
+        """Settlement il cui effetto non e' stato registrato (registro illeggibile/non scrivibile): in coda nel
+        processo per `reconcile_held_settlements`; dopo un riavvio lo riconsegna il poller (nessun checkpoint)."""
+        if not settlement_key:
+            return
+        pending = getattr(self, "_unrecorded_settlements", None)
+        if pending is None:
+            pending = self._unrecorded_settlements = {}
+        pending[settlement_key] = {"payload": dict(payload or {}), "pnl": float(pnl)}
+
     def reconcile_held_settlements(self) -> dict:
         """#461 PR29-c: rivaluta i settlement registrati ``held`` (identita' allora non dimostrabile) con il payload
         conservato nel registro. Attribuibili ora => effetto sui tavoli una volta, nessun P&L realizzato ripetuto;
         ancora non attribuibili => restano held (nessuna perdita di contabilizzazione: riga, P&L e payload restano nel
         registro). Ritorna i conteggi; registro illeggibile => ``ok=False``."""
         result = {"ok": True, "reconciled": [], "still_held": [], "pending": []}
+        for key, item in list((getattr(self, "_unrecorded_settlements", None) or {}).items()):
+            with self._settlement_consumer_lock():
+                effect = self._release_settled_tables(item["payload"], table_id=item["payload"].get("table_id"),
+                                                      pnl=item["pnl"], settlement_key=key)
+            if effect.get("outcome") == "unverifiable":
+                result["pending"].append(key)
+                result["still_held"].append(key)
+            else:
+                self._unrecorded_settlements.pop(key, None)
+                (result["reconciled"] if effect.get("applied") else result["still_held"]).append(key)
         lister = getattr(getattr(self, "db", None), "list_held_settlement_effects", None)
         if not callable(lister):
             return result
@@ -5112,7 +5144,8 @@ class RuntimeController:
         return local.get(settlement_key)
 
     def _commit_settlement_effect(self, settlement_key: str, record: dict, settings: Optional[dict], *,
-                                  upgrade: bool = False):
+                                  upgrade: bool = False, merge: Optional[tuple] = None,
+                                  full_settings: Optional[dict] = None):
         """Registra l'effetto (e lo stato tavoli) in una transazione: True se registrato ora, False se gia'
         registrato (questo o un altro processo), None se la registrazione e' fallita (nessun effetto).
         Solo per un DB senza registro (doppi di test): ``"unpersisted"`` se l'effetto e' registrato nel processo ma lo
@@ -5121,7 +5154,10 @@ class RuntimeController:
         writer = getattr(db, "upgrade_held_settlement_effect" if upgrade else "record_settlement_effect", None)
         try:
             if callable(writer):
+                if merge is not None:
+                    return bool(writer(settlement_key, record, settings, recovery_merge=merge))
                 return bool(writer(settlement_key, record, settings))
+            settings = full_settings if full_settings is not None else settings
             # DB senza registro (doppi di test): idempotenza nel solo processo, stato tavoli come prima.
             local = getattr(self, "_local_settlement_effects", None)
             if local is None:
@@ -5740,7 +5776,7 @@ class RuntimeController:
             except Exception as exc:
                 self._recovery_persist_aborted(context, exc)
                 return False
-        self._recovery_persisted(context)
+            self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)
         return True
 
     def _recovery_write_lock(self):
@@ -6284,7 +6320,16 @@ class RuntimeController:
         settlement_key = self._settlement_effect_key(payload)
         # PF-ALL-F026 / F2 / #461 PR29-c: effetto sul tavolo della riserva identificata, una sola volta.
         effect = self._release_settled_tables(payload, table_id=table_id, pnl=pnl, settlement_key=settlement_key)
-        if effect["outcome"] in ("held", "unverifiable") and not self._persist_recovery_tables():   # RSR-12
+        # #461 PR29-c: un settlement senza effetto non cambia i tavoli: si riscrive lo stato solo per ritentare una
+        # scrittura fallita o un reset di ciclo in sospeso (riscriverlo comunque sovrascriverebbe, con piu' processi
+        # sullo stesso DB, le perdite registrate dagli altri: Codex su 70821fd).
+        retry_persist = (getattr(self, "_recovery_persist_failed", False)
+                         or getattr(self, "_pending_cycle_reset", None) is not None)
+        unrecorded = effect["outcome"] == "unverifiable"
+        if unrecorded:
+            self._remember_unrecorded_settlement(settlement_key, payload, pnl)
+        if (effect["outcome"] in ("held", "unverifiable") and retry_persist
+                and not self._persist_recovery_tables()):   # RSR-12
             # Stato di recovery NON durevole: dopo un crash la perdita aggiornata non
             # tornerebbe. Fail-closed: capacita' di recovery considerata esaurita (nessun
             # nuovo ingresso in recovery) finche' una scrittura riesce (rilievo Codex #512).
@@ -6352,14 +6397,17 @@ class RuntimeController:
             self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
             self.bus.publish("AUTO_TRADE_MM_RESULT", dict(fail_result))
             return
-        self._persist_cycle_checkpoint(
-            settlement_key=settlement_key,
-            payload=payload,
-            checkpoint_stage="SETTLEMENT_DETECTED",
-            next_trade_submission_status="NOT_ATTEMPTED",
-            reason="settlement_detected",
-            recovery_status=recovery_probe.get("status", "RECOVERY_NO_STATE"),
-        )
+        if not unrecorded:
+            # #461 PR29-c (Codex su 70821fd): effetto NON registrato => nessun checkpoint durevole (ne' qui ne' nel
+            # sync): il poller deve poterlo riconsegnare dopo un riavvio; nel processo resta in coda di ritentativo.
+            self._persist_cycle_checkpoint(
+                settlement_key=settlement_key,
+                payload=payload,
+                checkpoint_stage="SETTLEMENT_DETECTED",
+                next_trade_submission_status="NOT_ATTEMPTED",
+                reason="settlement_detected",
+                recovery_status=recovery_probe.get("status", "RECOVERY_NO_STATE"),
+            )
         # Pending-stop sincrono: se questo settlement sfonderebbe il limite,
         # arma il flag SOTTO LOCK *prima* di applicare il PnL. Da questo istante
         # ogni SIGNAL_RECEIVED concorrente (dispatch multi-worker) e' rifiutato,
@@ -6401,7 +6449,17 @@ class RuntimeController:
             # invece del conto live che sta settlando. L'order-entry resta gia'
             # bloccato dal pending-stop armato sopra, quindi anticipare il sync
             # non riapre la finestra di piazzamento ordini.
-            sync_result = self._sync_bankroll_post_settlement(payload)
+            if unrecorded:
+                sync_result = {
+                    "correlation_id": str(payload.get("correlation_id") or payload.get("event_key") or ""),
+                    "settlement_detected": True,
+                    "bankroll_before": float(self.risk_desk.bankroll_current),
+                    "bankroll_after": float(self.risk_desk.bankroll_current),
+                    "bankroll_sync_status": "SYNC_DEFERRED_EFFECT_UNRECORDED",
+                    "reason": "SETTLEMENT_EFFECT_UNRECORDED",
+                }
+            else:
+                sync_result = self._sync_bankroll_post_settlement(payload)
             self._last_bankroll_sync_result = dict(sync_result)
             self.bus.publish("BANKROLL_SYNC_RESULT", dict(sync_result))
             # Daily-loss hard stop SINCRONO (persist + cancel-all + lockdown) dopo
@@ -6423,7 +6481,13 @@ class RuntimeController:
                 with self._daily_loss_stop_lock:
                     self._daily_loss_pending_stop = False
                 self._persist_db_emergency_marker(active=False)
-        auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
+        if unrecorded:
+            # nessun ordine successivo su un settlement il cui effetto non e' registrato (fail-closed)
+            auto_trade_result = {"auto_trade_status": "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED",
+                                 "reason": "settlement_effect_unrecorded",
+                                 "correlation_id": str(payload.get("correlation_id") or "")}
+        else:
+            auto_trade_result = self._evaluate_and_maybe_submit_auto_next_trade(payload=payload, sync_result=sync_result)
         self._last_auto_trade_result = dict(auto_trade_result)
         self._last_cycle_executor_result = dict(auto_trade_result)
         self.bus.publish("AUTO_TRADE_MM_RESULT", dict(auto_trade_result))

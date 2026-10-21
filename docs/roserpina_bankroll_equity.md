@@ -123,8 +123,16 @@ restava per sempre (S9).
   (avvio in PAUSED) finché il tavolo non esiste; mai registrato come effetto senza debito.
 - **Auto-next**: la request persistita porta `reservation_table_id` e `reservation_id` (il campo `table_id`
   resta assente come prima), così il settlement della bet ritrova la riserva dopo un riavvio.
-- **Scritture dello stato tavoli**: snapshot e scrittura avvengono sotto il lock dei tavoli anche fuori dal
-  settlement, quindi uno snapshot vecchio non sovrascrive una perdita appena registrata.
+- **Scritture dello stato tavoli**: snapshot, scrittura ed esito (`_recovery_persisted`) avvengono sotto il lock
+  dei tavoli anche fuori dal settlement, quindi uno snapshot vecchio non sovrascrive una perdita appena registrata.
+  La registrazione di un settlement aggiorna, nella stessa transazione, **solo la voce del proprio tavolo** nella
+  mappa persistita (letta dentro la transazione): con più processi sullo stesso DB nessuno cancella le perdite
+  registrate dagli altri. Mappa intera solo con un reset di ciclo in sospeso o dopo una scrittura fallita; un
+  settlement senza effetto non riscrive lo stato salvo per ritentare una scrittura fallita.
+- **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
+  bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
+  in coda nel processo per `reconcile_held_settlements()` e dopo un riavvio lo riconsegna il poller.
+- **F018** ricostruisce la riserva viva dell'auto-next sul suo `reservation_table_id`.
 - **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
   stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata
   per un intento (nemmeno un esito senza tavolo). Un AMBIGUOUS registrato senza tavolo

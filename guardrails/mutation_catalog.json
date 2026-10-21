@@ -1587,6 +1587,54 @@
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Codex su 29903af): uno snapshot vecchio dello stato tavoli sovrascrive la perdita appena registrata da un settlement."
+    },
+    {
+      "id": "f018_ignores_auto_next_reservation_table",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                \"table_id\": p.get(\"table_id\") if p.get(\"table_id\") is not None else p.get(\"reservation_table_id\"),",
+      "mutated": "                \"table_id\": p.get(\"table_id\"),",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): F018 ricostruisce la riserva viva dell'auto-next su un altro tavolo."
+    },
+    {
+      "id": "recovery_persisted_outside_lock",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)\n        return True",
+      "mutated": "        self._recovery_persisted(context)\n        return True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): l'esito della scrittura dello stato tavoli e' annotato fuori dal lock (stato di reset in sospeso azzerato da una scrittura precedente)."
+    },
+    {
+      "id": "recovery_snapshot_replaces_other_process_tables",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "                    if loss is None:\n                        current.pop(str(table_key), None)\n                    else:\n                        current[str(table_key)] = float(loss)",
+      "mutated": "                    current = {}\n                    if loss is not None:\n                        current[str(table_key)] = float(loss)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): con due processi sullo stesso DB la scrittura del settlement cancella le perdite dei tavoli registrate dall'altro."
+    },
+    {
+      "id": "unrecorded_settlement_checkpointed",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if not unrecorded:\n            # #461 PR29-c (Codex su 70821fd): effetto NON registrato",
+      "mutated": "        if True:\n            # #461 PR29-c (Codex su 70821fd): effetto NON registrato",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): checkpoint durevole per un effetto non registrato: il poller non lo riconsegna e la perdita resta fuori dal recovery."
     }
   ]
 }

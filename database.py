@@ -9,7 +9,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from core.secret_cipher import SecretCipher
 from core.type_helpers import safe_float, safe_int, safe_bool_int, safe_json_dumps, safe_json_loads
@@ -1763,7 +1763,8 @@ class Database:
         return dict(row) if row else None
 
     def record_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
-                                 settings: Optional[Dict[str, Any]] = None) -> bool:
+                                 settings: Optional[Dict[str, Any]] = None, *,
+                                 recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
         """Registra l'effetto di un settlement e, nella STESSA transazione ``BEGIN IMMEDIATE``, le impostazioni
         durevoli che lo materializzano (stato dei tavoli di recovery). True solo se questa chiamata ha creato la
         riga; False se il settlement era gia' registrato (da questo o da un altro processo): in quel caso nulla
@@ -1791,10 +1792,12 @@ class Database:
             )
             return True
 
-        return self._settlement_transaction(settlement_key, insert, settings, "record_settlement_effect")
+        return self._settlement_transaction(settlement_key, insert, settings, "record_settlement_effect",
+                                            recovery_merge=recovery_merge)
 
     def upgrade_held_settlement_effect(self, settlement_key: str, record: Dict[str, Any],
-                                       settings: Optional[Dict[str, Any]] = None) -> bool:
+                                       settings: Optional[Dict[str, Any]] = None, *,
+                                       recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
         """Un settlement registrato ``held`` (identita' non dimostrabile allora) ha ora un effetto: esito e identita'
         aggiornati e stato dei tavoli scritto nella STESSA transazione, solo se la riga e' ancora ``held``. True se
         questa chiamata l'ha aggiornata; False se non e' (piu') ``held`` (gia' riconciliata, anche da un altro
@@ -1815,12 +1818,16 @@ class Database:
             )
             return cursor.rowcount == 1
 
-        return self._settlement_transaction(settlement_key, upgrade, settings, "upgrade_held_settlement_effect")
+        return self._settlement_transaction(settlement_key, upgrade, settings, "upgrade_held_settlement_effect",
+                                            recovery_merge=recovery_merge)
 
     def _settlement_transaction(self, settlement_key: str, change, settings: Optional[Dict[str, Any]],
-                                name: str) -> bool:
+                                name: str, *, recovery_merge: Optional[Tuple[str, str, Optional[float]]] = None) -> bool:
         """``change(conn, key)`` e le impostazioni in una transazione ``BEGIN IMMEDIATE``: change False => nulla
-        scritto. Un errore annulla tutto e si propaga."""
+        scritto. Un errore annulla tutto e si propaga.
+        ``recovery_merge`` = (chiave, tavolo, perdita|None): aggiorna SOLO la voce di quel tavolo nella mappa JSON
+        persistita, letta dentro la transazione (None = voce rimossa). Con piu' processi sullo stesso file nessuno
+        sovrascrive le voci scritte dagli altri (Codex su 70821fd). Mappa persistita illeggibile => errore."""
         key = str(settlement_key or "").strip()
         if not key:
             raise ValueError(f"{name} requires settlement_key")
@@ -1836,6 +1843,18 @@ class Database:
                     return False
                 for setting_key, setting_value in (settings or {}).items():
                     self._set_setting(str(setting_key), setting_value)
+                if recovery_merge is not None:
+                    merge_key, table_key, loss = recovery_merge
+                    row = conn.execute("SELECT value FROM settings WHERE key = ?", (str(merge_key),)).fetchone()
+                    raw = row[0] if row else ""
+                    current = json.loads(raw) if raw not in (None, "") else {}
+                    if not isinstance(current, dict):
+                        raise ValueError(f"{name}: stato persistito {merge_key} non valido")
+                    if loss is None:
+                        current.pop(str(table_key), None)
+                    else:
+                        current[str(table_key)] = float(loss)
+                    self._set_setting(str(merge_key), json.dumps(current))
                 conn.commit()
                 return True
             except Exception:

@@ -881,3 +881,75 @@ def test_r8_snapshot_dello_stato_tavoli_non_sovrascrive_un_settlement_registrato
     settlement.join(5)
     db.save_settings = originale
     assert _perdite_persistite(c).get(int(cmd["table_id"])) == 10.0, "perdita registrata sovrascritta"
+
+
+# ---------------------------------------------------------------- review Codex su 70821fd
+def test_r9_f018_ricostruisce_l_auto_next_sul_tavolo_persistito(tmp_path):
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _close_payload
+
+    c = _chain(tmp_path, db_name="r9.db")
+    c.rc.risk_desk.sync_bankroll(100.0)
+    c.rc._on_close_position(_close_payload("batch-r9"))
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    # La riserva dell'auto-next persistita su un tavolo che non e' il primo libero (es. tavolo del ciclo 3)
+    riga = c.db._execute("SELECT id, payload_json FROM orders WHERE customer_ref = ?", (cmd["customer_ref"],),
+                         fetch=True, commit=False)[0]
+    persistita = dict(json.loads(riga["payload_json"]), reservation_table_id=3)
+    c.db._execute("UPDATE orders SET payload_json = ? WHERE id = ?", (json.dumps(persistita), riga["id"]), commit=True)
+    cmd = dict(cmd, reservation_table_id=3)
+    c.rc.table_manager = TableManager(table_count=len(c.rc.table_manager.snapshot()))   # riavvio: tavoli vuoti
+    c.rc.duplication_guard = DuplicationGuard()
+    assert c.rc._rebuild_open_positions()["ok"]
+    ricostruito = c.rc.table_manager.find_by_customer_ref(cmd["customer_ref"])
+    assert ricostruito is not None and ricostruito.table_id == int(cmd["reservation_table_id"]), \
+        "riserva viva ricostruita su un altro tavolo"
+
+
+def test_r10_esito_della_scrittura_annotato_sotto_il_lock_dei_tavoli(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    visti = []
+    originale = c.rc._recovery_persisted
+
+    def annota(context):
+        visti.append(c.rc.table_manager.locked()._is_owned())
+        return originale(context)
+
+    monkeypatch.setattr(c.rc, "_recovery_persisted", annota)
+    c.rc._on_close_position(_cleared(bet, -10.0))          # percorso del settlement
+    c.rc._persist_recovery_tables()                        # percorso ordinario
+    assert visti == [True, True], visti
+
+
+def test_r11_due_processi_non_si_sovrascrivono_le_perdite_dei_tavoli(tmp_path):
+    c1 = _catena(tmp_path, db_name="condiviso_r11.db")
+    a, bet_a = _piazza(c1)
+    c2 = _catena(tmp_path, db_name="condiviso_r11.db")     # secondo processo: tavoli propri
+    c2.rc.table_manager.activate(table_id=int(a["table_id"]), event_key="segnaposto", exposure=1.0,
+                                 market_id="9.9", selection_id=1, meta={"customer_ref": "sig-segnaposto"})
+    b, bet_b = _seconda(c2)
+    c1.regolate.append(c2.regolate[-1])
+    c2.regolate.insert(0, c1.regolate[0])
+    assert int(b["table_id"]) != int(a["table_id"])
+    c1.rc._on_close_position(_cleared(bet_a, -10.0))
+    c2.rc._on_close_position(_cleared(bet_b, -5.0))
+    assert _perdite_persistite(c1) == {int(a["table_id"]): 10.0, int(b["table_id"]): 5.0}, _perdite_persistite(c1)
+
+
+def test_r12_effetto_non_registrato_nessun_checkpoint_ne_ordine_poi_riconciliato(tmp_path, monkeypatch):
+    c = _catena(tmp_path)
+    cmd, bet = _con_bet(c)
+    chiave = f"cleared:{MERCATO}:{bet}"
+    ordini = len(c.bus.payloads("CMD_QUICK_BET"))
+    with monkeypatch.context() as m:
+        m.setattr(c.rc.db, "record_settlement_effect", _guasto)
+        c.rc._on_close_position(_cleared(bet, -10.0))
+    assert c.rc._read_cycle_recovery_state(chiave).get("status") in (None, "", "RECOVERY_NO_STATE"), \
+        "checkpoint durevole scritto per un effetto non registrato (il poller non lo riconsegnerebbe)"
+    assert c.rc._last_bankroll_sync_result["bankroll_sync_status"] == "SYNC_DEFERRED_EFFECT_UNRECORDED"
+    assert c.rc._last_auto_trade_result["auto_trade_status"] == "AUTO_TRADE_SKIPPED_EFFECT_UNRECORDED"
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == ordini
+    _nessun_effetto(c, cmd)
+    assert c.rc.reconcile_held_settlements()["reconciled"] == [chiave]          # ritentativo nel processo
+    assert _tavolo(c, cmd["table_id"]).current_event_key == "" and _perdite(c) == 10.0
+    assert round(float(c.rc.risk_desk.realized_pnl), 2) == -10.0                 # perdita contata una volta
