@@ -2432,6 +2432,18 @@
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
       ],
       "max_files": 11
+    },
+    "issue461-pr29b-dutching-ack-keeps-reservation": {
+      "description": "Mandato owner PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026), roadmap #461 scheda PR29, sotto-PR 29-b: PF-C29-01.17 (#506 c.6123640661) — un lotto Dutching con gambe a mercato o abbinate (EXECUTED) non libera tavolo/esposizione/chiave nella riconciliazione; rilascio solo su esito terminale privo di rischio di ogni gamba (FAILED/CANCELLED/ROLLED_BACK), una volta sola. Test invariante che codificava il rilascio su EXECUTED corretto.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/reconciliation_engine.py",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "max_files": 6
     }
   }
 }

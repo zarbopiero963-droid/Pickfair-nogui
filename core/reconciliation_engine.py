@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 # RECONCILIATION ENGINE
 # =============================================================================
 
+
+# #461 PR29-b (PF-C29-01.17): stati terminali di un lotto in cui nessuna gamba porta rischio sull'exchange.
+NO_RISK_TERMINAL_BATCH_STATUSES = frozenset({"FAILED", "CANCELLED", "ROLLED_BACK"})
+
 class ReconciliationEngine:
     """
     Riconcilia i batch dutching al riavvio o su richiesta.
@@ -1864,7 +1868,11 @@ class ReconciliationEngine:
         status = str((new_batch or {}).get("status") or "")
 
         if status.upper() in TERMINAL_BATCH_STATUSES:
-            self._release(batch_id)
+            # #461 PR29-b (PF-C29-01.17): si libera solo su esito terminale certo e PRIVO di rischio di ogni gamba
+            # (tutte fallite / annullate / rollback). EXECUTED vuol dire gambe a mercato o abbinate: la posizione e'
+            # viva, tavolo, esposizione e chiave restano fino al settlement (finalize_terminal_batch con il P&L).
+            if status.upper() in NO_RISK_TERMINAL_BATCH_STATUSES:
+                self._release(batch_id)
             self._lock_mgr.cleanup_batch(batch_id)
 
         # final legs: use in-memory snapshot (current under batch lock).

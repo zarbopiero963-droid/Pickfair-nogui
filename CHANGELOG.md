@@ -22,6 +22,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR29-b — un lotto Dutching a mercato non libera la riserva (PF-C29-01.17):** nella riconciliazione un
+  lotto con gambe a mercato o abbinate (stato EXECUTED) non libera piu' tavolo, esposizione e chiave anti-duplicato:
+  la posizione e' viva fino al settlement. Il rilascio avviene solo su esito terminale certo e privo di rischio di
+  ogni gamba (FAILED, CANCELLED, ROLLED_BACK), una volta sola. Corretto il test invariante che codificava il rilascio
+  su ogni terminale. Dutching resta dormiente (decisione owner #531).
+
 - **#461 PR29-a — il rilascio segue la riserva, mai un esito che non la chiude (PF-C29-01.03, .13):**
   `QUICK_BET_SUCCESS` non rilascia più tavolo, esposizione o chiave anti-duplicato. In produzione l'engine lo
   emette per `DUPLICATE_BLOCKED` (richiesta non inviata perché lo stesso intento è già in volo): un replay dello

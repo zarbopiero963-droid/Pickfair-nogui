@@ -287,16 +287,17 @@ def test_no_invalid_status_transition():
         assert item["status"] in VALID_LEG_STATUSES
 
 
-def test_all_terminal_batches_released():
+def test_executed_batch_keeps_runtime_artifacts():
     """
     Cosa uccide:
-      cleanup saltato su batch terminali.
+      rilascio di tavolo/esposizione/chiave con le gambe abbinate (#461 PR29-b, PF-C29-01.17).
 
     Invariant coperto:
-      release runtime artifacts sempre sui terminali.
+      un lotto EXECUTED (gambe a mercato o abbinate) e' una posizione viva: nessun release fino al
+      settlement (finalize_terminal_batch). Prima questo test codificava il rilascio su ogni terminale.
 
     Mutation che deve fallire:
-      saltare _release.
+      rilasciare su ogni stato terminale.
     """
     db = FakeDB()
     batch_manager = FakeBatchManager()
@@ -332,7 +333,43 @@ def test_all_terminal_batches_released():
     assert result["ok"] is True
     assert result["status"] == "EXECUTED"
 
-    assert batch_manager.release_calls == [{"batch_id": "B-INV-2", "pnl": 0.0}]
+    assert batch_manager.release_calls == []
+
+
+def test_no_risk_terminal_batch_released_once():
+    """
+    Invariant coperto (#461 PR29-b, PF-C29-01.17): un lotto terminale senza rischio (gambe annullate per
+    intero) rilascia gli artefatti runtime una sola volta, anche a una seconda riconciliazione.
+
+    Mutation che deve fallire:
+      saltare _release sui terminali privi di rischio.
+    """
+    db = FakeDB()
+    batch_manager = FakeBatchManager()
+    batch_manager.add_batch(
+        batch_id="B-INV-3",
+        market_id="1.333",
+        status="OPEN",
+        legs=[leg(leg_index=0, status="UNKNOWN", customer_ref="REF-INV-3", created_at_ts=0.0)],
+    )
+    client = FakeClient(
+        orders_by_market={
+            "1.333": [
+                remote_order(
+                    customer_ref="REF-INV-3",
+                    bet_id="BET-INV-3",
+                    status="CANCELLED",
+                    size_matched=0.0,
+                    size_remaining=0.0,
+                )
+            ]
+        }
+    )
+    engine = make_engine(db=db, batch_manager=batch_manager, client=client)
+
+    engine.reconcile_batch("B-INV-3")
+    engine.reconcile_batch("B-INV-3")
+    assert batch_manager.release_calls == [{"batch_id": "B-INV-3", "pnl": 0.0}]
 
 
 def test_no_orphan_legs():

@@ -1199,6 +1199,32 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex P1 #533): un SUCCESS di completamento chiude l'incertezza AMBIGUOUS fuori da un'operazione atomica e puo' cancellare quella di un tavolo riassegnato."
+    },
+    {
+      "id": "executed_batch_releases_live_reservation",
+      "module": "core.reconciliation_engine",
+      "area": "exposure",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if status.upper() in NO_RISK_TERMINAL_BATCH_STATUSES:",
+      "mutated": "            if status.upper() in TERMINAL_BATCH_STATUSES:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "rationale": "#461 PR29-b (PF-C29-01.17): un lotto EXECUTED (gambe a mercato/abbinate) libera tavolo, esposizione e chiave nella riconciliazione."
+    },
+    {
+      "id": "no_risk_terminal_batch_never_released",
+      "module": "core.reconciliation_engine",
+      "area": "exposure",
+      "file": "core/reconciliation_engine.py",
+      "original": "                self._release(batch_id)\n            self._lock_mgr.cleanup_batch(batch_id)",
+      "mutated": "                pass\n            self._lock_mgr.cleanup_batch(batch_id)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "rationale": "#461 PR29-b (PF-C29-01.17): un lotto con tutte le gambe annullate/fallite non rilascia mai tavolo e chiave."
     }
   ]
 }
