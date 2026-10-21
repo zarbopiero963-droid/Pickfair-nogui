@@ -1825,11 +1825,12 @@ class Database:
                                 name: str, *, recovery_merge: Optional[Tuple[str, Dict[str, float], List[str]]] = None) -> bool:
         """``change(conn, key)`` e le impostazioni in una transazione ``BEGIN IMMEDIATE``: change False => nulla
         scritto. Un errore annulla tutto e si propaga.
-        ``recovery_merge`` = (chiave, aggiornate, rimosse): applica alla mappa JSON persistita, letta DENTRO la
-        transazione, solo le voci cambiate da questo processo (``aggiornate`` {tavolo: perdita}, ``rimosse``
-        [tavolo]). Con piu' processi sullo stesso file nessuno sovrascrive le voci scritte dagli altri (Codex e Sol
-        su 70821fd/7a4f2c3). Mappa persistita illeggibile => errore, nulla scritto. ``change`` None => solo
-        impostazioni e mappa."""
+        ``recovery_merge`` = (chiave, delta, rimosse): applica alla mappa JSON persistita, letta DENTRO la
+        transazione, le VARIAZIONI di questo processo: ``delta`` {tavolo: variazione della perdita} si somma al valore
+        persistito (mai sostituito), ``rimosse`` [tavolo] toglie la voce solo se il risultato e' <= 0. Con piu'
+        processi sullo stesso file, anche sullo stesso tavolo, nessuno cancella o sovrascrive la perdita registrata
+        dagli altri (Codex e Sol su 70821fd/7a4f2c3). Mappa persistita illeggibile => errore, nulla scritto.
+        ``change`` None => solo impostazioni e mappa."""
         key = str(settlement_key or "").strip()
         if not key:
             raise ValueError(f"{name} requires settlement_key")
@@ -1852,10 +1853,11 @@ class Database:
                     current = json.loads(raw) if raw not in (None, "") else {}
                     if not isinstance(current, dict):
                         raise ValueError(f"{name}: stato persistito {merge_key} non valido")
+                    for table_key, delta in (updates or {}).items():
+                        current[str(table_key)] = max(0.0, float(current.get(str(table_key), 0.0)) + float(delta))
                     for table_key in deletes or ():
-                        current.pop(str(table_key), None)
-                    for table_key, loss in (updates or {}).items():
-                        current[str(table_key)] = float(loss)
+                        if float(current.get(str(table_key), 0.0)) <= 1e-9:
+                            current.pop(str(table_key), None)
                     self._set_setting(str(merge_key), json.dumps(current))
                 conn.commit()
                 return True

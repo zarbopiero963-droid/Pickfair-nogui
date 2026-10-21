@@ -980,3 +980,18 @@ def test_r11c_scrittura_non_rimuove_la_voce_di_un_tavolo_sconosciuto(tmp_path):
     assert c.rc._restore_recovery_tables()
     assert c.rc._persist_recovery_tables()
     assert _perdite_persistite(c).get(99) == 7.0, "debito di un tavolo non configurato cancellato"
+
+
+def test_r13_due_processi_sullo_stesso_tavolo_sommano_le_perdite(tmp_path):
+    # Codex su 7a4f2c3: due runtime che usano lo STESSO numero di tavolo per riserve diverse. La scrittura del
+    # valore assoluto lasciava solo la perdita dell'ultimo processo; con i delta le due perdite si sommano.
+    c1 = _catena(tmp_path, db_name="condiviso_r13.db")
+    a, bet_a = _piazza(c1)
+    c2 = _catena(tmp_path, db_name="condiviso_r13.db")
+    b, bet_b = _seconda(c2)
+    assert int(b["table_id"]) == int(a["table_id"])            # stesso tavolo, processi diversi
+    c1.regolate.append(c2.regolate[-1])
+    c2.regolate.insert(0, c1.regolate[0])
+    c1.rc._on_close_position(_cleared(bet_a, -10.0))
+    c2.rc._on_close_position(_cleared(bet_b, -5.0))
+    assert _perdite_persistite(c1) == {int(a["table_id"]): 15.0}, _perdite_persistite(c1)

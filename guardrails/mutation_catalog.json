@@ -1617,8 +1617,8 @@
       "module": "database",
       "area": "recovery",
       "file": "database.py",
-      "original": "                    for table_key in deletes or ():\n                        current.pop(str(table_key), None)",
-      "mutated": "                    current = {}",
+      "original": "                    for table_key in deletes or ():\n                        if float(current.get(str(table_key), 0.0)) <= 1e-9:\n                            current.pop(str(table_key), None)",
+      "mutated": "                    current = {k: v for k, v in current.items() if k in (updates or {})}",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
@@ -1641,12 +1641,24 @@
       "module": "core.runtime_controller",
       "area": "recovery",
       "file": "core/runtime_controller.py",
-      "original": "        updates = {k: v for k, v in current.items() if view.get(k) != v}",
-      "mutated": "        updates = dict(current)\n        deletes = [k for k in view if k not in current]\n        return self._RECOVERY_KEY, updates, deletes + [k for k in (\"1\", \"2\", \"3\") if k not in current]",
+      "original": "        deltas = {k: v - float(view.get(k, 0.0)) for k, v in current.items() if view.get(k) != v}",
+      "mutated": "        deltas = dict(current)\n        deletes = deletes + [k for k in (\"1\", \"2\", \"3\") if k not in current]",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
       "rationale": "#461 PR29-c (Sol su 7a4f2c3): una scrittura di ritentativo o ordinaria cancella le perdite dei tavoli registrate da un altro processo."
+    },
+    {
+      "id": "recovery_delta_replaced_by_absolute",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "                        current[str(table_key)] = max(0.0, float(current.get(str(table_key), 0.0)) + float(delta))",
+      "mutated": "                        current[str(table_key)] = max(0.0, float(delta))",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 7a4f2c3): due processi sullo stesso tavolo: la scrittura sostituisce la perdita dell'altro invece di sommarla."
     }
   ]
 }

@@ -182,7 +182,7 @@ try:
             while time.time() < deadline:
                 closes = sum(1 for t, e, _d in list(EV) if t >= t_settle and e == "RUNTIME_CLOSE_POSITION")
                 done = sum(1 for t, e, _d in list(EV) if t >= t_settle and e == "AUTO_TRADE_MM_RESULT")
-                if done >= closes:
+                if closes and done >= closes:          # almeno una chiusura ricevuta e tutte elaborate
                     break
                 time.sleep(0.2)
         elif op == "resettle":

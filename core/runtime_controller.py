@@ -5804,12 +5804,15 @@ class RuntimeController:
         return view
 
     def _recovery_diff(self) -> tuple:
-        """(chiave, aggiornate, rimosse): voci dei tavoli che questo processo ha cambiato rispetto alla sua vista."""
+        """(chiave, delta, rimosse): VARIAZIONI della perdita dei tavoli che questo processo ha prodotto rispetto alla
+        sua vista (si sommano al valore persistito, Codex su 7a4f2c3) e voci che ha chiuso (rimosse solo se il
+        valore persistito risultante e' <= 0)."""
         current = {str(k): float(v) for k, v in self.table_manager.recovery_state().items()}
         view = self._recovery_view()
-        updates = {k: v for k, v in current.items() if view.get(k) != v}
         deletes = [k for k in view if k not in current]
-        return self._RECOVERY_KEY, updates, deletes
+        deltas = {k: v - float(view.get(k, 0.0)) for k, v in current.items() if view.get(k) != v}
+        deltas.update({k: -float(view[k]) for k in deletes if float(view[k])})
+        return self._RECOVERY_KEY, deltas, deletes
 
     def _recovery_view_written(self) -> None:
         self._persisted_recovery_view = {str(k): float(v) for k, v in self.table_manager.recovery_state().items()}
