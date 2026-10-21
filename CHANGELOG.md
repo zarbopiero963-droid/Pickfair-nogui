@@ -30,7 +30,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   quello di un doppione non tocca nulla. Con anti-duplicazione disattivata un segnale identico (stesso
   `customer_ref`) è rifiutato prima di riservare un secondo tavolo (`ingresso_gia_in_volo`); la riconsegna di un
   intento già consegnato al trasporto (DB durevole, anche dopo riavvio) è rifiutata prima di riservare un tavolo
-  (`ingresso_gia_eseguito`, verifica fallita => `ammissione_non_verificabile`), anche nell'auto-next. Il rilascio resta
+  (`ingresso_gia_eseguito`, verifica fallita => `ammissione_non_verificabile`), anche nell'auto-next. Con più processi
+  sullo stesso DB, `QUICK_BET_DUPLICATE` riporta `duplicate_in_process` (deciso sotto il lock del motore): se
+  l'intento è stato preso da un altro processo, la riserva mai inviata di questo processo si rilascia (stesso
+  tavolo, evento e `customer_ref`, non a mercato); un replay nello stesso processo la conserva. Il rilascio resta
   a FAILED certo, sweep F028 e settlement. Corretto il test PR28-e che codificava il rilascio su SUCCESS.
 
 - **#461 PR28-e — gate esplicito dei fondi sulle nuove entrate (PF-CAP-09 / PF-CAP-19, PF-EXEC-04):**

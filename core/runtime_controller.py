@@ -1477,6 +1477,7 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_DUPLICATE", self._on_quick_bet_duplicate)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
         # Esito di ogni cashout/hedge (CMD_EXECUTE_CASHOUT resta a consumatore unico: l'executor)
@@ -5476,6 +5477,29 @@ class RuntimeController:
         if equity >= peak:
             return 0.0
         return (peak - equity) / peak * 100.0
+
+    def _on_quick_bet_duplicate(self, payload: dict) -> None:
+        """#461 PR29-a (rilievo Codex su #533): doppione bloccato perche' l'intento e' stato preso FUORI da questo
+        processo (``duplicate_in_process`` False: altro processo sullo stesso DB). La riserva di QUESTO comando non
+        e' mai partita da qui: si rilascia, come per un esito certo di non-invio, solo se il tavolo porta ancora
+        proprio quella riserva (tavolo, evento e customer_ref) e non risulta a mercato. Replay nello stesso
+        processo (True) o dato assente => nulla (la riserva viva dell'originale si conserva, PF-C29-01.03)."""
+        payload = dict(payload or {})
+        if payload.get("duplicate_in_process") is not False:
+            return
+        table_id, event_key = payload.get("table_id"), str(payload.get("event_key") or "")
+        ref = str(payload.get("customer_ref") or "")
+        try:
+            table = self.table_manager.get_table(int(table_id)) if table_id is not None else None
+        except (TypeError, ValueError):
+            table = None
+        meta = (table.meta or {}) if table is not None else {}
+        if (table is None or not event_key or not ref or table.current_event_key != event_key
+                or str(meta.get("customer_ref") or "") != ref or "placed_at" in meta):
+            return
+        logger.warning("Doppione esterno per %s: riserva mai inviata da questo processo rilasciata (tavolo %s)",
+                       ref, table_id)
+        self._release_if_terminal(payload, event_name="QUICK_BET_FAILED")
 
     def _consumed_intent_reason(self, customer_ref: str) -> str:
         """#461 PR29-a: '' se l'intento non risulta gia' consegnato al trasporto (DB durevole, valido anche dopo un

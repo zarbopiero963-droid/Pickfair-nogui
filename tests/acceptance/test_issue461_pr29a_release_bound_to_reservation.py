@@ -84,6 +84,47 @@ def test_verifica_dell_intento_che_fallisce_blocca_l_ingresso(tmp_path):
     assert _tavoli_occupati(c) == []
 
 
+def test_doppione_bloccato_da_un_altro_processo_rilascia_la_propria_riserva_mai_inviata(tmp_path):
+    # Rilievo Codex su #533: due processi sullo stesso DB ammettono lo stesso intento; A lo invia, il dedup del
+    # motore di B vede la riga/intento di A sul DB e blocca B come DUPLICATE. La riserva di B non e' mai partita
+    # da B: va rilasciata (prima di PR29-a lo faceva il SUCCESS; ora lo fa QUICK_BET_DUPLICATE con
+    # duplicate_in_process=False). Due runtime reali sullo stesso file SQLite.
+    a = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    b = _chain(tmp_path, stake=10.0, anti_duplication=True, db_name="shared.db")
+    for c in (a, b):
+        c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
+    b.rc._consumed_intent_reason = lambda _ref: ""        # B ha controllato l'intento PRIMA che A lo consumasse
+    a.rc._on_signal_received(_signal())
+    assert len(a.bus.payloads("CMD_QUICK_BET")) == 1 and len(a.broker.state.orders) == 1
+    b.rc._on_signal_received(_signal())
+    (dup,) = b.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is False, dup
+    assert b.broker.state.orders == {}                    # B non ha inviato nulla
+    assert _tavoli_occupati(b) == [], "la riserva mai inviata del processo perdente resta bloccata"
+    assert not b.rc.duplication_guard._active
+    assert _tavoli_occupati(a) != []                      # A conserva la sua riserva viva
+
+
+def test_doppione_dello_stesso_processo_conserva_la_riserva_viva(tmp_path):
+    # Replay nello stesso processo: l'originale e' in volo nella memoria del motore => duplicate_in_process=True,
+    # nessun rilascio (PF-C29-01.03).
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    c.bus.publish("CMD_QUICK_BET", dict(cmd))
+    (dup,) = c.bus.payloads("QUICK_BET_DUPLICATE")
+    assert dup.get("duplicate_in_process") is True, dup
+    assert _tavoli_occupati(c) == [cmd["table_id"]]
+    assert c.rc.duplication_guard._active
+
+
+def test_doppione_esterno_non_rilascia_una_riserva_di_un_altro_ordine(tmp_path):
+    # Il tavolo indicato dall'evento porta ora la riserva di un altro intento (ref diverso): nessun rilascio.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    c.rc._on_quick_bet_duplicate({**cmd, "customer_ref": "ref-di-un-altro-ordine", "duplicate_in_process": False})
+    assert _tavoli_occupati(c) == [cmd["table_id"]]
+    c.rc._on_quick_bet_duplicate({**cmd, "duplicate_in_process": None})        # dato assente => si conserva
+    assert _tavoli_occupati(c) == [cmd["table_id"]]
+
+
 # ---------------------------------------------------------------- runtime reale (HeadlessApp, SIM, SQLite)
 from tests.f026.test_f026_financial import run  # noqa: E402
 

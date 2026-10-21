@@ -1079,6 +1079,42 @@
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
       ],
       "rationale": "#461 PR29-a (review anticipata P1): la riconsegna di un intento gia' consegnato riserva un tavolo che il SUCCESS del doppione non rilascia piu'."
+    },
+    {
+      "id": "duplicate_scope_always_in_process",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        duplicate_in_process = self.guard is not None or self._is_duplicate_in_memory(ctx)",
+      "mutated": "        duplicate_in_process = True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a (Codex #533): il doppione bloccato da un altro processo e' segnalato come interno: la riserva mai inviata del processo perdente resta bloccata."
+    },
+    {
+      "id": "in_process_duplicate_releases_live_reservation",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if payload.get(\"duplicate_in_process\") is not False:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: un replay nello stesso processo rilascia la riserva viva dell'originale."
+    },
+    {
+      "id": "external_duplicate_releases_foreign_reservation",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "                or str(meta.get(\"customer_ref\") or \"\") != ref or \"placed_at\" in meta):",
+      "mutated": "                or \"placed_at\" in meta):",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
+      ],
+      "rationale": "#461 PR29-a: un doppione esterno rilascia la riserva di un altro ordine sullo stesso tavolo."
     }
   ]
 }

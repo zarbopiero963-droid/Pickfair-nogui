@@ -2417,12 +2417,13 @@
       "max_files": 23
     },
     "issue461-pr29a-release-bound-to-reservation": {
-      "description": "Mandato owner PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026), roadmap #461 scheda PR29 (prenotazione atomica dell'esposizione), sotto-PR 29-a dalla Phase 0: PF-C29-01.03/.13 (#506 c.6123640661) — QUICK_BET_SUCCESS non rilascia tavolo/esposizione/chiave; doppione dello stesso intento rifiutato prima di un secondo tavolo; test PR28-e corretto; harness f026 con replay_cmd.",
+      "description": "Mandato owner PF-CORE-FINANCIAL-CONTINUATION-03 (21/10/2026), roadmap #461 scheda PR29 (prenotazione atomica dell'esposizione), sotto-PR 29-a dalla Phase 0: PF-C29-01.03/.13 (#506 c.6123640661) — QUICK_BET_SUCCESS non rilascia tavolo/esposizione/chiave; doppione dello stesso intento rifiutato prima di un secondo tavolo; test PR28-e corretto; harness f026 con replay_cmd. ESTENSIONE DICHIARATA (rilievo Codex r4333921165, fix 1/10): +core/trading_engine.py (QUICK_BET_DUPLICATE riporta duplicate_in_process, deciso sotto il lock del motore: il runtime rilascia la riserva mai inviata del processo perdente, conserva quella viva di un replay).",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
         "core/runtime_controller.py",
         "core/table_manager.py",
+        "core/trading_engine.py",
         "guardrails/mutation_catalog.json",
         "tests/acceptance/test_issue437_pr28d_integration_512.py",
         "tests/acceptance/test_issue461_pr28e_funds_gate.py",
@@ -2430,7 +2431,7 @@
         "tests/f026/child_f026.py",
         "tests/integration/test_issue461_pr26a_customer_ref_provenance.py"
       ],
-      "max_files": 10
+      "max_files": 11
     }
   }
 }
