@@ -174,3 +174,15 @@ def test_riconciliazioni_concorrenti_rilasciano_una_volta(tmp_path):
     for f in fili:
         f.join()
     assert rilasci == ["B-29B"]
+
+
+def test_rilascio_del_lotto_non_libera_la_chiave_di_una_nuova_riserva_sullo_stesso_evento(tmp_path):
+    # Il tavolo del lotto e' gia' libero (reset) e la chiave dell'evento appartiene ora a una nuova riserva su un
+    # altro tavolo: la chiusura tardiva del lotto non libera ne' quel tavolo ne' la sua chiave anti-duplicato.
+    engine, bm, tm, guard, client = _lotto(tmp_path)
+    tm.force_unlock(1)
+    tm.activate(table_id=2, event_key=EVENT_KEY, exposure=6.0, market_id="1.777", selection_id=11, meta={})
+    _annullate(client)
+    engine.reconcile_batch("B-29B")
+    assert tm.get_table(2).current_event_key == EVENT_KEY and tm.get_table(2).current_exposure == 6.0
+    assert EVENT_KEY in guard._active, "liberata la chiave anti-duplicato della nuova riserva"
