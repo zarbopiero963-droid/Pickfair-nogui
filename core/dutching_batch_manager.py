@@ -677,20 +677,40 @@ class DutchingBatchManager:
         event_key = str(batch.get("event_key") or "")
         table_id = batch.get("table_id")
 
-        if duplication_guard and event_key:
+        # #461 PR29-b (PF-C29-01.17): il rilascio e' legato alla riserva del lotto (tavolo + event_key), con
+        # controllo e rilascio atomici nel TableManager (release_batch_reservation). Un tavolo gia' liberato e riassegnato a un'altra riserva
+        # non si tocca, e nemmeno la sua chiave anti-duplicato; un secondo rilascio e' un no-op.
+        owns_key = True
+        if table_manager and table_id is not None:
+            owns_key = False
+            try:
+                if hasattr(table_manager, "release_batch_reservation"):
+                    outcome = table_manager.release_batch_reservation(int(table_id), event_key, batch_id=str(batch_id),
+                                                                         pnl=float(pnl))
+                    # La chiave e' del lotto solo se il suo tavolo ne porta ancora la riserva (prova atomica nel
+                    # TableManager). Tavolo gia' libero o riassegnato: la chiave non si tocca, ne' release ne' unpin,
+                    # anche se nessun tavolo porta l'evento: un nuovo intento la acquisisce (e la appunta) PRIMA di
+                    # attivare il suo tavolo, e senza identita' della registrazione non si distingue da quella del
+                    # vecchio lotto. Una chiave orfana resta fino al riavvio (guardia in memoria): fail-closed
+                    # (review Sol su #534).
+                    owns_key = outcome == "released"
+                elif pnl != 0.0 and hasattr(table_manager, "release"):
+                    table_manager.release(int(table_id), pnl=float(pnl))
+                    owns_key = True
+                elif hasattr(table_manager, "force_unlock"):
+                    table_manager.force_unlock(int(table_id))
+                    owns_key = True
+            except Exception:
+                logger.exception("Errore release table batch=%s table_id=%s", batch_id, table_id)
+            if not owns_key:
+                logger.warning("Rilascio lotto %s non applicato: tavolo %s non porta piu' la riserva %s",
+                               batch_id, table_id, event_key)
+
+        if duplication_guard and event_key and owns_key:
             try:
                 duplication_guard.release(event_key)
             except Exception:
                 logger.exception("Errore release duplication guard batch=%s", batch_id)
-
-        if table_manager and table_id is not None:
-            try:
-                if pnl != 0.0 and hasattr(table_manager, "release"):
-                    table_manager.release(int(table_id), pnl=float(pnl))
-                elif hasattr(table_manager, "force_unlock"):
-                    table_manager.force_unlock(int(table_id))
-            except Exception:
-                logger.exception("Errore release table batch=%s table_id=%s", batch_id, table_id)
 
     def register_new_batch_from_results(
         self,

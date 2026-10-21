@@ -4663,6 +4663,10 @@ class RuntimeController:
                 "meta": {k: p.get(k) for k in ("event_name", "event_id", "event_identity", "market_name",
                                                "runner_name", "bet_type", "price", "simulation_mode")},
             }
+            if item["batch_id"]:
+                # #461 PR29-b (rilievo Codex #534): il tavolo ricostruito porta l'identita' del lotto come quello
+                # allocato da DutchingController._allocate_table, cosi' il rilascio del lotto lo riconosce come suo.
+                item["meta"].update(type="dutching_batch", batch_id=item["batch_id"])
             # Rilievo Codex #512 (r4306544229): un lato assente/non valido NON si inventa (BACK
             # sottostimerebbe la liability di un LAY): la riga resta non attribuita, riconciliazione.
             if not item["market_id"] or not item["event_key"] or item["side"] not in ("BACK", "LAY"):

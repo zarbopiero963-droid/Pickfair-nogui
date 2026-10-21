@@ -1199,6 +1199,128 @@
         "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py"
       ],
       "rationale": "#461 PR29-a (Codex P1 #533): un SUCCESS di completamento chiude l'incertezza AMBIGUOUS fuori da un'operazione atomica e puo' cancellare quella di un tavolo riassegnato."
+    },
+    {
+      "id": "executed_batch_releases_live_reservation",
+      "module": "core.reconciliation_engine",
+      "area": "exposure",
+      "file": "core/reconciliation_engine.py",
+      "original": "            if status.upper() in NO_RISK_TERMINAL_BATCH_STATUSES:",
+      "mutated": "            if status.upper() in TERMINAL_BATCH_STATUSES:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "rationale": "#461 PR29-b (PF-C29-01.17): un lotto EXECUTED (gambe a mercato/abbinate) libera tavolo, esposizione e chiave nella riconciliazione."
+    },
+    {
+      "id": "no_risk_terminal_batch_never_released",
+      "module": "core.reconciliation_engine",
+      "area": "exposure",
+      "file": "core/reconciliation_engine.py",
+      "original": "                self._release(batch_id)\n            self._lock_mgr.cleanup_batch(batch_id)",
+      "mutated": "                pass\n            self._lock_mgr.cleanup_batch(batch_id)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/invariant/test_reconcile_invariants.py"
+      ],
+      "rationale": "#461 PR29-b (PF-C29-01.17): un lotto con tutte le gambe annullate/fallite non rilascia mai tavolo e chiave."
+    },
+    {
+      "id": "batch_release_ignores_reservation_identity",
+      "module": "core.table_manager",
+      "area": "exposure",
+      "file": "core/table_manager.py",
+      "original": "            if key and owner and table.current_event_key == key and str(meta.get(\"batch_id\") or \"\") == owner:",
+      "mutated": "            if key and table.current_event_key == key:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (Sol #534): il rilascio di un lotto libera un tavolo riusato per lo stesso evento da un'altra riserva."
+    },
+    {
+      "id": "batch_release_frees_foreign_dedup_key",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "        if duplication_guard and event_key and owns_key:",
+      "mutated": "        if duplication_guard and event_key:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b: il rilascio di un lotto libera la chiave anti-duplicato di una riserva che non gli appartiene."
+    },
+    {
+      "id": "batch_release_frees_unproven_key_on_free_table",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "                    owns_key = outcome == \"released\"",
+      "mutated": "                    owns_key = outcome in (\"released\", \"free\")",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Sol): tavolo del lotto gia' libero, chiave acquisita e appuntata da un nuovo intento prima dell'attivazione del suo tavolo: il cleanup del vecchio lotto la cancella, ordini duplicati."
+    },
+    {
+      "id": "batch_release_frees_unproven_key_on_reassigned_table",
+      "module": "core.dutching_batch_manager",
+      "area": "dedupe",
+      "file": "core/dutching_batch_manager.py",
+      "original": "                    owns_key = outcome == \"released\"",
+      "mutated": "                    owns_key = outcome in (\"released\", \"foreign\")",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Sol): tavolo del lotto riassegnato, chiave di un nuovo intento sullo stesso evento cancellata dal cleanup del vecchio lotto."
+    },
+    {
+      "id": "reassigned_table_status_ignores_booked_recovery",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "            table.status = \"RECOVERY\" if table.in_recovery else \"ACTIVE\"",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Codex): perdita del vecchio lotto contabilizzata su un tavolo riassegnato ma stato ACTIVE: snapshot e UI di rischio mostrano un tavolo pulito con debito di recovery."
+    },
+    {
+      "id": "rebuilt_batch_table_loses_batch_identity",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "                item[\"meta\"].update(type=\"dutching_batch\", batch_id=item[\"batch_id\"])",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review Codex): il tavolo di una gamba Dutching ricostruito al riavvio non porta il batch_id: il rilascio del lotto stesso da' foreign e tavolo, esposizione e chiave restano trattenuti per sempre."
+    },
+    {
+      "id": "batch_pnl_dropped_on_freed_table",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "                if float(pnl or 0.0) != 0.0:\n                    self.release(int(table_id), pnl=pnl)\n                return \"free\"",
+      "mutated": "                return \"free\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (review anticipata): il P&L negativo di un lotto su un tavolo gia' libero non entra nel recovery."
+    },
+    {
+      "id": "foreign_batch_pnl_not_booked",
+      "module": "core.table_manager",
+      "area": "money_management",
+      "file": "core/table_manager.py",
+      "original": "            self._book_pnl(table, pnl)\n            return \"foreign\"",
+      "mutated": "            return \"foreign\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+      ],
+      "rationale": "#461 PR29-b (Sol #534): la perdita di un lotto su un tavolo riassegnato non entra nel recovery."
     }
   ]
 }
