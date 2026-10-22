@@ -73,6 +73,22 @@ momento ⇒ `RuntimeAuthorityLost("lease_unreadable", permanent=False)`: l'opera
 non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a rinnovare prima della scadenza ⇒
 `lease_unrenewable`, perdita definitiva).
 
+## Regole aggiuntive dopo la review di `fc8f136`
+
+- **Scritture in autocommit**: con il fence vincolato, `_execute` apre `BEGIN IMMEDIATE`, verifica il fence, scrive
+  e fa commit nella stessa transazione. Un subentro fra controllo e scrittura attende il commit.
+- **Dopo lo STOP**: un'autorità rilasciata blocca (`runtime_authority_released`). Il bus resta vivo e un comando in
+  coda non passa come se non ci fosse autorità da verificare. Senza autorità mai armata (DB in memoria, harness)
+  non c'è nulla da verificare.
+- **Autorità persa ⇒ STOP obbligatorio**: `acquire_lease` rifiuta (`runtime_authority_lost:<motivo>:stop_required`).
+  Una nuova epoca parte solo dopo lo STOP che smonta servizi e autorità.
+- **TTL degli unmatched**: `_poll_direct_unmatched_ttl` non cancella nulla senza autorità (il feed può restare vivo).
+- **Istante del rinnovo**: `renew_runtime_lease` e `acquire_runtime_lease` leggono l'orologio dopo `BEGIN IMMEDIATE`.
+  Un'attesa del lock del DB oltre la scadenza non resuscita una lease scaduta.
+- **Ordine dei lock**: `RuntimeAuthority` non fa I/O sul database mentre tiene il proprio lock, e le violazioni del
+  fence in autocommit si notificano fuori dal write lock: nessun deadlock fra heartbeat e segnalazione della perdita.
+- `verify` su un'autorità mai armata rifiuta senza marcarla persa.
+
 ## Perdita dell'autorità
 
 `mark_lost(motivo)` (idempotente): lease scaduta subito se ancora nostra (così il proprietario legittimo può
@@ -129,4 +145,6 @@ nessun rilascio né scrittura da un runtime superato (T13); START arma sempre l'
 `_holder_alive` (T17); `verify` fail-closed (T18); auto-next, engine e cashout rifiutati senza autorità
 (T19–T21); sweep F028, perdita senza oggetto autorità, `is_live_allowed`, token superato dello stesso owner,
 lease scaduta (T22–T26); hedge del cashout rifiutato al piazzamento, verifica in errore fail-closed, cablaggio
-reale in `HeadlessApp` e `MiniPickfairGUI` (T27–T30). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+reale in `HeadlessApp` e `MiniPickfairGUI` (T27–T30); rilievi Codex su `fc8f136`: scrittura autocommit
+serializzata col subentro, nessun invio dopo lo STOP, TTL unmatched senza autorità, START rifiutato dopo la
+perdita senza STOP, rinnovo misurato dopo l'attesa del lock, nessun deadlock heartbeat/fence (T31–T36). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

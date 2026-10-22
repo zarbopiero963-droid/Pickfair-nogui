@@ -2769,8 +2769,11 @@ class RuntimeController:
         if lost:
             return f"runtime_authority_lost:{lost}"
         authority = getattr(self, "runtime_authority", None)
-        if authority is None or authority.released:
+        if authority is None:
             return ""
+        if authority.released:
+            # Codex su fc8f136: dopo lo STOP il bus resta vivo; un comando in coda non vale come "nessuna autorita'"
+            return "runtime_authority_released"
         try:
             authority.verify(context)
         except RuntimeAuthorityLost as exc:
@@ -6470,6 +6473,8 @@ class RuntimeController:
         """
         if not bool(getattr(self.config, "direct_unmatched_ttl_enabled", False)):
             return
+        if RuntimeController._runtime_authority_block(self, "unmatched_ttl"):
+            return      # #536 (Codex su fc8f136): il feed puo' restare vivo dopo la perdita; nessun cancel
         now_mono = time.monotonic()
         interval = max(1.0, float(
             getattr(self.config, "direct_unmatched_ttl_poll_sec", 30.0) or 30.0))

@@ -734,3 +734,121 @@ def test_t30_la_gui_cabla_la_verifica_dell_autorita_nell_esecutore_del_cashout(t
             gui.shutdown.shutdown()
     finally:
         mp.undo()
+
+
+# ---------------------------------------------------------------- rilievi Codex su fc8f136 (RED prima della patch)
+def test_t31_scrittura_autocommit_serializzata_con_il_subentro(tmp_path):
+    """Codex P1 database.py:260: controllo del fence e scrittura autocommit nella stessa transazione. Un subentro
+    tentato fra il controllo e la scrittura deve attendere il commit, mai precederlo."""
+    p = str(tmp_path / "t31.db")
+    db, altro = Database(p), Database(p)
+    assert db.acquire_runtime_lease("a", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="")["acquired"]
+    db.bind_runtime_fence("a", 1)
+    originale = db._assert_runtime_fence
+    eventi = []
+
+    def _subentro():
+        esito = altro.acquire_runtime_lease("b", ttl_sec=30.0, now=time.time(), pid=2, host="h", lock_identity="",
+                                            holder_alive=lambda pid, host: False)
+        eventi.append(("subentro", esito["acquired"]))
+
+    def _controllo_poi_subentro(conn, name):
+        originale(conn, name)
+        t = threading.Thread(target=_subentro, daemon=True)
+        t.start()
+        t.join(0.5)                                            # se il subentro non e' serializzato, finisce qui
+
+    db._assert_runtime_fence = _controllo_poi_subentro
+    db._execute("INSERT INTO cycle_recovery_checkpoints (settlement_key, cycle_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?)", ("k31", "a", "t", "t"))
+    eventi.append(("scrittura", True))
+    assert _attendi(lambda: len(eventi) == 2, 5.0)
+    assert eventi[0] == ("scrittura", True), f"subentro completato prima del commit della scrittura: {eventi}"
+
+
+def test_t32_dopo_lo_stop_nessun_invio_finanziario(tmp_path, monkeypatch):
+    """Codex P1 runtime_controller.py:2773: un'autorita' rilasciata allo STOP non vale come 'nessuna autorita''."""
+    monkeypatch.chdir(tmp_path)
+    app = _app_su(str(tmp_path / "t32.db"), monkeypatch)
+    try:
+        rt = app.runtime
+        assert rt.start(execution_mode="SIMULATION").get("started") is True
+        assert rt.stop().get("stopped", True) is not False
+        assert rt.runtime_authority is not None and rt.runtime_authority.released
+        assert rt._runtime_authority_block("order_submit").startswith("runtime_authority_released")
+        with pytest.raises(RuntimeAuthorityLost):
+            rt.assert_runtime_authority("order_submit")
+    finally:
+        _ferma(app)
+
+
+def test_t33_ttl_unmatched_non_cancella_senza_autorita(tmp_path, monkeypatch):
+    """Codex P1 runtime_controller.py:2818: il feed resta vivo dopo la perdita; il TTL non deve cancellare."""
+    c = _catena_armata(tmp_path, "t33.db")
+    monkeypatch.setattr(c.rc.config, "direct_unmatched_ttl_enabled", True, raising=False)
+    c.rc._direct_order_bet_ids = {"ref-1": "B1"}
+    c.rc._last_direct_ttl_poll_at = -1e9
+    chiamate = []
+    monkeypatch.setattr(c.rc.betfair_service, "list_current_orders", lambda *a, **k: chiamate.append(1) or [],
+                        raising=False)
+    os.unlink(_lock_path(str(tmp_path / "t33.db")))
+    c.rc._poll_direct_unmatched_ttl()
+    assert chiamate == [], "TTL unmatched eseguito da un runtime senza autorita'"
+
+
+def test_t34_start_rifiutato_finche_lo_stop_non_ha_smontato_l_autorita_persa(tmp_path):
+    """Codex P1 runtime_controller.py:2729: lease scaduta/irrinnovabile con lock intatto => niente nuova epoca
+    sulla stessa autorita' senza STOP."""
+    c = _catena_armata(tmp_path, "t34.db")
+    c.rc._on_runtime_authority_lost("lease_unrenewable")
+    assert c.rc.runtime_authority.lost_reason == "lease_unrenewable"
+    blocco = c.rc._acquire_runtime_lease()
+    assert blocco.startswith("runtime_authority_lost"), blocco
+    assert c.rc._authority_lost_reason == "lease_unrenewable"   # la perdita non viene cancellata
+
+
+def test_t35_rinnovo_misurato_dopo_l_attesa_del_lock_del_database(tmp_path):
+    """Codex P1 runtime_authority.py:232: l'istante del rinnovo si legge dopo BEGIN IMMEDIATE, non prima."""
+    p = str(tmp_path / "t35.db")
+    db = Database(p)
+    orologio = [1000.0]
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=30.0, heartbeat_sec=10.0, clock=lambda: orologio[0])
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    orologio[0] = 1010.0                                       # heartbeat a T+10
+    originale = db._lease_transaction
+
+    def _attesa_del_lock(name, fn):
+        orologio[0] = 1035.0                                   # il lock arriva a T+35: lease gia' scaduta a T+30
+        return originale(name, fn)
+
+    db._lease_transaction = _attesa_del_lock
+    assert auth.heartbeat_once() is False
+    assert auth.lost_reason in ("lease_superseded", "lease_expired"), auth.lost_reason
+    riga = db.read_runtime_lease()
+    assert float(riga["expires_at"]) <= 1035.0, "lease scaduta resuscitata dal rinnovo tardivo"
+    db._lease_transaction = originale
+    auth.release()
+
+
+def test_t36_nessun_deadlock_fra_heartbeat_e_violazione_del_fence(tmp_path):
+    """Codex P2 runtime_authority.py:223: il thread che tiene il write lock del DB e segnala la perdita non deve
+    attendere l'heartbeat, che a sua volta attende il write lock."""
+    p = str(tmp_path / "t36.db")
+    db = Database(p)
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=30.0, heartbeat_sec=10.0)
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    fatto = []
+
+    def _thread_db():
+        with db._write_lock:                                   # come una transazione che rileva la violazione
+            hb = threading.Thread(target=auth.heartbeat_once, daemon=True)
+            hb.start()
+            time.sleep(0.3)                                    # l'heartbeat e' in attesa del write lock
+            auth.mark_lost("fencing_token_superseded")
+            fatto.append("mark_lost")
+
+    t = threading.Thread(target=_thread_db, daemon=True)
+    t.start()
+    t.join(5.0)
+    assert fatto == ["mark_lost"], "deadlock fra heartbeat e segnalazione della perdita"
+    assert auth.lost_reason == "fencing_token_superseded"

@@ -254,13 +254,10 @@ class Database:
         conn = self._get_connection()
         if (self._runtime_fence is not None and not self._in_transaction()
                 and str(sql).lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "REPLAC")):
-            # #536: anche una scrittura in autocommit (checkpoint del ciclo, ordini, marker) e' fenced: un runtime
-            # che ha perso la lease non puo' piu' modificare lo stato persistito.
-            try:
-                self._assert_runtime_fence(conn, "execute")
-            except RuntimeFenceViolation as exc:
-                self._notify_fence_violation(exc)
-                raise
+            # #536: anche una scrittura in autocommit (checkpoint del ciclo, ordini, marker) e' fenced, e il controllo
+            # sta nella STESSA transazione della scrittura (BEGIN IMMEDIATE): un subentro fra controllo e scrittura
+            # attende il commit invece di precederlo (Codex su fc8f136).
+            return self._execute_fenced_write(conn, sql, params, fetch=fetch, fetchone=fetchone)
         cur = conn.execute(sql, tuple(params))
 
         if fetchone:
@@ -279,6 +276,32 @@ class Database:
             conn.commit()
 
         return cur
+
+    def _execute_fenced_write(self, conn, sql: str, params, *, fetch: bool, fetchone: bool):
+        violation: Optional[RuntimeFenceViolation] = None
+        try:
+            with self._write_lock:
+                conn.execute("BEGIN IMMEDIATE")
+                self._set_tx_depth(1)
+                try:
+                    self._assert_runtime_fence(conn, "execute")
+                    cur = conn.execute(sql, tuple(params))
+                    out = cur.fetchone() if fetchone else (cur.fetchall() if fetch else cur)
+                    conn.commit()
+                    return out
+                except BaseException as exc:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        logger.exception("Errore rollback scrittura fenced")
+                    if isinstance(exc, RuntimeFenceViolation):
+                        violation = exc
+                    raise
+                finally:
+                    self._set_tx_depth(0)
+        finally:
+            if violation is not None:
+                self._notify_fence_violation(violation)       # fuori dal write lock: nessun lock-order inverso
 
     def close_all_connections(self) -> None:
         conn = getattr(self._local, "conn", None)
@@ -1976,7 +1999,7 @@ class Database:
                 self._set_tx_depth(0)
 
     def acquire_runtime_lease(self, owner_id: str, *, ttl_sec: float, now: float, pid: int, host: str,
-                              lock_identity: str, holder_alive=None) -> Dict[str, Any]:
+                              lock_identity: str, holder_alive=None, clock=None) -> Dict[str, Any]:
         """Acquisisce la lease per ``owner_id``. Riuscita (``acquired`` True, nuovo ``fencing_token`` monotono)
         solo se non c'e' lease, o e' scaduta, o e' gia' di questo proprietario, o il detentore e' dimostrabilmente
         morto sullo stesso host (``holder_alive(pid, host)`` restituisce False). Altrimenti ``acquired`` False con
@@ -1987,8 +2010,10 @@ class Database:
         ttl = float(ttl_sec)
         if not (ttl > 0):
             raise ValueError("acquire_runtime_lease: ttl non valido")
+        now_arg = now
 
         def fn(conn):
+            now = float(clock()) if callable(clock) else float(now_arg)   # #536: dopo l'attesa del lock del DB
             row = conn.execute(self._RUNTIME_LEASE_SELECT).fetchone()
             if row is not None:
                 same = str(row["owner_id"]) == owner
@@ -2020,10 +2045,15 @@ class Database:
 
         return self._lease_transaction("acquire_runtime_lease", fn)
 
-    def renew_runtime_lease(self, owner_id: str, fencing_token: int, *, ttl_sec: float, now: float) -> Optional[float]:
+    def renew_runtime_lease(self, owner_id: str, fencing_token: int, *, ttl_sec: float, now: float,
+                            clock=None) -> Optional[float]:
         """Rinnova la lease solo se e' ancora di ``owner_id`` con lo stesso token e NON scaduta. Ritorna la nuova
-        scadenza, oppure None: il proprietario non puo' piu' dimostrare l'autorita' (fail-closed)."""
+        scadenza, oppure None: il proprietario non puo' piu' dimostrare l'autorita' (fail-closed). Con ``clock``
+        l'istante si legge DOPO ``BEGIN IMMEDIATE``: un'attesa del lock oltre la scadenza non resuscita la lease."""
+        now_arg = now
+
         def fn(conn):
+            now = float(clock()) if callable(clock) else float(now_arg)
             cur = conn.execute(
                 "UPDATE runtime_lease SET heartbeat_at = ?, expires_at = ? WHERE id = 1 AND owner_id = ? "
                 "AND fencing_token = ? AND expires_at >= ?",

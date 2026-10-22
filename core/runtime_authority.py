@@ -167,6 +167,9 @@ class RuntimeAuthority:
     # ------------------------------------------------------------------ strato 3: lease e fencing
     def acquire_lease(self) -> str:
         with self._lock:
+            if self.lost_reason:
+                # Codex su fc8f136: un'autorita' persa non apre una nuova epoca senza lo STOP che smonta i servizi
+                return f"runtime_authority_lost:{self.lost_reason}:stop_required"
             if self.lock_fh is None:
                 return "runtime_lock_not_held"
             problem = self.lock_identity_problem()
@@ -175,7 +178,7 @@ class RuntimeAuthority:
             try:
                 outcome = self.db.acquire_runtime_lease(
                     self.owner_id, ttl_sec=self.lease_ttl_sec, now=self._clock(), pid=self.pid, host=self.host,
-                    lock_identity=self.lock_identity,
+                    lock_identity=self.lock_identity, clock=self._clock,
                     holder_alive=lambda pid, host: _holder_alive(pid, host, my_host=self.host))
             except Exception as exc:
                 logger.exception("Lease del runtime non acquisibile")
@@ -200,13 +203,13 @@ class RuntimeAuthority:
             raise RuntimeAuthorityLost("released")
         if self.lost_reason:
             raise RuntimeAuthorityLost(self.lost_reason)
+        if self.lock_fh is None or self.token is None:
+            # mai armata (lock o lease non ancora presi): rifiuto, ma non e' una perdita da rendere definitiva
+            raise RuntimeAuthorityLost("lock_not_held" if self.lock_fh is None else "lease_not_acquired")
         problem = self.lock_identity_problem()
         if problem:
             self.mark_lost(problem)
             raise RuntimeAuthorityLost(problem)
-        if self.token is None:
-            self.mark_lost("lease_not_acquired")
-            raise RuntimeAuthorityLost("lease_not_acquired")
         try:
             row = self.db.read_runtime_lease()
         except Exception:
@@ -220,28 +223,35 @@ class RuntimeAuthority:
             raise RuntimeAuthorityLost("lease_expired")
 
     def heartbeat_once(self) -> bool:
+        """Rinnovo della lease. Nessun I/O sul database sotto ``self._lock`` (Codex su fc8f136): chi tiene il write
+        lock del DB e segnala una violazione del fence deve poter marcare la perdita senza attendere l'heartbeat."""
         with self._lock:
             if self.released or self.lost_reason:
                 return False
-            problem = self.lock_identity_problem()
-            if problem:
-                self.mark_lost(problem)
+            token, expires = self.token, self.lease_expires_at
+        problem = self.lock_identity_problem()
+        if problem:
+            self.mark_lost(problem)
+            return False
+        now = self._clock()
+        try:
+            renewed = self.db.renew_runtime_lease(self.owner_id, int(token), ttl_sec=self.lease_ttl_sec, now=now,
+                                                  clock=self._clock)
+        except Exception:
+            logger.exception("Heartbeat della lease fallito (database non disponibile)")
+            if now + self.heartbeat_sec >= expires:
+                # non si riuscirebbe piu' a rinnovare prima della scadenza: autorita' non dimostrabile
+                self.mark_lost("lease_unrenewable")
                 return False
-            now = self._clock()
-            try:
-                renewed = self.db.renew_runtime_lease(self.owner_id, int(self.token), ttl_sec=self.lease_ttl_sec, now=now)
-            except Exception:
-                logger.exception("Heartbeat della lease fallito (database non disponibile)")
-                if now + self.heartbeat_sec >= self.lease_expires_at:
-                    # non si riuscirebbe piu' a rinnovare prima della scadenza: autorita' non dimostrabile
-                    self.mark_lost("lease_unrenewable")
-                    return False
-                return True
-            if renewed is None:
-                self.mark_lost("lease_superseded")
+            return True
+        if renewed is None:
+            self.mark_lost("lease_superseded")
+            return False
+        with self._lock:
+            if self.released or self.lost_reason:
                 return False
             self.lease_expires_at = float(renewed)
-            return True
+        return True
 
     def start_heartbeat(self) -> None:
         with self._lock:
@@ -278,11 +288,12 @@ class RuntimeAuthority:
             self.lost_reason = str(reason or "authority_lost")
             logger.critical("Autorita' del runtime persa: %s", self.lost_reason)
             self._stop.set()
-            if self.token is not None:
-                try:
-                    self.db.release_runtime_lease(self.owner_id, int(self.token), now=self._clock())
-                except Exception:
-                    logger.warning("Lease non rilasciabile dopo la perdita dell'autorita' (%s)", self.lost_reason)
+            token = self.token
+        if token is not None:                           # I/O sul DB fuori da self._lock (nessun lock-order inverso)
+            try:
+                self.db.release_runtime_lease(self.owner_id, int(token), now=self._clock())
+            except Exception:
+                logger.warning("Lease non rilasciabile dopo la perdita dell'autorita' (%s)", self.lost_reason)
         callback = self._on_lost
         if callable(callback):
             try:
@@ -297,18 +308,19 @@ class RuntimeAuthority:
                 return
             self.released = True
             self._stop.set()
+            token = self.token if not self.lost_reason else None
         self.stop_heartbeat()
-        with self._lock:
-            if self.token is not None and not self.lost_reason:
-                try:
-                    self.db.release_runtime_lease(self.owner_id, int(self.token), now=self._clock())
-                except Exception:
-                    logger.exception("Lease del runtime non rilasciata allo STOP")
+        if token is not None:                           # I/O sul DB fuori da self._lock
             try:
-                if getattr(self.db, "runtime_fence", None) and (self.db.runtime_fence() or {}).get("owner_id") == self.owner_id:
-                    self.db.unbind_runtime_fence()
+                self.db.release_runtime_lease(self.owner_id, int(token), now=self._clock())
             except Exception:
-                logger.exception("Fence del runtime non sciolto allo STOP")
+                logger.exception("Lease del runtime non rilasciata allo STOP")
+        try:
+            if getattr(self.db, "runtime_fence", None) and (self.db.runtime_fence() or {}).get("owner_id") == self.owner_id:
+                self.db.unbind_runtime_fence()
+        except Exception:
+            logger.exception("Fence del runtime non sciolto allo STOP")
+        with self._lock:
             handle, self.lock_fh = self.lock_fh, None
             self._lock_stat = None
             if handle is not None:

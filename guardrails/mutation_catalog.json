@@ -2050,8 +2050,8 @@
       "module": "core.runtime_authority",
       "area": "live_safety",
       "file": "core/runtime_authority.py",
-      "original": "                if now + self.heartbeat_sec >= self.lease_expires_at:",
-      "mutated": "                if False:",
+      "original": "            if now + self.heartbeat_sec >= expires:",
+      "mutated": "            if False:",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
@@ -2062,8 +2062,8 @@
       "module": "core.runtime_authority",
       "area": "live_safety",
       "file": "core/runtime_authority.py",
-      "original": "            if self.token is not None:\n                try:\n                    self.db.release_runtime_lease(",
-      "mutated": "            if False:\n                try:\n                    self.db.release_runtime_lease(",
+      "original": "        if token is not None:                           # I/O sul DB fuori da self._lock (nessun lock-order inverso)",
+      "mutated": "        if False:",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
@@ -2116,6 +2116,66 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01: un errore della verifica dell'autorita' lascia partire l'hedge."
+    },
+    {
+      "id": "i536_released_authority_allows_orders",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if authority.released:\n            # Codex su fc8f136: dopo lo STOP il bus resta vivo; un comando in coda non vale come \"nessuna autorita'\"\n            return \"runtime_authority_released\"",
+      "mutated": "        if authority.released:\n            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): dopo lo STOP un comando in coda passa il choke point."
+    },
+    {
+      "id": "i536_unmatched_ttl_without_authority",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"unmatched_ttl\"):\n            return      #",
+      "mutated": "        if False:\n            return      #",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): il TTL degli unmatched cancella ordini da un runtime senza autorita'."
+    },
+    {
+      "id": "i536_lost_authority_reopens_epoch",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            if self.lost_reason:\n                # Codex su fc8f136",
+      "mutated": "            if False:\n                # Codex su fc8f136",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): un'autorita' persa riapre una nuova epoca senza STOP."
+    },
+    {
+      "id": "i536_renew_time_before_lock_wait",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "        def fn(conn):\n            now = float(clock()) if callable(clock) else float(now_arg)\n            cur = conn.execute(",
+      "mutated": "        def fn(conn):\n            now = float(now_arg)\n            cur = conn.execute(",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): l'istante del rinnovo e' letto prima dell'attesa del lock: lease scaduta resuscitata."
+    },
+    {
+      "id": "i536_fenced_autocommit_deferred",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                conn.execute(\"BEGIN IMMEDIATE\")\n                self._set_tx_depth(1)\n                try:\n                    self._assert_runtime_fence(conn, \"execute\")",
+      "mutated": "                self._set_tx_depth(1)\n                try:\n                    self._assert_runtime_fence(conn, \"execute\")",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): controllo del fence e scrittura autocommit non serializzati con il subentro."
     }
   ]
 }

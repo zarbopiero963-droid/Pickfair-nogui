@@ -37,7 +37,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   `TradingEngine` (`assert_runtime_authority`), ricontrollo dopo l'invio (`RUNTIME_AUTHORITY_LOST_AFTER_SEND`),
   `is_live_allowed` False (verifica completa di lock e lease); verifica anche nel `CashoutExecutor` subito prima
   dell'hedge (`cashout_wiring.cabla_catena_cashout(runtime_authority_check=...)`, cablato da headless e GUI), perché
-  il bus è asincrono e la verifica al routing non copre il piazzamento. Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
+  il bus è asincrono e la verifica al routing non copre il piazzamento. Dopo la review di `fc8f136`: fence e
+  scrittura autocommit nella stessa `BEGIN IMMEDIATE`; autorità rilasciata allo STOP = blocco; autorità persa ⇒
+  nuova epoca solo dopo STOP; TTL unmatched senza autorità = nessun cancel; rinnovo e acquisizione misurati dopo
+  l'attesa del lock del DB; nessun I/O sul DB sotto il lock dell'autorità (niente deadlock). Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
   proprietario legittimo subentra, evento `RUNTIME_AUTHORITY_LOST`. Limiti dichiarati: finestra TOCTOU fra verifica
   e chiamata all'exchange (segnalata, lasciata alla riconciliazione del nuovo proprietario), stesso host e
   orologio condiviso, filesystem di rete non supportato, Windows MANUAL_ONLY. Test HARD REAL in
