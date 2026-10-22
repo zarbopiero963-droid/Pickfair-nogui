@@ -47,7 +47,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   l'hedge del cashout in volo è contato e atteso dallo STOP; `begin_transaction` fenced, emergency stop senza
   cancel-all di mercato da un runtime superato, candidato TTL conservato se l'autorità blocca il cancel, START
   rifiutato se l'autorità cade durante l'avvio, scadenza della lease ritentata allo STOP; `transaction()` con fence
-  in `BEGIN IMMEDIATE` (l'upgrade da lettura a scrittura falliva se l'heartbeat rinnovava nel mezzo). Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
+  in `BEGIN IMMEDIATE` (l'upgrade da lettura a scrittura falliva se l'heartbeat rinnovava nel mezzo); TTL degli
+  unmatched con esito del cancel locale alla chiamata (`CashoutCancelAdapter.cancel_with_outcome`) e presa in carico
+  del `bet_id` prima del broker, così due giri sovrapposti non cancellano due volte lo stesso ordine. Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
   proprietario legittimo subentra, evento `RUNTIME_AUTHORITY_LOST`. Limiti dichiarati: finestra TOCTOU fra verifica
   e chiamata all'exchange (segnalata, lasciata alla riconciliazione del nuovo proprietario), stesso host e
   orologio condiviso, filesystem di rete non supportato, Windows MANUAL_ONLY. Test HARD REAL in

@@ -6641,35 +6641,42 @@ class RuntimeController:
         """
         market_id = str(item.get("market_id") or "").strip()
         bet_id = str(item.get("bet_id") or "").strip()
+        # NO RETRY: fuori dal registry PRIMA del broker. #536 (Grok su 589cdb5): la presa in carico e' anche il
+        # confine fra giri TTL sovrapposti (stream + REST fallback): chi non la ottiene non invia un secondo cancel.
+        presi = self._discard_direct_bet_id(bet_id)
+        if not presi:
+            return
         try:
-            confirmed = bool(adapter.cancel(market_id, [bet_id]))
+            confirmed, not_attempted = adapter.cancel_with_outcome(market_id, [bet_id])
         except Exception as exc:  # belt-and-suspenders: l'adapter è già fail-closed
-            self._discard_direct_bet_id(bet_id)          # NO RETRY: un tentativo c'e' stato
             self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
                 "market_id": market_id, "bet_id": bet_id, "reason": str(exc)})
             logger.warning("direct_ttl_poll: cancel sollevato bet_id=%s: %s", bet_id, exc)
             return
-        not_attempted = str(getattr(adapter, "last_block", "") or "")
         if not_attempted:
-            # #536 (Codex su 1542b5d, Sol su 9a80162): l'adapter ha rifiutato per autorita' prima di chiamare il
-            # broker => nessun tentativo, il candidato resta per un giro successivo
+            # #536 (Codex su 1542b5d, Sol/Grok su 9a80162/589cdb5): rifiuto per autorita' prima del broker, con
+            # esito locale alla chiamata => nessun tentativo, il candidato torna per un giro successivo
+            self._direct_order_bet_ids.update(presi)
             self.bus.publish("DIRECT_UNMATCHED_CANCEL_DEFERRED", {"market_id": market_id, "bet_id": bet_id,
                                                                   "reason": not_attempted})
             return
-        # NO RETRY: fuori dal registry dopo UN tentativo (successo o fallimento).
-        self._discard_direct_bet_id(bet_id)
+        confirmed = bool(confirmed)
         event = "DIRECT_UNMATCHED_CANCELLED" if confirmed else "DIRECT_UNMATCHED_CANCEL_FAILED"
         self.bus.publish(event, {"market_id": market_id, "bet_id": bet_id, "ok": confirmed})
         logger.info("direct_ttl_poll: cancel bet_id=%s market=%s ok=%s",
                     bet_id, market_id, confirmed)
 
-    def _discard_direct_bet_id(self, bet_id: str) -> None:
-        """Rimuove dal registry tutte le voci con questo ``bet_id``."""
+    def _discard_direct_bet_id(self, bet_id: str) -> dict:
+        """Rimuove dal registry tutte le voci con questo ``bet_id``; restituisce quelle rimosse da QUESTA chiamata
+        (``pop`` per chiave: con due chiamanti concorrenti ogni voce va a uno solo)."""
         bid = str(bet_id or "").strip()
+        presi: dict = {}
         if not bid:
-            return
-        for cref in [c for c, b in self._direct_order_bet_ids.items() if b == bid]:
-            self._direct_order_bet_ids.pop(cref, None)
+            return presi
+        for cref in [c for c, b in list(self._direct_order_bet_ids.items()) if b == bid]:
+            if self._direct_order_bet_ids.pop(cref, None) is not None:
+                presi[cref] = bid
+        return presi
 
     # =========================================================
     # MANUAL/EXTERNAL CLOSE POSITION

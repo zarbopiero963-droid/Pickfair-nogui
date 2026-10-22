@@ -1233,3 +1233,55 @@ def test_t53_transazione_fenced_non_fallisce_se_l_heartbeat_rinnova_nel_mezzo(tm
     db._assert_runtime_fence = originale
     assert _attendi(lambda: len(esiti) == 1, 5.0) and esiti[0] is not None, "rinnovo dell'heartbeat perso"
     assert (db.get_settings() or {}).get("roserpina.f032_probe") == "1"
+
+
+# ---------------------------------------------------------------- rilievi Grok su 589cdb5 (RED prima della patch)
+def test_t54_esito_del_cancel_ttl_non_dipende_da_stato_condiviso_dell_adapter(tmp_path):
+    """Grok su 589cdb5: ``last_block`` e' stato d'istanza; un cancel concorrente sullo stesso adapter lo azzera
+    e il rifiuto per autorita' verrebbe letto come tentativo (candidato perso, unmatched vivo). L'esito deve
+    essere locale alla chiamata."""
+    c = _catena_armata(tmp_path, "t54.db")
+    c.rc._direct_order_bet_ids = {"ref-1": "B1"}
+    adapter = c.rc._direct_ttl_cancel_adapter()
+    adapter.authority_check = lambda: "runtime_authority_lost:lease_unreadable"
+    adapter.sim_cancel = adapter.live_cancel = lambda **kw: pytest.fail("cancel inviato senza autorita'")
+    for nome in ("cancel", "cancel_with_outcome"):
+        originale = getattr(adapter, nome, None)
+        if originale is None:
+            continue
+
+        def _con_concorrente(m, ids, _orig=originale):
+            out = _orig(m, ids)
+            adapter.last_block = ""                     # effetto di un cancel concorrente riuscito sullo stesso adapter
+            return out
+
+        setattr(adapter, nome, _con_concorrente)
+    c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
+    assert c.rc._direct_order_bet_ids == {"ref-1": "B1"}, "candidato TTL perso senza alcun tentativo"
+    assert c.bus.payloads("DIRECT_UNMATCHED_CANCEL_FAILED") == []
+    assert c.bus.payloads("DIRECT_UNMATCHED_CANCEL_DEFERRED")
+
+
+def test_t55_bet_id_fuori_dal_registry_durante_la_chiamata_al_broker(tmp_path):
+    """Grok su 589cdb5: durante il cancel il bet_id non deve restare candidato, altrimenti un giro TTL
+    sovrapposto (stream + REST fallback) invia un secondo cancel sullo stesso ordine."""
+    c = _catena_armata(tmp_path, "t55.db")
+    c.rc._direct_order_bet_ids = {"ref-1": "B1"}
+    adapter = c.rc._direct_ttl_cancel_adapter()
+    visto = []
+    adapter.sim_cancel = adapter.live_cancel = (
+        lambda **kw: visto.append("B1" in c.rc.direct_unmatched_bet_ids) or {"ok": True, "cancelled_count": 1})
+    c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
+    assert visto == [False], "bet_id ancora candidato mentre il cancel e' in corso"
+    assert "B1" not in c.rc.direct_unmatched_bet_ids
+
+
+def test_t56_candidato_gia_preso_in_carico_non_genera_un_secondo_cancel(tmp_path):
+    """Grok su 589cdb5: un giro sovrapposto che ha selezionato lo stesso ordine prima della presa in carico
+    non invia un secondo cancel."""
+    c = _catena_armata(tmp_path, "t56.db")
+    c.rc._direct_order_bet_ids = {}                              # gia' preso in carico dal giro concorrente
+    adapter = c.rc._direct_ttl_cancel_adapter()
+    adapter.sim_cancel = adapter.live_cancel = lambda **kw: pytest.fail("secondo cancel sullo stesso ordine")
+    c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
+    assert c.bus.payloads("DIRECT_UNMATCHED_CANCELLED") == []

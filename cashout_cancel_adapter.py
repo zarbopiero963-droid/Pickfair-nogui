@@ -30,7 +30,7 @@ salta la posizione invece di chiudere alla cieca lasciando il resting vivo).
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -120,16 +120,25 @@ class CashoutCancelAdapter:
         Firma posizionale ``(market_id, bet_ids)`` = il contratto che il router
         si aspetta da ``cancel_orders``.
         """
-        self.last_block = ""
+        confirmed, block = self.cancel_with_outcome(market_id, bet_ids)
+        self.last_block = block
+        return confirmed
+
+    def cancel_with_outcome(self, market_id: str, bet_ids: List[str]) -> Tuple[bool, str]:
+        """Come :meth:`cancel`, con l'esito locale alla chiamata: ``(confermato, motivo_non_tentato)``.
+
+        #536 (Grok su 589cdb5): ``motivo_non_tentato`` non vuoto = rifiuto per autorita' prima del broker. Non
+        passa da stato d'istanza, quindi un cancel concorrente sullo stesso adapter non lo altera.
+        """
         ids = [str(b).strip() for b in (bet_ids or []) if b and str(b).strip()]
         if not ids:
             # Niente da cancellare. NON inoltrare al broker: bet_ids vuoto =
             # "cancella TUTTI gli unmatched del mercato" lato Betfair/SIM.
-            return True
+            return True, ""
         market = str(market_id or "").strip()
         if not market:
             logger.warning("[cashout_cancel] market_id vuoto: cancel non confermato")
-            return False
+            return False, ""
         if self.authority_check is not None:
             try:
                 block = str(self.authority_check() or "")
@@ -137,8 +146,7 @@ class CashoutCancelAdapter:
                 block = "runtime_authority_check_failed"
             if block:
                 logger.warning("[cashout_cancel] cancel rifiutato su %s: %s", market, block)
-                self.last_block = block
-                return False
+                return False, block
         try:
             if self.is_simulation():
                 instructions: List[Dict[str, Any]] = [{"betId": bid} for bid in ids]
@@ -147,8 +155,8 @@ class CashoutCancelAdapter:
                 result = self.live_cancel(market_id=market, bet_ids=ids)
         except Exception as exc:  # noqa: BLE001 - fail-closed: cancel non confermato
             logger.warning("[cashout_cancel] cancel fallito su %s: %s", market, exc)
-            return False
+            return False, ""
         confirmed = response_confirms_cancel(result)
         if not confirmed:
             logger.warning("[cashout_cancel] cancel NON confermato su %s (%r)", market, result)
-        return confirmed
+        return confirmed, ""

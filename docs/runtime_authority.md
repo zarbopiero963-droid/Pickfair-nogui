@@ -117,8 +117,13 @@ non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a r
 - **Emergency stop**: il LOCKDOWN locale resta sempre; il cancel-all di mercato si interrompe, riverificando prima
   di ogni mercato, se l'autorità è persa in modo definitivo (lock cancellato/sostituito, lease superata o scaduta, autorità rilasciata), perché gli unmatched
   possono essere del nuovo proprietario. Autorità solo illeggibile sul momento (DB) ⇒ cancel ammesso.
-- **TTL degli unmatched**: un cancel non tentato perché l'autorità non è dimostrata (l'adapter lo segnala con
-  `last_block`) conserva il candidato (`DIRECT_UNMATCHED_CANCEL_DEFERRED`); solo un tentativo reale lo consuma.
+- **TTL degli unmatched**: un cancel non tentato perché l'autorità non è dimostrata conserva il candidato
+  (`DIRECT_UNMATCHED_CANCEL_DEFERRED`); solo un tentativo reale lo consuma. Dopo la review Grok di `589cdb5`: il
+  motivo del rifiuto arriva da `CashoutCancelAdapter.cancel_with_outcome`, locale alla chiamata (non dallo stato
+  d'istanza `last_block`, che un cancel concorrente sullo stesso adapter azzererebbe); il `bet_id` esce dal
+  registry **prima** della chiamata al broker, come su main, e la presa in carico (`pop` per chiave) fa da confine
+  fra giri TTL sovrapposti (stream e REST fallback): chi non la ottiene non invia un secondo cancel; il candidato
+  torna nel registry solo se il cancel non è stato tentato.
 - **START**: l'autorità si riverifica subito prima dell'attivazione; persa durante connessione o recovery ⇒
   `RUNTIME_AUTHORITY_LOST_DURING_START`, servizi smontati, lock e lease rilasciati, nessun `RUNTIME_STARTED`.
 - **STOP dopo una perdita**: la scadenza della lease si ritenta anche se `mark_lost` non era riuscito (scoped su
@@ -191,4 +196,6 @@ STOP che attende l'hedge del cashout in volo (T43); rilievi Codex su `1542b5d`: 
 scadenza ritentata allo STOP, emergency stop, candidato TTL conservato, START non attivo dopo la perdita (T44–T48);
 rilievi Sol su `9a80162`: emergency stop riverificato per mercato, NO RETRY del TTL solo dopo un tentativo (T49–T50);
 rilievi Grok su `9a80162`: rollback su ogni errore in `begin_transaction`, cashout REJECTED se l'operazione in volo
-non si registra (T51–T52); transazione fenced che non fallisce se l'heartbeat rinnova nel mezzo (T53). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+non si registra (T51–T52); transazione fenced che non fallisce se l'heartbeat rinnova nel mezzo (T53); rilievi Grok su `589cdb5`: esito del
+cancel TTL locale alla chiamata, `bet_id` fuori dal registry durante il broker, nessun secondo cancel da un giro
+sovrapposto (T54–T56). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

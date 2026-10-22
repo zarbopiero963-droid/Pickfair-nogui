@@ -2314,12 +2314,36 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        not_attempted = str(getattr(adapter, \"last_block\", \"\") or \"\")",
-      "mutated": "        not_attempted = \"\"",
+      "original": "            self._direct_order_bet_ids.update(presi)",
+      "mutated": "            pass",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
-      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162): il rifiuto dell'adapter dopo il precontrollo consuma il candidato TTL senza tentativo."
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162, Grok su 589cdb5): il rifiuto per autorita' dell'adapter consuma il candidato TTL senza tentativo."
+    },
+    {
+      "id": "i536_ttl_overlapping_poll_second_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if not presi:\n            return",
+      "mutated": "        if False:\n            return",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 589cdb5): un giro TTL sovrapposto invia un secondo cancel su un ordine gia' preso in carico."
+    },
+    {
+      "id": "i536_ttl_bet_id_kept_during_broker_call",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        presi = self._discard_direct_bet_id(bet_id)",
+      "mutated": "        presi = {c: b for c, b in self._direct_order_bet_ids.items() if b == bet_id}",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 589cdb5): il bet_id resta candidato durante la chiamata al broker."
     },
     {
       "id": "i536_begin_transaction_leaks_lock_on_error",
