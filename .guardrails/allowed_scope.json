@@ -2469,6 +2469,22 @@
         "tests/test_pr512_codex_034af59.py"
       ],
       "max_files": 16
+    },
+    "issue536-runtime-authority-lease-fencing": {
+      "description": "Mandato owner PF-536-ISOLATED-IMPLEMENTATION-01 (22/10/2026), issue #536 PF-RUNTIME-LOCK-01, baseline main 152613b: autorita' esclusiva del runtime a tre strati — lock OS, identita' (inode) del file .runtime.lock verificata a ogni operazione, lease persistente nel DB (tabella additiva runtime_lease) con fencing token monotono obbligatorio e fence su ogni scrittura del Database dentro la stessa transazione; verifica fail-closed prima di segnale, auto-next, cashout, reset_cycle, sweep F028 e di ogni invio del TradingEngine; ricontrollo dopo l'invio; LOCKDOWN senza cancel-all alla perdita. Nuovo core/runtime_authority.py e docs/runtime_authority.md; test HARD REAL tests/acceptance/test_issue536_runtime_authority.py; mutazioni i536_* nel catalogo. Nessun merge, nessun LIVE.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "core/runtime_authority.py",
+        "core/runtime_controller.py",
+        "core/trading_engine.py",
+        "database.py",
+        "docs/roserpina_bankroll_equity.md",
+        "docs/runtime_authority.md",
+        "guardrails/mutation_catalog.json",
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "max_files": 10
     }
   }
 }

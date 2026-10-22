@@ -64,6 +64,16 @@ _ROLLBACK_NESTED_SAVEPOINT_SQL = "ROLLBACK TO SAVEPOINT sp_nested_tx"
 
 
 
+class RuntimeFenceViolation(RuntimeError):
+    """#536 PF-RUNTIME-LOCK-01: una scrittura e' stata rifiutata perche' il runtime che la chiede non possiede
+    piu' la lease del database (``runtime_lease``): proprietario diverso, fencing token superato o lease scaduta.
+    Fail-closed: nulla viene scritto."""
+
+    def __init__(self, reason: str):
+        super().__init__(f"runtime_authority_lost:{reason}")
+        self.reason = str(reason)
+
+
 class RecoveryDelta:
     """#461 PR29-c: variazioni dello stato dei tavoli di recovery ({tavolo: variazione}, tavoli chiusi) da sommare
     alla mappa persistita dentro la transazione di `Database.save_settings` (mai una sostituzione dell'intera mappa:
@@ -85,6 +95,7 @@ class Database:
         self._write_lock = threading.RLock()
         self._cipher = SecretCipher.from_env_or_file()
         self._durability_profile = self._resolve_durability_profile()
+        self._runtime_fence: Optional[Dict[str, Any]] = None   # #536: {owner_id, token, on_violation}
         self._ensure_parent_dir()
         self._init_db()
 
@@ -208,6 +219,7 @@ class Database:
                     conn.execute(_NESTED_SAVEPOINT_SQL)
                 else:
                     conn.execute("BEGIN")
+                    self._assert_runtime_fence(conn, "transaction")   # #536: dentro la transazione
 
                 yield conn
 
@@ -216,7 +228,7 @@ class Database:
                 else:
                     conn.commit()
 
-            except Exception:
+            except Exception as exc:
                 try:
                     if is_nested:
                         conn.execute(_ROLLBACK_NESTED_SAVEPOINT_SQL)
@@ -225,6 +237,7 @@ class Database:
                         conn.rollback()
                 except Exception:
                     logger.exception("Errore rollback transaction")
+                self._notify_fence_violation(exc)
                 raise
             finally:
                 self._set_tx_depth(original_depth)
@@ -239,6 +252,15 @@ class Database:
         commit: bool = True,
     ):
         conn = self._get_connection()
+        if (self._runtime_fence is not None and not self._in_transaction()
+                and str(sql).lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "REPLAC")):
+            # #536: anche una scrittura in autocommit (checkpoint del ciclo, ordini, marker) e' fenced: un runtime
+            # che ha perso la lease non puo' piu' modificare lo stato persistito.
+            try:
+                self._assert_runtime_fence(conn, "execute")
+            except RuntimeFenceViolation as exc:
+                self._notify_fence_violation(exc)
+                raise
         cur = conn.execute(sql, tuple(params))
 
         if fetchone:
@@ -362,6 +384,28 @@ class Database:
             self._migrate_signal_pattern_action(conn)
             self._migrate_cycle_recovery_checkpoints(conn)
             self._migrate_settlement_effects(conn)
+            self._migrate_runtime_lease(conn)
+
+    @staticmethod
+    def _migrate_runtime_lease(conn) -> None:
+        """#536 PF-RUNTIME-LOCK-01: lease persistente dell'unico runtime autorizzato sul database (riga singola).
+        ``fencing_token`` e' monotono: ogni acquisizione lo incrementa, cosi' una scrittura di un proprietario
+        superato e' riconoscibile e rifiutata dentro la transazione (`_assert_runtime_fence`). Additiva."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_lease (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                owner_id TEXT NOT NULL,
+                fencing_token INTEGER NOT NULL,
+                acquired_at REAL NOT NULL,
+                heartbeat_at REAL NOT NULL,
+                expires_at REAL NOT NULL,
+                pid INTEGER,
+                host TEXT NOT NULL DEFAULT '',
+                lock_identity TEXT NOT NULL DEFAULT ''
+            )
+            """
+        )
 
     @staticmethod
     def _migrate_settlement_effects(conn) -> None:
@@ -1869,6 +1913,7 @@ class Database:
             conn.execute("BEGIN IMMEDIATE")
             self._set_tx_depth(1)
             try:
+                self._assert_runtime_fence(conn, name)          # #536: fencing dentro la stessa transazione
                 if change is not None and not change(conn, key):
                     conn.rollback()
                     return False
@@ -1889,6 +1934,38 @@ class Database:
                     self._set_setting(str(merge_key), json.dumps(current))
                 conn.commit()
                 return True
+            except Exception as exc:
+                try:
+                    conn.rollback()
+                except Exception:
+                    logger.exception("Errore rollback %s", name)
+                self._notify_fence_violation(exc)
+                raise
+            finally:
+                self._set_tx_depth(0)
+
+    # =========================================================
+    # #536 PF-RUNTIME-LOCK-01: lease del runtime e fencing token
+    # =========================================================
+    _RUNTIME_LEASE_SELECT = ("SELECT owner_id, fencing_token, acquired_at, heartbeat_at, expires_at, pid, host, "
+                             "lock_identity FROM runtime_lease WHERE id = 1")
+
+    def read_runtime_lease(self) -> Optional[Dict[str, Any]]:
+        row = self._execute(self._RUNTIME_LEASE_SELECT, fetchone=True, commit=False)
+        return dict(row) if row is not None else None
+
+    def _lease_transaction(self, name: str, fn):
+        """Operazione sulla lease in ``BEGIN IMMEDIATE``: mai passa dal fence (e' la lease stessa)."""
+        with self._write_lock:
+            if self._in_transaction():
+                raise RuntimeError(f"{name}: transazione gia' aperta (atomicita' non garantita)")
+            conn = self._get_connection()
+            conn.execute("BEGIN IMMEDIATE")
+            self._set_tx_depth(1)
+            try:
+                out = fn(conn)
+                conn.commit()
+                return out
             except Exception:
                 try:
                     conn.rollback()
@@ -1897,6 +1974,108 @@ class Database:
                 raise
             finally:
                 self._set_tx_depth(0)
+
+    def acquire_runtime_lease(self, owner_id: str, *, ttl_sec: float, now: float, pid: int, host: str,
+                              lock_identity: str, holder_alive=None) -> Dict[str, Any]:
+        """Acquisisce la lease per ``owner_id``. Riuscita (``acquired`` True, nuovo ``fencing_token`` monotono)
+        solo se non c'e' lease, o e' scaduta, o e' gia' di questo proprietario, o il detentore e' dimostrabilmente
+        morto sullo stesso host (``holder_alive(pid, host)`` restituisce False). Altrimenti ``acquired`` False con
+        il detentore: l'avvio va rifiutato."""
+        owner = str(owner_id or "").strip()
+        if not owner:
+            raise ValueError("acquire_runtime_lease: owner_id mancante")
+        ttl = float(ttl_sec)
+        if not (ttl > 0):
+            raise ValueError("acquire_runtime_lease: ttl non valido")
+
+        def fn(conn):
+            row = conn.execute(self._RUNTIME_LEASE_SELECT).fetchone()
+            if row is not None:
+                same = str(row["owner_id"]) == owner
+                expired = float(now) > float(row["expires_at"])
+                dead = False
+                if not same and not expired and callable(holder_alive):
+                    try:
+                        dead = holder_alive(row["pid"], row["host"]) is False
+                    except Exception:
+                        dead = False                          # non dimostrabile => non si scavalca
+                if not (same or expired or dead):
+                    return {"acquired": False, "holder": dict(row)}
+                token = int(row["fencing_token"]) + 1
+                cur = conn.execute(
+                    "UPDATE runtime_lease SET owner_id = ?, fencing_token = ?, acquired_at = ?, heartbeat_at = ?, "
+                    "expires_at = ?, pid = ?, host = ?, lock_identity = ? WHERE id = 1 AND fencing_token = ?",
+                    (owner, token, float(now), float(now), float(now) + ttl, int(pid or 0), str(host or ""),
+                     str(lock_identity or ""), int(row["fencing_token"])))
+                if cur.rowcount != 1:
+                    return {"acquired": False, "holder": dict(row), "reason": "concurrent_update"}
+            else:
+                token = 1
+                conn.execute(
+                    "INSERT INTO runtime_lease (id, owner_id, fencing_token, acquired_at, heartbeat_at, expires_at, "
+                    "pid, host, lock_identity) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (owner, token, float(now), float(now), float(now) + ttl, int(pid or 0), str(host or ""),
+                     str(lock_identity or "")))
+            return {"acquired": True, "fencing_token": token, "expires_at": float(now) + ttl}
+
+        return self._lease_transaction("acquire_runtime_lease", fn)
+
+    def renew_runtime_lease(self, owner_id: str, fencing_token: int, *, ttl_sec: float, now: float) -> Optional[float]:
+        """Rinnova la lease solo se e' ancora di ``owner_id`` con lo stesso token e NON scaduta. Ritorna la nuova
+        scadenza, oppure None: il proprietario non puo' piu' dimostrare l'autorita' (fail-closed)."""
+        def fn(conn):
+            cur = conn.execute(
+                "UPDATE runtime_lease SET heartbeat_at = ?, expires_at = ? WHERE id = 1 AND owner_id = ? "
+                "AND fencing_token = ? AND expires_at >= ?",
+                (float(now), float(now) + float(ttl_sec), str(owner_id), int(fencing_token), float(now)))
+            return float(now) + float(ttl_sec) if cur.rowcount == 1 else None
+
+        return self._lease_transaction("renew_runtime_lease", fn)
+
+    def release_runtime_lease(self, owner_id: str, fencing_token: int, *, now: float) -> bool:
+        """Scade subito la lease di ``owner_id``/``fencing_token``; mai quella di un altro proprietario."""
+        def fn(conn):
+            cur = conn.execute(
+                "UPDATE runtime_lease SET expires_at = ? WHERE id = 1 AND owner_id = ? AND fencing_token = ?",
+                (float(now) - 1.0, str(owner_id), int(fencing_token)))
+            return cur.rowcount == 1
+
+        return self._lease_transaction("release_runtime_lease", fn)
+
+    def bind_runtime_fence(self, owner_id: str, fencing_token: int, on_violation=None) -> None:
+        """Da qui in poi ogni scrittura di questo ``Database`` (transazioni e autocommit) richiede che la lease sia
+        ancora di ``owner_id`` con ``fencing_token``; altrimenti `RuntimeFenceViolation` e ``on_violation(reason)``."""
+        self._runtime_fence = {"owner_id": str(owner_id), "token": int(fencing_token), "on_violation": on_violation}
+
+    def unbind_runtime_fence(self) -> None:
+        self._runtime_fence = None
+
+    def runtime_fence(self) -> Optional[Dict[str, Any]]:
+        fence = self._runtime_fence
+        return {"owner_id": fence["owner_id"], "token": fence["token"]} if fence else None
+
+    def _assert_runtime_fence(self, conn, name: str) -> None:
+        fence = self._runtime_fence
+        if fence is None:
+            return
+        row = conn.execute(self._RUNTIME_LEASE_SELECT).fetchone()
+        if row is None:
+            raise RuntimeFenceViolation("lease_missing")
+        if str(row["owner_id"]) != fence["owner_id"] or int(row["fencing_token"]) != int(fence["token"]):
+            raise RuntimeFenceViolation("fencing_token_superseded")
+        if float(row["expires_at"]) < time.time():
+            raise RuntimeFenceViolation("lease_expired")
+
+    def _notify_fence_violation(self, exc: BaseException) -> None:
+        if not isinstance(exc, RuntimeFenceViolation):
+            return
+        fence = self._runtime_fence
+        callback = fence.get("on_violation") if fence else None
+        if callable(callback):
+            try:
+                callback(exc.reason)
+            except Exception:
+                logger.exception("Callback di perdita dell'autorita' fallita")
 
     def list_held_settlement_effects(self) -> List[Dict[str, Any]]:
         """Settlement registrati ``held`` (in attesa di riconciliazione), con il payload originale."""

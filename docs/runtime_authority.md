@@ -1,0 +1,125 @@
+# Autorità esclusiva del runtime — lock OS, identità del lock, lease con fencing (#536)
+
+Fonte: issue **#536 PF-RUNTIME-LOCK-01** (mandato owner PF-536-ISOLATED-IMPLEMENTATION-01, 22/10/2026),
+decisione owner ratificata «un solo runtime attivo per database». Codice: `core/runtime_authority.py`
+(`RuntimeAuthority`, `RuntimeAuthorityLost`), `database.py` (tabella `runtime_lease`, `bind_runtime_fence`,
+`RuntimeFenceViolation`), `core/runtime_controller.py` (acquisizione allo START, guard sui percorsi finanziari,
+LOCKDOWN alla perdita), `core/trading_engine.py` (choke point prima dell'invio e ricontrollo dopo).
+Test: `tests/acceptance/test_issue536_runtime_authority.py`.
+
+## Problema
+
+Il lock del sistema operativo su `<db>.runtime.lock` (PR29-c) impedisce un secondo `start()` sullo stesso
+database, ma un `flock` protegge l'inode, non il percorso: se il file viene cancellato o sostituito mentre il
+runtime è attivo, un secondo runtime prende un lock su un nuovo file e i due operano sullo stesso DB credendosi
+entrambi proprietari. I tavoli Roserpina vivono in memoria per processo: due copie attive divergono e possono
+piazzare ordini o azzerare cicli in modo non coordinato.
+
+## Architettura: tre strati, tutti obbligatori
+
+Nessuno dei tre strati è disattivabile da configurazione, né in SIM né in LIVE.
+
+1. **Lock OS** (`RuntimeAuthority.acquire_os_lock`): `fcntl.flock` esclusivo non bloccante su POSIX,
+   `msvcrt.locking` del byte 0 su Windows, sul percorso canonico `realpath(db) + ".runtime.lock"`. Fallito ⇒
+   `RUNTIME_INSTANCE_ACTIVE`, come prima.
+2. **Identità del file di lock**: all'acquisizione si memorizzano `(st_dev, st_ino)` del descrittore e nel file
+   si scrive il record JSON del proprietario (`owner_id`, `pid`, `host`, `acquired_at`). Ogni verifica confronta
+   il descrittore con `os.stat(percorso)`: percorso assente o `nlink == 0` ⇒ `lock_file_deleted`; inode diverso
+   ⇒ `lock_file_replaced`. In entrambi i casi l'autorità è persa in modo definitivo.
+3. **Lease persistente con fencing token** (tabella `runtime_lease`, riga singola `id = 1`, additiva —
+   `CREATE TABLE IF NOT EXISTS`, nessuna colonna esistente toccata):
+   - `acquire_runtime_lease` in `BEGIN IMMEDIATE`: riesce solo se la lease manca, è scaduta, è già di questo
+     `owner_id`, o il detentore è **dimostrabilmente morto sullo stesso host** (`_holder_alive` restituisce
+     False: pid inesistente). Non dimostrabile (altro host, pid non valido, errore) ⇒ non si scavalca. Il
+     `fencing_token` è monotono (`+1` a ogni acquisizione) e l'UPDATE è condizionato al token letto
+     (`concurrent_update` ⇒ rifiuto);
+   - `renew_runtime_lease` (heartbeat ogni 10 s, TTL 30 s — costanti `RuntimeController.RUNTIME_LEASE_TTL_SEC`
+     e `RUNTIME_LEASE_HEARTBEAT_SEC`, non chiavi di config) rinnova solo se owner e token coincidono **e la lease
+     non è scaduta**; altrimenti `None` ⇒ `lease_superseded`;
+   - `release_runtime_lease` scade subito la lease, solo se owner e token sono i propri;
+   - `bind_runtime_fence(owner_id, token)`: da quel momento ogni scrittura del `Database` — `transaction()`
+     (dopo `BEGIN`), `_settlement_transaction` (dopo `BEGIN IMMEDIATE`) e le scritture autocommit
+     `INSERT/UPDATE/DELETE/REPLACE` in `_execute` — verifica **dentro la stessa transazione** che la riga
+     `runtime_lease` sia ancora di questo owner con questo token e non scaduta; altrimenti
+     `RuntimeFenceViolation(lease_missing | fencing_token_superseded | lease_expired)`, rollback, e callback
+     `on_violation` che marca l'autorità persa. Un runtime superato non può scrivere stato finanziario, qualunque
+     cosa creda di essere.
+
+## Sequenza allo START e allo STOP
+
+`start()` (serializzato dal lock di ciclo di vita): lock OS → lease (`RUNTIME_LEASE_HELD`, evento
+`RUNTIME_START_REFUSED`, lock rilasciato se la lease è di un altro runtime vivo) → heartbeat → servizi. Un
+database su file arma sempre l'autorità; con DB `:memory:` (solo test single-process) non c'è lock né lease.
+`stop()` riuscito: heartbeat fermo, lease scaduta (solo se ancora nostra), fence sciolto, descrittore chiuso.
+Uno STOP fallito trattiene lock e lease come in PR29-c; uno STOP ripetuto o concorrente non rilascia due volte.
+
+## Percorsi finanziari protetti (`_runtime_authority_block(context)` ⇒ `verify`)
+
+| Percorso | Punto di verifica | Esito al rifiuto |
+|---|---|---|
+| Segnale Telegram / Quick Bet | `_route_signal…` subito prima di `CMD_QUICK_BET` | riserva rilasciata, segnale rifiutato con `runtime_authority_lost:<motivo>` |
+| Auto-next Roserpina | prima dell'invio dell'ordine successivo | tavolo sbloccato, nessun ordine |
+| Cashout | `_route_cashout_signal_under_barrier` | segnale rifiutato |
+| Reset di ciclo | `reset_cycle` | `{"reset": False, "ok": False, "reason": …}` |
+| Sweep F028 (ordini mai abbinati) | `_release_final_unmatched_orders` | nessun rilascio |
+| **Ogni invio** (SIM e LIVE, manuale, dutching, copy) | `TradingEngine._submit_to_order_path` → `RuntimeController.assert_runtime_authority("order_submit")` | `RuntimeAuthorityLost` prima della chiamata all'exchange |
+| Dopo l'invio | `after_order_send_authority_check(result)` | evento `RUNTIME_AUTHORITY_LOST_AFTER_SEND` con `correlation_id`/`customer_ref` |
+| LIVE | `is_live_allowed()` | False se l'autorità è persa |
+
+`verify` è fail-closed: lock non tenuto, file cancellato/sostituito, lease non acquisita, lease di un altro owner
+o con token diverso, lease scaduta ⇒ `RuntimeAuthorityLost` **permanente** (`mark_lost`). DB non leggibile sul
+momento ⇒ `RuntimeAuthorityLost("lease_unreadable", permanent=False)`: l'operazione è rifiutata ma il runtime
+non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a rinnovare prima della scadenza ⇒
+`lease_unrenewable`, perdita definitiva).
+
+## Perdita dell'autorità
+
+`mark_lost(motivo)` (idempotente): lease scaduta subito se ancora nostra (così il proprietario legittimo può
+subentrare senza aspettare il TTL), heartbeat fermato, fence lasciato vincolato (ogni scrittura successiva è
+rifiutata), callback al controller. `RuntimeController._on_runtime_authority_lost`: `live_enabled = False`,
+`mode = LOCKDOWN`, `last_error = RUNTIME_AUTHORITY_LOST:<motivo>`, poller dei settlement fermato, evento
+`RUNTIME_AUTHORITY_LOST`. **Nessun cancel-all**: gli ordini aperti sull'exchange possono essere del nuovo
+proprietario. Nessuna scrittura di LOCKDOWN nel DB: il fence la rifiuterebbe comunque.
+
+## Recupero dopo crash, riavvio e avvii concorrenti
+
+- Crash del processo: il SO rilascia il flock; la lease resta nel DB fino alla scadenza (≤ 30 s) **oppure**
+  viene scavalcata subito se il pid del detentore non esiste più sullo stesso host. Il nuovo runtime ottiene
+  `fencing_token + 1`, ricostruisce i tavoli (F018) e riconcilia; un eventuale processo fantasma con il token
+  precedente è rifiutato dal fence alla prima scrittura.
+- Riavvio ordinato: STOP scade la lease; il nuovo START la riacquisisce con token maggiore (monotono anche
+  attraverso i riavvii: la riga non viene mai cancellata).
+- Avvii simultanei: il flock serializza sullo stesso file; con file cancellato/sostituito la lease in
+  `BEGIN IMMEDIATE` fa da secondo gate: uno solo acquisisce, gli altri ricevono `RUNTIME_LEASE_HELD`.
+- Lease scaduta con il vecchio processo ancora vivo (DB lento, processo sospeso): il vecchio runtime perde
+  l'autorità al primo `verify`/heartbeat (`lease_expired` o `lease_superseded`) e va in LOCKDOWN; il nuovo
+  proprietario ha un token maggiore e il fence rifiuta le scritture del vecchio.
+
+## Limiti dichiarati (nessun falso senso di sicurezza)
+
+- **Finestra TOCTOU fra `verify` e la chiamata all'exchange.** Non può essere fenced: l'exchange non conosce il
+  token. Un ordine può partire con autorità appena persa; il ricontrollo dopo l'invio lo segnala
+  (`RUNTIME_AUTHORITY_LOST_AFTER_SEND`), la riga `orders` del runtime superato è rifiutata dal fence e l'ordine
+  (con il `customer_ref` di quel runtime) resta sull'exchange per la riconciliazione del nuovo proprietario.
+  Non si ritenta e non si cancella alla cieca.
+- **Stesso host, orologio condiviso.** Il confronto dei pid e le scadenze (`time.time`) lo assumono. Un database
+  su filesystem di rete (NFS/SMB) non è supportato: né il flock né `st_ino` sono affidabili.
+- **Windows**: `st_ino` è l'indice del file NTFS; la sostituzione è riconosciuta se l'indice cambia. Non eseguito
+  in CI (MANUAL_ONLY).
+- **Processo sospeso oltre il TTL** (SIGSTOP, pausa del debugger): tra la ripresa e il primo `verify` nessun
+  ordine parte, perché ogni invio passa da `verify`; ma una chiamata all'exchange già in volo al momento della
+  sospensione rientra nella finestra TOCTOU sopra.
+- **In LOCKDOWN** il consumer dei settlement può tentare scritture che il fence rifiuta: i settlement restano
+  trattenuti e vengono riconciliati dal runtime che detiene l'autorità.
+- Nessun cap monetario, nessuna nuova modalità, nessun flag: lo stesso motore SIM/LIVE.
+
+## Prove (test HARD REAL, `tests/acceptance/test_issue536_runtime_authority.py`)
+
+Lock cancellato e sostituito durante l'attività (T01/T02); tre avvii simultanei (T03); due processi OS reali con
+lock cancellato e kill del detentore (T04); crash multi-tavolo con `os._exit` e ricostruzione con token
+maggiore e fantasma rifiutato (T05); riavvio con token monotono (T06); STOP fallito, ripetuto e concorrente
+(T07); lease scaduta con vecchio processo vivo (T08/T08b); DB temporaneamente indisponibile (T09); perdita
+durante l'ammissione (T10) e fra verifica e invio (T11); fence nelle transazioni e in autocommit (T12/T12b);
+nessun rilascio né scrittura da un runtime superato (T13); START arma sempre l'autorità (T15); heartbeat (T16);
+`_holder_alive` (T17); `verify` fail-closed (T18); auto-next, engine e cashout rifiutati senza autorità
+(T19–T21). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

@@ -10,6 +10,7 @@ import os
 import threading
 import time
 import uuid
+import weakref
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -21,6 +22,7 @@ from core.market_tracker import MarketTracker
 from core.money_management import RoserpinaMoneyManagement
 from core.pnl_engine import PnLEngine
 from core.reconciliation_engine import ReconciliationEngine
+from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost
 from core.state_recovery import StateRecovery
 from core.risk_desk import RiskDesk
 from core.safety_layer import assert_live_gate_or_refuse
@@ -263,6 +265,8 @@ class RuntimeController:
         # #461 PR29-c: consumo seriale dei settlement nel processo (vedi `_settlement_consumer_lock`)
         self._settlement_lock = threading.RLock()
         self._lifecycle_lock = threading.RLock()   # #461 PR29-c (Sol su e3fe4d7): start/stop serializzati
+        self.runtime_authority: Optional[RuntimeAuthority] = None   # #536: lock OS + identita' file + lease/fencing
+        self._authority_lost_reason = ""
         self._processed_auto_trade_keys: set[str] = set()
         self._cycle_step_counts: dict[str, int] = {}
         self._last_bankroll_sync_result: dict[str, Any] = {
@@ -1986,6 +1990,8 @@ class RuntimeController:
         return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
 
     def is_live_allowed(self) -> bool:
+        if getattr(self, "_authority_lost_reason", ""):        # #536: autorita' persa => nessun invio LIVE
+            return False
         # Choke point unico per OGNI submission live (manuale, dutching, copy):
         # l'emergenza blocca qui anche se qualcuno riabilita live/execution_mode
         # senza passare da reset_emergency() (es. start() dopo un riavvio con
@@ -2434,6 +2440,15 @@ class RuntimeController:
                                                        "reason": instance_block})
             return {"ok": False, "started": False, "refused": True, "reason": instance_block,
                     "reason_code": "RUNTIME_INSTANCE_ACTIVE", "status": self._safe_status_snapshot()}
+        # #536: il lock OS da solo non basta (file cancellato o sostituito => un secondo flock riesce). La lease nel
+        # database, con fencing token monotono, e' il secondo gate: tenuta da un altro runtime vivo => rifiuto.
+        lease_block = self._acquire_runtime_lease()
+        if lease_block:
+            logger.critical("Avvio rifiutato: %s", lease_block)
+            self._release_runtime_instance_lock_if_stopped()
+            self.bus.publish("RUNTIME_START_REFUSED", {"reason_code": "RUNTIME_LEASE_HELD", "reason": lease_block})
+            return {"ok": False, "started": False, "refused": True, "reason": lease_block,
+                    "reason_code": "RUNTIME_LEASE_HELD", "status": self._safe_status_snapshot()}
         try:
             result = self._start_with_instance_lock(password=password, simulation_mode=simulation_mode,
                                                     execution_mode=execution_mode, live_enabled=live_enabled,
@@ -2693,33 +2708,123 @@ class RuntimeController:
         }
 
     def _acquire_runtime_instance_lock(self) -> str:
-        """Lock esclusivo ``<db_path>.runtime.lock`` per la vita del processo. '' se ottenuto (o gia' tenuto da questo
+        """Lock esclusivo ``<db_path>.runtime.lock`` (strato 1 di `RuntimeAuthority`, #536: percorso canonico,
+        identita' del file memorizzata, record del proprietario nel file). '' se ottenuto (o gia' tenuto da questo
         controller, o DB in memoria); altrimenti il motivo del rifiuto."""
         if getattr(self, "_instance_lock_fh", None) is not None:
             return ""
         path = str(getattr(getattr(self, "db", None), "db_path", "") or "")
         if not path or path == ":memory:":
             return ""
-        # Grok su e3fe4d7: percorso canonico (link simbolici, percorsi relativi, maiuscole su Windows), cosi' due
-        # grafie dello stesso database prendono lo stesso lock.
-        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))
-        try:
-            handle = open(path + ".runtime.lock", "a+")
-        except OSError as exc:
-            return f"runtime_lock_unavailable:{exc.__class__.__name__}"
-        try:
-            if os.name == "nt":
-                import msvcrt
-                handle.seek(0)                   # Grok su e3fe4d7: sempre il byte 0, non l'offset di append
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            handle.close()
-            return "runtime_already_active_on_database"
-        self._instance_lock_fh = handle
+        authority = self._runtime_authority_for(path)
+        block = authority.acquire_os_lock()
+        if block:
+            return block
+        self._instance_lock_fh = authority.lock_fh
         return ""
+
+    def _runtime_authority_for(self, path: str) -> RuntimeAuthority:
+        current = getattr(self, "runtime_authority", None)
+        if current is None or current.released:
+            # Riferimento debole: nessun ciclo controller -> authority -> controller, cosi' un controller
+            # abbandonato libera subito il suo lock (conteggio dei riferimenti, non il garbage collector).
+            lost_ref = weakref.WeakMethod(self._on_runtime_authority_lost)
+
+            def _on_lost(reason: str, _ref=lost_ref) -> None:
+                handler = _ref()
+                if handler is not None:
+                    handler(reason)
+
+            current = RuntimeAuthority(self.db, path, on_lost=_on_lost,
+                                       lease_ttl_sec=float(self.RUNTIME_LEASE_TTL_SEC),
+                                       heartbeat_sec=float(self.RUNTIME_LEASE_HEARTBEAT_SEC))
+            self.runtime_authority = current
+        return current
+
+    # #536: scadenza della lease e periodo dell'heartbeat (secondi). Non sono chiavi di configurazione: un valore
+    # troppo alto allungherebbe la finestra in cui un runtime superato puo' credersi proprietario, uno troppo basso
+    # farebbe perdere l'autorita' per un rallentamento del DB. I test li riducono per le prove di scadenza.
+    RUNTIME_LEASE_TTL_SEC = 30.0
+    RUNTIME_LEASE_HEARTBEAT_SEC = 10.0
+
+    def _acquire_runtime_lease(self) -> str:
+        """#536 strato 3: lease persistente con fencing token, vincolata al `Database` (ogni scrittura la verifica)
+        e rinnovata dall'heartbeat. '' se acquisita; altrimenti il motivo (lease di un altro runtime vivo, DB non
+        disponibile). Senza lock OS (DB in memoria) non c'e' lease: solo test single-process."""
+        authority = getattr(self, "runtime_authority", None)
+        if authority is None or getattr(self, "_instance_lock_fh", None) is None:
+            return ""
+        block = authority.acquire_lease()
+        if block:
+            return block
+        self._authority_lost_reason = ""
+        authority.start_heartbeat()
+        return ""
+
+    def _runtime_authority_block(self, context: str) -> str:
+        """'' se l'autorita' esclusiva e' dimostrata adesso (lock OS, identita' del file, lease e token nel DB);
+        altrimenti il motivo del blocco. Un controller mai avviato con `start()` (harness di test, DB in memoria)
+        non ha autorita' da verificare: `start()` la arma sempre per un database su file."""
+        lost = getattr(self, "_authority_lost_reason", "")
+        if lost:
+            return f"runtime_authority_lost:{lost}"
+        authority = getattr(self, "runtime_authority", None)
+        if authority is None or authority.released:
+            return ""
+        try:
+            authority.verify(context)
+        except RuntimeAuthorityLost as exc:
+            return f"runtime_authority_lost:{exc.reason}"
+        return ""
+
+    def assert_runtime_authority(self, context: str = "") -> None:
+        """Choke point per il TradingEngine prima di OGNI invio (SIM e LIVE): solleva `RuntimeAuthorityLost`."""
+        block = self._runtime_authority_block(context or "order_submit")
+        if block:
+            raise RuntimeAuthorityLost(block.split(":", 1)[1] if ":" in block else block)
+
+    def after_order_send_authority_check(self, result: Any) -> None:
+        """Ricontrollo DOPO la chiamata all'exchange (finestra TOCTOU fra `verify` e l'invio): se l'autorita' e'
+        stata persa nel frattempo, l'ordine inviato va lasciato alla riconciliazione del nuovo proprietario e il
+        runtime va in LOCKDOWN. Non si ritenta e non si cancella alla cieca."""
+        block = self._runtime_authority_block("after_order_send")
+        if not block:
+            return
+        if isinstance(result, dict):
+            result["authority_after_send"] = "LOST"
+            result["authority_after_send_reason"] = block
+        bus = getattr(self, "bus", None)
+        if bus is not None:
+            bus.publish("RUNTIME_AUTHORITY_LOST_AFTER_SEND", {
+                "reason": block,
+                "correlation_id": (result or {}).get("correlation_id") if isinstance(result, dict) else None,
+                "customer_ref": (result or {}).get("customer_ref") if isinstance(result, dict) else None,
+            })
+
+    def _on_runtime_authority_lost(self, reason: str) -> None:
+        """Perdita definitiva dell'autorita' (file di lock cancellato/sostituito, lease superata o scaduta, fence
+        violato): LOCKDOWN in memoria, nessun nuovo ingresso, poller fermato, nessun cancel-all (gli ordini aperti
+        possono essere del nuovo proprietario). Nessuna scrittura: il fence le rifiuterebbe comunque."""
+        reason = str(reason or "authority_lost")
+        if getattr(self, "_authority_lost_reason", ""):
+            return
+        self._authority_lost_reason = reason
+        logger.critical("AUTORITA' DEL RUNTIME PERSA (%s): LOCKDOWN senza cancel-all", reason)
+        self.live_enabled = False
+        self.mode = RuntimeMode.LOCKDOWN
+        self.last_error = f"RUNTIME_AUTHORITY_LOST:{reason}"
+        stop_event = getattr(self, "_settlement_poll_stop", None)
+        if stop_event is not None:
+            stop_event.set()
+        authority = getattr(self, "runtime_authority", None)
+        if authority is not None:
+            authority.mark_lost(reason)          # idempotente: scade la lease (se ancora nostra), ferma l'heartbeat
+        bus = getattr(self, "bus", None)
+        if bus is not None:
+            try:
+                bus.publish("RUNTIME_AUTHORITY_LOST", {"reason": reason, "mode": RuntimeMode.LOCKDOWN.value})
+            except Exception:
+                logger.exception("Evento RUNTIME_AUTHORITY_LOST non pubblicato")
 
     def _teardown_failed_start(self) -> bool:
         """Smonta i servizi eventualmente avviati da uno `start()` fallito (runtime rimasto fermo). True se tutto e'
@@ -2749,6 +2854,10 @@ class RuntimeController:
         if getattr(self, "_instance_teardown_pending", False):
             return                               # Sol su ad315ca: servizi forse ancora vivi, smontaggio non riuscito
         self._instance_lock_fh = None
+        authority = getattr(self, "runtime_authority", None)
+        if authority is not None and authority.lock_fh is handle:
+            authority.release()                  # #536: heartbeat fermo, lease scaduta, fence sciolto, lock chiuso
+            return
         try:
             handle.close()                       # chiudere il descrittore rilascia flock/msvcrt
         except OSError:
@@ -2850,6 +2959,10 @@ class RuntimeController:
         }
 
     def reset_cycle(self) -> dict:
+        authority_block = self._runtime_authority_block("reset_cycle")     # #536: operazione globale sui tavoli
+        if authority_block:
+            logger.error("reset_cycle rifiutato: %s", authority_block)
+            return {"reset": False, "ok": False, "reason": authority_block, "status": self._safe_status_snapshot()}
         self._reset_reservations_keeping_uncertain()       # PF-ALL-F024
         self._reset_recovery_cycle_keeping_losses()
 
@@ -3075,6 +3188,10 @@ class RuntimeController:
         # (SIGNAL_REJECTED) senza pubblicare nulla né toccare il broker.
         if not self._cashout_chain_wired():
             self._reject_signal(signal, "cashout_chain_not_wired")
+            return False
+        authority_block = RuntimeController._runtime_authority_block(self, "cashout")   # #536: senza autorita' niente cashout
+        if authority_block:
+            self._reject_signal(signal, authority_block)
             return False
 
         # Grace auto-green OPT-IN (G5): se armato, DIFFERISCI l'intera route su un
@@ -4533,6 +4650,11 @@ class RuntimeController:
                 },
             },
         )
+        authority_block = self._runtime_authority_block("signal_submit")   # #536: subito prima dell'invio
+        if authority_block:
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=authority_block)
+            return
         RuntimeController._register_queued_entry_fence(self, payload, admission_fence)
         self.bus.publish("CMD_QUICK_BET", payload)
 
@@ -4903,10 +5025,13 @@ class RuntimeController:
         Solo righe SUBMITTED con betId: un esito incerto (AMBIGUOUS/INFLIGHT, riserve incerte) non e'
         mai considerato annullato. Rilascio idempotente (``force_unlock_if_event``): la perdita di
         recovery del tavolo resta. La chiave anti-duplicato resta acquisita: un segnale riconsegnato
+        #536: senza autorita' esclusiva dimostrata nessun rilascio (un altro runtime potrebbe possedere le riserve).
         non viene rigiocato per il TTL; se era fissata al riavvio (F018) torna a scadere normalmente
         (`unpin`, riesame indipendente c9). Dopo un riavvio la stessa conclusione la trae F018 (ordine assente).
         """
         if not self._settlement_reconciliation_allowed():
+            return []
+        if self._runtime_authority_block("f028"):
             return []
         uncertain = set(self._uncertain_reservations_map())
         tables_by_key: dict = {}
@@ -7471,6 +7596,7 @@ class RuntimeController:
                           candidate_exposure=validators.order_exposure_or_inf(
                               submit_payload["bet_type"], submit_payload["stake"], submit_payload["price"])
                           if table_id is not None else 0.0))  # P38; candidato != violazione
+        stop_block = self._runtime_authority_block("auto_next") or stop_block   # #536: prima dell'invio
         if stop_block:
             # Sblocca il tavolo attivato sopra: nessun CMD_QUICK_BET parte, quindi
             # nessun evento terminale lo libererebbe (tavolo/esposizione fantasma).

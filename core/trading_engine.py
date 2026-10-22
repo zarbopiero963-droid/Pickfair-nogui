@@ -866,6 +866,13 @@ class TradingEngine:
                         done(request, certain=certain)
                     except Exception:
                         logger.exception("Chiusura della registrazione d'invio fallita")
+            # #536: ricontrollo dell'autorita' DOPO la chiamata all'exchange (finestra fra verifica e invio).
+            after_send = getattr(getattr(self, "runtime_controller", None), "after_order_send_authority_check", None)
+            if callable(after_send):
+                try:
+                    after_send(result)
+                except Exception:
+                    logger.exception("Ricontrollo dell'autorita' dopo l'invio fallito")
             if not pending:
                 # Uscita prima del controllo del fence (normalizzazione fallita, engine non pronto): il fence
                 # in coda per questa richiesta non resta orfano (review indipendente su 7a715c6).
@@ -2161,6 +2168,11 @@ class TradingEngine:
                     raise RuntimeError("EMERGENCY_STOP_ACTIVE")
             elif getattr(runtime, "is_emergency_stopped", False) is True:
                 raise RuntimeError("EMERGENCY_STOP_ACTIVE")
+            # #536: autorita' esclusiva del runtime verificata immediatamente prima dell'invio, in OGNI modalita'
+            # (lock OS, identita' del file di lock, lease nel DB con fencing token): persa => nessun invio.
+            assert_authority = getattr(runtime, "assert_runtime_authority", None)
+            if callable(assert_authority):
+                assert_authority("order_submit")
 
         modalita_dichiarata = ""
         if runtime is not None and callable(getattr(runtime, "get_effective_execution_mode", None)):

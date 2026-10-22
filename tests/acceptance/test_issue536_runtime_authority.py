@@ -1,0 +1,657 @@
+"""#536 PF-RUNTIME-LOCK-01 — esclusivita' del runtime per database: lock OS + identita' del file + lease con fencing.
+
+Mandato owner PF-536-ISOLATED-IMPLEMENTATION-01 (22/10/2026). Phase 0 su main 152613b: con il file
+``.runtime.lock`` cancellato o sostituito un secondo runtime partiva sullo stesso database (P1/P2) e il primo
+restava ACTIVE e continuava a operare (P3). Qui: prove REALI (processi OS, SQLite su file, catena
+runtime -> engine -> broker SIM), nessun mock dei componenti sotto prova. Nessun test LIVE.
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import subprocess
+import sys
+import threading
+import time
+
+import pytest
+
+from core.runtime_authority import RuntimeAuthority, RuntimeAuthorityLost, _holder_alive
+from core.runtime_controller import RuntimeController
+from core.system_state import RuntimeMode
+from database import Database, RuntimeFenceViolation
+from tests.acceptance.test_issue461_pr29c_settlement_processes_and_schema import (
+    ROOT, _RUNTIME_SIM_ATTIVO, _app_su, _controller_su)
+from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _signal
+
+POSIX = os.name != "nt"
+
+
+def _lock_path(percorso: str) -> str:
+    return os.path.normcase(os.path.realpath(os.path.abspath(percorso))) + ".runtime.lock"
+
+
+def _arma(c):
+    """Stesse chiamate di `start()`: lock OS, poi lease + fence + heartbeat."""
+    assert c.rc._acquire_runtime_instance_lock() == ""
+    assert c.rc._acquire_runtime_lease() == ""
+    return c.rc.runtime_authority
+
+
+def _catena_armata(tmp_path, nome="autorita.db", **kw):
+    c = _chain(tmp_path, db_name=nome, **kw)
+    _arma(c)
+    return c
+
+
+def _ferma(*apps):
+    for app in apps:
+        try:
+            app.stop()
+        except Exception:
+            pass
+
+
+def _attendi(cond, timeout=5.0):
+    fine = time.monotonic() + timeout
+    while not cond() and time.monotonic() < fine:
+        time.sleep(0.02)
+    return cond()
+
+
+def _ordini(c):
+    return [o.customer_ref for o in c.broker.state.orders.values()]
+
+
+# ---------------------------------------------------------------- lock cancellato / sostituito (Phase 0 P1-P3)
+def test_t01_lock_cancellato_secondo_runtime_rifiutato_e_primo_in_lockdown(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t01.db")
+    a, b = _app_su(p, monkeypatch), _app_su(p, monkeypatch)
+    persi = []
+    a.bus.subscribe("RUNTIME_AUTHORITY_LOST", lambda pl: persi.append(dict(pl)))
+    try:
+        assert a.runtime.start(execution_mode="SIMULATION").get("started") is True
+        token_a = a.runtime.runtime_authority.token
+        os.unlink(_lock_path(p))
+        esito = b.runtime.start(execution_mode="SIMULATION")
+        assert esito.get("started") is False and esito["reason_code"] == "RUNTIME_LEASE_HELD", esito
+        assert b.runtime.mode is RuntimeMode.STOPPED
+        # A se ne accorge all'heartbeat (thread ogni 10 s in produzione) e si ferma da solo, senza cancel-all
+        assert a.runtime.runtime_authority.heartbeat_once() is False
+        assert a.runtime.mode is RuntimeMode.LOCKDOWN and a.runtime.is_live_allowed() is False
+        # B, tentando l'avvio, ha ricreato il file sul percorso: per A e' "sostituito" (inode diverso)
+        assert a.runtime._authority_lost_reason in ("lock_file_deleted", "lock_file_replaced")
+        assert a.runtime._emergency_stopped is False, "perdita dell'autorita' non deve fare cancel-all"
+        assert _attendi(lambda: persi) and persi[0]["reason"] == a.runtime._authority_lost_reason
+        # lease scaduta da A: ora B puo' subentrare, con token maggiore; A non puo' piu' scrivere
+        assert b.runtime.start(execution_mode="SIMULATION").get("started") is True
+        assert b.runtime.runtime_authority.token > token_a
+        with pytest.raises(RuntimeFenceViolation):
+            a.runtime.db.record_settlement_effect("k-a", {"outcome": "released", "table_id": 1, "pnl": -1.0}, None)
+    finally:
+        _ferma(b, a)
+
+
+def test_t02_lock_sostituito_inode_diverso(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t02.db")
+    a, b = _app_su(p, monkeypatch), _app_su(p, monkeypatch)
+    try:
+        assert a.runtime.start(execution_mode="SIMULATION").get("started") is True
+        lp = _lock_path(p)
+        os.unlink(lp)
+        with open(lp, "w") as fh:
+            fh.write("sostituito")
+        assert b.runtime.start(execution_mode="SIMULATION")["reason_code"] == "RUNTIME_LEASE_HELD"
+        assert a.runtime.runtime_authority.lock_identity_problem() == "lock_file_replaced"
+        assert a.runtime.runtime_authority.heartbeat_once() is False
+        assert a.runtime.mode is RuntimeMode.LOCKDOWN
+        assert a.runtime._authority_lost_reason == "lock_file_replaced"
+    finally:
+        _ferma(b, a)
+
+
+def test_t03_due_avvii_simultanei_uno_solo_parte(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t03.db")
+    apps = [_app_su(p, monkeypatch) for _ in range(3)]
+    esiti = [None] * 3
+    barriera = threading.Barrier(3)
+
+    def go(i):
+        barriera.wait()
+        esiti[i] = apps[i].runtime.start(execution_mode="SIMULATION")
+
+    fili = [threading.Thread(target=go, args=(i,)) for i in range(3)]
+    for f in fili:
+        f.start()
+    for f in fili:
+        f.join(60)
+    try:
+        partiti = [e for e in esiti if e and e.get("started")]
+        assert len(partiti) == 1, esiti
+        assert all((e or {}).get("reason_code") in ("RUNTIME_INSTANCE_ACTIVE", "RUNTIME_LEASE_HELD")
+                   for e in esiti if e and not e.get("started"))
+        lease = apps[0].runtime.db.read_runtime_lease()
+        vincitore = next(app for app in apps if app.runtime.mode is RuntimeMode.ACTIVE)
+        assert lease["owner_id"] == vincitore.runtime.runtime_authority.owner_id
+    finally:
+        _ferma(*apps)
+
+
+# ---------------------------------------------------------------- processi OS reali
+@pytest.mark.skipif(not POSIX, reason="kill e pid del figlio: semantica POSIX")
+def test_t04_due_processi_os_lock_cancellato_lease_viva_poi_crash_del_proprietario(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t04.db")
+    Database(p)
+    figlio = subprocess.Popen([sys.executable, "-c", _RUNTIME_SIM_ATTIVO, p], cwd=ROOT,
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    app = _app_su(p, monkeypatch)
+    try:
+        assert figlio.stdout.readline().strip() == "ATTIVO"
+        lease = app.runtime.db.read_runtime_lease()
+        assert lease and int(lease["pid"]) == figlio.pid
+        assert app.runtime.start(execution_mode="SIMULATION")["reason_code"] == "RUNTIME_INSTANCE_ACTIVE"
+        os.unlink(_lock_path(p))                               # il flock del figlio e' ora su un inode orfano
+        esito = app.runtime.start(execution_mode="SIMULATION")
+        assert esito["reason_code"] == "RUNTIME_LEASE_HELD", esito   # la lease del figlio VIVO lo protegge
+        assert f"pid={figlio.pid}" in esito["reason"]
+    finally:
+        figlio.kill()                                          # crash del proprietario
+        figlio.wait(15)
+    # lease non scaduta ma detentore dimostrabilmente morto sullo stesso host => subentro immediato
+    assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+    nuova = app.runtime.db.read_runtime_lease()
+    assert int(nuova["fencing_token"]) > int(lease["fencing_token"]) and nuova["owner_id"] != lease["owner_id"]
+    app.stop()
+    assert _controller_su(p)._acquire_runtime_instance_lock() == ""
+
+
+_CRASH_MULTI_TAVOLO = """
+import os, sys
+import headless_main
+from database import Database
+percorso = sys.argv[1]
+headless_main.Database = lambda: Database(percorso)
+app = headless_main.HeadlessApp()
+app.build(start_services=False)
+app.telegram_service.start = lambda *a, **k: {"started": False, "stub": True}
+app.telegram_service.stop = lambda *a, **k: None
+assert app.runtime.start(execution_mode="SIMULATION").get("started")
+tm = app.runtime.table_manager
+tm.activate(table_id=1, event_key="1.1:1:BACK", exposure=4.0, market_id="1.1", selection_id=1, meta={"customer_ref": "r1"})
+tm.activate(table_id=2, event_key="1.1:2:BACK", exposure=4.0, market_id="1.1", selection_id=2, meta={"customer_ref": "r2"})
+assert app.runtime._persist_recovery_tables()
+auth = app.runtime.runtime_authority
+print("ATTIVO", auth.owner_id, auth.token, flush=True)
+os._exit(9)                                   # crash improvviso con due tavoli attivi: nessun cleanup
+"""
+
+
+@pytest.mark.skipif(not POSIX, reason="processo figlio con os._exit: semantica POSIX")
+def test_t05_crash_durante_attivita_multi_tavolo_e_ricostruzione_dell_autorita(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t05.db")
+    Database(p)
+    out = subprocess.run([sys.executable, "-c", _CRASH_MULTI_TAVOLO, p], cwd=ROOT, capture_output=True,
+                         text=True, timeout=120)
+    assert out.returncode == 9, out.stderr[-800:]
+    _, owner_vecchio, token_vecchio = out.stdout.strip().split()
+    lease = Database(p).read_runtime_lease()
+    assert lease["owner_id"] == owner_vecchio and int(lease["fencing_token"]) == int(token_vecchio)
+    app = _app_su(p, monkeypatch)
+    try:
+        assert app.runtime.start(execution_mode="SIMULATION").get("started") is True   # detentore morto
+        nuova = app.runtime.db.read_runtime_lease()
+        assert int(nuova["fencing_token"]) == int(token_vecchio) + 1
+        # un "fantasma" del vecchio proprietario (stesso owner/token) non puo' piu' scrivere
+        fantasma = Database(p)
+        fantasma.bind_runtime_fence(owner_vecchio, int(token_vecchio))
+        with pytest.raises(RuntimeFenceViolation):
+            fantasma.save_settings({"pr536.fantasma": "x"})
+        assert "pr536.fantasma" not in (Database(p).get_settings() or {})
+        # il nuovo runtime gestisce piu' tavoli: nessun limite introdotto
+        tm = app.runtime.table_manager
+        tm.activate(table_id=1, event_key="1.2:1:BACK", exposure=4.0, market_id="1.2", selection_id=1, meta={"customer_ref": "n1"})
+        tm.activate(table_id=2, event_key="1.2:2:BACK", exposure=4.0, market_id="1.2", selection_id=2, meta={"customer_ref": "n2"})
+        assert app.runtime._persist_recovery_tables()
+    finally:
+        _ferma(app)
+
+
+# ---------------------------------------------------------------- riavvio, STOP, token monotono
+def test_t06_riavvio_nello_stesso_processo_token_monotono(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t06.db")
+    app = _app_su(p, monkeypatch)
+    try:
+        assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+        t1, owner1 = app.runtime.runtime_authority.token, app.runtime.runtime_authority.owner_id
+        app.runtime.stop()
+        assert app.runtime.db.runtime_fence() is None
+        assert float(app.runtime.db.read_runtime_lease()["expires_at"]) < time.time()
+        assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+        assert app.runtime.runtime_authority.token > t1
+        stale = Database(p)
+        stale.bind_runtime_fence(owner1, t1)
+        with pytest.raises(RuntimeFenceViolation):
+            stale._execute("INSERT INTO settings (key, value) VALUES (?, ?)", ("pr536.stale", "x"))
+    finally:
+        _ferma(app)
+
+
+def test_t07_stop_fallito_ripetuto_e_concorrente(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t07.db")
+    app = _app_su(p, monkeypatch)
+    rc = app.runtime
+    disconnetti = rc.betfair_service.disconnect
+
+    def _guasto(*_a, **_k):
+        raise RuntimeError("disconnessione fallita")
+
+    assert rc.start(execution_mode="SIMULATION").get("started") is True
+    rc.betfair_service.disconnect = _guasto
+    with pytest.raises(RuntimeError):
+        rc.stop()                                              # STOP fallito: lock e lease restano
+    assert _controller_su(p)._acquire_runtime_instance_lock() == "runtime_already_active_on_database"
+    assert float(rc.db.read_runtime_lease()["expires_at"]) > time.time()
+    rc.betfair_service.disconnect = disconnetti
+    rc.stop()                                                  # STOP ripetuto: rilascio
+    assert float(rc.db.read_runtime_lease()["expires_at"]) < time.time()
+    assert _controller_su(p)._acquire_runtime_instance_lock() == ""
+    assert rc.start(execution_mode="SIMULATION").get("started") is True
+    errori = []
+
+    def _stop():
+        try:
+            rc.stop()
+        except Exception as exc:                               # pragma: no cover
+            errori.append(exc)
+
+    fili = [threading.Thread(target=_stop) for _ in range(3)]
+    for f in fili:
+        f.start()
+    for f in fili:
+        f.join(30)
+    assert errori == [] and rc.mode is RuntimeMode.STOPPED
+    assert rc.db.runtime_fence() is None and getattr(rc, "_instance_lock_fh", None) is None
+    assert _controller_su(p)._acquire_runtime_instance_lock() == ""
+
+
+# ---------------------------------------------------------------- lease scaduta, DB non disponibile
+def test_t08_lease_scaduta_con_vecchio_processo_vivo(tmp_path, monkeypatch):
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_TTL_SEC", 1.0)
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_HEARTBEAT_SEC", 0.3)
+    a = _catena_armata(tmp_path, "t08.db")
+    a.rc.runtime_authority.stop_heartbeat()                    # il vecchio processo "si blocca" e non rinnova
+    os.unlink(_lock_path(str(tmp_path / "t08.db")))           # ... e intanto il suo file di lock e' stato rimosso
+    time.sleep(1.3)
+    b = _catena_armata(tmp_path, "t08.db")                     # lease scaduta => subentro
+    assert b.rc.runtime_authority.token > a.rc.runtime_authority.token
+    # il vecchio processo e' vivo e crede di essere ACTIVE: ogni percorso finanziario e' rifiutato
+    a.rc._on_signal_received(_signal())
+    rifiuti = a.bus.payloads("SIGNAL_REJECTED")
+    assert rifiuti and str(rifiuti[-1].get("reason", "")).startswith("runtime_authority_lost:"), rifiuti
+    assert a.bus.payloads("CMD_QUICK_BET") == [] and _ordini(a) == []
+    assert a.rc.mode is RuntimeMode.LOCKDOWN
+    with pytest.raises(RuntimeFenceViolation) as exc:
+        a.db.save_settings({"pr536.vecchio": "x"})
+    assert exc.value.reason == "fencing_token_superseded"      # il token del vecchio proprietario e' superato
+    assert a.rc.reset_cycle()["reset"] is False
+    # il nuovo proprietario opera normalmente
+    b.rc._on_signal_received(_signal())
+    assert len(b.bus.payloads("CMD_QUICK_BET")) == 1 and len(_ordini(b)) == 1
+    b.rc.runtime_authority.release()
+
+
+def test_t08b_lease_superata_nel_database_con_lock_intatto(tmp_path):
+    # difesa in profondita': la riga della lease cambia proprietario (altro host, DB ripristinato da backup) mentre
+    # il file di lock di A e' intatto => A lo scopre alla verifica e si dichiara superato
+    p = str(tmp_path / "t08b.db")
+    db_a, db_altro = Database(p), Database(p)
+    auth = RuntimeAuthority(db_a, p, lease_ttl_sec=30.0, heartbeat_sec=5.0)
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    auth.verify("ok")
+    db_altro._execute("UPDATE runtime_lease SET expires_at = ? WHERE id = 1", (time.time() - 1,))
+    assert db_altro.acquire_runtime_lease("ALTRO", ttl_sec=30, now=time.time(), pid=1, host="h2",
+                                          lock_identity="z")["acquired"]
+    with pytest.raises(RuntimeAuthorityLost) as exc:
+        auth.verify("x")
+    assert exc.value.reason == "lease_superseded" and auth.lost_reason == "lease_superseded"
+    assert auth.heartbeat_once() is False
+    with pytest.raises(RuntimeFenceViolation):
+        db_a.save_settings({"pr536.a": "1"})
+    auth.release()
+
+
+def test_t09_database_temporaneamente_indisponibile_rifiuto_senza_perdita_definitiva(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t09.db")
+
+    def _giu(*_a, **_k):
+        raise sqlite3.OperationalError("database is locked")
+
+    with monkeypatch.context() as m:
+        m.setattr(c.db, "read_runtime_lease", _giu)
+        c.rc._on_signal_received(_signal())
+        rifiuti = c.bus.payloads("SIGNAL_REJECTED")
+        assert rifiuti and rifiuti[-1]["reason"] == "runtime_authority_lost:lease_unreadable"
+        assert c.bus.payloads("CMD_QUICK_BET") == []
+        assert c.rc.mode is RuntimeMode.ACTIVE and c.rc._authority_lost_reason == ""   # transitorio
+    c.rc._on_signal_received(_signal(selection_id=12, selection="Under 2.5"))
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1                               # DB tornato: si opera
+    # heartbeat con DB giu': tollerato finche' la lease resta rinnovabile prima della scadenza, poi perdita
+    auth = c.rc.runtime_authority
+    auth.stop_heartbeat()
+    with monkeypatch.context() as m:
+        m.setattr(c.db, "renew_runtime_lease", _giu)
+        assert auth.heartbeat_once() is True and auth.lost_reason == ""
+        auth.lease_expires_at = time.time() + auth.heartbeat_sec / 2       # non piu' rinnovabile in tempo
+        assert auth.heartbeat_once() is False and auth.lost_reason == "lease_unrenewable"
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+
+
+# ---------------------------------------------------------------- perdita durante ammissione ed esecuzione
+def test_t10_perdita_dell_autorita_durante_l_ammissione_nessun_ordine(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t10.db")
+    lp = _lock_path(str(tmp_path / "t10.db"))
+    originale = c.rc._apply_direct_best_price
+
+    def _durante_ammissione(payload):
+        os.unlink(lp)                                          # l'operatore cancella il lock a meta' ammissione
+        return originale(payload)
+
+    monkeypatch.setattr(c.rc, "_apply_direct_best_price", _durante_ammissione)
+    c.rc._on_signal_received(_signal())
+    rifiuti = c.bus.payloads("SIGNAL_REJECTED")
+    assert rifiuti and rifiuti[-1]["reason"] == "runtime_authority_lost:lock_file_deleted", rifiuti
+    assert c.bus.payloads("CMD_QUICK_BET") == [] and _ordini(c) == []
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+    assert all(not str(t.get("current_event_key") or "") for t in c.rc.table_manager.snapshot()), \
+        "tavolo lasciato riservato da un ingresso rifiutato"
+
+
+def test_t11_perdita_fra_verifica_e_invio_segnalata_e_lockdown(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t11.db")
+    lp = _lock_path(str(tmp_path / "t11.db"))
+    eventi = []
+    c.bus.subscribe("RUNTIME_AUTHORITY_LOST_AFTER_SEND", lambda pl: eventi.append(dict(pl)))
+    originale = c.engine._route_native_microstake
+
+    def _dopo_la_verifica(ctx, payload, modalita):
+        os.unlink(lp)                                          # finestra TOCTOU: dopo verify, prima dell'invio
+        return originale(ctx, payload, modalita)
+
+    monkeypatch.setattr(c.engine, "_route_native_microstake", _dopo_la_verifica)
+    c.rc._on_signal_received(_signal())
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
+    assert eventi and eventi[0]["reason"].startswith("runtime_authority_lost:lock_file_deleted"), eventi
+    assert c.rc.mode is RuntimeMode.LOCKDOWN and c.rc.is_live_allowed() is False
+    # l'ordine puo' essere arrivato all'exchange: resta alla riconciliazione, nessun secondo invio
+    c.rc._on_signal_received(_signal(selection_id=12, selection="Under 2.5"))
+    assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
+    assert len(_ordini(c)) <= 1
+
+
+# ---------------------------------------------------------------- fencing nel database
+def test_t12_fence_rifiuta_le_scritture_del_proprietario_superato_ma_non_le_letture(tmp_path):
+    p = str(tmp_path / "t12.db")
+    db1, db2 = Database(p), Database(p)
+    now = time.time()
+    l1 = db1.acquire_runtime_lease("A", ttl_sec=30, now=now, pid=1, host="h", lock_identity="x")
+    assert l1["acquired"] and l1["fencing_token"] == 1
+    db1.bind_runtime_fence("A", 1)
+    assert db1.record_settlement_effect("k1", {"outcome": "released", "table_id": 1, "pnl": -1.0}, None)
+    assert db2.acquire_runtime_lease("B", ttl_sec=30, now=now, pid=2, host="h", lock_identity="y")["acquired"] is False
+    assert db1.release_runtime_lease("A", 1, now=now)
+    l2 = db2.acquire_runtime_lease("B", ttl_sec=30, now=now, pid=2, host="h", lock_identity="y")
+    assert l2["acquired"] and l2["fencing_token"] == 2
+    violazioni = []
+    db1.bind_runtime_fence("A", 1, on_violation=lambda r: violazioni.append(r))
+    with pytest.raises(RuntimeFenceViolation):
+        db1.record_settlement_effect("k2", {"outcome": "released", "table_id": 1, "pnl": -1.0}, None)
+    with pytest.raises(RuntimeFenceViolation):
+        db1._execute("INSERT INTO settings (key, value) VALUES (?, ?)", ("pr536.k", "v"))
+    with pytest.raises(RuntimeFenceViolation):
+        db1.save_settings({"pr536.k2": "v"})
+    with pytest.raises(RuntimeFenceViolation):
+        db1.mark_settlement_realized("k1")
+    assert violazioni and set(violazioni) == {"fencing_token_superseded"}
+    assert db1.get_settlement_effect("k1") is not None and db1.get_settlement_effect("k2") is None   # letture ok
+    assert db2.get_settings().get("pr536.k") is None and db2.get_settings().get("pr536.k2") is None
+    assert db1.get_settlement_effect("k1")["realized_applied"] == 0
+    # renew/release non scavalcano mai un altro proprietario
+    assert db1.renew_runtime_lease("A", 1, ttl_sec=30, now=now) is None
+    assert db1.release_runtime_lease("A", 1, now=now) is False
+    assert db2.read_runtime_lease()["owner_id"] == "B"
+
+
+def test_t12b_lease_scaduta_rifiutata_anche_al_proprietario(tmp_path):
+    db = Database(str(tmp_path / "t12b.db"))
+    now = time.time()
+    db.acquire_runtime_lease("A", ttl_sec=1, now=now - 5, pid=1, host="h", lock_identity="x")
+    db.bind_runtime_fence("A", 1)
+    with pytest.raises(RuntimeFenceViolation) as exc:
+        db.save_settings({"pr536.x": "1"})
+    assert exc.value.reason == "lease_expired"
+    assert db.renew_runtime_lease("A", 1, ttl_sec=30, now=now) is None       # scaduta: non si rinnova
+    db.unbind_runtime_fence()
+    assert db.acquire_runtime_lease("B", ttl_sec=30, now=now, pid=2, host="h", lock_identity="y")["acquired"]
+
+
+# ---------------------------------------------------------------- nessuna duplicazione, nessun rilascio prematuro
+def test_t13_runtime_superato_non_rilascia_riserve_ne_scrive_effetti(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t13.db")
+    c.rc._on_signal_received(_signal())
+    assert len(_ordini(c)) == 1
+    tavolo = next(t for t in c.rc.table_manager.snapshot() if str(t.get("current_event_key") or ""))
+    os.unlink(_lock_path(str(tmp_path / "t13.db")))
+    assert c.rc.runtime_authority.heartbeat_once() is False
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+    assert c.rc._release_final_unmatched_orders() == []                       # F028 senza autorita': nulla
+    assert c.rc.reset_cycle()["reset"] is False
+    ancora = c.rc.table_manager.get_table(int(tavolo["table_id"]))
+    assert ancora.current_event_key == tavolo["current_event_key"], "riserva rilasciata senza autorita'"
+    prima = c.db.get_settings()
+    bet = next(str(o.bet_id) for o in c.broker.state.orders.values())
+    c.rc._on_close_position({"event_key": f"cleared:1.234:{bet}", "market_id": "1.234", "table_id": None,
+                             "batch_id": "", "pnl": -4.0, "gross_pnl": -4.0, "net_pnl": -4.0,
+                             "commission_amount": 0.0, "commission_pct": 4.5, "settlement_ref": bet,
+                             "settlement_source": "betfair_cleared_orders", "settlement_kind": "realized_settlement"})
+    assert c.db.get_settlement_effect(f"cleared:1.234:{bet}") is None, "effetto scritto da un runtime superato"
+    assert c.db.get_settings() == prima, "stato persistito cambiato da un runtime superato"
+
+
+# ---------------------------------------------------------------- invarianti di avvio e unita'
+def test_t15_start_arma_sempre_l_autorita_su_un_database_su_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t15.db")
+    app = _app_su(p, monkeypatch)
+    rt = app.runtime
+    try:
+        assert rt.start(execution_mode="SIMULATION").get("started") is True
+        auth = rt.runtime_authority
+        lease = rt.db.read_runtime_lease()
+        assert lease["owner_id"] == auth.owner_id and int(lease["fencing_token"]) == auth.token
+        assert rt.db.runtime_fence() == {"owner_id": auth.owner_id, "token": auth.token}
+        assert lease["lock_identity"] == auth.lock_identity and auth.lock_identity
+        with open(_lock_path(p)) as fh:
+            record = json.loads(fh.readline())
+        assert record["pid"] == os.getpid() and record["owner_id"] == auth.owner_id
+        assert auth._thread is not None and auth._thread.is_alive()
+        assert rt._runtime_authority_block("test") == ""
+    finally:
+        _ferma(app)
+    assert rt.db.runtime_fence() is None and rt.runtime_authority.released
+
+
+def test_t16_heartbeat_rinnova_la_lease_e_non_cambia_il_token(tmp_path, monkeypatch):
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_TTL_SEC", 1.0)
+    monkeypatch.setattr(RuntimeController, "RUNTIME_LEASE_HEARTBEAT_SEC", 0.25)
+    c = _catena_armata(tmp_path, "t16.db")
+    token = c.rc.runtime_authority.token
+    time.sleep(2.2)                                            # > 2 TTL: senza heartbeat sarebbe scaduta
+    lease = c.db.read_runtime_lease()
+    assert float(lease["expires_at"]) > time.time() and int(lease["fencing_token"]) == token
+    assert c.rc.mode is RuntimeMode.ACTIVE and c.rc._runtime_authority_block("test") == ""
+    c.rc.runtime_authority.release()
+
+
+def test_t17_holder_alive_dimostrabile_solo_sullo_stesso_host():
+    me = __import__("socket").gethostname()
+    assert _holder_alive(os.getpid(), me, my_host=me) is True
+    assert _holder_alive(os.getpid(), "altro-host", my_host=me) is None
+    assert _holder_alive(0, me, my_host=me) is None and _holder_alive("x", me, my_host=me) is None
+    if POSIX:
+        morto = subprocess.Popen([sys.executable, "-c", "pass"])
+        morto.wait(30)
+        assert _holder_alive(morto.pid, me, my_host=me) is False
+
+
+def test_t18_verify_senza_lease_e_dopo_rilascio_fail_closed(tmp_path):
+    p = str(tmp_path / "t18.db")
+    db = Database(p)
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=2.0, heartbeat_sec=0.5)
+    with pytest.raises(RuntimeAuthorityLost):
+        auth.verify("x")                                       # lock mai preso
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    auth.verify("x")
+    auth.release()
+    with pytest.raises(RuntimeAuthorityLost) as exc:
+        auth.verify("x")
+    assert exc.value.reason == "released"
+    with pytest.raises(ValueError):
+        RuntimeAuthority(db, p, lease_ttl_sec=1.0, heartbeat_sec=2.0)   # heartbeat >= ttl: configurazione rifiutata
+
+
+# ---------------------------------------------------------------- auto-next, engine, cashout
+def test_t19_auto_next_rifiutato_se_l_autorita_cade_prima_dell_invio(tmp_path, monkeypatch):
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _close_payload
+
+    c = _catena_armata(tmp_path, "t19.db")
+    c.rc.risk_desk.sync_bankroll(100.0)
+    lp = _lock_path(str(tmp_path / "t19.db"))
+    originale = c.rc._attach_single_entry_liquidity
+
+    def _prima_dell_invio(payload):
+        os.unlink(lp)                                          # fra ammissione dell'auto-next e CMD_QUICK_BET
+        return originale(payload)
+
+    monkeypatch.setattr(c.rc, "_attach_single_entry_liquidity", _prima_dell_invio)
+    c.rc._on_close_position(_close_payload("batch-t19"))
+    assert c.bus.payloads("CMD_QUICK_BET") == [] and _ordini(c) == []
+    esito = c.rc._last_auto_trade_result
+    assert esito["submitted"] is False and str(esito["reason"]).startswith("runtime_authority_lost:"), esito
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+    assert all(not str(t.get("current_event_key") or "") for t in c.rc.table_manager.snapshot()), \
+        "tavolo dell'auto-next lasciato riservato"
+
+
+def test_t20_il_trading_engine_rifiuta_l_invio_senza_autorita_anche_se_il_runtime_non_lo_ferma(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t20.db")
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    assert len(_ordini(c)) == 1
+    os.unlink(_lock_path(str(tmp_path / "t20.db")))
+    # il runtime viene "ingannato" (gate a monte neutralizzato): deve fermarsi il choke point dell'engine
+    monkeypatch.setattr(c.rc, "_runtime_authority_block", lambda context: "" if context == "signal_submit" else
+                        RuntimeController._runtime_authority_block(c.rc, context))
+    secondo = dict(cmd)
+    secondo["customer_ref"] = cmd["customer_ref"][:-3] + "zz9"
+    secondo["correlation_id"] = "t20-secondo"
+    secondo["selection_id"] = 12
+    esito = c.engine.submit_quick_bet(secondo)
+    assert str(esito.get("status") or "").upper() not in ("SUBMITTED", "ACCEPTED", "SUCCESS"), esito
+    assert len(_ordini(c)) == 1, "ordine inviato dall'engine senza autorita'"
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+
+
+def test_t21_cashout_rifiutato_senza_autorita(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t21.db")
+    instradati = []
+    monkeypatch.setattr(c.rc, "_cashout_chain_wired", lambda: True)
+    monkeypatch.setattr(c.rc, "_execute_cashout_route", lambda signal: instradati.append(dict(signal)))
+    c.rc._route_cashout_signal_under_barrier({"signal_type": "CASHOUT_ALL"}, 1)
+    assert len(instradati) == 1                                # con autorita': instradato
+    os.unlink(_lock_path(str(tmp_path / "t21.db")))
+    c.rc._route_cashout_signal_under_barrier({"signal_type": "CASHOUT_ALL"}, 2)
+    assert len(instradati) == 1, "cashout instradato senza autorita'"
+    rifiuti = c.bus.payloads("SIGNAL_REJECTED")
+    assert rifiuti and rifiuti[-1]["reason"].startswith("runtime_authority_lost:lock_file_deleted")
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+
+
+# ---------------------------------------------------------------- mutazioni sopravvissute al primo giro (i536_*)
+def test_t22_sweep_f028_non_rilascia_nulla_senza_autorita(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t22.db")
+    monkeypatch.setattr(c.rc, "_settlement_reconciliation_allowed", lambda: True)
+    monkeypatch.setattr(c.rc, "_uncertain_reservations_map",
+                        lambda: (_ for _ in ()).throw(AssertionError("sweep F028 avviato senza autorita'")))
+    os.unlink(_lock_path(str(tmp_path / "t22.db")))
+    assert c.rc._release_final_unmatched_orders() == []
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+
+
+def test_t23_perdita_registrata_blocca_anche_senza_oggetto_autorita(tmp_path):
+    """Il fence puo' segnalare la perdita quando `runtime_authority` non c'e' piu' (release concorrente):
+    il motivo registrato sul controller basta a rifiutare ogni percorso finanziario."""
+    c = _chain(tmp_path, db_name="t23.db")
+    assert c.rc.runtime_authority is None
+    c.rc._on_runtime_authority_lost("fence_violation")
+    assert c.rc._runtime_authority_block("signal_submit") == "runtime_authority_lost:fence_violation"
+    with pytest.raises(RuntimeAuthorityLost):
+        c.rc.assert_runtime_authority("order_submit")
+    c.rc._on_signal_received(_signal())
+    assert c.bus.payloads("CMD_QUICK_BET") == [] and _ordini(c) == []
+
+
+def test_t24_is_live_allowed_false_dopo_la_perdita_dell_autorita(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t24.db")
+    c.rc.execution_mode = "LIVE"
+    c.rc.live_enabled = True
+    monkeypatch.setattr(c.rc, "get_deploy_gate_status", lambda **kw: {"allowed": True, "readiness": "READY"})
+    assert c.rc.is_live_allowed() is True                      # tutti gli altri gate aperti (SIM broker, nessuna chiamata live)
+    os.unlink(_lock_path(str(tmp_path / "t24.db")))
+    assert c.rc._runtime_authority_block("x").startswith("runtime_authority_lost:lock_file_deleted")
+    assert c.rc.live_enabled is False and c.rc.is_live_allowed() is False
+    c.rc.live_enabled = True                                   # riabilitato senza un nuovo start(): resta vietato
+    assert c.rc.is_live_allowed() is False
+    assert c.rc.get_effective_execution_mode() == "SIMULATION"
+
+
+def test_t25_fence_rifiuta_un_token_superato_anche_dello_stesso_owner(tmp_path):
+    p = str(tmp_path / "t25.db")
+    db = Database(p)
+    primo = db.acquire_runtime_lease("owner-x", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="1:1")
+    assert primo["acquired"] and primo["fencing_token"] == 1
+    violazioni = []
+    db.bind_runtime_fence("owner-x", 1, on_violation=violazioni.append)
+    with db.transaction() as conn:
+        conn.execute("INSERT INTO cycle_recovery_checkpoints (settlement_key, cycle_id, created_at, updated_at) VALUES (?, ?, ?, ?)", ("k1", "ok", "t", "t"))
+    secondo = db.acquire_runtime_lease("owner-x", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="1:1")
+    assert secondo["acquired"] and secondo["fencing_token"] == 2      # stesso owner, riavvio: token maggiore
+    with pytest.raises(RuntimeFenceViolation) as exc:
+        with db.transaction() as conn:
+            conn.execute("INSERT INTO cycle_recovery_checkpoints (settlement_key, cycle_id, created_at, updated_at) VALUES (?, ?, ?, ?)", ("k2", "vecchio", "t", "t"))
+    assert exc.value.reason == "fencing_token_superseded" and violazioni == ["fencing_token_superseded"]
+    with pytest.raises(RuntimeFenceViolation):
+        db._execute("INSERT INTO cycle_recovery_checkpoints (settlement_key, cycle_id, created_at, updated_at) VALUES (?, ?, ?, ?)", ("k3", "vecchio2", "t", "t"))
+    assert db._execute("SELECT COUNT(*) AS n FROM cycle_recovery_checkpoints WHERE cycle_id LIKE 'vecchio%'", fetchone=True)["n"] == 0
+
+
+def test_t26_verify_rifiuta_una_lease_scaduta_senza_aspettare_l_heartbeat(tmp_path):
+    p = str(tmp_path / "t26.db")
+    db = Database(p)
+    orologio = [1000.0]
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=5.0, heartbeat_sec=1.0, clock=lambda: orologio[0])
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    auth.verify("x")
+    orologio[0] += 5.5                                          # oltre la scadenza, nessun rinnovo nel frattempo
+    with pytest.raises(RuntimeAuthorityLost) as exc:
+        auth.verify("x")
+    assert exc.value.reason == "lease_expired" and auth.lost_reason == "lease_expired"
+    assert db.renew_runtime_lease(auth.owner_id, int(auth.token), ttl_sec=5.0, now=orologio[0]) is None
+    auth.release()
