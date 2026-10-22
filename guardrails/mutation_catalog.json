@@ -2254,8 +2254,8 @@
       "module": "cashout_executor",
       "area": "live_safety",
       "file": "cashout_executor.py",
-      "original": "            scope = operation() if callable(operation) else contextlib.nullcontext()",
-      "mutated": "            scope = contextlib.nullcontext()",
+      "original": "            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())",
+      "mutated": "            stack.enter_context(contextlib.nullcontext())",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
@@ -2286,30 +2286,6 @@
       "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): dopo una perdita con scadenza fallita lo STOP lascia la lease viva."
     },
     {
-      "id": "i536_emergency_cancel_without_authority",
-      "module": "core.runtime_controller",
-      "area": "live_safety",
-      "file": "core/runtime_controller.py",
-      "original": "        if authority_block and by_market:\n            # #536 (Codex su 1542b5d)",
-      "mutated": "        if False:\n            # #536 (Codex su 1542b5d)",
-      "tests": [
-        "tests/acceptance/test_issue536_runtime_authority.py"
-      ],
-      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): l'emergency stop di un runtime superato cancella gli unmatched di mercato del nuovo proprietario."
-    },
-    {
-      "id": "i536_ttl_candidate_dropped_when_blocked",
-      "module": "core.runtime_controller",
-      "area": "live_safety",
-      "file": "core/runtime_controller.py",
-      "original": "        if blocked:\n            # #536 (Codex su 1542b5d): nessun tentativo",
-      "mutated": "        if False:\n            # #536 (Codex su 1542b5d): nessun tentativo",
-      "tests": [
-        "tests/acceptance/test_issue536_runtime_authority.py"
-      ],
-      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): un cancel TTL non tentato per autorita' consuma l'unico tentativo."
-    },
-    {
       "id": "i536_start_activates_after_loss",
       "module": "core.runtime_controller",
       "area": "live_safety",
@@ -2320,6 +2296,66 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): lo START si dichiara attivo dopo aver perso l'autorita' durante l'avvio."
+    },
+    {
+      "id": "i536_emergency_cancel_not_rechecked_per_market",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato",
+      "mutated": "                market_block = \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162): autorita' persa durante l'emergency stop: i cancel-all dei mercati successivi partono comunque."
+    },
+    {
+      "id": "i536_ttl_candidate_dropped_after_adapter_refusal",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        not_attempted = str(getattr(adapter, \"last_block\", \"\") or \"\")",
+      "mutated": "        not_attempted = \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162): il rifiuto dell'adapter dopo il precontrollo consuma il candidato TTL senza tentativo."
+    },
+    {
+      "id": "i536_begin_transaction_leaks_lock_on_error",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                    except BaseException as exc:\n                        # Grok su 9a80162: qualunque errore della verifica => rollback, il lock non resta preso",
+      "mutated": "                    except RuntimeFenceViolation as exc:\n                        # Grok su 9a80162: qualunque errore della verifica => rollback, il lock non resta preso",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 9a80162): un errore non-fence dopo BEGIN IMMEDIATE lascia la transazione aperta e il lock di scrittura al runtime."
+    },
+    {
+      "id": "i536_cashout_operation_enter_failure_unhandled",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "        try:\n            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())\n        except Exception:",
+      "mutated": "        try:\n            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())\n        except ZeroDivisionError:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 9a80162): l'operazione in volo che non si registra lascia il cashout senza esito."
+    },
+    {
+      "id": "i536_fenced_transaction_deferred_upgrade",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                    conn.execute(\"BEGIN IMMEDIATE\")\n                    self._assert_runtime_fence(conn, \"transaction\")   # #536: dentro la transazione",
+      "mutated": "                    conn.execute(\"BEGIN\")\n                    self._assert_runtime_fence(conn, \"transaction\")   # #536: dentro la transazione",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (CI F032_01): transazione fenced in BEGIN differita, l'upgrade a scrittura fallisce se l'heartbeat rinnova nel mezzo."
     }
   ]
 }

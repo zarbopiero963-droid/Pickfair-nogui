@@ -119,13 +119,14 @@ class CashoutExecutor:
         # finestra della chiamata di rete) → flag sim errato (Codex P2).
         sim = self._is_simulation()
         operation = self.authority_operation
+        stack = contextlib.ExitStack()
         try:
-            scope = operation() if callable(operation) else contextlib.nullcontext()
-        except Exception:  # noqa: BLE001 - operazione non registrabile => nessun hedge
+            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())
+        except Exception:  # noqa: BLE001 - operazione non registrabile (Grok su 9a80162) => nessun hedge
             logger.exception("[CashoutExecutor] operazione in volo non registrabile")
             self._fail("runtime_authority_operation_failed", status="REJECTED", payload=payload)
             return
-        with scope:
+        with stack:
             authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge
             if authority_block:
                 self._fail(authority_block, status="REJECTED", payload=payload)

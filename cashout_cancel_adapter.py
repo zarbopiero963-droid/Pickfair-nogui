@@ -112,6 +112,7 @@ class CashoutCancelAdapter:
         self.sim_cancel = sim_cancel
         # #536: '' = il runtime ha l'autorita' esclusiva; altrimenti il motivo => nessun cancel al broker
         self.authority_check = authority_check
+        self.last_block = ""      # motivo dell'ultimo cancel NON tentato per autorita' ('' = tentato o non bloccato)
 
     def cancel(self, market_id: str, bet_ids: List[str]) -> bool:
         """Cancella gli ordini resting indicati; ``True`` solo se CONFERMATO.
@@ -119,6 +120,7 @@ class CashoutCancelAdapter:
         Firma posizionale ``(market_id, bet_ids)`` = il contratto che il router
         si aspetta da ``cancel_orders``.
         """
+        self.last_block = ""
         ids = [str(b).strip() for b in (bet_ids or []) if b and str(b).strip()]
         if not ids:
             # Niente da cancellare. NON inoltrare al broker: bet_ids vuoto =
@@ -135,6 +137,7 @@ class CashoutCancelAdapter:
                 block = "runtime_authority_check_failed"
             if block:
                 logger.warning("[cashout_cancel] cancel rifiutato su %s: %s", market, block)
+                self.last_block = block
                 return False
         try:
             if self.is_simulation():

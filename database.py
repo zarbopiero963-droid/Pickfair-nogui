@@ -170,11 +170,14 @@ class Database:
                     conn.execute("BEGIN IMMEDIATE")
                     try:
                         self._assert_runtime_fence(conn, "begin_transaction")
-                    except RuntimeFenceViolation as exc:
+                    except BaseException as exc:
+                        # Grok su 9a80162: qualunque errore della verifica => rollback, il lock non resta preso
                         try:
                             conn.rollback()
                         except Exception:
                             logger.exception("Errore rollback begin_transaction fenced")
+                        if not isinstance(exc, RuntimeFenceViolation):
+                            raise
                         violation = exc
                 else:
                     conn.execute("BEGIN")
@@ -235,9 +238,14 @@ class Database:
             try:
                 if is_nested:
                     conn.execute(_NESTED_SAVEPOINT_SQL)
+                elif self._runtime_fence is not None:
+                    # #536 (CI F032_01 su fc8f136/9a80162): con il fence la prima istruzione e' una LETTURA della
+                    # lease; in BEGIN differita l'upgrade a scrittura fallisce subito ('database is locked', senza
+                    # busy timeout) se l'heartbeat rinnova nel mezzo. BEGIN IMMEDIATE prende il lock prima.
+                    conn.execute("BEGIN IMMEDIATE")
+                    self._assert_runtime_fence(conn, "transaction")   # #536: dentro la transazione
                 else:
                     conn.execute("BEGIN")
-                    self._assert_runtime_fence(conn, "transaction")   # #536: dentro la transazione
 
                 yield conn
 

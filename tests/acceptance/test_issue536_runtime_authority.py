@@ -1128,3 +1128,108 @@ def test_t48_start_non_si_dichiara_attivo_se_l_autorita_cade_durante_l_avvio(tmp
         assert avviati == []
     finally:
         _ferma(app)
+
+
+# ---------------------------------------------------------------- rilievi Sol su 9a80162 (RED prima della patch)
+def test_t49_emergency_stop_riverifica_l_autorita_prima_di_ogni_mercato(tmp_path, monkeypatch):
+    """Sol su 9a80162: autorita' persa durante un cancel lento => nessun cancel-all sui mercati successivi."""
+    c = _catena_armata(tmp_path, "t49.db")
+    lp = _lock_path(str(tmp_path / "t49.db"))
+    chiamate = []
+
+    class _Live:
+        def cancel_orders(self, **kw):
+            chiamate.append(kw)
+            if len(chiamate) == 1:
+                os.unlink(lp)                                  # perdita durante il primo cancel
+            return {"ok": True, "cancelled_count": 1}
+
+    monkeypatch.setattr(c.rc.db, "get_pending_sagas",
+                        lambda: [{"market_id": "1.1", "bet_id": "B1"}, {"market_id": "1.2", "bet_id": "B2"}],
+                        raising=False)
+    monkeypatch.setattr(c.rc.betfair_service, "get_live_client", lambda: _Live(), raising=False)
+    esito = c.rc.emergency_stop("prova")
+    assert [k["market_id"] for k in chiamate] == ["1.1"], f"cancel-all dopo la perdita: {chiamate}"
+    assert any(e.get("stage") == "runtime_authority" for e in esito.get("cancel_errors", [])), esito
+
+
+def test_t50_tentativo_reale_del_ttl_consuma_il_candidato_no_retry(tmp_path):
+    """Complemento di T47 (Sol su 9a80162): con autorita' valida il cancel parte e il candidato esce dal registry
+    anche se il broker non conferma (NO RETRY invariato); solo il rifiuto per autorita' lo conserva."""
+    c = _catena_armata(tmp_path, "t50.db")
+    c.rc._direct_order_bet_ids = {"ref-1": "B1"}
+    adapter = c.rc._direct_ttl_cancel_adapter()
+    chiamate = []
+    adapter.sim_cancel = adapter.live_cancel = lambda **kw: chiamate.append(kw) or {"ok": False}
+    c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
+    assert len(chiamate) == 1 and adapter.last_block == ""
+    assert "B1" not in c.rc.direct_unmatched_bet_ids
+    assert c.bus.payloads("DIRECT_UNMATCHED_CANCEL_FAILED"), "esito del tentativo non pubblicato"
+
+
+# ---------------------------------------------------------------- rilievi Grok su 9a80162 (RED prima della patch)
+def test_t51_begin_transaction_non_lascia_aperta_la_transazione_se_la_verifica_fallisce(tmp_path, monkeypatch):
+    """Grok su 9a80162: un errore qualsiasi nella verifica dopo BEGIN IMMEDIATE fa rollback; il lock di scrittura
+    non resta al runtime."""
+    p = str(tmp_path / "t51.db")
+    db, altro = Database(p), Database(p)
+    assert db.acquire_runtime_lease("a", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="")["acquired"]
+    db.bind_runtime_fence("a", 1)
+
+    def _db_guasto(conn, name):
+        raise sqlite3.OperationalError("disk I/O error")
+
+    monkeypatch.setattr(db, "_assert_runtime_fence", _db_guasto)
+    with pytest.raises(sqlite3.OperationalError):
+        db.begin_transaction()
+    assert not db._in_transaction() and not db._get_connection().in_transaction
+    altro._get_connection().execute("PRAGMA busy_timeout = 200")
+    assert altro.acquire_runtime_lease("b", ttl_sec=30.0, now=time.time(), pid=2, host="h", lock_identity="",
+                                       holder_alive=lambda pid, host: False)["acquired"], "lock di scrittura trattenuto"
+
+
+def test_t52_esecutore_fail_closed_se_l_operazione_in_volo_non_si_registra(tmp_path):
+    """Grok su 9a80162: l'ingresso nell'operazione in volo che solleva chiude il cashout come REJECTED."""
+    from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
+
+    c = _catena_armata(tmp_path, "t52.db")
+    catena = _cashout_wired(c)
+
+    class _Rotto:
+        def __enter__(self):
+            raise RuntimeError("contatore non disponibile")
+
+        def __exit__(self, *exc):
+            return False
+
+    catena.cashout_executor.authority_operation = lambda: _Rotto()
+    _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
+    c.bus.publish("CMD_EXECUTE_CASHOUT", _cashout_cmd(2.0))
+    assert not c.broker.state.orders
+    falliti = c.bus.payloads("CASHOUT_FAILED")
+    assert falliti and falliti[-1]["status"] == "REJECTED", falliti
+
+
+def test_t53_transazione_fenced_non_fallisce_se_l_heartbeat_rinnova_nel_mezzo(tmp_path):
+    """CI su fc8f136/9a80162 (F032_01): con il fence, transaction() leggeva la lease in una BEGIN differita e poi
+    scriveva; un rinnovo dell'heartbeat su un'altra connessione nel mezzo rendeva impossibile l'upgrade a scrittura
+    ('database is locked' immediato, senza busy timeout) => save_settings della baseline F032 perso."""
+    p = str(tmp_path / "t53.db")
+    db, heartbeat = Database(p), Database(p)
+    assert db.acquire_runtime_lease("a", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="")["acquired"]
+    db.bind_runtime_fence("a", 1)
+    originale = db._assert_runtime_fence
+    esiti = []
+
+    def _rinnovo_nel_mezzo(conn, name):
+        originale(conn, name)
+        t = threading.Thread(target=lambda: esiti.append(
+            heartbeat.renew_runtime_lease("a", 1, ttl_sec=30.0, now=time.time())), daemon=True)
+        t.start()
+        t.join(0.3)                                            # il rinnovo parte fra la verifica e la scrittura
+
+    db._assert_runtime_fence = _rinnovo_nel_mezzo
+    db.save_settings({"roserpina.f032_probe": "1"})            # deve riuscire
+    db._assert_runtime_fence = originale
+    assert _attendi(lambda: len(esiti) == 1, 5.0) and esiti[0] is not None, "rinnovo dell'heartbeat perso"
+    assert (db.get_settings() or {}).get("roserpina.f032_probe") == "1"

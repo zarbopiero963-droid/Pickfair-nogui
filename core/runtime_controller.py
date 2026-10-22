@@ -2279,15 +2279,17 @@ class RuntimeController:
             logger.warning("emergency_stop: cannot get live client: %s", exc)
             cancel_errors.append({"stage": "get_live_client", "error": str(exc)})
 
-        authority_block = self._authority_definitively_lost()
-        if authority_block and by_market:
-            # #536 (Codex su 1542b5d): un runtime superato non cancella gli unmatched di mercato (possono essere del
-            # nuovo proprietario); resta il LOCKDOWN locale. Autorita' solo illeggibile sul momento: cancel ammesso.
-            logger.critical("emergency_stop: cancel-all saltato, %s", authority_block)
-            cancel_errors.append({"stage": "runtime_authority", "error": authority_block})
-            by_market = {}
+        # #536 (Codex su 1542b5d, Sol su 9a80162): un runtime superato non cancella gli unmatched di mercato (possono
+        # essere del nuovo proprietario); l'autorita' si riverifica prima di OGNI mercato, il LOCKDOWN locale resta.
+        # Autorita' solo illeggibile sul momento: cancel ammesso.
         if live_client is not None and by_market:
             for market_id, orders in by_market.items():
+                market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato
+                if market_block:
+                    logger.critical("emergency_stop: cancel-all interrotto su %s, %s", market_id, market_block)
+                    cancel_errors.append({"stage": "runtime_authority", "market_id": market_id,
+                                          "error": market_block})
+                    break
                 try:
                     response = live_client.cancel_orders(
                         market_id=market_id,
@@ -6639,25 +6641,23 @@ class RuntimeController:
         """
         market_id = str(item.get("market_id") or "").strip()
         bet_id = str(item.get("bet_id") or "").strip()
-        check = getattr(adapter, "authority_check", None)
-        try:
-            blocked = str(check() or "") if callable(check) else ""
-        except Exception:
-            blocked = "runtime_authority_check_failed"
-        if blocked:
-            # #536 (Codex su 1542b5d): nessun tentativo => il candidato resta per un giro successivo
-            self.bus.publish("DIRECT_UNMATCHED_CANCEL_DEFERRED", {"market_id": market_id, "bet_id": bet_id,
-                                                                  "reason": blocked})
-            return
-        # NO RETRY: fuori dal registry dopo UN tentativo (successo o fallimento).
-        self._discard_direct_bet_id(bet_id)
         try:
             confirmed = bool(adapter.cancel(market_id, [bet_id]))
         except Exception as exc:  # belt-and-suspenders: l'adapter è già fail-closed
+            self._discard_direct_bet_id(bet_id)          # NO RETRY: un tentativo c'e' stato
             self.bus.publish("DIRECT_UNMATCHED_CANCEL_FAILED", {
                 "market_id": market_id, "bet_id": bet_id, "reason": str(exc)})
             logger.warning("direct_ttl_poll: cancel sollevato bet_id=%s: %s", bet_id, exc)
             return
+        not_attempted = str(getattr(adapter, "last_block", "") or "")
+        if not_attempted:
+            # #536 (Codex su 1542b5d, Sol su 9a80162): l'adapter ha rifiutato per autorita' prima di chiamare il
+            # broker => nessun tentativo, il candidato resta per un giro successivo
+            self.bus.publish("DIRECT_UNMATCHED_CANCEL_DEFERRED", {"market_id": market_id, "bet_id": bet_id,
+                                                                  "reason": not_attempted})
+            return
+        # NO RETRY: fuori dal registry dopo UN tentativo (successo o fallimento).
+        self._discard_direct_bet_id(bet_id)
         event = "DIRECT_UNMATCHED_CANCELLED" if confirmed else "DIRECT_UNMATCHED_CANCEL_FAILED"
         self.bus.publish(event, {"market_id": market_id, "bet_id": bet_id, "ok": confirmed})
         logger.info("direct_ttl_poll: cancel bet_id=%s market=%s ok=%s",
