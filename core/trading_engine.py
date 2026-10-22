@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import inspect
 import logging
 import math
@@ -848,8 +849,11 @@ class TradingEngine:
         in_flight = _admission_requests_in_flight()
         start = len(in_flight)
         result: Any = None
+        operation = getattr(getattr(self, "runtime_controller", None), "authority_operation", None)
         try:
-            result = self._submit_via_engine(payload)
+            # #536 (Codex su 125aa05): lo STOP attende che l'invio in volo finisca prima di sciogliere il fence
+            with (operation() if callable(operation) else contextlib.nullcontext()):
+                result = self._submit_via_engine(payload)
             return result
         finally:
             pending = in_flight[start:]
@@ -877,6 +881,18 @@ class TradingEngine:
                 # Uscita prima del controllo del fence (normalizzazione fallita, engine non pronto): il fence
                 # in coda per questa richiesta non resta orfano (review indipendente su 7a715c6).
                 self._discard_unchecked_admission_fence(payload)
+
+    def _runtime_authority_admission_block(self) -> str:
+        """'' se il runtime dimostra l'autorita' esclusiva (o non ne ha da verificare); altrimenti il motivo."""
+        assert_authority = getattr(getattr(self, "runtime_controller", None), "assert_runtime_authority", None)
+        if not callable(assert_authority):
+            return ""
+        try:
+            assert_authority("order_admission")
+        except Exception as exc:  # noqa: BLE001 - autorita' non dimostrabile => nessuna ammissione
+            text = str(exc) or exc.__class__.__name__
+            return text if text.startswith("runtime_authority") else f"runtime_authority_check_failed:{text}"
+        return ""
 
     def _discard_unchecked_admission_fence(self, payload: Dict[str, Any]) -> None:
         """Ordine rifiutato prima del controllo del fence: il runtime scarta il fence in coda della richiesta.
@@ -1033,6 +1049,16 @@ class TradingEngine:
                     ctx, audit, order_id=order_id,
                     status=STATUS_DENIED,
                     reason=str(risk_result.get("reason", "RISK_DENY")),
+                    extra_fields=extra_fields)
+
+            # #536 (Codex su 125aa05): autorita' esclusiva verificata PRIMA di persistere l'intento; la verifica
+            # immediatamente prima del trasporto (`_submit_to_order_path`) resta.
+            authority_block = self._runtime_authority_admission_block()
+            if authority_block:
+                self._consume_admission_fence(normalized)
+                self._emit(ctx, audit, "RUNTIME_AUTHORITY_DENIED", {"reason": authority_block}, category="guard")
+                return self._complete_order_lifecycle(
+                    ctx, audit, order_id=None, status=STATUS_DENIED, reason=authority_block,
                     extra_fields=extra_fields)
 
             with self._lock:

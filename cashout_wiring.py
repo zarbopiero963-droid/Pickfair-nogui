@@ -97,6 +97,7 @@ def cabla_catena_cashout(
         is_simulation=lambda: svc.is_simulation_mode(),
         live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
         sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+        authority_check=runtime_authority_check,       # #536: nessun cancel del residuo senza autorita'
     )
     cashout_residual_handler = CashoutResidualHandler(
         cancel=residual_cancel.cancel,

@@ -267,6 +267,9 @@ class RuntimeController:
         self._lifecycle_lock = threading.RLock()   # #461 PR29-c (Sol su e3fe4d7): start/stop serializzati
         self.runtime_authority: Optional[RuntimeAuthority] = None   # #536: lock OS + identita' file + lease/fencing
         self._authority_lost_reason = ""
+        self._authority_ops = 0                        # #536: operazioni finanziarie in volo (drain allo STOP)
+        self._authority_ops_cond = threading.Condition()
+        self._authority_draining = False
         self._processed_auto_trade_keys: set[str] = set()
         self._cycle_step_counts: dict[str, int] = {}
         self._last_bankroll_sync_result: dict[str, Any] = {
@@ -2746,6 +2749,33 @@ class RuntimeController:
     # farebbe perdere l'autorita' per un rallentamento del DB. I test li riducono per le prove di scadenza.
     RUNTIME_LEASE_TTL_SEC = 30.0
     RUNTIME_LEASE_HEARTBEAT_SEC = 10.0
+    # #536 (Codex su 125aa05): attesa massima allo STOP delle operazioni finanziarie in volo prima di sciogliere
+    # lease e fence. Non svuotate => lock, lease e fence restano (fail-closed) e il prossimo STOP ritenta.
+    RUNTIME_AUTHORITY_DRAIN_SEC = 15.0
+
+    @contextlib.contextmanager
+    def authority_operation(self):
+        """Un'operazione finanziaria in volo (invio con le sue scritture): lo STOP la attende."""
+        cond = self._authority_ops_condition()
+        with cond:
+            self._authority_ops = int(getattr(self, "_authority_ops", 0) or 0) + 1
+        try:
+            yield
+        finally:
+            with cond:
+                self._authority_ops -= 1
+                cond.notify_all()
+
+    def _authority_ops_condition(self) -> threading.Condition:
+        cond = getattr(self, "_authority_ops_cond", None)
+        if cond is None:
+            cond = self._authority_ops_cond = threading.Condition()
+        return cond
+
+    def _wait_authority_ops_drained(self, timeout: float) -> bool:
+        cond = self._authority_ops_condition()
+        with cond:
+            return cond.wait_for(lambda: int(getattr(self, "_authority_ops", 0) or 0) <= 0, timeout=max(0.0, timeout))
 
     def _acquire_runtime_lease(self) -> str:
         """#536 strato 3: lease persistente con fencing token, vincolata al `Database` (ogni scrittura la verifica)
@@ -2754,10 +2784,13 @@ class RuntimeController:
         authority = getattr(self, "runtime_authority", None)
         if authority is None or getattr(self, "_instance_lock_fh", None) is None:
             return ""
+        if int(getattr(self, "_authority_ops", 0) or 0) > 0:
+            return "runtime_authority_draining"        # nessuna nuova epoca con operazioni della vecchia in volo
         block = authority.acquire_lease()
         if block:
             return block
         self._authority_lost_reason = ""
+        self._authority_draining = False
         authority.start_heartbeat()
         return ""
 
@@ -2771,6 +2804,8 @@ class RuntimeController:
         authority = getattr(self, "runtime_authority", None)
         if authority is None:
             return ""
+        if getattr(self, "_authority_draining", False) and context != "after_order_send" and not authority.released:
+            return "runtime_authority_draining"        # STOP in corso: nessuna nuova operazione finanziaria
         if authority.released:
             # Codex su fc8f136: dopo lo STOP il bus resta vivo; un comando in coda non vale come "nessuna autorita'"
             return "runtime_authority_released"
@@ -2861,15 +2896,35 @@ class RuntimeController:
             return
         if getattr(self, "_instance_teardown_pending", False):
             return                               # Sol su ad315ca: servizi forse ancora vivi, smontaggio non riuscito
-        self._instance_lock_fh = None
         authority = getattr(self, "runtime_authority", None)
         if authority is not None and authority.lock_fh is handle:
-            authority.release()                  # #536: heartbeat fermo, lease scaduta, fence sciolto, lock chiuso
+            # #536 (Codex su 125aa05): prima si svuotano le operazioni in volo, poi si scioglie il fence; se non si
+            # svuotano o la lease non si rilascia, autorita', lock, lease e fence restano e il prossimo STOP ritenta.
+            self._authority_draining = True
+            if not self._wait_authority_ops_drained(float(self.RUNTIME_AUTHORITY_DRAIN_SEC)):
+                logger.critical("STOP: operazioni finanziarie ancora in volo, autorita' trattenuta")
+                self._publish_authority_release_pending("operations_in_flight")
+                return
+            if not authority.release():          # heartbeat fermo, lease scaduta, fence sciolto, lock chiuso
+                logger.critical("STOP: lease del runtime non rilasciata, autorita' trattenuta")
+                self._publish_authority_release_pending("lease_release_failed")
+                return
+            self._instance_lock_fh = None
+            self._authority_draining = False
             return
+        self._instance_lock_fh = None
         try:
             handle.close()                       # chiudere il descrittore rilascia flock/msvcrt
         except OSError:
             logger.exception("Lock di istanza: chiusura fallita")
+
+    def _publish_authority_release_pending(self, reason: str) -> None:
+        bus = getattr(self, "bus", None)
+        if bus is not None:
+            try:
+                bus.publish("RUNTIME_AUTHORITY_RELEASE_PENDING", {"reason": reason})
+            except Exception:
+                logger.exception("Evento RUNTIME_AUTHORITY_RELEASE_PENDING non pubblicato")
 
     def stop(self) -> dict:
         with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()
@@ -3530,6 +3585,8 @@ class RuntimeController:
                 is_simulation=svc.is_simulation_mode,
                 live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
                 sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+                # #536 (Codex su 125aa05): verifica al momento del cancel, non solo al routing
+                authority_check=lambda: RuntimeController._runtime_authority_block(self, "cashout_cancel"),
             )
             router = CashoutRouter(
                 fetch_current_orders=svc.list_current_orders,
@@ -6536,6 +6593,7 @@ class RuntimeController:
                 c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
             sim_cancel=lambda **kw: (
                 b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+            authority_check=lambda: RuntimeController._runtime_authority_block(self, "unmatched_ttl_cancel"),
         )
 
     def _cancel_direct_unmatched(self, adapter: CashoutCancelAdapter, item: dict) -> None:

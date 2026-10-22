@@ -89,6 +89,25 @@ non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a r
   fence in autocommit si notificano fuori dal write lock: nessun deadlock fra heartbeat e segnalazione della perdita.
 - `verify` su un'autorità mai armata rifiuta senza marcarla persa.
 
+## Regole aggiuntive dopo la review di `125aa05`
+
+- **Cancel del cashout e del TTL**: `CashoutCancelAdapter(authority_check=...)` verifica l'autorità al momento
+  della chiamata al broker. Vale per il router del cashout, per il residuo (`cashout_wiring`) e per il TTL degli
+  unmatched. Persa o in errore ⇒ cancel non confermato, nessuna chiamata.
+- **Ammissione**: `TradingEngine` verifica l'autorità prima di persistere l'intento (nessuna riga `INFLIGHT` da un
+  runtime superato) e di nuovo subito prima del trasporto.
+- **STOP e operazioni in volo**: ogni invio gira dentro `RuntimeController.authority_operation()`. Lo STOP segna
+  `runtime_authority_draining` (nessuna nuova operazione), attende fino a `RUNTIME_AUTHORITY_DRAIN_SEC` (15 s) che
+  le operazioni in volo finiscano, poi scioglie lease e fence. Non svuotate ⇒ autorità, lock, lease e fence
+  restano, evento `RUNTIME_AUTHORITY_RELEASE_PENDING`, e il prossimo STOP ritenta. Nessuna nuova epoca parte con
+  operazioni della precedente in volo.
+- **Rilascio fallito**: se la lease non si può scadere, `release()` restituisce False, l'heartbeat riprende e
+  autorità, lock e fence restano: lo STOP non si dichiara pulito con una lease viva.
+- **Rinnovo concorrente alla perdita**: se la perdita o lo STOP arrivano mentre il rinnovo è in corso, la lease
+  rinnovata torna subito scaduta. `acquire_lease` non fa I/O sul database sotto il lock dell'autorità.
+- Limite residuo: un task dell'executor ancora in corso dopo un esito AMBIGUOUS (attesa scaduta) non è contato fra
+  le operazioni in volo; il suo ordine resta alla riconciliazione.
+
 ## Perdita dell'autorità
 
 `mark_lost(motivo)` (idempotente): lease scaduta subito se ancora nostra (così il proprietario legittimo può
@@ -147,4 +166,6 @@ nessun rilascio né scrittura da un runtime superato (T13); START arma sempre l'
 lease scaduta (T22–T26); hedge del cashout rifiutato al piazzamento, verifica in errore fail-closed, cablaggio
 reale in `HeadlessApp` e `MiniPickfairGUI` (T27–T30); rilievi Codex su `fc8f136`: scrittura autocommit
 serializzata col subentro, nessun invio dopo lo STOP, TTL unmatched senza autorità, START rifiutato dopo la
-perdita senza STOP, rinnovo misurato dopo l'attesa del lock, nessun deadlock heartbeat/fence (T31–T36). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+perdita senza STOP, rinnovo misurato dopo l'attesa del lock, nessun deadlock heartbeat/fence (T31–T36);
+rilievi su `125aa05`: cancel del cashout/TTL/residuo rifiutati, nessuna riga INFLIGHT senza autorità, verifica
+prima del trasporto, STOP che attende le operazioni in volo, rilascio fallito, rinnovo annullato (T37–T42, T20b). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

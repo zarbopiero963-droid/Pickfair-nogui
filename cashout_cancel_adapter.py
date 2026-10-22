@@ -30,7 +30,7 @@ salta la posizione invece di chiudere alla cieca lasciando il resting vivo).
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -105,10 +105,13 @@ class CashoutCancelAdapter:
         is_simulation: Callable[[], bool],
         live_cancel: Callable[..., Any],
         sim_cancel: Callable[..., Any],
+        authority_check: Optional[Callable[[], str]] = None,
     ) -> None:
         self.is_simulation = is_simulation
         self.live_cancel = live_cancel
         self.sim_cancel = sim_cancel
+        # #536: '' = il runtime ha l'autorita' esclusiva; altrimenti il motivo => nessun cancel al broker
+        self.authority_check = authority_check
 
     def cancel(self, market_id: str, bet_ids: List[str]) -> bool:
         """Cancella gli ordini resting indicati; ``True`` solo se CONFERMATO.
@@ -125,6 +128,14 @@ class CashoutCancelAdapter:
         if not market:
             logger.warning("[cashout_cancel] market_id vuoto: cancel non confermato")
             return False
+        if self.authority_check is not None:
+            try:
+                block = str(self.authority_check() or "")
+            except Exception:  # noqa: BLE001 - autorita' non dimostrabile => nessun cancel
+                block = "runtime_authority_check_failed"
+            if block:
+                logger.warning("[cashout_cancel] cancel rifiutato su %s: %s", market, block)
+                return False
         try:
             if self.is_simulation():
                 instructions: List[Dict[str, Any]] = [{"betId": bid} for bid in ids]

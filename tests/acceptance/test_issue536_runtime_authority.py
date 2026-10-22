@@ -566,7 +566,30 @@ def test_t20_il_trading_engine_rifiuta_l_invio_senza_autorita_anche_se_il_runtim
     esito = c.engine.submit_quick_bet(secondo)
     assert str(esito.get("status") or "").upper() not in ("SUBMITTED", "ACCEPTED", "SUCCESS"), esito
     assert len(_ordini(c)) == 1, "ordine inviato dall'engine senza autorita'"
-    # a fermarlo e' il choke point dell'engine, non solo il fence del DB piu' a valle (seconda difesa)
+    # a fermarlo e' l'engine all'ammissione, prima di persistere l'intento (non il fence del DB a valle)
+    assert str(esito.get("reason") or "").startswith("runtime_authority_lost:lock_file_deleted"), esito.get("reason")
+    assert esito["status"] == "DENIED"
+
+
+def test_t20b_verifica_anche_subito_prima_del_trasporto(tmp_path, monkeypatch):
+    """L'autorita' persa fra ammissione e trasporto: l'ultima verifica prima dell'exchange ferma l'invio."""
+    c = _catena_armata(tmp_path, "t20b.db")
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    originale = c.rc.assert_runtime_authority
+    lp = _lock_path(str(tmp_path / "t20b.db"))
+
+    def _perde_dopo_l_ammissione(context=""):
+        if context == "order_admission":
+            originale(context)
+            os.unlink(lp)                                      # perdita subito dopo l'ammissione
+            return None
+        return originale(context)
+
+    monkeypatch.setattr(c.rc, "assert_runtime_authority", _perde_dopo_l_ammissione)
+    secondo = dict(cmd, customer_ref=cmd["customer_ref"][:-3] + "zz7", correlation_id="t20b", selection_id=14)
+    esito = c.engine.submit_quick_bet(secondo)
+    assert len(_ordini(c)) == 1, "ordine inviato all'exchange senza autorita'"
     assert str(esito.get("error") or "").startswith("runtime_authority_lost:lock_file_deleted"), esito.get("error")
     assert c.rc.mode is RuntimeMode.LOCKDOWN
 
@@ -802,8 +825,10 @@ def test_t34_start_rifiutato_finche_lo_stop_non_ha_smontato_l_autorita_persa(tmp
     c = _catena_armata(tmp_path, "t34.db")
     c.rc._on_runtime_authority_lost("lease_unrenewable")
     assert c.rc.runtime_authority.lost_reason == "lease_unrenewable"
+    token_prima = int(c.db.read_runtime_lease()["fencing_token"])
     blocco = c.rc._acquire_runtime_lease()
-    assert blocco.startswith("runtime_authority_lost"), blocco
+    assert blocco == "runtime_authority_lost:lease_unrenewable:stop_required", blocco
+    assert int(c.db.read_runtime_lease()["fencing_token"]) == token_prima, "nuova lease scritta senza STOP"
     assert c.rc._authority_lost_reason == "lease_unrenewable"   # la perdita non viene cancellata
 
 
@@ -852,3 +877,117 @@ def test_t36_nessun_deadlock_fra_heartbeat_e_violazione_del_fence(tmp_path):
     t.join(5.0)
     assert fatto == ["mark_lost"], "deadlock fra heartbeat e segnalazione della perdita"
     assert auth.lost_reason == "fencing_token_superseded"
+
+
+# ---------------------------------------------------------------- rilievi su 125aa05 (Codex, Grok) — RED prima della patch
+def test_t37_cancel_del_cashout_e_del_ttl_rifiutati_senza_autorita(tmp_path, monkeypatch):
+    """Codex P1 runtime_controller.py:3200: i cancel del router e del TTL verificano l'autorita' al momento
+    della chiamata al broker, non solo al routing."""
+    import core.runtime_controller as modulo
+    from cashout_cancel_adapter import CashoutCancelAdapter
+
+    c = _catena_armata(tmp_path, "t37.db")
+    costruiti = []
+
+    class _Registra(CashoutCancelAdapter):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            costruiti.append(self)
+
+    monkeypatch.setattr(modulo, "CashoutCancelAdapter", _Registra)
+    monkeypatch.setattr(c.rc.betfair_service, "is_simulation_mode", lambda: True, raising=False)
+    c.rc._execute_cashout_route({"signal_type": "CASHOUT", "market_id": "1.1", "selection_id": 7})
+    adapter_ttl = c.rc._direct_ttl_cancel_adapter()
+    assert len(costruiti) == 2 and adapter_ttl in costruiti
+    chiamate = []
+    for adapter in costruiti:
+        adapter.sim_cancel = adapter.live_cancel = (
+            lambda **kw: chiamate.append(kw) or {"instructionReports": [{"status": "SUCCESS"}]})
+        assert adapter.cancel("1.1", ["B0"]) is True                # con autorita': confermato
+    assert len(chiamate) == 2
+    chiamate.clear()
+    os.unlink(_lock_path(str(tmp_path / "t37.db")))
+    for adapter in costruiti:
+        assert adapter.cancel("1.1", ["B1"]) is False
+    assert chiamate == [], "cancel inviato al broker da un runtime senza autorita'"
+
+
+def test_t38_cancel_del_residuo_del_cashout_rifiutato_senza_autorita(tmp_path, monkeypatch):
+    c = _catena_armata(tmp_path, "t38.db")
+    monkeypatch.setattr(c.rc.betfair_service, "is_simulation_mode", lambda: True, raising=False)
+    catena = _cashout_wired(c)
+    adapter = catena.cashout_residual_handler._cancel.__self__
+    chiamate = []
+    adapter.sim_cancel = adapter.live_cancel = lambda **kw: chiamate.append(kw) or {"instructionReports": [{"status": "SUCCESS"}]}
+    assert adapter.cancel("1.1", ["B0"]) is True and len(chiamate) == 1   # con autorita': confermato
+    chiamate.clear()
+    os.unlink(_lock_path(str(tmp_path / "t38.db")))
+    assert adapter.cancel("1.1", ["B1"]) is False and chiamate == []
+
+
+def test_t39_nessuna_riga_inflight_se_l_autorita_manca_all_ammissione(tmp_path):
+    """Codex P2 trading_engine.py:2175: la verifica precede la persistenza dell'intento."""
+    c = _catena_armata(tmp_path, "t39.db")
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    righe_prima = len(c.db._execute("SELECT id FROM orders", fetch=True))
+    os.unlink(_lock_path(str(tmp_path / "t39.db")))
+    secondo = dict(cmd, customer_ref=cmd["customer_ref"][:-3] + "zz8", correlation_id="t39", selection_id=13)
+    esito = c.engine.submit_quick_bet(secondo)
+    assert "runtime_authority_lost" in str(esito.get("error") or esito.get("reason") or ""), esito
+    audit = [e["type"] for e in (esito.get("audit") or {}).get("events", [])]
+    assert "PERSIST_INFLIGHT" not in audit, audit
+    assert len(c.db._execute("SELECT id FROM orders", fetch=True)) == righe_prima
+
+
+def test_t40_stop_attende_le_operazioni_in_volo_prima_di_sciogliere_il_fence(tmp_path, monkeypatch):
+    """Codex P1 runtime_authority.py:320: lo STOP non scioglie fence e lease mentre un invio e' in volo; finche'
+    non si svuota nessun nuovo invio e nessuna nuova epoca."""
+    monkeypatch.setattr(RuntimeController, "RUNTIME_AUTHORITY_DRAIN_SEC", 0.5)
+    c = _catena_armata(tmp_path, "t40.db")
+    auth = c.rc.runtime_authority
+    with c.rc.authority_operation():
+        c.rc.mode = RuntimeMode.STOPPED
+        c.rc._release_runtime_instance_lock_if_stopped()
+        assert not auth.released and c.db.runtime_fence() is not None, "fence sciolto con un invio in volo"
+        assert c.rc._runtime_authority_block("order_submit") == "runtime_authority_draining"
+        assert c.rc._acquire_runtime_lease() == "runtime_authority_draining"
+    c.rc._release_runtime_instance_lock_if_stopped()
+    assert auth.released and c.db.runtime_fence() is None
+
+
+def test_t41_rilascio_della_lease_fallito_non_dichiara_lo_stop_pulito(tmp_path, monkeypatch):
+    """Codex P2 runtime_authority.py:317: lease non rilasciata => autorita', lock e fence restano."""
+    c = _catena_armata(tmp_path, "t41.db")
+    auth = c.rc.runtime_authority
+
+    def _db_giu(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(c.db, "release_runtime_lease", _db_giu)
+    c.rc.mode = RuntimeMode.STOPPED
+    c.rc._release_runtime_instance_lock_if_stopped()
+    assert not auth.released and auth.lock_fh is not None and c.db.runtime_fence() is not None
+    assert c.rc._instance_lock_fh is auth.lock_fh
+    monkeypatch.undo()
+    c.rc._release_runtime_instance_lock_if_stopped()           # al ritentativo il rilascio riesce
+    assert auth.released and c.db.read_runtime_lease()["expires_at"] < time.time()
+
+
+def test_t42_rinnovo_riuscito_dopo_una_perdita_concorrente_viene_annullato(tmp_path):
+    """Grok su 125aa05: se la perdita scatta mentre il rinnovo e' in corso, la lease rinnovata torna scaduta."""
+    p = str(tmp_path / "t42.db")
+    db = Database(p)
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=30.0, heartbeat_sec=10.0)
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    originale = db.renew_runtime_lease
+
+    def _perdita_durante_il_rinnovo(*a, **k):
+        out = originale(*a, **k)
+        with auth._lock:
+            auth.lost_reason = "fencing_token_superseded"      # mark_lost concorrente gia' passato
+        return out
+
+    db.renew_runtime_lease = _perdita_durante_il_rinnovo
+    assert auth.heartbeat_once() is False
+    assert float(db.read_runtime_lease()["expires_at"]) < time.time(), "lease rinnovata per un'autorita' persa"

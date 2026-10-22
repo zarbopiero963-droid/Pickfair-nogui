@@ -170,28 +170,41 @@ class RuntimeAuthority:
             if self.lost_reason:
                 # Codex su fc8f136: un'autorita' persa non apre una nuova epoca senza lo STOP che smonta i servizi
                 return f"runtime_authority_lost:{self.lost_reason}:stop_required"
+            if self.released:
+                return "runtime_authority_released"
             if self.lock_fh is None:
                 return "runtime_lock_not_held"
-            problem = self.lock_identity_problem()
-            if problem:
-                return problem
-            try:
-                outcome = self.db.acquire_runtime_lease(
-                    self.owner_id, ttl_sec=self.lease_ttl_sec, now=self._clock(), pid=self.pid, host=self.host,
-                    lock_identity=self.lock_identity, clock=self._clock,
-                    holder_alive=lambda pid, host: _holder_alive(pid, host, my_host=self.host))
-            except Exception as exc:
-                logger.exception("Lease del runtime non acquisibile")
-                return f"runtime_lease_unavailable:{exc.__class__.__name__}"
-            if not outcome.get("acquired"):
-                holder = outcome.get("holder") or {}
-                return (f"runtime_lease_held_by:{holder.get('owner_id')}:pid={holder.get('pid')}"
-                        f":expires_in={max(0.0, float(holder.get('expires_at') or 0.0) - self._clock()):.1f}s")
-            self.token = int(outcome["fencing_token"])
-            self.lease_expires_at = float(outcome["expires_at"])
-            self.lost_reason = ""
-            self.db.bind_runtime_fence(self.owner_id, self.token, on_violation=self._on_fence_violation)
-            return ""
+        problem = self.lock_identity_problem()
+        if problem:
+            return problem
+        try:                                            # I/O sul DB fuori da self._lock (Grok su 125aa05)
+            outcome = self.db.acquire_runtime_lease(
+                self.owner_id, ttl_sec=self.lease_ttl_sec, now=self._clock(), pid=self.pid, host=self.host,
+                lock_identity=self.lock_identity, clock=self._clock,
+                holder_alive=lambda pid, host: _holder_alive(pid, host, my_host=self.host))
+        except Exception as exc:
+            logger.exception("Lease del runtime non acquisibile")
+            return f"runtime_lease_unavailable:{exc.__class__.__name__}"
+        if not outcome.get("acquired"):
+            holder = outcome.get("holder") or {}
+            return (f"runtime_lease_held_by:{holder.get('owner_id')}:pid={holder.get('pid')}"
+                    f":expires_in={max(0.0, float(holder.get('expires_at') or 0.0) - self._clock()):.1f}s")
+        with self._lock:
+            stale = int(outcome["fencing_token"]) if (self.lost_reason or self.released) else None
+            if stale is None:
+                self.token = int(outcome["fencing_token"])
+                self.lease_expires_at = float(outcome["expires_at"])
+                self.db.bind_runtime_fence(self.owner_id, self.token, on_violation=self._on_fence_violation)
+        if stale is not None:                           # perdita o rilascio concorrenti: la lease non vale
+            self._expire_lease_quietly(stale)
+            return "runtime_authority_lost_during_acquire"
+        return ""
+
+    def _expire_lease_quietly(self, token: int) -> None:
+        try:
+            self.db.release_runtime_lease(self.owner_id, int(token), now=self._clock())
+        except Exception:
+            logger.warning("Lease non riportata a scaduta (token %s)", token)
 
     def _on_fence_violation(self, reason: str) -> None:
         self.mark_lost(str(reason or "fence_violation"))
@@ -248,9 +261,14 @@ class RuntimeAuthority:
             self.mark_lost("lease_superseded")
             return False
         with self._lock:
-            if self.released or self.lost_reason:
-                return False
-            self.lease_expires_at = float(renewed)
+            undo = bool(self.released or self.lost_reason)
+            if not undo:
+                self.lease_expires_at = float(renewed)
+        if undo:
+            # Grok su 125aa05: perdita o STOP concorrenti al rinnovo => la lease rinnovata torna scaduta, cosi' il
+            # proprietario legittimo subentra senza attendere il TTL.
+            self._expire_lease_quietly(int(token))
+            return False
         return True
 
     def start_heartbeat(self) -> None:
@@ -301,20 +319,24 @@ class RuntimeAuthority:
             except Exception:
                 logger.exception("Callback di perdita dell'autorita' fallita")
 
-    def release(self) -> None:
-        """Rilascio ordinato a runtime fermo: heartbeat, lease, fence, lock."""
+    def release(self) -> bool:
+        """Rilascio ordinato a runtime fermo: heartbeat, lease, fence, lock. False (nulla rilasciato, heartbeat
+        ripreso) se la lease non si puo' scadere: lo STOP non si dichiara pulito con una lease ancora viva."""
         with self._lock:
             if self.released:
-                return
-            self.released = True
-            self._stop.set()
+                return True
             token = self.token if not self.lost_reason else None
+            self._stop.set()
         self.stop_heartbeat()
         if token is not None:                           # I/O sul DB fuori da self._lock
             try:
                 self.db.release_runtime_lease(self.owner_id, int(token), now=self._clock())
             except Exception:
-                logger.exception("Lease del runtime non rilasciata allo STOP")
+                logger.exception("Lease del runtime non rilasciata allo STOP: autorita' trattenuta")
+                self.start_heartbeat()                  # Codex su 125aa05: si continua a dimostrarla
+                return False
+        with self._lock:
+            self.released = True
         try:
             if getattr(self.db, "runtime_fence", None) and (self.db.runtime_fence() or {}).get("owner_id") == self.owner_id:
                 self.db.unbind_runtime_fence()
@@ -328,6 +350,7 @@ class RuntimeAuthority:
                     handle.close()                   # chiudere il descrittore rilascia flock/msvcrt
                 except OSError:
                     logger.exception("Lock di istanza: chiusura fallita")
+        return True
 
 
 __all__ = ["RuntimeAuthority", "RuntimeAuthorityLost", "RuntimeFenceViolation",

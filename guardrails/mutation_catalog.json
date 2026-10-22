@@ -2176,6 +2176,78 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): controllo del fence e scrittura autocommit non serializzati con il subentro."
+    },
+    {
+      "id": "i536_engine_admission_without_authority",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            authority_block = self._runtime_authority_admission_block()\n            if authority_block:",
+      "mutated": "            authority_block = \"\"\n            if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): l'intento viene persistito (riga INFLIGHT) prima della verifica dell'autorita'."
+    },
+    {
+      "id": "i536_stop_does_not_drain_operations",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if not self._wait_authority_ops_drained(float(self.RUNTIME_AUTHORITY_DRAIN_SEC)):",
+      "mutated": "            if not True:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): lo STOP scioglie fence e lease con un invio ancora in volo."
+    },
+    {
+      "id": "i536_draining_allows_new_operations",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"runtime_authority_draining\"        # STOP in corso: nessuna nuova operazione finanziaria",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): durante lo STOP nuove operazioni passano il choke point."
+    },
+    {
+      "id": "i536_new_epoch_while_draining",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"runtime_authority_draining\"        # nessuna nuova epoca con operazioni della vecchia in volo",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): una nuova epoca parte con operazioni della precedente ancora in volo."
+    },
+    {
+      "id": "i536_release_failure_declared_clean",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "                self.start_heartbeat()                  # Codex su 125aa05: si continua a dimostrarla\n                return False",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): rilascio della lease fallito ma STOP dichiarato pulito."
+    },
+    {
+      "id": "i536_renew_after_loss_not_undone",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            undo = bool(self.released or self.lost_reason)",
+      "mutated": "            undo = False",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): un rinnovo concorrente alla perdita lascia la lease viva per l'autorita' persa."
     }
   ]
 }
