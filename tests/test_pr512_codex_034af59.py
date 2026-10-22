@@ -464,6 +464,11 @@ def _c9_occupied(c):
     return [(t["table_id"], t["current_event_key"]) for t in c.rc.table_manager.snapshot() if t.get("current_event_key")]
 
 
+def _c9_ref(c, table_id):
+    """#461 PR29-c: gli esiti portano il customer_ref reale dell'intento che il tavolo riserva."""
+    return c.rc.table_manager.get_table(int(table_id)).meta["customer_ref"]
+
+
 def _c9_expire_ttl(monkeypatch, guard):
     from core import duplication_guard as dg_mod
     base = dg_mod.time.monotonic()
@@ -540,16 +545,17 @@ def test_c9_1_ambiguous_order_stays_protected_when_a_sibling_order_on_the_same_e
     occ = _c9_occupied(c)
     assert len(occ) == 2, occ
     (t1, key), (t2, _) = occ
-    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    ref_a, ref_b = _c9_ref(c, t1), _c9_ref(c, t2)
+    c.rc._on_quick_bet_ambiguous({"event_key": key, "table_id": t2, "customer_ref": ref_b})
     handler = c.rc._on_quick_bet_failed if terminal == "failed" else c.rc._on_quick_bet_success
-    handler({"event_key": key, "table_id": t1, "customer_ref": "A"})
+    handler({"event_key": key, "table_id": t1, "customer_ref": ref_a})
     assert c.rc._uncertain_reservations_map().get(key) == t2, "incertezza di B cancellata dall'esito di A"
     n = len(c.broker.state.orders)
     c.rc._on_signal_received(_c9_signal(price=2.3, received_at="2026-10-08T10:07:00.000000+00:00"))
     assert _c9_rejects(c)[-1] == "evento_gia_in_posizione", _c9_rejects(c)
     assert len(c.broker.state.orders) == n, "nuovo ordine su un evento con un ordine AMBIGUOUS aperto"
     # BLOCK inverso: quando anche B ha un esito certo, l'evento torna libero
-    c.rc._on_quick_bet_failed({"event_key": key, "table_id": t2, "customer_ref": "B"})
+    c.rc._on_quick_bet_failed({"event_key": key, "table_id": t2, "customer_ref": ref_b})
     assert key not in c.rc._uncertain_reservations_map()
 
 
@@ -1248,14 +1254,15 @@ def test_c11_f028_releases_the_finalized_orders_own_table_never_the_live_one(tmp
     assert len(occ) == 2, occ
     t_a, t_b = sorted(occ)
     key = occ[t_a]
-    cand = [{"customer_ref": "A", "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
+    ref_a, ref_b = _c9_ref(c, t_a), _c9_ref(c, t_b)
+    cand = [{"customer_ref": ref_a, "status": "SUBMITTED", "bet_id": "BA", "market_id": "1.234", "event_key": key,
              "table_id": t_a},
-            {"customer_ref": "B", "status": "SUBMITTED", "bet_id": "BB", "market_id": "1.234", "event_key": key,
+            {"customer_ref": ref_b, "status": "SUBMITTED", "bet_id": "BB", "market_id": "1.234", "event_key": key,
              "table_id": t_b}]
     c.rc._open_order_candidates = lambda: (cand, [])
     c.rc._final_unmatched_bets = lambda markets, bets: {"BA"}
     c.rc._settlement_reconciliation_allowed = lambda: True
-    assert c.rc._release_final_unmatched_orders() == ["A"]
+    assert c.rc._release_final_unmatched_orders() == [ref_a]
     still = {tid for tid, _ in _c9_occupied(c)}
     assert t_b in still and t_a not in still, ("tavolo dell'ordine vivo liberato", still)
 
@@ -1581,15 +1588,17 @@ def test_c13_service_treats_a_missing_collection_as_malformed():
 class _C14Db:
     """Ordini del bot + settings persistiti, per il registro dei mercati con hedge di cashout."""
 
-    def __init__(self, payloads=(), settings=None, fail_save=False, fail_load=False):
+    def __init__(self, payloads=(), settings=None, fail_save=False, fail_load=False, bot_bets=("111",)):
         self.payloads = [dict(p) for p in payloads]
+        self.bot_bets = list(bot_bets)
         self.settings = dict(settings or {})
         self.fail_save = fail_save
         self.fail_load = fail_load
 
     def _execute(self, sql, *args, **kwargs):
         if "FROM orders" in sql:
-            return [{"payload_json": json.dumps(p), "status": "SUBMITTED"} for p in self.payloads]
+            # PR29-c: ogni ordine del bot porta il customer_ref dell'intento (identita' della riserva)
+            return [{"payload_json": json.dumps(p), "status": "SUBMITTED", "customer_ref": "REF-A"} for p in self.payloads]
         return []
 
     def get_settings(self):
@@ -1602,6 +1611,24 @@ class _C14Db:
             raise RuntimeError("disk full")
         self.settings.update({str(k): v for k, v in data.items()})
 
+    def get_bot_active_orders(self):
+        return [{"bet_id": b, "market_id": "1.10", "event_name": "E"} for b in self.bot_bets]
+
+    def find_orders_by_bet_id(self, bet_id):
+        # PR29-c: la bet si lega all'intento tramite la sua riga `orders`
+        if str(bet_id) not in self.bot_bets:
+            return []
+        return [{"customer_ref": "REF-A", "status": "SUBMITTED", "payload": dict(p)} for p in self.payloads]
+
+
+# PR29-c: settlement cleared per bet della sola bet del bot (identita' completa). Senza hedge rilascerebbe: i test
+# che lo trattengono misurano quindi il controllo hedge, non la mancanza di identita'.
+_C14_CLEARED = {"market_id": "1.10", "event_key": "cleared:1.10:111", "settlement_ref": "111"}
+
+
+def _c14_settle(rc, pnl=-10.0):
+    rc._release_settled_tables(dict(_C14_CLEARED), table_id=None, pnl=pnl, settlement_key="cleared:1.10:111")
+
 
 def _c14_rc(db):
     sys.path.insert(0, os.path.join(ROOT, "tests", "f026"))
@@ -1609,7 +1636,8 @@ def _c14_rc(db):
     rc = _rc()
     rc.db = db
     rc._load_hedged_markets()
-    _activate(rc, 1, "EV-A", "1.10")
+    _activate(rc, 1, "EV-A", "1.10", ref="REF-A")
+    rc.betfair_service = _C16Service(rows=[{"betId": b, "marketId": "1.10"} for b in db.bot_bets])
     return rc
 
 
@@ -1624,7 +1652,7 @@ def test_c14_cashout_hedge_blocks_release_by_market_with_one_leg_pnl():
     (e stake successivo) sbagliata. Con un hedge registrato sul mercato: nessun rilascio, perdita invariata."""
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     _c14_hedge(rc)
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    _c14_settle(rc)
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "EV-A", "tavolo liberato con il P&L di una sola gamba"
     assert t["loss_amount"] == 0.0
@@ -1635,7 +1663,7 @@ def test_c14_hedge_registry_survives_restart():
     rc = _c14_rc(db)
     _c14_hedge(rc)
     again = _c14_rc(db)                                      # nuovo processo, stesso DB
-    again._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    _c14_settle(again)
     t = {x["table_id"]: x for x in again.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "EV-A", "registro degli hedge perso al riavvio"
 
@@ -1647,7 +1675,7 @@ def test_c14_unreliable_hedge_registry_is_fail_closed(kind):
     rc = _c14_rc(db)
     if kind == "save":
         _c14_hedge(rc, market="9.99")                        # hedge su ALTRO mercato, ma non persistito
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    _c14_settle(rc)
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "EV-A", "registro inaffidabile trattato come vuoto"
 
@@ -1655,7 +1683,8 @@ def test_c14_unreliable_hedge_registry_is_fail_closed(kind):
 def test_c14_without_hedge_the_unique_single_bet_table_is_still_released():
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     _c14_hedge(rc, market="2.20")                            # hedge su un altro mercato: irrilevante
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0,
+                               settlement_key="sim:1.10:S1")
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
 
@@ -1674,7 +1703,8 @@ def test_c14_sim_market_level_settlement_still_releases_after_a_hedge():
     hedge compreso, quindi il P&L e' il netto del tavolo e il rilascio resta corretto."""
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     _c14_hedge(rc)
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-0.5)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-0.5,
+                               settlement_key="sim:1.10:S1")
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 0.5
 
@@ -1682,7 +1712,7 @@ def test_c14_sim_market_level_settlement_still_releases_after_a_hedge():
 def test_c14_cleared_per_bet_settlement_with_hedge_is_held():
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     _c14_hedge(rc)
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    _c14_settle(rc)
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0
 
@@ -1691,7 +1721,8 @@ def test_c14_outcome_without_market_is_ignored_not_unreliable():
     rc = _c14_rc(_C14Db([{"market_id": "1.10", "event_key": "EV-A", "selection_id": 7}]))
     rc._on_cashout_command({"reason": "bridge_rejected"})
     assert rc._hedged_markets_unreliable is False
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "sim:1.10:S1"}, table_id=None, pnl=-10.0,
+                               settlement_key="sim:1.10:S1")
     t = {x["table_id"]: x for x in rc.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
 
@@ -1799,7 +1830,7 @@ def test_c15_failed_registry_save_survives_restart_as_unreliable(tmp_path):
     db.fail_save = False                                     # il DB torna a funzionare, processo riavviato
     again = _c14_rc(db)
     assert again._hedged_markets_unreliable is True
-    again._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:1"}, table_id=None, pnl=-10.0)
+    _c14_settle(again)
     t = {x["table_id"]: x for x in again.table_manager.snapshot()}[1]
     assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "rilascio con P&L di una sola gamba"
 
@@ -1843,12 +1874,7 @@ class _C16Service:
 
 
 class _C16Db(_C14Db):
-    def __init__(self, *a, bot_bets=(), **kw):
-        super().__init__(*a, **kw)
-        self.bot_bets = list(bot_bets)
-
-    def get_bot_active_orders(self):
-        return [{"bet_id": b, "market_id": "1.10", "event_name": "E"} for b in self.bot_bets]
+    pass
 
 
 def _c16_rc(service, *, bot_bets=("111",), fail_save=False, tmp_path=None):
@@ -1873,7 +1899,8 @@ def test_c16_foreign_settled_leg_on_the_exchange_blocks_release_without_any_loca
     _c14_hedge(rc)                                           # registro E sentinella falliscono
     again = _c16_rc(service, tmp_path=tmp_path)              # riavvio: nessuna traccia locale dell'hedge
     assert again._hedged_markets_unreliable is False
-    again._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    again._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111", "settlement_ref": "111"},
+                                  table_id=None, pnl=-10.0, settlement_key="cleared:1.10:111")
     t = _c16_table(again)
     assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "rilascio con il P&L di una sola gamba"
     assert service.calls and service.calls[-1].get("market_ids") == ["1.10"]
@@ -1883,13 +1910,15 @@ def test_c16_foreign_settled_leg_on_the_exchange_blocks_release_without_any_loca
                                      _C16Service(rows=[{"marketId": "1.10"}]), _C16Service(rows=["x"])])
 def test_c16_unreadable_exchange_reconciliation_is_fail_closed(service):
     rc = _c16_rc(service)
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111", "settlement_ref": "111"},
+                               table_id=None, pnl=-10.0, settlement_key="cleared:1.10:111")
     assert _c16_table(rc)["current_event_key"] == "EV-A"
 
 
 def test_c16_only_bot_legs_on_the_exchange_still_release():
     rc = _c16_rc(_C16Service(rows=[{"betId": "111", "marketId": "1.10"}]))
-    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111"}, table_id=None, pnl=-10.0)
+    rc._release_settled_tables({"market_id": "1.10", "event_key": "cleared:1.10:111", "settlement_ref": "111"},
+                               table_id=None, pnl=-10.0, settlement_key="cleared:1.10:111")
     t = _c16_table(rc)
     assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
 
@@ -1903,13 +1932,18 @@ def test_c17_keyless_or_position_settlement_also_reconciles_on_the_exchange(tmp_
     rc = _c16_rc(service, fail_save=True, tmp_path=tmp_path)
     _c14_hedge(rc)
     again = _c16_rc(service, tmp_path=tmp_path)
-    again._release_settled_tables(dict(payload), table_id=None, pnl=-10.0)
+    again._release_settled_tables(dict(payload), table_id=None, pnl=-10.0,
+                                  settlement_key=again._build_bankroll_sync_key(dict(payload)))
     t = _c16_table(again)
     assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0, "settlement per bet non verificato"
 
 
-def test_c17_keyless_settlement_with_only_bot_legs_still_releases():
+def test_c17_keyless_settlement_without_identity_is_held_even_with_only_bot_legs():
+    """#461 PR29-c: un settlement senza chiave e senza bet non e' legabile a una riserva (nessuna identita'
+    durevole): resta trattenuto, anche se sull'exchange ci sono solo gambe del bot. Prima di PR29-c liberava il
+    tavolo; la stessa bet con identita' (`settlement_ref`) rilascia ancora (test c16 qui sopra)."""
     rc = _c16_rc(_C16Service(rows=[{"betId": "111", "marketId": "1.10"}]))
-    rc._release_settled_tables({"market_id": "1.10"}, table_id=None, pnl=-10.0)
+    payload = {"market_id": "1.10"}
+    rc._release_settled_tables(payload, table_id=None, pnl=-10.0, settlement_key=rc._build_bankroll_sync_key(payload))
     t = _c16_table(rc)
-    assert t["current_event_key"] == "" and t["loss_amount"] == 10.0
+    assert t["current_event_key"] == "EV-A" and t["loss_amount"] == 0.0

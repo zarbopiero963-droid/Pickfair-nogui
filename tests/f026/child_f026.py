@@ -170,10 +170,21 @@ try:
                                                 "simulation_mode": True, "source": "F026"})
             time.sleep(1.5)
         elif op == "settle":
+            t_settle = time.time()
             book(st["m"], status="CLOSED", winner=11 if st.get("win") else 12)
             if st.get("nowait"):                 # piu' mercati chiusi nello stesso giro del poller
                 continue
             time.sleep(4)
+            # #461 PR29-c: il consumer del settlement registra l'effetto in una transazione durevole; sotto carico
+            # (CI) puo' superare i 4 s. Lo snapshot attende la FINE di ogni RUNTIME_CLOSE_POSITION ricevuto
+            # (AUTO_TRADE_MM_RESULT e' l'ultimo evento del consumer), con un limite: nessuna aspettativa cambia.
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                closes = sum(1 for t, e, _d in list(EV) if t >= t_settle and e == "RUNTIME_CLOSE_POSITION")
+                done = sum(1 for t, e, _d in list(EV) if t >= t_settle and e == "AUTO_TRADE_MM_RESULT")
+                if closes and done >= closes:          # almeno una chiusura ricevuta e tutte elaborate
+                    break
+                time.sleep(0.2)
         elif op == "resettle":
             app.bus.publish("RUNTIME_CLOSE_POSITION", dict(next((d for _, e, d in reversed(EV)
                                                                  if e == "RUNTIME_CLOSE_POSITION" and d.get("market_id") == st["m"]), {})))

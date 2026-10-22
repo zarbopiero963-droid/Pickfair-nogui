@@ -1231,12 +1231,13 @@
       "module": "core.table_manager",
       "area": "exposure",
       "file": "core/table_manager.py",
-      "original": "            if key and owner and table.current_event_key == key and str(meta.get(\"batch_id\") or \"\") == owner:",
-      "mutated": "            if key and table.current_event_key == key:",
+      "original": "                    and all(str(meta.get(k) or \"\") == v for k, v in wanted.items())):",
+      "mutated": "                    and True):",
       "tests": [
-        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
+        "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
       ],
-      "rationale": "#461 PR29-b (Sol #534): il rilascio di un lotto libera un tavolo riusato per lo stesso evento da un'altra riserva."
+      "rationale": "#461 PR29-b (Sol #534): il rilascio di un lotto libera un tavolo riusato per lo stesso evento da un'altra riserva. PR29-c: stesso controllo d'identita' (batch_id, customer_ref, reservation_id) di release_identified_reservation."
     },
     {
       "id": "batch_release_frees_foreign_dedup_key",
@@ -1321,6 +1322,512 @@
         "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py"
       ],
       "rationale": "#461 PR29-b (Sol #534): la perdita di un lotto su un tavolo riassegnato non entra nel recovery."
+    },
+    {
+      "id": "settlement_ledger_replays_effect",
+      "module": "database",
+      "area": "dedupe",
+      "file": "database.py",
+      "original": "            if conn.execute(\"SELECT 1 FROM settlement_effects WHERE settlement_key = ?\", (key,)).fetchone():",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py",
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: il registro durevole non riconosce un settlement gia' registrato (stesso o altro processo)."
+    },
+    {
+      "id": "settlement_duplicate_reapplied",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": bool(existing.get(\"realized_applied\"))}",
+      "mutated": "        if existing is not None and not upgrade:\n            return {\"outcome\": \"duplicate\", \"applied\": False,\n                    \"realized_already\": False}",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (S7/T08): un settlement gia' registrato e marcato riapplica il P&L realizzato (il registro trattiene l'effetto sui tavoli anche come seconda difesa)."
+    },
+    {
+      "id": "settlement_duplicate_not_rolled_back",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "                tm.restore_table(snapshot)                     # nessun effetto: gia' registrato o non registrabile",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c: effetto in memoria non annullato quando la registrazione perde la corsa o fallisce."
+    },
+    {
+      "id": "settlement_realized_reapplied_after_restart",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                    and not effect.get(\"realized_already\") and not unproven):",
+      "mutated": "                    and not unproven):",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (T07): dopo un riavvio il P&L realizzato di un settlement gia' applicato rientra nella perdita giornaliera."
+    },
+    {
+      "id": "settlement_foreign_outcome_clears_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            if recorded and recorded != ref:\n                return True",
+      "mutated": "            if recorded and ref and recorded != ref:\n                return True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (S3, Grok su 29903af): l'esito certo di un altro intento, o senza customer_ref, chiude l'incertezza AMBIGUOUS di una riserva."
+    },
+    {
+      "id": "settlement_ambiguous_bet_attribution",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if len(rows) != 1:\n            return None\n        request = rows[0].get(\"payload\") or {}",
+      "mutated": "        if not rows:\n            return None\n        request = rows[0].get(\"payload\") or {}",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c: una bet legata a piu' righe orders viene attribuita alla prima invece di restare trattenuta."
+    },
+    {
+      "id": "settlement_dedupe_key_never_released",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            if not still_uncertain and tm.find_by_event_key(ev) is None:\n                self.duplication_guard.release(ev)",
+      "mutated": "            if not still_uncertain and tm.find_by_event_key(ev) is None:\n                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (S9): la chiave anti-duplicato di una riserva regolata resta appuntata per sempre."
+    },
+    {
+      "id": "lifecycle_outcome_releases_other_intent",
+      "module": "core.table_manager",
+      "area": "recovery",
+      "file": "core/table_manager.py",
+      "original": "            if reserved and reserved != ref:\n                return False",
+      "mutated": "            if ref and reserved and reserved != ref:\n                return False",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e2bb36e): l'esito terminale senza customer_ref (o di un altro intento) libera il tavolo di una riserva identificata."
+    },
+    {
+      "id": "settlement_lost_race_reapplies_realized",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                return {\"outcome\": \"duplicate\", \"applied\": False, \"realized_already\": True}",
+      "mutated": "                return {\"outcome\": \"duplicate\", \"applied\": False, \"realized_already\": False}",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c: chi perde la corsa di registrazione contro un altro consumer applica comunque il P&L realizzato."
+    },
+    {
+      "id": "settlement_win_reapplied_when_unproven",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "                        and float(pnl) >= 0.0)",
+      "mutated": "                        and False)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (validazione finale, punto 6): una vincita senza registrazione dimostrata (riga non marcata, registro illeggibile) rientra nel realizzato e abbassa la perdita misurata (fail-open del limite giornaliero)."
+    },
+    {
+      "id": "held_settlement_never_reconciled",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        upgrade = existing is not None and str(existing.get(\"outcome\") or \"\") == \"held\"",
+      "mutated": "        upgrade = False",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (validazione finale, punto 9): un settlement trattenuto non si riconcilia mai, debito di recovery perso."
+    },
+    {
+      "id": "held_upgrade_not_conditional",
+      "module": "database",
+      "area": "dedupe",
+      "file": "database.py",
+      "original": "                WHERE settlement_key = ? AND outcome = 'held'",
+      "mutated": "                WHERE settlement_key = ?",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: la riconciliazione di un held gia' riconciliato (anche da un altro processo) riapplica l'effetto."
+    },
+    {
+      "id": "held_reconciled_before_rebuild",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        if not (rebuild or {}).get(\"ok\"):\n            return rebuild\n        try:\n            held = self.reconcile_held_settlements()",
+      "mutated": "        if False:\n            return rebuild\n        try:\n            held = self.reconcile_held_settlements()",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c: all'avvio i held si rivalutano su tavoli non ricostruiti (F018 incompleto)."
+    },
+    {
+      "id": "lifecycle_unproven_outcome_releases_key",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            if held is not None and held.current_event_key == event_key and reserved and reserved != outcome_ref:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e2bb36e): l'esito senza identita' della riserva rilascia la chiave anti-duplicato di una riserva viva."
+    },
+    {
+      "id": "settlement_recorded_without_recovery_state",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                if prepared is None:\n                    # Stato dei tavoli non scrivibile",
+      "mutated": "                if False:\n                    # Stato dei tavoli non scrivibile",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): il settlement e' registrato senza lo stato dei tavoli: dopo un crash il debito e' perso e ogni riconsegna e' un duplicato.",
+      "equivalent": "Dal calcolo delle variazioni (c6d2338) il blocco successivo legge prepared[0] dentro un try che, su qualunque errore, ripristina il tavolo e restituisce 'unverifiable': senza il controllo esplicito il risultato osservabile e' identico (nessuna riga, nessun effetto, riconsegna applicabile). Il comportamento resta verificato da test_r3_stato_tavoli_non_scrivibile_nessuna_registrazione_poi_una_volta."
+    },
+    {
+      "id": "position_close_key_without_reservation",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "        if (str(payload.get(\"table_id\") or \"\").strip()\n                or not event_key.startswith((\"cleared:\", \"sim:\"))):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e/29903af): la chiusura di una nuova riserva sullo stesso tavolo e lo stesso evento e' trattata come replay (registro, sync del bankroll, checkpoint, auto-next)."
+    },
+    {
+      "id": "tableless_uncertainty_never_cleared",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "        tableless = (table_id is not None and ref and refs.get((event_key, \"None\")) == ref)",
+      "mutated": "        tableless = False",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): un AMBIGUOUS senza table_id resta incerto dopo il settlement della propria riserva: chiave bloccata."
+    },
+    {
+      "id": "held_pending_does_not_pause_startup",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if held[\"pending\"]:\n            return dict(rebuild, ok=False,",
+      "mutated": "        if False:\n            return dict(rebuild, ok=False,",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e2bb36e): un settlement trattenuto per lettura fallita non blocca l'avvio in ACTIVE."
+    },
+    {
+      "id": "tableless_outcome_clears_uncertainty",
+      "module": "core.runtime_controller",
+      "area": "ambiguous",
+      "file": "core/runtime_controller.py",
+      "original": "            if recorded_refs and recorded_refs != {ref}:\n                return True",
+      "mutated": "            if False:\n                return True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su 29903af): un esito senza tavolo ne' customer_ref chiude l'AMBIGUOUS dell'auto-next e riapre la chiave anti-duplicato."
+    },
+    {
+      "id": "settlement_books_on_missing_table",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if self.table_manager.get_table(tid) is None:\n            # Tavolo della riserva non presente",
+      "mutated": "        if False:\n            # Tavolo della riserva non presente",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): il settlement di una riserva il cui tavolo non esiste e' registrato senza contabilizzare il debito."
+    },
+    {
+      "id": "auto_next_reservation_not_persisted",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            submit_payload[\"reservation_table_id\"] = int(table_id)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): la request dell'auto-next non porta il tavolo della riserva: dopo un riavvio il settlement non e' attribuibile."
+    },
+    {
+      "id": "recovery_snapshot_written_outside_lock",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        with self._recovery_write_lock():\n            prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,",
+      "mutated": "        with contextlib.nullcontext():\n            prepared = self._prepare_recovery_persist(cycle_reset=cycle_reset, reset_ts=reset_ts,",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 29903af): uno snapshot vecchio dello stato tavoli sovrascrive la perdita appena registrata da un settlement."
+    },
+    {
+      "id": "f018_ignores_auto_next_reservation_table",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                \"table_id\": p.get(\"table_id\") if p.get(\"table_id\") is not None else p.get(\"reservation_table_id\"),",
+      "mutated": "                \"table_id\": p.get(\"table_id\"),",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): F018 ricostruisce la riserva viva dell'auto-next su un altro tavolo."
+    },
+    {
+      "id": "recovery_persisted_outside_lock",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "            self._recovery_persisted(context)                       # sotto il lock della scrittura (Codex su 70821fd)\n            self._recovery_view_written()\n        return True",
+      "mutated": "        self._recovery_persisted(context)\n        self._recovery_view_written()\n        return True",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): l'esito della scrittura dello stato tavoli e' annotato fuori dal lock (stato di reset in sospeso azzerato da una scrittura precedente)."
+    },
+    {
+      "id": "recovery_snapshot_replaces_other_process_tables",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "                    for table_key in deletes or ():\n                        if float(current.get(str(table_key), 0.0)) <= 1e-9:\n                            current.pop(str(table_key), None)",
+      "mutated": "                    current = {k: v for k, v in current.items() if k in (updates or {})}",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): con due processi sullo stesso DB la scrittura del settlement cancella le perdite dei tavoli registrate dall'altro."
+    },
+    {
+      "id": "unrecorded_settlement_checkpointed",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if not unrecorded:\n            # #461 PR29-c (Codex su 70821fd): effetto NON registrato",
+      "mutated": "        if True:\n            # #461 PR29-c (Codex su 70821fd): effetto NON registrato",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 70821fd): checkpoint durevole per un effetto non registrato: il poller non lo riconsegna e la perdita resta fuori dal recovery."
+    },
+    {
+      "id": "recovery_write_ignores_process_view",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "        deltas = {k: v - float(view.get(k, 0.0)) for k, v in current.items() if view.get(k) != v}",
+      "mutated": "        deltas = dict(current)\n        deletes = deletes + [k for k in (\"1\", \"2\", \"3\") if k not in current]",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su 7a4f2c3): una scrittura di ritentativo o ordinaria cancella le perdite dei tavoli registrate da un altro processo."
+    },
+    {
+      "id": "recovery_delta_replaced_by_absolute",
+      "module": "database",
+      "area": "recovery",
+      "file": "database.py",
+      "original": "                        current[str(table_key)] = max(0.0, float(current.get(str(table_key), 0.0)) + float(delta))",
+      "mutated": "                        current[str(table_key)] = max(0.0, float(delta))",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su 7a4f2c3): due processi sullo stesso tavolo: la scrittura sostituisce la perdita dell'altro invece di sommarla."
+    },
+    {
+      "id": "second_runtime_instance_allowed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        except OSError:\n            handle.close()\n            return \"runtime_already_active_on_database\"",
+      "mutated": "        except OSError:\n            handle.close()\n            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su c6d2338): un secondo runtime parte sullo stesso database e diverge sui tavoli di recovery (reset concorrente)."
+    },
+    {
+      "id": "settlement_key_not_canonical",
+      "module": "core.runtime_controller",
+      "area": "dedupe",
+      "file": "core/runtime_controller.py",
+      "original": "            ref = str(payload.get(\"customer_ref\") or \"\").strip() or str(payload.get(\"reservation_id\") or \"\").strip()",
+      "mutated": "            ref = \"|\".join(x for x in (str(payload.get(k) or \"\").strip() for k in (\"customer_ref\", \"reservation_id\")) if x)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su c6d2338): la riconsegna senza reservation_id diventa un secondo settlement e ripete il debito."
+    },
+    {
+      "id": "unrecorded_settlements_not_retried_in_process",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                self._retry_unrecorded_settlements()     # #461 PR29-c (Codex su c6d2338): ritento nel processo",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su c6d2338): un effetto non registrato resta non applicato fino al riavvio."
+    },
+    {
+      "id": "instance_lock_kept_after_stop",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                self._instance_teardown_pending = not smontato\n                self._release_runtime_instance_lock_if_stopped()",
+      "mutated": "                self._instance_teardown_pending = not smontato",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: dopo STOP il lock resta preso e nessun runtime (riavvio nello stesso processo) puo' piu' partire."
+    },
+    {
+      "id": "instance_lock_kept_after_failed_start",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()\n            raise",
+      "mutated": "            raise",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: un avvio non riuscito trattiene il lock e blocca ogni avvio successivo."
+    },
+    {
+      "id": "instance_lock_released_while_active",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if handle is None or getattr(self, \"mode\", RuntimeMode.STOPPED) is not RuntimeMode.STOPPED:",
+      "mutated": "        if handle is None:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c: il lock si rilascia anche con il runtime attivo (un secondo avvio fallito libera il lock del primo)."
+    },
+    {
+      "id": "stop_not_serialized_with_start",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        with self._runtime_lifecycle_lock():          # #461 PR29-c: mai in parallelo con start()\n            return self._stop_serialized()",
+      "mutated": "        return self._stop_serialized()",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su e3fe4d7): STOP in parallelo con uno start() in corso chiude il lock che lo start riusa (due runtime sullo stesso DB)."
+    },
+    {
+      "id": "retry_does_not_mark_realized",
+      "module": "core.runtime_controller",
+      "area": "recovery",
+      "file": "core/runtime_controller.py",
+      "original": "                    self._mark_settlement_realized(key)\n                self._unrecorded_settlements.pop(key, None)",
+      "mutated": "                    pass\n                self._unrecorded_settlements.pop(key, None)",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): dopo un ritento riuscito la riga non dichiara il realizzato e un riavvio conta la perdita due volte."
+    },
+    {
+      "id": "transient_held_not_retried_in_process",
+      "module": "core.runtime_controller",
+      "area": "reconciliation",
+      "file": "core/runtime_controller.py",
+      "original": "        if unrecorded or (effect[\"outcome\"] == \"held\" and effect.get(\"transient\")):",
+      "mutated": "        if unrecorded:",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): un held per lettura fallita resta senza effetto fino al riavvio."
+    },
+    {
+      "id": "failed_start_releases_lock_without_teardown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if self._teardown_failed_start():\n                self._release_runtime_instance_lock_if_stopped()",
+      "mutated": "            if True:\n                self._release_runtime_instance_lock_if_stopped()",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Codex su e3fe4d7): un avvio fallito libera il lock con una sessione Betfair o Telegram ancora viva."
+    },
+    {
+      "id": "instance_lock_path_not_canonical",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))",
+      "mutated": "        path = path",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): due grafie dello stesso database prendono due lock diversi (due runtime)."
+    },
+    {
+      "id": "windows_lock_follows_append_offset",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                handle.seek(0)                   # Grok su e3fe4d7: sempre il byte 0, non l'offset di append",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): su Windows il byte bloccato segue l'offset di append e due processi non collidono."
+    },
+    {
+      "id": "pending_teardown_ignored_on_release",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if getattr(self, \"_instance_teardown_pending\", False):\n            return                               # Sol su ad315ca: servizi forse ancora vivi, smontaggio non riuscito",
+      "mutated": "        if False:\n            return",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su ad315ca): dopo uno smontaggio fallito un avvio rifiutato libera il lock con servizi forse vivi."
+    },
+    {
+      "id": "stop_releases_lock_after_failed_disconnect",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            except BaseException:\n                smontato = False\n                raise",
+      "mutated": "            except BaseException:\n                raise",
+      "tests": [
+        "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
+      ],
+      "rationale": "#461 PR29-c (Sol su ad315ca): uno STOP con disconnessione Betfair fallita libera il lock."
     }
   ]
 }

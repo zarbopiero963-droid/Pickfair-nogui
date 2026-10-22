@@ -40,10 +40,14 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
 
 ## F2 — rilascio al settlement
 
-`RuntimeController._release_settled_tables`:
-- con `table_id` nel payload il comportamento è invariato;
-- senza `table_id` (settlement dal poller SIM o cleared) il tavolo si individua dal `market_id` e si libera,
-  con il P&L del tavolo, **solo se è univoco e certo**;
+`RuntimeController._release_settled_tables` (dalla #461 PR29-c il tavolo si individua per **identità durevole**,
+vedi la sezione PR29-c sotto):
+- con `table_id` nel payload (chiusura del `PnLEngine`) si rilascia solo se il payload porta `customer_ref` ed
+  `event_key` della posizione e il tavolo porta ancora quella riserva (`customer_ref`, `reservation_id`); un tavolo
+  riusato da un'altra riserva non si libera e la perdita della posizione entra una volta nel suo recovery;
+- senza `table_id`: settlement cleared per bet => bet → riga `orders` (unica) → `customer_ref` → tavolo;
+  settlement SIM per mercato => solo con un tavolo e un solo ordine del bot sul mercato, e quell'ordine è
+  l'intento che il tavolo porta. Identità non dimostrabile o settlement senza chiave => nulla si libera;
 - una riserva incerta resta trattenuta (F024/F004);
 - con più tavoli sullo stesso mercato non si rilascia nulla automaticamente (log);
 - un hedge di cashout passa da OrderRouter senza riga in `orders`, quindi il settlement di una gamba non è il netto
@@ -70,6 +74,105 @@ cioè del **regolato**, e mai sul solo disponibile: le puntate aperte non sono p
   memoria e il log critico). Corretto nel ciclo 14 della #512 (verifica indipendente,
   r4303297587): l'affermazione precedente «invariato rispetto a main» era falsa per l'effetto sulla perdita di
   recovery, perché su main il rilascio per mercato senza `table_id` non esisteva.
+
+## PR29-c — un settlement, un solo effetto finanziario (PF-PR29-C-FINANCIAL-IDEMPOTENCY-01)
+
+Contratto PF-C29-01 .11/.13/.18 (#461). Phase 0 su main 409bcf9: quattro consegne concorrenti dello stesso
+settlement portavano il debito di recovery da 10 a 40 (S7); con due bet sullo stesso mercato nessun tavolo si
+liberava (S2); il settlement della propria bet non chiudeva l'incertezza AMBIGUOUS (S3); la chiusura con `table_id`
+liberava la riserva di un altro evento e raddoppiava la perdita (S5/S6); dopo il riavvio la chiave appuntata da F018
+restava per sempre (S9).
+
+- **Catena d'identità durevole** `bet_id → customer_ref → reservation_id → table_id`: `TableManager.activate`
+  assegna un `reservation_id` alla riserva; il comando `CMD_QUICK_BET` lo porta e la riga `orders` lo persiste;
+  F018 lo ripristina nel meta del tavolo ricostruito insieme al `customer_ref`. `Database.find_orders_by_bet_id`
+  lega la bet all'intento (righe zero o più di una => nessuna attribuzione).
+- **Registro durevole `settlement_effects`** (tabella additiva, `CREATE TABLE IF NOT EXISTS`, nessuna colonna
+  esistente toccata; un registro creato da una versione precedente della tabella riceve la colonna `payload_json`
+  con `ALTER TABLE`): chiave = chiave del settlement (`batch_id|event_key|table_id|bet_id|order_id`), esito,
+  identità, P&L, istanza, `realized_applied`. `record_settlement_effect` inserisce la riga **e** lo stato durevole
+  dei tavoli di recovery nella stessa transazione `BEGIN IMMEDIATE`: lo stesso settlement, consegnato più volte,
+  in concorrenza, da due processi sullo stesso DB o dopo un riavvio, produce il suo effetto una volta sola.
+- **Ordine dei lock**: lock del consumer (`_settlement_lock`, un settlement alla volta nel processo) → lock dei
+  tavoli → transazione DB. Effetto sul tavolo applicato in memoria, poi registrato; registrazione persa (duplicato)
+  o fallita => tavolo ripristinato dallo snapshot, nessun effetto (ritentabile).
+- **P&L realizzato** una volta: set in memoria + flag `realized_applied`, marcato dopo il monitor della perdita
+  giornaliera. Quando la registrazione non è di questa consegna (riga già presente ma non marcata: crash prima
+  della marcatura o altro processo in volo; registro illeggibile; riconciliazione di un `held`) si applica solo
+  una **perdita**: contarla due volte alza la perdita misurata (fail-closed); una vincita contata due volte la
+  abbasserebbe e terrebbe aperti gli ingressi oltre il limite giornaliero/di sessione (fail-open), quindi non si
+  riapplica. Chi perde la corsa di registrazione contro un altro processo non applica il realizzato.
+- **Il P&L in memoria non è capitale**: `bankroll_current` (stake) e il gate fondi PR28-e leggono il conto
+  dell'exchange; `_apply_realized_pnl_without_mutating_bankroll` non tocca il bankroll. Il realizzato in memoria
+  alimenta solo i limiti di perdita giornaliera e di sessione, per cui vale la regola qui sopra.
+- **Settlement trattenuti (`held`) riconciliabili**: il registro conserva payload, P&L e mercato. Una nuova
+  consegna dello stesso settlement, la riconciliazione esplicita `reconcile_held_settlements()` o l'avvio (dopo
+  una ricostruzione F018 riuscita) lo rivalutano: identità ora dimostrabile => effetto sui tavoli una volta
+  (`UPDATE ... WHERE outcome = 'held'` nella stessa transazione dello stato tavoli), nessun realizzato ripetuto;
+  ancora non attribuibile => resta `held`. Una lettura fallita (ordini, exchange) non trattiene più per sempre.
+  All'avvio e alla ripresa un `held` ancora in attesa di una lettura fallita (o il registro illeggibile) tiene
+  il runtime in **PAUSED** (`HELD_SETTLEMENTS_PENDING:<chiavi>` / `HELD_SETTLEMENTS_UNREADABLE`): il suo effetto
+  (riserva, debito di recovery) non è ancora applicato. Gli `held` non attribuibili in modo definitivo (hedge,
+  più righe `orders`, più tavoli SIM, bet non del bot) restano trattenuti senza fermare il runtime.
+- **Stato dei tavoli non scrivibile** (RSR-12 illeggibile, serializzazione fallita): nessuna riga registrata ed
+  effetto annullato, così la riconsegna resta applicabile e il debito non si perde dopo un crash.
+- **Chiave della chiusura di posizione** (`table_id`): `_build_bankroll_sync_key` include l'identità canonica
+  della riserva, `customer_ref` (un intento = una riserva) oppure, solo in sua assenza, `reservation_id`, in OGNI
+  fase (registro degli effetti, sync del bankroll, checkpoint del ciclo, auto-next): lo stesso tavolo riusato per
+  lo stesso evento da un'altra riserva produce un'altra chiusura, non un replay; una riconsegna della stessa
+  chiusura che omette `reservation_id` resta un duplicato (nessun debito ripetuto).
+- **Tavolo della riserva assente** (es. riavvio con meno tavoli): il settlement resta `held` in attesa
+  (avvio in PAUSED) finché il tavolo non esiste; mai registrato come effetto senza debito.
+- **Auto-next**: la request persistita porta `reservation_table_id` e `reservation_id` (il campo `table_id`
+  resta assente come prima), così il settlement della bet ritrova la riserva dopo un riavvio.
+- **Scritture dello stato tavoli**: snapshot, scrittura ed esito (`_recovery_persisted`) avvengono sotto il lock
+  dei tavoli anche fuori dal settlement, quindi uno snapshot vecchio non sovrascrive una perdita appena registrata.
+  Ogni scrittura della mappa (registrazione di un settlement, scrittura ordinaria, ritentativo, reset) è un
+  insieme di **variazioni** rispetto a ciò che questo processo ha ripristinato all'avvio o scritto per ultimo,
+  sommate alla mappa letta dentro la stessa transazione `BEGIN IMMEDIATE`; una voce si rimuove solo se il valore
+  risultante è ≤ 0. Con più processi sullo stesso DB, anche sullo stesso tavolo, nessuno cancella o sovrascrive
+  le perdite registrate dagli altri (marker di reset e baseline viaggiano a parte). Un settlement senza effetto
+  non riscrive lo stato salvo per ritentare una scrittura fallita.
+- **Un solo runtime attivo per database**: `start()` prende un lock esclusivo del sistema operativo su
+  `<db_path>.runtime.lock` (percorso canonico: link simbolici, relativi e maiuscole su Windows portano allo stesso
+  lock; fcntl su Linux, msvcrt sul byte 0 su Windows), tenuto finché il runtime non è fermo: lo rilasciano
+  `stop()` (dopo lo smontaggio dei servizi) e un avvio non riuscito, mai un runtime ancora attivo (nemmeno un suo
+  secondo `start()` fallito); un avvio fallito dopo la connessione smonta prima i servizi già avviati (poller, feed, Telegram,
+  Betfair) e, se lo smontaggio fallisce, trattiene il lock finché uno smontaggio successivo non riesce (ritentato a
+  un nuovo avvio rifiutato, o da uno `stop()` completo); anche `stop()` lo rilascia solo dopo uno smontaggio riuscito; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
+  chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
+  per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
+  permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
+  (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli vivono in memoria per processo e due copie
+  attive divergerebbero su operazioni globali come il reset di ciclo. Ledger exactly-once e scritture a variazioni
+  restano come seconda difesa (crash, riavvio, processi di servizio).
+- **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
+  bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
+  in coda nel processo e si ritenta a ogni giro del poller (`_retry_unrecorded_settlements`, anche in ACTIVE),
+  oltre che in `reconcile_held_settlements()`; dopo un riavvio lo riconsegna il poller. Un ritento riuscito marca
+  il realizzato già applicato alla consegna (`realized_applied`), così la riconsegna dopo un riavvio non lo riconta.
+  Anche un settlement `held` per una lettura fallita (ordini, exchange) entra nella stessa coda e si riconcilia nel
+  processo appena la lettura torna disponibile.
+- **F018** ricostruisce la riserva viva dell'auto-next sul suo `reservation_table_id`.
+- **Esiti del lifecycle**: un tavolo che porta un intento si libera (tavolo e chiave) solo con l'esito di quello
+  stesso intento; un esito senza `customer_ref` non libera nulla e non chiude un'incertezza AMBIGUOUS registrata
+  per un intento (nemmeno un esito senza tavolo). Un AMBIGUOUS registrato senza tavolo
+  (auto-next) si chiude con il settlement della stessa riserva.
+- **Replay** di un settlement già registrato: nessun effetto economico (tavolo, recovery, realizzato, ordini);
+  restano solo letture informative (sync del saldo, checkpoint del ciclo).
+- **Incertezza per riserva**: l'AMBIGUOUS registra il `customer_ref`; l'esito certo di un altro intento non la
+  chiude. Il settlement della propria bet chiude l'incertezza della sola sua riserva e libera la chiave
+  anti-duplicato (anche appuntata da F018) solo se nessun altro tavolo porta l'evento. L'esito terminale del
+  lifecycle (`force_unlock_if_event`) non libera un tavolo la cui riserva porta un altro `customer_ref`.
+- **Semantica cambiata, dichiarata**: un settlement senza chiave o senza identità dimostrabile non libera più nulla
+  (prima liberava il tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato
+  la chiave anti-duplicato del payload.
+
+Limiti residui dichiarati (fail-closed): le viste in memoria (risk desk, tavoli) restano per processo fino a
+29-g1/g2; il settlement SIM per mercato con più tavoli resta trattenuto (netto non attribuibile); finestra di
+sovra-conteggio del realizzato su crash (direzione sicura); con `auto_close_enabled` (default `False`, dormiente)
+la chiusura di una gamba Dutching non libera il tavolo del lotto e la sua perdita entra nel recovery del tavolo
+(rilascio a livello di lotto: PR30).
 
 ## F027 — settlement fuori da ACTIVE (decisione owner, CLOSURE-03)
 

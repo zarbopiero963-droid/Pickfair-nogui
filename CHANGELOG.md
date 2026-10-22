@@ -22,6 +22,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#461 PR29-c — un settlement, un solo effetto finanziario, sulla sola riserva che identifica
+  (PF-PR29-C-FINANCIAL-IDEMPOTENCY-01, PF-C29-01 .11/.13/.18):** su main 409bcf9 quattro consegne concorrenti dello
+  stesso settlement portavano il debito di recovery da 10 a 40 (S7); con due bet sullo stesso mercato nessun tavolo
+  si liberava (S2); il settlement della propria bet non chiudeva l'AMBIGUOUS (S3); la chiusura con `table_id`
+  liberava la riserva di un altro evento e raddoppiava la perdita (S5/S6); la chiave appuntata da F018 restava per
+  sempre (S9). Ora: catena d'identità durevole `bet_id → customer_ref → reservation_id → table_id`
+  (`reservation_id` assegnato da `TableManager.activate`, persistito nella riga `orders`, ripristinato da F018);
+  nuovo registro durevole `settlement_effects` (tabella **additiva**, `CREATE TABLE IF NOT EXISTS`, nessuna colonna
+  esistente toccata) scritto con lo stato dei tavoli di recovery nella stessa transazione `BEGIN IMMEDIATE`:
+  replay, concorrenza, due processi sullo stesso DB e riavvio producono l'effetto una volta sola; P&L realizzato una
+  volta (flag `realized_applied`); effetto in memoria annullato se la registrazione perde la corsa o fallisce;
+  rilascio legato all'identità (`TableManager.release_identified_reservation`, anche per i lotti); incertezza
+  AMBIGUOUS per riserva e lifecycle che non libera il tavolo di un altro intento. Senza registrazione dimostrata
+  (riga non marcata, registro illeggibile, corsa persa) si applica al realizzato solo una perdita, mai una vincita
+  (nessun fail-open dei limiti di perdita); il P&L in memoria non entra nel capitale né nel gate fondi. I
+  settlement trattenuti restano nel registro con il loro payload e si riconciliano a una nuova consegna, con
+  `reconcile_held_settlements()` o all'avvio dopo F018; all'avvio un `held` in attesa di una lettura fallita
+  tiene il runtime in PAUSED. Review su e2bb36e: nessuna registrazione senza lo stato dei tavoli; chiave della
+  chiusura di posizione con l'identità della riserva; esiti del lifecycle senza identità che non liberano tavolo
+  né chiave; AMBIGUOUS senza tavolo chiuso dal settlement della propria riserva. Review su 29903af: chiave
+  consapevole della riserva in ogni fase; tavolo della riserva assente => held in attesa; auto-next con tavolo e
+  riserva persistiti nella request; snapshot dello stato tavoli scritto sotto il lock dei tavoli; incertezza
+  AMBIGUOUS chiusa solo dall'esito dello stesso intento. Review su 70821fd: identità della riserva nella chiave
+  di ogni chiusura di posizione; F018 riusa il tavolo persistito dell'auto-next; esito della scrittura dello stato
+  tavoli sotto il lock; aggiornamento per tavolo della mappa di recovery dentro la transazione (più processi);
+  effetto non registrato senza checkpoint né auto-next e in coda di ritentativo. Review su 7a4f2c3: ogni
+  scrittura della mappa di recovery (anche ordinaria, di ritentativo o di reset) è un insieme di variazioni
+  rispetto alla vista del processo, sommate dentro la transazione (anche due processi sullo stesso tavolo).
+  Review su c6d2338: un solo runtime attivo per database (lock esclusivo del sistema operativo all'avvio,
+  rifiuto `RUNTIME_INSTANCE_ACTIVE`, lock rilasciato da STOP e da un avvio non riuscito, START/STOP serializzati); chiave della chiusura di posizione con identità canonica (`customer_ref`,
+  `reservation_id` solo in sua assenza) ed effetti non registrati (e held per lettura fallita) ritentati a ogni giro del poller, con il realizzato marcato;
+  avvio fallito smontato prima del rilascio del lock. **Semantica cambiata,
+  dichiarata:** un settlement senza chiave o senza identità dimostrabile non libera più nulla (prima liberava il
+  tavolo univoco del mercato); `RUNTIME_CLOSE_POSITION` non rilascia più in modo incondizionato la chiave
+  anti-duplicato del payload. Adeguati i test che codificavano il rilascio senza identità (uno, pr26a, dipendeva
+  dal difetto S5). Limiti residui in `docs/roserpina_bankroll_equity.md` (sezione PR29-c). Nessuna attività LIVE,
+  Dutching disattivato.
+
 - **#461 PR29-b — un lotto Dutching a mercato non libera la riserva (PF-C29-01.17):** nella riconciliazione un
   lotto con gambe a mercato o abbinate (stato EXECUTED) non libera piu' tavolo, esposizione e chiave anti-duplicato:
   la posizione e' viva fino al settlement. Il rilascio avviene solo su esito terminale certo e privo di rischio di

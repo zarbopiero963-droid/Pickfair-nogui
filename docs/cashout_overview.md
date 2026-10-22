@@ -370,15 +370,14 @@ invariato); la #523 le rende conformi ai gate prima di qualunque attivazione.
   abbinato) salta le gambe di un lotto: una gamba sola non libera il tavolo
   condiviso. La chiave anti-duplicato del lotto è **fissata** (non scade col
   TTL): nel percorso Dutching la rilasciano soltanto i rollback prima della
-  pubblicazione. I settlement dal poller **non** la rilasciano:
-  `RUNTIME_CLOSE_POSITION` libera la chiave del proprio payload, e quei
-  settlement portano `cleared:<mercato>`, `cleared:<mercato>:<ref>` o
-  `sim:<mercato>:<ref>`, mai la chiave del lotto. **Eccezione nota, preesistente
-  e dormiente**: con `auto_close_enabled` attivo (default `False`) la chiusura
-  mark-to-market del `PnLEngine` pubblica `RUNTIME_CLOSE_POSITION` con
-  l'`event_key` della posizione, che per una gamba è la chiave del lotto, e
-  quindi libera chiave e tavolo anche con altre gambe aperte; non va attivata
-  insieme alle corsie Dutching ed è trasferita a PR30. Fuori da quel percorso la chiave resta fissata fino
+  pubblicazione. I settlement dal poller **non** la rilasciano: dalla #461
+  PR29-c `RUNTIME_CLOSE_POSITION` libera una chiave solo insieme al tavolo
+  della riserva identificata (bet → `customer_ref` → tavolo), e un lotto ha
+  rilascio a livello di lotto. Con `auto_close_enabled` attivo (default
+  `False`, dormiente) la chiusura mark-to-market del `PnLEngine` di una gamba
+  porta il `customer_ref` della gamba, che il tavolo del lotto non porta:
+  tavolo e chiave restano, la perdita della gamba entra nel recovery del
+  tavolo; il rilascio a livello di lotto resta della PR30. Fuori da quel percorso la chiave resta fissata fino
   al riavvio o a un reset esplicito della guardia (`DuplicationGuard.clear`; stesso evento => sempre
   `Duplicato bloccato`). Nemmeno il tavolo del lotto è liberato da un
   settlement per bet: con più gambe sullo stesso mercato il P&L della gamba non
