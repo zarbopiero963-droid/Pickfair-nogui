@@ -52,11 +52,12 @@
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
   "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
-  "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)"
+  "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)",
+  "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)"
  ],
- "lotto_corrente": "#536 implementato in isolamento: PR #537 aperta (head fc8f136, base 152613b); registri #453 c.6340127508, #506 c.6340129340, #536 c.6340130594 aggiornati; in attesa di CI e review Sol/Grok",
+ "lotto_corrente": "#536 PR #537 head ae10708 (cicli fix 1-6); regressione 8893/0, mutation ufficiale 194 KILLED + 1 equivalente; Sol/Grok puliti su ae10708; Codex usage limit; risultati in results/pr537/",
  "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "Attendere CI e review Sol/Grok/Codex su PR #537 (head fc8f136); triage dei rilievi (cicli fix <= 10); poi verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING.",
+ "next_atomic_action": "PR #537 head ae10708 (ciclo fix 6/10): Sol e Grok senza bloccanti sul head, 17 thread Codex risolti a check conclusi, Merge readiness rilanciato; consegnare verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING. Follow-up registrati: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

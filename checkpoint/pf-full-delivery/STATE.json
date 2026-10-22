@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 62,
- "updated_at": "2026-10-22T17:41:16Z",
+ "seq": 63,
+ "updated_at": "2026-10-22T17:42:02Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere CI e review Sol/Grok/Codex su PR #537 (head fc8f136); triage dei rilievi (cicli fix <= 10); poi verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING.",
+ "next_atomic_action": "PR #537 head ae10708 (ciclo fix 6/10): Sol e Grok senza bloccanti sul head, 17 thread Codex risolti a check conclusi, Merge readiness rilanciato; consegnare verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING. Follow-up registrati: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "PF-536-ISOLATED-IMPLEMENTATION-01",
- "previous_checkpoint_sha": "515bc227b090b030f74c18fc05296737f7a73d72",
- "lotto_corrente": "#536 implementato in isolamento: PR #537 aperta (head fc8f136, base 152613b); registri #453 c.6340127508, #506 c.6340129340, #536 c.6340130594 aggiornati; in attesa di CI e review Sol/Grok",
+ "previous_checkpoint_sha": "0c0c9b597984693d4c5380b8d7336189f57d7473",
+ "lotto_corrente": "#536 PR #537 head ae10708 (cicli fix 1-6); regressione 8893/0, mutation ufficiale 194 KILLED + 1 equivalente; Sol/Grok puliti su ae10708; Codex usage limit; risultati in results/pr537/",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -550,7 +550,8 @@
   "lotto locale completo (3 commit, 20 file, 32 test) verificato: regressione 7816 passed, P8 D-B PASS (seq 23)",
   "#523 / PR #529: cicli 6,7,F,A,A2,A3,A4,A5 (decisioni owner); squash 380157a; CI post-merge 13/13 verdi",
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
-  "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)"
+  "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)",
+  "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -596,13 +597,12 @@
  "repository": "zarbopiero963-droid/Pickfair-nogui",
  "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
  "code": {
-  "branch": "main",
-  "sha": "152613b30fb0719682d71ae6653f984079a48262",
-  "verified_with": "squash di #535 (head 23237cb), albero identico (git diff --stat vuoto)",
+  "branch": "ccr-bcc81683-ud0hgc",
+  "sha": "ae107086ed410de9e59f62a7ce5623457894e73e",
   "patch": {
    "head": "ae107086ed410de9e59f62a7ce5623457894e73e",
    "tree": "5c976b5bd7796f48e9972aaa53ce68b2d461cbed",
-   "captured_at": "2026-10-22T17:41:29+00:00",
+   "captured_at": "2026-10-22T17:42:03+00:00",
    "modified": [],
    "untracked": [],
    "files": [
