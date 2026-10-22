@@ -6,8 +6,8 @@
   "sha": "152613b30fb0719682d71ae6653f984079a48262"
  },
  "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "Rapporto B: riconciliazione globale (evidenza codice+test su main 152613b per 60 schede + inserti; inventari in scratchpad/recon/), scheda correttiva dedicata per il rischio .runtime.lock collegata a #453/#506/#351/#461 con criteri di accettazione (prerequisito LIVE), piano Parallel Development Factory (NON avviare sessioni). Nessuna modifica al codice di produzione, nessun merge, nessun LIVE.",
- "previous_checkpoint_sha": "aea6e7177bb4dfddd94eec981e67bdb93dbcff61",
+ "next_atomic_action": "Attendere le decisioni owner elencate in rapporto_B.md \u00a77 (in particolare: deroga alla serialita' delle PR per la Factory; mandato #536). Nessuna sessione parallela, nessuna modifica al codice di produzione, nessun merge, nessun LIVE finche' non arriva un mandato.",
+ "previous_checkpoint_sha": "6b4f1a28ede3feb3753a0ad255e3218201fc9ead",
  "schema": "pf-current/1",
- "seq": 59
+ "seq": 60
 }

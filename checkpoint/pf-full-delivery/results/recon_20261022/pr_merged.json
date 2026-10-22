@@ -1,0 +1,286 @@
+{
+ "criterio": "PR MERGED con merged_at >= 2026-10-01 (list_pull_requests state=closed sort=updated desc perPage=50, 1 pagina; merge SHA da list_commits main since 2026-10-01: 22 commit = 22 PR)",
+ "nota_campo_merged": "list_pull_requests restituisce merged=false anche per PR con merged_at valorizzato; verificato con pull_request_read get (merged=true) su tutte e 22",
+ "chiuse_non_mergiate_dal_1_ottobre": [
+  {
+   "number": 505,
+   "closed_at": "2026-10-19T10:26:29Z",
+   "nota": "PR28-d chiusa senza merge, sostituita da #522"
+  },
+  {
+   "number": 508,
+   "closed_at": "2026-10-18T09:06:42Z",
+   "nota": "DOCS-REVIEW OD-01 chiusa senza merge"
+  }
+ ],
+ "prima_pr_mergiata_prima_del_1_ottobre": {
+  "number": 488,
+  "merged_at": "2026-09-29T22:02:38Z"
+ },
+ "pr_merged": [
+  {
+   "number": 535,
+   "title": "[TASK: issue461-pr29c-settlement-identity-idempotency] #461 PR29-c: un settlement, un solo effetto finanziario sulla riserva che identifica",
+   "task_key": "issue461-pr29c-settlement-identity-idempotency",
+   "merge_commit_sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "merge_commit_short": "152613b",
+   "merged_at": "2026-10-22T07:37:15Z",
+   "head_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "base_sha_short": "409bcf9",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/535"
+  },
+  {
+   "number": 534,
+   "title": "[TASK: issue461-pr29b-dutching-ack-keeps-reservation] #461 PR29-b: un lotto Dutching a mercato non libera la riserva (PF-C29-01.17)",
+   "task_key": "issue461-pr29b-dutching-ack-keeps-reservation",
+   "merge_commit_sha": "409bcf9dd9ca6fe86aeaed6808dfabde4f7fa109",
+   "merge_commit_short": "409bcf9",
+   "merged_at": "2026-10-21T15:21:28Z",
+   "head_sha": "be37148651967efde1dfac6e7cc2c30dc7fec2a0",
+   "base_sha_short": "2f25576",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/534"
+  },
+  {
+   "number": 533,
+   "title": "[TASK: issue461-pr29a-release-bound-to-reservation] #461 PR29-a: QUICK_BET_SUCCESS non rilascia la riserva (PF-C29-01.03)",
+   "task_key": "issue461-pr29a-release-bound-to-reservation",
+   "merge_commit_sha": "2f25576ed09e302229f5342c594d3be2b8ec9bd9",
+   "merge_commit_short": "2f25576",
+   "merged_at": "2026-10-21T11:41:27Z",
+   "head_sha": "0e9403be57b46647ef68938880eda33f18e9a9df",
+   "base_sha_short": "f334946",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/533"
+  },
+  {
+   "number": 531,
+   "title": "[TASK: issue461-pr28e-funds-gate] #461 PR28-e: gate esplicito dei fondi sulle nuove entrate",
+   "task_key": "issue461-pr28e-funds-gate",
+   "merge_commit_sha": "f3349467ee7b320d8ecfca7b9729b1272e025def",
+   "merge_commit_short": "f334946",
+   "merged_at": "2026-10-20T23:11:59Z",
+   "head_sha": "a6212a3a06a9374103436fe87f36c48a6ea54eb7",
+   "base_sha_short": "2141031",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/531"
+  },
+  {
+   "number": 530,
+   "title": "[TASK: issue461-fix-loop-cap-10] Fix loop: tetto per PR da 5 a 10 cicli, stop anticipato e gate invariati (merge owner)",
+   "task_key": "issue461-fix-loop-cap-10",
+   "merge_commit_sha": "2141031a900f406b6a1b4e0325d26200eca97998",
+   "merge_commit_short": "2141031",
+   "merged_at": "2026-10-20T20:00:34Z",
+   "head_sha": "2ecc4a4ed9008396f1f48a1d17d9d34506272ff5",
+   "base_sha_short": "380157a",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/530"
+  },
+  {
+   "number": 529,
+   "title": "[TASK: issue523-dutching-manual-bet-gates] #523: Dutching e bet manuale conformi ai gate (lato, barriera cashout, esposizione, lotto trattenuto fail-closed)",
+   "task_key": "issue523-dutching-manual-bet-gates",
+   "merge_commit_sha": "380157a200ae98b8b77034f15c232ed96d61bc79",
+   "merge_commit_short": "380157a",
+   "merged_at": "2026-10-20T18:10:24Z",
+   "head_sha": "b902b007671ea529b8fd000a3048b383b7a7aee1",
+   "base_sha_short": "e694e39",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/529"
+  },
+  {
+   "number": 527,
+   "title": "[TASK: issue525-ci-orchestrators-recovery] #525: gli orchestratori CI si avviano di nuovo (merge owner)",
+   "task_key": "issue525-ci-orchestrators-recovery",
+   "merge_commit_sha": "e694e39b7baa326095638d9ec0bdb3ce7ba6817f",
+   "merge_commit_short": "e694e39",
+   "merged_at": "2026-10-20T10:23:21Z",
+   "head_sha": "1b7ca9adb48990449bfe2c8f0dae88306ef5a875",
+   "base_sha_short": "ac2064c",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/527"
+  },
+  {
+   "number": 526,
+   "title": "[TASK: issue524-engine-ambiguous-never-failed] #524: un ordine forse inviato non diventa mai FAILED senza prova del rifiuto",
+   "task_key": "issue524-engine-ambiguous-never-failed",
+   "merge_commit_sha": "ac2064c99d6c79734458b6637ff06b6ddf2eb2ca",
+   "merge_commit_short": "ac2064c",
+   "merged_at": "2026-10-20T05:24:52Z",
+   "head_sha": "c57f5659bc5fa317528cd3b625d82c5afc0e3e2e",
+   "base_sha_short": "dd0ae58",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/526"
+  },
+  {
+   "number": 522,
+   "title": "[TASK: issue461-pr28d-absolute-caps] #505 ripresa sopra la #512: cap monetari opzionali, lato obbligatorio, identità evento, fencing cashout",
+   "task_key": "issue461-pr28d-absolute-caps",
+   "merge_commit_sha": "dd0ae58fb120ad5bc1ddccf9106ea6fbec23752a",
+   "merge_commit_short": "dd0ae58",
+   "merged_at": "2026-10-19T21:30:27Z",
+   "head_sha": "2b7d90f30779136f6884059221d14fa53fbb5b8d",
+   "base_sha_short": "f8bbbe9",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/522"
+  },
+  {
+   "number": 512,
+   "title": "[TASK: issue461-pr28-microstake-native-02] Microstake nativo automatico sul SimulationBroker reale, rettifica owner 17/10, checkpoint multi-agente",
+   "task_key": "issue461-pr28-microstake-native-02",
+   "merge_commit_sha": "f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9",
+   "merge_commit_short": "f8bbbe9",
+   "merged_at": "2026-10-19T13:03:57Z",
+   "head_sha": "fda6992202ba4eb369eb438d171b49f6d851e69e",
+   "base_sha_short": "028cee9",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/512"
+  },
+  {
+   "number": 504,
+   "title": "[TASK: issue461-pr28c-risk-stop] RISK_STOP (P38) and exposure stop, separate from EMERGENCY (#461 PR28-c)",
+   "task_key": "issue461-pr28c-risk-stop",
+   "merge_commit_sha": "028cee9074c3ab6c2a8014449a1897ae8faebc93",
+   "merge_commit_short": "028cee9",
+   "merged_at": "2026-10-09T05:40:41Z",
+   "head_sha": "929d038c6beb8d51c89a00fb69ec2560c7f4ab5b",
+   "base_sha_short": "f7c103c",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/504"
+  },
+  {
+   "number": 503,
+   "title": "[TASK: issue461-pr28b-loss-limits] PR28-b: perdita giornaliera durevole (F4) e stop perdita di sessione (P37) (#461)",
+   "task_key": "issue461-pr28b-loss-limits",
+   "merge_commit_sha": "f7c103cacf84921a4b3587ddbb303cc834728651",
+   "merge_commit_short": "f7c103c",
+   "merged_at": "2026-10-08T19:32:02Z",
+   "head_sha": "c49c57994e7a8b1d26b23b90e94ef8f860273874",
+   "base_sha_short": "54e9d17",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/503"
+  },
+  {
+   "number": 502,
+   "title": "[TASK: issue461-pr28-owner-limits] PR28 (prima parte): rischio LAY, soglia esatta, reload_config e auto-next (#461)",
+   "task_key": "issue461-pr28-owner-limits",
+   "merge_commit_sha": "54e9d176711b2203c68a91bd08802bec47e19e41",
+   "merge_commit_short": "54e9d17",
+   "merged_at": "2026-10-08T18:03:30Z",
+   "head_sha": "3ee7615011420d1de149534170272a038dd614ef",
+   "base_sha_short": "feb2302",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/502"
+  },
+  {
+   "number": 501,
+   "title": "[TASK: issue461-pr27-numeric-validation] PR27: validazione numerica fail-closed per ordini e rischio (#461)",
+   "task_key": "issue461-pr27-numeric-validation",
+   "merge_commit_sha": "feb2302b612269db468c29b3d4d88c2fadb0ea90",
+   "merge_commit_short": "feb2302",
+   "merged_at": "2026-10-08T17:25:01Z",
+   "head_sha": "2726ef42bae2e94aa8eb4a13244060cf3c0a16fd",
+   "base_sha_short": "f5cb7e6",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/501"
+  },
+  {
+   "number": 500,
+   "title": "[TASK: issue461-pr26-order-authority] PR26: unica autorita' ordini, de-dup durevole degli intenti e contratti adapter (#461)",
+   "task_key": "issue461-pr26-order-authority",
+   "merge_commit_sha": "f5cb7e637a5fba0a68d0d0b5f471b1de8ef31452",
+   "merge_commit_short": "f5cb7e6",
+   "merged_at": "2026-10-08T16:11:39Z",
+   "head_sha": "40e383a59c12e66be364f8568ed57dfa954b143b",
+   "base_sha_short": "456fc94",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/500"
+  },
+  {
+   "number": 499,
+   "title": "[TASK: policy-agent-autonomy-contract] [POLICY] Autonomia end-to-end dell'agente: defer, teorici, auto-merge e PR successiva",
+   "task_key": "policy-agent-autonomy-contract",
+   "merge_commit_sha": "456fc946980a3c749e7c8d633823fad670c6ca89",
+   "merge_commit_short": "456fc94",
+   "merged_at": "2026-10-08T14:42:56Z",
+   "head_sha": "d82686092609fdd6cadcaf62d3ed80d812a2b370",
+   "base_sha_short": "a193909",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/499"
+  },
+  {
+   "number": 498,
+   "title": "[TASK: issue461-pr26a-customer-ref-provenance] PR26-a: customer_ref stabile per i produttori esistenti",
+   "task_key": "issue461-pr26a-customer-ref-provenance",
+   "merge_commit_sha": "a193909dcdc9997e9314e9d768fc3f10d71f6c20",
+   "merge_commit_short": "a193909",
+   "merged_at": "2026-10-08T07:57:11Z",
+   "head_sha": "fa2df55ba35287c9d38a38f32797e3d8f5a38dbb",
+   "base_sha_short": "452dde1",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/498"
+  },
+  {
+   "number": 496,
+   "title": "[TASK: pr-flow-bounded-triage] Cap cumulativo 5 e triage anti-churn per le PR",
+   "task_key": "pr-flow-bounded-triage",
+   "merge_commit_sha": "452dde1009482ac35d52d9e981721c04e38a652d",
+   "merge_commit_short": "452dde1",
+   "merged_at": "2026-10-07T22:25:01Z",
+   "head_sha": "b3eaeec030fcd4d6f66189eb762325827c4625e7",
+   "base_sha_short": "30fb165",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/496"
+  },
+  {
+   "number": 494,
+   "title": "docs: consolidamento operativo MCP [TASK: mcp-operational-consolidation]",
+   "task_key": "mcp-operational-consolidation",
+   "merge_commit_sha": "30fb16564a4a51fbf5d285a7a53272ea59ba94a7",
+   "merge_commit_short": "30fb165",
+   "merged_at": "2026-10-07T17:25:05Z",
+   "head_sha": "921efa085a958474ecdef372c5403713e0dbc96b",
+   "base_sha_short": "e068a14",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/494"
+  },
+  {
+   "number": 493,
+   "title": "ci(review): Grok 4.7 passa da 240s a 400s per tentativo [TASK: grok47-timeout-400]",
+   "task_key": "grok47-timeout-400",
+   "merge_commit_sha": "e068a14deb9571e5c86de2113422f5d61b2a4375",
+   "merge_commit_short": "e068a14",
+   "merged_at": "2026-10-07T14:57:13Z",
+   "head_sha": "41e0332bd192ae29a51e20598c448f61ae73bb8d",
+   "base_sha_short": "7e0881b",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/493"
+  },
+  {
+   "number": 492,
+   "title": "ci(review): Sol passa a GPT-6.1 Sol con reasoning max [TASK: sol-gpt61-effort-max]",
+   "task_key": "sol-gpt61-effort-max",
+   "merge_commit_sha": "7e0881b91d60b3239a8f9d64b3221a6729d695c2",
+   "merge_commit_short": "7e0881b",
+   "merged_at": "2026-10-07T12:55:43Z",
+   "head_sha": "bd58428458732b783bbc02f9da4b4d3bb1864c68",
+   "base_sha_short": "aba1340",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/492"
+  },
+  {
+   "number": 490,
+   "title": "[TASK: issue461-pr04-quater-credenziali] PR04-quater: credenziali Betfair Delayed/Live e save atomico",
+   "task_key": "issue461-pr04-quater-credenziali",
+   "merge_commit_sha": "aba1340c1aa21b78be0bb5428bf66fdbd3ea3612",
+   "merge_commit_short": "aba1340",
+   "merged_at": "2026-10-02T11:32:06Z",
+   "head_sha": "8f2a8bafd9fceb61fe7ed75a1e479d69992c873f",
+   "base_sha_short": "633c178",
+   "merged_by": "zarbopiero963-droid",
+   "url": "https://github.com/zarbopiero963-droid/Pickfair-nogui/pull/490"
+  }
+ ]
+}

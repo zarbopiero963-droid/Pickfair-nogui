@@ -1,0 +1,1187 @@
+{
+ "meta": {
+  "baseline": "main 152613b30fb0719682d71ae6653f984079a48262",
+  "comando_test": "cd mainwt && DISPLAY=:99 PYTHONPATH=netguard venv312/bin/python -m pytest -q -p no:cacheprovider <file>; Xvfb :99 avviato dall'agente (assente all'inizio: 1 fallimento GUI iniziale, 0 al rerun)",
+  "data": "2026-10-22",
+  "totale_test": {
+   "passed": 3875,
+   "failed": 0,
+   "xfailed": 4,
+   "nota": "conteggio deduplicato sui file eseguiti; un fallimento iniziale (test GUI PR04-quater, display :99 assente) azzerato al rerun con Xvfb"
+  }
+ },
+ "schede": [
+  {
+   "id": "PR01",
+   "titolo": "Rimozione Codacy dismesso e adeguamento dei gate collegati",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "scripts/pr_flow_automation.py:is_decommissioned_codacy_check",
+    "scripts/pr_flow_automation.py:DECOMMISSIONED_CODACY_CHECK_NAMES",
+    "scripts/pr_automation_controller.py:DECOMMISSIONED_CODACY_CHECK_NAMES",
+    "git: 16a8030 (#462) presente nella storia di main"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/scripts/test_codacy_decommissioned.py",
+     "esito": "PASS (36 passed)"
+    },
+    {
+     "file": "tests/scripts/test_pr_automation_controller.py",
+     "esito": "PASS (1021 passed)"
+    },
+    {
+     "file": "tests/scripts/test_pr_flow_automation.py",
+     "esito": "PASS (118 passed)"
+    }
+   ],
+   "mancanze": [
+    "#351 T31 non eseguito (fuori perimetro offline)"
+   ],
+   "note": "Le occorrenze residue di 'codacy' su main sono solo marker di dismissione/commenti storici; nessuna integrazione attiva."
+  },
+  {
+   "id": "PR02",
+   "titolo": "Q452: regressione anti-doppio invio e documento registry",
+   "stato_dichiarato": "MERGED (impl. PARZIALE: manca verbale #351)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/order_router.py",
+    "core/trading_engine.py (ramo LIVE, ad9ce64)",
+    "betfair_client.py:place_bet (customer_ref)",
+    "guardrails/contracts/core.trading_engine.json"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr02.py",
+     "esito": "PASS (42 passed)"
+    },
+    {
+     "file": "tests/unit/test_place_bet_customer_ref.py",
+     "esito": "PASS (25 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_live_safety.py",
+     "esito": "PASS (4 passed)"
+    }
+   ],
+   "mancanze": [
+    "Verbale #351 (T09/T31) NOT_RUN: parte di certificazione, non di codice"
+   ],
+   "note": "Dichiarata 'impl. PARZIALE' solo per il verbale #351 mancante; codice e test offline completi su main."
+  },
+  {
+   "id": "PR03",
+   "titolo": "Settlement SIM fino al netto di mercato e Roserpina",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "simulation_broker.py:_settle_closed_market_locked",
+    "core/pnl_engine.py:apply_simulated_market_settlement",
+    "core/pnl_engine.py:simulated_settlement_key",
+    "core/pnl_engine.py:exchange_settled_gross_pnl"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr03.py",
+     "esito": "PASS (8 passed)"
+    },
+    {
+     "file": "tests/integration/test_simulation_broker_commission_semantics.py",
+     "esito": "PASS (38 passed)"
+    },
+    {
+     "file": "tests/integration/test_simulation_realism.py",
+     "esito": "PASS (8 passed)"
+    },
+    {
+     "file": "tests/integration/test_simulation_broker_position_ledger_integration.py",
+     "esito": "PASS (4 passed)"
+    },
+    {
+     "file": "tests/unit/test_simulation_state_commission_policy.py",
+     "esito": "PASS (6 passed)"
+    }
+   ],
+   "mancanze": [
+    "#351 T13/T14 BLOCKED_ENV (feed SIM Delayed, dipende da PR11)",
+    "OD12-08 void/rettifiche dichiarato parziale: non verificato qui"
+   ],
+   "note": "Il clone e' shallow (7b0fc5b e' il commit radice): la lista file della #485 non e' ricostruibile da git; evidenza da simboli e test."
+  },
+  {
+   "id": "PR04",
+   "titolo": "Cashout GUI: catena effettiva con SafetyLayer",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "cashout_wiring.py:cabla_catena_cashout",
+    "cashout_wiring.py:CatenaCashout",
+    "mini_gui.py:242 (import cabla_catena_cashout)",
+    "headless_main.py:31 (stesso cablaggio)",
+    "core/runtime_controller.py:3071"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr04.py",
+     "esito": "PASS (18 passed)"
+    },
+    {
+     "file": "tests/unit/test_cashout_wiring.py",
+     "esito": "PASS (10 passed)"
+    },
+    {
+     "file": "tests/guardrails/test_cablaggio_runtime.py",
+     "esito": "PASS (48 passed)"
+    }
+   ],
+   "mancanze": [
+    "#351 T03/T16/T23 NOT_RUN",
+    "Prova visiva GUI reale non eseguita in questa verifica"
+   ],
+   "note": "GUI e headless costruiscono la stessa catena cashout dallo stesso modulo."
+  },
+  {
+   "id": "PR04-bis",
+   "titolo": "F6: lati del book BACK/LAY come su Betfair (inserto owner P25)",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/simulation_order_book.py:get_available_to_back",
+    "core/simulation_order_book.py:get_available_to_lay",
+    "core/simulation_order_book.py:get_opposite_ladder",
+    "core/simulation_matching_engine.py",
+    "cashout_router.py"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue453_f6_lati_book.py",
+     "esito": "PASS (88 passed)"
+    },
+    {
+     "file": "tests/unit/test_simulation_broker_side_parity.py",
+     "esito": "PASS (43 passed)"
+    },
+    {
+     "file": "tests/unit/test_cashout_router.py",
+     "esito": "PASS (32 passed)"
+    }
+   ],
+   "mancanze": [
+    "T16 LIVE NOT_RUN"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR04-ter",
+   "titolo": "F11: place_bet LIVE rifiuta quote NaN/inf (inserto owner P27)",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "betfair_client.py:1631 (math.isfinite(price))",
+    "betfair_client.py:1638 (math.isfinite(size))",
+    "betfair_client.py:1813 (replace price)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/unit/test_betfair_client_quota_non_finita.py",
+     "esito": "PASS (28 passed)"
+    }
+   ],
+   "mancanze": [],
+   "note": ""
+  },
+  {
+   "id": "PR04-quater",
+   "titolo": "Credenziali Betfair: Sfoglia, due App Key Delayed/Live, migrazione sicura",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "config_registry.py:406 (app_key_live)",
+    "config_registry.py:414 (betfair.app_key_delayed)",
+    "services/betfair_service.py:445/517 (live_key / app_key_delayed redazione)",
+    "core/redaction.py",
+    "git: aba1340 (#490) presente"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue461_pr04_quater.py",
+     "esito": "PASS (18 passed)"
+    },
+    {
+     "file": "tests/unit/test_issue490_review_proofs.py",
+     "esito": "PASS (53 passed)"
+    },
+    {
+     "file": "tests/unit/test_config_registry.py",
+     "esito": "PASS (14 passed)"
+    },
+    {
+     "file": "tests/integration/test_sim_live_switch.py",
+     "esito": "PASS (11 passed)"
+    },
+    {
+     "file": "tests/integration/test_deploy_gate.py",
+     "esito": "PASS (5 passed)"
+    },
+    {
+     "file": "tests/integration/test_live_readiness_gate.py",
+     "esito": "PASS (25 passed)"
+    }
+   ],
+   "mancanze": [
+    "Login SIM con App Key Delayed rinviato a PR11 (P31): su main nessun uso della chiave Delayed per il login",
+    "T04 installato NOT_RUN"
+   ],
+   "note": "Il test GUI test_gui_save_reopen_file_pickers_and_live_boundary passa sotto Xvfb; SHA merge #490 = aba1340."
+  },
+  {
+   "id": "PR05",
+   "titolo": "Visibilita' GUI, scrollbar, DPI e controlli safety",
+   "stato_dichiarato": "NON INIZIATO (Phase 0 avviata 29/09 e sospesa; falso successo RIPRODOTTO: 57/129 controlli non visibili a 1280x820)",
+   "stato_verificato": "MANCANTE",
+   "evidenza_codice": [
+    "mini_gui.py: 7 riferimenti a scrollbar preesistenti; nessuna gestione DPI/scaling trovata"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Nessuna PR, nessun test dedicato",
+    "Il falso successo (57/129 controlli non visibili) richiede verifica visiva reale: NON_VERIFICABILE qui"
+   ],
+   "note": "Coerente con NON INIZIATO."
+  },
+  {
+   "id": "PR06",
+   "titolo": "Parser standard e provenienza del segnale",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "services/delimiter_parser.py:DelimiterParser (non cablato in produzione: nessun uso in telegram_signal_processor/core/parser/telegram_listener)",
+    "core/order_identity.py:signal_upstream_customer_ref (provenienza, da PR26-a)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/integration/test_parser_v2_pipeline.py",
+     "esito": "PASS (6 passed)"
+    }
+   ],
+   "mancanze": [
+    "Parser neutrale non cablato nel flusso segnale",
+    "Nessun test dedicato alla scheda",
+    "Trasporto Telegram sospeso (OWN-004)"
+   ],
+   "note": "Codice preesistente/parziale, non attribuibile alla scheda; stato scheda resta non iniziato."
+  },
+  {
+   "id": "PR07",
+   "titolo": "Catalogo GUI: contratto worker/on_success",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "mini_gui.py:2157 _run_runtime_command_async(on_success=...)",
+    "mini_gui.py:2620 SYNC_CATALOG",
+    "services/catalog_sync_service.py"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/services/test_catalog_sync_betfair_listing.py",
+     "esito": "PASS (19 passed)"
+    },
+    {
+     "file": "tests/unit/test_ui_freeze_boundaries.py",
+     "esito": "PASS (8 passed)"
+    }
+   ],
+   "mancanze": [
+    "Contratto formale worker/on_success della scheda non definito/verificato",
+    "GUI reale non provata (T08/T20)"
+   ],
+   "note": "Meccanismo asincrono presente; la scheda non e' stata eseguita."
+  },
+  {
+   "id": "PR08",
+   "titolo": "Resolver deterministico e catalogo incrementale",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "services/deterministic_resolver.py:DeterministicResolver (modulo orfano: nessun chiamante in services/core)",
+    "services/catalog_sync_service.py (nessun 'incrementale')"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Cablaggio del resolver nel flusso segnale/MCP per nome",
+    "Catalogo incrementale",
+    "Test dedicati assenti"
+   ],
+   "note": "Modulo presente ma non cablato; prerequisito del primo MCP per nome non soddisfatto."
+  },
+  {
+   "id": "PR09",
+   "titolo": "Dutching: publisher, budget equo e CASHOUT Esegui",
+   "stato_dichiarato": "NON INIZIATO (corsia Dutching dormiente, BLOCKS_DUTCHING_ACTIVATION)",
+   "stato_verificato": "BLOCCATO",
+   "evidenza_codice": [
+    "controllers/dutching_controller.py (barriera cashout/fence #523, :833/:1565/:1831)",
+    "corsia dormiente per decisione (#523/#529)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/guardrails/test_dutching_lane_dormant_523.py",
+     "esito": "PASS (3 passed)"
+    },
+    {
+     "file": "tests/integration/test_dutching_max_win_guard.py",
+     "esito": "PASS (58 passed)"
+    },
+    {
+     "file": "tests/integration/test_dutching_liquidity_guard.py",
+     "esito": "PASS (39 passed)"
+    }
+   ],
+   "mancanze": [
+    "Publisher, budget equo e CASHOUT Esegui non presenti",
+    "Attivazione bloccata da BLOCKS_DUTCHING_ACTIVATION (PR30/PR31)"
+   ],
+   "note": "Il test di guardia prova che nessun codice di produzione pubblica la corsia Dutching: blocco verificato, non implementazione."
+  },
+  {
+   "id": "PR10",
+   "titolo": "Rimozione definitiva del parser regex",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "MANCANTE",
+   "evidenza_codice": [
+    "core/parser.py: 19 usi di re.compile/search/match ancora presenti",
+    "core/custom_parser_engine.py: 3"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Parser regex ancora attivo"
+   ],
+   "note": "Coerente con NON INIZIATO."
+  },
+  {
+   "id": "PR11",
+   "titolo": "Feed Italy in SIM, timestamp e freshness (Market Stream / Delayed)",
+   "stato_dichiarato": "NON INIZIATO (Market Stream PARTIAL/non operativo già in services/streaming_feed.py)",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "services/streaming_feed.py:StreamingFeed (891 righe, _last_message_at)",
+    "core/runtime_controller.py:49/464/471 (StreamingFeed cablato start/stop)",
+    "services/betfair_service.py: app_key_delayed solo come segreto, nessun login Delayed"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/unit/test_streaming_feed.py",
+     "esito": "PASS (18 passed)"
+    },
+    {
+     "file": "tests/unit/test_streaming_feed_operational_proofs.py",
+     "esito": "PASS (11 passed)"
+    }
+   ],
+   "mancanze": [
+    "Login SIM con App Key Delayed (DEC-426-P31) assente",
+    "Freshness/timestamp per scheda e feed Italy non evidenti",
+    "Prova operativa richiede rete Betfair: NON_VERIFICABILE offline"
+   ],
+   "note": "Market Stream base esiste (PARTIAL dichiarato); la scheda non e' stata eseguita."
+  },
+  {
+   "id": "PR12",
+   "titolo": "Stake locale MANUAL/FIXED/MM",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "stake_mode.py:MODE_MM/MODE_MASTER/MODE_FIXED (nessuna modalita' MANUAL)",
+    "core/runtime_controller.py: nessun uso di stake_mode"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/unit/test_stake_mode.py",
+     "esito": "PASS (19 passed)"
+    }
+   ],
+   "mancanze": [
+    "Modalita' MANUAL (preview + seconda conferma via MCP, OWN-002) non implementata",
+    "stake_mode non cablato nel runtime"
+   ],
+   "note": "Modulo preesistente non collegato al flusso; scheda non iniziata."
+  },
+  {
+   "id": "PR13",
+   "titolo": "Osservabilita' unica e Safe Mode nella GUI",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "mini_gui.py:244/418 (get_safe_mode_manager cablato)",
+    "mini_gui.py:849-854 (tab Watchdog/Alert/Log)",
+    "observability/*"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "'Osservabilita' unica' non verificata",
+    "GUI reale non provata (T03/T23)",
+    "Nessun test dedicato"
+   ],
+   "note": "Elementi preesistenti; scheda non eseguita."
+  },
+  {
+   "id": "PR14",
+   "titolo": "Storico LIVE+SIM, pagine, writer e coordinator",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "mini_gui.py:846/851 (tab 'Storico Bet', 'Storico Risk Desk')",
+    "database.py:get_risk_position_history (paginata)",
+    "nessun writer/coordinator storico LIVE+SIM trovato"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Writer e coordinator dello storico assenti",
+    "Separazione LIVE+SIM nello storico non verificata",
+    "Test dedicati assenti"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR15",
+   "titolo": "Emergency snapshot e separazione saldi SIM/LIVE (mode-scoped)",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "core/runtime_controller.py:2090 _reload_persisted_emergency_state",
+    "core/runtime_controller.py:2149 _persist_emergency_state",
+    "core/runtime_controller.py:2166 _persist_db_emergency_marker",
+    "docs/roserpina_bankroll_equity.md (picco di cassa unico, non per modalita')"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/failure/test_live_switch_fail_closed.py",
+     "esito": "PASS (10 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_controller_bankroll_sync.py",
+     "esito": "PASS (34 passed)"
+    }
+   ],
+   "mancanze": [
+    "Saldi/picco drawdown separati per modalita' SIM/LIVE non evidenti (nessuna chiave mode-scoped)",
+    "Emergency snapshot come da scheda non verificato"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR16",
+   "titolo": "Logout Betfair server-side",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "betfair_client.py:1338 logout()",
+    "services/betfair_service.py:599 (client.logout() alla disconnessione, dopo stop keepalive)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/unit/test_betfair_service_keepalive.py",
+     "esito": "PASS (20 passed)"
+    }
+   ],
+   "mancanze": [
+    "Verifica che il logout raggiunga il server richiede LIVE (T04/T05/T26): NON_VERIFICABILE offline",
+    "Nessun test dedicato alla scheda"
+   ],
+   "note": "Chiamata presente su main; scheda dichiarata non iniziata."
+  },
+  {
+   "id": "PR17",
+   "titolo": "Shutdown idempotente su errore main",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "shutdown_manager.py:94 shutdown() con guardia _has_run sotto lock (idempotente)",
+    "headless_main.py:1431-1437 (shutdown nel finally del teardown)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/unit/test_shutdown_manager.py",
+     "esito": "PASS (10 passed)"
+    }
+   ],
+   "mancanze": [
+    "Test dedicato del percorso 'errore in main -> shutdown una sola volta' assente",
+    "Blocker WINDOWS_SHUTDOWN_SIGNAL_PARITY aperto (NON_VERIFICABILE su Linux)"
+   ],
+   "note": "Idempotenza del manager provata; l'integrazione sull'errore main non ha test dedicato."
+  },
+  {
+   "id": "PR18",
+   "titolo": "Chat ID numerico per-bot e due trasporti Telegram",
+   "stato_dichiarato": "SOSPESO",
+   "stato_verificato": "BLOCCATO",
+   "evidenza_codice": [
+    "database_schema.py: tabelle telegram_bots / telegram_bot_chats",
+    "services/telegram_service.py:34 bot_transport_factory",
+    "telegram_listener.py:436 handle_incoming(chat_id: int|None)"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Sospesa da OWN-004 (Telegram)"
+   ],
+   "note": "Codice preesistente parziale; nessuna attivita' di scheda."
+  },
+  {
+   "id": "PR19",
+   "titolo": "Commissione coerente fra GUI, cashout e settlement",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "simulation_broker.py:88-142 commission_pct / market_commission_ledger",
+    "core/runtime_controller.py:6844 COMMISSION_AMOUNT_POLICY_MISMATCH (F1 #453 ancora aperto)",
+    "nessun marketBaseRate"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/integration/test_simulation_broker_commission_semantics.py",
+     "esito": "PASS (38 passed)"
+    },
+    {
+     "file": "tests/unit/test_simulation_state_commission_policy.py",
+     "esito": "PASS (6 passed)"
+    },
+    {
+     "file": "tests/unit/test_cashout_executor.py",
+     "esito": "PASS (27 passed)"
+    }
+   ],
+   "mancanze": [
+    "F1/F5 #453 aperti",
+    "marketBaseRate LIVE (OD-PF-COMMISSION-RATE-01) assente",
+    "Coerenza GUI/cashout/settlement non verificata"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR20",
+   "titolo": "Anomaly escalation: hook e azione effettiva",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "observability/watchdog_service.py:132/154/159 anomaly_escalation_hook, escalation_requested",
+    "observability/anomaly_engine.py:AnomalyEngine"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/integration/test_anomaly_escalation_toggle.py",
+     "esito": "PASS (5 passed)"
+    },
+    {
+     "file": "tests/services/test_anomaly_alert_delivery.py",
+     "esito": "PASS (3 passed)"
+    }
+   ],
+   "mancanze": [
+    "'Azione effettiva' dell'escalation (pausa/stop reale) non evidente nel runtime",
+    "Test dedicato alla scheda assente"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR21",
+   "titolo": "Setup ambiente e documentazione Bot API",
+   "stato_dichiarato": "SOSPESO",
+   "stato_verificato": "BLOCCATO",
+   "evidenza_codice": [
+    "ops/telegram_bots.md",
+    "ops/telegram_login.md"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Sospesa da OWN-004"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR22",
+   "titolo": "EXPANSION sulla baseline bankroll_start persistita",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "core/runtime_controller.py:5769 _EXPANSION_KEY='roserpina.expansion_baseline_state'",
+    "core/runtime_controller.py:_start_expansion_cycle (F032, baseline persistita in settings)",
+    "core/risk_desk.py:set_bankroll_start",
+    "core/money_management.py:DeskMode.EXPANSION"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/f026/test_f032_rsr12_units.py",
+     "esito": "PASS (20 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_controller_bankroll_sync.py",
+     "esito": "PASS (34 passed)"
+    }
+   ],
+   "mancanze": [
+    "Scheda non chiusa formalmente: la baseline persistita e' entrata con F032 (#512), non con una PR22",
+    "T14 #351 NOT_RUN"
+   ],
+   "note": "Stato dichiarato NON INIZIATO, ma il nucleo (baseline EXPANSION persistita) e' gia' su main via #512."
+  },
+  {
+   "id": "PR23",
+   "titolo": "Formula MM, esempi numerici e precedenze messaggio/GUI/MM",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "core/money_management.py",
+    "docs/roserpina41_parameter_dossier.md",
+    "docs/microstake_native.md"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/core/test_money_management_caps_and_malformed.py",
+     "esito": "PASS (23 passed)"
+    },
+    {
+     "file": "tests/core/test_money_management_decision2_20261017.py",
+     "esito": "PASS (5 passed)"
+    },
+    {
+     "file": "tests/core/test_money_management_rectification_20261017.py",
+     "esito": "PASS (8 passed)"
+    },
+    {
+     "file": "tests/integration/test_money_management_live_sim_parity.py",
+     "esito": "PASS (5 passed)"
+    }
+   ],
+   "mancanze": [
+    "Precedenze messaggio/GUI/MM non codificate ne' documentate (nessun riferimento nel codice)",
+    "Memoria perdite Roserpina (F2) in parte in PR29-c"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR24",
+   "titolo": "SL/TP: soglie, direzione PnL e uscita reale",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "core/runtime_controller.py:6258 _monitor_sl_tp_trailing (meta stop_loss/take_profit)",
+    "core/runtime_controller.py:6304 _trigger_auto_close_table -> REQ_EXECUTE_CASHOUT"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr04.py",
+     "esito": "PASS (18 passed)"
+    }
+   ],
+   "mancanze": [
+    "SL% su perdita netta liquidabile (DEC-PF-CASH-CASE-U15HT) non implementato",
+    "Direzione PnL per lato e uscita reale non verificate con test dedicato"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR25",
+   "titolo": "Trailing persistente e auto-cashout MM (intento P35)",
+   "stato_dichiarato": "NON INIZIATO",
+   "stato_verificato": "MANCANTE",
+   "evidenza_codice": [
+    "core/runtime_controller.py:6258 (solo il nome '_monitor_sl_tp_trailing'; nessuna logica trailing, nessuna persistenza)"
+   ],
+   "evidenza_test": [],
+   "mancanze": [
+    "Trailing, persistenza e auto-cashout MM assenti"
+   ],
+   "note": "Coerente con NON INIZIATO."
+  },
+  {
+   "id": "PR26-0",
+   "titolo": "PR-F001 (P0): Future ExecutorManager; F024 AMBIGUOUS non rilascia riserva; F023 identita' eventi terminali",
+   "stato_dichiarato": "MERGED (entrato con #512)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/trading_engine.py:609-668 (attesa/classificazione Future, PF-ALL-F001)",
+    "core/trading_engine.py:1292/1339/1376 (fail-closed Future non risolto)",
+    "core/trading_engine.py:815 (PF-ALL-F023 identita' riserva negli eventi)",
+    "core/table_manager.py:238/490 (F023/F024)",
+    "core/runtime_controller.py:67/2853 (_reset_reservations_keeping_uncertain, F024)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/f001/test_b_red_f001.py",
+     "esito": "PASS (29 passed)"
+    },
+    {
+     "file": "tests/f001/test_f001_release_and_wait_units.py",
+     "esito": "PASS (32 passed)"
+    },
+    {
+     "file": "tests/f001/test_f001_autoreset_integration.py",
+     "esito": "PASS (1 passed)"
+    },
+    {
+     "file": "tests/f026/test_f026_units.py",
+     "esito": "PASS (46 passed)"
+    },
+    {
+     "file": "tests/f026/test_f026_financial.py",
+     "esito": "PASS (39 passed)"
+    },
+    {
+     "file": "tests/f029/test_f029_recovery_table_occupied.py",
+     "esito": "PASS (4 passed)"
+    }
+   ],
+   "mancanze": [
+    "F011/F025 (betId) rinviati a PR26; F026 harness instabile #528 dichiarato (qui 39 passed)"
+   ],
+   "note": "Entrato con #512 (f8bbbe9)."
+  },
+  {
+   "id": "PR26-a",
+   "titolo": "customer_ref / provenance dei produttori",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/order_identity.py:derive_customer_ref",
+    "core/order_identity.py:resolve_customer_ref",
+    "core/order_identity.py:signal_upstream_customer_ref",
+    "core/dutching_batch_manager.py",
+    "core/risk_middleware.py",
+    "git: a193909 (#498)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/integration/test_issue461_pr26a_customer_ref_provenance.py",
+     "esito": "PASS (28 passed)"
+    }
+   ],
+   "mancanze": [
+    "Residui dichiarati: message_id Telegram, batch_id dutching -> PR30/31"
+   ],
+   "note": "SHA squash #498 = a193909 (mancava nell'inventario)."
+  },
+  {
+   "id": "PR26",
+   "titolo": "Unica autorita' ordini e contratti adapter (PKG-P23)",
+   "stato_dichiarato": "MERGED (scheda chiusa; gate LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE soddisfatto come gate di codice)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "database_schema.py:292 consumed_order_intents",
+    "order_manager.py:ReasonCode.BROKER_REJECTED (:231/:315/:761)",
+    "core/trading_engine.py:1370",
+    "core/safety_layer.py",
+    "simulation_broker.py",
+    "tests/helpers/fake_consumed_intents.py"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr26.py",
+     "esito": "PASS (50 passed)"
+    },
+    {
+     "file": "tests/failure/test_betfair_place_orders_single_shot.py",
+     "esito": "PASS (10 passed)"
+    },
+    {
+     "file": "tests/unit/test_circuit_breaker_wiring.py",
+     "esito": "PASS (19 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_live_safety.py",
+     "esito": "PASS (4 passed)"
+    }
+   ],
+   "mancanze": [
+    "#351 T09/T30 NOT_RUN",
+    "Preesistenti fuori scope dichiarati: SIM LAPSED->ACCEPTED_FOR_PROCESSING, replace OrderManager -> PR30"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR27",
+   "titolo": "Validazione numerica fail-closed per ordini e rischio (PKG-P24-A)",
+   "stato_dichiarato": "MERGED",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/validators.py:finite_number/order_price/order_stake/order_exposure/order_exposure_or_inf",
+    "core/validators.py:require_finite_now",
+    "core/money_management.py",
+    "order_manager.py"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr27.py",
+     "esito": "PASS (85 passed)"
+    }
+   ],
+   "mancanze": [
+    "#351 T09/T18 NOT_RUN"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR28",
+   "titolo": "Tutti i limiti owner da GUI/config al trasporto (PKG-P24-B) - scheda ombrello",
+   "stato_dichiarato": "PARZIALE / IMPLEMENTED_WITH_NOTE (tutte le sotto-PR mergiate; residui aperti)",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "vedi sotto-schede PR28 slice-1, 28-b, 28-c, Microstake #512, 28-d, 28-e"
+   ],
+   "evidenza_test": [
+    {
+     "file": "aggregato sotto-schede",
+     "esito": "PASS (vedi righe PR28-*)"
+    }
+   ],
+   "mancanze": [
+    "P06 cap per strategia DEFERRED",
+    "PF-C28-01..03 crash drill durevole (PR34) NOT VERIFIED",
+    "G7 #532: SimulationBroker non riserva fondi (4 xfail in test_g7_sim_funds_reservation.py)",
+    "PF-CAP-13/18/07/15 su percorsi dormienti",
+    "Verbale formale 'verifica PR28' mancante"
+   ],
+   "note": "Tutte le sotto-PR mergiate e verdi; i residui sono quelli dichiarati."
+  },
+  {
+   "id": "PR28-slice1",
+   "titolo": "PR28 prima slice (#502): liability LAY, soglia esatta, reload_config, auto-next",
+   "stato_dichiarato": "MERGED (#502)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/runtime_controller.py:2041 reload_config",
+    "core/runtime_controller.py:4302 (LAY = liability)",
+    "core/risk_gate.py",
+    "core/table_manager.py",
+    "git: 54e9d17"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr28.py",
+     "esito": "PASS (36 passed)"
+    }
+   ],
+   "mancanze": [],
+   "note": ""
+  },
+  {
+   "id": "PR28-b",
+   "titolo": "Daily loss durevole (F4) e session-loss stop (P37)",
+   "stato_dichiarato": "MERGED (#503)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/daily_loss_store.py:persist_daily_loss/restore_daily_loss/reconcile",
+    "core/loss_limits.py:session_loss_reason",
+    "core/system_state.py",
+    "git: f7c103c (#503)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr28b.py",
+     "esito": "PASS (46 passed)"
+    },
+    {
+     "file": "tests/unit/test_session_expiry_recovery.py",
+     "esito": "PASS (17 passed)"
+    }
+   ],
+   "mancanze": [
+    "Crash drill su DB reale (PR34) non eseguito",
+    "KNOWN_LIMITATION db+marker non scrivibili"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR28-c",
+   "titolo": "RISK_STOP distinto da EMERGENCY (P38) + exposure stop",
+   "stato_dichiarato": "MERGED (#504, SHA non citato)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/risk_stop.py:exposure_stop_reason/is_stop_trigger/cashout_all_signal",
+    "core/risk_stop.py:RISK_STOP_STATE_KEY",
+    "git: 028cee9 (#504)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr28c.py",
+     "esito": "PASS (55 passed)"
+    },
+    {
+     "file": "tests/unit/test_runtime_controller_gate_proofs.py",
+     "esito": "PASS (6 passed)"
+    }
+   ],
+   "mancanze": [],
+   "note": "SHA merge #504 = 028cee9 (mancava nell'inventario)."
+  },
+  {
+   "id": "PR28-Microstake-512",
+   "titolo": "Microstake nativo automatico sul SimulationBroker reale (#512)",
+   "stato_dichiarato": "MERGED (#512)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/microstake_safe.py:MicrostakeCoordinator/NativeMicrostakeExecutor/SmartExecutionEngine",
+    "core/microstake_sim_port.py",
+    "core/liquidity.py",
+    "core/money_management.py:75 (max_stake_abs opzionale, nessun minimo artificiale)",
+    "docs/microstake_native.md",
+    "git: f8bbbe9"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/test_microstake_engine_native.py",
+     "esito": "PASS (19 passed)"
+    },
+    {
+     "file": "tests/test_microstake_native_integration.py",
+     "esito": "PASS (15 passed)"
+    },
+    {
+     "file": "tests/test_microstake_safe_recovery.py",
+     "esito": "PASS (38 passed)"
+    },
+    {
+     "file": "tests/test_microstake_sim_port.py",
+     "esito": "PASS (17 passed)"
+    },
+    {
+     "file": "tests/test_microstake_cashout_and_recovery.py",
+     "esito": "PASS (19 passed)"
+    },
+    {
+     "file": "tests/test_pr512_codex_034af59.py",
+     "esito": "PASS (162 passed)"
+    },
+    {
+     "file": "tests/test_pr512_codex_f62f0e3.py",
+     "esito": "PASS (20 passed)"
+    },
+    {
+     "file": "tests/test_pr512_codex_findings.py",
+     "esito": "PASS (11 passed)"
+    },
+    {
+     "file": "tests/test_pr512_recovery_fixes.py",
+     "esito": "PASS (20 passed)"
+    },
+    {
+     "file": "tests/test_pr512_review_cycle4.py",
+     "esito": "PASS (20 passed)"
+    },
+    {
+     "file": "tests/test_pr512_review_cycle6.py",
+     "esito": "PASS (17 passed)"
+    },
+    {
+     "file": "tests/core/test_min_stake_single_source.py",
+     "esito": "PASS (8 passed)"
+    },
+    {
+     "file": "tests/traceability/test_pf_trace.py",
+     "esito": "PASS (17 passed)"
+    },
+    {
+     "file": "tests/traceability/test_pf_trace_codex_034af59.py",
+     "esito": "PASS (57 passed)"
+    },
+    {
+     "file": "tests/roserpina41/test_rsr_targeted.py",
+     "esito": "PASS (67 passed)"
+    },
+    {
+     "file": "tests/guardrails/test_no_bypass_paths.py",
+     "esito": "PASS (6 passed)"
+    },
+    {
+     "file": "tests/agent_checkpoint/test_pfckpt.py",
+     "esito": "PASS (42 passed)"
+    }
+   ],
+   "mancanze": [
+    "Debito #516-#521 dichiarato",
+    "LIVE senza adapter = fail-closed: non provabile offline"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR28-d",
+   "titolo": "Cap monetari opzionali e disattivati di default (rettifica 18/10), lato obbligatorio, fencing cashout",
+   "stato_dichiarato": "MERGED (#522)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/money_management.py:75 max_stake_abs (None = non attivo)",
+    "core/runtime_controller.py:3662-3704 (_configured_optional max_drawdown_abs/cap ordine/mercato/evento)",
+    "core/risk_gate.py:331-349",
+    "trading_config.py",
+    "config_registry.py",
+    "git: dd0ae58 (#522)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue437_pr28d.py",
+     "esito": "PASS (69 passed)"
+    },
+    {
+     "file": "tests/acceptance/test_issue437_pr28d_integration_512.py",
+     "esito": "PASS (102 passed)"
+    },
+    {
+     "file": "tests/acceptance/test_issue437_pr28d_rectification.py",
+     "esito": "PASS (89 passed)"
+    },
+    {
+     "file": "tests/integration/test_mini_gui_optional_caps_save.py",
+     "esito": "PASS (4 passed)"
+    },
+    {
+     "file": "tests/core/test_risk_gate.py",
+     "esito": "PASS (111 passed)"
+    },
+    {
+     "file": "tests/unit/test_cashout_residual_handler.py",
+     "esito": "PASS (16 passed)"
+    }
+   ],
+   "mancanze": [
+    "#505 chiusa senza merge; vale #522"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR28-e",
+   "titolo": "Gate esplicito dei fondi sulle nuove entrate (PF-CAP-09/19, PF-EXEC-04)",
+   "stato_dichiarato": "MERGED (#531)",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "core/runtime_controller.py:4477 (fondi verificati sotto lock contro tutte le riserve)",
+    "core/runtime_controller.py:5723-5748 (fondi_insufficienti:riserve_pendenti)",
+    "services/betfair_service.py",
+    "git: f334946 (#531)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue461_pr28e_funds_gate.py",
+     "esito": "PASS (43 passed)"
+    },
+    {
+     "file": "tests/acceptance/test_g7_sim_funds_reservation.py",
+     "esito": "4 xfailed (G7 aperto: SimulationBroker non riserva fondi, decisione owner #531)"
+    },
+    {
+     "file": "tests/integration/test_runtime_controller_live_sim_parity.py",
+     "esito": "PASS (43 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_controller_auto_trade_mm.py",
+     "esito": "PASS (10 passed)"
+    }
+   ],
+   "mancanze": [
+    "G7 #532: parita' SIM/LIVE del gate fondi non certificata (xfail espliciti)",
+    "29-f doppio conteggio riserve nel gate fondi aperto"
+   ],
+   "note": "Gate presente e testato; la parte SIM e' dichiaratamente incompleta."
+  },
+  {
+   "id": "PR29",
+   "titolo": "Prenotazione atomica dell'esposizione concorrente (PKG-P24-C) - scheda ombrello",
+   "stato_dichiarato": "PARZIALE / IN CORSO (29-a, 29-b, 29-c MERGED; 29-f e altri figli PF-C29-01.xx aperti)",
+   "stato_verificato": "PARZIALE",
+   "evidenza_codice": [
+    "vedi sotto-schede 29-a/29-b/29-c",
+    "core/runtime_controller.py:2695 _acquire_runtime_instance_lock (un solo runtime per DB)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "aggregato sotto-schede",
+     "esito": "PASS (vedi righe PR29-*)"
+    }
+   ],
+   "mancanze": [
+    "29-f (doppio conteggio riserve / G7) aperto",
+    "T-F03/T-F06 con due processi runtime reali non provati (il test 29-c prova due processi sul DB, non due runtime completi)",
+    "Rischio .runtime.lock cancellato manualmente (c.6335409948) non mitigato (candidata PR32)",
+    "#528 flake F026 dichiarato (qui 0 fallimenti)"
+   ],
+   "note": ""
+  },
+  {
+   "id": "PR29-a",
+   "titolo": "QUICK_BET_SUCCESS non rilascia la riserva; ammissione in volo; identita' riserva (.03/.07/.13)",
+   "stato_dichiarato": "MERGED (#533)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/runtime_controller.py:6182 _on_quick_bet_success (non rilascia)",
+    "core/table_manager.py:374 find_by_customer_ref",
+    "core/table_manager.py:429/445 mark_placed / mark_placed_by_ref",
+    "git: 2f25576 (#533)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py",
+     "esito": "PASS (19 passed)"
+    }
+   ],
+   "mancanze": [],
+   "note": ""
+  },
+  {
+   "id": "PR29-b",
+   "titolo": "Lotto Dutching a mercato non libera la riserva (PF-C29-01.17, R1-R3)",
+   "stato_dichiarato": "MERGED (#534)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/table_manager.py:260 release_batch_reservation",
+    "core/dutching_batch_manager.py",
+    "core/reconciliation_engine.py",
+    "git: 409bcf9 (#534)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue461_pr29b_dutching_ack_keeps_reservation.py",
+     "esito": "PASS (21 passed)"
+    },
+    {
+     "file": "tests/invariant/test_reconcile_invariants.py",
+     "esito": "PASS (5 passed)"
+    }
+   ],
+   "mancanze": [],
+   "note": ""
+  },
+  {
+   "id": "PR29-c",
+   "titolo": "Settlement -> tavolo per bet_id/customer_ref, dedup, release idempotente (.18/.11/.13), un solo runtime per DB",
+   "stato_dichiarato": "MERGED (#535)",
+   "stato_verificato": "COMPLETATO_CON_EVIDENZA",
+   "evidenza_codice": [
+    "core/table_manager.py:274 release_identified_reservation",
+    "core/table_manager.py:235 force_unlock_if_event (idempotente)",
+    "core/pnl_engine.py:220/241/397 (bet_id/customer_ref nel settlement)",
+    "core/runtime_controller.py:2695 _acquire_runtime_instance_lock",
+    "database.py (tabella dedup settlement, migrazione)",
+    "git: 152613b (#535)"
+   ],
+   "evidenza_test": [
+    {
+     "file": "tests/acceptance/test_issue461_pr29c_settlement_identity_idempotency.py",
+     "esito": "PASS (66 passed)"
+    },
+    {
+     "file": "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py",
+     "esito": "PASS (21 passed)"
+    },
+    {
+     "file": "tests/integration/test_runtime_controller_bankroll_sync.py",
+     "esito": "PASS (34 passed)"
+    }
+   ],
+   "mancanze": [
+    "Rischio .runtime.lock cancellato a mano: limite dichiarato in docs/roserpina_bankroll_equity.md, non mitigato"
+   ],
+   "note": "Il test 'due_processi_os_indipendenti_sullo_stesso_sqlite' usa subprocess reali (crash prima/dopo commit)."
+  }
+ ]
+}

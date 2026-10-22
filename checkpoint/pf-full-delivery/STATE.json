@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 59,
- "updated_at": "2026-10-22T08:10:27+00:00",
+ "seq": 60,
+ "updated_at": "2026-10-22T08:21:11+00:00",
  "agent": "claude-code (modello: claude-fable-5-1 dalle 21:0x del 21/10, prima claude-opus-5-5)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -463,9 +463,20 @@
    "source": "prompt owner in chat 14/10"
   }
  ],
- "owner_decisions_pending": [],
+ "owner_decisions_pending": [
+  "Factory: deroga serialita' PR (CLAUDE.md) o modello sviluppo parallelo/PR seriali",
+  "Mandato #536 (lease DB, inode, fencing obbligatorio)",
+  "R1-R4 #529 + PF-EXEC-02 per PR30",
+  "OD-PF-RECON-02 ordine di applicazione",
+  "Conflitti #426: drawdown 10, TTL saldo, max_stake_abs, cap fix loop, merge autonomo workflow",
+  "PR59: PR58 vs Caso B",
+  "PR35 dipendenza crittografica",
+  "Numerazione 4 nuove schede",
+  "OWN-004 perimetro per PR06/PR10",
+  "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
+ ],
  "uncertain_ops": [],
- "next_atomic_action": "Rapporto B: riconciliazione globale (evidenza codice+test su main 152613b per 60 schede + inserti; inventari in scratchpad/recon/), scheda correttiva dedicata per il rischio .runtime.lock collegata a #453/#506/#351/#461 con criteri di accettazione (prerequisito LIVE), piano Parallel Development Factory (NON avviare sessioni). Nessuna modifica al codice di produzione, nessun merge, nessun LIVE.",
+ "next_atomic_action": "Attendere le decisioni owner elencate in rapporto_B.md §7 (in particolare: deroga alla serialita' delle PR per la Factory; mandato #536). Nessuna sessione parallela, nessuna modifica al codice di produzione, nessun merge, nessun LIVE finche' non arriva un mandato.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -484,8 +495,8 @@
   "residual_risk": "cancellazione manuale di .runtime.lock a runtime attivo => esclusivita' compromessa; blocker certificazione LIVE; NON coperto da #453/#506/#351 (verificato 22/10): scheda correttiva dedicata da predisporre, implementazione solo con mandato separato"
  },
  "mandate_current": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01",
- "previous_checkpoint_sha": "aea6e7177bb4dfddd94eec981e67bdb93dbcff61",
- "lotto_corrente": "post-merge #535 PASS; riconciliazione globale 60 schede in corso (read-only); Parallel Factory PENDING (solo piano)",
+ "previous_checkpoint_sha": "6b4f1a28ede3feb3753a0ad255e3218201fc9ead",
+ "lotto_corrente": "Rapporto A PASS (#461 c.6336012399) e Rapporto B riconciliazione globale consegnato (#461 c.6336179844); #536 PF-RUNTIME-LOCK-01 creata; Parallel Factory PENDING (solo piano)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -1273,5 +1284,26 @@
   "mandate": "PF-PR-SEQUENCE-RECOVERY-01 (owner 19/10)"
  },
  "code_divergence_note": "checkpoint seq 51 puntava a e694e39; main avanzato a 380157a dal merge #529 (riconciliato qui)",
- "checkpoint_repair_note": "seq 58 (aea6e71) pushato ma NON DURABLE: readback fallito perche' il clone di main non risolve lo SHA del head di PR 23237cb nelle voci di test del seq 57; seq 59 ripunta quelle voci a 152613b (albero identico) con nota; nessun altro contenuto cambiato"
+ "checkpoint_repair_note": "seq 58 (aea6e71) pushato ma NON DURABLE: readback fallito perche' il clone di main non risolve lo SHA del head di PR 23237cb nelle voci di test del seq 57; seq 59 ripunta quelle voci a 152613b (albero identico) con nota; nessun altro contenuto cambiato",
+ "reconciliation_20261022": {
+  "artifacts": "results/recon_20261022/",
+  "verified_on_main": "152613b30fb0719682d71ae6653f984079a48262",
+  "tests_executed_on_main": "5319 passed, 0 failed, 4 xfailed (G7)",
+  "schede_60": {
+   "COMPLETATO_CON_EVIDENZA": 6,
+   "PARZIALE": 36,
+   "MANCANTE": 10,
+   "BLOCCATO": 8
+  },
+  "inserti_20": {
+   "COMPLETATO_CON_EVIDENZA": 13,
+   "PARZIALE": 3,
+   "MANCANTE": 3,
+   "NON_VERIFICABILE": 1
+  },
+  "attivita_residue": 61,
+  "owner_decisions_needed": 10,
+  "issue_536": "PF-RUNTIME-LOCK-01 prerequisito LIVE",
+  "factory": "PENDING, piano in rapporto_B.md §8, nessuna sessione avviata"
+ }
 }

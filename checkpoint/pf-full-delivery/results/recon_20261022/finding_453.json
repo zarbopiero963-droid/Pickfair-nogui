@@ -1,0 +1,1079 @@
+{
+ "issue": 453,
+ "stato_issue": "open",
+ "comments_totali": 101,
+ "comments_letti": 101,
+ "body_righe_35": {
+  "IMPLEMENTATO": 4,
+  "PARZIALE": 23,
+  "NON_IMPLEMENTATO": 8,
+  "nota": "conteggio del corpo (13/09/2026), non aggiornato dopo le PR di ottobre"
+ },
+ "sottogate_S1_B7": {
+  "testo": "due processi/restart concorrenti sul medesimo DB -> un solo owner valido/fencing persistente o esclusione single-instance provata; crash rilascia ownership in modo sicuro",
+  "stato": "[ ] aperto nel corpo",
+  "nota": "unico punto del corpo #453 che tocca l'esclusivita' del runtime"
+ },
+ "runtime_lock": {
+  "finding_esplicito_su_cancellazione_manuale_runtime_lock": false,
+  "finding_su_esclusivita_runtime": [
+   "#453 corpo S1-B7",
+   "#506 c.6123962107 L08-F1 (PF-C32-01)",
+   "#506 c.6315251036 OWNER-MULTIPROCESS-03 / T-F03,T-F06 -> 29-g1/g2",
+   "#453 c.6162830558 T-F03/T-F06 a due processi"
+  ],
+  "implementazione": "core/runtime_controller.py::_acquire_runtime_instance_lock (PR29-c #535, merge 152613b, 22/10/2026) con limite dichiarato in docs/roserpina_bankroll_equity.md",
+  "stringa_runtime.lock_nei_commenti": "nessuna occorrenza in #453/#506/#351"
+ },
+ "findings": [
+  {
+   "id": "F1",
+   "titolo": "LIVE: vincita dopo perdita stesso mercato rifiutata (COMMISSION_AMOUNT_POLICY_MISMATCH)",
+   "stato_dichiarato": "OPEN (dest. PR19)",
+   "severita": "conservativa",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5877897525",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F2",
+   "titolo": "Tavoli Roserpina: settlement non arriva alla memoria perdite (table_id None, rilascio a SUCCESS)",
+   "stato_dichiarato": "PARZIALE: SUCCESS non rilascia piu' (#533); settlement per identita' in #535 (PR29-c); residuo multi-tavolo held",
+   "severita": "alta",
+   "pr_o_commit_correzione": [
+    "#533 2f25576",
+    "#535 152613b"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5877897525",
+   "note": "Famiglia F02; L05-F3; vedi c.6320059392",
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F3",
+   "titolo": "Docstring list_cleared_orders da riallineare",
+   "stato_dichiarato": "OPEN (dest. PR11)",
+   "severita": "bassa",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5877897525",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F4",
+   "titolo": "Daily-loss non sopravvive a riavvio (fail-open kill-switch)",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in PR28-b (#503)",
+   "severita": "alta",
+   "pr_o_commit_correzione": [
+    "#503 f7c103c"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5877897525",
+   "note": "Durabilita' crash drill PR34 restante",
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F5",
+   "titolo": "LIVE: dedupe settlement precede publish",
+   "stato_dichiarato": "OPEN (dest. PR19)",
+   "severita": "bassa",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5877897525",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F6",
+   "titolo": "Lati del book invertiti nel SIM e nel prezzo di chiusura cashout",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE (#487 a86bfaa, P25)",
+   "severita": "critica LIVE cashout",
+   "pr_o_commit_correzione": [
+    "#487 a86bfaa"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5881918056",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F7",
+   "titolo": "SIM: livello svuotato/senza size abbina intero ordine",
+   "stato_dichiarato": "OPEN (dest. PR11)",
+   "severita": "solo SIM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893389383",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F8",
+   "titolo": "SIM: ordine a riposo ha status FAILURE nel report",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in PR26 (#500)",
+   "severita": "parita' SIM/LIVE",
+   "pr_o_commit_correzione": [
+    "#500 f5cb7e6"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893389383",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F9",
+   "titolo": "SIM: ordine a riposo non si riabbina quando il book si muove",
+   "stato_dichiarato": "OPEN (dest. PR11)",
+   "severita": "solo SIM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893389383",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F10",
+   "titolo": "SIM: gamba non valida resta registrata a riposo",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in PR26 (#500)",
+   "severita": "parita'",
+   "pr_o_commit_correzione": [
+    "#500 f5cb7e6"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893543850",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F11",
+   "titolo": "LIVE: place_bet non rifiuta quota NaN/inf",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE (#488 633c178, P27)",
+   "severita": "alta",
+   "pr_o_commit_correzione": [
+    "#488 633c178"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893543850",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F12",
+   "titolo": "Certificato/chiave: campi testo senza picker",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE (#490 aba1340, PR04-quater)",
+   "severita": "media",
+   "pr_o_commit_correzione": [
+    "#490 aba1340"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893922854",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F13",
+   "titolo": "Una sola App Key, Delayed non inseribile",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE (#490 aba1340)",
+   "severita": "media",
+   "pr_o_commit_correzione": [
+    "#490 aba1340"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5893922854",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F14",
+   "titolo": "OrderManager: NaN passa, rifiuto pre-invio registrato AMBIGUO",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in PR26 (#500) + PR27 (#501)",
+   "severita": "media",
+   "pr_o_commit_correzione": [
+    "#500",
+    "#501"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5899903839",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F15",
+   "titolo": "SafetyLayer validate_cashout_request non controlla finitezza",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in PR26 (#500)",
+   "severita": "media",
+   "pr_o_commit_correzione": [
+    "#500"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-5899903839",
+   "note": null,
+   "famiglia": "FOLLOW-UP-453 F1-F15"
+  },
+  {
+   "id": "F01",
+   "titolo": "SL/TP usa LTP e formula con direzione errata",
+   "stato_dichiarato": "FAIL UNIT -> OPEN (PR24/25/43/19)",
+   "severita": "CRITICAL",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F02",
+   "titolo": "AMBIGUOUS/SUCCESS liberano esposizione tavolo",
+   "stato_dichiarato": "PARZIALE: F024 (AMBIGUOUS trattenuto) in #512; SUCCESS in #533; settlement #535. Famiglia F02 ancora con residui (L05-F2/F4/F5/F6, 29-d/e/g)",
+   "severita": "CRITICAL",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F03",
+   "titolo": "EXPANSION confrontata con peak invece di bankroll_start",
+   "stato_dichiarato": "OPEN (PR22; F032 decisione owner)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F04",
+   "titolo": "Drawdown assoluto senza perdita non realizzata",
+   "stato_dichiarato": "OPEN (PR28/15/31; F026 equity=disponibile+esposizione in #512 copre parte)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F05",
+   "titolo": "RiskDesk accetta bankroll non finito",
+   "stato_dichiarato": "OPEN/reachability NOT VERIFIED (PR27/15/33)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F06",
+   "titolo": "Fencing cashout non copre scope evento",
+   "stato_dichiarato": "PARTIAL FIX; fencing cashout per ambito in #522 dd0ae58 (da riverificare)",
+   "severita": "CRITICAL",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F07",
+   "titolo": "Restart/ricostruzione esposizione non provati E2E",
+   "stato_dichiarato": "STATIC/NOT VERIFIED; F018 ricostruzione in #512; crash drill in #535 (PR29-c)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F08",
+   "titolo": "Decisioni owner non propagate ai testi storici",
+   "stato_dichiarato": "DOCUMENTARY CORRECTION, OPEN",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F09",
+   "titolo": "MCP vuoto e Control API assente",
+   "stato_dichiarato": "BLOCKED (PR26/36/37/47/59, MCP01-07)",
+   "severita": "CRITICAL",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F10",
+   "titolo": "Default GUI e loader differenti",
+   "stato_dichiarato": "STATIC/NOT VERIFIED (PR05/28/33)",
+   "severita": "MEDIUM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "F11",
+   "titolo": "Warning-only scope diverso fra precheck e RiskGate",
+   "stato_dichiarato": "STATIC/CONTRACT GAP (PR09/28/43)",
+   "severita": "MEDIUM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6085517147",
+   "note": "Matrice chiusura D09: c.6087858130 (0/11 chiusure HARD)",
+   "famiglia": "PF-DOC v1 F01-F11"
+  },
+  {
+   "id": "AUD-01",
+   "titolo": "Ordine ghost contato nel cap totale ma non nei cap mercato/evento",
+   "stato_dichiarato": "OPEN, blocca LIVE (PR29/PR31)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-AUDIT-FIN"
+  },
+  {
+   "id": "AUD-02",
+   "titolo": "Hedge con esito ignoto: settlement scartato (no betId)",
+   "stato_dichiarato": "OPEN, blocca LIVE (PR30/31/45)",
+   "severita": "HIGH",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": "Parzialmente affine a #524/#526 (AMBIGUOUS mai FAILED, ordine singolo)",
+   "famiglia": "PF-AUDIT-FIN"
+  },
+  {
+   "id": "AUD-03",
+   "titolo": "Esito ignoto del place hedge pubblicato come ERROR invece di AMBIGUOUS",
+   "stato_dichiarato": "OPEN, blocca Gate B (PR45)",
+   "severita": "MEDIUM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-AUDIT-FIN"
+  },
+  {
+   "id": "AUD-04",
+   "titolo": "customerRef hedge non canonico",
+   "stato_dichiarato": "OPEN (PR26/PR45)",
+   "severita": "MEDIUM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-AUDIT-FIN"
+  },
+  {
+   "id": "AUD-05",
+   "titolo": "Cashout senza ledger -> nessuna tracciabilita'",
+   "stato_dichiarato": "OPEN (PR26/PF-API-0)",
+   "severita": "MEDIUM",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-AUDIT-FIN"
+  },
+  {
+   "id": "PF-FIN-01/FIN-02 (FIN-MTM, FIN-HEDGE)",
+   "titolo": "MTM e realizzato errati nel position ledger",
+   "stato_dichiarato": "OPEN P1 (PR43)",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": "#506 c.6113115125",
+   "famiglia": "PF-FIN"
+  },
+  {
+   "id": "#510-F04 (FIN-LAY)",
+   "titolo": "LAY non abbinata con esposizione SIM 0",
+   "stato_dichiarato": "OPEN P1 -> parzialmente G7 (#532) SIM non riserva fondi",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-FIN"
+  },
+  {
+   "id": "PF-FIN-02 / D03-R2-F1 (FIN-FUNDS)",
+   "titolo": "Fallback saldo precedente su fondi illeggibili; saldo LIVE non autorevole",
+   "stato_dichiarato": "PARZIALE: PF-CAP-19 chiuso da #531 (fondi_non_verificabili); riserva cross-process/TTL fondi in PR29-f/g (OPEN)",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#531 f334946"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162830558",
+   "note": "Test T-F01..T-F09 richiesti; T-F03/T-F06 a due processi",
+   "famiglia": "PF-FIN"
+  },
+  {
+   "id": "CL19-CASH-REF-001 (FIN-CREF)",
+   "titolo": "customer_ref del cashout = source (TELEGRAM) non unico",
+   "stato_dichiarato": "OPEN P0 dichiarato in #506; #512 genera ref proprio per saga microstake (finding da riconciliare)",
+   "severita": "P0",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6162762000",
+   "note": null,
+   "famiglia": "PF-FIN"
+  },
+  {
+   "id": "PF-ALL-F001",
+   "titolo": "Contratto executor violato: Future restituito come esito",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512 (consolidato)",
+   "severita": "P0",
+   "pr_o_commit_correzione": [
+    "#512 f8bbbe9"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F002",
+   "titolo": "Registro TTL DIRECT mai popolato",
+   "stato_dichiarato": "OPEN (PR38)",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F003",
+   "titolo": "Eventi ciclo ordine senza produttore",
+   "stato_dichiarato": "OPEN (PR26/30/31)",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F004",
+   "titolo": "RECOVER_ORDER senza consumatore",
+   "stato_dichiarato": "OPEN (PR31/33)",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F005",
+   "titolo": "Watchdog senza liveness reale",
+   "stato_dichiarato": "OPEN (PR47/20)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F006",
+   "titolo": "Heartbeat improprio",
+   "stato_dichiarato": "OPEN (PR47)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F007",
+   "titolo": "Protezioni documentate non collegate (auto_throttle, market_validator, ai_guardrail, safe_mode)",
+   "stato_dichiarato": "OPEN, decisione owner",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F008",
+   "titolo": "Supervisor runtime assente",
+   "stato_dichiarato": "OPEN (PR53/54)",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F009",
+   "titolo": "Escalation anomalie senza azione",
+   "stato_dichiarato": "OPEN (PR20)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F010",
+   "titolo": "EventBus senza ordinamento",
+   "stato_dichiarato": "OPEN NOT VERIFIED (PR46)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F011",
+   "titolo": "Forma risposta instructionReports top-level non gestita",
+   "stato_dichiarato": "OPEN, differito (RED conservato)",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F012",
+   "titolo": "Dipendenze non dichiarate",
+   "stato_dichiarato": "OPEN",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F013",
+   "titolo": "Control API/MCP assenti",
+   "stato_dichiarato": "OPEN (conferma F09)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F014",
+   "titolo": "Stop di sessione fail-open con baseline assente",
+   "stato_dichiarato": "OPEN (PR28-b) - da riverificare",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F015",
+   "titolo": "Codice finanziario duplicato o morto",
+   "stato_dichiarato": "OPEN (PR48)",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163146564",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F016",
+   "titolo": "SafeMode/kill switch mai alimentati",
+   "stato_dichiarato": "OPEN",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F017",
+   "titolo": "settlement.poll_enabled OFF di default",
+   "stato_dichiarato": "OPEN, decisione owner",
+   "severita": "P1",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F018",
+   "titolo": "Riavvio: tavoli non ricostruiti",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512 (F018 ricostruzione) + reservation_id in #535",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#512",
+    "#535"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F019",
+   "titolo": "Batch dutching tutte PLACED diventa EXECUTED e rilascia",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #534 (PR29-b)",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#534 409bcf9"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F020",
+   "titolo": "Moduli legacy non collegati",
+   "stato_dichiarato": "OPEN (PR48)",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F021",
+   "titolo": "HeadlessApp.stop non ferma EventBus",
+   "stato_dichiarato": "OPEN",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F022",
+   "titolo": "get_status dopo risk_stop senza campo di stop",
+   "stato_dichiarato": "OPEN",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6163919308",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F023",
+   "titolo": "Eventi terminali senza table_id/market_id",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6170832671",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F024",
+   "titolo": "AMBIGUOUS/SUCCESS rilasciano chiave e tavolo",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512 (AMBIGUOUS) e #533 (SUCCESS)",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#512",
+    "#533"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6170832671",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F025",
+   "titolo": "SUCCESS senza betId accettato",
+   "stato_dichiarato": "OPEN, differito",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6170832671",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F026",
+   "titolo": "Bankroll sincronizzato col disponibile -> falso drawdown e auto-reset",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512",
+   "severita": "P1",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6170832671",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F027",
+   "titolo": "Settlement contabilizzati anche in PAUSED/LOCKDOWN/emergency",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512 (b33b54d)",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F028",
+   "titolo": "Stato finale non abbinato confermato libera tavolo",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F029",
+   "titolo": "(consolidato in #512)",
+   "stato_dichiarato": "FIXED (citato nel corpo #512)",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F030",
+   "titolo": "Liquidity Guard ingressi singoli",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F031",
+   "titolo": "Parita' SIM parziale abbinato con residuo annullato",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #512",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#512"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F032",
+   "titolo": "EXPANSION irraggiungibile in runtime (RSR-08/09)",
+   "stato_dichiarato": "OPEN, decisione owner",
+   "severita": "-",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "PF-ALL-F033",
+   "titolo": "Cap evento non aggrega mercati dello stesso incontro",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE in #522 (xfail rimosso)",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#522 dd0ae58"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6187670007",
+   "note": null,
+   "famiglia": "PF-ALL-MODULES"
+  },
+  {
+   "id": "OBS-1",
+   "titolo": "Bankroll non riallineato fra cashout e settlement successivo",
+   "stato_dichiarato": "OSSERVAZIONE, non aperta come issue",
+   "severita": "bassa",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6174471178",
+   "note": null,
+   "famiglia": "OBS"
+  },
+  {
+   "id": "OBS-2",
+   "titolo": "Realizzato del ciclo riparte da 0 al riavvio",
+   "stato_dichiarato": "OSSERVAZIONE, collegata a F018",
+   "severita": "bassa",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6174471178",
+   "note": null,
+   "famiglia": "OBS"
+  },
+  {
+   "id": "PF-CAP-08",
+   "titolo": "Telegram auto_stake vuoto -> 1 EUR silenzioso",
+   "stato_dichiarato": "OPEN (PR Telegram, corsia sospesa)",
+   "severita": "A",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6250410915",
+   "note": null,
+   "famiglia": "PF-CAP-REGISTER-20261018"
+  },
+  {
+   "id": "PF-CAP-09",
+   "titolo": "Nessun gate esplicito stake/liability <= fondi disponibili",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE #531 f334946 (PR28-e)",
+   "severita": "C ALTA",
+   "pr_o_commit_correzione": [
+    "#531 f334946"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6304345652",
+   "note": "Q10 ratificata; hedge/cashout fuori gate",
+   "famiglia": "PF-CAP-REGISTER-20261018"
+  },
+  {
+   "id": "PF-CAP-13",
+   "titolo": "telegram_listener stake assente -> 1.0 fisso",
+   "stato_dichiarato": "OPEN (PR Telegram)",
+   "severita": "A ALTA",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6250528652",
+   "note": null,
+   "famiglia": "PF-CAP-REGISTER-20261018"
+  },
+  {
+   "id": "PF-CAP-18",
+   "titolo": "quota inventata 2.0 nel listener",
+   "stato_dichiarato": "OPEN",
+   "severita": "A",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6250528652",
+   "note": null,
+   "famiglia": "PF-CAP-REGISTER-20261018"
+  },
+  {
+   "id": "PF-CAP-19",
+   "titolo": "Bankroll precedente conservato se get_account_funds fallisce",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE #531 f334946 (ammissione nuove entrate)",
+   "severita": "C ALTA LIVE",
+   "pr_o_commit_correzione": [
+    "#531 f334946"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6304345652",
+   "note": null,
+   "famiglia": "PF-CAP-REGISTER-20261018"
+  },
+  {
+   "id": "G7 (#532)",
+   "titolo": "SimulationBroker non riserva fondi sugli ordini: parita' SIM/LIVE fondi non certificata",
+   "stato_dichiarato": "OPEN, NOT CERTIFIED (xfail strict in #531)",
+   "severita": "P1/parita'",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6304345652",
+   "note": "Anche #506 c.6304344711",
+   "famiglia": "G7"
+  },
+  {
+   "id": "L05-F1",
+   "titolo": "Batch dutching tutte PLACED -> EXECUTED -> rilascio all'ACK",
+   "stato_dichiarato": "CHIUSO in #534 (PR29-b); lotto EXECUTED con gambe annullate -> DEFERRED_BY_POLICY PR30/PF-EXEC-02",
+   "severita": "P1 (latente P2)",
+   "pr_o_commit_correzione": [
+    "#534 409bcf9"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6320059392",
+   "note": null,
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "L05-F2",
+   "titolo": "Reset e restart azzerano esposizione in memoria senza riconciliazione",
+   "stato_dichiarato": "OPEN -> 29-d",
+   "severita": "P1 cand.",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6320059392",
+   "note": null,
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "L05-F3",
+   "titolo": "Settlement con table_id=None",
+   "stato_dichiarato": "PARZIALE: #535 (PR29-c) S2/S7/S9 corretti; multi-tavolo per mercato held",
+   "severita": "P2",
+   "pr_o_commit_correzione": [
+    "#535 152613b"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6320059392",
+   "note": "Vedi PR #535 body",
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "L05-F4",
+   "titolo": "Auto-close usa current_exposure come stake (LAY)",
+   "stato_dichiarato": "OPEN -> 29-e",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6320059392",
+   "note": null,
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "L05-F5",
+   "titolo": "FAILED post-submit senza table_id lascia tavolo ACTIVE",
+   "stato_dichiarato": "OPEN -> PR29/PR31",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/453#issuecomment-6320059392",
+   "note": null,
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "L05-F6",
+   "titolo": "Path AMBIGUOUS/SUCCESS di OrderManager (non istanziato)",
+   "stato_dichiarato": "LATENT, OPEN",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6123640661",
+   "note": null,
+   "famiglia": "PF-C29-01 / L05"
+  },
+  {
+   "id": "PF-C29-01.03",
+   "titolo": "QUICK_BET_SUCCESS non rilascia riserva",
+   "stato_dichiarato": "IMPLEMENTED+TESTED (#533)",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#533 2f25576"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6315251036",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.07",
+   "titolo": "FAILED certo rilascia una volta sola",
+   "stato_dichiarato": "IMPLEMENTED+TESTED (#533)",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#533"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6315251036",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.13",
+   "titolo": "Rilascio legato all'identita'",
+   "stato_dichiarato": "IMPLEMENTED (#533 doppioni esterni; #535 settlement)",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#533",
+    "#535"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6320057119",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.17",
+   "titolo": "Lotto Dutching PLACED/MATCHED mantiene riserva",
+   "stato_dichiarato": "IMPLEMENTED_WITH_NOTE (#534)",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#534 409bcf9"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6320057119",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.11",
+   "titolo": "Settlement idempotente (effetto finanziario una volta)",
+   "stato_dichiarato": "VIOLATED su 409bcf9 -> corretto in #535 (S7); stato post-merge non ancora registrato in #453/#506",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#535 152613b"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6320057119",
+   "note": "Da confermare con commento post-merge #535",
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.18",
+   "titolo": "Settlement -> tavolo (piu' bet sullo stesso mercato)",
+   "stato_dichiarato": "MISSING su 409bcf9 -> corretto in #535 (S2); non ancora registrato in #453/#506",
+   "severita": null,
+   "pr_o_commit_correzione": [
+    "#535 152613b"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6320057119",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "PF-C29-01.09",
+   "titolo": "Reset non rilascia riserve vive",
+   "stato_dichiarato": "OPEN -> 29-d (ordine OWNER-SETTLEMENT-02)",
+   "severita": null,
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6315251036",
+   "note": null,
+   "famiglia": "PF-C29-01"
+  },
+  {
+   "id": "OWNER-MULTIPROCESS-03 / T-F03,T-F06",
+   "titolo": "Coordinamento durevole fra processi (lease, registro cross-process)",
+   "stato_dichiarato": "OPEN -> 29-g1/29-g2 (e PR32 L08-F1)",
+   "severita": null,
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6315251036",
+   "note": "Decisione owner richiesta: deployment ammette piu' processi sullo stesso DB/account? (#506 c.6123962107)",
+   "famiglia": "PF-C29-01 / PF-C32-01"
+  },
+  {
+   "id": "L07-F1",
+   "titolo": "Recovery all'avvio fallito ignorato: runtime passa ACTIVE",
+   "stato_dichiarato": "OPEN P1 cand. (PR31)",
+   "severita": "P1 cand.",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6123962107",
+   "note": null,
+   "famiglia": "PF-C31-01 / L07"
+  },
+  {
+   "id": "L08-F1",
+   "titolo": "Nessun lock fra processi e nessuna garanzia di istanza unica; INSTANCE_LOCK_CONFLICT mai emesso",
+   "stato_dichiarato": "PARZIALE: lock OS <db>.runtime.lock introdotto da #535 (PR29-c, 152613b) ma non ancora registrato come FIXED in #453/#506; fencing/lease durevole PR32 OPEN",
+   "severita": "P1 cand.",
+   "pr_o_commit_correzione": [
+    "#535 152613b (lock di istanza)"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6123962107",
+   "note": "Limite dichiarato in docs/roserpina_bankroll_equity.md: rimozione manuale del file .runtime.lock a runtime attivo permette un secondo lock",
+   "famiglia": "PF-C32-01 / L08"
+  },
+  {
+   "id": "L08-F2",
+   "titolo": "Fencing check-then-act senza token nel SQL; token riparte da 0",
+   "stato_dichiarato": "OPEN (PR32)",
+   "severita": "P2",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6123962107",
+   "note": null,
+   "famiglia": "PF-C32-01 / L08"
+  },
+  {
+   "id": "L08-F3",
+   "titolo": "enable_fencing_token=False -> fail-open per configurazione",
+   "stato_dichiarato": "OPEN (PR32)",
+   "severita": "P3",
+   "pr_o_commit_correzione": null,
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6123962107",
+   "note": null,
+   "famiglia": "PF-C32-01 / L08"
+  },
+  {
+   "id": "#524",
+   "titolo": "Ordine forse inviato diventava FAILED senza prova",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE #526 (ac2064c), ratifica owner c.6284060186; PR30 resta dipendenza",
+   "severita": "P1 BLOCKS_LIVE",
+   "pr_o_commit_correzione": [
+    "#526 ac2064c"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6284060186",
+   "note": null,
+   "famiglia": "owner finding"
+  },
+  {
+   "id": "#525",
+   "titolo": "Orchestratori CI non partono",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE #527 (e694e39); mutation-guardrails limite noto",
+   "severita": "BLOCKS_GOVERNANCE_CERTIFICATION",
+   "pr_o_commit_correzione": [
+    "#527 e694e39"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6288782331",
+   "note": null,
+   "famiglia": "owner finding"
+  },
+  {
+   "id": "#523",
+   "titolo": "Dutching e manual_bet non conformi ai gate",
+   "stato_dichiarato": "FIXED_WITH_EVIDENCE #529 (380157a); corsie restano dormienti; PF-EXEC-02 NON completo -> PR30/31",
+   "severita": "-",
+   "pr_o_commit_correzione": [
+    "#529 380157a"
+   ],
+   "fonte_comment": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6298120251",
+   "note": null,
+   "famiglia": "owner finding"
+  }
+ ]
+}

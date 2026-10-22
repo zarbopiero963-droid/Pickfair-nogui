@@ -1,0 +1,1481 @@
+{
+  "meta": {
+    "generato": "2026-10-22",
+    "repo": "zarbopiero963-droid/Pickfair-nogui",
+    "issue": 461,
+    "commenti_letti": 224,
+    "fonti_definizione_60_schede": {
+      "corpo_461_tabella_60": "issue #461 body, sezione 'Roadmap — 60 schede operative da riconciliare col codice corrente' (marker PR-BY-PR-437-PHASE0-2026-09-14-REV2), 'Conteggio delle schede: 60'",
+      "schede_individuali": {
+        "PR01-PR15": 5664139028,
+        "PR16-PR30": 5664141515,
+        "PR31-PR45": 5664144043,
+        "PR46-PR60": 5664146928,
+        "data": "2026-09-14T12:44Z (rev. 01/10/2026)"
+      },
+      "addenda_PF-DOC_cards": {
+        "PR01-10": 6085511432,
+        "PR11-20": 6085511970,
+        "PR21-30": 6085512485,
+        "PR31-40": 6085513127,
+        "PR41-50": 6085513826,
+        "PR51-60": 6085514414,
+        "data": "2026-10-09T17:02Z",
+        "nota": "stato requisito VIGENTE/SUSPENDED/DEFERRED_FIRST_LIVE per scheda; 183 ID PF-C"
+      },
+      "matrice_D03_60+3": {
+        "id": 6087228239,
+        "data": "2026-10-09T18:51Z",
+        "nota": "60/60 intestazioni PR01–PR60 + 3 inserti PR04-bis/ter/quater (9 ID PF-I)"
+      },
+      "sequenza_MCP_corrente": "issue #461 body §REGOLE VIGENTI: PR26-a → PR26 → PR27 → PR28 → PR29 → PR30 → PR31 → PR32 → PR33 → PR34 → PR35 → PR36 → PR37 → PR38 → PR08 → PR11 → PR09 → PR12 → PR15 → PR16 → PR17 → PR19 → PR20 → PR22 → PR23 → PR24 → PR25 → PR43 → PR44 → PR45 → PR46 → PR47 → PF-API-0 → PF-API-1 → PF-API commands"
+    },
+    "baseline_ultima": "main 152613b30fb0719682d71ae6653f984079a48262 (squash #535 PR29-c, 22/10/2026); nessuna PR aperta dichiarata; LIVE NO-GO; Gate A #506 NON PASS",
+    "legenda_stato": "MERGED / PARZIALE / NON INIZIATO (PENDING) / SOSPESO / DEFERRED / NON CREATA; stato_requisito_PF-DOC = VIGENTE/SUSPENDED/DEFERRED_FIRST_LIVE dagli addenda cards1-6"
+  },
+  "schede": [
+    {
+      "id": "PR01",
+      "nome": "Rimozione Codacy dismesso e adeguamento dei gate collegati",
+      "pacchetto_fonte": "#462",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 462,
+          "merge_sha": "16a803094995174930056b5a587f5ee10cc3beec",
+          "data": "2026-09-22 verificato"
+        }
+      ],
+      "dipendenze_dichiarate": "nessuna; riconvalidare prove correnti",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T31",
+      "note_limiti_residui": "Parte Codacy del vecchio PKG-P38; parte Fugu/collection resta in PR50. Test sul main corrente non rieseguiti.",
+      "fonti_comment_id": [
+        5664139028,
+        6085511432
+      ]
+    },
+    {
+      "id": "PR02",
+      "nome": "Q452: regressione anti-doppio invio e documento registry",
+      "pacchetto_fonte": "PKG-P01",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED (impl. PARZIALE: manca verbale #351)",
+      "pr_github": [
+        {
+          "n": 478,
+          "merge_sha": "ad9ce64efd2ac66fc3380c773189361f230c9686",
+          "data": "2026-09-23"
+        }
+      ],
+      "dipendenze_dichiarate": "PR01",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T09,T31",
+      "note_limiti_residui": "Perimetro offline provato per intero; T09/T31 NOT_RUN.",
+      "fonti_comment_id": [
+        5664139028
+      ]
+    },
+    {
+      "id": "PR03",
+      "nome": "Settlement SIM fino al netto di mercato e Roserpina",
+      "pacchetto_fonte": "PKG-P02",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 485,
+          "merge_sha": "7b0fc5be4614afc480a6eb5fb47382ed9a15e73a",
+          "data": "2026-09-29"
+        }
+      ],
+      "dipendenze_dichiarate": "PR02; inserzioni #480 (P13), #481 (P15), #483 (P14)",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T13,T14",
+      "note_limiti_residui": "#351 T13/T14 BLOCKED_ENV fino alla PR11 (feed SIM Delayed). OD12-08 settlement/void/rettifiche: parziale.",
+      "fonti_comment_id": [
+        5664139028,
+        6235867968
+      ]
+    },
+    {
+      "id": "PR04",
+      "nome": "Cashout GUI: catena effettiva con SafetyLayer",
+      "pacchetto_fonte": "PKG-P03",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 486,
+          "merge_sha": "774bb3be5e7554d81f73c49e6e4a526db36c6954",
+          "data": "2026-09-29"
+        }
+      ],
+      "dipendenze_dichiarate": "PR03",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T03,T16,T23",
+      "note_limiti_residui": "T03/T16/T23 NOT_RUN; intento sospeso da completare in PR25/PR45; DEC-426-P26: nessun pulsante cashout manuale.",
+      "fonti_comment_id": [
+        5664139028
+      ]
+    },
+    {
+      "id": "PR04-bis",
+      "nome": "F6: lati del book BACK/LAY come su Betfair (inserto owner P25)",
+      "pacchetto_fonte": "inserto owner",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 487,
+          "merge_sha": "a86bfaa6e8ac53e0d0c00ee3ed828e0bc432ffad",
+          "data": "2026-09-29"
+        }
+      ],
+      "dipendenze_dichiarate": "PR04",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T16 LIVE NOT_RUN",
+      "note_limiti_residui": "ID PF-I04B-01..03 (D03); prove offline registrate.",
+      "fonti_comment_id": [
+        5664139028,
+        6087228239
+      ]
+    },
+    {
+      "id": "PR04-ter",
+      "nome": "F11: place_bet LIVE rifiuta quote NaN/∞ (inserto owner P27)",
+      "pacchetto_fonte": "inserto owner",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 488,
+          "merge_sha": "633c178bf4fa05b9d2c7c007513111820afca803",
+          "data": "2026-09-29"
+        }
+      ],
+      "dipendenze_dichiarate": "PR04-bis",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "F14/F15 assegnati a PR26 (chiusi in #500). ID PF-I04T-01..03.",
+      "fonti_comment_id": [
+        5664139028,
+        6087228239
+      ]
+    },
+    {
+      "id": "PR04-quater",
+      "nome": "Credenziali Betfair: Sfoglia, due App Key Delayed/Live, migrazione sicura (DEC-426-P28–P32)",
+      "pacchetto_fonte": "inserto owner",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 490,
+          "merge_sha": null,
+          "data": "2026-10-02/07 (MERGIATA, SHA non citato nei commenti letti; main post-#493 = e068a14deb9571e5c86de2113422f5d61b2a4375)"
+        }
+      ],
+      "dipendenze_dichiarate": "PR04-ter",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T04 installato NOT_RUN",
+      "note_limiti_residui": "Merge manuale owner (eccezione Grok timeout c.5950951736); login SIM con Delayed rinviato alla PR11 (P31). ID PF-I04Q-01..03.",
+      "fonti_comment_id": [
+        5664139028,
+        5947822371,
+        5950951736
+      ]
+    },
+    {
+      "id": "PR05",
+      "nome": "Visibilità GUI, scrollbar, DPI e controlli safety",
+      "pacchetto_fonte": "PKG-P04",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (Phase 0 avviata 29/09 e sospesa; falso successo RIPRODOTTO: 57/129 controlli non visibili a 1280x820)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR04-quater",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T02,T03",
+      "note_limiti_residui": "Esplicitamente 'PR05 non è la prossima attività automatica MCP'; fuori dalla sequenza MCP corrente.",
+      "fonti_comment_id": [
+        5664139028
+      ]
+    },
+    {
+      "id": "PR06",
+      "nome": "Parser standard e provenienza del segnale",
+      "pacchetto_fonte": "PKG-P05",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE (scope MIXED: parser neutrale vigente, trasporto Telegram sospeso)",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR05 (storica); non dipendenza tecnica per PR08",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T06–T08",
+      "note_limiti_residui": "OWN-004: Telegram sospeso; OD-PF-C0603-OFFLINE-01 solo test offline.",
+      "fonti_comment_id": [
+        6085511432,
+        6085502813
+      ]
+    },
+    {
+      "id": "PR07",
+      "nome": "Catalogo GUI: contratto worker/on_success",
+      "pacchetto_fonte": "PKG-P06",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR06 (storica)",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T08,T20",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511432
+      ]
+    },
+    {
+      "id": "PR08",
+      "nome": "Resolver deterministico e catalogo incrementale",
+      "pacchetto_fonte": "PKG-P07",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "core safety (PR26–PR38) → PR08; prerequisito del primo MCP per nome",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T08",
+      "note_limiti_residui": "Decisione MCP 06/10 §3: risoluzione per nome richiesta.",
+      "fonti_comment_id": [
+        6085511432,
+        6026322035
+      ]
+    },
+    {
+      "id": "PR09",
+      "nome": "Dutching: publisher, budget equo e CASHOUT Esegui",
+      "pacchetto_fonte": "PKG-P08",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (corsia Dutching dormiente, BLOCKS_DUTCHING_ACTIVATION)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR08; PR30/PR31 complete prima dell'attivazione",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T12,T16",
+      "note_limiti_residui": "Requisito owner PF-DUTCH-CS-FTHT-ROSERPINA-E2E-01 (#511, 72 casi) SPECIFICATO; PF529-A3-R1..R4 e cablaggio batch manager rinviati a PR30.",
+      "fonti_comment_id": [
+        6085511432,
+        6179223908,
+        6295132960,
+        6296247545
+      ]
+    },
+    {
+      "id": "PR10",
+      "nome": "Rimozione definitiva del parser regex",
+      "pacchetto_fonte": "PKG-P09",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE (MIXED)",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR09",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T06,T27",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511432
+      ]
+    },
+    {
+      "id": "PR11",
+      "nome": "Feed Italy in SIM, timestamp e freshness (Market Stream / Delayed)",
+      "pacchetto_fonte": "PKG-P10",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (Market Stream PARTIAL/non operativo già in services/streaming_feed.py)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR08 → PR11 (sequenza MCP); credenziali PR04-quater",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T04 SIM,T13,T14,T28,T32",
+      "note_limiti_residui": "DEC-426-P31 login SIM Delayed qui; sblocca PR03 T13/T14; integra F3/F7/F9; Order Stream = NUOVA SCHEDA (owner da esplicitare).",
+      "fonti_comment_id": [
+        6085511970,
+        6043517977
+      ]
+    },
+    {
+      "id": "PR12",
+      "nome": "Stake locale MANUAL/FIXED/MM",
+      "pacchetto_fonte": "PKG-P11",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR11",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T07,T18",
+      "note_limiti_residui": "OWN-002: MANUAL via MCP = preview + seconda conferma owner per operazione (deciso 08/10, non implementato).",
+      "fonti_comment_id": [
+        6085511970,
+        6068305820
+      ]
+    },
+    {
+      "id": "PR13",
+      "nome": "Osservabilità unica e Safe Mode nella GUI",
+      "pacchetto_fonte": "PKG-P12",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR12",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T03,T23",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511970
+      ]
+    },
+    {
+      "id": "PR14",
+      "nome": "Storico LIVE+SIM, pagine, writer e coordinator",
+      "pacchetto_fonte": "PKG-P13",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR13",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T19,T20",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511970
+      ]
+    },
+    {
+      "id": "PR15",
+      "nome": "Emergency snapshot e separazione saldi SIM/LIVE (mode-scoped)",
+      "pacchetto_fonte": "PKG-P14",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR12 (sequenza MCP)",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T14,T17,T22",
+      "note_limiti_residui": "Contratto SIM/LIVE 07/10: peak SIM non contamina drawdown LIVE; T-F09 nessun fallback a SIM/bankroll precedente.",
+      "fonti_comment_id": [
+        6085511970,
+        6162829180
+      ]
+    },
+    {
+      "id": "PR16",
+      "nome": "Logout Betfair server-side",
+      "pacchetto_fonte": "PKG-P15",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR15",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T04,T05,T26",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511970
+      ]
+    },
+    {
+      "id": "PR17",
+      "nome": "Shutdown idempotente su errore main",
+      "pacchetto_fonte": "PKG-P16",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR16",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T05,T22,T29",
+      "note_limiti_residui": "Blocker WINDOWS_SHUTDOWN_SIGNAL_PARITY (BLOCKS_FINAL_CERTIFICATION) owner PR17/PR54.",
+      "fonti_comment_id": [
+        6085511970,
+        6063071704
+      ]
+    },
+    {
+      "id": "PR18",
+      "nome": "Chat ID numerico per-bot e due trasporti Telegram",
+      "pacchetto_fonte": "PKG-P17",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR17",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T06",
+      "note_limiti_residui": "OWN-004 Telegram sospeso; riattivazione solo con nuova decisione owner.",
+      "fonti_comment_id": [
+        6085511970
+      ]
+    },
+    {
+      "id": "PR19",
+      "nome": "Commissione coerente fra GUI, cashout e settlement",
+      "pacchetto_fonte": "PKG-P18",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR17 (sequenza MCP)",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T13,T18",
+      "note_limiti_residui": "F1/F5 #453; BF2-E-F04 VOIDED dopo settlement, E-F01 resettlement; OD-PF-COMMISSION-RATE-01 (marketBaseRate in LIVE).",
+      "fonti_comment_id": [
+        6085511970,
+        6125598240,
+        6129518925
+      ]
+    },
+    {
+      "id": "PR20",
+      "nome": "Anomaly escalation: hook e azione effettiva",
+      "pacchetto_fonte": "PKG-P19",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR19",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T23",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085511970
+      ]
+    },
+    {
+      "id": "PR21",
+      "nome": "Setup ambiente e documentazione Bot API",
+      "pacchetto_fonte": "PKG-P20",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR20",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T02,T31",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085512485
+      ]
+    },
+    {
+      "id": "PR22",
+      "nome": "EXPANSION sulla baseline bankroll_start persistita",
+      "pacchetto_fonte": "PKG-P21",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR20 (sequenza MCP)",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T14",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085512485
+      ]
+    },
+    {
+      "id": "PR23",
+      "nome": "Formula MM, esempi numerici e precedenze messaggio/GUI/MM",
+      "pacchetto_fonte": "PKG-P22-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR22; parser/catalogo/feed pronti",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T07,T15",
+      "note_limiti_residui": "Identità corretta 06/10 (c.6025961736). F2 memoria perdite Roserpina; PR29 possiede esposizione.",
+      "fonti_comment_id": [
+        6085512485,
+        6025961736
+      ]
+    },
+    {
+      "id": "PR24",
+      "nome": "SL/TP: soglie, direzione PnL e uscita reale",
+      "pacchetto_fonte": "PKG-P22-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR23",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T15,T16",
+      "note_limiti_residui": "DEC-PF-CASH-CASE-U15HT (SL% su perdita netta liquidabile) approvata 11/10.",
+      "fonti_comment_id": [
+        6085512485,
+        6112703848
+      ]
+    },
+    {
+      "id": "PR25",
+      "nome": "Trailing persistente e auto-cashout MM (intento P35)",
+      "pacchetto_fonte": "PKG-P22-C",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR24",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T15,T16,T32",
+      "note_limiti_residui": "P34/P35-A/B/C confermate; integrare uscite dell'arresto di rischio con PR45.",
+      "fonti_comment_id": [
+        6085512485
+      ]
+    },
+    {
+      "id": "PR26-0",
+      "nome": "PR-F001 (P0): risoluzione Future ExecutorManager; PF-ALL-F024 AMBIGUOUS non rilascia riserva; PF-ALL-F023 table_id/market_id eventi terminali",
+      "pacchetto_fonte": "inserto (fase B PF-ALL-F001)",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED (entrato con #512)",
+      "pr_github": [
+        {
+          "n": 512,
+          "merge_sha": "f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9",
+          "data": "2026-10-19"
+        }
+      ],
+      "dipendenze_dichiarate": "prerequisito di PR26/PR29/PR30",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Patch locale d666de9 (task key issue461-pr26-0-f001-executor-outcome) poi assorbita in #512; F011/F025 (betId) → PR26; F026 → PR28/PR34.",
+      "fonti_comment_id": [
+        6167132117,
+        6170842441,
+        6309349391
+      ]
+    },
+    {
+      "id": "PR26-a",
+      "nome": "customer_ref / provenance dei produttori",
+      "pacchetto_fonte": "inserto (parte PR26)",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 498,
+          "merge_sha": null,
+          "data": "2026-10-08 (head fa2df55; merge manuale owner; SHA squash non citato nei commenti letti)"
+        }
+      ],
+      "dipendenze_dichiarate": "prima PR operativa MCP",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "",
+      "note_limiti_residui": "Residui: message_id Telegram (prodotto); table_id eventi terminali → PR29; batch_id dutching/create_leg → PR30/31.",
+      "fonti_comment_id": [
+        6049998287,
+        6053164400,
+        6309349391
+      ]
+    },
+    {
+      "id": "PR26",
+      "nome": "Unica autorità ordini e contratti adapter (PKG-P23)",
+      "pacchetto_fonte": "PKG-P23",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED (scheda chiusa; gate LIVE_BLOCKED_UNTIL_PR26_DURABLE_DEDUPE soddisfatto come gate di codice)",
+      "pr_github": [
+        {
+          "n": 500,
+          "merge_sha": "f5cb7e637a5fba0a68d0d0b5f471b1de8ef31452",
+          "data": "2026-10-08"
+        }
+      ],
+      "dipendenze_dichiarate": "PR26-a",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T09,T30",
+      "note_limiti_residui": "F8/F10/F14/F15 chiusi; decisione BROKER_REJECTED=INTENT_CONSUMED (c.6063940461). Preesistenti fuori scope: SIM LAPSED→ACCEPTED_FOR_PROCESSING (→PR30/31); replace OrderManager → PR30.",
+      "fonti_comment_id": [
+        6064163784,
+        6063940461,
+        6053160870
+      ]
+    },
+    {
+      "id": "PR27",
+      "nome": "Validazione numerica fail-closed per ordini e rischio (PKG-P24-A)",
+      "pacchetto_fonte": "PKG-P24-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "MERGED",
+      "pr_github": [
+        {
+          "n": 501,
+          "merge_sha": "feb2302b612269db468c29b3d4d88c2fadb0ea90",
+          "data": "2026-10-08"
+        }
+      ],
+      "dipendenze_dichiarate": "PR26",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T09,T18",
+      "note_limiti_residui": "Rinvii: A1/A2/reload_config → PR28 (chiusi in #502); tavolo ACTIVE dopo FAILED → PR29/F2.",
+      "fonti_comment_id": [
+        6065369529
+      ]
+    },
+    {
+      "id": "PR28",
+      "nome": "Tutti i limiti owner da GUI/config al trasporto (PKG-P24-B) — scheda ombrello",
+      "pacchetto_fonte": "PKG-P24-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "PARZIALE / IMPLEMENTED_WITH_NOTE (tutte le sotto-PR mergiate; residui aperti)",
+      "pr_github": [
+        {
+          "n": 502,
+          "merge_sha": "54e9d176711b2203c68a91bd08802bec47e19e41",
+          "data": "2026-10-08",
+          "slice": "PR28 prima slice: liability LAY, reload_config"
+        },
+        {
+          "n": 503,
+          "merge_sha": "f7c103cacf84921a4b3587ddbb303cc834728651",
+          "data": "2026-10-08",
+          "slice": "PR28-b: daily loss durevole F4, session-loss stop P37"
+        },
+        {
+          "n": 504,
+          "merge_sha": null,
+          "data": "2026-10 (MERGED; SHA non citato)",
+          "slice": "PR28-c: RISK_STOP distinto da EMERGENCY (P38) + exposure stop"
+        },
+        {
+          "n": 512,
+          "merge_sha": "f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9",
+          "data": "2026-10-19",
+          "slice": "PR28 Microstake nativo (PF-MICROSTAKE-NATIVE-INTEGRATION-02, task key issue461-pr28-microstake-native-02), 14 cicli"
+        },
+        {
+          "n": 505,
+          "merge_sha": null,
+          "data": "chiusa temporaneamente senza merge 19/10 (archive/pf-505-pre-512 = 618884e)",
+          "slice": "PR28-d cap assoluti Roserpina (versione originaria)"
+        },
+        {
+          "n": 522,
+          "merge_sha": "dd0ae58 (head c4ac69e)",
+          "data": "2026-10-19",
+          "slice": "PR28-d ripresa: cap monetari opzionali e disattivati di default (rettifica 18/10), 6 cicli"
+        },
+        {
+          "n": 531,
+          "merge_sha": "f3349467ee7b320d8ecfca7b9729b1272e025def",
+          "data": "2026-10-20",
+          "slice": "PR28-e gate esplicito dei fondi (PF-CAP-09/19, PF-EXEC-04); Q10 ratificata"
+        }
+      ],
+      "dipendenze_dichiarate": "PR27",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T07,T17,T18",
+      "note_limiti_residui": "Residui: P06 cap per strategia DEFERRED/NOT IMPLEMENTED (Roserpina unica autorità); PF-C28-01..03 NOT VERIFIED (crash drill con PR34); verbale formale 'verifica PR28' mancante; PF-CAP-13 (telegram_listener stake or 1.0), PF-CAP-18 (master_price or 2.0), PF-CAP-07/15 (MIN_STAKE/floor dutching) su percorsi dormienti; G7 #532 SimulationBroker non riserva fondi (parità SIM/LIVE non certificata); corsie Dutching/manual_bet dormienti; codici errore fondi/provider PLANNED; debito #516–#521 da #512.",
+      "fonti_comment_id": [
+        6066020561,
+        6067529638,
+        6068101049,
+        6068114207,
+        6272363335,
+        6304343807,
+        6309349391,
+        6267898378
+      ]
+    },
+    {
+      "id": "PR29",
+      "nome": "Prenotazione atomica dell'esposizione concorrente (PKG-P24-C)",
+      "pacchetto_fonte": "PKG-P24-C",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "PARZIALE / IN CORSO (29-a, 29-b, 29-c MERGED; 29-f e altri figli PF-C29-01.xx aperti)",
+      "pr_github": [
+        {
+          "n": 533,
+          "merge_sha": "2f25576",
+          "data": "2026-10-21",
+          "slice": "PR29-a: PF-C29-01.03/.07/.13 (QUICK_BET_SUCCESS non rilascia; ammissione in volo; due processi stesso DB)"
+        },
+        {
+          "n": 534,
+          "merge_sha": "409bcf9dd9ca6fe86aeaed6808dfabde4f7fa109",
+          "data": "2026-10-21",
+          "slice": "PR29-b: PF-C29-01.17 lotto Dutching (R1-R3)"
+        },
+        {
+          "n": 535,
+          "merge_sha": "152613b30fb0719682d71ae6653f984079a48262",
+          "data": "2026-10-22",
+          "slice": "PR29-c: settlement→tavolo per bet_id/customer_ref, dedup, release idempotente (.18/.11/.13), un solo runtime per DB"
+        }
+      ],
+      "dipendenze_dichiarate": "PR28, PR-F001, gate fondi (PR28-e); requisiti PF-LIVE-FUNDS-POLICY-01/02, THRESHOLD-01 (30 s), INVALIDATE-01, ATOMIC-RESERVE-01 (T-F01…T-F09), OWNER-EXPOSURE-01, OWNER-SETTLEMENT-02 (.18 prima di .09), OWNER-MULTIPROCESS-03, FIN-FUNDS, L05-F2/F3/F5, PF-C29-01.01–.18",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T17,T18,T21",
+      "note_limiti_residui": "Aperti: 29-f doppio conteggio riserve nel gate fondi / G7; chiusura incertezza per identità riserva (fatto in 29-c? dichiarato requisito 29-c); rischio residuo .runtime.lock cancellato manualmente (blocker certificazione LIVE, c.6335409948, da tracciare separatamente con #453/#506/#351); T-F03/T-F06 da provare con due processi reali; #528 flake F026.",
+      "fonti_comment_id": [
+        6309349391,
+        6315249711,
+        6320051493,
+        6327246613,
+        6335409948,
+        6162829180,
+        6124158750
+      ]
+    },
+    {
+      "id": "PR30",
+      "nome": "FSM AMBIGUOUS e replace senza retry cieco (PKG-P25)",
+      "pacchetto_fonte": "PKG-P25",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (PENDING; molti requisiti trasferiti; BLOCKS_LIVE)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR29 verificata soddisfatta; da non iniziare prima",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T09,T10,T21",
+      "note_limiti_residui": "Trasferiti: PF-EXEC-02 esito lotto Dutching (scelta F #529); PF529-A3-R1..R4 (pre-controllo lotto tutto-o-niente); cablaggio batch manager (runtime.batch_manager vs dutching_batch_manager); manual_bet customer_ref; lotto EXECUTED con gambe annullate; BF2-A-F01 UNKNOWN_OUTCOME; customerOrderRef (c.6125270694); riconciliazione automatica AMBIGUOUS con Betfair (dipendenza LIVE da #524/#526); SIM LAPSED→ACCEPTED_FOR_PROCESSING; replace OrderManager; D-B PAUSED al riavvio con AMBIGUOUS. Stato 'non MODIFIED' dopo #526.",
+      "fonti_comment_id": [
+        6085512485,
+        6292754293,
+        6294445741,
+        6295132960,
+        6296247545,
+        6311697332,
+        6317204134,
+        6278391354,
+        6284059630
+      ]
+    },
+    {
+      "id": "PR31",
+      "nome": "Riconciliazione per identità, current+cleared e ghost (PKG-P26)",
+      "pacchetto_fonte": "PKG-P26",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (PENDING)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR30",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T10,T21,T30",
+      "note_limiti_residui": "Trasferiti: F018 ricostruzione tavolo per gamba; riconciliazione all'avvio non rilascia lotto EXECUTED; persist_decision_log assente nel Database di produzione; batch_id dutching canonico/replay create_leg; Recovery K01–K13; BF2-R-F01 alias customerRef/customerOrderRef; T-F02/T-F07; startup reconciliation non consente ACTIVE se incompleta; OD-PF-RECON-02 matrice autorità REST/stream.",
+      "fonti_comment_id": [
+        6085513127,
+        6294445741,
+        6316751984,
+        6320051493,
+        6053161124,
+        6128717447
+      ]
+    },
+    {
+      "id": "PR32",
+      "nome": "Retry bounded, lock e fencing cross-process (PKG-P27)",
+      "pacchetto_fonte": "PKG-P27",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR31",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T21,T22",
+      "note_limiti_residui": "OWNER-MULTIPROCESS-03: PF-C32-01.03/.04 requisiti pieni; TS-D14/D15 lease; candidata per la mitigazione .runtime.lock (ownership/fencing/OS-level lock, c.6335409948).",
+      "fonti_comment_id": [
+        6085513127,
+        6124156631,
+        6335409948
+      ]
+    },
+    {
+      "id": "PR33",
+      "nome": "Migrazioni DB, saga e outbox atomiche (PKG-P28-A)",
+      "pacchetto_fonte": "PKG-P28-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (BLOCKED_ENV finché manca prova SQLite reale)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR32; acquisire delta c8fcaa3 (#446)",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T21,T22",
+      "note_limiti_residui": "OD12-07 STOP persistente / PF-EXEC-06 → PR33 recovery (NOT VERIFIED).",
+      "fonti_comment_id": [
+        6085513127,
+        6235867968
+      ]
+    },
+    {
+      "id": "PR34",
+      "nome": "Durabilità SIM e crash/restart sul DB reale temporaneo (PKG-P28-B)",
+      "pacchetto_fonte": "PKG-P28-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR33",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T10,T21,T22",
+      "note_limiti_residui": "Prova durevole F4 di PR28 (PF-C28-01..03); F026 bankroll da saldo disponibile/auto-reset → PR28/PR34; harness F026 instabile #528; KNOWN_LIMITATION db+marker non scrivibili (PR28-b).",
+      "fonti_comment_id": [
+        6085513127,
+        6170842441,
+        6067529638
+      ]
+    },
+    {
+      "id": "PR35",
+      "nome": "AEAD e migrazione segreti non distruttiva (PKG-P29)",
+      "pacchetto_fonte": "PKG-P29",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR34",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T04,T26",
+      "note_limiti_residui": "Blocker WINDOWS_SECRET_ACL_PARITY (owner PR35/PR53).",
+      "fonti_comment_id": [
+        6085513127,
+        6063071704
+      ]
+    },
+    {
+      "id": "PR36",
+      "nome": "Autenticazione e confini dell'API locale (PKG-P30-A)",
+      "pacchetto_fonte": "PKG-P30-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR35",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T27,T31",
+      "note_limiti_residui": "OWN-002 MANUAL MCP preview/conferma collegato.",
+      "fonti_comment_id": [
+        6085513127
+      ]
+    },
+    {
+      "id": "PR37",
+      "nome": "Preview senza effetti e barriera STOP fisica (PKG-P30-B)",
+      "pacchetto_fonte": "PKG-P30-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR36",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T17,T27,T30",
+      "note_limiti_residui": "Best price DIRECT/TTL (PR37/38) da riconciliare con PF-BEST-EXECUTION-DYNAMIC-01 e PF-OD12-04 (PLANNED), senza assumere copertura.",
+      "fonti_comment_id": [
+        6085513127,
+        6235560755,
+        6235867968
+      ]
+    },
+    {
+      "id": "PR38",
+      "nome": "Best-price DIRECT e TTL totalmente unmatched (PKG-P31)",
+      "pacchetto_fonte": "PKG-P31",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR37",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T28",
+      "note_limiti_residui": "OC-06: cancellazione automatica a scadenza DIRECT disattivata di default; F002 (TTL).",
+      "fonti_comment_id": [
+        6085513127,
+        6131667643,
+        6167132117
+      ]
+    },
+    {
+      "id": "PR39",
+      "nome": "Master/slave: dutching e cashout con identità (PKG-P32)",
+      "pacchetto_fonte": "PKG-P32",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR38",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T24",
+      "note_limiti_residui": "OWN-004 Copy/Mirror sospesi; nessun tool MCP master/copy/follow.",
+      "fonti_comment_id": [
+        6085513127
+      ]
+    },
+    {
+      "id": "PR40",
+      "nome": "Registry durevole e dispatcher dei follower (PKG-P33-A)",
+      "pacchetto_fonte": "PKG-P33-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR39",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T25",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085513127
+      ]
+    },
+    {
+      "id": "PR41",
+      "nome": "Quattro modalità stake follower e cap per conto (PKG-P33-B)",
+      "pacchetto_fonte": "PKG-P33-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR40",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T25",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085513826
+      ]
+    },
+    {
+      "id": "PR42",
+      "nome": "Replica azioni completa, isolamento e recovery follower (PKG-P33-C)",
+      "pacchetto_fonte": "PKG-P33-C",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "SUSPENDED",
+      "stato_dichiarato": "SOSPESO (azione condizionata DEFERRED/FUTURE)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR41",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T24,T25",
+      "note_limiti_residui": "Decisione 08/10: nessun motore condizionato nel follower.",
+      "fonti_comment_id": [
+        6085513826,
+        6068305820
+      ]
+    },
+    {
+      "id": "PR43",
+      "nome": "Cashout per target e netting BACK/LAY (PKG-P34-A)",
+      "pacchetto_fonte": "PKG-P34-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "core safety + PR25/P35 + PR37/38 → PR43",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T12,T16",
+      "note_limiti_residui": "P39 Void = hedge; fixture 'due mercati/strategie' sostituita con isolamento reale (08/10); nessun strategy_ref.",
+      "fonti_comment_id": [
+        6085513826,
+        6068307679
+      ]
+    },
+    {
+      "id": "PR44",
+      "nome": "Cashout partial/fraction, residui e minimi supportati (PKG-P34-B)",
+      "pacchetto_fonte": "PKG-P34-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR43",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T11,T16",
+      "note_limiti_residui": "DEC-PF-C44-03 denominatore = capitale a rischio (11/10); P34/P35 confermate.",
+      "fonti_comment_id": [
+        6085513826,
+        6112703848
+      ]
+    },
+    {
+      "id": "PR45",
+      "nome": "Riconciliazione cashout AMBIGUOUS e parità GUI/headless (PKG-P34-C)",
+      "pacchetto_fonte": "PKG-P34-C",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR44",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T16,T21,T23",
+      "note_limiti_residui": "P38 arresto di rischio; D-D un solo cashout attivo per posizione; AUD-02/03.",
+      "fonti_comment_id": [
+        6085513826,
+        6247974757
+      ]
+    },
+    {
+      "id": "PR46",
+      "nome": "EventBus, code, drain e backpressure (PKG-P35-A)",
+      "pacchetto_fonte": "PKG-P35-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR45",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T22,T30,T32",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085513826
+      ]
+    },
+    {
+      "id": "PR47",
+      "nome": "Metriche correlate, tempi, incidenti e alert (PKG-P35-B)",
+      "pacchetto_fonte": "PKG-P35-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO ('audit necessario')",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR46",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "T19,T23,T30",
+      "note_limiti_residui": "OD12-11 storico verificabile: parziale (orders/audit_events, saghe Microstake).",
+      "fonti_comment_id": [
+        6085513826,
+        6235867968
+      ]
+    },
+    {
+      "id": "PR48",
+      "nome": "Pulizia XTrader/doppioni con preservazione runtime (PKG-P36)",
+      "pacchetto_fonte": "PKG-P36",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR47; callgraph definitivo",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T02,T27,T30",
+      "note_limiti_residui": "Blocker LEGACY_XTRADER_PATHS_NOT_AUTHORITATIVE.",
+      "fonti_comment_id": [
+        6085513826,
+        6063071704
+      ]
+    },
+    {
+      "id": "PR49",
+      "nome": "CI: autorizzazioni da fonte fidata e merge markers (PKG-P37-A)",
+      "pacchetto_fonte": "PKG-P37-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR48",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T31",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085513826
+      ]
+    },
+    {
+      "id": "PR50",
+      "nome": "CI: collection/workflow_run e policy reviewer corrente (PKG-P37-B/PKG-P38 residuo)",
+      "pacchetto_fonte": "PKG-P37-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "PARZIALE (P16 orchestratori ci-master-gate/ci-dynamic-intelligent FIXED da #527; resto NON INIZIATO)",
+      "pr_github": [
+        {
+          "n": 527,
+          "merge_sha": "e694e39",
+          "data": "2026-10-20",
+          "slice": "#525 PF-CI-ORCHESTRATORS-RECOVERY-01 + mutation-guardrails reali (merge autonomo PF-AUTONOMOUS-MERGE-20261020)"
+        }
+      ],
+      "dipendenze_dichiarate": "PR49 e PR01/#462",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T31",
+      "note_limiti_residui": "P16 assegnava gli orchestratori a PR50; risolti fuori scheda via #525/#527. Policy reviewer vigente P41 + 6110336882 (Sol/Grok non bloccanti se assenti).",
+      "fonti_comment_id": [
+        6085513826,
+        5792003414,
+        6288782631
+      ]
+    },
+    {
+      "id": "PR51",
+      "nome": "Backup SQLite cifrato, scheduler e retention (PKG-P39-A)",
+      "pacchetto_fonte": "PKG-P39-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR50; AEAD pronto",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T26,T29",
+      "note_limiti_residui": "Gate del primo MCP LIVE (OWN-003).",
+      "fonti_comment_id": [
+        6085514414
+      ]
+    },
+    {
+      "id": "PR52",
+      "nome": "Restore drill isolato, errori disco/WAL/permessi (PKG-P39-B)",
+      "pacchetto_fonte": "PKG-P39-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR51",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T26,T29",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085514414
+      ]
+    },
+    {
+      "id": "PR53",
+      "nome": "Pacchetti installabili Windows e Linux (PKG-P40-A)",
+      "pacchetto_fonte": "PKG-P40-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR52",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T01,T02",
+      "note_limiti_residui": "Blocker WINDOWS_LINUX_BUILD_REPRODUCIBILITY_PARITY, INSTALLED_ARTIFACT_PARITY; #351 richiede due VPS reali (08/10).",
+      "fonti_comment_id": [
+        6085514414,
+        6063071704,
+        6067169671
+      ]
+    },
+    {
+      "id": "PR54",
+      "nome": "Avvio continuativo, restart e operatività H24 (PKG-P40-B)",
+      "pacchetto_fonte": "PKG-P40-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR53",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T22,T29",
+      "note_limiti_residui": "Blocker H24_RESTART_PARITY_WINDOWS_LINUX.",
+      "fonti_comment_id": [
+        6085514414,
+        6063071704
+      ]
+    },
+    {
+      "id": "PR55",
+      "nome": "VERSION, pipeline Release e manifest verificabile (PKG-P41-A)",
+      "pacchetto_fonte": "PKG-P41-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR54; CI/backup pronti",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T01,T31,T33",
+      "note_limiti_residui": "Resta gate del rilascio installabile e del primo MCP LIVE (OWN-003 Caso B).",
+      "fonti_comment_id": [
+        6085514414,
+        6068305820
+      ]
+    },
+    {
+      "id": "PR56",
+      "nome": "Version checker, notifica e download con hash/progress (PKG-P41-B)",
+      "pacchetto_fonte": "PKG-P41-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "DEFERRED_FIRST_LIVE",
+      "stato_dichiarato": "DEFERRED (prima LIVE); VIGENTE per prodotto finale",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR55",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T01,T33",
+      "note_limiti_residui": "UPDATER_SCOPE = Caso B (08/10).",
+      "fonti_comment_id": [
+        6085514414,
+        6068305820
+      ]
+    },
+    {
+      "id": "PR57",
+      "nome": "Safe-state, barriera e updater separato (PKG-P42-A)",
+      "pacchetto_fonte": "PKG-P42-A",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "DEFERRED_FIRST_LIVE",
+      "stato_dichiarato": "DEFERRED (prima LIVE)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR56; shutdown/DB/STOP pronti",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T22,T33",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085514414
+      ]
+    },
+    {
+      "id": "PR58",
+      "nome": "Sostituzione, health, compatibilità DB e rollback (PKG-P42-B)",
+      "pacchetto_fonte": "PKG-P42-B",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "DEFERRED_FIRST_LIVE",
+      "stato_dichiarato": "DEFERRED (prima LIVE)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR57",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T29,T33",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085514414
+      ]
+    },
+    {
+      "id": "PR59",
+      "nome": "Accettazione whole-wiring sul runtime vero (PKG-P43)",
+      "pacchetto_fonte": "PKG-P43",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "corpo #461: 'PR58 → PR59 totale → PR60' (ma OWN-003 Caso B: updater non blocca primo MCP LIVE) — dipendenza da riconciliare",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T09–T33,T35",
+      "note_limiti_residui": "OD12-05/OD12-12 (Dutching, parità simulatore) mappate su PR59; matrice OS nel dossier finale.",
+      "fonti_comment_id": [
+        6085514414,
+        6068305820,
+        6235867968
+      ]
+    },
+    {
+      "id": "PR60",
+      "nome": "Sweep finale #380 e dossier per il collaudo (PKG-P44)",
+      "pacchetto_fonte": "PKG-P44",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO",
+      "pr_github": [],
+      "dipendenze_dichiarate": "PR59",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "T03,T07,T15,T18,T23,T28,T35",
+      "note_limiti_residui": "",
+      "fonti_comment_id": [
+        6085514414
+      ]
+    },
+    {
+      "id": "PF-API-0 / PF-API-1 / PF-API commands",
+      "nome": "Control API in-process (readiness control-plane sostituisce gate Telegram; comandi)",
+      "pacchetto_fonte": "sequenza MCP (#491/#495)",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON INIZIATO (Control API assente)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "dopo PR47 nella sequenza MCP",
+      "in_sequenza_MCP_corrente": true,
+      "test_351": "",
+      "note_limiti_residui": "Non è una delle 60 schede; fonte #491/#495/pickfair-mcp- #1.",
+      "fonti_comment_id": [
+        6043517977
+      ]
+    },
+    {
+      "id": "MCP-01a",
+      "nome": "Repository pickfair-mcp-: struttura, server stdio, get_meta, adapter simulato",
+      "pacchetto_fonte": "pickfair-mcp- #1",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "AUTORIZZATO / IN SVILUPPO (21/10)",
+      "pr_github": [],
+      "dipendenze_dichiarate": "indipendente; nessuna mutazione reale (MCP_MUTATION_EXPOSURE=BLOCKED_UNTIL_CORE_AUTHORITY_READY)",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Non è scheda #461; merge subordinato ad autorizzazione owner.",
+      "fonti_comment_id": [
+        6324994877
+      ]
+    },
+    {
+      "id": "NEW-ORDER-STREAM",
+      "nome": "Order Stream applicativo (MISSING) — NUOVA SCHEDA NECESSARIA, owner primario da esplicitare (PR31/PR11 integrazioni); BF2-C-F01 503, BF2-C-F02 img",
+      "pacchetto_fonte": "#495 audit",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON CREATA (numero non assegnato per decisione: 'nessun numero inventato')",
+      "pr_github": [],
+      "dipendenze_dichiarate": "",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Censita in #461 body §Integrazione operativa audit #495 (08/10).",
+      "fonti_comment_id": [
+        6043517977,
+        6125598240
+      ]
+    },
+    {
+      "id": "NEW-REST-DISCOVERY",
+      "nome": "REST discovery / runner book / market P&L: wrapper morti/parziali e schema — NUOVA SCHEDA NECESSARIA",
+      "pacchetto_fonte": "#495 audit",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON CREATA (numero non assegnato per decisione: 'nessun numero inventato')",
+      "pr_github": [],
+      "dipendenze_dichiarate": "",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Censita in #461 body §Integrazione operativa audit #495 (08/10).",
+      "fonti_comment_id": [
+        6043517977,
+        6125598240
+      ]
+    },
+    {
+      "id": "NEW-ACCOUNT",
+      "nome": "Account details / statement / currency rates (funds PARTIAL, 3 MISSING) — NUOVA SCHEDA NECESSARIA",
+      "pacchetto_fonte": "#495 audit",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON CREATA (numero non assegnato per decisione: 'nessun numero inventato')",
+      "pr_github": [],
+      "dipendenze_dichiarate": "",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Censita in #461 body §Integrazione operativa audit #495 (08/10).",
+      "fonti_comment_id": [
+        6043517977,
+        6125598240
+      ]
+    },
+    {
+      "id": "NEW-UPDATEORDERS",
+      "nome": "updateOrders MISSING (contratto authority PR26, lifecycle PR30/31) — NUOVA SCHEDA NECESSARIA",
+      "pacchetto_fonte": "#495 audit",
+      "descrizione": "",
+      "stato_requisito_PF-DOC": "VIGENTE",
+      "stato_dichiarato": "NON CREATA (numero non assegnato per decisione: 'nessun numero inventato')",
+      "pr_github": [],
+      "dipendenze_dichiarate": "",
+      "in_sequenza_MCP_corrente": false,
+      "test_351": "",
+      "note_limiti_residui": "Censita in #461 body §Integrazione operativa audit #495 (08/10).",
+      "fonti_comment_id": [
+        6043517977,
+        6125598240
+      ]
+    }
+  ],
+  "issue_e_programmi_collegati": [
+    {
+      "id": "#505",
+      "ruolo": "PR28-d originaria, chiusa temporaneamente senza merge (archive/pf-505-pre-512=618884e, prep 022ee9d); ripresa via #522",
+      "fonte": 6265078210
+    },
+    {
+      "id": "#512",
+      "ruolo": "PR28 Microstake nativo, MERGED f8bbbe9 (19/10), 14 cicli; debito → #516–#521",
+      "fonte": 6267898378
+    },
+    {
+      "id": "#513",
+      "ruolo": "PF-QA-02 policy 10 cicli → PR #530 MERGED 2141031 (merge manuale owner 20/10)",
+      "fonte": 6300328359
+    },
+    {
+      "id": "#515",
+      "ruolo": "PF-AUTONOMOUS-UNBLOCK-01 (policy registrata, non implementata; primo slot compatibile)",
+      "fonte": 6255410532
+    },
+    {
+      "id": "#516–#521",
+      "ruolo": "finding rinviati da #512: debito obbligatorio, FIXED solo con prova; mapping verifica G1–G7 (spec continuous_formal_verification)",
+      "fonte": 6272363335
+    },
+    {
+      "id": "#523 / PR #529",
+      "ruolo": "Dutching/manual_bet lato obbligatorio, MERGED 380157a200ae98b8b77034f15c232ed96d61bc79 (20/10); BLOCKS_DUTCHING_ACTIVATION resta",
+      "fonte": 6298118212
+    },
+    {
+      "id": "#524 / PR #526",
+      "ruolo": "engine AMBIGUOUS→FAILED: MERGED ac2064c (20/10), FIXED solo per quel difetto; PR30 resta BLOCKS_LIVE",
+      "fonte": 6284059630
+    },
+    {
+      "id": "#525 / PR #527",
+      "ruolo": "orchestratori CI + mutation-guardrails: MERGED e694e39 (20/10)",
+      "fonte": 6288782631
+    },
+    {
+      "id": "#528",
+      "ruolo": "harness F026 instabile (follow-up aperto)",
+      "fonte": 6298118212
+    },
+    {
+      "id": "#532 (G7)",
+      "ruolo": "SimulationBroker non riserva fondi: difetto finanziario reale da correggere (fase M6); parità SIM/LIVE non certificata",
+      "fonte": 6304341575
+    },
+    {
+      "id": "#510",
+      "ruolo": "Roserpina multi-tavolo: non certificato senza prove",
+      "fonte": 6322399988
+    },
+    {
+      "id": "#511",
+      "ruolo": "PF-ROSERPINA-41 GUI/MCP + simulazione combinatoria; PF-DUTCH-CS-FTHT-ROSERPINA-E2E-01 (72 casi) SPECIFICATO",
+      "fonte": 6177955933
+    },
+    {
+      "id": "#509",
+      "ruolo": "QA VPS manuale: solo specifica, dopo merge #505 e sequenza #461",
+      "fonte": 6127838858
+    },
+    {
+      "id": "#506",
+      "ruolo": "Gate A globale NON PASS (A01–A13 invariati); Gate B non certificato",
+      "fonte": 6270750771
+    },
+    {
+      "id": "#351",
+      "ruolo": "certificazione finale; due VPS reali richieste; mercati solo calcio MATCH_ODDS/OVER_UNDER_25/CORRECT_SCORE/BTTS",
+      "fonte": 6067169671
+    },
+    {
+      "id": "PF-QA-CONTINUOUS-REDTEAM-01",
+      "ruolo": "programma trasversale approvato 16/10 (non eseguito)",
+      "fonte": 6210967565
+    },
+    {
+      "id": "PF-AGENT-CONTINUITY-01 / PF-TRACEABILITY-ALL-01",
+      "ruolo": "programmi trasversali di governance registrati 17/10",
+      "fonte": 6225689722
+    },
+    {
+      "id": "PF-CONTINUOUS-FORMAL-VERIFICATION-01",
+      "ruolo": "standard permanente (19/10); PR strumenti a merge owner dopo #522",
+      "fonte": 6272360473
+    }
+  ]
+}

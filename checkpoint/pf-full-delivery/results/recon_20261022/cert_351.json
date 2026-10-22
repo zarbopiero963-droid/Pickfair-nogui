@@ -1,0 +1,120 @@
+{
+ "issue": 351,
+ "stato_issue": "open",
+ "comments_totali": 84,
+ "comments_letti": 84,
+ "verdetto_corrente": "NO-GO HARD / certificazione non completata (c.6278395720 19/10; c.6284060752 20/10 ratifica #526 senza LIVE)",
+ "requisiti": [
+  {
+   "requisito": "Campagna T01-T35 installata Windows poi Linux",
+   "stato_dichiarato": "NOT_RUN / NON ESEGUITA",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Matrice SIM/LIVE (SIM Windows, SIM Linux NOT_RUN; LIVE Windows/Linux BLOCKED)",
+   "stato_dichiarato": "NOT_RUN/BLOCKED",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Estensione #495 (real client/adapter, malformed, cancel lost, stream, order stream, shutdown/crash/concurrency, Control API/MCP E2E, whole-wiring)",
+   "stato_dichiarato": "NOT_RUN/BLOCKED (impl. mancante)",
+   "fonte": "corpo #351 AUDIT-495-ALIGNMENT"
+  },
+  {
+   "requisito": "Milestone A MCP SIM / B MCP LIVE / C chiusura totale",
+   "stato_dichiarato": "tutte [ ] aperte",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Gate certificazione SIM/LIVE: crash/restart, concurrency, SQLite reale, SimulationBroker reale, Betfair reale, whole-wiring",
+   "stato_dichiarato": "NOT_RUN",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Certificazione installata finale su 2 VPS reali: PASS_INSTALLED_WINDOWS + PASS_H24_WINDOWS + PASS_INSTALLED_LINUX + PASS_H24_LINUX + PASS_CROSS_OS_PARITY",
+   "stato_dichiarato": "NOT_RUN; VPS #509 Linux acquistata non configurata; Windows BLOCKED",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6067168898"
+  },
+  {
+   "requisito": "Matrice parita' OS (17 aree)",
+   "stato_dichiarato": "tutte NOT_RUN",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6063073039"
+  },
+  {
+   "requisito": "Market matrix calcio, MANUAL via MCP, updater scope (update manuale ammesso per primo MCP LIVE)",
+   "stato_dichiarato": "definito, NOT_RUN",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6068311872"
+  },
+  {
+   "requisito": "PF-CAP-ATOMIC-01: nessun cap monetario fisso di default (6 punti)",
+   "stato_dichiarato": "AUDIT COMPLETED; #522/#531 applicano decisione; certificazione NOT_RUN",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6250413342"
+  },
+  {
+   "requisito": "PF-CONTINUOUS-FORMAL-VERIFICATION-01: M1-M6, invarianti I1-I11 e C1-C6 sulla baseline candidata LIVE",
+   "stato_dichiarato": "obbligatorio, NOT_RUN; NOT_RUN blocca",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6272369752"
+  },
+  {
+   "requisito": "Blocker owner #524 e #525",
+   "stato_dichiarato": "#524 FIXED (#526 ratifica c.6284060752) con dipendenza PR30; #525 FIXED (#527)",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6275845616"
+  },
+  {
+   "requisito": "Blocker aperti prima di LIVE (stato 19/10)",
+   "stato_dichiarato": "#523 (poi #529), PR30 riconciliazione AMBIGUOUS, collaudo Roserpina multi-tavolo crash/riavvio, Gate A globale NON PASS",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6278395720"
+  },
+  {
+   "requisito": "PF-351-INTEGRATED-CERTIFICATION-01 piano P1-P12",
+   "stato_dichiarato": "P12 NON AVVIABILE; P11 Windows BLOCKED; P10 Betfair reale BLOCKED",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6242905583"
+  },
+  {
+   "requisito": "Invarianti finanziari 1-10 (§4 mandato master)",
+   "stato_dichiarato": "1,2,3,5,6,7,8,9,10 verificati da test su head #512; 4 SIM-only, LIVE NOT VERIFIED",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6242905583"
+  },
+  {
+   "requisito": "E2E-11 Due processi concorrenti (PF-DOC tests)",
+   "stato_dichiarato": "NOT VERIFIED",
+   "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/351#issuecomment-6085517762"
+  },
+  {
+   "requisito": "T21 riconciliazione/durabilita' DB: due istanze concorrenti sul DB test; fencing/lock efficaci",
+   "stato_dichiarato": "NOT_RUN",
+   "fonte": "corpo #351 catalogo T21"
+  },
+  {
+   "requisito": "T29 backup/restore e H24: restore non avvia due trader sullo stesso account",
+   "stato_dichiarato": "NOT_RUN",
+   "fonte": "corpo #351 catalogo T29"
+  },
+  {
+   "requisito": "T22 crash/restart/teardown",
+   "stato_dichiarato": "NOT_RUN",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Prerequisiti prima dei test con denaro (SHA/build, AEAD S2, paper con feed autentico, decisione #426 limiti, backup/recovery)",
+   "stato_dichiarato": "[ ] aperti",
+   "fonte": "corpo #351"
+  },
+  {
+   "requisito": "Criterio finale di completamento (6 punti)",
+   "stato_dichiarato": "[ ] aperti",
+   "fonte": "corpo #351"
+  }
+ ],
+ "runtime_lock": {
+  "protezione_runtime_lock_elencata_come_prerequisito": false,
+  "stringa_runtime.lock": "nessuna occorrenza in corpo e 84 commenti",
+  "prerequisiti_vicini": [
+   "T21 due istanze concorrenti sul DB test, fencing/lock efficaci (corpo)",
+   "T29 restore non avvia due trader sullo stesso account (corpo)",
+   "E2E-11 due processi concorrenti NOT VERIFIED (c.6085517762)",
+   "Gate certificazione 'concurrency' NOT_RUN (corpo MCP-OPERATIVE-351)",
+   "Shutdown/crash/restart/concurrency #495 NOT_RUN (corpo)"
+  ]
+ }
+}

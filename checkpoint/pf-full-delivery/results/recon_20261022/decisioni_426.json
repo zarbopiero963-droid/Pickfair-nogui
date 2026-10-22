@@ -1,0 +1,1252 @@
+{
+  "meta": {
+    "generato": "2026-10-22",
+    "issue": 426,
+    "commenti_letti": 132,
+    "titolo": "[DECISIONI OWNER] Registro unico per #453 e collaudo reale #351",
+    "nota": "Indice compatto; i testi integrali restano nei commenti. 'stato' = CONFERMATA salvo diversa indicazione; 'rettificata_o_superata_da' indica decisioni successive prevalenti.",
+    "corpo_426_ultimo_aggiornamento": "2026-10-09 (PF-DOC-CURRENT-20261009) + rettifica 08/10; sezioni SIM/LIVE 07/10, P33–P40, D01–D24, P01–P12"
+  },
+  "decisioni": [
+    {
+      "id": "D01–D24 (registro consolidato)",
+      "comment_id": "corpo #426",
+      "data": "2026-09-13",
+      "sintesi": "24 decisioni storiche già confermate (issue operativa #453, una PR alla volta, formato KEY:value, Dutching Roserpina, stake locale, master/follower, PnL, precedenza auto-exit, cashout Esegui istantaneo, MIN_STAKE 0.10, logout, #412 opzione 1, #458 updater, VPS non disponibile, rotazione credenziali 21/08).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": "parziale: vedi note",
+      "supera": null,
+      "note": "D02 (merge safety-critical manuale) superata da P19/P41/PF-AUTONOMOUS-MERGE-20261020; D09–D11 master/follower SOSPESE da OWN-004; D14 cashout integrata da P34/P35; D15 MIN_STAKE canonico superato dalla rettifica Microstake 17/10 e dai 'nessun cap fisso' 18/10 (D-E minimo configurato verificato)."
+    },
+    {
+      "id": "P01–P12 (batch)",
+      "comment_id": 5654359134,
+      "data": "2026-09-13",
+      "sintesi": "Approvazione proposte P01–P12 tranne P04/P10/P12 (poi chiuse in 5655887855). P02/P06: limiti €1 ordine, €2 mercato/evento, €1 strategia, €10 totale/drawdown.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": "P02/P06 limiti numerici SUPERSEDED da RETTIFICA LIMITI MONETARI DEFAULT 18/10 (6249983066, 6272356144); P06 per-strategia DEFERRED (6068101392); P11 Codacy dismesso/Fugu superato da P41",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P01–P12 trascrizione formale",
+      "comment_id": 5655799793,
+      "data": "2026-09-13",
+      "sintesi": "Verbale DECISIONE-426 del batch (conferma Grok 4.6).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P04 / P10 / P12",
+      "comment_id": 5655887855,
+      "data": "2026-09-13",
+      "sintesi": "P04 SL/TP/trailing dal MM se assenti, Q incoerente ignorata, cashout MM automatico con checkbox; P10 cinque feature rinviate (volatility breaker, Parser Trainer, Kelly, PROFITTO X€, Desktop Commander); P12 MiniApp/Railway rinviati, Telethon+Bot API mantenuti.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "P12 Telethon/Bot API: trasporto Telegram poi SOSPESO (OWN-004)."
+    },
+    {
+      "id": "Ambienti/limiti/backup (P01,P02,P05–P08)",
+      "comment_id": 5656005416,
+      "data": "2026-09-13",
+      "sintesi": "Dati campagna #351: Windows/Linux 24h, stake €1, esposizione/sessione €10, backup 12h/2gg/2 copie, restore drill.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": "€20/€20 superati da P37/P38 (01/10); cap €1/€10 default superati dalla rettifica 18/10",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P13",
+      "comment_id": 5791172352,
+      "data": "2026-09-22",
+      "sintesi": "Validazione lato BACK/LAY nel client Betfair: opzione B, PR dedicata (#480).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Parte OrderManager → PR26 (5791355861)."
+    },
+    {
+      "id": "P13-int",
+      "comment_id": 5791271267,
+      "data": "2026-09-23",
+      "sintesi": "Correzione del lato estesa a OrderManager.",
+      "stato": "SUPERATA (parte OrderManager)",
+      "rettificata_o_superata_da": "5791355861",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P13-OM",
+      "comment_id": 5791355861,
+      "data": "2026-09-23",
+      "sintesi": "Correzione lato su OrderManager rinviata alla PR26 (OrderManager non usato in produzione).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P15",
+      "comment_id": 5791741598,
+      "data": "2026-09-23",
+      "sintesi": "Parità SIM/LIVE sul lato: PR dedicata subito dopo #480 (→ #481).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P14",
+      "comment_id": 5791745141,
+      "data": "2026-09-23",
+      "sintesi": "Redazione segreti nei reviewer AI: correggere limite degli spazi (#479 → #483).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P16",
+      "comment_id": 5792003414,
+      "data": "2026-09-23",
+      "sintesi": "Orchestratori CI ci-master-gate/ci-dynamic-intelligent: si sistemano nella PR50.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Risolti di fatto da #525/#527 (20/10) fuori PR50."
+    },
+    {
+      "id": "P17 / P18",
+      "comment_id": 5860387768,
+      "data": "2026-09-27",
+      "sintesi": "P17 A: chiusura #481 NEEDS_MANUAL; P18 A: tetto output Fable 3000→8000 (#482).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "P18 superata da P41 (Fable spento)."
+    },
+    {
+      "id": "P19",
+      "comment_id": 5860443300,
+      "data": "2026-09-27",
+      "sintesi": "Agente lavora in autonomia, mergia qualsiasi PR e applica label quando servono.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Precisata da P41 e PF-AUTONOMOUS-MERGE-20261020; file-policy/workflow restano merge owner salvo autorizzazione 20/10."
+    },
+    {
+      "id": "P20 / P21",
+      "comment_id": 5865777221,
+      "data": "2026-09-28",
+      "sintesi": "P20 lato non-stringa mai ordine (secondo push #481); P21 #482 mergiata con overlap-check rosso.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P22",
+      "comment_id": 5867703084,
+      "data": "2026-09-28",
+      "sintesi": "#483 forme ambigue redazione: C tieni così.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P23",
+      "comment_id": 5867875814,
+      "data": "2026-09-28",
+      "sintesi": "#483: ultimo push poi stop.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P24",
+      "comment_id": 5873226592,
+      "data": "2026-09-28",
+      "sintesi": "Grok timeout su head finale: mergia senza Grok; PR dedicata sul timeout; poi fermarsi.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P24-int",
+      "comment_id": 5873634095,
+      "data": "2026-09-28",
+      "sintesi": "PR timeout Grok: mergia senza Grok.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P25",
+      "comment_id": 5885351320,
+      "data": "2026-09-29",
+      "sintesi": "F6 lati del book invertiti in SIM/cashout: PR dedicata (→ PR04-bis #487).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P26",
+      "comment_id": 5885353293,
+      "data": "2026-09-29",
+      "sintesi": "Nessun pulsante cashout manuale in GUI: cashout solo da messaggio.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P27",
+      "comment_id": 5893897413,
+      "data": "2026-09-29",
+      "sintesi": "F11 quota NaN/∞ in place_bet: PR piccola subito (→ PR04-ter #488).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P28",
+      "comment_id": 5893901504,
+      "data": "2026-09-29",
+      "sintesi": "Credenziali: Sfoglia cert/key + due App Key Delayed/Live, PR dedicata prima di PR05 (→ PR04-quater #490).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P29",
+      "comment_id": 5893904970,
+      "data": "2026-09-29",
+      "sintesi": "App Key per modalità: Delayed in SIM, solo Live in LIVE.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P30 / P31 / P32",
+      "comment_id": 5905778715,
+      "data": "2026-09-29",
+      "sintesi": "Key vecchia → Delayed; login SIM con Delayed arriva con PR11; password vuota = invariata.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PERIMETRO-2026-10-01",
+      "comment_id": 5932618681,
+      "data": "2026-10-01",
+      "sintesi": "Perimetro vigente #461: vecchie issue non autorizzano implementazione integrale; classificare sottorequisiti in Phase 0.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P33–P40",
+      "comment_id": 5934306152,
+      "data": "2026-10-01",
+      "sintesi": "P33 tab Azioni esclusa; P34 cashout % soglia+frazione; P35-A attesa; P36 UI Test esclusa; P37 stop sessione €10 ed esposizione €10; P38 tre azioni allo stop; P39 Void=hedge; P40 solo calcio.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "P37 importi €10: superati come default fissi dalla rettifica 18/10 (restano configurabili/limite campagna #351 per il drawdown, 6141902809)."
+    },
+    {
+      "id": "P35-A",
+      "comment_id": 5934505951,
+      "data": "2026-10-01",
+      "sintesi": "Cashout: attesa automatica confermata.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "P35-B/C",
+      "comment_id": 5934562905,
+      "data": "2026-10-01",
+      "sintesi": "Nessuna sostituzione del comando pendente; scadenza alla chiusura del mercato. P35 interamente confermata.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Mandato #490 oltre cap fix loop",
+      "comment_id": 5947822371,
+      "data": "2026-10-02",
+      "sintesi": "Completare PR04-quater #490 oltre le 3 iterazioni; merge solo con gate passati.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Direttiva #490 Grok timeout",
+      "comment_id": 5950951736,
+      "data": "2026-10-02",
+      "sintesi": "Completare le tre full-range; merge riservato all'owner (eccezione specifica).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "MCP coordinamento",
+      "comment_id": 6025277738,
+      "data": "2026-10-06",
+      "sintesi": "Pickfair-nogui motore autorevole; MCP comando prioritario; Telegram rinviabile non cancellato; nessuna logica MM/risk duplicata in MCP.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "MCP domande aperte (audit)",
+      "comment_id": 6025960661,
+      "data": "2026-10-06",
+      "sintesi": "10 domande da decidere prima del percorso MCP real-money.",
+      "stato": "SUPERATA",
+      "rettificata_o_superata_da": "6026322035 (risposte 1,3,4,5,6,7,8,9,10); MANUAL (4) da 6068305820; hosting (8) locale",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "DECISIONI OWNER MCP 06/10 (1–10)",
+      "comment_id": 6026322035,
+      "data": "2026-10-06",
+      "sintesi": "Switch SIM/LIVE solo su comando owner; MANUAL da decidere; risoluzione per nome (PR08 prerequisito); no master/copy via MCP; una PR per repository; collaudi Telegram rinviabili; readiness MCP sostituisce gate Telegram; PAUSE/STOP/EMERGENCY/RESUME; P35 invariato; no hosting remoto.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Punto 2 MANUAL chiuso da OWN-002 (6068305820)."
+    },
+    {
+      "id": "P41",
+      "comment_id": 6035270922,
+      "data": "2026-10-07",
+      "sintesi": "Reviewer: Fugu/Fable/Astra spenti; Sol e Grok a ogni push; agente mergia da solo con Sol+Grok puliti sull'head.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "regola 16/09 'label final-* sempre'",
+      "note": "Integrata da 6110336882 (Sol/Grok assenti non bloccano) e PF-AUTONOMOUS-MERGE-20261020."
+    },
+    {
+      "id": "Completezza Betfair personale",
+      "comment_id": 6043516714,
+      "data": "2026-10-07",
+      "sintesi": "Implementare tutta la superficie Betfair personale (Betting, Accounts, Market/Order Stream) via Control API → MCP; esclusi vendor/subscription.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "SIM/LIVE 07/10 (corpo #426)",
+      "comment_id": "corpo #426 §SIM/LIVE",
+      "data": "2026-10-07",
+      "sintesi": "Un solo motore, un solo set di tool MCP; SIM = Delayed key + SimulationBroker + bankroll fittizio; LIVE = Live key + reale; parità SIM/LIVE; nessuna modalità PAPER/REAL/HYBRID; mai auto-LIVE.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "UPDATER_SCOPE (corpo #426)",
+      "comment_id": "corpo #426",
+      "data": "2026-10-07",
+      "sintesi": "OWNER_OPEN, default Caso A.",
+      "stato": "SUPERATA",
+      "rettificata_o_superata_da": "6068305820 §2: Caso B",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "BROKER_REJECTED = INTENT_CONSUMED (PR26)",
+      "comment_id": "6063940461 (#461) / #500 c.6063940120",
+      "data": "2026-10-08",
+      "sintesi": "Rifiuto esplicito del broker consuma il customer_ref; rilascio solo con prova di non invio; ambiguità → riconciliazione.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Strategy 21:56",
+      "comment_id": 6067971776,
+      "data": "2026-10-08",
+      "sintesi": "strategy_ref esplicito, bucket DEFAULT, max_strategy_exposure, PR28-e.",
+      "stato": "SUPERATA",
+      "rettificata_o_superata_da": "6068101392 / 6068113541",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Strategy 22:06 (supersede)",
+      "comment_id": 6068101392,
+      "data": "2026-10-08",
+      "sintesi": "Nessun strategy_ref/DEFAULT/PR28-e; Roserpina unica autorità; P06 per-strategia DEFERRED.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "6067971776",
+      "note": ""
+    },
+    {
+      "id": "OWN-001 Roserpina unica autorità monetaria",
+      "comment_id": 6068113541,
+      "data": "2026-10-08",
+      "sintesi": "Nessuna strategia hardcoded/DEFAULT; strategie solo future esplicite via MCP senza MM proprio.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OWN-002/003 + PR42 + mercati #351",
+      "comment_id": 6068305820,
+      "data": "2026-10-08",
+      "sintesi": "MANUAL via MCP = preview + seconda conferma owner; UPDATER_SCOPE = Caso B (PR56–58 non bloccano primo MCP LIVE); PR42 condizionata DEFERRED; mercati solo calcio MATCH_ODDS/OVER_UNDER_25/CORRECT_SCORE/BTTS; mai aumentare cap per minimi exchange.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OWN-004 Pickfair finale in parole semplici",
+      "comment_id": 6084260665,
+      "data": "2026-10-09",
+      "sintesi": "Perimetro = Betfair + motore + Roserpina + Control API + MCP; Telegram/Copy/Mirror SOSPESI.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-DOC v1 registro decisioni OWN-001..006",
+      "comment_id": 6085502813,
+      "data": "2026-10-09",
+      "sintesi": "Registro precedenze: OWN-005 una sola PR (#505); OWN-006 SIM = SimulationBroker + Delayed; rettifica doc MANUAL MCP SUPERSEDED.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-DOC-1 D10 regole di precedenza",
+      "comment_id": 6087860670,
+      "data": "2026-10-09",
+      "sintesi": "DEC-MCP-01, DEC-SUSP-01/02, DEC-PR-01, DEC-LIVE-01, DEC-OWNER-01.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-DOC-4 BLOCKED_SPEC",
+      "comment_id": 6109140471,
+      "data": "2026-10-11",
+      "sintesi": "PF-C44-03 e PF-CASH-CASE-U15HT senza contratto.",
+      "stato": "SUPERATA",
+      "rettificata_o_superata_da": "6112703848",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "FIX10 + review opzionale",
+      "comment_id": 6110336882,
+      "data": "2026-10-11",
+      "sintesi": "Fix loop 5→10 cicli; Sol/Grok assenti non bloccano merge se gli altri gate PASS; nessun bypass branch protection; implementazione in PF-QA-02 dopo #505.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Implementata con #530 (2141031, 20/10); poi PF-QA-AUTONOMOUS-CONTINUATION-01 rende 10 una soglia non un divieto."
+    },
+    {
+      "id": "DEC-PF-C44-03 / DEC-PF-CASH-CASE-U15HT",
+      "comment_id": 6112703848,
+      "data": "2026-10-11",
+      "sintesi": "Cashout % e SL % misurati su profitto/perdita netta liquidabile rapportata al capitale a rischio della singola posizione.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OWNER-EXPOSURE-01 / SETTLEMENT-02 / MULTIPROCESS-03",
+      "comment_id": 6124156631,
+      "data": "2026-10-12",
+      "sintesi": "Esposizione = caso peggiore netto (commissioni incluse), fail-closed; .18 prima di .09; più processi su stesso account/DB, nessuna sicurezza da lock in memoria.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "BF2-A-F05 customerOrderRef",
+      "comment_id": 6125270694,
+      "data": "2026-10-12",
+      "sintesi": "customerOrderRef nelle PR30/31, distinto da intent_id/betId/customerStrategyRef; UNKNOWN_OUTCOME fail-closed.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-01 / OD-02 / OD-03",
+      "comment_id": 6126847863,
+      "data": "2026-10-12",
+      "sintesi": "OD-01 revisore Sol primario, Grok secondo, eccezione PR docs-only tetto 2€; OD-02 metodo D03 v2 proposto; OD-03 coda segnali: no sostituzione, force non supera limiti, rifiuto a capienza.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "OD-01 emendata 6126895636 (tetto 10€, Grok ogni push); OD-02 sostituita da P1–P7 v2 (6127910031)."
+    },
+    {
+      "id": "OD-01 emendamento",
+      "comment_id": 6126895636,
+      "data": "2026-10-12",
+      "sintesi": "22 workflow CI ammessi; Grok ogni push; tetto 10 EUR.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": "budget innalzato a 20 EUR da 6129318628",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "QA VPS manuale (#509)",
+      "comment_id": 6127838858,
+      "data": "2026-10-12",
+      "sintesi": "Solo specifica/workflow futuro, avvio manuale, nessun required check.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-03 autonomo + metodo D03 P1–P7 v2",
+      "comment_id": 6127910031,
+      "data": "2026-10-12",
+      "sintesi": "OD-03 vale per signal_queue a prescindere da P35; P1–P7 v2 metodo D03 vincolante.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "OD-02 v1",
+      "note": ""
+    },
+    {
+      "id": "OD-PF-FUNDS-01/02, MARKET-01, STREAM, RECON-01, BROKER-01 (PF-GA-D03)",
+      "comment_id": 6128186028,
+      "data": "2026-10-12",
+      "sintesi": "getAccountFunds in errore ⇒ blocco nuove entrate LIVE; TTL saldo 10 s; listMarketBook non affidabile ⇒ blocco.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "TTL 10 s di FUNDS-02 vs 30 s di PF-LIVE-FUNDS-THRESHOLD-01 (6162806642): divergenza da riconciliare (la seconda è più recente e dichiara di chiudere la parte aperta di POLICY-01)."
+    },
+    {
+      "id": "OD-PF-RECON-02",
+      "comment_id": 6128717447,
+      "data": "2026-10-12",
+      "sintesi": "Matrice autorità riconciliazione REST/stream (listMarketBook, listCurrentOrders ...).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-PF-CODEFIRST-01, QUEUE, RISK-R, COMMISSION-01 (PF-GA-FAST-01)",
+      "comment_id": 6129211258,
+      "data": "2026-10-12",
+      "sintesi": "Ratifica selettiva 338 comportamenti code-first (124 critici uno per uno; 214 OUT_OF_SCOPE_UNRATIFIED).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-PF-AI-BUDGET-20",
+      "comment_id": 6129318628,
+      "data": "2026-10-12",
+      "sintesi": "Budget AI esterno globale 20 EUR, approvazione per lotto.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-PF-COMMISSION-RATE-01 / CODEFIRST-INDIV-01",
+      "comment_id": 6129518925,
+      "data": "2026-10-12",
+      "sintesi": "In LIVE marketBaseRate verificato; commission_pct solo SIM/stime; mai doppia commissione.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "LF-02 (BATCH50-NOAUTH, LF02-01)",
+      "comment_id": 6129715382,
+      "data": "2026-10-12",
+      "sintesi": "Batch 50 non autorizzato; 24 P0 con oracle atomici.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "LF-02 CLOSEOUT D01–D08",
+      "comment_id": 6130388766,
+      "data": "2026-10-12",
+      "sintesi": "Telegram offline only; force non supera capienza; registro 69 code-first; 84 candidati riconciliati; batch Sol condizionato 1,30 EUR.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "OD-PF-QUEUE-MULTILINE-01",
+      "comment_id": 6131285661,
+      "data": "2026-10-12",
+      "sintesi": "Blocco multi-riga atomico; rifiuto se non entra; nessuna sostituzione implicita.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-OWNER-CLOSE-ALL-01 OC-01..06",
+      "comment_id": 6131667643,
+      "data": "2026-10-12",
+      "sintesi": "Limiti giornalieri/esposizione obbligatori LIVE; Max Win/Max Stake % bloccanti; recovery reset solo dopo riconciliazione; cancel solo ordini propri identificati; OC-06 TTL DIRECT disattivato di default.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "OC-02 'Max Win bloccante' va letto con la rettifica 18–19/10: max_win/max_stake_abs opzionali e None di default (6272356144)."
+    },
+    {
+      "id": "7 questioni normative residue",
+      "comment_id": 6131708446,
+      "data": "2026-10-12",
+      "sintesi": "Esposizione totale = capitale a rischio aggregato; perdita sessione configurabile; drawdown stop €10; sessione opzionale; moltiplicatore liquidità; epsilon per tipo di calcolo; nessun nuovo valore numerico.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "GATE A PREP CLOSEOUT",
+      "comment_id": 6131980558,
+      "data": "2026-10-12",
+      "sintesi": "Esposizione in euro; drawdown 10 € assoluti non 10%; nessun epsilon universale 0,50; nessuna nuova chiamata Sol; split 81 record non approvati automaticamente.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Q1–Q8 (pacchetto residuo)",
+      "comment_id": 6139406637,
+      "data": "2026-10-13",
+      "sintesi": "Proposte Q1 PCT_RANGE, Q2 domini, Q3 CAP_OPERATOR, Q4 LAY_CAP_BASE, Q5 DRAWDOWN_UNIT, Q6 child-set, Q7 tolleranze T4–T7, Q8 soglia senza valore.",
+      "stato": "PROPOSTE (decise in 6141136157/6141450045)",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Q5 / Q6",
+      "comment_id": 6141136157,
+      "data": "2026-10-13",
+      "sintesi": "Q5 A: drawdown vincolante 10 € assoluti in SIM e LIVE; Q6 B: child-set verificati individualmente. Aperte Q1,Q2,Q3,Q4,Q7,Q8.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "Il 10 € come default fisso è poi superato (18/10): resta limite vincolante della campagna #351 (6141902809)."
+    },
+    {
+      "id": "PF-OWNER-CLOSE-ALL-02 (Q3, Q4, Q7; Q1/Q2 tecnica delegata)",
+      "comment_id": 6141450045,
+      "data": "2026-10-13",
+      "sintesi": "Esposizione = cap consentita, > bloccata, Decimal senza tolleranza; drawdown >= 10 €; LAY rischio = liability stake×(quota−1); T5/T7 confronto esatto Decimal; T4 solo read-only; T6 dopo T4.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Drawdown campagna + cap mancante",
+      "comment_id": 6141902809,
+      "data": "2026-10-13",
+      "sintesi": "Drawdown €10 assoluto tetto vincolante per #351 (configurabile, mai oltre); cap obbligatorio assente/invalido ⇒ blocco nuovo rischio, nessun cap implicito €10.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "t80u chiavi assenti/non valide",
+      "comment_id": 6143637861,
+      "data": "2026-10-13",
+      "sintesi": "max_single_bet_pct/total/event/max_stake_abs assenti ⇒ blocco; max_recovery_tables/allow_recovery assenti ⇒ no recovery; commission_pct solo verificato. Nessuna approvazione di 18%/35%/18%/10000/2/True/4.5%.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "max_stake_abs poi reso opzionale/None (6272356144): 'assente' = non attivo, non blocco — divergenza apparente da riconciliare."
+    },
+    {
+      "id": "Migrazione pre-v9 (opzione A)",
+      "comment_id": 6145958246,
+      "data": "2026-10-13",
+      "sintesi": "Ratifica manuale una tantum; sistema bloccato per nuovo rischio finché stato incompleto; atomica, kill -9 resistente.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Ricostruzione picco equity (opzione A)",
+      "comment_id": 6146717266,
+      "data": "2026-10-13",
+      "sintesi": "Picco equity solo da storico Betfair autentico, read-only; incompleto ⇒ blocco.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-505-SCOPE-01 / PF-A13-INDEP-01 / PF-LIVE-FUNDS-POLICY-01",
+      "comment_id": 6162788177,
+      "data": "2026-10-14",
+      "sintesi": "Perimetro #505 invariato; A13 revisione indipendente sostanziale; regole 1–8 fondi LIVE (soglia temporale lasciata aperta).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-LIVE-FUNDS-THRESHOLD-01",
+      "comment_id": 6162806642,
+      "data": "2026-10-14",
+      "sintesi": "Soglia validità saldo LIVE 30 s (clock monotono).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "vedi divergenza con OD-PF-FUNDS-02 10 s"
+    },
+    {
+      "id": "PF-LIVE-FUNDS-INVALIDATE-01 / ATOMIC-RESERVE-01 (+T-F01…T-F09)",
+      "comment_id": 6162826424,
+      "data": "2026-10-14",
+      "sintesi": "Invalidazione immediata della conferma fondi su eventi; verifica fondi + esposizione + prenotazione sotto concorrenza (PR29).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-WORK-REAL-VERIFIED-01",
+      "comment_id": 6164133115,
+      "data": "2026-10-14",
+      "sintesi": "Ciclo operativo obbligatorio in 10 passi; software realmente funzionante prima di audit/documentazione.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-MICROSTAKE-NATIVE-AUTO-01",
+      "comment_id": 6210870965,
+      "data": "2026-10-16",
+      "sintesi": "Microstake nativo, permanente, automatico, senza flag; non bypassa RiskGate; fonte storica Pickfair@66d5f98/8031447; lotto PF-MICROSTAKE-SAFE-RECOVERY-01 offline.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-MICROSTAKE-OWNER-RECTIFICATION-20261017",
+      "comment_id": 6235508131,
+      "data": "2026-10-17",
+      "sintesi": "MM calcola e richiede stake esatto; nessun minimo artificiale né cap fisso 1€/2€; esecuzione esatta o errore esplicito; 8 grandezze separate.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "lettura 'stub 2€ viola cap €1' (c.6225689722) e cap P02/P06 come limite universale Microstake",
+      "note": ""
+    },
+    {
+      "id": "PF-BEST-EXECUTION-DYNAMIC-01",
+      "comment_id": 6235560755,
+      "data": "2026-10-17",
+      "sintesi": "Miglior prezzo dinamico automatico (BACK più alta, LAY più bassa), solo parte unmatched, limiti di inseguimento verificabili, uscite protettive non ritardate. Registrata, NON implementata.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-EXECUTION-SAFETY-DECISIONS-01 (PF-EXEC-01..06)",
+      "comment_id": 6235676826,
+      "data": "2026-10-17",
+      "sintesi": "01 ripuntata solo residuo dopo cancel confermata; 02 Dutching parziale ribilanciato/coperto/sospeso; 03 chiusura protettiva senza inseguimento; 04 fondi insufficienti = blocco; 05 sospeso/feed/disconnessione = nessun ingresso/retry; 06 riavvio con ripristino/STOP persistente.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": "PF-EXEC-02 non completo: trasferito a PR30/PR31 (scelta F #529); PF-EXEC-04 implementato in PR28-e #531 (gate fondi)."
+    },
+    {
+      "id": "PF-OWNER-DECISIONS-12-20261017 (PF-OD12-01..12, OD12-04 definitiva)",
+      "comment_id": 6235863600,
+      "data": "2026-10-17",
+      "sintesi": "Stessa partita richieste indipendenti; fondi riconciliati; validità segnali; OD12-04 miglior prezzo senza limite universale al peggioramento, esecuzione se condizioni valide altrimenti blocco; liquidità Dutching; importi netti; STOP persistente; settlement autorevole; intervento manuale; notifiche; storico; parità SIM/LIVE.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "formulazione iniziale di PF-OD12-04 ('accettazione quote peggiori')",
+      "note": ""
+    },
+    {
+      "id": "PF-PR-RECOVERY-20261017 (5 domande)",
+      "comment_id": 6240947984,
+      "data": "2026-10-17",
+      "sintesi": "Stub Microstake vs cap #505; stake > max_single_bet; ordine merge; #508; sei fix #512.",
+      "stato": "DOMANDE",
+      "rettificata_o_superata_da": "6242324827",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-PR-RECOVERY-DECISIONS-02",
+      "comment_id": 6242324827,
+      "data": "2026-10-17",
+      "sintesi": "1 nessun limite universale allo stake, stub 2€ non è puntata finale; 2 stake > max_single_bet ⇒ rifiuto esplicito, mai ridimensionamento; 3 ordine integrazione; 4 #508 chiusa senza merge dopo verdetto; 5 sei fix in un lotto.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "D-A…D-J (richieste)",
+      "comment_id": 6243156939,
+      "data": "2026-10-17/18",
+      "sintesi": "Decisioni aperte su #512: deroga ciclo 6, PAUSED con AMBIGUOUS, scope, cashout unico, minimo verificato, bet_id, PF-QA-02, #508, cap storico, oracle campagna.",
+      "stato": "DOMANDE",
+      "rettificata_o_superata_da": "6247974757",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "D-J aggiunta",
+      "comment_id": 6247484716,
+      "data": "2026-10-18",
+      "sintesi": "Oracle campagna Roserpina: 80 VIOLATION = impronta Microstake; opzioni J1/J2.",
+      "stato": "DOMANDA",
+      "rettificata_o_superata_da": "6247974757 (J1)",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Nota D-A",
+      "comment_id": 6247543193,
+      "data": "2026-10-18",
+      "sintesi": "Lotto 10 cicli pronto in locale (merge owner).",
+      "stato": "NOTA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-DECISIONS-DA-DJ-20261018",
+      "comment_id": 6247974757,
+      "data": "2026-10-18",
+      "sintesi": "D-A A1 deroga ciclo 6; D-B PAUSED al riavvio con AMBIGUOUS fino a riconciliazione; D-C scope esteso; D-D un cashout attivo per posizione; D-E minimo verificato; D-F settlement per bet_id; D-G PF-QA-02 (#513); D-H verdetto #508; D-I riconciliare default 1€; D-J J1.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-PR512-CYCLE7-AUTHORIZATION + PF-AUTONOMOUS-CERTIFICATION-01",
+      "comment_id": 6249825590,
+      "data": "2026-10-18",
+      "sintesi": "O1 approvata (ciclo 7 sui tre P1 Codex); autonomia operativa riconfermata con stop solo per le sei condizioni.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-DECISION-RECONCILIATION-20261018 (ricognizione, non decisione)",
+      "comment_id": 6249927744,
+      "data": "2026-10-18",
+      "sintesi": "Già deciso: D-B, D-D, D-E, D-F, D-G, D-I, PF-C44-03/U15HT; registro #514.",
+      "stato": "RICOGNIZIONE",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Cross-reference #514",
+      "comment_id": 6249942685,
+      "data": "2026-10-18",
+      "sintesi": "Registro di riconciliazione decisioni in #514.",
+      "stato": "RIFERIMENTO",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "RETTIFICA LIMITI MONETARI DEFAULT",
+      "comment_id": 6249983066,
+      "data": "2026-10-18",
+      "sintesi": "Nessun cap monetario fisso preimpostato (né €1 ordine, €2 mercato/evento, €10 drawdown); limiti opzionali configurabili e disattivati di default; non è 'nessun controllo di rischio'.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "P02/P06 cap numerici; piano #505 c.6242327543; default 10000 di max_stake_abs/max_win (6272356144)",
+      "note": ""
+    },
+    {
+      "id": "Registro 13:15Z rettifica + mandati",
+      "comment_id": 6250308098,
+      "data": "2026-10-18",
+      "sintesi": "Registrazione della rettifica e dei mandati PF-MONETARY-DEFAULT-CONFLICT-RESOLUTION / PF-MM-STRATEGY-PRESERVATION.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-PR512-CYCLES-08-10-AUTHORIZATION",
+      "comment_id": 6250353189,
+      "data": "2026-10-18",
+      "sintesi": "Deroga nominativa cicli 8–10 sulla #512; nessun ciclo 11; nessun reset ledger.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Registro deroga cicli 8–10 (ledger)",
+      "comment_id": 6250367209,
+      "data": "2026-10-18",
+      "sintesi": "Ledger #512 inizializzato; blocco tecnico col cap 5 segnalato.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-CAP-REGISTER-20261018 (PF-CAP-01..12, Q1–Q9)",
+      "comment_id": 6250405396,
+      "data": "2026-10-18",
+      "sintesi": "Registro canonico conflitti cap: #505 default 1€/2€/2€/10€ ⇒ opzionali None; max_stake_abs/max_win 10000 ⇒ opzionali; Q1–Q9 richieste.",
+      "stato": "AUDIT COMPLETED",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-CAP-REGISTER addendum 1 (PF-CAP-13..19, Q10)",
+      "comment_id": 6250526960,
+      "data": "2026-10-18",
+      "sintesi": "Cap nascosti: PF-CAP-13 telegram_listener stake or 1.0 (ALTA), PF-CAP-14 auto_stake or 1.0, PF-CAP-18 master_price or 2.0 ...; Q9 migrazione legacy_default; Q10 gate fondi esclude hedge/uscite protettive (racc. sì).",
+      "stato": "REVISIONE PASS CON CORREZIONI",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-AUTONOMOUS-UNBLOCK-01 (mandato, #515)",
+      "comment_id": 6255213376,
+      "data": "2026-10-18",
+      "sintesi": "Autorizzato registrazione/analisi/preparazione; non merge automatici, non interruzione ciclo 10, non LIVE; chiusura ciclo 10 #512 opzione 2.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-AUTONOMOUS-UNBLOCK-POLICY-01",
+      "comment_id": 6255410532,
+      "data": "2026-10-18",
+      "sintesi": "Policy T1 (3 tentativi identici), timeout, riuso review AI (B1–B4); registrata, non implementata; contraddizione Grok timeout di CLAUDE.md registrata (prevale CLAUDE.md per review a pagamento).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#512 ciclo 10 BLOCKED + richiesta ciclo 11",
+      "comment_id": 6256083616,
+      "data": "2026-10-18",
+      "sintesi": "Blocker B1–B5; debito → #516–#521.",
+      "stato": "RICHIESTA",
+      "rettificata_o_superata_da": "6262487915",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#512 ciclo 11 straordinario",
+      "comment_id": 6262487915,
+      "data": "2026-10-19",
+      "sintesi": "Autorizzato ciclo 11 solo per B1–B5; non ciclo 12.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#512 ciclo 11 BLOCKED",
+      "comment_id": 6263257590,
+      "data": "2026-10-19",
+      "sintesi": "B1–B5 chiusi; due P1 Codex residui.",
+      "stato": "STATO",
+      "rettificata_o_superata_da": "6263572358",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#512 ciclo 12 straordinario",
+      "comment_id": 6263572358,
+      "data": "2026-10-19",
+      "sintesi": "Autorizzato ciclo 12 per r4311806874 (AMBIGUOUS dopo errore persistenza) e r4311806886 (provenienza settlement emergenza).",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-QA-AUTONOMOUS-CONTINUATION-01",
+      "comment_id": 6263595478,
+      "data": "2026-10-19",
+      "sintesi": "10 cicli = soglia di diagnosi, non divieto; prosecuzione autonoma alle 8 condizioni; esiti READY FOR OWNER MERGE o BLOCKED SOSTANZIALE.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "divieto di prosecuzione automatica oltre il cap (6110336882 p.1 e deroghe per-ciclo)",
+      "note": "CLAUDE.md vigente (22/10) registra invece 'undicesimo ciclo si ferma: NEEDS_MANUAL' e deroga owner per numero preciso di cicli: divergenza fra decisione canonica e testo di policy da riconciliare."
+    },
+    {
+      "id": "PF-PR-SEQUENCE-RECOVERY-01 (+fase F)",
+      "comment_id": 6265078210,
+      "data": "2026-10-19",
+      "sintesi": "Sequenza #512 → #505 → #516–#521 → roadmap #461 → #351; #505 conservata in archive/pf-505-pre-512; merge #512 autorizzato ai gate; finding rinviati = debito obbligatorio.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#512 thread rinviati: opzione 1",
+      "comment_id": 6265278160,
+      "data": "2026-10-19",
+      "sintesi": "Resolve GitHub solo dei thread DEFERRED — VERIFIED NON-BLOCKING; non equivale a FIXED.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Registro #512 mergiata",
+      "comment_id": 6267898378,
+      "data": "2026-10-19",
+      "sintesi": "Squash f8bbbe9a0ce565c02b99d0aaa68dfbef36c33be9; 9 FIXED, 18 DEFERRED (#516–#521).",
+      "stato": "REGISTRO",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Riconciliazione Gate A #506",
+      "comment_id": 6270750139,
+      "data": "2026-10-19",
+      "sintesi": "'Gate A globale prima di #505' SUPERSEDED solo per la sequenza di sviluppo (ripresa via #522); Gate A globale resta NON PASS.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "sequenza 'Gate A globale → Gate A #505 → ...' (6124158750, 6210967565)",
+      "note": ""
+    },
+    {
+      "id": "Limiti monetari preesistenti (definitiva)",
+      "comment_id": 6272356144,
+      "data": "2026-10-19",
+      "sintesi": "max_stake_abs (RSR-15) e max_win (RSR-26) opzionali, None di default; applicata in #522 head c4ac69e; 10000 legacy ⇒ non attivo.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "default 10000 e t80u 'max_stake_abs assente ⇒ blocco' per la semantica di assenza",
+      "note": ""
+    },
+    {
+      "id": "PF-CONTINUOUS-FORMAL-VERIFICATION-01",
+      "comment_id": 6272360473,
+      "data": "2026-10-19",
+      "sintesi": "Sei metodologie permanenti; spec docs/verification/continuous_formal_verification.md@c4ac69e; PR strumenti a merge owner.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#524 / #525 in PR proprie",
+      "comment_id": 6275843696,
+      "data": "2026-10-19",
+      "sintesi": "#524 engine AMBIGUOUS→FAILED BLOCKS_LIVE PR dedicata; #525 orchestratori CI merge owner.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Registro 19/10 (deroga #522, mandato POST522)",
+      "comment_id": 6278392552,
+      "data": "2026-10-19",
+      "sintesi": "#522 deroga a 10 cicli; sequenza #524 → #525 → #523 → fix loop 10 → riconciliazione #461; #523 BLOCKS_DUTCHING_ACTIVATION.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Registro #526 mergiata",
+      "comment_id": 6284074145,
+      "data": "2026-10-20",
+      "sintesi": "#526 → ac2064c; #524 FIXED solo per AMBIGUOUS→FAILED; PR30 e #525 restano prima della certificazione LIVE.",
+      "stato": "REGISTRO",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-AUTONOMOUS-MERGE-20261020",
+      "comment_id": 6286967995,
+      "data": "2026-10-20",
+      "sintesi": "Agenti possono mergiare in autonomia PR tecniche incl. #527 e workflow CI necessari (condizioni: no P0/P1, review complete, nessun gate disabilitato, no protezioni/regole economiche, no LIVE); mutation testing reale soglia 80%; audit ruleset PICKFAIR-MAIN-PROTECTION senza required_status_checks.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": "regola 'merge owner' per .github/workflows (CLAUDE.md/AGENTS.md da allineare in PR dedicata a merge owner)",
+      "note": ""
+    },
+    {
+      "id": "Registro #527 mergiata",
+      "comment_id": 6288782964,
+      "data": "2026-10-20",
+      "sintesi": "#527 squash e694e39 in autonomia; label manual-review-required coperta dall'autorizzazione.",
+      "stato": "REGISTRO",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#529 ciclo A2 NEEDS_MANUAL",
+      "comment_id": 6294666744,
+      "data": "2026-10-20",
+      "sintesi": "Domanda A3 vs scope PR30.",
+      "stato": "DOMANDA",
+      "rettificata_o_superata_da": "scelta owner A3/A4/A5 (6295729582, 6296225861, 6298122733)",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#529 ciclo A3 NEEDS_MANUAL",
+      "comment_id": 6295729582,
+      "data": "2026-10-20",
+      "sintesi": "Domanda ciclo A4 vs rinvio PR30; R1–R4 rinviati con BLOCKS_DUTCHING_ACTIVATION.",
+      "stato": "DOMANDA",
+      "rettificata_o_superata_da": "6296225861",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "#529 ciclo A4 NEEDS_MANUAL",
+      "comment_id": 6296225861,
+      "data": "2026-10-20",
+      "sintesi": "P2 introdotto (lato di soli spazi) e review Grok UNKNOWN; richiesta ciclo A5.",
+      "stato": "DOMANDA",
+      "rettificata_o_superata_da": "6298122733",
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Esecuzione A5 — #529 MERGED",
+      "comment_id": 6298122733,
+      "data": "2026-10-20",
+      "sintesi": "Scelta F owner: esito lotto event-driven rimosso, fail-closed; squash 380157a200ae98b8b77034f15c232ed96d61bc79; restano PF529-A3-R1..R4, PF-EXEC-02, cablaggio batch manager (BLOCKS_DUTCHING_ACTIVATION); difetto gate Grok (review senza sezioni marcata done).",
+      "stato": "ESECUZIONE",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Merge #530 (fix loop 10)",
+      "comment_id": 6300329609,
+      "data": "2026-10-20",
+      "sintesi": "Approvazione owner; squash 2141031a900f406b6a1b4e0325d26200eca97998; avvio PF-ROADMAP-AUTONOMOUS-CONTINUATION-02.",
+      "stato": "ESECUZIONE",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "Q10 ratifica + G7 (#531)",
+      "comment_id": 6304341575,
+      "data": "2026-10-20",
+      "sintesi": "Gate fondi: nuove entrate rifiutate con fondi insufficienti/non verificabili, nessun fallback bankroll interno né ridimensionamento; hedge/cashout/uscite protettive non passano dal gate (PF-EXEC-03). G7 difetto finanziario reale da correggere (#532); parità SIM/LIVE non certificata. #531 mergiata f3349467ee7b320d8ecfca7b9729b1272e025def.",
+      "stato": "CONFERMATA",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-POST-PR29C-GLOBAL-RECONCILIATION-01",
+      "comment_id": 6322399988,
+      "data": "2026-10-21",
+      "sintesi": "Riconciliazione globale 60 schede/sotto-PR/PR GitHub/codice/#506/#453/#426/#351/#510/G7/GUI/Control API/MCP: PENDING — DO NOT EXECUTE finché PR29-c non è mergiata con autorizzazione separata, CI verde e checkpoint durevole; audit read-only, nessun merge, no LIVE, no cap fisso, #505 protetta.",
+      "stato": "PENDING → ATTIVABILE (condizioni 1–2 soddisfatte dal merge #535 del 22/10; 3–4 da verificare: CI post-merge e checkpoint seq 58, c.6335409948)",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-POST-PR29C-PARALLEL-FACTORY-01",
+      "comment_id": 6322621696,
+      "data": "2026-10-21",
+      "sintesi": "Parallel Development Factory: piano solo dopo la riconciliazione globale e nuova autorizzazione owner.",
+      "stato": "PENDING — DO NOT EXECUTE",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PF-MCP-PARALLEL-DEV-01 / PF-MCP-01A",
+      "comment_id": 6324994877,
+      "data": "2026-10-21",
+      "sintesi": "Phase 0 accettata, implementazione MCP-01a autorizzata solo nel repo pickfair-mcp-; non attiva la Factory; una PR per repository; no mutazioni reali; tetto 3,5 M token.",
+      "stato": "AUTORIZZATA / IN SVILUPPO",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    },
+    {
+      "id": "PR29-c #535 merged + rischio .runtime.lock",
+      "comment_id": 6335409948,
+      "data": "2026-10-22",
+      "sintesi": "OWNER DECISION: PR #535 merged via squash 152613b30fb0719682d71ae6653f984079a48262 (source HEAD 23237cba8ba95380ad5ba7d9b82fbde94d09d818). Ratificato: esattamente un runtime Pickfair attivo per database (non limita tavoli/bet Roserpina simultanei nel runtime); nessun cap monetario fisso di default; protezioni finanziarie obbligatorie. Rischio residuo / blocker certificazione LIVE: la cancellazione manuale di .runtime.lock mentre il runtime è attivo può minare la proprietà esclusiva e consentire un secondo runtime — documentare threat model, riproduzione e mitigazione robusta (ownership/fencing/OS-level lock o equivalente) con test cross-process crash/restart; nessuna certificazione LIVE finché la mitigazione non è implementata, revisionata e verificata; non rimuovere silenziosamente il vincolo single-runtime; finding tracciato separatamente e collegato a #453/#506/#351/#461. Next: CI post-merge main, checkpoint seq 58, poi riconciliazione globale come fase read-only autorizzata separatamente; Parallel Factory PENDING; no LIVE.",
+      "stato": "CONFERMATA (decisione owner, testo in inglese)",
+      "rettificata_o_superata_da": null,
+      "supera": null,
+      "note": ""
+    }
+  ]
+}

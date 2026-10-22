@@ -1,0 +1,136 @@
+{
+ "issue": 506,
+ "stato_issue": "open",
+ "comments_totali": 447,
+ "comments_letti": 447,
+ "verdetto_corrente": "Gate A globale NON PASS; A01-A13 tutti aperti (c.6278393693 19/10, c.6320057119 21/10); condizione 'Gate A prima di #505' SUPERSEDED solo per la sequenza di sviluppo (c.6270749054 PF-PR-SEQUENCE-RECOVERY-01)",
+ "criterio_pass": "inventario esaustivo e denominatore difendibile; 100% requisiti attivi specificati; oracle operativi; tracciabilita' completa; zero BLOCKED_SPEC attivi; revisione indipendente. MISSING/NOT_RUN ammessi, non valgono HARD",
+ "macroblocchi_owner_B1_B5": {
+  "fonte": "https://github.com/zarbopiero963-droid/Pickfair-nogui/issues/506#issuecomment-6109349651",
+  "stato": "B1 NOT PASS (c.6109899152), B2-B5 in attesa"
+ },
+ "items": [
+  {
+   "id": "A01",
+   "descrizione": "Snapshot/congelamento fonti PF-DOC-1/2/3, SHA, versioni, rettifiche",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "PF-DOC-4 (c.6109174764) ha recuperato 872 entita'; B1 non PASS (c.6109899152)"
+  },
+  {
+   "id": "A02",
+   "descrizione": "Inventario indipendente B da codice/GUI/config/API/MCP/DB/test; simboli orfani",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "censimento sintattico eseguito, inventario comportamentale incompleto (c.6109174764)"
+  },
+  {
+   "id": "A03",
+   "descrizione": "Riconciliazione semantica A/B, deduplica, denominatore globale",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "M14: 327 parent, 307 senza child-set, denominatore null (c.6111763865); D03 1062 record, 1035 aperti (c.6131986497)"
+  },
+  {
+   "id": "A04",
+   "descrizione": "183/183 PF-C verificati semanticamente",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "183 testi recuperati, verifica semantica non attestata; PF-C29/30/31/32 SPEC_COMPLETE_CANDIDATE_REVIEWED (c.6123640661, c.6123962107)"
+  },
+  {
+   "id": "A05",
+   "descrizione": "60 schede + PR04-bis/ter/quater",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "63 enumerate, Gate A per scheda non chiuso"
+  },
+  {
+   "id": "A06",
+   "descrizione": "Roserpina RSR-01..41 x 10 assi = 410 controlli",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "410 enumerate; campagna 1684 scenari su 180f405 (36 PASS/1 NV/4 BLOCKED) da rieseguire (#351 c.6242905583)"
+  },
+  {
+   "id": "A07",
+   "descrizione": "Cashout PF-CASH-01..25, SL/TP/trailing, P/L, hedge/void",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "25 progetti test pubblicati, tutti NOT_RUN; U15HT risolto da owner (c.6112705592)"
+  },
+  {
+   "id": "A08",
+   "descrizione": "Betfair 17 Betting + 4 Account + Market/Order Stream",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "115 sottorequisiti preservati; schemi/errori incompleti; #495 NOT_RUN"
+  },
+  {
+   "id": "A09",
+   "descrizione": "Control API 25 route + MCP tool",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "MCP MISSING (repo vuoto)"
+  },
+  {
+   "id": "A10",
+   "descrizione": "Finding F01-F11, PF-DOC findings, PF-FIN-01/02: dedup, oracle, RED->GREEN",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "input AUD-01..05 registrato (c.6162791592); nessun FIXED senza prove; #524/#525 aggiunti come finding obbligatori (c.6275844253)"
+  },
+  {
+   "id": "A11",
+   "descrizione": "D01-D10 e manifest machine-readable bidirezionale",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "D01-D10 PARZIALI (archivio PF-DOC-4 in #351); docs/traceability/requirements.json 20 requisiti (#351 c.6242905583)"
+  },
+  {
+   "id": "A12",
+   "descrizione": "Validatore strutturale + revisione semantica, zero orfani",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "validatore exit 1, schema FAIL, semantic NOT_PASS (c.6109174764)"
+  },
+  {
+   "id": "A13",
+   "descrizione": "Revisore distinto e verdetto Gate A globale",
+   "stato_dichiarato": "OPEN [ ]",
+   "evidenza_note": "PF-A13-INDEP-01: alternanza fra modelli non e' indipendenza; audit self-review non valgono (c.6162791592)"
+  }
+ ],
+ "livelli_distinti": [
+  "Gate A globale (NON PASS)",
+  "Gate A per PR",
+  "Gate B per PR (#522 soddisfatto c.6278393693; #526 ratificato c.6284060186; #529 c.6298120251; #530 c.6300330860)",
+  "Certificazione LIVE #351 (non avviata)"
+ ],
+ "decisioni_owner_aperte_citate": [
+  "OWNER-MULTIPROCESS-03: deployment ammette piu' processi sullo stesso DB/account? (c.6123962107)",
+  "ALIGN-D07 misura esposizione parziali/miste (c.6123640661)",
+  "F032 base crescita EXPANSION",
+  "PF-ALL-F017 poller settlement obbligatorio",
+  "PF-ALL-F007 protezioni orfane"
+ ],
+ "runtime_lock": {
+  "menzionato_come_item_gate_A": false,
+  "riferimenti_vicini": [
+   "L08-F1 PF-C32-01 (c.6123962107)",
+   "TS-D14/TS-D15 due processi/lease NOT_RUN (c.6125417791)",
+   "BF2-D006 Betfair non offre lock (c.6124420864)",
+   "OWNER-MULTIPROCESS-03 -> 29-g1/g2 (c.6315251036)"
+  ]
+ },
+ "ultimi_aggiornamenti": [
+  {
+   "id": 6320057119,
+   "data": "2026-10-21",
+   "sintesi": "PF-C29-01 dopo #534; Phase 0 PR29-c; Gate A NON PASS; G7 aperto"
+  },
+  {
+   "id": 6315251036,
+   "data": "2026-10-21",
+   "sintesi": "PF-C29-01 .03/.07/.13 dopo #533"
+  },
+  {
+   "id": 6304344711,
+   "data": "2026-10-20",
+   "sintesi": "PF-EXEC-04 da #531"
+  },
+  {
+   "id": 6288782331,
+   "data": "2026-10-20",
+   "sintesi": "checkpoint post-merge #527"
+  }
+ ]
+}
