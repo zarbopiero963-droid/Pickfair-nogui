@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "ae107086ed410de9e59f62a7ce5623457894e73e"
+  "branch": "main",
+  "sha": "3bb4477d39fcfdff44abb372eb35061d4a9bde42"
  },
  "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "PR #537 head ae10708 (ciclo fix 6/10): Sol e Grok senza bloccanti sul head, 17 thread Codex risolti a check conclusi, Merge readiness rilanciato; consegnare verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING. Follow-up registrati: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
- "previous_checkpoint_sha": "0c0c9b597984693d4c5380b8d7336189f57d7473",
+ "next_atomic_action": "STOP OPERATIVO owner: SVILUPPO IN PAUSA \u2014 IN ATTESA DEI DUE AUDIT OWNER. Nessuna PR, nessun codice, nessun ciclo di fix/review/mutation, nessun merge, nessun LIVE/deploy/Factory fino a nuova autorizzazione esplicita. Follow-up aperti: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
+ "previous_checkpoint_sha": "caab770786130e2a1949bf84dc0eb71014513a65",
  "schema": "pf-current/1",
- "seq": 63
+ "seq": 64
 }
