@@ -2,12 +2,12 @@
  "certification_verdict": "NO-GO",
  "checkpoint_commit": null,
  "code": {
-  "branch": "main",
-  "sha": "3bb4477d39fcfdff44abb372eb35061d4a9bde42"
+  "branch": "ccr-764b0316-9r1a1d",
+  "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5"
  },
- "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "STOP OPERATIVO owner: SVILUPPO IN PAUSA \u2014 IN ATTESA DEI DUE AUDIT OWNER. Nessuna PR, nessun codice, nessun ciclo di fix/review/mutation, nessun merge, nessun LIVE/deploy/Factory fino a nuova autorizzazione esplicita. Follow-up aperti: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
- "previous_checkpoint_sha": "caab770786130e2a1949bf84dc0eb71014513a65",
+ "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
+ "next_atomic_action": "Attendere CI e review Sol/Grok su PR #538 (head 0fd0ba2); triage (cicli <= 10); a gate verdi dichiarare READY: merge richiede approvazione owner finche full-suite non e required check. Poi PFC-002 (merge OWNER), PFC-003 (merge OWNER), PFC-004 G7-a. Salvaguardia 24 h su PFC-002/003. NO LIVE.",
+ "previous_checkpoint_sha": "3763ebffa888d8822f561489d65765c7eb5f31f4",
  "schema": "pf-current/1",
- "seq": 64
+ "seq": 65
 }

@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 64,
+ "seq": 65,
  "updated_at": "2026-10-22T18:10:15Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "STOP OPERATIVO owner: SVILUPPO IN PAUSA — IN ATTESA DEI DUE AUDIT OWNER. Nessuna PR, nessun codice, nessun ciclo di fix/review/mutation, nessun merge, nessun LIVE/deploy/Factory fino a nuova autorizzazione esplicita. Follow-up aperti: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
+ "next_atomic_action": "Attendere CI e review Sol/Grok su PR #538 (head 0fd0ba2); triage (cicli <= 10); a gate verdi dichiarare READY: merge richiede approvazione owner finche full-suite non e required check. Poi PFC-002 (merge OWNER), PFC-003 (merge OWNER), PFC-004 G7-a. Salvaguardia 24 h su PFC-002/003. NO LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -514,9 +514,9 @@
    "full_diff": "PASS, nessun file owner-manual"
   }
  },
- "mandate_current": "PF-536-ISOLATED-IMPLEMENTATION-01",
- "previous_checkpoint_sha": "caab770786130e2a1949bf84dc0eb71014513a65",
- "lotto_corrente": "PAUSA owner dopo merge #537 (main 3bb4477, CI 14/14): in attesa di due audit indipendenti",
+ "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
+ "previous_checkpoint_sha": "3763ebffa888d8822f561489d65765c7eb5f31f4",
+ "lotto_corrente": "PFC-001 (PR #538): M025 + M158, solo test",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -588,7 +588,9 @@
  "verified_vs_declared": "verified=True solo per test eseguiti in questa sessione sullo SHA indicato; il resto e' dichiarato",
  "gate_a_506": "NON PASS",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
- "live": "NO-GO",
+ "live": {
+  "status": "NO-GO"
+ },
  "dependencies": {
   "pr_505": "aperta (head 618884e), non toccata; compatibile con il ramo salvo conflitti testuali (allowed_scope.json, CHANGELOG); F033 si chiude solo sulla baseline integrata",
   "gate_a_506": "NON PASS: A01-A13 tutti aperti; questo lavoro alimenta A06 (scheda RSR, matrice 410 controlli non completa) e A10 (finding RED->GREEN); servono riconciliazione inventario, denominatore globale, revisore indipendente (A13)",
@@ -596,19 +598,20 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
+ "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
  "code": {
-  "branch": "main",
-  "sha": "3bb4477d39fcfdff44abb372eb35061d4a9bde42",
+  "branch": "ccr-764b0316-9r1a1d",
+  "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
   "patch": {
-   "head": "ae107086ed410de9e59f62a7ce5623457894e73e",
-   "tree": "5c976b5bd7796f48e9972aaa53ce68b2d461cbed",
-   "captured_at": "2026-10-22T18:10:16+00:00",
+   "head": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
+   "tree": "000c6762d5112b78546fae05a433baa0b674d543",
+   "captured_at": "2026-10-22T21:48:13+00:00",
    "modified": [],
    "untracked": [],
    "files": [
     "code_patch/BASELINE.json"
-   ]
+   ],
+   "skipped_symlinks": {}
   }
  },
  "blocks": [
@@ -627,17 +630,17 @@
  ],
  "owner_authorizations": {
   "live": false,
-  "merge": "#535 mergiata dall'owner; nessun nuovo merge autorizzato",
+  "merge": "automatico solo per PR non protette con enforcement indipendente verificato; altrimenti owner",
   "deploy": false,
   "modify_main": false,
   "modify_pr_505": false,
-  "new_pr": false,
+  "new_pr": "una alla volta, secondo roadmap canonica",
   "costs": false,
   "render_neon": false,
   "telegram_copy_mirror": false,
-  "push_code_branch": "ccr-bcc81683-ud0hgc",
+  "push_code_branch": "ccr-764b0316-9r1a1d",
   "push_state_branch": "solo agent-state/pf-full-delivery, senza force",
-  "source": "PF-AUTONOMOUS-CERTIFICATION-01 (18/10) + PF-PR512-CYCLE7-AUTHORIZATION + mandati precedenti",
+  "source": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (22/10) + precedenti",
   "commit": true,
   "pr": true,
   "publish_decisions_github": true,
@@ -645,6 +648,27 @@
   "reconciliation_readonly": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (22/10): riconciliazione globale read-only autorizzata; Parallel Factory PENDING"
  },
  "tests_executed": [
+  {
+   "id": "pfc001_regression_serial",
+   "status": "PASS",
+   "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
+   "result": "8895 passed, 14 skipped, 5 xfailed; 1 failed ambientale (tkinter assente, identico su main)",
+   "artifact": "results/pfc001/summary.txt"
+  },
+  {
+   "id": "pfc001_regression_parallel",
+   "status": "PASS",
+   "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
+   "result": "8894+1 passed; nodeid 8915=8915=8915",
+   "artifact": "results/pfc001/summary.txt"
+  },
+  {
+   "id": "pfc001_mutation",
+   "status": "PASS",
+   "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
+   "result": "194 KILLED, 1 EQUIVALENT, gate PASS",
+   "artifact": "results/pfc001/mut.json"
+  },
   {
    "id": "regression_full_530",
    "status": "PASS",
@@ -1336,5 +1360,23 @@
   "owner_decisions_needed": 10,
   "issue_536": "PF-RUNTIME-LOCK-01 prerequisito LIVE",
   "factory": "PENDING, piano in rapporto_B.md §8, nessuna sessione avviata"
+ },
+ "roadmap_108": {
+  "doc": "results/roadmap_108/PF-POST537-AUDIT-RECONCILIATION-01.md",
+  "sha256": "dee0264f024d7a953c0a0df21640e7a7cb37438c2d298e1da745c37619338632",
+  "prs_future": 108,
+  "executable": 101,
+  "suspended": 7,
+  "atomic_requirements": 164,
+  "merge_owner_prs": 11
+ },
+ "pfc001": {
+  "pr": 538,
+  "head": "0fd0ba2",
+  "serial": "8895 passed, 1 env fail (tkinter), 838.7 s",
+  "parallel": "8894+1 passed, 157 s + 3.5 s",
+  "nodeids_equal": "8915=8915=8915",
+  "mutation": "194 KILLED, 1 EQUIVALENT, gate PASS",
+  "f026": "460 s -> 318 s, 162 passed"
  }
 }

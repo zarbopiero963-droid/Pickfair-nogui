@@ -1,0 +1,7 @@
+PFC-001 validation on 0fd0ba24d132e0c879b019d33eb2220e565f1aa5 (22/10/2026)
+serial: 1 failed, 8895 passed, 14 skipped, 5 xfailed, 25 warnings, 8 subtests passed in 838.68s (0:13:58)
+FAILED tests/acceptance/test_issue461_pr04_quater.py::test_gui_save_reopen_file_pickers_and_live_boundary[True]
+parallel -n 8 worksteal -m 'not serial': 8894 passed, 14 skipped, 5 xfailed, 25 warnings, 8 subtests passed in 155.77s (0:02:35)
+serial-only -m serial: 1 failed, 1 passed, 8913 deselected in 3.51s
+nodeids: serial 8915 == parallel+serial 8915 == collected 8915
+mutation: 194 KILLED, 0 SURVIVED, 1 EQUIVALENT, gate PASS (mut.json)

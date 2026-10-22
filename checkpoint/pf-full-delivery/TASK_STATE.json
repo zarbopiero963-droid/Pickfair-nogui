@@ -56,9 +56,9 @@
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)"
  ],
- "lotto_corrente": "PAUSA owner dopo merge #537 (main 3bb4477, CI 14/14): in attesa di due audit indipendenti",
- "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "STOP OPERATIVO owner: SVILUPPO IN PAUSA \u2014 IN ATTESA DEI DUE AUDIT OWNER. Nessuna PR, nessun codice, nessun ciclo di fix/review/mutation, nessun merge, nessun LIVE/deploy/Factory fino a nuova autorizzazione esplicita. Follow-up aperti: G7 P0, RST-EXEC P1, OP-VIS P1, TTL-PERSIST P2 (#453 c.6345531244, #506 c.6345533873).",
+ "lotto_corrente": "PFC-001 (PR #538): M025 + M158, solo test",
+ "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
+ "next_atomic_action": "Attendere CI e review Sol/Grok su PR #538 (head 0fd0ba2); triage (cicli <= 10); a gate verdi dichiarare READY: merge richiede approvazione owner finche full-suite non e required check. Poi PFC-002 (merge OWNER), PFC-003 (merge OWNER), PFC-004 G7-a. Salvaguardia 24 h su PFC-002/003. NO LIVE.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
