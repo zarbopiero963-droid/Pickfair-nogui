@@ -23,7 +23,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     impostato ritorna subito, sotto carico il thread del test non fallisce più per tempo (falso rosso su #535). Le
     attese negative restano brevi.
   - Marker `serial` in `pytest.ini` per i test con widget Tk reali sul display X condiviso, con guard
-    `tests/guardrails/test_serial_marker_pfc001.py`. README: comando parallelo + passo seriale.
+    `tests/guardrails/test_serial_marker_pfc001.py`: un test (o una fixture che richiede) usa un display reale se
+    legge `DISPLAY`, costruisce una radice Tk (`Tk`/`CTk`/`Toplevel`) o una `MiniPickfairGUI` senza
+    `test_mode=True` (rilievo Codex P2 su 0fd0ba2). README: comando parallelo + passo seriale.
 
 - **Fix loop: tetto per PR portato da 5 a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner
   20/10/2026):** `MAX_FIX_LOOP_ITERATIONS_PER_PR = 10` in `scripts/pr_fix_loop_policy.py`. È un massimo,
