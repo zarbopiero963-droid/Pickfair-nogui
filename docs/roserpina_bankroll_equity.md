@@ -140,12 +140,17 @@ restava per sempre (S9).
   secondo `start()` fallito); un avvio fallito dopo la connessione smonta prima i servizi già avviati (poller, feed, Telegram,
   Betfair) e, se lo smontaggio fallisce, trattiene il lock finché uno smontaggio successivo non riesce (ritentato a
   un nuovo avvio rifiutato, o da uno `stop()` completo); anche `stop()` lo rilascia solo dopo uno smontaggio riuscito; `start()` e `stop()` sono serializzati da un lock di ciclo di vita, così uno STOP non
-  chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Non è una lease a scadenza: non si perde
-  per tempo o per inattività. Limite noto: la rimozione manuale del file di lock mentre il runtime è attivo
-  permetterebbe un secondo lock su un nuovo file. Un secondo runtime sullo stesso DB viene rifiutato all'avvio
-  (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli vivono in memoria per processo e due copie
-  attive divergerebbero su operazioni globali come il reset di ciclo. Ledger exactly-once e scritture a variazioni
-  restano come seconda difesa (crash, riavvio, processi di servizio).
+  chiude il lock mentre un avvio lo sta usando; il sistema lo libera anche in caso di crash. Un secondo runtime
+  sullo stesso DB viene rifiutato all'avvio (`RUNTIME_INSTANCE_ACTIVE`, evento `RUNTIME_START_REFUSED`): i tavoli
+  vivono in memoria per processo e due copie attive divergerebbero su operazioni globali come il reset di ciclo.
+  **#536**: il lock OS da solo non bastava (file di lock cancellato o sostituito ⇒ secondo `flock` su un nuovo
+  file). Ora l'autorità è a tre strati (`docs/runtime_authority.md`): identità del file di lock (inode) verificata
+  a ogni operazione, **lease persistente** nella tabella `runtime_lease` con **fencing token monotono** (TTL 30 s,
+  heartbeat 10 s; tenuta da un altro runtime vivo ⇒ `RUNTIME_LEASE_HELD`), fence su ogni scrittura del `Database`
+  dentro la stessa transazione, verifica prima di segnale, auto-next, cashout, reset di ciclo, sweep F028 e di
+  ogni invio del TradingEngine, ricontrollo dopo l'invio. Autorità persa ⇒ LOCKDOWN senza cancel-all e nessuna
+  scrittura. Ledger exactly-once e scritture a variazioni restano come seconda difesa (crash, riavvio, processi
+  di servizio).
 - **Effetto non registrato** (registro non scrivibile): nessun checkpoint durevole, nessun sync durevole del
   bankroll, nessun auto-next; la perdita entra comunque nel realizzato (limite giornaliero). Il settlement resta
   in coda nel processo e si ritenta a ogni giro del poller (`_retry_unrecorded_settlements`, anche in ACTIVE),

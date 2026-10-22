@@ -1663,15 +1663,15 @@
     },
     {
       "id": "second_runtime_instance_allowed",
-      "module": "core.runtime_controller",
+      "module": "core.runtime_authority",
       "area": "live_safety",
-      "file": "core/runtime_controller.py",
-      "original": "        except OSError:\n            handle.close()\n            return \"runtime_already_active_on_database\"",
-      "mutated": "        except OSError:\n            handle.close()\n            return \"\"",
+      "file": "core/runtime_authority.py",
+      "original": "            except OSError:\n                handle.close()\n                return \"runtime_already_active_on_database\"",
+      "mutated": "            except OSError:\n                handle.close()\n                return \"\"",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
-      "rationale": "#461 PR29-c (Sol su c6d2338): un secondo runtime parte sullo stesso database e diverge sui tavoli di recovery (reset concorrente)."
+      "rationale": "#461 PR29-c (Sol su c6d2338): un secondo runtime parte sullo stesso database e diverge sui tavoli di recovery (reset concorrente). (#536: lock spostato in core/runtime_authority.py)"
     },
     {
       "id": "settlement_key_not_canonical",
@@ -1783,27 +1783,27 @@
     },
     {
       "id": "instance_lock_path_not_canonical",
-      "module": "core.runtime_controller",
+      "module": "core.runtime_authority",
       "area": "live_safety",
-      "file": "core/runtime_controller.py",
-      "original": "        path = os.path.normcase(os.path.realpath(os.path.abspath(path)))",
-      "mutated": "        path = path",
+      "file": "core/runtime_authority.py",
+      "original": "        self.lock_path = os.path.normcase(os.path.realpath(os.path.abspath(self.db_path))) + \".runtime.lock\"",
+      "mutated": "        self.lock_path = self.db_path + \".runtime.lock\"",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
-      "rationale": "#461 PR29-c (Grok su e3fe4d7): due grafie dello stesso database prendono due lock diversi (due runtime)."
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): due grafie dello stesso database prendono due lock diversi (due runtime). (#536: lock spostato in core/runtime_authority.py)"
     },
     {
       "id": "windows_lock_follows_append_offset",
-      "module": "core.runtime_controller",
+      "module": "core.runtime_authority",
       "area": "live_safety",
-      "file": "core/runtime_controller.py",
-      "original": "                handle.seek(0)                   # Grok su e3fe4d7: sempre il byte 0, non l'offset di append",
-      "mutated": "                pass",
+      "file": "core/runtime_authority.py",
+      "original": "                    handle.seek(0)\n                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)",
+      "mutated": "                    msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)",
       "tests": [
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
-      "rationale": "#461 PR29-c (Grok su e3fe4d7): su Windows il byte bloccato segue l'offset di append e due processi non collidono."
+      "rationale": "#461 PR29-c (Grok su e3fe4d7): su Windows il byte bloccato segue l'offset di append e due processi non collidono. (#536: lock spostato in core/runtime_authority.py)"
     },
     {
       "id": "pending_teardown_ignored_on_release",
@@ -1828,6 +1828,570 @@
         "tests/acceptance/test_issue461_pr29c_settlement_processes_and_schema.py"
       ],
       "rationale": "#461 PR29-c (Sol su ad315ca): uno STOP con disconnessione Betfair fallita libera il lock."
+    },
+    {
+      "id": "i536_signal_submit_authority_guard_bypassed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        authority_block = self._runtime_authority_block(\"signal_submit\")   # #536: subito prima dell'invio\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: un runtime senza autorita' invia il segnale (CMD_QUICK_BET) invece di rifiutarlo."
+    },
+    {
+      "id": "i536_auto_next_authority_guard_bypassed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        stop_block = self._runtime_authority_block(\"auto_next\") or stop_block   # #536: prima dell'invio",
+      "mutated": "        stop_block = stop_block",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: l'auto-next Roserpina parte anche con autorita' persa."
+    },
+    {
+      "id": "i536_cashout_authority_guard_bypassed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        authority_block = RuntimeController._runtime_authority_block(self, \"cashout\")   # #536: senza autorita' niente cashout\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: il cashout passa senza verifica dell'autorita'."
+    },
+    {
+      "id": "i536_reset_cycle_authority_guard_bypassed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        authority_block = self._runtime_authority_block(\"reset_cycle\")     # #536: operazione globale sui tavoli\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: reset_cycle azzera i tavoli da un runtime superato."
+    },
+    {
+      "id": "i536_f028_sweep_authority_guard_bypassed",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if self._runtime_authority_block(\"f028\"):\n            return []",
+      "mutated": "        if False:\n            return []",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: lo sweep F028 rilascia tavoli da un runtime superato."
+    },
+    {
+      "id": "i536_authority_block_ignores_lost_reason",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if lost:\n            return f\"runtime_authority_lost:{lost}\"\n        authority = getattr(self, \"runtime_authority\", None)\n        if authority is None:\n            return \"\"\n        if getattr(self, \"_authority_draining\"",
+      "mutated": "        if False:\n            return f\"runtime_authority_lost:{lost}\"\n        authority = getattr(self, \"runtime_authority\", None)\n        if authority is None:\n            return \"\"\n        if getattr(self, \"_authority_draining\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: la perdita gia' registrata non blocca piu' i percorsi finanziari."
+    },
+    {
+      "id": "i536_after_send_recheck_disabled",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        block = self._runtime_authority_block(\"after_order_send\")\n        if not block:\n            return",
+      "mutated": "        block = \"\"\n        if not block:\n            return",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: la perdita dell'autorita' fra verifica e invio non viene segnalata (TOCTOU silenziosa)."
+    },
+    {
+      "id": "i536_is_live_allowed_ignores_lost_authority",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"live_check\"):   # #536: lock + lease, non solo la memoria\n            return False",
+      "mutated": "        if False:\n            return False",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: is_live_allowed resta True dopo la perdita dell'autorita'."
+    },
+    {
+      "id": "i536_lost_handler_no_lockdown",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        self.live_enabled = False\n        self.mode = RuntimeMode.LOCKDOWN\n        self.last_error = f\"RUNTIME_AUTHORITY_LOST:{reason}\"",
+      "mutated": "        self.live_enabled = False\n        self.last_error = f\"RUNTIME_AUTHORITY_LOST:{reason}\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: la perdita dell'autorita' non porta il runtime in LOCKDOWN."
+    },
+    {
+      "id": "i536_start_ignores_lease_refusal",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if lease_block:\n            logger.critical(\"Avvio rifiutato: %s\", lease_block)",
+      "mutated": "        if False:\n            logger.critical(\"Avvio rifiutato: %s\", lease_block)",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: start() procede anche se la lease e' di un altro runtime vivo."
+    },
+    {
+      "id": "i536_lease_takeover_with_live_holder",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                if not (same or expired or dead):\n                    return {\"acquired\": False, \"holder\": dict(row)}",
+      "mutated": "                if False:\n                    return {\"acquired\": False, \"holder\": dict(row)}",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: la lease viene scavalcata anche se il detentore e' vivo."
+    },
+    {
+      "id": "i536_renew_without_expiry_check",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                \"AND fencing_token = ? AND expires_at >= ?\",",
+      "mutated": "                \"AND fencing_token = ? AND expires_at >= ? - 1e12\",",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: una lease scaduta viene rinnovata invece di essere rifiutata."
+    },
+    {
+      "id": "i536_fence_ignores_token",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "        if str(row[\"owner_id\"]) != fence[\"owner_id\"] or int(row[\"fencing_token\"]) != int(fence[\"token\"]):",
+      "mutated": "        if str(row[\"owner_id\"]) != fence[\"owner_id\"]:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: il fence non confronta il fencing token: un token superato dello stesso owner scrive."
+    },
+    {
+      "id": "i536_fence_not_checked_in_transaction",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                    self._assert_runtime_fence(conn, \"transaction\")   # #536: dentro la transazione",
+      "mutated": "                    pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: transaction() scrive senza verificare la lease."
+    },
+    {
+      "id": "i536_fence_not_checked_in_execute",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                self._assert_runtime_fence(conn, \"execute\")",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: una scrittura in autocommit passa senza fence."
+    },
+    {
+      "id": "i536_fence_not_checked_in_settlement_transaction",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                self._assert_runtime_fence(conn, name)          # #536: fencing dentro la stessa transazione",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: le transazioni di settlement scrivono senza fence."
+    },
+    {
+      "id": "i536_lock_replacement_not_detected",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "        if (current.st_dev, current.st_ino) != (held.st_dev, held.st_ino):\n            return \"lock_file_replaced\"",
+      "mutated": "        if False:\n            return \"lock_file_replaced\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: un file di lock sostituito (inode diverso) non viene riconosciuto."
+    },
+    {
+      "id": "i536_verify_ignores_expired_lease",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "        if float(row.get(\"expires_at\") or 0.0) < self._clock():\n            self.mark_lost(\"lease_expired\")",
+      "mutated": "        if False:\n            self.mark_lost(\"lease_expired\")",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: verify accetta una lease scaduta."
+    },
+    {
+      "id": "i536_heartbeat_db_down_never_loses",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            if now + self.heartbeat_sec >= expires:",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: con il DB non disponibile l'autorita' resta dichiarata anche oltre la scadenza."
+    },
+    {
+      "id": "i536_mark_lost_keeps_lease",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "        if token is not None:                           # I/O sul DB fuori da self._lock (nessun lock-order inverso)",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: dopo la perdita la lease non scade: il proprietario legittimo non puo' subentrare."
+    },
+    {
+      "id": "i536_engine_submit_without_authority",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            if callable(assert_authority):\n                assert_authority(\"order_submit\")",
+      "mutated": "            if callable(assert_authority):\n                pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: il TradingEngine invia senza il choke point di autorita'."
+    },
+    {
+      "id": "i536_is_live_allowed_memory_only",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"live_check\"):   # #536: lock + lease, non solo la memoria",
+      "mutated": "        if getattr(self, \"_authority_lost_reason\", \"\"):",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: is_live_allowed guarda solo lo stato in memoria: lock cancellato non ancora rilevato => LIVE ammesso (Grok su fc8f136)."
+    },
+    {
+      "id": "i536_cashout_executor_skips_authority",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "            authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge\n            if authority_block:",
+      "mutated": "            authority_block = \"\"\n            if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: l'hedge del cashout parte da un runtime senza autorita' (bus asincrono, rilievo interno su fc8f136)."
+    },
+    {
+      "id": "i536_cashout_authority_check_error_fail_open",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "            return \"runtime_authority_check_failed\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: un errore della verifica dell'autorita' lascia partire l'hedge."
+    },
+    {
+      "id": "i536_released_authority_allows_orders",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if authority.released:\n            # Codex su fc8f136: dopo lo STOP il bus resta vivo; un comando in coda non vale come \"nessuna autorita'\"\n            return \"runtime_authority_released\"",
+      "mutated": "        if authority.released:\n            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): dopo lo STOP un comando in coda passa il choke point."
+    },
+    {
+      "id": "i536_unmatched_ttl_without_authority",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"unmatched_ttl\"):\n            return      #",
+      "mutated": "        if False:\n            return      #",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): il TTL degli unmatched cancella ordini da un runtime senza autorita'."
+    },
+    {
+      "id": "i536_lost_authority_reopens_epoch",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            if self.lost_reason:\n                # Codex su fc8f136",
+      "mutated": "            if False:\n                # Codex su fc8f136",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): un'autorita' persa riapre una nuova epoca senza STOP."
+    },
+    {
+      "id": "i536_renew_time_before_lock_wait",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "        def fn(conn):\n            now = float(clock()) if callable(clock) else float(now_arg)\n            cur = conn.execute(",
+      "mutated": "        def fn(conn):\n            now = float(now_arg)\n            cur = conn.execute(",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): l'istante del rinnovo e' letto prima dell'attesa del lock: lease scaduta resuscitata."
+    },
+    {
+      "id": "i536_fenced_autocommit_deferred",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                conn.execute(\"BEGIN IMMEDIATE\")\n                self._set_tx_depth(1)\n                try:\n                    self._assert_runtime_fence(conn, \"execute\")",
+      "mutated": "                self._set_tx_depth(1)\n                try:\n                    self._assert_runtime_fence(conn, \"execute\")",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su fc8f136): controllo del fence e scrittura autocommit non serializzati con il subentro."
+    },
+    {
+      "id": "i536_engine_admission_without_authority",
+      "module": "core.trading_engine",
+      "area": "live_safety",
+      "file": "core/trading_engine.py",
+      "original": "            authority_block = self._runtime_authority_admission_block()\n            if authority_block:",
+      "mutated": "            authority_block = \"\"\n            if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): l'intento viene persistito (riga INFLIGHT) prima della verifica dell'autorita'."
+    },
+    {
+      "id": "i536_stop_does_not_drain_operations",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            if not self._wait_authority_ops_drained(float(self.RUNTIME_AUTHORITY_DRAIN_SEC)):",
+      "mutated": "            if not True:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): lo STOP scioglie fence e lease con un invio ancora in volo."
+    },
+    {
+      "id": "i536_draining_allows_new_operations",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"runtime_authority_draining\"        # STOP in corso: nessuna nuova operazione finanziaria",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): durante lo STOP nuove operazioni passano il choke point."
+    },
+    {
+      "id": "i536_new_epoch_while_draining",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            return \"runtime_authority_draining\"        # nessuna nuova epoca con operazioni della vecchia in volo",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): una nuova epoca parte con operazioni della precedente ancora in volo."
+    },
+    {
+      "id": "i536_release_failure_declared_clean",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "                self.start_heartbeat()                  # Codex su 125aa05: si continua a dimostrarla\n                return False",
+      "mutated": "                pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): rilascio della lease fallito ma STOP dichiarato pulito."
+    },
+    {
+      "id": "i536_renew_after_loss_not_undone",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            undo = bool(self.released or self.lost_reason)",
+      "mutated": "            undo = False",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): un rinnovo concorrente alla perdita lascia la lease viva per l'autorita' persa."
+    },
+    {
+      "id": "i536_cashout_hedge_not_drained",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())",
+      "mutated": "            stack.enter_context(contextlib.nullcontext())",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 1542b5d): l'hedge del cashout in volo non e' contato e lo STOP scioglie il fence mentre piazza."
+    },
+    {
+      "id": "i536_explicit_transaction_unfenced",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                if self._runtime_fence is not None:\n                    # #536 (Codex su 1542b5d)",
+      "mutated": "                if False:\n                    # #536 (Codex su 1542b5d)",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): begin_transaction() apre una transazione senza fence: la riconciliazione di un runtime superato scrive."
+    },
+    {
+      "id": "i536_release_skips_expiry_after_loss",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            token = self.token\n            self._stop.set()",
+      "mutated": "            token = self.token if not self.lost_reason else None\n            self._stop.set()",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): dopo una perdita con scadenza fallita lo STOP lascia la lease viva."
+    },
+    {
+      "id": "i536_start_activates_after_loss",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        authority_block = RuntimeController._runtime_authority_block(self, \"start_activation\")\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): lo START si dichiara attivo dopo aver perso l'autorita' durante l'avvio."
+    },
+    {
+      "id": "i536_emergency_cancel_not_rechecked_per_market",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "                market_block = self._authority_definitively_lost()   # Sol su 9a80162: prima di ogni mercato",
+      "mutated": "                market_block = \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162): autorita' persa durante l'emergency stop: i cancel-all dei mercati successivi partono comunque."
+    },
+    {
+      "id": "i536_ttl_candidate_dropped_after_adapter_refusal",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "            self._direct_order_bet_ids.update(presi)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 9a80162, Grok su 589cdb5): il rifiuto per autorita' dell'adapter consuma il candidato TTL senza tentativo."
+    },
+    {
+      "id": "i536_ttl_overlapping_poll_second_cancel",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if not presi:\n            return",
+      "mutated": "        if False:\n            return",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 589cdb5): un giro TTL sovrapposto invia un secondo cancel su un ordine gia' preso in carico."
+    },
+    {
+      "id": "i536_ttl_bet_id_kept_during_broker_call",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        presi = self._discard_direct_bet_id(bet_id)",
+      "mutated": "        presi = {c: b for c, b in self._direct_order_bet_ids.items() if b == bet_id}",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 589cdb5): il bet_id resta candidato durante la chiamata al broker."
+    },
+    {
+      "id": "i536_ttl_claim_not_atomic_per_bet_id",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        with _DIRECT_TTL_CLAIM_LOCK:",
+      "mutated": "        with contextlib.nullcontext():",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Sol su 2a5a6c2): con piu' riferimenti allo stesso ordine due giri TTL concorrenti prendono una voce ciascuno e cancellano due volte."
+    },
+    {
+      "id": "i536_begin_transaction_leaks_lock_on_error",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                    except BaseException as exc:\n                        # Grok su 9a80162: qualunque errore della verifica => rollback, il lock non resta preso",
+      "mutated": "                    except RuntimeFenceViolation as exc:\n                        # Grok su 9a80162: qualunque errore della verifica => rollback, il lock non resta preso",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 9a80162): un errore non-fence dopo BEGIN IMMEDIATE lascia la transazione aperta e il lock di scrittura al runtime."
+    },
+    {
+      "id": "i536_cashout_operation_enter_failure_unhandled",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "        try:\n            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())\n        except Exception:",
+      "mutated": "        try:\n            stack.enter_context(operation() if callable(operation) else contextlib.nullcontext())\n        except ZeroDivisionError:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 9a80162): l'operazione in volo che non si registra lascia il cashout senza esito."
+    },
+    {
+      "id": "i536_fenced_transaction_deferred_upgrade",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                    conn.execute(\"BEGIN IMMEDIATE\")\n                    self._assert_runtime_fence(conn, \"transaction\")   # #536: dentro la transazione",
+      "mutated": "                    conn.execute(\"BEGIN\")\n                    self._assert_runtime_fence(conn, \"transaction\")   # #536: dentro la transazione",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (CI F032_01): transazione fenced in BEGIN differita, l'upgrade a scrittura fallisce se l'heartbeat rinnova nel mezzo."
     }
   ]
 }

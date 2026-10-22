@@ -22,6 +22,40 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **#536 PF-RUNTIME-LOCK-01 — autorità esclusiva del runtime: lock OS + identità del lock + lease con fencing
+  token (mandato owner PF-536-ISOLATED-IMPLEMENTATION-01):** su main 152613b il lock `<db>.runtime.lock` proteggeva
+  l'inode, non il percorso: cancellato o sostituito il file, un secondo runtime partiva sullo stesso database e i
+  due operavano senza coordinamento (ordini, auto-next, reset di ciclo su tavoli divergenti). Ora
+  (`core/runtime_authority.py`, `docs/runtime_authority.md`): identità `(st_dev, st_ino)` del lock verificata a
+  ogni operazione; tabella **additiva** `runtime_lease` (riga singola, `CREATE TABLE IF NOT EXISTS`) con
+  `fencing_token` monotono acquisita in `BEGIN IMMEDIATE`, scavalcabile solo se scaduta o se il detentore è
+  dimostrabilmente morto sullo stesso host, rinnovata dall'heartbeat (TTL 30 s / 10 s) e rifiutata se scaduta;
+  fence vincolato al `Database`: ogni scrittura (`transaction`, `_settlement_transaction`, autocommit
+  `INSERT/UPDATE/DELETE/REPLACE`) verifica owner e token dentro la stessa transazione, altrimenti
+  `RuntimeFenceViolation` e rollback. `start()` rifiuta con `RUNTIME_LEASE_HELD` se la lease è di un altro runtime
+  vivo. Verifica fail-closed prima di segnale, auto-next, cashout, `reset_cycle`, sweep F028 e di ogni invio del
+  `TradingEngine` (`assert_runtime_authority`), ricontrollo dopo l'invio (`RUNTIME_AUTHORITY_LOST_AFTER_SEND`),
+  `is_live_allowed` False (verifica completa di lock e lease); verifica anche nel `CashoutExecutor` subito prima
+  dell'hedge (`cashout_wiring.cabla_catena_cashout(runtime_authority_check=...)`, cablato da headless e GUI), perché
+  il bus è asincrono e la verifica al routing non copre il piazzamento. Dopo la review di `fc8f136`: fence e
+  scrittura autocommit nella stessa `BEGIN IMMEDIATE`; autorità rilasciata allo STOP = blocco; autorità persa ⇒
+  nuova epoca solo dopo STOP; TTL unmatched senza autorità = nessun cancel; rinnovo e acquisizione misurati dopo
+  l'attesa del lock del DB; nessun I/O sul DB sotto il lock dell'autorità (niente deadlock). Dopo la review di
+  `125aa05`: verifica nei cancel del cashout, del residuo e del TTL (`CashoutCancelAdapter(authority_check=...)`),
+  verifica prima di persistere l'intento, STOP che attende le operazioni in volo (`authority_operation`,
+  `RUNTIME_AUTHORITY_DRAIN_SEC`), rilascio fallito che trattiene l'autorità, rinnovo concorrente annullato; anche
+  l'hedge del cashout in volo è contato e atteso dallo STOP; `begin_transaction` fenced, emergency stop senza
+  cancel-all di mercato da un runtime superato, candidato TTL conservato se l'autorità blocca il cancel, START
+  rifiutato se l'autorità cade durante l'avvio, scadenza della lease ritentata allo STOP; `transaction()` con fence
+  in `BEGIN IMMEDIATE` (l'upgrade da lettura a scrittura falliva se l'heartbeat rinnovava nel mezzo); TTL degli
+  unmatched con esito del cancel locale alla chiamata (`CashoutCancelAdapter.cancel_with_outcome`) e presa in carico
+  del `bet_id` prima del broker, così due giri sovrapposti non cancellano due volte lo stesso ordine. Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
+  proprietario legittimo subentra, evento `RUNTIME_AUTHORITY_LOST`. Limiti dichiarati: finestra TOCTOU fra verifica
+  e chiamata all'exchange (segnalata, lasciata alla riconciliazione del nuovo proprietario), stesso host e
+  orologio condiviso, filesystem di rete non supportato, Windows MANUAL_ONLY. Test HARD REAL in
+  `tests/acceptance/test_issue536_runtime_authority.py` (due processi OS, crash, riavvio, lock cancellato e
+  sostituito, lease scaduta con processo vivo, DB indisponibile, STOP fallito/ripetuto/concorrente); mutazioni
+  `i536_*` nel catalogo.
 - **#461 PR29-c — un settlement, un solo effetto finanziario, sulla sola riserva che identifica
   (PF-PR29-C-FINANCIAL-IDEMPOTENCY-01, PF-C29-01 .11/.13/.18):** su main 409bcf9 quattro consegne concorrenti dello
   stesso settlement portavano il debito di recovery da 10 a 40 (S7); con due bet sullo stesso mercato nessun tavolo

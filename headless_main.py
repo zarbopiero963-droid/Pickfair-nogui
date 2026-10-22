@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import signal
 import os
@@ -522,6 +523,14 @@ class HeadlessApp:
             microstake_executor_provider=lambda: (
                 self.trading_engine.native_microstake_executor()
                 if getattr(self, "trading_engine", None) is not None else None),
+            # #536: l'hedge parte solo se il runtime ha ancora l'autorita' esclusiva sul database.
+            runtime_authority_check=lambda: (
+                self.runtime.cashout_authority_check()
+                if getattr(self, "runtime", None) is not None else "runtime_not_built"),
+            # #536: l'hedge in volo e' contato fra le operazioni che lo STOP attende
+            runtime_authority_operation=lambda: (
+                self.runtime.authority_operation()
+                if getattr(self, "runtime", None) is not None else contextlib.nullcontext()),
         )
         self.order_router = catena.order_router
         self.cashout_executor = catena.cashout_executor

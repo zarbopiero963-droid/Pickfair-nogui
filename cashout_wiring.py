@@ -53,6 +53,8 @@ def cabla_catena_cashout(
     persist: Callable[[Dict[str, Any]], None],
     notify: Callable[..., None],
     microstake_executor_provider: Callable[[], Any] | None = None,
+    runtime_authority_check: Callable[[], str] | None = None,
+    runtime_authority_operation: Callable[[], Any] | None = None,
 ) -> CatenaCashout:
     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
 
@@ -62,7 +64,9 @@ def cabla_catena_cashout(
       ``SafetyLayer`` REALE (#437): ``validate_cashout_request`` aggiunge
       schema e tipi agli invarianti hard. Il costruttore del layer e' inerte e
       il bridge normalizza gia' i tipi sul percorso reale, quindi il layer non
-      puo' rigettare cashout legittimi;
+      puo' rigettare cashout legittimi; con ``runtime_authority_check`` (#536,
+      ``RuntimeController.cashout_authority_check``) nessun hedge parte da un
+      runtime che ha perso l'autorita' esclusiva sul database;
     - ``CashoutRequestBridge``: consuma ``REQ_EXECUTE_CASHOUT`` (dedup,
       normalizzazione, ``CASHOUT_FAILED`` strutturato) e pubblica il CMD;
     - ``CashoutResidualHandler``: consuma ``CASHOUT_FAILED`` e ``CASHOUT_SUCCESS``
@@ -82,7 +86,9 @@ def cabla_catena_cashout(
     # lotto M4): sotto il minimo exchange il router non chiama il broker diretto.
     # Senza provider (es. harness di test senza engine) resta fail-closed.
     order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
-    cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer())
+    cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(),
+                                       authority_check=runtime_authority_check,
+                                       authority_operation=runtime_authority_operation)
     cashout_executor.wire()
 
     cashout_request_bridge = CashoutRequestBridge(bus)
@@ -93,6 +99,7 @@ def cabla_catena_cashout(
         is_simulation=lambda: svc.is_simulation_mode(),
         live_cancel=lambda **kw: (c.cancel_orders(**kw) if (c := svc.get_live_client()) is not None else False),
         sim_cancel=lambda **kw: (b.cancel_orders(**kw) if (b := svc.get_simulation_broker()) is not None else False),
+        authority_check=runtime_authority_check,       # #536: nessun cancel del residuo senza autorita'
     )
     cashout_residual_handler = CashoutResidualHandler(
         cancel=residual_cancel.cancel,
