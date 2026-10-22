@@ -108,6 +108,17 @@ non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a r
 - **Hedge del cashout in volo** (Grok su `1542b5d`): `CashoutExecutor(authority_operation=...)` piazza l'hedge
   dentro `authority_operation()`, cablato da `cashout_wiring(runtime_authority_operation=...)` in headless e GUI;
   lo STOP lo attende come gli invii dell'engine.
+- **Transazioni esplicite** (`begin_transaction`/`commit_transaction`, usate dalla riconciliazione): con il fence
+  vincolato aprono `BEGIN IMMEDIATE` e verificano la lease; superata ⇒ `RuntimeFenceViolation`, nessuna transazione.
+- **Emergency stop**: il LOCKDOWN locale resta sempre; il cancel-all di mercato si salta se l'autorità è persa in
+  modo definitivo (lock cancellato/sostituito, lease superata o scaduta, autorità rilasciata), perché gli unmatched
+  possono essere del nuovo proprietario. Autorità solo illeggibile sul momento (DB) ⇒ cancel ammesso.
+- **TTL degli unmatched**: un cancel non tentato perché l'autorità non è dimostrata conserva il candidato
+  (`DIRECT_UNMATCHED_CANCEL_DEFERRED`) invece di consumare l'unico tentativo.
+- **START**: l'autorità si riverifica subito prima dell'attivazione; persa durante connessione o recovery ⇒
+  `RUNTIME_AUTHORITY_LOST_DURING_START`, servizi smontati, lock e lease rilasciati, nessun `RUNTIME_STARTED`.
+- **STOP dopo una perdita**: la scadenza della lease si ritenta anche se `mark_lost` non era riuscito (scoped su
+  owner e token).
 - Limite residuo: un task dell'executor ancora in corso dopo un esito AMBIGUOUS (attesa scaduta) non è contato fra
   le operazioni in volo; il suo ordine resta alla riconciliazione.
 
@@ -172,4 +183,5 @@ serializzata col subentro, nessun invio dopo lo STOP, TTL unmatched senza autori
 perdita senza STOP, rinnovo misurato dopo l'attesa del lock, nessun deadlock heartbeat/fence (T31–T36);
 rilievi su `125aa05`: cancel del cashout/TTL/residuo rifiutati, nessuna riga INFLIGHT senza autorità, verifica
 prima del trasporto, STOP che attende le operazioni in volo, rilascio fallito, rinnovo annullato (T37–T42, T20b);
-STOP che attende l'hedge del cashout in volo (T43). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+STOP che attende l'hedge del cashout in volo (T43); rilievi Codex su `1542b5d`: transazione esplicita fenced,
+scadenza ritentata allo STOP, emergency stop, candidato TTL conservato, START non attivo dopo la perdita (T44–T48). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

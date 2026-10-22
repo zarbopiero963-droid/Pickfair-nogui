@@ -160,13 +160,31 @@ class Database:
 
     def begin_transaction(self) -> None:
         conn = self._get_connection()
+        violation: Optional[RuntimeFenceViolation] = None
         with self._write_lock:
             depth = self._get_tx_depth()
             if depth == 0:
-                conn.execute("BEGIN")
+                if self._runtime_fence is not None:
+                    # #536 (Codex su 1542b5d): transazione esplicita (riconciliazione) fenced e serializzata col
+                    # subentro: BEGIN IMMEDIATE prende subito il lock di scrittura, poi si verifica la lease.
+                    conn.execute("BEGIN IMMEDIATE")
+                    try:
+                        self._assert_runtime_fence(conn, "begin_transaction")
+                    except RuntimeFenceViolation as exc:
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            logger.exception("Errore rollback begin_transaction fenced")
+                        violation = exc
+                else:
+                    conn.execute("BEGIN")
             else:
                 conn.execute(f"SAVEPOINT sp_{depth}")
-            self._set_tx_depth(depth + 1)
+            if violation is None:
+                self._set_tx_depth(depth + 1)
+        if violation is not None:
+            self._notify_fence_violation(violation)          # fuori dal write lock
+            raise violation
 
     def commit_transaction(self) -> None:
         conn = self._get_connection()

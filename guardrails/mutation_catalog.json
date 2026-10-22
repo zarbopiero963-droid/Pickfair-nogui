@@ -1894,8 +1894,8 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        if lost:\n            return f\"runtime_authority_lost:{lost}\"",
-      "mutated": "        if False:\n            return f\"runtime_authority_lost:{lost}\"",
+      "original": "        if lost:\n            return f\"runtime_authority_lost:{lost}\"\n        authority = getattr(self, \"runtime_authority\", None)\n        if authority is None:\n            return \"\"\n        if getattr(self, \"_authority_draining\"",
+      "mutated": "        if False:\n            return f\"runtime_authority_lost:{lost}\"\n        authority = getattr(self, \"runtime_authority\", None)\n        if authority is None:\n            return \"\"\n        if getattr(self, \"_authority_draining\"",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
@@ -2260,6 +2260,66 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 1542b5d): l'hedge del cashout in volo non e' contato e lo STOP scioglie il fence mentre piazza."
+    },
+    {
+      "id": "i536_explicit_transaction_unfenced",
+      "module": "database",
+      "area": "live_safety",
+      "file": "database.py",
+      "original": "                if self._runtime_fence is not None:\n                    # #536 (Codex su 1542b5d)",
+      "mutated": "                if False:\n                    # #536 (Codex su 1542b5d)",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): begin_transaction() apre una transazione senza fence: la riconciliazione di un runtime superato scrive."
+    },
+    {
+      "id": "i536_release_skips_expiry_after_loss",
+      "module": "core.runtime_authority",
+      "area": "live_safety",
+      "file": "core/runtime_authority.py",
+      "original": "            token = self.token\n            self._stop.set()",
+      "mutated": "            token = self.token if not self.lost_reason else None\n            self._stop.set()",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): dopo una perdita con scadenza fallita lo STOP lascia la lease viva."
+    },
+    {
+      "id": "i536_emergency_cancel_without_authority",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if authority_block and by_market:\n            # #536 (Codex su 1542b5d)",
+      "mutated": "        if False:\n            # #536 (Codex su 1542b5d)",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): l'emergency stop di un runtime superato cancella gli unmatched di mercato del nuovo proprietario."
+    },
+    {
+      "id": "i536_ttl_candidate_dropped_when_blocked",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if blocked:\n            # #536 (Codex su 1542b5d): nessun tentativo",
+      "mutated": "        if False:\n            # #536 (Codex su 1542b5d): nessun tentativo",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): un cancel TTL non tentato per autorita' consuma l'unico tentativo."
+    },
+    {
+      "id": "i536_start_activates_after_loss",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        authority_block = RuntimeController._runtime_authority_block(self, \"start_activation\")\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Codex su 1542b5d): lo START si dichiara attivo dopo aver perso l'autorita' durante l'avvio."
     }
   ]
 }

@@ -1024,3 +1024,107 @@ def test_t43_lo_stop_attende_anche_l_hedge_del_cashout_in_volo(tmp_path, monkeyp
     assert visto["released"] is False and visto["fence"] is not None, "fence sciolto con un hedge in volo"
     c.rc._release_runtime_instance_lock_if_stopped()            # finito l'hedge, lo STOP successivo rilascia
     assert auth.released
+
+
+# ---------------------------------------------------------------- rilievi Codex su 1542b5d (RED prima della patch)
+def test_t44_transazione_esplicita_fenced_e_serializzata_col_subentro(tmp_path):
+    """Codex P1 database.py:256: begin_transaction()/commit_transaction() (riconciliazione) passano dal fence."""
+    p = str(tmp_path / "t44.db")
+    db, altro = Database(p), Database(p)
+    assert db.acquire_runtime_lease("a", ttl_sec=30.0, now=time.time(), pid=1, host="h", lock_identity="")["acquired"]
+    db.bind_runtime_fence("a", 1)
+    eventi = []
+
+    def _subentro():
+        esito = altro.acquire_runtime_lease("b", ttl_sec=30.0, now=time.time(), pid=2, host="h", lock_identity="",
+                                            holder_alive=lambda pid, host: False)
+        eventi.append(("subentro", esito["acquired"]))
+
+    db.begin_transaction()
+    t = threading.Thread(target=_subentro, daemon=True)
+    t.start()
+    t.join(0.5)
+    db._execute("INSERT INTO cycle_recovery_checkpoints (settlement_key, cycle_id, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?)", ("k44", "a", "t", "t"))
+    db.commit_transaction()
+    eventi.append(("commit", True))
+    assert _attendi(lambda: len(eventi) == 2, 5.0)
+    assert eventi[0] == ("commit", True), f"subentro completato dentro la transazione esplicita: {eventi}"
+    with pytest.raises(RuntimeFenceViolation):                 # ora la lease e' di "b": nessuna nuova transazione
+        db.begin_transaction()
+    assert not db._in_transaction()
+
+
+def test_t45_lo_stop_ritenta_la_scadenza_della_lease_dopo_una_perdita(tmp_path, monkeypatch):
+    """Codex P2 runtime_authority.py:328: mark_lost non riesce a scadere la lease => lo STOP ritenta."""
+    p = str(tmp_path / "t45.db")
+    db = Database(p)
+    auth = RuntimeAuthority(db, p, lease_ttl_sec=30.0, heartbeat_sec=10.0)
+    assert auth.acquire_os_lock() == "" and auth.acquire_lease() == ""
+    originale = db.release_runtime_lease
+
+    def _db_giu(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(db, "release_runtime_lease", _db_giu)
+    auth.mark_lost("lease_unrenewable")
+    assert float(db.read_runtime_lease()["expires_at"]) > time.time()   # lease ancora viva
+    monkeypatch.setattr(db, "release_runtime_lease", originale)
+    assert auth.release() is True
+    assert float(db.read_runtime_lease()["expires_at"]) < time.time(), "lease lasciata viva dopo lo STOP"
+
+
+def test_t46_emergency_stop_non_cancella_da_un_runtime_superato(tmp_path, monkeypatch):
+    """Codex P1 runtime_controller.py:2857: il cancel-all di mercato richiede l'autorita' corrente."""
+    c = _catena_armata(tmp_path, "t46.db")
+    chiamate = []
+
+    class _Live:
+        def cancel_orders(self, **kw):
+            chiamate.append(kw)
+            return {"ok": True, "cancelled_count": 1}
+
+    monkeypatch.setattr(c.rc.db, "get_pending_sagas", lambda: [{"market_id": "1.1", "bet_id": "B1"}], raising=False)
+    monkeypatch.setattr(c.rc.betfair_service, "get_live_client", lambda: _Live(), raising=False)
+    os.unlink(_lock_path(str(tmp_path / "t46.db")))
+    esito = c.rc.emergency_stop("prova")
+    assert chiamate == [], "cancel-all di mercato inviato da un runtime senza autorita'"
+    assert any(e.get("stage") == "runtime_authority" for e in esito.get("cancel_errors", [])), esito
+
+
+def test_t47_candidato_ttl_conservato_se_l_autorita_blocca_il_cancel(tmp_path):
+    """Codex P2 runtime_controller.py:6596: un cancel non tentato per autorita' non dimostrata non consuma
+    l'unico tentativo del TTL."""
+    c = _catena_armata(tmp_path, "t47.db")
+    c.rc._direct_order_bet_ids = {"ref-1": "B1"}
+    adapter = c.rc._direct_ttl_cancel_adapter()
+    adapter.authority_check = lambda: "runtime_authority_lost:lease_unreadable"
+    adapter.sim_cancel = adapter.live_cancel = lambda **kw: pytest.fail("cancel inviato senza autorita'")
+    c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
+    assert "B1" in c.rc.direct_unmatched_bet_ids, "candidato TTL perso senza alcun tentativo"
+    assert c.bus.payloads("DIRECT_UNMATCHED_CANCEL_FAILED") == []
+
+
+def test_t48_start_non_si_dichiara_attivo_se_l_autorita_cade_durante_l_avvio(tmp_path, monkeypatch):
+    """Codex P2 runtime_controller.py:2448: autorita' persa durante connessione/recovery => niente ACTIVE."""
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t48.db")
+    app = _app_su(p, monkeypatch)
+    avviati = []
+    app.bus.subscribe("RUNTIME_STARTED", lambda pl: avviati.append(pl))
+    originale = app.runtime.betfair_service.connect
+
+    def _connetti_e_perdi(*a, **k):
+        out = originale(*a, **k)
+        os.unlink(_lock_path(p))                              # lock rimosso mentre l'avvio e' in corso
+        return out
+
+    app.runtime.betfair_service.connect = _connetti_e_perdi
+    try:
+        esito = app.runtime.start(execution_mode="SIMULATION")
+        assert esito.get("started") is not True, esito
+        assert app.runtime.mode is not RuntimeMode.ACTIVE
+        time.sleep(0.3)
+        assert avviati == []
+    finally:
+        _ferma(app)

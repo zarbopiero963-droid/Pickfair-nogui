@@ -325,7 +325,9 @@ class RuntimeAuthority:
         with self._lock:
             if self.released:
                 return True
-            token = self.token if not self.lost_reason else None
+            # Codex su 1542b5d: anche dopo una perdita si ritenta la scadenza (scoped su owner e token: una lease di
+            # un altro proprietario non viene toccata), se mark_lost non era riuscito a farla.
+            token = self.token
             self._stop.set()
         self.stop_heartbeat()
         if token is not None:                           # I/O sul DB fuori da self._lock

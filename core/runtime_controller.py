@@ -2279,6 +2279,13 @@ class RuntimeController:
             logger.warning("emergency_stop: cannot get live client: %s", exc)
             cancel_errors.append({"stage": "get_live_client", "error": str(exc)})
 
+        authority_block = self._authority_definitively_lost()
+        if authority_block and by_market:
+            # #536 (Codex su 1542b5d): un runtime superato non cancella gli unmatched di mercato (possono essere del
+            # nuovo proprietario); resta il LOCKDOWN locale. Autorita' solo illeggibile sul momento: cancel ammesso.
+            logger.critical("emergency_stop: cancel-all saltato, %s", authority_block)
+            cancel_errors.append({"stage": "runtime_authority", "error": authority_block})
+            by_market = {}
         if live_client is not None and by_market:
             for market_id, orders in by_market.items():
                 try:
@@ -2686,6 +2693,18 @@ class RuntimeController:
         # (settlement.poll_enabled); in SIM legge il registro del broker
         # simulato (PR03 #461). Un errore qui non deve impedire lo start
         # del runtime.
+        authority_block = RuntimeController._runtime_authority_block(self, "start_activation")
+        if authority_block:
+            # #536 (Codex su 1542b5d): autorita' persa durante connessione/recovery => nessuna attivazione; servizi
+            # smontati, lock e lease rilasciati dal chiamante (avvio non riuscito).
+            logger.critical("Avvio rifiutato: autorita' persa durante l'avvio (%s)", authority_block)
+            self.mode = RuntimeMode.STOPPED
+            self.last_error = f"RUNTIME_AUTHORITY_LOST_DURING_START:{authority_block}"
+            self._teardown_failed_start()
+            self.bus.publish("RUNTIME_START_REFUSED", {"reason_code": "RUNTIME_AUTHORITY_LOST_DURING_START",
+                                                       "reason": authority_block})
+            return {"ok": False, "started": False, "refused": True, "reason": authority_block,
+                    "reason_code": "RUNTIME_AUTHORITY_LOST_DURING_START", "status": self._safe_status_snapshot()}
         try:
             self._start_settlement_poller()
         except Exception:
@@ -2813,6 +2832,23 @@ class RuntimeController:
             authority.verify(context)
         except RuntimeAuthorityLost as exc:
             return f"runtime_authority_lost:{exc.reason}"
+        return ""
+
+    def _authority_definitively_lost(self) -> str:
+        """'' se l'autorita' e' dimostrata o solo non verificabile sul momento (DB illeggibile); altrimenti il motivo
+        di una perdita definitiva (lock cancellato/sostituito, lease superata/scaduta, autorita' rilasciata)."""
+        lost = getattr(self, "_authority_lost_reason", "")
+        if lost:
+            return f"runtime_authority_lost:{lost}"
+        authority = getattr(self, "runtime_authority", None)
+        if authority is None:
+            return ""
+        if authority.released:
+            return "runtime_authority_released"
+        try:
+            authority.verify("emergency_cancel")
+        except RuntimeAuthorityLost as exc:
+            return f"runtime_authority_lost:{exc.reason}" if exc.permanent else ""
         return ""
 
     def cashout_authority_check(self) -> str:
@@ -6603,6 +6639,16 @@ class RuntimeController:
         """
         market_id = str(item.get("market_id") or "").strip()
         bet_id = str(item.get("bet_id") or "").strip()
+        check = getattr(adapter, "authority_check", None)
+        try:
+            blocked = str(check() or "") if callable(check) else ""
+        except Exception:
+            blocked = "runtime_authority_check_failed"
+        if blocked:
+            # #536 (Codex su 1542b5d): nessun tentativo => il candidato resta per un giro successivo
+            self.bus.publish("DIRECT_UNMATCHED_CANCEL_DEFERRED", {"market_id": market_id, "bet_id": bet_id,
+                                                                  "reason": blocked})
+            return
         # NO RETRY: fuori dal registry dopo UN tentativo (successo o fallimento).
         self._discard_direct_bet_id(bet_id)
         try:
