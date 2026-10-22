@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 58,
- "updated_at": "2026-10-22T07:53:52+00:00",
+ "seq": 59,
+ "updated_at": "2026-10-22T08:10:27+00:00",
  "agent": "claude-code (modello: claude-fable-5-1 dalle 21:0x del 21/10, prima claude-opus-5-5)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -484,7 +484,7 @@
   "residual_risk": "cancellazione manuale di .runtime.lock a runtime attivo => esclusivita' compromessa; blocker certificazione LIVE; NON coperto da #453/#506/#351 (verificato 22/10): scheda correttiva dedicata da predisporre, implementazione solo con mandato separato"
  },
  "mandate_current": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01",
- "previous_checkpoint_sha": "e219f5385b2224e0668e32ffbd410fa532d3ca58",
+ "previous_checkpoint_sha": "aea6e7177bb4dfddd94eec981e67bdb93dbcff61",
  "lotto_corrente": "post-merge #535 PASS; riconciliazione globale 60 schede in corso (read-only); Parallel Factory PENDING (solo piano)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -1010,32 +1010,42 @@
   {
    "id": "regression_full_535_parallel",
    "status": "PASS",
-   "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-   "result": "8832 passed / 0 failed / 14 skipped / 5 xfailed (-n auto, py3.12 venv, Xvfb, netguard)"
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "8832 passed / 0 failed / 14 skipped / 5 xfailed (-n auto, py3.12 venv, Xvfb, netguard)",
+   "executed_on_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "sha_note": "eseguito sul head di PR #535 (23237cb, branch ccr-bcc81683-ud0hgc); squash su main 152613b con albero identico (tree c3b4ff2be5cf01617933e635ef67f53abdbbf3dd, git diff --stat vuoto)"
   },
   {
    "id": "regression_full_535_serial",
    "status": "PASS",
-   "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-   "result": "8832 passed / 0 failed (seriale, 18:50, come ultra-check CI)"
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "8832 passed / 0 failed (seriale, 18:50, come ultra-check CI)",
+   "executed_on_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "sha_note": "eseguito sul head di PR #535 (23237cb, branch ccr-bcc81683-ud0hgc); squash su main 152613b con albero identico (tree c3b4ff2be5cf01617933e635ef67f53abdbbf3dd, git diff --stat vuoto)"
   },
   {
    "id": "mutation_official_535",
    "status": "PASS",
-   "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-   "result": "148 mutazioni: 147 KILLED, 1 EQUIVALENT (settlement_recorded_without_recovery_state), 0 SURVIVED; GATE PASS"
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "148 mutazioni: 147 KILLED, 1 EQUIVALENT (settlement_recorded_without_recovery_state), 0 SURVIVED; GATE PASS",
+   "executed_on_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "sha_note": "eseguito sul head di PR #535 (23237cb, branch ccr-bcc81683-ud0hgc); squash su main 152613b con albero identico (tree c3b4ff2be5cf01617933e635ef67f53abdbbf3dd, git diff --stat vuoto)"
   },
   {
    "id": "pr29c_acceptance",
    "status": "PASS",
-   "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-   "result": "test_issue461_pr29c_settlement_identity_idempotency.py 66 + test_issue461_pr29c_settlement_processes_and_schema.py 21 (lock OS reale, 2 processi, crash os._exit, schema)"
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "test_issue461_pr29c_settlement_identity_idempotency.py 66 + test_issue461_pr29c_settlement_processes_and_schema.py 21 (lock OS reale, 2 processi, crash os._exit, schema)",
+   "executed_on_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "sha_note": "eseguito sul head di PR #535 (23237cb, branch ccr-bcc81683-ud0hgc); squash su main 152613b con albero identico (tree c3b4ff2be5cf01617933e635ef67f53abdbbf3dd, git diff --stat vuoto)"
   },
   {
    "id": "guard_fulldiff_535",
    "status": "PASS",
-   "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-   "result": "guardrail_check PASS (16 file == scope), pr_autonomy_policy full-diff PASS, owner_manual_merge_required false"
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "guardrail_check PASS (16 file == scope), pr_autonomy_policy full-diff PASS, owner_manual_merge_required false",
+   "executed_on_sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
+   "sha_note": "eseguito sul head di PR #535 (23237cb, branch ccr-bcc81683-ud0hgc); squash su main 152613b con albero identico (tree c3b4ff2be5cf01617933e635ef67f53abdbbf3dd, git diff --stat vuoto)"
   },
   {
    "id": "ci_post_merge_main_535",
@@ -1262,5 +1272,6 @@
   "archive_dir": "results/pf505_archive",
   "mandate": "PF-PR-SEQUENCE-RECOVERY-01 (owner 19/10)"
  },
- "code_divergence_note": "checkpoint seq 51 puntava a e694e39; main avanzato a 380157a dal merge #529 (riconciliato qui)"
+ "code_divergence_note": "checkpoint seq 51 puntava a e694e39; main avanzato a 380157a dal merge #529 (riconciliato qui)",
+ "checkpoint_repair_note": "seq 58 (aea6e71) pushato ma NON DURABLE: readback fallito perche' il clone di main non risolve lo SHA del head di PR 23237cb nelle voci di test del seq 57; seq 59 ripunta quelle voci a 152613b (albero identico) con nota; nessun altro contenuto cambiato"
 }
