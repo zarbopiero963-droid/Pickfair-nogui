@@ -1,8 +1,8 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 60,
- "updated_at": "2026-10-22T08:21:11+00:00",
- "agent": "claude-code (modello: claude-fable-5-1 dalle 21:0x del 21/10, prima claude-opus-5-5)",
+ "seq": 61,
+ "updated_at": "2026-10-22T13:30:00Z",
+ "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
   "PF-ROSERPINA-CONFIG-41-MCP-01",
@@ -17,7 +17,11 @@
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
   "main_sha": "152613b30fb0719682d71ae6653f984079a48262",
-  "verified_with": "git fetch origin main; tree(152613b) == tree(23237cb); PR #535 merged_by owner 2026-10-22T07:37:15Z"
+  "verified_with": "git fetch origin main; tree(152613b) == tree(23237cb); PR #535 merged_by owner 2026-10-22T07:37:15Z",
+  "code_branch": {
+   "name": "ccr-bcc81683-ud0hgc",
+   "sha": "fc8f136e8dee850297a9b96aae097c32b49effc9"
+  }
  },
  "protected": {
   "pr505_head": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
@@ -378,6 +382,16 @@
    "id": "triage Codex 2c6aa09 (4 rilievi)",
    "sha": "2c6aa0931d957d05e79ab71e7b7dad3fbb6c142f",
    "result": "4/4 confermati con test: dedupe TTL (preesistente, PR restringe), transizione reset non atomica, ROLLED_BACK pendente, pf_trace tests; artifacts results/pr512_cycle9/triage/"
+  },
+  {
+   "id": "#536 acceptance (27 test HARD REAL)",
+   "sha": "fc8f136e8dee850297a9b96aae097c32b49effc9",
+   "result": "27 passed: tests/acceptance/test_issue536_runtime_authority.py"
+  },
+  {
+   "id": "#536 mutation ufficiale",
+   "sha": "fc8f136e8dee850297a9b96aae097c32b49effc9",
+   "result": "168/168 KILLED, GATE PASS"
   }
  ],
  "findings": {
@@ -476,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere le decisioni owner elencate in rapporto_B.md §7 (in particolare: deroga alla serialita' delle PR per la Factory; mandato #536). Nessuna sessione parallela, nessuna modifica al codice di produzione, nessun merge, nessun LIVE finche' non arriva un mandato.",
+ "next_atomic_action": "Attendere CI e review Sol/Grok/Codex su PR #537 (head fc8f136); triage dei rilievi (cicli fix <= 10); poi verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -485,18 +499,24 @@
  ],
  "parameters_41": "36 PASS (RSR-04 con riserva F033), 0 FAIL, 1 NOT VERIFIED (RSR-20 solo LIVE), 4 BLOCKED (RSR-38..41)",
  "verdict": {
-  "pr": 535,
-  "head": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-  "merged_main_sha": "152613b30fb0719682d71ae6653f984079a48262",
-  "status": "MERGED dall'owner (squash) 2026-10-22T07:37:15Z; post-merge PASS",
-  "ci_post_merge": "main 152613b: 14/14 workflow push success (incl. pnl-engine ultra-check seriale)",
-  "financial_evidence_on_main": "481 passed / 0 failed sul checkout 152613b (pr29c identity 66 + processes/schema 21, f026, pr512, pr26a, bankroll_sync, pr03)",
-  "owner_decision": "ratificata: un solo runtime Pickfair attivo per database (non limita tavoli/operazioni; nessun cap monetario fisso di default) — #535 c.6335409335, #426 c.6335409948",
-  "residual_risk": "cancellazione manuale di .runtime.lock a runtime attivo => esclusivita' compromessa; blocker certificazione LIVE; NON coperto da #453/#506/#351 (verificato 22/10): scheda correttiva dedicata da predisporre, implementazione solo con mandato separato"
+  "pr": 537,
+  "head": "fc8f136e8dee850297a9b96aae097c32b49effc9",
+  "base": "152613b30fb0719682d71ae6653f984079a48262",
+  "status": "OPEN, CHECKS_PENDING",
+  "merge": "vietato senza nuova autorizzazione owner",
+  "safety_critical": true,
+  "local_validation": {
+   "tests_536": "27/27 PASS",
+   "mutation_official": "169 tot, 168 valide, 168 KILLED, 0 survived, 0 not_applicable, 1 equivalente; GATE PASS (results/pr537/mutation_fc8f136.json)",
+   "regression_parallel": "8858 passed, 1 failed (catalogo, poi corretto 24/24)",
+   "regression_serial": "4533 passed; 1 fallimento GUI per Xvfb caduto, 18/18 con display su head e main",
+   "guard": "PASS files==diff 10",
+   "full_diff": "PASS, nessun file owner-manual"
+  }
  },
- "mandate_current": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01",
- "previous_checkpoint_sha": "6b4f1a28ede3feb3753a0ad255e3218201fc9ead",
- "lotto_corrente": "Rapporto A PASS (#461 c.6336012399) e Rapporto B riconciliazione globale consegnato (#461 c.6336179844); #536 PF-RUNTIME-LOCK-01 creata; Parallel Factory PENDING (solo piano)",
+ "mandate_current": "PF-536-ISOLATED-IMPLEMENTATION-01",
+ "previous_checkpoint_sha": "f5691f85b9bf14c4468b105237598e68505cea01",
+ "lotto_corrente": "#536 implementato in isolamento: PR #537 aperta (head fc8f136, base 152613b); registri #453 c.6340127508, #506 c.6340129340, #536 c.6340130594 aggiornati; in attesa di CI e review Sol/Grok",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",

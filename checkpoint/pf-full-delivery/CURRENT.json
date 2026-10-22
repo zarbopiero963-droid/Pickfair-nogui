@@ -6,8 +6,8 @@
   "sha": "152613b30fb0719682d71ae6653f984079a48262"
  },
  "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
- "next_atomic_action": "Attendere le decisioni owner elencate in rapporto_B.md \u00a77 (in particolare: deroga alla serialita' delle PR per la Factory; mandato #536). Nessuna sessione parallela, nessuna modifica al codice di produzione, nessun merge, nessun LIVE finche' non arriva un mandato.",
- "previous_checkpoint_sha": "6b4f1a28ede3feb3753a0ad255e3218201fc9ead",
+ "next_atomic_action": "Attendere CI e review Sol/Grok/Codex su PR #537 (head fc8f136); triage dei rilievi (cicli fix <= 10); poi verdetto READY/NOT READY all'owner. NESSUN MERGE senza nuova autorizzazione owner, NESSUN LIVE, Factory PENDING.",
+ "previous_checkpoint_sha": "f5691f85b9bf14c4468b105237598e68505cea01",
  "schema": "pf-current/1",
- "seq": 60
+ "seq": 61
 }
