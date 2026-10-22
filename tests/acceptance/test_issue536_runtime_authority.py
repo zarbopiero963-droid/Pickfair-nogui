@@ -566,6 +566,8 @@ def test_t20_il_trading_engine_rifiuta_l_invio_senza_autorita_anche_se_il_runtim
     esito = c.engine.submit_quick_bet(secondo)
     assert str(esito.get("status") or "").upper() not in ("SUBMITTED", "ACCEPTED", "SUCCESS"), esito
     assert len(_ordini(c)) == 1, "ordine inviato dall'engine senza autorita'"
+    # a fermarlo e' il choke point dell'engine, non solo il fence del DB piu' a valle (seconda difesa)
+    assert str(esito.get("error") or "").startswith("runtime_authority_lost:lock_file_deleted"), esito.get("error")
     assert c.rc.mode is RuntimeMode.LOCKDOWN
 
 
@@ -615,8 +617,8 @@ def test_t24_is_live_allowed_false_dopo_la_perdita_dell_autorita(tmp_path, monke
     monkeypatch.setattr(c.rc, "get_deploy_gate_status", lambda **kw: {"allowed": True, "readiness": "READY"})
     assert c.rc.is_live_allowed() is True                      # tutti gli altri gate aperti (SIM broker, nessuna chiamata live)
     os.unlink(_lock_path(str(tmp_path / "t24.db")))
-    assert c.rc._runtime_authority_block("x").startswith("runtime_authority_lost:lock_file_deleted")
-    assert c.rc.live_enabled is False and c.rc.is_live_allowed() is False
+    assert c.rc.is_live_allowed() is False                     # verifica lock + lease, non solo lo stato in memoria
+    assert c.rc._authority_lost_reason == "lock_file_deleted" and c.rc.live_enabled is False
     c.rc.live_enabled = True                                   # riabilitato senza un nuovo start(): resta vietato
     assert c.rc.is_live_allowed() is False
     assert c.rc.get_effective_execution_mode() == "SIMULATION"
@@ -655,3 +657,80 @@ def test_t26_verify_rifiuta_una_lease_scaduta_senza_aspettare_l_heartbeat(tmp_pa
     assert exc.value.reason == "lease_expired" and auth.lost_reason == "lease_expired"
     assert db.renew_runtime_lease(auth.owner_id, int(auth.token), ttl_sec=5.0, now=orologio[0]) is None
     auth.release()
+
+
+# ---------------------------------------------------------------- hedge del cashout (rilievo interno su fc8f136)
+def _cashout_wired(c):
+    import cashout_wiring
+    return cashout_wiring.cabla_catena_cashout(
+        bus=c.bus, betfair_service=c.rc.betfair_service, persist=lambda r: None,
+        notify=lambda text, *, severity="HIGH": None,
+        microstake_executor_provider=c.engine.native_microstake_executor,
+        runtime_authority_check=c.rc.cashout_authority_check)
+
+
+def test_t27_hedge_del_cashout_rifiutato_al_piazzamento_senza_autorita(tmp_path):
+    """Il bus e' asincrono: l'hedge parte dall'esecutore dopo il routing. Phase 0 su fc8f136: con il lock
+    cancellato l'hedge arrivava al broker. Ora l'esecutore verifica l'autorita' subito prima dell'invio."""
+    from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
+
+    c = _catena_armata(tmp_path, "t27.db")
+    _cashout_wired(c)
+    _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
+    c.bus.publish("CMD_EXECUTE_CASHOUT", _cashout_cmd(2.0))
+    assert len(c.broker.state.orders) == 1                     # con autorita': l'hedge parte
+    os.unlink(_lock_path(str(tmp_path / "t27.db")))
+    c.bus.publish("CMD_EXECUTE_CASHOUT", {**_cashout_cmd(2.0), "position_id": "p2"})
+    assert len(c.broker.state.orders) == 1, "hedge piazzato da un runtime senza autorita'"
+    falliti = c.bus.payloads("CASHOUT_FAILED")
+    assert falliti and falliti[-1]["status"] == "REJECTED"
+    assert falliti[-1]["reason"].startswith("runtime_authority_lost:lock_file_deleted")
+    assert c.rc.mode is RuntimeMode.LOCKDOWN
+
+
+def test_t28_esecutore_fail_closed_se_la_verifica_dell_autorita_solleva(tmp_path):
+    from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
+
+    c = _catena_armata(tmp_path, "t28.db")
+    catena = _cashout_wired(c)
+    catena.cashout_executor.authority_check = lambda: (_ for _ in ()).throw(RuntimeError("db giu'"))
+    _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
+    c.bus.publish("CMD_EXECUTE_CASHOUT", _cashout_cmd(2.0))
+    assert not c.broker.state.orders
+    assert c.bus.payloads("CASHOUT_FAILED")[-1]["reason"] == "runtime_authority_check_failed"
+
+
+def test_t29_headless_cabla_la_verifica_dell_autorita_nell_esecutore_del_cashout(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    p = str(tmp_path / "t29.db")
+    app = _app_su(p, monkeypatch)
+    try:
+        assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
+        check = app.cashout_executor.authority_check
+        assert callable(check) and check() == ""
+        os.unlink(_lock_path(p))
+        assert check().startswith("runtime_authority_lost:lock_file_deleted")
+        assert app.runtime.mode is RuntimeMode.LOCKDOWN
+    finally:
+        _ferma(app)
+
+
+def test_t30_la_gui_cabla_la_verifica_dell_autorita_nell_esecutore_del_cashout(tmp_path):
+    """Stesso filo della GUI (MiniPickfairGUI reale in test_mode): l'esecutore non resta senza verifica."""
+    import mini_gui
+    from tests.guardrails.test_cablaggio_runtime import _TelegramTabUISenzaWidget
+
+    mp = pytest.MonkeyPatch()
+    mp.setattr(mini_gui, "Database", lambda: Database(str(tmp_path / "gui.db")))
+    mp.setattr(mini_gui, "TelegramTabUI", _TelegramTabUISenzaWidget)
+    try:
+        gui = mini_gui.MiniPickfairGUI(test_mode=True, force_simulation=True)
+        try:
+            check = gui.cashout_executor.authority_check
+            assert callable(check) and check() == ""           # runtime costruito, non avviato: nulla da verificare
+            gui.runtime._on_runtime_authority_lost("fence_violation")
+            assert check() == "runtime_authority_lost:fence_violation"
+        finally:
+            gui.shutdown.shutdown()
+    finally:
+        mp.undo()

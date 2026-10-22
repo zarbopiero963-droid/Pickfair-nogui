@@ -1990,7 +1990,7 @@ class RuntimeController:
         return bool(self.evaluate_live_readiness(**kwargs).get("ready", False))
 
     def is_live_allowed(self) -> bool:
-        if getattr(self, "_authority_lost_reason", ""):        # #536: autorita' persa => nessun invio LIVE
+        if RuntimeController._runtime_authority_block(self, "live_check"):   # #536: lock + lease, non solo la memoria
             return False
         # Choke point unico per OGNI submission live (manuale, dutching, copy):
         # l'emergenza blocca qui anche se qualcuno riabilita live/execution_mode
@@ -2776,6 +2776,11 @@ class RuntimeController:
         except RuntimeAuthorityLost as exc:
             return f"runtime_authority_lost:{exc.reason}"
         return ""
+
+    def cashout_authority_check(self) -> str:
+        """Per il `CashoutExecutor` (cablato da headless e GUI): '' se l'hedge puo' partire, altrimenti il motivo.
+        Il bus e' asincrono: la verifica al routing del segnale non copre il momento del piazzamento."""
+        return self._runtime_authority_block("cashout_place")
 
     def assert_runtime_authority(self, context: str = "") -> None:
         """Choke point per il TradingEngine prima di OGNI invio (SIM e LIVE): solleva `RuntimeAuthorityLost`."""

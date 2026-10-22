@@ -59,12 +59,13 @@ Uno STOP fallito trattiene lock e lease come in PR29-c; uno STOP ripetuto o conc
 |---|---|---|
 | Segnale Telegram / Quick Bet | `_route_signal…` subito prima di `CMD_QUICK_BET` | riserva rilasciata, segnale rifiutato con `runtime_authority_lost:<motivo>` |
 | Auto-next Roserpina | prima dell'invio dell'ordine successivo | tavolo sbloccato, nessun ordine |
-| Cashout | `_route_cashout_signal_under_barrier` | segnale rifiutato |
+| Cashout (routing) | `_route_cashout_signal_under_barrier` | segnale rifiutato |
+| **Cashout (piazzamento dell'hedge)** | `CashoutExecutor` subito prima di `OrderRouter.place`, con `authority_check` = `RuntimeController.cashout_authority_check` cablato da `headless_main` e `mini_gui` tramite `cashout_wiring.cabla_catena_cashout(runtime_authority_check=...)` | `CASHOUT_FAILED` `REJECTED`, nessun hedge; errore della verifica ⇒ `runtime_authority_check_failed` |
 | Reset di ciclo | `reset_cycle` | `{"reset": False, "ok": False, "reason": …}` |
 | Sweep F028 (ordini mai abbinati) | `_release_final_unmatched_orders` | nessun rilascio |
 | **Ogni invio** (SIM e LIVE, manuale, dutching, copy) | `TradingEngine._submit_to_order_path` → `RuntimeController.assert_runtime_authority("order_submit")` | `RuntimeAuthorityLost` prima della chiamata all'exchange |
 | Dopo l'invio | `after_order_send_authority_check(result)` | evento `RUNTIME_AUTHORITY_LOST_AFTER_SEND` con `correlation_id`/`customer_ref` |
-| LIVE | `is_live_allowed()` | False se l'autorità è persa |
+| LIVE | `is_live_allowed()` | False se lock o lease non sono dimostrati adesso (verifica completa, non solo lo stato in memoria) |
 
 `verify` è fail-closed: lock non tenuto, file cancellato/sostituito, lease non acquisita, lease di un altro owner
 o con token diverso, lease scaduta ⇒ `RuntimeAuthorityLost` **permanente** (`mark_lost`). DB non leggibile sul
@@ -111,6 +112,10 @@ proprietario. Nessuna scrittura di LOCKDOWN nel DB: il fence la rifiuterebbe com
   sospensione rientra nella finestra TOCTOU sopra.
 - **In LOCKDOWN** il consumer dei settlement può tentare scritture che il fence rifiuta: i settlement restano
   trattenuti e vengono riconciliati dal runtime che detiene l'autorità.
+- Il bus degli eventi è **asincrono**: una verifica al routing non copre il momento in cui un consumer piazza
+  l'ordine. Per questo la verifica sta anche nei punti di piazzamento (engine e `CashoutExecutor`). Il monitor
+  SL/TP (`_trigger_auto_close_table`) pubblica `REQ_EXECUTE_CASHOUT` senza verifica propria: l'hedge è fermato
+  dall'esecutore.
 - Nessun cap monetario, nessuna nuova modalità, nessun flag: lo stesso motore SIM/LIVE.
 
 ## Prove (test HARD REAL, `tests/acceptance/test_issue536_runtime_authority.py`)
@@ -122,4 +127,6 @@ maggiore e fantasma rifiutato (T05); riavvio con token monotono (T06); STOP fall
 durante l'ammissione (T10) e fra verifica e invio (T11); fence nelle transazioni e in autocommit (T12/T12b);
 nessun rilascio né scrittura da un runtime superato (T13); START arma sempre l'autorità (T15); heartbeat (T16);
 `_holder_alive` (T17); `verify` fail-closed (T18); auto-next, engine e cashout rifiutati senza autorità
-(T19–T21). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+(T19–T21); sweep F028, perdita senza oggetto autorità, `is_live_allowed`, token superato dello stesso owner,
+lease scaduta (T22–T26); hedge del cashout rifiutato al piazzamento, verifica in errore fail-closed, cablaggio
+reale in `HeadlessApp` e `MiniPickfairGUI` (T27–T30). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

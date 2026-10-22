@@ -1918,7 +1918,7 @@
       "module": "core.runtime_controller",
       "area": "live_safety",
       "file": "core/runtime_controller.py",
-      "original": "        if getattr(self, \"_authority_lost_reason\", \"\"):        # #536: autorita' persa => nessun invio LIVE\n            return False",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"live_check\"):   # #536: lock + lease, non solo la memoria\n            return False",
       "mutated": "        if False:\n            return False",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
@@ -2080,6 +2080,42 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01: il TradingEngine invia senza il choke point di autorita'."
+    },
+    {
+      "id": "i536_is_live_allowed_memory_only",
+      "module": "core.runtime_controller",
+      "area": "live_safety",
+      "file": "core/runtime_controller.py",
+      "original": "        if RuntimeController._runtime_authority_block(self, \"live_check\"):   # #536: lock + lease, non solo la memoria",
+      "mutated": "        if getattr(self, \"_authority_lost_reason\", \"\"):",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: is_live_allowed guarda solo lo stato in memoria: lock cancellato non ancora rilevato => LIVE ammesso (Grok su fc8f136)."
+    },
+    {
+      "id": "i536_cashout_executor_skips_authority",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "        authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge\n        if authority_block:",
+      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: l'hedge del cashout parte da un runtime senza autorita' (bus asincrono, rilievo interno su fc8f136)."
+    },
+    {
+      "id": "i536_cashout_authority_check_error_fail_open",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "            return \"runtime_authority_check_failed\"",
+      "mutated": "            return \"\"",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01: un errore della verifica dell'autorita' lascia partire l'hedge."
     }
   ]
 }
