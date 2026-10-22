@@ -689,7 +689,8 @@ def _cashout_wired(c):
         bus=c.bus, betfair_service=c.rc.betfair_service, persist=lambda r: None,
         notify=lambda text, *, severity="HIGH": None,
         microstake_executor_provider=c.engine.native_microstake_executor,
-        runtime_authority_check=c.rc.cashout_authority_check)
+        runtime_authority_check=c.rc.cashout_authority_check,
+        runtime_authority_operation=c.rc.authority_operation)
 
 
 def test_t27_hedge_del_cashout_rifiutato_al_piazzamento_senza_autorita(tmp_path):
@@ -731,6 +732,9 @@ def test_t29_headless_cabla_la_verifica_dell_autorita_nell_esecutore_del_cashout
         assert app.runtime.start(execution_mode="SIMULATION").get("started") is True
         check = app.cashout_executor.authority_check
         assert callable(check) and check() == ""
+        with app.cashout_executor.authority_operation():        # l'hedge in volo e' contato dal runtime
+            assert app.runtime._authority_ops == 1
+        assert app.runtime._authority_ops == 0
         os.unlink(_lock_path(p))
         assert check().startswith("runtime_authority_lost:lock_file_deleted")
         assert app.runtime.mode is RuntimeMode.LOCKDOWN
@@ -751,6 +755,8 @@ def test_t30_la_gui_cabla_la_verifica_dell_autorita_nell_esecutore_del_cashout(t
         try:
             check = gui.cashout_executor.authority_check
             assert callable(check) and check() == ""           # runtime costruito, non avviato: nulla da verificare
+            with gui.cashout_executor.authority_operation():    # l'hedge in volo e' contato dal runtime
+                assert gui.runtime._authority_ops == 1
             gui.runtime._on_runtime_authority_lost("fence_violation")
             assert check() == "runtime_authority_lost:fence_violation"
         finally:
@@ -991,3 +997,30 @@ def test_t42_rinnovo_riuscito_dopo_una_perdita_concorrente_viene_annullato(tmp_p
     db.renew_runtime_lease = _perdita_durante_il_rinnovo
     assert auth.heartbeat_once() is False
     assert float(db.read_runtime_lease()["expires_at"]) < time.time(), "lease rinnovata per un'autorita' persa"
+
+
+def test_t43_lo_stop_attende_anche_l_hedge_del_cashout_in_volo(tmp_path, monkeypatch):
+    """Grok su 1542b5d: l'hedge del cashout e' un'operazione in volo come l'invio dell'engine; lo STOP non
+    scioglie il fence mentre l'esecutore sta piazzando."""
+    from tests.test_microstake_cashout_and_recovery import _book, _cashout_cmd
+
+    monkeypatch.setattr(RuntimeController, "RUNTIME_AUTHORITY_DRAIN_SEC", 0.3)
+    c = _catena_armata(tmp_path, "t43.db")
+    catena = _cashout_wired(c)
+    _book(c.broker, "1.100", 7, lay=(3.0, 50.0))
+    auth = c.rc.runtime_authority
+    visto = {}
+    originale = catena.order_router.place
+
+    def _stop_durante_il_piazzamento(payload):
+        c.rc.mode = RuntimeMode.STOPPED
+        c.rc._release_runtime_instance_lock_if_stopped()        # STOP concorrente all'hedge
+        visto["fence"] = c.db.runtime_fence()
+        visto["released"] = auth.released
+        return originale(payload)
+
+    monkeypatch.setattr(catena.order_router, "place", _stop_durante_il_piazzamento)
+    c.bus.publish("CMD_EXECUTE_CASHOUT", _cashout_cmd(2.0))
+    assert visto["released"] is False and visto["fence"] is not None, "fence sciolto con un hedge in volo"
+    c.rc._release_runtime_instance_lock_if_stopped()            # finito l'hedge, lo STOP successivo rilascia
+    assert auth.released

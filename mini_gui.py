@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 import types
@@ -487,6 +488,10 @@ class MiniPickfairGUI(ctk.CTk, TelegramModule):
             runtime_authority_check=lambda: (
                 self.runtime.cashout_authority_check()
                 if getattr(self, "runtime", None) is not None else "runtime_not_built"),
+            # #536: l'hedge in volo e' contato fra le operazioni che lo STOP attende
+            runtime_authority_operation=lambda: (
+                self.runtime.authority_operation()
+                if getattr(self, "runtime", None) is not None else contextlib.nullcontext()),
         )
         self.order_router = catena_cashout.order_router
         self.cashout_executor = catena_cashout.cashout_executor

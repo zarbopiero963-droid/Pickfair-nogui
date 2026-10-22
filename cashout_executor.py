@@ -42,6 +42,7 @@ già nel payload ``CASHOUT_FAILED``).
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import math
 from typing import Any, Callable, Dict, Optional
@@ -61,11 +62,14 @@ class CashoutExecutor:
     _VALID_SIDES = {"BACK", "LAY"}
 
     def __init__(self, bus: Any, order_router: Any, safety_layer: Optional[Any] = None,
-                 authority_check: Optional[Callable[[], str]] = None) -> None:
+                 authority_check: Optional[Callable[[], str]] = None,
+                 authority_operation: Optional[Callable[[], Any]] = None) -> None:
         self.bus = bus
         self.order_router = order_router
         self.safety_layer = safety_layer
         self.authority_check = authority_check
+        # #536 (Grok su 1542b5d): l'hedge e' un'operazione in volo; lo STOP la attende prima di sciogliere il fence
+        self.authority_operation = authority_operation
 
     def _authority_block(self) -> str:
         """#536: '' se il runtime ha l'autorita' esclusiva (o non ne ha da verificare); altrimenti il motivo."""
@@ -114,17 +118,25 @@ class CashoutExecutor:
         # Rileggerlo dopo place() esporrebbe a uno switch SIM/LIVE in volo (la
         # finestra della chiamata di rete) → flag sim errato (Codex P2).
         sim = self._is_simulation()
-        authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge
-        if authority_block:
-            self._fail(authority_block, status="REJECTED", payload=payload)
-            return
+        operation = self.authority_operation
         try:
-            result = self.order_router.place(place_payload)
-        except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
-            self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
+            scope = operation() if callable(operation) else contextlib.nullcontext()
+        except Exception:  # noqa: BLE001 - operazione non registrabile => nessun hedge
+            logger.exception("[CashoutExecutor] operazione in volo non registrabile")
+            self._fail("runtime_authority_operation_failed", status="REJECTED", payload=payload)
             return
+        with scope:
+            authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge
+            if authority_block:
+                self._fail(authority_block, status="REJECTED", payload=payload)
+                return
+            try:
+                result = self.order_router.place(place_payload)
+            except Exception as exc:  # noqa: BLE001 - esito ignoto => fail-closed
+                self._fail(f"place_exception:{exc}", status="ERROR", payload=payload)
+                return
 
-        self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
+            self._handle_result(result if isinstance(result, dict) else {}, payload, sim)
 
     @classmethod
     def _enforce_hard_invariants(cls, payload: Dict[str, Any]) -> None:

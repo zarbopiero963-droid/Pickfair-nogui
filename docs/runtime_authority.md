@@ -105,6 +105,9 @@ non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a r
   autorità, lock e fence restano: lo STOP non si dichiara pulito con una lease viva.
 - **Rinnovo concorrente alla perdita**: se la perdita o lo STOP arrivano mentre il rinnovo è in corso, la lease
   rinnovata torna subito scaduta. `acquire_lease` non fa I/O sul database sotto il lock dell'autorità.
+- **Hedge del cashout in volo** (Grok su `1542b5d`): `CashoutExecutor(authority_operation=...)` piazza l'hedge
+  dentro `authority_operation()`, cablato da `cashout_wiring(runtime_authority_operation=...)` in headless e GUI;
+  lo STOP lo attende come gli invii dell'engine.
 - Limite residuo: un task dell'executor ancora in corso dopo un esito AMBIGUOUS (attesa scaduta) non è contato fra
   le operazioni in volo; il suo ordine resta alla riconciliazione.
 
@@ -168,4 +171,5 @@ reale in `HeadlessApp` e `MiniPickfairGUI` (T27–T30); rilievi Codex su `fc8f13
 serializzata col subentro, nessun invio dopo lo STOP, TTL unmatched senza autorità, START rifiutato dopo la
 perdita senza STOP, rinnovo misurato dopo l'attesa del lock, nessun deadlock heartbeat/fence (T31–T36);
 rilievi su `125aa05`: cancel del cashout/TTL/residuo rifiutati, nessuna riga INFLIGHT senza autorità, verifica
-prima del trasporto, STOP che attende le operazioni in volo, rilascio fallito, rinnovo annullato (T37–T42, T20b). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+prima del trasporto, STOP che attende le operazioni in volo, rilascio fallito, rinnovo annullato (T37–T42, T20b);
+STOP che attende l'hedge del cashout in volo (T43). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

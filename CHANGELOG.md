@@ -43,7 +43,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   l'attesa del lock del DB; nessun I/O sul DB sotto il lock dell'autorità (niente deadlock). Dopo la review di
   `125aa05`: verifica nei cancel del cashout, del residuo e del TTL (`CashoutCancelAdapter(authority_check=...)`),
   verifica prima di persistere l'intento, STOP che attende le operazioni in volo (`authority_operation`,
-  `RUNTIME_AUTHORITY_DRAIN_SEC`), rilascio fallito che trattiene l'autorità, rinnovo concorrente annullato. Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
+  `RUNTIME_AUTHORITY_DRAIN_SEC`), rilascio fallito che trattiene l'autorità, rinnovo concorrente annullato; anche
+  l'hedge del cashout in volo è contato e atteso dallo STOP. Autorità persa ⇒ LOCKDOWN in memoria **senza cancel-all**, lease scaduta subito così il
   proprietario legittimo subentra, evento `RUNTIME_AUTHORITY_LOST`. Limiti dichiarati: finestra TOCTOU fra verifica
   e chiamata all'exchange (segnalata, lasciata alla riconciliazione del nuovo proprietario), stesso host e
   orologio condiviso, filesystem di rete non supportato, Windows MANUAL_ONLY. Test HARD REAL in

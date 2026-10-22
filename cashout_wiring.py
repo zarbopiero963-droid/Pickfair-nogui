@@ -54,6 +54,7 @@ def cabla_catena_cashout(
     notify: Callable[..., None],
     microstake_executor_provider: Callable[[], Any] | None = None,
     runtime_authority_check: Callable[[], str] | None = None,
+    runtime_authority_operation: Callable[[], Any] | None = None,
 ) -> CatenaCashout:
     """Sottoscrive al ``bus`` la catena di esecuzione + residuo del cashout.
 
@@ -86,7 +87,8 @@ def cabla_catena_cashout(
     # Senza provider (es. harness di test senza engine) resta fail-closed.
     order_router = OrderRouter(betfair_service, microstake_executor_provider=microstake_executor_provider)
     cashout_executor = CashoutExecutor(bus, order_router, safety_layer=SafetyLayer(),
-                                       authority_check=runtime_authority_check)
+                                       authority_check=runtime_authority_check,
+                                       authority_operation=runtime_authority_operation)
     cashout_executor.wire()
 
     cashout_request_bridge = CashoutRequestBridge(bus)

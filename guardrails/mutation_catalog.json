@@ -2098,8 +2098,8 @@
       "module": "cashout_executor",
       "area": "live_safety",
       "file": "cashout_executor.py",
-      "original": "        authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge\n        if authority_block:",
-      "mutated": "        authority_block = \"\"\n        if authority_block:",
+      "original": "            authority_block = self._authority_block()     # #536: subito prima dell'invio dell'hedge\n            if authority_block:",
+      "mutated": "            authority_block = \"\"\n            if authority_block:",
       "tests": [
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
@@ -2248,6 +2248,18 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01 (review su 125aa05): un rinnovo concorrente alla perdita lascia la lease viva per l'autorita' persa."
+    },
+    {
+      "id": "i536_cashout_hedge_not_drained",
+      "module": "cashout_executor",
+      "area": "live_safety",
+      "file": "cashout_executor.py",
+      "original": "            scope = operation() if callable(operation) else contextlib.nullcontext()",
+      "mutated": "            scope = contextlib.nullcontext()",
+      "tests": [
+        "tests/acceptance/test_issue536_runtime_authority.py"
+      ],
+      "rationale": "#536 PF-RUNTIME-LOCK-01 (Grok su 1542b5d): l'hedge del cashout in volo non e' contato e lo STOP scioglie il fence mentre piazza."
     }
   ]
 }
