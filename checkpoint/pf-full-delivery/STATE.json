@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 61,
- "updated_at": "2026-10-22T13:30:00Z",
+ "seq": 62,
+ "updated_at": "2026-10-22T17:41:16Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -20,7 +20,7 @@
   "verified_with": "git fetch origin main; tree(152613b) == tree(23237cb); PR #535 merged_by owner 2026-10-22T07:37:15Z",
   "code_branch": {
    "name": "ccr-bcc81683-ud0hgc",
-   "sha": "fc8f136e8dee850297a9b96aae097c32b49effc9"
+   "sha": "ae107086ed410de9e59f62a7ce5623457894e73e"
   }
  },
  "protected": {
@@ -515,7 +515,7 @@
   }
  },
  "mandate_current": "PF-536-ISOLATED-IMPLEMENTATION-01",
- "previous_checkpoint_sha": "f5691f85b9bf14c4468b105237598e68505cea01",
+ "previous_checkpoint_sha": "515bc227b090b030f74c18fc05296737f7a73d72",
  "lotto_corrente": "#536 implementato in isolamento: PR #537 aperta (head fc8f136, base 152613b); registri #453 c.6340127508, #506 c.6340129340, #536 c.6340130594 aggiornati; in attesa di CI e review Sol/Grok",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
@@ -598,7 +598,17 @@
  "code": {
   "branch": "main",
   "sha": "152613b30fb0719682d71ae6653f984079a48262",
-  "verified_with": "squash di #535 (head 23237cb), albero identico (git diff --stat vuoto)"
+  "verified_with": "squash di #535 (head 23237cb), albero identico (git diff --stat vuoto)",
+  "patch": {
+   "head": "ae107086ed410de9e59f62a7ce5623457894e73e",
+   "tree": "5c976b5bd7796f48e9972aaa53ce68b2d461cbed",
+   "captured_at": "2026-10-22T17:41:29+00:00",
+   "modified": [],
+   "untracked": [],
+   "files": [
+    "code_patch/BASELINE.json"
+   ]
+  }
  },
  "blocks": [
   "Gate A #506 NON PASS",
