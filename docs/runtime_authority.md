@@ -168,6 +168,12 @@ proprietario. Nessuna scrittura di LOCKDOWN nel DB: il fence la rifiuterebbe com
 - **Processo sospeso oltre il TTL** (SIGSTOP, pausa del debugger): tra la ripresa e il primo `verify` nessun
   ordine parte, perché ogni invio passa da `verify`; ma una chiamata all'exchange già in volo al momento della
   sospensione rientra nella finestra TOCTOU sopra.
+- **Crash fra la presa in carico del TTL e l'esito del cancel.** Il registry degli ordini DIRECT del TTL è in
+  memoria per scelta di main (B6.3.2a: vuoto al riavvio, così un `bet_id` senza identità certa non è mai
+  candidato). Dopo un crash l'ordine resta nel ledger persistente del bot (`get_bot_active_orders`), lo stato
+  vero è quello dell'exchange (`list_current_orders`) e nessun cancel parte alla cieca; il cancel automatico per
+  TTL di quell'ordine però **non si ripete**: resta all'intervento manuale o agli altri percorsi (cashout,
+  settlement). Comportamento identico a main, provato da T57 (crash prima e dopo la chiamata al broker).
 - **In LOCKDOWN** il consumer dei settlement può tentare scritture che il fence rifiuta: i settlement restano
   trattenuti e vengono riconciliati dal runtime che detiene l'autorità.
 - Il bus degli eventi è **asincrono**: una verifica al routing non copre il momento in cui un consumer piazza
@@ -198,4 +204,5 @@ rilievi Sol su `9a80162`: emergency stop riverificato per mercato, NO RETRY del 
 rilievi Grok su `9a80162`: rollback su ogni errore in `begin_transaction`, cashout REJECTED se l'operazione in volo
 non si registra (T51–T52); transazione fenced che non fallisce se l'heartbeat rinnova nel mezzo (T53); rilievi Grok su `589cdb5`: esito del
 cancel TTL locale alla chiamata, `bet_id` fuori dal registry durante il broker, nessun secondo cancel da un giro
-sovrapposto (T54–T56). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+sovrapposto (T54–T56); crash fra presa in carico ed esito del cancel TTL, prima e dopo il broker: ordine nel
+ledger, stato dell'exchange riconciliabile, nessun cancel alla cieca al riavvio (T57). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.

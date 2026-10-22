@@ -1285,3 +1285,56 @@ def test_t56_candidato_gia_preso_in_carico_non_genera_un_secondo_cancel(tmp_path
     adapter.sim_cancel = adapter.live_cancel = lambda **kw: pytest.fail("secondo cancel sullo stesso ordine")
     c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.1", "bet_id": "B1"})
     assert c.bus.payloads("DIRECT_UNMATCHED_CANCELLED") == []
+
+
+class _MortoDelProcesso(BaseException):
+    """Interruzione del processo nel mezzo del cancel: non e' un ``Exception``, nessun handler la intercetta."""
+
+
+@pytest.mark.parametrize("quando", ["prima_del_broker", "dopo_il_broker"])
+def test_t57_crash_fra_presa_in_carico_ed_esito_del_cancel_ttl_ordine_non_dimenticato(tmp_path, monkeypatch, quando):
+    """Owner sul ciclo 5: Pickfair muore dopo aver preso in carico l'ordine e prima di conoscere l'esito del cancel.
+    Al riavvio l'ordine resta nel ledger persistente del bot, lo stato vero e' quello dell'exchange e nessun cancel
+    parte alla cieca (il registry TTL e' in memoria per scelta di main: vuoto al riavvio)."""
+    c = _catena_armata(tmp_path, "t57.db")
+    c.rc._on_signal_received(_signal(price=50.0))
+    (bet_id,) = [o.bet_id for o in c.broker.state.orders.values()]
+    c.rc._direct_order_bet_ids = {"ref-1": bet_id}
+    adapter = c.rc._direct_ttl_cancel_adapter()
+
+    def _muore(**kw):
+        if quando == "dopo_il_broker":
+            ids = kw.get("bet_ids") or [i["betId"] for i in kw.get("instructions") or []]
+            c.broker.cancel_orders(market_id=kw["market_id"], instructions=[{"betId": b} for b in ids])
+            # l'exchange ha cancellato, l'esito non torna mai
+        raise _MortoDelProcesso()
+
+    adapter.sim_cancel = adapter.live_cancel = _muore
+    with pytest.raises(_MortoDelProcesso):
+        c.rc._cancel_direct_unmatched(adapter, {"market_id": "1.234", "bet_id": bet_id})
+    # morte del processo: heartbeat fermo, descrittore del lock chiuso dal SO, lease mai rilasciata e poi scaduta
+    vecchia = c.rc.runtime_authority
+    vecchia.stop_heartbeat()
+    vecchia.lock_fh.close()
+    token_vecchio = int(c.db.read_runtime_lease()["fencing_token"])
+    raw = sqlite3.connect(str(tmp_path / "t57.db"))
+    raw.execute("UPDATE runtime_lease SET expires_at = 0 WHERE id = 1")
+    raw.commit()
+    raw.close()
+
+    r = _chain(tmp_path, db_name="t57.db")                 # riavvio: nuovo runtime sullo stesso DB e lo stesso exchange
+    r.rc.betfair_service.simulation_broker = c.broker
+    _arma(r)
+    assert int(r.db.read_runtime_lease()["fencing_token"]) == token_vecchio + 1
+    assert bet_id in {o["bet_id"] for o in r.db.get_bot_active_orders()}, "ordine dimenticato dopo il crash"
+    vivo = {o.get("betId") for o in r.rc.betfair_service.list_current_orders()
+            if str(o.get("status") or "").upper() == "EXECUTABLE"}
+    assert (bet_id in vivo) is (quando == "prima_del_broker"), "stato dell'exchange non riconciliabile"
+    assert r.rc._direct_order_bet_ids == {}
+    inviati = []
+    originale = c.broker.cancel_orders
+    monkeypatch.setattr(c.broker, "cancel_orders", lambda **kw: inviati.append(kw) or originale(**kw))
+    monkeypatch.setattr(r.rc.config, "direct_unmatched_ttl_enabled", True, raising=False)
+    r.rc._last_direct_ttl_poll_at = -1e9
+    r.rc._poll_direct_unmatched_ttl()
+    assert inviati == [], "cancel alla cieca dopo il riavvio"
