@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 57,
- "updated_at": "2026-10-21T21:47:15+00:00",
+ "seq": 58,
+ "updated_at": "2026-10-22T07:53:52+00:00",
  "agent": "claude-code (modello: claude-fable-5-1 dalle 21:0x del 21/10, prima claude-opus-5-5)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -16,8 +16,8 @@
  ],
  "repo": {
   "name": "zarbopiero963-droid/Pickfair-nogui",
-  "main_sha": "409bcf9dd9ca6fe86aeaed6808dfabde4f7fa109",
-  "verified_with": "git fetch origin main + GitHub API (merge #534 squash)"
+  "main_sha": "152613b30fb0719682d71ae6653f984079a48262",
+  "verified_with": "git fetch origin main; tree(152613b) == tree(23237cb); PR #535 merged_by owner 2026-10-22T07:37:15Z"
  },
  "protected": {
   "pr505_head": "618884e6c0aa82342bb98ad7c81a4cf8963f1fa4",
@@ -465,7 +465,7 @@
  ],
  "owner_decisions_pending": [],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere l'autorizzazione owner al merge di #535 (23237cb). Dopo il merge autorizzato: CI post-merge main, checkpoint seq 58, poi (solo su nuova autorizzazione) PF-POST-PR29C-GLOBAL-RECONCILIATION-01 (#426 c.6322399988) e a seguire PF-POST-PR29C-PARALLEL-FACTORY-01 (#426 c.6322621696). Nessun LIVE. Nessuna PR30 anticipata.",
+ "next_atomic_action": "Rapporto B: riconciliazione globale (evidenza codice+test su main 152613b per 60 schede + inserti; inventari in scratchpad/recon/), scheda correttiva dedicata per il rischio .runtime.lock collegata a #453/#506/#351/#461 con criteri di accettazione (prerequisito LIVE), piano Parallel Development Factory (NON avviare sessioni). Nessuna modifica al codice di produzione, nessun merge, nessun LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -476,19 +476,16 @@
  "verdict": {
   "pr": 535,
   "head": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-  "status": "READY_FOR_OWNER_MANUAL_MERGE (PRONTA PER MERGE; merge NON eseguito: mandato owner 'Non autorizzo il merge')",
-  "hard_verify": "FULLY_IMPLEMENTED",
-  "safety_critical": "si: core/runtime_controller.py, core/table_manager.py, core/pnl_engine.py, database.py",
-  "regression": "8832 passed 0 failed su 23237cb, sia -n auto sia seriale",
-  "mutation": "148: 147 KILLED, 1 EQUIVALENT dichiarata, 0 SURVIVED, score 100%, GATE PASS (worktree isolato)",
-  "ci": "23237cb: 38/38 verdi settled; Merge Readiness success (attempt 2, dopo risoluzione thread); mergeable_state clean",
-  "review": "Sol e Grok senza bloccanti su f1c070f..23237cb; Codex assente (limite d'uso) su ad315ca/f1c070f/23237cb; 18/18 thread risolti con prova; fix loop 8/10",
-  "ci_flake_noted": "risk-middleware/ultra-check rosso su f1c070f (test pr28d non toccato, attesa 2s in suite seriale); verde su 23237cb e sugli altri 9 head; riprodotto localmente 10/10, 5/5, suite seriale completa",
-  "product_decision_to_ratify": "un solo runtime attivo per database (lock OS <db>.runtime.lock, RUNTIME_INSTANCE_ACTIVE)"
+  "merged_main_sha": "152613b30fb0719682d71ae6653f984079a48262",
+  "status": "MERGED dall'owner (squash) 2026-10-22T07:37:15Z; post-merge PASS",
+  "ci_post_merge": "main 152613b: 14/14 workflow push success (incl. pnl-engine ultra-check seriale)",
+  "financial_evidence_on_main": "481 passed / 0 failed sul checkout 152613b (pr29c identity 66 + processes/schema 21, f026, pr512, pr26a, bankroll_sync, pr03)",
+  "owner_decision": "ratificata: un solo runtime Pickfair attivo per database (non limita tavoli/operazioni; nessun cap monetario fisso di default) — #535 c.6335409335, #426 c.6335409948",
+  "residual_risk": "cancellazione manuale di .runtime.lock a runtime attivo => esclusivita' compromessa; blocker certificazione LIVE; NON coperto da #453/#506/#351 (verificato 22/10): scheda correttiva dedicata da predisporre, implementazione solo con mandato separato"
  },
- "mandate_current": "PF-PR29-C-FINANCIAL-IDEMPOTENCY-01",
- "previous_checkpoint_sha": "3777e8288e28a138563a5150a35b6757e48f87af",
- "lotto_corrente": "#535 PR29-c PRONTA PER MERGE su 23237cb (READY_FOR_OWNER_MANUAL_MERGE); merge in attesa di autorizzazione owner",
+ "mandate_current": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01",
+ "previous_checkpoint_sha": "e219f5385b2224e0668e32ffbd410fa532d3ca58",
+ "lotto_corrente": "post-merge #535 PASS; riconciliazione globale 60 schede in corso (read-only); Parallel Factory PENDING (solo piano)",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -566,11 +563,11 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-PR29-C-FINANCIAL-IDEMPOTENCY-01 + mandato owner PR29-c FINAL VALIDATION (21/10/2026)",
+ "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
  "code": {
-  "branch": "ccr-bcc81683-ud0hgc",
-  "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
-  "verified_with": "git rev-parse HEAD == origin/ccr-bcc81683-ud0hgc == head PR #535; base main 409bcf9"
+  "branch": "main",
+  "sha": "152613b30fb0719682d71ae6653f984079a48262",
+  "verified_with": "squash di #535 (head 23237cb), albero identico (git diff --stat vuoto)"
  },
  "blocks": [
   "Gate A #506 NON PASS",
@@ -588,7 +585,7 @@
  ],
  "owner_authorizations": {
   "live": false,
-  "merge": "NO per #535 (mandato 'Non autorizzo il merge'); auto-merge gated sospeso per questa PR",
+  "merge": "#535 mergiata dall'owner; nessun nuovo merge autorizzato",
   "deploy": false,
   "modify_main": false,
   "modify_pr_505": false,
@@ -602,7 +599,8 @@
   "commit": true,
   "pr": true,
   "publish_decisions_github": true,
-  "resolve_fixed_threads": "sì, solo con correzione dimostrata sul commit pubblicato e riferimento alla prova"
+  "resolve_fixed_threads": "sì, solo con correzione dimostrata sul commit pubblicato e riferimento alla prova",
+  "reconciliation_readonly": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (22/10): riconciliazione globale read-only autorizzata; Parallel Factory PENDING"
  },
  "tests_executed": [
   {
@@ -1038,6 +1036,18 @@
    "status": "PASS",
    "sha": "23237cba8ba95380ad5ba7d9b82fbde94d09d818",
    "result": "guardrail_check PASS (16 file == scope), pr_autonomy_policy full-diff PASS, owner_manual_merge_required false"
+  },
+  {
+   "id": "ci_post_merge_main_535",
+   "status": "PASS",
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "14 workflow push success"
+  },
+  {
+   "id": "financial_evidence_main_535",
+   "status": "PASS",
+   "sha": "152613b30fb0719682d71ae6653f984079a48262",
+   "result": "481 passed / 0 failed (test PR29-c, F026, pr512, pr26a, bankroll_sync, pr03) sul checkout 152613b"
   }
  ],
  "tests_missing": [

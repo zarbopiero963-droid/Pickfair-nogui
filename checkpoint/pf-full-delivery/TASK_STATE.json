@@ -54,9 +54,9 @@
   "PR #530 fix loop 10 cicli: squash 2141031 (merge manuale owner sull'head 2ecc4a4); CI post-merge 12/12",
   "#534 PR29-b (PF-C29-01.17): squash 409bcf9 (merge autonomo safety-critical, fix loop 4/10); CI post-merge main 14/14 (12 sempre attivi + reconciliation-engine e dutching filtrati per percorso; test focalizzati skipped/advisory, backstop completo success)"
  ],
- "lotto_corrente": "#535 PR29-c PRONTA PER MERGE su 23237cb (READY_FOR_OWNER_MANUAL_MERGE); merge in attesa di autorizzazione owner",
- "mandate_id": "PF-PR29-C-FINANCIAL-IDEMPOTENCY-01 + mandato owner PR29-c FINAL VALIDATION (21/10/2026)",
- "next_atomic_action": "Attendere l'autorizzazione owner al merge di #535 (23237cb). Dopo il merge autorizzato: CI post-merge main, checkpoint seq 58, poi (solo su nuova autorizzazione) PF-POST-PR29C-GLOBAL-RECONCILIATION-01 (#426 c.6322399988) e a seguire PF-POST-PR29C-PARALLEL-FACTORY-01 (#426 c.6322621696). Nessun LIVE. Nessuna PR30 anticipata.",
+ "lotto_corrente": "post-merge #535 PASS; riconciliazione globale 60 schede in corso (read-only); Parallel Factory PENDING (solo piano)",
+ "mandate_id": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (owner 22/10/2026)",
+ "next_atomic_action": "Rapporto B: riconciliazione globale (evidenza codice+test su main 152613b per 60 schede + inserti; inventari in scratchpad/recon/), scheda correttiva dedicata per il rischio .runtime.lock collegata a #453/#506/#351/#461 con criteri di accettazione (prerequisito LIVE), piano Parallel Development Factory (NON avviare sessioni). Nessuna modifica al codice di produzione, nessun merge, nessun LIVE.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
