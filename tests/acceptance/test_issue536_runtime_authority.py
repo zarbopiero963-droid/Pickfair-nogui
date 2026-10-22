@@ -1338,3 +1338,41 @@ def test_t57_crash_fra_presa_in_carico_ed_esito_del_cancel_ttl_ordine_non_diment
     r.rc._last_direct_ttl_poll_at = -1e9
     r.rc._poll_direct_unmatched_ttl()
     assert inviati == [], "cancel alla cieca dopo il riavvio"
+
+
+# ---------------------------------------------------------------- rilievo Sol su 2a5a6c2 (RED prima della patch)
+def test_t58_presa_in_carico_atomica_per_bet_id_con_piu_riferimenti(tmp_path):
+    """Sol su 2a5a6c2: con due riferimenti allo stesso ordine due giri concorrenti possono rimuoverne uno ciascuno
+    e inviare entrambi il cancel. La presa in carico e' atomica per ``bet_id``: un solo cancel per ordine."""
+    c = _catena_armata(tmp_path, "t58.db")
+
+    class _Intrecciato(dict):
+        """Impone l'intreccio peggiore se i due giri possono sovrapporsi: 'r1' va prima al giro A, 'r2' prima al
+        giro B (attesa limitata: con la presa in carico serializzata l'altro giro non arriva e si prosegue)."""
+
+        def __init__(self, *a):
+            super().__init__(*a)
+            self.fatto = {"r1": threading.Event(), "r2": threading.Event()}
+
+        def pop(self, chiave, *a):
+            primo = {"r1": "giro-A", "r2": "giro-B"}.get(chiave)
+            if primo and threading.current_thread().name != primo:
+                self.fatto[chiave].wait(0.3)
+            out = super().pop(chiave, *a)
+            if chiave in self.fatto:
+                self.fatto[chiave].set()
+            return out
+
+    for _ in range(3):
+        c.rc._direct_order_bet_ids = _Intrecciato({"r1": "B1", "r2": "B1"})
+        inviati = []
+        adapter = c.rc._direct_ttl_cancel_adapter()
+        adapter.sim_cancel = adapter.live_cancel = lambda **kw: inviati.append(kw) or {"ok": True}
+        giri = [threading.Thread(target=c.rc._cancel_direct_unmatched, name=nome,
+                                 args=(adapter, {"market_id": "1.1", "bet_id": "B1"})) for nome in ("giro-A", "giro-B")]
+        for g in giri:
+            g.start()
+        for g in giri:
+            g.join(5)
+        assert len(inviati) == 1, f"{len(inviati)} cancel per lo stesso ordine"
+        assert "B1" not in c.rc.direct_unmatched_bet_ids

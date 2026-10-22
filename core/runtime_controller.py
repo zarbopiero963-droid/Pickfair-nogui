@@ -72,6 +72,9 @@ _NO_RELEASE_UNCERTAIN_EVENTS = frozenset({"QUICK_BET_AMBIGUOUS"})
 _DIRECT_TTL_TERMINAL_EVENTS = frozenset({
     "QUICK_BET_FILLED", "QUICK_BET_FAILED", "QUICK_BET_ROLLBACK_DONE",
 })
+# #536 (Sol su 2a5a6c2): la presa in carico di un bet_id dal registry TTL e' una sola operazione anche con piu'
+# riferimenti allo stesso ordine; due giri concorrenti non possono prenderne una voce ciascuno.
+_DIRECT_TTL_CLAIM_LOCK = threading.Lock()
 
 
 class RuntimeController:
@@ -6667,15 +6670,17 @@ class RuntimeController:
                     bet_id, market_id, confirmed)
 
     def _discard_direct_bet_id(self, bet_id: str) -> dict:
-        """Rimuove dal registry tutte le voci con questo ``bet_id``; restituisce quelle rimosse da QUESTA chiamata
-        (``pop`` per chiave: con due chiamanti concorrenti ogni voce va a uno solo)."""
+        """Rimuove dal registry tutte le voci con questo ``bet_id``; restituisce quelle rimosse da QUESTA chiamata.
+        Scansione e rimozione sotto ``_DIRECT_TTL_CLAIM_LOCK``: con due chiamanti concorrenti tutte le voci dello
+        stesso ordine vanno a uno solo (Sol su 2a5a6c2)."""
         bid = str(bet_id or "").strip()
         presi: dict = {}
         if not bid:
             return presi
-        for cref in [c for c, b in list(self._direct_order_bet_ids.items()) if b == bid]:
-            if self._direct_order_bet_ids.pop(cref, None) is not None:
-                presi[cref] = bid
+        with _DIRECT_TTL_CLAIM_LOCK:
+            for cref in [c for c, b in list(self._direct_order_bet_ids.items()) if b == bid]:
+                if self._direct_order_bet_ids.pop(cref, None) is not None:
+                    presi[cref] = bid
         return presi
 
     # =========================================================

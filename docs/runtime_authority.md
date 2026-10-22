@@ -123,7 +123,9 @@ non è ancora dichiarato superato (l'heartbeat decide: se non si riesce più a r
   d'istanza `last_block`, che un cancel concorrente sullo stesso adapter azzererebbe); il `bet_id` esce dal
   registry **prima** della chiamata al broker, come su main, e la presa in carico (`pop` per chiave) fa da confine
   fra giri TTL sovrapposti (stream e REST fallback): chi non la ottiene non invia un secondo cancel; il candidato
-  torna nel registry solo se il cancel non è stato tentato.
+  torna nel registry solo se il cancel non è stato tentato. Dopo la review Sol di `2a5a6c2`: scansione e rimozione
+  avvengono sotto `_DIRECT_TTL_CLAIM_LOCK`, così anche con più riferimenti allo stesso ordine tutte le voci vanno a
+  un solo giro.
 - **START**: l'autorità si riverifica subito prima dell'attivazione; persa durante connessione o recovery ⇒
   `RUNTIME_AUTHORITY_LOST_DURING_START`, servizi smontati, lock e lease rilasciati, nessun `RUNTIME_STARTED`.
 - **STOP dopo una perdita**: la scadenza della lease si ritenta anche se `mark_lost` non era riuscito (scoped su
@@ -205,4 +207,5 @@ rilievi Grok su `9a80162`: rollback su ogni errore in `begin_transaction`, casho
 non si registra (T51–T52); transazione fenced che non fallisce se l'heartbeat rinnova nel mezzo (T53); rilievi Grok su `589cdb5`: esito del
 cancel TTL locale alla chiamata, `bet_id` fuori dal registry durante il broker, nessun secondo cancel da un giro
 sovrapposto (T54–T56); crash fra presa in carico ed esito del cancel TTL, prima e dopo il broker: ordine nel
-ledger, stato dell'exchange riconciliabile, nessun cancel alla cieca al riavvio (T57). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
+ledger, stato dell'exchange riconciliabile, nessun cancel alla cieca al riavvio (T57);
+rilievo Sol su `2a5a6c2`: presa in carico atomica per `bet_id` con più riferimenti e due giri concorrenti (T58). Mutazioni `i536_*` in `guardrails/mutation_catalog.json`.
