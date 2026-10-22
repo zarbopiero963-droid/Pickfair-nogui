@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 65,
+ "seq": 66,
  "updated_at": "2026-10-22T18:10:15Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere CI e review Sol/Grok su PR #538 (head 0fd0ba2); triage (cicli <= 10); a gate verdi dichiarare READY: merge richiede approvazione owner finche full-suite non e required check. Poi PFC-002 (merge OWNER), PFC-003 (merge OWNER), PFC-004 G7-a. Salvaguardia 24 h su PFC-002/003. NO LIVE.",
+ "next_atomic_action": "Attendere il merge owner di PR #538 (head b83fde3: CI 70 success/41 skipped/0 failure, Merge Readiness success, 0 thread, fix loop 1/10). Nessun merge automatico: enforcement indipendente non verificato. Dopo il merge: CI post-merge main, registri #453/#461, poi PFC-002 (merge OWNER). NO LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "3763ebffa888d8822f561489d65765c7eb5f31f4",
- "lotto_corrente": "PFC-001 (PR #538): M025 + M158, solo test",
+ "previous_checkpoint_sha": "4ffaf2f66694623f5bd33cc9dbb58932e99dab06",
+ "lotto_corrente": "PFC-001 (PR #538) READY_FOR_OWNER_MANUAL_MERGE su b83fde3",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -601,11 +601,11 @@
  "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
+  "sha": "b83fde309a106d672b767c624fbb81500325b81b",
   "patch": {
-   "head": "0fd0ba24d132e0c879b019d33eb2220e565f1aa5",
-   "tree": "000c6762d5112b78546fae05a433baa0b674d543",
-   "captured_at": "2026-10-22T21:48:13+00:00",
+   "head": "b83fde309a106d672b767c624fbb81500325b81b",
+   "tree": "0594c58b7da44d18ba98bc0ee62821e3876816a9",
+   "captured_at": "2026-10-22T22:29:54+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -648,6 +648,12 @@
   "reconciliation_readonly": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (22/10): riconciliazione globale read-only autorizzata; Parallel Factory PENDING"
  },
  "tests_executed": [
+  {
+   "id": "pfc001_ci_b83fde3",
+   "status": "PASS",
+   "sha": "b83fde309a106d672b767c624fbb81500325b81b",
+   "result": "CI 70 success, 41 skipped, 0 failure; Merge Readiness success"
+  },
   {
    "id": "pfc001_regression_serial",
    "status": "PASS",
@@ -1372,11 +1378,18 @@
  },
  "pfc001": {
   "pr": 538,
-  "head": "0fd0ba2",
+  "head": "b83fde309a106d672b767c624fbb81500325b81b",
   "serial": "8895 passed, 1 env fail (tkinter), 838.7 s",
   "parallel": "8894+1 passed, 157 s + 3.5 s",
   "nodeids_equal": "8915=8915=8915",
   "mutation": "194 KILLED, 1 EQUIVALENT, gate PASS",
-  "f026": "460 s -> 318 s, 162 passed"
+  "f026": "460 s -> 318 s, 162 passed",
+  "ci": "70 success, 41 skipped, 0 failure",
+  "merge_readiness": "success",
+  "threads_open": 0,
+  "fix_loop": "1/10",
+  "codex_p2": "r4354025687 fixed in b83fde3, resolved",
+  "verdict_comment": 6352717373,
+  "review_coverage": "parziale: troncamenti per budget per file (Sol: child_f026, pr28d; Grok: coda child_f026, guard test)"
  }
 }
