@@ -2490,6 +2490,21 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "max_files": 15
+    },
+    "pfc001-test-stabilization": {
+      "description": "Roadmap canonica ratificata PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026), PFC-001 = M025 (#528 harness F026 deterministica) + M158 (test timing e marker serial). Solo test, docs e configurazione pytest: nessuna modifica di produzione. Attese fisse della harness F026 sostituite da condizioni verificabili (ordine fuori da INFLIGHT o esito/rifiuto, chiusura per mercato elaborata, bus fermo); backoff a 0 e asserzione sui tentativi in test_retry_does_not_stack_overflow (181 s); attese positive a 30 s in test_issue437_pr28d; marker serial per i test con widget Tk reali e guard dedicato.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "README.md",
+        "pytest.ini",
+        "tests/acceptance/test_issue437_pr28d.py",
+        "tests/acceptance/test_issue461_pr04_quater.py",
+        "tests/f026/child_f026.py",
+        "tests/guardrails/test_serial_marker_pfc001.py",
+        "tests/reconciliation/test_reconciliation_hardening.py"
+      ],
+      "max_files": 9
     }
   }
 }

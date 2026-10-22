@@ -10,6 +10,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-001 — test deterministici e veloci, nessuna modifica di produzione (roadmap canonica ratificata
+  PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01, #528):**
+  - `tests/f026/child_f026.py`: le attese fisse (1,5 s dopo ogni segnale, 4 s prima del settlement) diventano
+    condizioni verificabili: l'ordine del segnale ha lasciato `INFLIGHT` (oppure c'è un esito o un rifiuto), ogni
+    mercato chiuso ha il proprio `RUNTIME_CLOSE_POSITION` elaborato, e il bus non ha callback in coda o in
+    esecuzione per 3 letture consecutive. Scadenza 30 s registrata in `R["waits"]`; nessuna aspettativa dei test
+    cambia. `tests/f026`: 460 s → 318 s in seriale.
+  - `test_retry_does_not_stack_overflow`: backoff a 0 nel test (dormiva 181 s reali, il 15% della suite) e nuova
+    asserzione sugli 11 tentativi effettivi; un codice che smette di ritentare ora fa fallire il test.
+  - `tests/acceptance/test_issue437_pr28d.py`: attese positive (`Event.wait`, `join`) da 1–2 s a 30 s; un Event già
+    impostato ritorna subito, sotto carico il thread del test non fallisce più per tempo (falso rosso su #535). Le
+    attese negative restano brevi.
+  - Marker `serial` in `pytest.ini` per i test con widget Tk reali sul display X condiviso, con guard
+    `tests/guardrails/test_serial_marker_pfc001.py`. README: comando parallelo + passo seriale.
+
 - **Fix loop: tetto per PR portato da 5 a 10 cicli (PF-QA-AUTONOMOUS-CONTINUATION-01, mandato owner
   20/10/2026):** `MAX_FIX_LOOP_ITERATIONS_PER_PR = 10` in `scripts/pr_fix_loop_policy.py`. È un massimo,
   non un obiettivo: stop anticipato per `REVIEW_CHURN`, prenotazione prima della patch, nessun reset,

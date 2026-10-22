@@ -139,13 +139,27 @@ def test_audit_fail_closed_blocks_state_change(engine, batch):
 
 
 def test_retry_does_not_stack_overflow(engine):
-    engine.client_getter = lambda: FakeClient(fail=True)
+    calls = []
+
+    class CountingClient(FakeClient):
+        def get_current_orders(self, **kwargs):
+            calls.append(kwargs)
+            return super().get_current_orders(**kwargs)
+
+    engine.client_getter = lambda: CountingClient(fail=True)
     engine.cfg.max_transient_retries = 10
+    # PFC-001: il test verifica che 10 ritentativi transitori non ricorrano fino allo stack overflow e finiscano in
+    # TRANSIENT_ERROR, non la durata del backoff. Con i ritardi di default dormiva 181 s reali (15% della suite).
+    # Il backoff esponenziale resta lo stesso codice, eseguito con ritardo 0.
+    engine.cfg.transient_retry_base_delay = 0.0
+    engine.cfg.transient_retry_max_delay = 0.0
 
     orders, reason = engine._fetch_current_orders_by_market("1.100")
 
     assert orders == []
     assert reason == ReasonCode.TRANSIENT_ERROR
+    # i ritentativi sono avvenuti davvero: tentativo iniziale + 10 ritentativi, senza ricorsione
+    assert len(calls) == 11
 
 
 def test_recovery_marker_expires(engine):

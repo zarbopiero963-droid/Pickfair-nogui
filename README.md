@@ -72,7 +72,16 @@ pytest tests/safety -q -m safety
 
 # Observability / sanitizer tests
 pytest tests/observability -q -m observability
+
+# Full suite in parallel (pytest-xdist), then the tests that must stay serial
+pytest -q -n 8 --dist worksteal -m "not serial"
+pytest -q -m serial
 ```
+
+`serial` marks the tests that use real Tk widgets on a shared X display: they never run under
+xdist. The two commands together run the whole suite (`tests/guardrails/test_serial_marker_pfc001.py`
+fails if a test with a real display is left unmarked). The parallel run is fast feedback; the
+merge gate is the CI on the PR head.
 
 ## Branch policy
 
