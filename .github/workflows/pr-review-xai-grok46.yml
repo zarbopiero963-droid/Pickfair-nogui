@@ -22,6 +22,8 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
+  # PFC-002: la verifica della copertura legge run e artifact del workflow.
+  actions: read
 
 concurrency:
   group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
@@ -36,10 +38,6 @@ jobs:
     # margine per paginazione/commenti senza troncare una review valida.
     timeout-minutes: 30
 
-    if: >
-      github.event.pull_request.draft == false &&
-      github.event.pull_request.head.repo.full_name == github.repository
-
     env:
       XAI_API_KEY: ${{ secrets.GROK_PICKFAIR }}
       XAI_MODEL: grok-4.7
@@ -52,6 +50,14 @@ jobs:
       AFTER_SHA: ${{ github.event.after }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      PR_DRAFT: ${{ github.event.pull_request.draft }}
+      PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      REVIEW_WORKFLOW_FILE: pr-review-xai-grok46.yml
+      # PFC-002 (M159): il diff si divide in segmenti e lotti invece di essere
+      # troncato; oltre questo numero di lotti non si chiama il modello e la
+      # copertura risulta incompleta (decisione owner: dividere o alzare).
+      MAX_REVIEW_CALLS: "8"
+      ATTESTATION_FILE: review-coverage/attestation.json
 
       # `grok46` resta com'e' anche dopo il passaggio a 4.7: e' un
       # IDENTIFICATORE, non una descrizione — entra nei done_marker dei
@@ -103,14 +109,37 @@ jobs:
       MANUAL_REVIEW_LABEL: manual-review-required
 
     steps:
+      # Eleggibilita' e segreto si controllano DENTRO lo step, non con un `if:`
+      # a livello di job: un job saltato da `if:` risulta "skipped", e GitHub
+      # conta un required check skipped come soddisfatto. Qui la PR in draft,
+      # quella da fork e il segreto mancante NON producono review: lo step di
+      # verifica qui sotto fallisce, cioe' il check e' rosso (PFC-002, M159).
+      - name: Checkout trusted base helpers (no PR code)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: _base
+          sparse-checkout: scripts/ci/review_coverage.py
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
       - name: Review pushed commit range with Grok 4.7
         shell: bash
         run: |
           set -euo pipefail
 
-          # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
+          if [ "$PR_DRAFT" = "true" ]; then
+            echo "::error::PR in draft: review Grok 4.7 non eseguita, copertura NON provata."
+            exit 0
+          fi
+          if [ "$PR_HEAD_REPO" != "$REPO" ]; then
+            echo "::error::PR da fork: review Grok 4.7 non eseguita (niente segreti ai fork), copertura NON provata."
+            exit 0
+          fi
+          # Reviewer ATTIVO (P41): senza secret nessuna review, e il check di
+          # copertura qui sotto fallisce. Prima usciva verde ("saltato").
           if [ -z "${XAI_API_KEY:-}" ]; then
-            echo "::notice::XAI_API_KEY non configurato: reviewer Grok 4.7 saltato (nessun check rosso)."
+            echo "::error::XAI_API_KEY non configurato: review Grok 4.7 NON eseguita, copertura NON provata."
             exit 0
           fi
 
@@ -210,7 +239,8 @@ jobs:
               r"(^|/)\.github/workflows/",
               r"^(CLAUDE|AGENTS)\.md$",
               r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
-              r"^scripts/(guardrail_check|pr_[a-z0-9_]+|ci/check_ci_quarantine)\.py$",
+              r"^scripts/(guardrail_check|pr_[a-z0-9_]+)\.py$",
+              r"^scripts/ci/",
               r"(^|/)requirements[^/]*\.(txt|in|lock)$",
               r"(^|/)pyproject\.toml$",
               r"(^|/)poetry\.lock$",
@@ -518,14 +548,26 @@ jobs:
                   "E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
                   "che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
                   "Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
-                  "VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
-                  "diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
-                  "vedi solo l'inizio."
+                  "VERIFICABILE invece di darlo per mancante. Un file lungo arriva\n"
+                  "diviso in SEGMENTI, anche su lotti diversi: un segmento che qui non\n"
+                  "vedi e' revisionato in un altro lotto dello stesso range."
               )
 
           def build_patch_payload(files):
-              chunks, skipped, critical = [], [], []
-              total = 0
+              """Prepara i file del range per la segmentazione (PFC-002, requisito M159).
+
+              Fino alla PFC-002 questa funzione TAGLIAVA ogni patch a
+              MAX_PATCH_PER_FILE_CHARS e SALTAVA i file oltre MAX_TOTAL_PATCH_CHARS: quella
+              parte del diff non arrivava a nessun revisore, e il job restava verde lo
+              stesso. Ora non taglia piu' nulla: redige i segreti, neutralizza i fence e
+              passa i file a `review_coverage.plan_review`, che divide i patch lunghi in
+              segmenti e i segmenti in lotti, una chiamata per lotto. I due tetti restano,
+              ma come dimensione del segmento e del lotto, non come soglia oltre la quale
+              il codice sparisce.
+
+              Ritorna (file preparati, file senza patch, file safety-critical).
+              """
+              prepared, skipped, critical = [], [], []
 
               for f in files:
                   # Nome file redatto E ripulito dai control-char (può contenere
@@ -533,8 +575,6 @@ jobs:
                   filename = safe_display(f.get("filename", ""))
                   prev = f.get("previous_filename")
                   status = f.get("status", "")
-                  additions = f.get("additions", 0)
-                  deletions = f.get("deletions", 0)
                   changes = f.get("changes", 0)
                   patch = f.get("patch")
 
@@ -547,6 +587,7 @@ jobs:
 
                   if not patch:
                       skipped.append(filename)
+                      prepared.append({"filename": filename, "status": status, "changes": changes, "patch": None})
                       continue
 
                   patch = redact(patch)
@@ -554,24 +595,9 @@ jobs:
                   # deve chiudere il blocco delimitato e far uscire testo non
                   # attendibile dal recinto anti-injection.
                   patch = patch.replace("```", "` ` `")
+                  prepared.append({"filename": filename, "status": status, "changes": changes, "patch": patch})
 
-                  if len(patch) > MAX_PATCH_PER_FILE_CHARS:
-                      patch = patch[:MAX_PATCH_PER_FILE_CHARS] + "\n...[PATCH FILE TRONCATO PER BUDGET TOKEN]..."
-
-                  block = (
-                      f"\n\n### FILE: {filename}\n"
-                      f"status: {status} | changes: {changes} | additions: {additions} | deletions: {deletions}\n"
-                      f"```diff\n{patch}\n```"
-                  )
-
-                  if total + len(block) > MAX_TOTAL_PATCH_CHARS:
-                      skipped.append(filename)
-                      continue
-
-                  chunks.append(block)
-                  total += len(block)
-
-              return "\n".join(chunks), sorted(set(skipped)), sorted(set(critical))
+              return prepared, sorted(set(skipped)), sorted(set(critical))
 
           def try_add_label():
               try:
@@ -792,12 +818,46 @@ jobs:
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
               )
 
+          # --- Copertura attestata (PFC-002, requisito M159) ----------------------
+          # Il modulo arriva dal checkout del BRANCH BASE (step precedente), mai dalla
+          # PR: e' codice fidato come il resto di questo script, che gira da
+          # pull_request_target. La PR non puo' cambiare ne' come si segmenta ne' come
+          # si attesta.
+          import concurrent.futures
+
+          sys.path.insert(0, os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "_base", "scripts", "ci"))
+          import review_coverage as rc  # noqa: E402
+
+          RUN_ID = int(os.environ.get("GITHUB_RUN_ID") or 0)
+          RUN_ATTEMPT = int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1)
+          WORKFLOW_FILE = os.environ["REVIEW_WORKFLOW_FILE"]
+          MAX_REVIEW_CALLS = int(os.environ.get("MAX_REVIEW_CALLS", "8"))
+          ATTESTATION_FILE = os.environ.get("ATTESTATION_FILE", "review-coverage/attestation.json")
+
+
+          def scrivi_attestazione(range_base, range_head, plan, outcomes, *, compare_truncated=False,
+                                  esclusi=None, reasons=None):
+              """Attestazione del range, caricata come artifact dallo step successivo."""
+              att = rc.build_attestation(
+                  reviewer=REVIEW_ID, model=XAI_MODEL, repo=REPO, pr=int(PR_NUMBER),
+                  range_base=range_base, range_head=range_head, run_id=RUN_ID, run_attempt=RUN_ATTEMPT,
+                  workflow_file=WORKFLOW_FILE, plan=plan, outcomes=outcomes,
+                  compare_truncated=compare_truncated, excluded_from_base=esclusi, reasons=reasons,
+              )
+              os.makedirs(os.path.dirname(ATTESTATION_FILE) or ".", exist_ok=True)
+              with open(ATTESTATION_FILE, "w", encoding="utf-8") as fh:
+                  json.dump(att, fh, indent=2, ensure_ascii=False)
+              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
+                  fh.write(f"COVERAGE_ARTIFACT={rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}\n")
+              return att
+
+
           try:
               range_base, range_head, range_scope, compared = resolve_range()
           except Exception as exc:
-              # Errore infra GitHub (Compare/commit API): reviewer opzionale,
-              # non deve bloccare la PR.
-              print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API), PR non bloccata: {redact(str(exc))[:500]}")
+              # Errore infra GitHub (Compare/commit API): nessuna review e nessuna
+              # attestazione. Lo step di verifica fallisce: la copertura non e' provata.
+              print(f"::error::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API): nessuna review, copertura NON provata: {redact(str(exc))[:500]}")
               sys.exit(0)
           files = compared.get("files") or []
           # Prima di qualunque altra cosa: via i file che vengono dal branch base.
@@ -810,27 +870,26 @@ jobs:
                     f"perche' provenienti dal branch base (gia' revisionati e mergiati): "
                     f"{', '.join(files_dal_base[:10])}")
           commit_count = len(compared.get("commits") or [])
-          diff_text, skipped_files, critical_files = build_patch_payload(files)
+          prepared_files, skipped_files, critical_files = build_patch_payload(files)
           manual_files = manual_authority_files(files)
 
           # La Compare API tronca i file a 300: se raggiunto il tetto non possiamo
           # garantire di aver visto tutti i file sensibili del range → forziamo il
-          # controllo manuale (fail-closed).
+          # controllo manuale (fail-closed). Ora rende anche l'attestazione incompleta.
           compare_truncated = len(files) >= 300
 
           marker = f"<!-- {REVIEW_ID}-pr-review:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
           # Marker di COMPLETAMENTO: presente nel commento SOLO quando la review è
-          # arrivata davvero (testo reale del modello, non troncata/errore). La dedup
-          # a pagamento guarda QUESTO marker, non `marker`: così un commento troncato
-          # o d'errore (che porta `marker` ma NON `done_marker`) non blocca il retry —
-          # altrimenti il gate resterebbe verde senza una review reale (P1 CodeRabbit/Codex).
+          # arrivata davvero E l'attestazione di copertura e' completa. La dedup a
+          # pagamento guarda QUESTO marker, non `marker`: così un commento troncato,
+          # d'errore o con segmenti non coperti non blocca il retry.
           done_marker = f"<!-- {REVIEW_ID}-pr-review-done:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
 
           # Anti-doppia-review a pagamento: se esiste GIÀ una review COMPLETATA per
           # QUESTO range (done_marker), non richiamare il modello — un re-run del
-          # workflow o togli/rimetti label NON devono ripagare la stessa review. Un
-          # nuovo push = nuovo range = nuovo marker → gira normalmente. Fail-open: se
-          # il controllo stesso fallisce, si procede con la review (non si salta).
+          # workflow NON deve ripagare la stessa review. La sua attestazione e' gia'
+          # nell'artifact del run che l'ha prodotta, e lo step di verifica la trova li'.
+          # Fail-open SOLO sulla spesa: se il controllo stesso fallisce, si rifa' la review.
           def comment_exists(marker: str) -> bool:
               # cap anti-loop (Sourcery bug_risk): se l'API restituisse sempre 100
               # commenti, il while non terminerebbe. Nessuna PR reale ha >2000
@@ -848,6 +907,8 @@ jobs:
                       # dagli SHA pubblici: senza questo filtro un utente che può
                       # commentare la PR potrebbe forgiarlo e far saltare la review
                       # finale obbligatoria / il gate a label (CodeRabbit Major).
+                      # Il marker decide solo se SPENDERE di nuovo: la copertura la
+                      # decide l'artifact del run ufficiale, che un commento non forgia.
                       if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and marker in (c.get("body") or ""):
                           return True
                   if len(comments) < 100:
@@ -916,22 +977,53 @@ jobs:
           skipped_note = ""
           if skipped_files:
               skipped_note = (
-                  "\n\n## File non inviati al modello\n"
-                  "Saltati perché binari, senza patch o oltre budget:\n"
+                  "\n\n## File senza patch testuale\n"
+                  "Binari, rinominati senza modifiche o oltre il limite con cui GitHub fornisce il patch "
+                  "(questi ultimi rendono l'attestazione INCOMPLETA):\n"
                   + "\n".join(f"- `{name}`" for name in skipped_files[:40])
                   + ("\n- ... altri file omessi" if len(skipped_files) > 40 else "")
                   + "\n"
               )
 
-          if not diff_text.strip():
-              upsert_comment(marker, f"""{marker}
+          plan = rc.plan_review(
+              prepared_files,
+              max_segment_chars=MAX_PATCH_PER_FILE_CHARS,
+              max_batch_chars=MAX_TOTAL_PATCH_CHARS,
+              max_calls=MAX_REVIEW_CALLS,
+          )
+
+
+          def nota_copertura(att) -> str:
+              stato = "COMPLETA" if att["complete"] else "INCOMPLETA"
+              righe = [
+                  f"**Copertura attestata:** `{stato}` — "
+                  f"{len(att['reviewed_segments'])}/{len(att['segments'])} segmenti revisionati, "
+                  f"{len(att['batches'])} lotti, artifact `{rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}`",
+              ]
+              righe.extend(f"- ❌ {motivo}" for motivo in att["reasons"][:20])
+              return "\n".join(righe)
+
+
+          if plan.budget_exceeded or not plan.segments:
+              att = scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
+                                        esclusi=files_dal_base)
+              if plan.budget_exceeded:
+                  motivo = (
+                      f"Il range richiede {len(plan.batches)} lotti, il tetto e' MAX_REVIEW_CALLS={MAX_REVIEW_CALLS}: "
+                      "nessun modello e' stato chiamato, per non pagare una review che resterebbe incompleta. "
+                      "Dividere la PR o alzare il tetto (decisione owner)."
+                  )
+              else:
+                  motivo = "Nessun patch testuale analizzabile trovato."
+              upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
           # xAI Grok 4.7 PR Review
 
-          Nessun patch testuale analizzabile trovato.
+          {motivo}
 
           **Scope:** `{range_scope}`
           **Range:** `{range_base[:12]}...{range_head[:12]}`
           **Commits nel range:** `{commit_count}`
+          {nota_copertura(att)}
 
           {manual_warning}
 
@@ -959,17 +1051,23 @@ jobs:
             "Nessun bloccante evidente".
           - Niente ripetizione del diff, niente teoria/tutorial/blocchi di codice,
             niente rischi minori, niente miglioramenti opzionali, niente sezioni extra.
+          - Dopo il verdetto, l'ULTIMA riga e' il riscontro dei segmenti letti
+            ("SEGMENTI ESAMINATI: ..."), come chiesto nel messaggio.
           """
 
           copertura = blocco_copertura(files, skipped_files)
 
-          user_prompt = f"""
+
+          def prompt_lotto(indice: int) -> str:
+              ids = plan.batches[indice]
+              user_prompt = f"""
           Repository: {REPO}
           PR: #{PR_NUMBER}
           Scope: {range_scope}
           Range: {range_base}...{range_head}
           Commits nel range: {commit_count}
           Modello: {MODEL_LABEL} ({XAI_MODEL})
+          Lotto: {indice + 1} di {len(plan.batches)}
 
           Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
           sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
@@ -979,40 +1077,81 @@ jobs:
 
           {copertura}
 
-          Diff del range appena pushato:
-          {diff_text}
+          SEGMENTAZIONE: il diff di questo range e' diviso in {len(plan.segments)} segmenti
+          e {len(plan.batches)} lotti. Qui ricevi i segmenti {", ".join(ids)}. Gli altri
+          sono revisionati in altri lotti dello stesso range: non sono assenti.
+
+          {rc.ack_instruction(ids)}
+
+          Diff del range appena pushato (segmenti di questo lotto):
+          {rc.render_batch(plan, indice)}
           """
+              return user_prompt
 
-          try:
-              review, usage = call_model(system_prompt, user_prompt)
-          except Exception as exc:
-              review = (
-                  "## Review Grok 4.7 non completata\n\n"
-                  f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
-              )
-              usage = {}
 
-          # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
-          # non coperto dalla redaction dell'input o echo del prompt) non deve finire
-          # in chiaro nel commento PR (Codex P2).
-          review = redact(review)
-
-          # La review conta come COMPLETATA solo se il modello ha prodotto testo reale:
-          # né troncamento (budget esaurito), né "nessun testo", né errore di chiamata.
-          # Solo in quel caso scriviamo done_marker → la dedup salterà i futuri re-run;
-          # altrimenti done_line resta vuoto e un re-run rifarà la review (retry sicuro).
-          review_complete = not review.lstrip().startswith((
+          # Una risposta che comincia cosi' NON e' una review: troncata, vuota, o
+          # errore di chiamata. chat/completions puo' rispondere con `choices` vuoto: e'
+          # un messaggio DIVERSO da "nessun testo" e va elencato a parte, o una
+          # NON-review resterebbe registrata come completa (rilievo Fable 5 su #463).
+          RISPOSTE_INCOMPLETE = (
               "Output troncato",
               "Il modello non ha restituito testo",
               "Il modello non ha restituito choices",
               "## Review Grok 4.7 non completata",
-          ))
+          )
+
+
+          def esegui_lotto(indice: int):
+              prompt_utente = prompt_lotto(indice)
+              chiamata_ok = True
+              try:
+                  review, usage = call_model(system_prompt, prompt_utente)
+              except Exception as exc:
+                  chiamata_ok = False
+                  review = (
+                      "## Review Grok 4.7 non completata\n\n"
+                      f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
+                  )
+                  usage = {}
+              # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
+              # non coperto dalla redaction dell'input o echo del prompt) non deve finire
+              # in chiaro nel commento PR (Codex P2).
+              review = redact(review)
+              completa = chiamata_ok and not review.lstrip().startswith(RISPOSTE_INCOMPLETE)
+              esito = rc.batch_outcome(review, completed=completa, expected=list(plan.batches[indice]))
+              return indice, review, usage, prompt_utente, esito
+
+
+          # I lotti girano in parallelo: il tempo del job resta quello di una chiamata,
+          # e il timeout del job (calcolato sul caso peggiore di UNA chiamata) regge.
+          with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan.batches))) as pool:
+              risultati = list(pool.map(esegui_lotto, range(len(plan.batches))))
+
+          att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
+                                    compare_truncated=compare_truncated, esclusi=files_dal_base)
+          # La review conta come COMPLETATA solo se l'attestazione lo e': ogni lotto con
+          # risposta completa e ogni segmento riscontrato. Solo allora done_marker → la
+          # dedup salterà i futuri re-run; altrimenti un re-run rifarà la review.
+          review_complete = att["complete"]
           done_line = done_marker if review_complete else ""
+
+          sezioni, costo_totale = [], 0.0
+          for indice, review, usage, user_prompt, esito in risultati:
+              nota = usage_note(usage, system_prompt, user_prompt, review)
+              trovato = re.search(r"Costo stimato base:\s*`~\$([0-9.]+)`", nota)
+              if trovato:
+                  costo_totale += float(trovato.group(1))
+              nota = nota.replace("Costo stimato base", "Costo stimato lotto")
+              stato = "revisionato" if esito["reviewed"] else "NON revisionato"
+              sezioni.append(
+                  f"## Lotto {indice + 1}/{len(plan.batches)} — segmenti {', '.join(esito['segments'])} ({stato})\n\n"
+                  f"{review}\n{nota}"
+              )
 
           body = f"""{marker}{done_line}
           # xAI Grok 4.7 PR Review
 
-          **Modalità:** push-range diff via GitHub Compare API
+          **Modalità:** push-range diff via GitHub Compare API, segmentato
           **Scope:** `{range_scope}`
           **Range:** `{range_base[:12]}...{range_head[:12]}`
           **Commits nel range:** `{commit_count}`
@@ -1020,14 +1159,16 @@ jobs:
           **Esecuzione codice PR:** no
           **Auto-merge / auto-approve:** no
           **Model:** `{XAI_MODEL}`
-          **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
-          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
+          **Budget per segmento / per lotto:** `{MAX_PATCH_PER_FILE_CHARS}` / `{MAX_TOTAL_PATCH_CHARS}` caratteri, max `{MAX_REVIEW_CALLS}` lotti
+          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max per lotto
+          {nota_copertura(att)}
 
           {manual_warning}
 
-          {review}
+          {chr(10).join(sezioni)}
 
-          {usage_note(usage, system_prompt, user_prompt, review)}
+          ## Uso token / costo stimato (totale)
+          - Costo stimato base: `~${costo_totale:.4f}`
 
           {skipped_note}
 
@@ -1037,3 +1178,31 @@ jobs:
 
           upsert_comment(marker, body[:64000])
           PY
+
+      - name: Upload review coverage attestation
+        if: always() && env.COVERAGE_ARTIFACT != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.COVERAGE_ARTIFACT }}
+          path: review-coverage/attestation.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Verify review coverage of the whole PR
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Il verdetto del check: verde SOLO se le review complete dei run
+          # ufficiali di questo workflow formano una catena dal branch base al
+          # head corrente. Push senza review, lotto troncato, segmento non
+          # riscontrato, artifact mancante o forgiato altrove => rosso.
+          python3 _base/scripts/ci/review_coverage.py verify \
+            --repo "$REPO" \
+            --pr "$PR_NUMBER" \
+            --reviewer "$REVIEW_ID" \
+            --workflow-file "$REVIEW_WORKFLOW_FILE" \
+            --base-sha "$BASE_SHA" \
+            --head-sha "$HEAD_SHA" \
+            --local-attestation review-coverage/attestation.json \
+            --output review-coverage/verify.json

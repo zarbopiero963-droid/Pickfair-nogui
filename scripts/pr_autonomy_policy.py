@@ -136,6 +136,16 @@ OWNER_MANUAL_MERGE_FILES = frozenset({
     "scripts/pr_clean_scope_rebuild.py",
     "scripts/pr_refresh_self_checks.py",
     "scripts/ci/check_ci_quarantine.py",
+    # PFC-002: il check obbligatorio `full-suite` e la copertura attestata delle
+    # review. `full-suite` gira dalla versione della PR (pull_request): una PR che
+    # ne indebolisce workflow, gate o contratto farebbe girare su di se' il check
+    # gia' indebolito. Stessa ragione strutturale dei workflow-gate qui sopra.
+    ".github/workflows/full-suite.yml",
+    "scripts/ci/full_suite_gate.py",
+    "scripts/ci/full_suite_plugin.py",
+    "scripts/ci/full_suite_contract.json",
+    "scripts/ci/required_checks.json",
+    "scripts/ci/review_coverage.py",
 })
 
 # Gli stessi criteri come regex: Sol e Grok ne tengono una copia identica
@@ -145,7 +155,10 @@ MANUAL_AUTHORITY_PATTERNS = (
     r"(^|/)\.github/workflows/",
     r"^(CLAUDE|AGENTS)\.md$",
     r"^docs/(auto_pr_flow_spec|hard_verify_spec)\.md$",
-    r"^scripts/(guardrail_check|pr_[a-z0-9_]+|ci/check_ci_quarantine)\.py$",
+    r"^scripts/(guardrail_check|pr_[a-z0-9_]+)\.py$",
+    # PFC-002: tutto scripts/ci (quarantena, full-suite, contratto, check
+    # obbligatori, copertura delle review) definisce o applica i gate.
+    r"^scripts/ci/",
     r"(^|/)requirements[^/]*\.(txt|in|lock)$",
     r"(^|/)pyproject\.toml$",
     r"(^|/)poetry\.lock$",

@@ -152,7 +152,62 @@ def pr_view(repo: str, pr: str) -> dict[str, Any]:
     ])
 
 
-def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, list[dict[str, Any]]]:
+#: Manifest dei check OBBLIGATORI (PFC-002). Sta fuori da questo file perche' lo
+#: legge anche il test che lo confronta con i job reali dei workflow.
+REQUIRED_CHECKS_FILE = Path(__file__).resolve().parent / "ci" / "required_checks.json"
+
+
+def load_required_checks(path: Path = REQUIRED_CHECKS_FILE) -> tuple[str, ...]:
+    """Nomi dei check che devono essere SUCCESS sull'head, ne' assenti ne' SKIPPED.
+
+    Manifest illeggibile o vuoto => errore: un gate che non sa cosa e'
+    obbligatorio non puo' dire "pronta" (fail-closed, deciso dal chiamante).
+    """
+    data = json.loads(path.read_text(encoding="utf-8"))
+    names = data.get("required_checks") if isinstance(data, dict) else None
+    if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
+        raise ValueError(f"{path}: required_checks assente, vuoto o malformato")
+    return tuple(n.strip() for n in names)
+
+
+def _required_check_verdicts(
+    seen: list[dict[str, Any]], required: tuple[str, ...], head_sha: str
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """(blockers, pending) dovuti ai check obbligatori.
+
+    Per gli altri check SKIPPED e NEUTRAL restano accettabili (le lane di
+    modulo si saltano da sole quando il diff non le riguarda). Per un check
+    OBBLIGATORIO no: SKIPPED non prova niente, e GitHub stesso conta un
+    required check skipped come soddisfatto. Qui vale solo SUCCESS.
+    """
+    blockers: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for name in required:
+        items = [i for i in seen if i["name"] == name]
+        if not items:
+            pending.append({"name": name, "state": "MISSING", "required": True,
+                            "reason": "required check not reported on the head"})
+            continue
+        for item in items:
+            if item["state"] in PENDING_STATES:
+                continue  # gia' fra i pending
+            if item["state"] != "SUCCESS":
+                if item["state"] not in BAD_STATES:  # SKIPPED/NEUTRAL: per gli altri sarebbe ok
+                    blockers.append({**item, "required": True,
+                                     "reason": f"required check is {item['state']}, only SUCCESS counts"})
+                continue
+            if head_sha and item.get("head_sha") and item["head_sha"] != head_sha:
+                blockers.append({**item, "required": True,
+                                 "reason": f"required check ran on {item['head_sha'][:12]}, head is {head_sha[:12]}"})
+    return blockers, pending
+
+
+def split_checks(
+    pr: dict[str, Any],
+    *,
+    ignore_self: bool = True,
+    required: tuple[str, ...] = (),
+) -> dict[str, list[dict[str, Any]]]:
     blockers: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     ignored: list[dict[str, Any]] = []
@@ -160,6 +215,7 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
     # Quanti check REALI sono stati osservati: esclusi il self-check del gate e
     # i servizi dismessi, inclusi quelli gia' passati.
     visti = 0
+    osservati: list[dict[str, Any]] = []
 
     for payload in pr.get("statusCheckRollup") or []:
         raw = payload if isinstance(payload, dict) else {}
@@ -200,10 +256,18 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
         # o "tutto verde" e "nessun check ancora registrato" diventano
         # indistinguibili — ed e' la differenza fra "pronta" e "non lo so".
         visti += 1
+        osservati.append(item)
         if item["state"] in PENDING_STATES:
             pending.append(item)
         elif item["state"] not in OK_STATES:
             blockers.append(item)
+
+    if required:
+        req_blockers, req_pending = _required_check_verdicts(
+            osservati, required, str(pr.get("headRefOid") or "")
+        )
+        blockers.extend(req_blockers)
+        pending.extend(req_pending)
 
     return {
         "blockers": blockers,
@@ -415,10 +479,16 @@ def build_decision(
     *,
     ignore_self: bool = True,
     review_threads: list[dict[str, Any]] | None = None,
+    required_checks: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    """Build merge readiness decision and apply blocker taxonomy routing."""
+    """Build merge readiness decision and apply blocker taxonomy routing.
+
+    `required_checks`: nomi che devono essere SUCCESS sull'head (vedi
+    `load_required_checks`). Il gate CI li passa sempre; il default vuoto serve
+    ai chiamanti di libreria che giudicano solo lo stato del rollup.
+    """
     pr = pr_view(repo, pr_number)
-    checks = split_checks(pr, ignore_self=ignore_self)
+    checks = split_checks(pr, ignore_self=ignore_self, required=tuple(required_checks))
     active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
     checks = _apply_deepsource_advisory_policy(pr, checks, active_review_threads)
     merge_state = _merge_readiness_state(pr, checks, active_review_threads)
@@ -1769,15 +1839,26 @@ def cmd_readiness(args: argparse.Namespace) -> int:
 
 
 def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    # PFC-002: il gate CI esige sempre i check obbligatori. Manifest illeggibile
+    # => si usa un nome che nessun check porta, cosi' il gate resta rosso e il
+    # motivo e' nel rollup ("required check not reported"), mai un verde.
+    try:
+        required = load_required_checks()
+    except (OSError, ValueError) as exc:
+        required = (f"<required checks manifest unreadable: {exc}>",)
     try:
         review_threads = fetch_all_review_threads(repo, pr_number)
     except (RuntimeError, ValueError, OSError, AttributeError):
-        return _readiness_review_api_blocked(repo, pr_number, ignore_self)
-    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads)
+        return _readiness_review_api_blocked(repo, pr_number, ignore_self, required)
+    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads,
+                          required_checks=required)
 
 
-def _readiness_review_api_blocked(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
-    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None)
+def _readiness_review_api_blocked(
+    repo: str, pr_number: str, ignore_self: bool, required: tuple[str, ...] = ()
+) -> dict[str, Any]:
+    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None,
+                              required_checks=required)
     reasons = decision.get("reasons")
     if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
         reasons.append("review_threads_api_unavailable")

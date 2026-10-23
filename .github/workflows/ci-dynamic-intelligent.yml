@@ -2,10 +2,20 @@ name: ci-dynamic-intelligent
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# PFC-002 (M156). Prima questo workflow girava due volte per push: da solo e
+# annidato in ci-master-gate. Ora solo da solo (niente piu' `workflow_call`),
+# e qui restano soltanto le lane che nessun altro workflow esegue sempre:
+# `dutching` e `pnl-engine`, avviate da `detect`. Le altre lane di modulo,
+# chaos-critical, live-gate e mutation-guardrails le esegue ci-master-gate su
+# ogni PR; noise-free-pr-gate, repo-guardrails-extended e merge-simulation-hard
+# partono da soli su ogni PR. La suite completa gira nel check `full-suite`.
 on:
-  workflow_call:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ci-dynamic-intelligent-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   detect:
@@ -81,12 +91,6 @@ jobs:
           name: changed-modules
           path: changed_modules.json
 
-  noise-free-pr-gate:
-    uses: ./.github/workflows/noise-free-pr-gate.yml
-
-  repo-guardrails-extended:
-    uses: ./.github/workflows/repo-guardrails-extended.yml
-
   dutching:
     needs: detect
     if: needs.detect.outputs.run_dutching == 'true'
@@ -96,79 +100,3 @@ jobs:
     needs: detect
     if: needs.detect.outputs.run_pnl_engine == 'true'
     uses: ./.github/workflows/pnl-engine.yml
-
-  trading-engine:
-    needs: detect
-    if: needs.detect.outputs.run_trading_engine == 'true'
-    uses: ./.github/workflows/trading-engine.yml
-
-  order-manager:
-    needs: detect
-    if: needs.detect.outputs.run_order_manager == 'true'
-    uses: ./.github/workflows/order-manager.yml
-
-  execution-guard:
-    needs: detect
-    if: needs.detect.outputs.run_execution_guard == 'true'
-    uses: ./.github/workflows/execution-guard.yml
-
-  risk-middleware:
-    needs: detect
-    if: needs.detect.outputs.run_risk_middleware == 'true'
-    uses: ./.github/workflows/risk-middleware.yml
-
-  runtime-controller:
-    needs: detect
-    if: needs.detect.outputs.run_runtime_controller == 'true'
-    uses: ./.github/workflows/runtime-controller.yml
-
-  money-management:
-    needs: detect
-    if: needs.detect.outputs.run_money_management == 'true'
-    uses: ./.github/workflows/money-management.yml
-
-  telegram-listener:
-    needs: detect
-    if: needs.detect.outputs.run_telegram_listener == 'true'
-    uses: ./.github/workflows/telegram-listener.yml
-
-  copy-engine:
-    needs: detect
-    if: needs.detect.outputs.run_copy_engine == 'true'
-    uses: ./.github/workflows/copy-engine.yml
-
-  simulation-broker:
-    needs: detect
-    if: needs.detect.outputs.run_simulation_broker == 'true'
-    uses: ./.github/workflows/simulation-broker.yml
-
-  session-manager:
-    needs: detect
-    if: needs.detect.outputs.run_session_manager == 'true'
-    uses: ./.github/workflows/session-manager.yml
-
-  rate-limiter:
-    needs: detect
-    if: needs.detect.outputs.run_rate_limiter == 'true'
-    uses: ./.github/workflows/rate-limiter.yml
-
-  live-gate:
-    needs: detect
-    if: needs.detect.outputs.run_live_gate == 'true'
-    uses: ./.github/workflows/live-gate.yml
-
-  chaos-critical:
-    needs: detect
-    if: needs.detect.outputs.run_chaos_critical == 'true'
-    uses: ./.github/workflows/chaos-critical.yml
-
-  mutation-guardrails:
-    needs: detect
-    if: needs.detect.outputs.run_mutation_guardrails == 'true'
-    uses: ./.github/workflows/mutation-guardrails.yml
-
-  merge-simulation-hard:
-    needs:
-      - noise-free-pr-gate
-      - repo-guardrails-extended
-    uses: ./.github/workflows/merge-simulation-hard.yml

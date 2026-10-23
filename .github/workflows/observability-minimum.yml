@@ -10,6 +10,10 @@ on:
       - "tests/scripts/test_observability_minimum_check.py"
       - ".github/workflows/observability-minimum.yml"
   push:
+    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
+    # faceva girare questo workflow due volte, una per `push` e una per
+    # `pull_request`, sullo stesso contenuto.
+    branches: [main]
     paths:
       - "ops/observability_minimum.md"
       - "scripts/observability_minimum_check.py"

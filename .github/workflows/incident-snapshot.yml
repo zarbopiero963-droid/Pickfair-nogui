@@ -10,6 +10,10 @@ on:
       - "tests/scripts/test_incident_snapshot.py"
       - ".github/workflows/incident-snapshot.yml"
   push:
+    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
+    # faceva girare questo workflow due volte, una per `push` e una per
+    # `pull_request`, sullo stesso contenuto.
+    branches: [main]
     paths:
       - "ops/incident_playbook.md"
       - "scripts/incident_snapshot.py"

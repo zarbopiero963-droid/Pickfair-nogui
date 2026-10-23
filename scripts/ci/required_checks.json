@@ -1,0 +1,9 @@
+{
+  "description": "Check che Merge Readiness esige SUCCESS sull'head della PR (PFC-002). Assente, SKIPPED, NEUTRAL, CANCELLED, TIMED_OUT o FAILURE non autorizzano il merge. Gli stessi nomi vanno impostati come required status check nel ruleset PICKFAIR-MAIN-PROTECTION, con sorgente GitHub Actions (docs/ci_full_suite_review_coverage.md). Il test tests/guardrails/test_pfc002_ci_contract.py li confronta con i job reali dei workflow.",
+  "required_checks": [
+    "full-suite",
+    "mutation-guardrails / mutation",
+    "GPT-6.1 Sol push-range review",
+    "Grok 4.7 push-range review"
+  ]
+}

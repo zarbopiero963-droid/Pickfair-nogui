@@ -5,6 +5,10 @@ env:
 on:
   workflow_call:
   push:
+    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
+    # faceva girare questo workflow due volte, una per `push` e una per
+    # `pull_request`, sullo stesso contenuto.
+    branches: [main]
     paths:
       - "pnl_engine.py"
       - "core/pnl_engine.py"

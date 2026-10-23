@@ -234,13 +234,13 @@ jobs:
           echo "::warning::No focused tests found for module $MODULE_PATH"
 
       # =========================================================
-      # FULL SUITE BACKSTOP (SEMPRE)
+      # FULL SUITE: NON QUI (PFC-002, M156)
       # =========================================================
-      - name: Run full test suite (backstop)
-        shell: bash
-        run: |
-          set -euo pipefail
-          pytest -q
+      # Fino alla PFC-002 ogni lane rieseguiva qui l'intera suite come
+      # backstop: 10 copie per push nel solo ci-master-gate, sullo stesso
+      # albero. La suite completa gira ora UNA volta per push nel check
+      # obbligatorio `full-suite` (.github/workflows/full-suite.yml), con un
+      # verdetto che legge il report e non solo l'exit code.
 
       # =========================================================
       # UPLOAD DEBUG ARTIFACT

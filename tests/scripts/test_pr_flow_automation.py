@@ -2032,9 +2032,10 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
 
     monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_args: expected_threads)
 
-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
         captured["ignore_self"] = ignore_self
         captured["review_threads"] = review_threads
+        captured["required_checks"] = required_checks
         return {
             "already_merged": False,
             "can_merge": False,
@@ -2060,6 +2061,9 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
 
     ASSERTIONS.assertEqual(rc, 0)
     ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
+    # PFC-002: il gate CI passa SEMPRE il manifest dei check obbligatori
+    ASSERTIONS.assertEqual(captured["required_checks"], flow.load_required_checks())
+    ASSERTIONS.assertIn("full-suite", captured["required_checks"])
 
 
 def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
@@ -2070,7 +2074,7 @@ def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
         lambda *_args: [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
     )
 
-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
         ASSERTIONS.assertEqual(ignore_self, True)
         ASSERTIONS.assertEqual(review_threads, [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
         return {
@@ -2142,7 +2146,7 @@ def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
     captured: dict[str, object] = {}
     _stub_readiness_fetch_failure(monkeypatch)
 
-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
+    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
         ASSERTIONS.assertTrue(ignore_self)
         captured["review_threads"] = review_threads
         return {

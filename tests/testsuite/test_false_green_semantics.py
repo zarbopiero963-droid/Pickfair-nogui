@@ -296,25 +296,33 @@ def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_
     _assert_no_forbidden_workflow_tokens(legacy_raw, legacy_rel)
 
 
-def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
-    wf = _workflow(".github/workflows/pr-check.yml")
-    run_blocks = _run_text(wf)
-    trigger_block = _trigger_block(wf, ".github/workflows/pr-check.yml")
+def test_full_suite_workflow_is_the_single_unconditional_full_pytest_gate():
+    # PFC-002 (M156): `pr-check.yml` (pytest -q nudo) e' assorbito dal check
+    # obbligatorio `full-suite`, che giudica il report e non solo l'exit code.
+    assert not Path(".github/workflows/pr-check.yml").exists()
+    rel = ".github/workflows/full-suite.yml"
+    wf = _workflow(rel)
+    trigger_block = _trigger_block(wf, rel)
 
     assert "pull_request" in trigger_block
-    pull = trigger_block.get("pull_request")
-    assert isinstance(pull, dict), (
-        f"pr-check.yml: sotto `pull_request:` non c'e' una mappa ({pull!r}), quindi "
-        "non c'e' `branches`: con `on:` in forma scalare o lista il gate non e' piu' "
-        "ancorato a main, e questo controllo esiste per accorgersene."
+    pull = trigger_block.get("pull_request") or {}
+    assert isinstance(pull, dict)
+    # un required check non deve poter non partire: niente filtri di path/branch
+    for filtro in ("paths", "paths-ignore", "branches", "branches-ignore"):
+        assert filtro not in pull, f"full-suite: filtro `{filtro}` sul pull_request"
+    assert (trigger_block.get("push") or {}).get("branches") == ["main"]
+    assert "workflow_dispatch" not in trigger_block, (
+        "un dispatch sul branch della PR farebbe girare la versione del file nella PR"
     )
-    branches = pull.get("branches")
-    assert isinstance(branches, list), (
-        f"pr-check.yml: `branches` non e' una lista ({branches!r})."
-    )
-    assert "main" in [str(x) for x in branches]
 
-    assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
+    jobs = wf.get("jobs") or {}
+    assert list(jobs) == ["full-suite"]
+    job = jobs["full-suite"]
+    assert job.get("name") == "full-suite"
+    assert "if" not in job, "un job saltato da `if:` risulta skipped, e skipped soddisfa un required check"
+    run_blocks = _run_text(wf)
+    assert re.search(r"python\s+scripts/ci/full_suite_gate\.py\s+run\b", run_blocks)
+    assert not re.search(r"\|\|\s*true", run_blocks)
 
 
 def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
@@ -322,12 +330,16 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
     run_blocks = _run_text(wf)
     trigger_block = _trigger_block(wf, ".github/workflows/merge-simulation-hard.yml")
 
-    assert "workflow_call" in trigger_block
+    # PFC-002: parte solo da se' (nessuno lo annida piu') e la suite completa
+    # si e' spostata nel check `full-suite`, sullo stesso albero di merge.
     assert "pull_request" in trigger_block
+    assert "workflow_call" not in trigger_block
 
     assert re.search(r"git\s+fetch\s+origin\s+main", run_blocks)
     assert re.search(r"git\s+merge\b[^\n]*origin/main", run_blocks)
-    assert re.search(r"pytest\s+-q(?:\s+-x|\s+.*\s-x|\s+-x\s+.*)", run_blocks)
+    assert re.search(r"python\s+scripts/check_merge_markers\.py", run_blocks)
+    assert re.search(r"python\s+scripts/validate_guardrails\.py", run_blocks)
+    assert not re.search(r"\bpytest\b", run_blocks), "la suite completa gira solo in full-suite"
 
 
 def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
@@ -338,7 +350,8 @@ def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
 
     assert "pull_request" in hard_trigger_block or "workflow_call" in hard_trigger_block
     assert re.search(r"git\s+merge\b", hard_run) or ("origin/main" in hard_run) or ("fetch-depth" in hard_raw)
-    assert "pytest" in hard_run
+    # PFC-002: la suite completa gira in `full-suite`, non piu' qui
+    assert "pytest" not in hard_run
     if "validate_guardrails.py" in hard_raw:
         assert re.search(r"python\s+scripts/validate_guardrails\.py", hard_run)
 
@@ -406,7 +419,9 @@ def test_observability_runtime_workflow_keeps_critical_path_filters():
 def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
     workflow = _read(".github/workflows/ci-dynamic-intelligent.yml")
     assert re.search(r"python\s+scripts/ci_changed_modules\.py\s+origin/main\s*>\s*changed_modules\.json", workflow)
-    assert "merge-simulation-hard:" in workflow
+    # PFC-002: merge-simulation-hard parte da solo su ogni PR; annidarlo qui
+    # lo rifaceva una seconda volta sullo stesso push
+    assert "./.github/workflows/merge-simulation-hard.yml" not in workflow
 
     spec = importlib.util.spec_from_file_location("ci_changed_modules", "scripts/ci_changed_modules.py")
     assert spec and spec.loader
@@ -468,14 +483,19 @@ def test_module_ultra_check_uses_validation_only_guardrail_runner_fail_closed():
             runner_run = step_run
         if "Run module-focused tests" in step_name:
             focused_idx = idx
-        if "Run full test suite (backstop)" in step_name:
+        if "Run full test suite (backstop)" in step_name or re.search(r"(?m)^\s*pytest\s+-q\s*$", step_run):
             full_idx = idx
 
     assert json_idx is not None
     assert runner_idx is not None
     assert runner_idx == json_idx + 1
     assert focused_idx is not None and runner_idx < focused_idx
-    assert full_idx is not None and runner_idx < full_idx
+    # PFC-002 (M156): il backstop completo NON sta piu' qui (10 copie per push
+    # sullo stesso albero). L'asserzione non sparisce: si sposta sul check
+    # obbligatorio unico `full-suite`, verificato in
+    # test_full_suite_workflow_is_the_single_unconditional_full_pytest_gate.
+    assert full_idx is None, "la suite completa gira una volta sola, nel check full-suite"
+    assert Path(".github/workflows/full-suite.yml").exists()
     assert "set -euo pipefail" in runner_run
     assert "--run-mutations" not in runner_run
     assert "--mutation-timeout-sec" not in runner_run

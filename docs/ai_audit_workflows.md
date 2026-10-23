@@ -107,10 +107,18 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   tutti i workflow, manifest di dipendenze, materiale segreto, o Compare API
   troncata (>= 300 file). I tre workflow sospesi conservano la vecchia regola
   larga e vanno allineati prima di un'eventuale riattivazione.
-- **Reviewer opzionali**: se il secret del provider non è configurato, il job
-  esce con successo (skip) e **non** fa fallire la PR. Eccezione: sul gate
-  finale a label (Fugu/Fable/Astra) una review non eseguibile fallisce di proposito
-  il job, così il check non risulta verde senza la review richiesta.
+- **Sol e Grok non sono più opzionali (PFC-002).** Il loro check è verde solo
+  se la copertura attestata dell'intera PR è completa
+  (`docs/ci_full_suite_review_coverage.md` §4). Rendono il check rosso, senza
+  alcuna chiamata a pagamento:
+  - segreto mancante;
+  - PR in draft o da fork;
+  - errore del provider;
+  - lotto troncato o segmento non riscontrato.
+
+  Prima il job usciva verde («saltato»). I workflow sospesi (Fugu, Fable, Astra)
+  restano come prima: sul loro gate a label una review non eseguibile fallisce
+  di proposito.
 
 ## Secret richiesti
 
@@ -141,8 +149,15 @@ Read and write permissions*.
 ## Copertura del diff: quello che il modello NON ha visto
 
 Un reviewer diff-only riceve le patch dei file, non il repository. Alcuni file
-restano fuori dal prompt: **binari**, file **senza patch** nella risposta della
-Compare API, e quelli che **non entrano nel budget** (`MAX_TOTAL_PATCH_CHARS`).
+restano fuori dal prompt: **binari** e file **senza patch** nella risposta della
+Compare API.
+
+> **Dalla PFC-002, per Sol e Grok:** nessun file resta più fuori «per budget» e
+> nessun patch si tronca. Il diff si divide in segmenti e lotti, ogni lotto è
+> una chiamata, e il check è verde solo con tutti i segmenti riscontrati
+> (`docs/ci_full_suite_review_coverage.md` §4). Il marcatore
+> `[PATCH FILE TRONCATO PER BUDGET TOKEN]` resta solo nei tre workflow sospesi.
+> La storia sotto spiega perché il prompt elenca comunque i file non inviati.
 
 Quell'elenco è sempre stato pubblicato, ma **solo nel commento**, nella sezione
 *«File non inviati al modello»* in fondo: cioè lo leggeva l'umano, dopo. Il

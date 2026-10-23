@@ -1,13 +1,23 @@
 name: ci-master-gate
 
+# PFC-002 (M156). Tolti due duplicati dimostrati:
+# - `dynamic` (ci-dynamic-intelligent annidato): lo stesso workflow parte gia'
+#   da solo su ogni pull_request, quindi la copia annidata rifaceva detect, le
+#   lane di modulo, mutation e merge-simulation-hard una seconda volta;
+# - `merge-simulation-hard`: parte gia' da solo su ogni pull_request.
+# La suite completa non gira piu' qui dentro (backstop di ogni lane): gira una
+# volta sola nel check `full-suite`.
+
 on:
   pull_request:
   workflow_dispatch:
 
-jobs:
-  dynamic:
-    uses: ./.github/workflows/ci-dynamic-intelligent.yml
+concurrency:
+  # Un push nuovo sulla stessa PR rende inutile il run dello SHA superato.
+  group: ci-master-gate-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+jobs:
   trading-engine:
     uses: ./.github/workflows/trading-engine.yml
 
@@ -49,6 +59,3 @@ jobs:
 
   mutation-guardrails:
     uses: ./.github/workflows/mutation-guardrails.yml
-
-  merge-simulation-hard:
-    uses: ./.github/workflows/merge-simulation-hard.yml

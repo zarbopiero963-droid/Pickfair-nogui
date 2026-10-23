@@ -10,6 +10,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-002 — CI senza duplicati, check `full-suite` obbligatorio, copertura attestata delle review
+  (M156 + M130 + M159, roadmap #461; merge owner). Dettagli in `docs/ci_full_suite_review_coverage.md`:**
+  - **Deduplica.** La suite completa passa da 17 esecuzioni per push a 1:
+    - tolti il backstop di `_module-ultra-check` e il pytest di `merge-simulation-hard`;
+    - rimosso `pr-check.yml`;
+    - `ci-master-gate` non annida più `ci-dynamic-intelligent` né `merge-simulation-hard`;
+    - `ci-dynamic-intelligent` tiene solo `detect` + `dutching` + `pnl-engine`;
+    - `mutation-guardrails` gira una volta per push;
+    - il `push` dei workflow doppi gira solo su `main`;
+    - i run degli SHA superati delle PR vengono cancellati (su `main` mai).
+  - **Check `full-suite`** (`.github/workflows/full-suite.yml`, `scripts/ci/full_suite_gate.py`,
+    `scripts/ci/full_suite_plugin.py`, contratto `scripts/ci/full_suite_contract.json`).
+    - Senza filtri e senza `if:`.
+    - Giudica il report del plugin: raccolta completa (≥ 8916 test), nessuna deselezione, ogni test raccolto
+      con un esito, nessun `failed`/`error`/`xpassed`, skip e xfail entro il contratto.
+    - Produce un'evidenza per SHA.
+  - **Review Sol e Grok senza troncamento** (`scripts/ci/review_coverage.py`).
+    - Il diff si divide in segmenti e lotti deterministici, con una chiamata per lotto e un tetto di 8 lotti oltre
+      il quale non si spende.
+    - Il modello riscontra ogni segmento.
+    - Ogni range ha un'attestazione caricata come artifact.
+    - Il check è verde solo se le attestazioni dei run ufficiali (`pull_request_target`) coprono l'intera PR, dal
+      branch base al head.
+    - Segreto mancante, draft, fork, lotto troncato o segmento non riscontrato rendono il check rosso; prima era
+      «saltato» verde.
+  - **Merge Readiness con check obbligatori** (`scripts/ci/required_checks.json`). `full-suite`,
+    `mutation-guardrails / mutation`, Sol e Grok devono essere SUCCESS sull'head; assente, SKIPPED o NEUTRAL bloccano.
+  - **Enforcement GitHub:** il ruleset non richiede ancora alcun check. Le istruzioni per l'owner sono nel doc.
+    Stato: IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER.
+
 - **PFC-001 — test deterministici e veloci, nessuna modifica di produzione (roadmap canonica ratificata
   PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01, #528):**
   - `tests/f026/child_f026.py`: le attese fisse (1,5 s dopo ogni segnale, 4 s prima del settlement) diventano

@@ -83,6 +83,12 @@ xdist. The two commands together run the whole suite (`tests/guardrails/test_ser
 fails if a test with a real display is left unmarked). The parallel run is fast feedback; the
 merge gate is the CI on the PR head.
 
+In CI the whole suite runs **once per push**, in the `full-suite` check
+(`python scripts/ci/full_suite_gate.py run`). The check judges the pytest report, not only the
+exit code: collection errors, deselected tests, tests collected but never run, failures,
+or more skips than `scripts/ci/full_suite_contract.json` allows all make it red. See
+`docs/ci_full_suite_review_coverage.md`.
+
 ## Branch policy
 
 All development happens on feature branches.  See `AGENTS.md` for the

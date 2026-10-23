@@ -4,6 +4,10 @@ env:
 
 on:
   push:
+    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
+    # faceva girare questo workflow due volte, una per `push` e una per
+    # `pull_request`, sullo stesso contenuto.
+    branches: [main]
     paths:
       - "core/**"
       - "order_manager.py"

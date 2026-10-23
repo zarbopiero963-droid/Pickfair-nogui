@@ -1,5 +1,17 @@
 # Orchestratori CI (`ci-master-gate`, `ci-dynamic-intelligent`)
 
+> **Aggiornamento PFC-002 (23/10/2026).**
+> - `ci-master-gate` non annida più `ci-dynamic-intelligent` né
+>   `merge-simulation-hard`.
+> - `ci-dynamic-intelligent` non è più richiamabile (`workflow_call` tolto) e
+>   contiene solo `detect`, `dutching` e `pnl-engine`.
+> - `_module-ultra-check` non riesegue più la suite completa: la suite gira una
+>   volta per push nel check obbligatorio `full-suite`.
+> - `merge-simulation-hard` non lancia più pytest.
+>
+> Le tabelle sotto descrivono lo stato del 20/10/2026 (#525). Lo stato attuale e
+> le ragioni sono in `docs/ci_full_suite_review_coverage.md`.
+
 Stato al 20/10/2026, issue #525. Nessuno dei due è un required check di `main`
 (su #526 la PR era `mergeable_state: clean` con entrambi rossi); la loro
 configurazione in branch protection non è leggibile dall'integrazione
@@ -14,7 +26,7 @@ dell'agente (HTTP 403) e resta da verificare dall'owner.
 
 Le lane di modulo chiamano `_module-ultra-check.yml`: esistenza del modulo e
 dei file guardrail, validazione JSON, `scripts/guardrail_runner.py`, test
-mirati e infine la suite completa (`pytest -q`) come backstop.
+mirati e (fino alla PFC-002) la suite completa (`pytest -q`) come backstop.
 
 Profondità massima del grafo: 4 livelli
 (master → dynamic → modulo → `_module-ultra-check`).

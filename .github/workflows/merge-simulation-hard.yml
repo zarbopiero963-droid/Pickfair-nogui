@@ -2,10 +2,18 @@ name: merge-simulation-hard
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
+# PFC-002 (M156): girava tre volte per push (da solo, annidato in ci-master-gate
+# e in ci-dynamic-intelligent), ognuna con la suite completa. Ora parte solo da
+# se' e non riesegue piu' pytest: la suite completa gira nel check `full-suite`
+# sullo stesso albero (refs/pull/N/merge). Qui restano i controlli propri del
+# merge con il main piu' recente: conflitti, marker e JSON dei guardrail.
 on:
-  workflow_call:
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: merge-simulation-hard-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   simulate-merge:
@@ -40,19 +48,7 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          pip install pytest pytest-xdist
 
       - name: Validate all guardrail JSON
         run: |
           python scripts/validate_guardrails.py
-
-      - name: Run full pytest after merge simulation
-        run: |
-          pytest -q -x
-
-      - name: Upload pytest logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: merge-simulation-logs
-          path: .pytest_cache

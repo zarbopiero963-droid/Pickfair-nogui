@@ -318,6 +318,24 @@ def _messaggi_di_non_review(albero: ast.Module) -> set[str]:
 
 
 def _prefissi_del_guard(albero: ast.Module) -> tuple[str, ...]:
+    # PFC-002: con la review a lotti il guard vive nella tupla
+    # RISPOSTE_INCOMPLETE, applicata a ogni lotto in `esegui_lotto`
+    # (`completa = ... not review.lstrip().startswith(RISPOSTE_INCOMPLETE)`), e
+    # `review_complete` viene dall'attestazione, che e' completa solo se lo e'
+    # ogni lotto. Il controllo resta lo stesso: ogni messaggio di non-review
+    # deve cominciare con uno di questi prefissi.
+    for nodo in ast.walk(albero):
+        if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
+                and isinstance(nodo.targets[0], ast.Name)
+                and nodo.targets[0].id == "RISPOSTE_INCOMPLETE"
+                and isinstance(nodo.value, (ast.Tuple, ast.List))):
+            usata = any(
+                isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "startswith"
+                and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id == "RISPOSTE_INCOMPLETE"
+                for n in ast.walk(albero)
+            )
+            assert usata, "RISPOSTE_INCOMPLETE definita ma nessun startswith la usa: guard scollegato"
+            return tuple(e.value for e in nodo.value.elts if isinstance(e, ast.Constant))
     for nodo in ast.walk(albero):
         if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
                 and isinstance(nodo.targets[0], ast.Name)
