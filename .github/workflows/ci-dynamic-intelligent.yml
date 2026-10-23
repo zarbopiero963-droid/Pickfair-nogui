@@ -4,8 +4,10 @@ env:
 
 # PFC-002 (M156). Prima questo workflow girava due volte per push: da solo e
 # annidato in ci-master-gate. Ora solo da solo (niente piu' `workflow_call`),
-# e qui restano soltanto le lane che nessun altro workflow esegue sempre:
-# `dutching` e `pnl-engine`, avviate da `detect`. Le altre lane di modulo,
+# e qui resta solo `detect` (diagnostica: `changed_modules.json`). Anche
+# `dutching` e `pnl-engine` non si lanciano piu' da qui: partono gia' da sole
+# sui loro `paths`, che ora includono quelli del detector (rilievo Codex su
+# #539: un PR su pnl_engine.py faceva girare la lane due volte). Le altre lane di modulo,
 # chaos-critical, live-gate e mutation-guardrails le esegue ci-master-gate su
 # ogni PR; noise-free-pr-gate, repo-guardrails-extended e merge-simulation-hard
 # partono da soli su ogni PR. La suite completa gira nel check `full-suite`.
@@ -90,13 +92,3 @@ jobs:
         with:
           name: changed-modules
           path: changed_modules.json
-
-  dutching:
-    needs: detect
-    if: needs.detect.outputs.run_dutching == 'true'
-    uses: ./.github/workflows/dutching.yml
-
-  pnl-engine:
-    needs: detect
-    if: needs.detect.outputs.run_pnl_engine == 'true'
-    uses: ./.github/workflows/pnl-engine.yml

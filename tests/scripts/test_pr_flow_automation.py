@@ -2326,8 +2326,29 @@ def _ready_to_merge_pr_view(_repo: str, _pr: str) -> dict[str, object]:
         "mergeStateStatus": "CLEAN",
         "reviewDecision": "APPROVED",
         "headRefOid": "abc123",
-        "statusCheckRollup": [_check("Unit tests", "SUCCESS")],
+        # PFC-002: "pronta" richiede anche i check obbligatori SUCCESS
+        "statusCheckRollup": [_check("Unit tests", "SUCCESS")]
+        + [_check(nome, "SUCCESS") for nome in flow.load_required_checks()],
     }
+
+
+def test_cmd_report_senza_check_obbligatori_non_annuncia_il_merge(tmp_path, monkeypatch):
+    """Rilievo Codex su #539: il report non deve dire "Merge allowed" se manca
+    full-suite o un reviewer obbligatorio (prima ignorava il manifest)."""
+    def _solo_unit(_repo: str, _pr: str) -> dict[str, object]:
+        dati = _ready_to_merge_pr_view(_repo, _pr)
+        dati["statusCheckRollup"] = [_check("Unit tests", "SUCCESS"), _check("full-suite", "SKIPPED")]
+        return dati
+
+    monkeypatch.setattr(flow, "pr_view", _solo_unit)
+    monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_a: [])
+    flow.cmd_report(argparse.Namespace(repo="owner/repo", pr="225", outdir=str(tmp_path), comment=False,
+                                       no_fail=True))
+    decision = json.loads((tmp_path / "pr-flow-decision.json").read_text(encoding="utf-8"))
+    ASSERTIONS.assertFalse(decision["can_merge"])
+    ASSERTIONS.assertFalse(decision["ready_to_merge_notification"])
+    ASSERTIONS.assertTrue(any(b.get("name") == "full-suite" for b in decision["blockers"]))
+    ASSERTIONS.assertTrue(any(p.get("state") == "MISSING" for p in decision["pending"]))
 
 
 def _assert_ready_to_merge_decision(decision: dict[str, object]) -> None:

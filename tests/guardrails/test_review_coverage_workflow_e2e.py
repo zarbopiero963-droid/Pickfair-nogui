@@ -64,6 +64,7 @@ class Fake:
         self.modo = modo
         self.prompt_ricevuti: list[str] = []
         self.commenti: list[str] = []
+        self.commenti_esistenti: list[dict] = []
 
     def __call__(self, req, timeout=None):
         url = req.full_url
@@ -76,7 +77,11 @@ class Fake:
         if "/compare/" in url:
             return _Risposta(json.dumps({"files": self.files, "commits": [{"sha": HEAD}]}).encode())
         if "/issues/" in url and url.split("?")[0].endswith("/comments") and metodo == "GET":
-            return _Risposta(b"[]")
+            return _Risposta(json.dumps(self.commenti_esistenti).encode())
+        if "/pulls/7/commits" in url:
+            return _Risposta(json.dumps([{"sha": HEAD}] if "page=1" in url else []).encode())
+        if "/actions/workflows/" in url:
+            return _Risposta(json.dumps({"workflow_runs": []}).encode())
         if metodo in ("POST", "PATCH") and "/comments" in url:
             self.commenti.append(json.loads(req.data.decode())["body"])
             return _Risposta(b"{}")
@@ -102,7 +107,7 @@ class Fake:
         return _Risposta(json.dumps(corpo).encode())
 
 
-def _esegui(nome, files, tmp_path, monkeypatch, modo="ok", max_calls=None):
+def _esegui(nome, files, tmp_path, monkeypatch, modo="ok", max_calls=None, done_marker_gia_presente=False):
     codice, env = _script_e_env(nome)
     chiave, _host = WORKFLOWS[nome]
     base_dir = tmp_path / "_base" / "scripts" / "ci"
@@ -123,6 +128,10 @@ def _esegui(nome, files, tmp_path, monkeypatch, modo="ok", max_calls=None):
     for k, v in valori.items():
         monkeypatch.setenv(k, v)
     fake = Fake(files, modo)
+    if done_marker_gia_presente:
+        rid = env["REVIEW_ID"]
+        fake.commenti_esistenti = [{"user": {"login": "github-actions[bot]"},
+                                    "body": f"<!-- {rid}-pr-review-done:pickfair-nogui:{BASE[:12]}...{HEAD[:12]} -->"}]
     monkeypatch.setattr(urllib.request, "urlopen", fake)
     monkeypatch.setattr("time.sleep", lambda *_a: None)
     monkeypatch.syspath_prepend(str(base_dir))
@@ -184,3 +193,13 @@ def test_oltre_il_tetto_di_lotti_nessuna_chiamata_a_pagamento(nome, tmp_path, mo
 def test_diff_piccolo_un_solo_lotto(nome, tmp_path, monkeypatch):
     fake, att, _env = _esegui(nome, _diff_grande(1, 10), tmp_path, monkeypatch)
     assert len(fake.prompt_ricevuti) == 1 and att["complete"] is True
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_done_marker_senza_artifact_ufficiale_rifa_la_review(nome, tmp_path, monkeypatch):
+    # Rilievo Codex su #539: il done_marker resta nel commento anche se
+    # l'artifact manca (upload fallito, scaduto, cancellato). Saltare la review
+    # lascerebbe il check rosso per sempre: senza artifact ufficiale si rifa'.
+    fake, att, _env = _esegui(nome, _diff_grande(1, 10), tmp_path, monkeypatch, done_marker_gia_presente=True)
+    assert len(fake.prompt_ricevuti) == 1
+    assert att is not None and att["complete"] is True

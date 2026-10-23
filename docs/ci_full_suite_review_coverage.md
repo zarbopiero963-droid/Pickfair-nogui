@@ -39,7 +39,8 @@ trading, money management, Betfair o configurazione runtime.
 |---|---|---|
 | Suite completa (`pytest` dell'intera raccolta) | 17 | **1**, nel check `full-suite` |
 | `mutation-guardrails` | fino a 3 (master, master→dynamic, dynamic) | **1** (`ci-master-gate`) |
-| `ci-dynamic-intelligent` | 2 (da solo e annidato) | **1** (da solo, solo `detect` + `dutching` + `pnl-engine`) |
+| `ci-dynamic-intelligent` | 2 (da solo e annidato) | **1** (da solo, solo `detect`: diagnostica) |
+| Lane `dutching` / `pnl-engine` | 2 su una PR che tocca i loro file (path diretti + detector) | **1** (path diretti, che ora includono quelli del detector) |
 | `merge-simulation-hard` | 3, ognuno con la suite completa | **1**, senza pytest: merge con il main più recente, marker, JSON dei guardrail |
 | Workflow con `push` + `pull_request` | 2 run per push sul branch della PR | 1 (`push` solo su `main`) |
 | Run di SHA superati su una PR | proseguivano fino alla fine | cancellati (`full-suite`, `ci-master-gate`, `ci-dynamic-intelligent`, `merge-simulation-hard`) |
@@ -152,8 +153,9 @@ Il prompt di ogni lotto elenca i propri segmenti e chiede come ultima riga
   non un errore del provider;
 - l'ultima riga di riscontro cita **tutti** i suoi segmenti.
 
-Un riscontro scritto dentro il diff, che non è attendibile, non vale: conta
-solo l'ultima riga.
+Vale solo l'**ultima riga non vuota** della risposta. Un riscontro seguito da un
+rifiuto, da un errore o da altro testo non chiude la review (rilievo Codex su
+#539).
 
 ### 4.3 Attestazione
 
@@ -180,6 +182,11 @@ Rendono l'attestazione **incompleta**:
 I binari non bloccano, ma sono elencati. Il `done_marker` del commento, che
 evita di ripagare lo stesso range, si scrive **solo** con attestazione completa.
 
+La dedup salta la review solo se esiste anche l'**artifact ufficiale** del range.
+Con il marker presente ma l'artifact mancante (upload fallito, scaduto,
+cancellato) la review si rifà: altrimenti il check resterebbe rosso per sempre su
+quel range (rilievo Codex su #539).
+
 ### 4.4 Verifica dell'intera PR: il verdetto del check
 
 L'ultimo step del job (`Verify review coverage of the whole PR`, `if: always()`)
@@ -193,8 +200,15 @@ anello della catena.
 Contano solo le attestazioni prodotte dai **run ufficiali**:
 - il file workflow del revisore;
 - evento `pull_request_target`, quindi codice del branch base e mai della PR;
-- head del run fra i commit della PR;
-- artifact che nomina lo stesso run e lo stesso head.
+- run associato alla PR: head del run fra i commit della PR, oppure la PR fra le
+  `pull_requests` del run;
+- artifact che nomina lo stesso run e un head che è commit della PR.
+
+**Push ravvicinati.** I run per SHA possono sovrapporsi. Se la catena non è
+ancora completa e ci sono run ufficiali della stessa PR ancora in corso, la
+verifica aspetta fino a 10 minuti (`--wait-seconds 600`) e rilegge. Scaduta
+l'attesa vale lo stato reale. Per questo i timeout dei job salgono a 108 minuti
+(Sol) e 45 (Grok).
 
 Sono quindi scartati:
 - un workflow aggiunto dalla PR;
@@ -243,6 +257,8 @@ Come li giudica `scripts/pr_flow_automation.py`:
 - **assente** → pending, quindi il gate aspetta, e a budget scaduto è rosso;
 - `SKIPPED`/`NEUTRAL` → bloccante;
 - `FAILURE`/`CANCELLED`/`TIMED_OUT` → bloccante, come prima;
+- vale anche per `report`, che può annunciare «Merge allowed», e non solo per
+  il gate CI (rilievo Codex su #539);
 - SHA diverso dall'head (quando il rollup lo riporta) → bloccante;
 - due esecuzioni con lo stesso nome valgono solo se sono **entrambe** SUCCESS;
 - manifest illeggibile o vuoto → gate rosso.

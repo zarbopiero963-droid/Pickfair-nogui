@@ -9,6 +9,10 @@ on:
     branches: [main]
     paths:
       - "dutching.py"
+      # PFC-002: i due path che prima vedeva solo il detector di
+      # ci-dynamic-intelligent, che non lancia piu' questa lane (doppio run).
+      - "controllers/dutching_controller.py"
+      - "dutching_state.py"
       - "guardrails/specs/dutching.json"
       - "guardrails/contracts/dutching.json"
       - "guardrails/state_models/dutching.json"
@@ -17,6 +21,10 @@ on:
   pull_request:
     paths:
       - "dutching.py"
+      # PFC-002: i due path che prima vedeva solo il detector di
+      # ci-dynamic-intelligent, che non lancia piu' questa lane (doppio run).
+      - "controllers/dutching_controller.py"
+      - "dutching_state.py"
       - "guardrails/specs/dutching.json"
       - "guardrails/contracts/dutching.json"
       - "guardrails/state_models/dutching.json"

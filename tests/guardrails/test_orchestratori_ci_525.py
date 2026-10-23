@@ -20,7 +20,9 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOWS = ROOT / ".github" / "workflows"
-ORCHESTRATORI = ("ci-master-gate.yml", "ci-dynamic-intelligent.yml")
+# PFC-002: ci-dynamic-intelligent non richiama piu' alcun workflow (resta
+# `detect`); l'orchestratore e' solo ci-master-gate.
+ORCHESTRATORI = ("ci-master-gate.yml",)
 PREFISSO_LOCALE = "./.github/workflows/"
 
 
@@ -133,3 +135,8 @@ def test_i_tre_workflow_restano_avviabili_anche_da_soli(nome):
     assert trigger["pull_request"] and trigger["pull_request"].get("paths"), (
         f"{nome}: filtro paths della PR perso"
     )
+
+
+def test_ci_dynamic_intelligent_non_richiama_piu_alcun_workflow():
+    # PFC-002 (Codex su #539): ogni lane parte da un solo punto.
+    assert _chiamate_locali(_carica("ci-dynamic-intelligent.yml")) == []

@@ -4,7 +4,8 @@
 > - `ci-master-gate` non annida più `ci-dynamic-intelligent` né
 >   `merge-simulation-hard`.
 > - `ci-dynamic-intelligent` non è più richiamabile (`workflow_call` tolto) e
->   contiene solo `detect`, `dutching` e `pnl-engine`.
+>   contiene solo `detect`. `dutching` e `pnl-engine` partono dai loro `paths`,
+>   che includono quelli del detector.
 > - `_module-ultra-check` non riesegue più la suite completa: la suite gira una
 >   volta per push nel check obbligatorio `full-suite`.
 > - `merge-simulation-hard` non lancia più pytest.

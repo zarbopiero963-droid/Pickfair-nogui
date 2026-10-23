@@ -2552,6 +2552,7 @@
         "scripts/pr_autonomy_policy.py",
         "scripts/pr_flow_automation.py",
         "tests/guardrails/test_gpt56sol_su_openrouter.py",
+        "tests/guardrails/test_orchestratori_ci_525.py",
         "tests/guardrails/test_pfc002_ci_contract.py",
         "tests/guardrails/test_review_coverage_workflow_e2e.py",
         "tests/scripts/test_full_suite_gate.py",
@@ -2560,7 +2561,7 @@
         "tests/scripts/test_review_coverage.py",
         "tests/testsuite/test_false_green_semantics.py"
       ],
-      "max_files": 50
+      "max_files": 51
     }
   }
 }

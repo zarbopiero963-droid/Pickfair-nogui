@@ -33,10 +33,10 @@ jobs:
   review:
     name: Grok 4.7 push-range review
     runs-on: ubuntu-latest
-    # 30 minuti: tre tentativi da 400 s, il backoff, sette chiamate a GitHub
-    # al tetto di 30 s e un minuto di avvio = 1484 s. Il job lascia 316 s di
-    # margine per paginazione/commenti senza troncare una review valida.
-    timeout-minutes: 30
+    # 45 minuti: tre tentativi da 400 s, il backoff, sette chiamate a GitHub
+    # al tetto di 30 s e un minuto di avvio = 1484 s, piu' fino a 600 s di
+    # attesa dei run predecessori nella verifica della copertura (PFC-002).
+    timeout-minutes: 45
 
     env:
       XAI_API_KEY: ${{ secrets.GROK_PICKFAIR }}
@@ -922,6 +922,18 @@ jobs:
               _already_reviewed = False
               print(f"::warning::{REVIEW_ID}: dedup check fallito, procedo con la review: {redact(str(exc))[:300]}")
 
+          # Il done_marker dice solo che una review e' stata pubblicata: la
+          # copertura la prova l'artifact del run ufficiale, che puo' mancare
+          # (upload fallito, scaduto dopo 90 giorni, cancellato). Senza artifact
+          # si rifa' la review, o il check resterebbe rosso per sempre su questo
+          # range (rilievo Codex su #539).
+          if _already_reviewed and not rc.range_attested(
+                  rc.GitHub(REPO, GITHUB_TOKEN), pr=int(PR_NUMBER), reviewer=REVIEW_ID,
+                  workflow_file=WORKFLOW_FILE, range_base=range_base, range_head=range_head):
+              print(f"::notice::{REVIEW_ID}: done_marker presente ma nessuna attestazione ufficiale "
+                    f"per {range_base[:12]}...{range_head[:12]}: rifaccio la review")
+              _already_reviewed = False
+
           if _already_reviewed:
               # Prima di uscire per dedup, ri-assicura la label di sicurezza sui range
               # critici: se un run precedente ha completato la review (done_marker) ma
@@ -1195,7 +1207,9 @@ jobs:
           set -euo pipefail
           # Il verdetto del check: verde SOLO se le review complete dei run
           # ufficiali di questo workflow formano una catena dal branch base al
-          # head corrente. Push senza review, lotto troncato, segmento non
+          # head corrente. Con push ravvicinati aspetta fino a 10 minuti i run
+          # ufficiali ancora in corso della stessa PR. Push senza review, lotto
+          # troncato, segmento non
           # riscontrato, artifact mancante o forgiato altrove => rosso.
           python3 _base/scripts/ci/review_coverage.py verify \
             --repo "$REPO" \
@@ -1205,4 +1219,6 @@ jobs:
             --base-sha "$BASE_SHA" \
             --head-sha "$HEAD_SHA" \
             --local-attestation review-coverage/attestation.json \
+            --wait-seconds 600 \
+            --poll-seconds 30 \
             --output review-coverage/verify.json

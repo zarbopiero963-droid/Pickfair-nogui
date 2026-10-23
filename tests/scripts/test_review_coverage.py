@@ -363,3 +363,92 @@ def test_radice_e_un_commit_del_branch_base_non_della_pr(monkeypatch, tmp_path):
     gh2 = FakeGitHub([_run(11, SHA_2)], {11: [(nome, _zip(_attestazione(SHA_1, SHA_2, 11)))]})
     code, out = _verify(monkeypatch, tmp_path, gh2, SHA_2)
     assert code == 1
+
+
+# ---------------------------------------------------------------------------
+# Rilievi Codex su #539
+# ---------------------------------------------------------------------------
+
+def test_riscontro_valido_solo_come_ultima_riga():
+    ids = ["F001S01", "F001S02"]
+    in_coda = rc.batch_outcome("## Bloccanti\nNessuno\nSEGMENTI ESAMINATI: F001S01, F001S02\n\n",
+                               completed=True, expected=ids)
+    assert in_coda["reviewed"]
+    poi_rifiuto = rc.batch_outcome("SEGMENTI ESAMINATI: F001S01, F001S02\nNon posso completare la review.",
+                                   completed=True, expected=ids)
+    assert not poi_rifiuto["reviewed"] and poi_rifiuto["missing"] == ids
+    in_grassetto = rc.batch_outcome("ok\n**SEGMENTI ESAMINATI:** F001S01, F001S02", completed=True, expected=ids)
+    assert in_grassetto["reviewed"]
+
+
+def test_run_associato_alla_pr_anche_con_head_sul_branch_base():
+    # pull_request_target: se l'API riportasse l'head del branch base, il run
+    # resta della PR grazie a `pull_requests`; l'attestazione deve comunque
+    # nominare un commit della PR.
+    att = _attestazione(SHA_BASE, SHA_1, run_id=21)
+    run = {"id": 21, "head_sha": "9" * 40, "event": "pull_request_target",
+           "path": ".github/workflows/pr-review.yml", "pull_requests": [{"number": 7}]}
+    altra_pr = dict(run, id=22, pull_requests=[{"number": 8}])
+    gh = FakeGitHub([run, altra_pr], {21: [("review-coverage-gpt56sol-x", _zip(att))],
+                                      22: [("review-coverage-gpt56sol-x", _zip(_attestazione(SHA_BASE, SHA_1, 22)))]})
+    atts, _ = rc.official_attestations(gh, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml",
+                                       pr_commits=set(gh.commits))
+    assert [a["run_id"] for a in atts] == [21]
+    fuori = _attestazione(SHA_BASE, "8" * 40, run_id=23)  # head che non e' della PR
+    gh2 = FakeGitHub([dict(run, id=23)], {23: [("review-coverage-gpt56sol-x", _zip(fuori))]})
+    atts2, scarti2 = rc.official_attestations(gh2, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml",
+                                              pr_commits=set(gh2.commits))
+    assert atts2 == [] and "non e' un commit della PR" in scarti2[0]
+
+
+def test_range_attested_per_la_dedup_a_pagamento():
+    nome = "review-coverage-gpt56sol-x"
+    gh = FakeGitHub([_run(11, SHA_1)], {11: [(nome, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]})
+    assert rc.range_attested(gh, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml",
+                             range_base=SHA_BASE, range_head=SHA_1)
+    # artifact mancante (upload fallito, scaduto, cancellato): si rifa' la review
+    vuoto = FakeGitHub([_run(11, SHA_1)], {})
+    assert not rc.range_attested(vuoto, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml",
+                                 range_base=SHA_BASE, range_head=SHA_1)
+
+    class Rotto(FakeGitHub):
+        def get(self, path):
+            raise RuntimeError("HTTP 502")
+
+    assert not rc.range_attested(Rotto([], {}), pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml",
+                                 range_base=SHA_BASE, range_head=SHA_1)
+
+
+def test_verify_aspetta_il_run_del_push_precedente(monkeypatch, tmp_path):
+    nome = "review-coverage-gpt56sol-x"
+    predecessore = dict(_run(11, SHA_1), status="in_progress")
+    gh = FakeGitHub([predecessore, dict(_run(12, SHA_2), status="in_progress")], {})
+
+    def dorme(_s):  # al primo giro di attesa il predecessore finisce e carica l'artifact
+        predecessore["status"] = "completed"
+        gh.artifacts[11] = [(nome, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]
+
+    monkeypatch.setattr(rc.time, "sleep", dorme)
+    monkeypatch.setenv("GITHUB_RUN_ID", "12")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(rc, "GitHub", lambda repo, token: gh)
+    locale = tmp_path / "l.json"
+    locale.write_text(json.dumps(_attestazione(SHA_1, SHA_2, 12)))
+    argv = ["verify", "--repo", REPO, "--pr", "7", "--reviewer", "gpt56sol", "--workflow-file", "pr-review.yml",
+            "--base-sha", SHA_BASE, "--head-sha", SHA_2, "--local-attestation", str(locale),
+            "--wait-seconds", "60", "--poll-seconds", "1", "--output", str(tmp_path / "o.json")]
+    assert rc.main(argv) == 0
+    out = json.loads((tmp_path / "o.json").read_text())
+    assert out["ok"] and out["waited_for_runs"] == [11]
+    # senza attesa (comportamento di a022dfe) lo stesso caso era rosso
+    gh.artifacts.clear()
+    predecessore["status"] = "in_progress"
+    assert rc.main(argv[:-6] + ["--output", str(tmp_path / "o2.json")]) == 1
+
+
+def test_verify_non_aspetta_se_nessun_run_e_in_corso(monkeypatch, tmp_path):
+    gh = FakeGitHub([dict(_run(11, SHA_1), status="completed")], {})
+    chiamate = []
+    monkeypatch.setattr(rc.time, "sleep", lambda s: chiamate.append(s))
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 1 and chiamate == []

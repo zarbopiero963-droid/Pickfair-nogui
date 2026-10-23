@@ -1838,14 +1838,22 @@ def cmd_readiness(args: argparse.Namespace) -> int:
     return 0 if decision["can_merge"] or args.no_fail else 1
 
 
-def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
-    # PFC-002: il gate CI esige sempre i check obbligatori. Manifest illeggibile
-    # => si usa un nome che nessun check porta, cosi' il gate resta rosso e il
-    # motivo e' nel rollup ("required check not reported"), mai un verde.
+def _gate_required_checks() -> tuple[str, ...]:
+    """Check obbligatori per OGNI percorso che emette una decisione di merge.
+
+    PFC-002. Manifest illeggibile => un nome che nessun check porta: la
+    decisione resta "non pronta" e il motivo e' nel rollup ("required check not
+    reported"), mai un verde.
+    """
     try:
-        required = load_required_checks()
+        return load_required_checks()
     except (OSError, ValueError) as exc:
-        required = (f"<required checks manifest unreadable: {exc}>",)
+        return (f"<required checks manifest unreadable: {exc}>",)
+
+
+def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+    # PFC-002: il gate CI esige sempre i check obbligatori.
+    required = _gate_required_checks()
     try:
         review_threads = fetch_all_review_threads(repo, pr_number)
     except (RuntimeError, ValueError, OSError, AttributeError):
@@ -2019,7 +2027,10 @@ def cmd_report(args: argparse.Namespace) -> int:
     except (RuntimeError, ValueError, OSError, AttributeError):
         review_nodes = []
         review_api_ok = False
-    decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes)
+    # PFC-002 (rilievo Codex su #539): anche il report, che puo' annunciare
+    # "Merge allowed", esige i check obbligatori.
+    decision = build_decision(args.repo, args.pr, ignore_self=True, review_threads=review_nodes,
+                              required_checks=_gate_required_checks())
     if not review_api_ok:
         # Fail-closed (§0.11): unreadable threads are UNKNOWN, never "0 open".
         reasons = decision.get("reasons")
@@ -2045,7 +2056,7 @@ def cmd_report(args: argparse.Namespace) -> int:
         "unresolved_active": unresolved_active,
         "mergeable": decision.get("mergeable"),
         "mergeStateStatus": decision.get("mergeStateStatus"),
-    }) and review_api_ok
+    }) and review_api_ok and not decision.get("pending")
     if not review_api_ok:
         decision["next_action"] = "needs_manual_review_api"
     decision["review_auto_resolve_candidates"] = unresolved_active

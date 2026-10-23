@@ -51,6 +51,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -60,7 +61,7 @@ from typing import Any, Callable, Iterable
 SCHEMA = "pickfair-review-coverage/v1"
 ARTIFACT_PREFIX = "review-coverage"
 ACK_PREFIX = "SEGMENTI ESAMINATI:"
-_ACK_RE = re.compile(r"^\s*\**\s*SEGMENTI ESAMINATI\s*\**\s*:\s*(.*)$", re.IGNORECASE | re.MULTILINE)
+_ACK_RE = re.compile(r"^\s*\**\s*SEGMENTI ESAMINATI\s*\**\s*:\s*(.*?)\s*\**\s*$", re.IGNORECASE)
 _SEG_ID_RE = re.compile(r"\bF\d{3}S\d{2,}\b")
 
 # File senza patch testuale che nessun revisore diff-only puo' leggere. Sono
@@ -250,11 +251,17 @@ def ack_instruction(batch_ids: list[str]) -> str:
 
 
 def parse_ack(text: str) -> set[str]:
-    """Id dei segmenti che il modello dichiara di aver letto (ultima riga di riscontro)."""
-    trovati = _ACK_RE.findall(text or "")
-    if not trovati:
+    """Id dei segmenti che il modello dichiara di aver letto.
+
+    Vale solo l'ULTIMA riga non vuota della risposta (rilievo Codex su #539): un
+    riscontro scritto prima di un rifiuto, di un errore o di altro testo non
+    chiude la review, e quindi non conta.
+    """
+    righe = [r for r in (text or "").splitlines() if r.strip()]
+    if not righe:
         return set()
-    return set(_SEG_ID_RE.findall(trovati[-1]))
+    trovato = _ACK_RE.match(righe[-1])
+    return set(_SEG_ID_RE.findall(trovato.group(1))) if trovato else set()
 
 
 def batch_outcome(text: str, *, completed: bool, expected: list[str]) -> dict[str, Any]:
@@ -482,6 +489,50 @@ def _pr_commit_shas(gh: GitHub, pr: int) -> set[str]:
     raise RuntimeError("PR con oltre 300 commit: la lista non e' completa, verifica impossibile")
 
 
+def _numeri_pr(run: dict[str, Any]) -> set[int]:
+    numeri = set()
+    for voce in run.get("pull_requests") or []:
+        valore = voce.get("number") if isinstance(voce, dict) else voce
+        try:
+            numeri.add(int(valore))
+        except (TypeError, ValueError):
+            continue
+    return numeri
+
+
+def _run_della_pr(run: dict[str, Any], pr: int, pr_commits: set[str]) -> bool:
+    return run.get("head_sha") in pr_commits or int(pr) in _numeri_pr(run)
+
+
+def runs_in_corso(gh: "GitHub", *, pr: int, workflow_file: str, pr_commits: set[str],
+                  escludi_run: int = 0) -> list[int]:
+    """Run ufficiali della PR non ancora conclusi (escluso quello corrente)."""
+    dati = gh.get(
+        f"/repos/{gh.repo}/actions/workflows/{workflow_file}/runs?event=pull_request_target&per_page=100&page=1"
+    ) or {}
+    return [int(r["id"]) for r in dati.get("workflow_runs") or []
+            if _run_della_pr(r, pr, pr_commits) and r.get("status") != "completed"
+            and int(r.get("id") or 0) != int(escludi_run)]
+
+
+def range_attested(gh: "GitHub", *, pr: int, reviewer: str, workflow_file: str,
+                   range_base: str, range_head: str) -> bool:
+    """Esiste gia' un'attestazione ufficiale e completa per questo range?
+
+    Serve alla dedup a pagamento: il done_marker del commento non basta,
+    perche' l'artifact puo' mancare (upload fallito, scaduto, cancellato) e
+    allora saltare la review lascerebbe il check rosso per sempre (rilievo
+    Codex su #539). Ogni errore => False: nel dubbio si rifa' la review.
+    """
+    try:
+        commits = _pr_commit_shas(gh, pr)
+        atts, _ = official_attestations(gh, pr=pr, reviewer=reviewer, workflow_file=workflow_file,
+                                        pr_commits=commits)
+    except Exception:
+        return False
+    return any(a["range_base"] == range_base and a["range_head"] == range_head for a in atts)
+
+
 def official_attestations(
     gh: GitHub,
     *,
@@ -493,10 +544,14 @@ def official_attestations(
     """Attestazioni prodotte dai run UFFICIALI del workflow del revisore.
 
     Un run conta solo se: e' del file workflow atteso, l'evento e'
-    `pull_request_target` (codice del branch base, non della PR) e il suo head e'
-    un commit della PR. L'attestazione dentro l'artifact deve poi nominare lo
-    stesso run e lo stesso head. Un workflow aggiunto dalla PR, un evento
-    `pull_request` o un artifact con lo stesso nome caricato altrove non entrano.
+    `pull_request_target` (codice del branch base, non della PR) ed e' associato
+    alla PR (head fra i commit della PR, oppure la PR fra le `pull_requests` del
+    run: rilievo Codex su #539, che per `pull_request_target` vede l'head del
+    run sul branch base; misurato su #538/#539 l'API riporta l'head della PR,
+    ma l'associazione non deve dipendere da questo). L'attestazione dentro
+    l'artifact deve nominare lo stesso run e un head che e' commit della PR. Un
+    workflow aggiunto dalla PR, un evento `pull_request` o un artifact con lo
+    stesso nome caricato altrove non entrano.
     """
     trovate: list[dict[str, Any]] = []
     scarti: list[str] = []
@@ -508,7 +563,7 @@ def official_attestations(
         ) or {}
         runs = dati.get("workflow_runs") or []
         for run in runs:
-            if run.get("head_sha") not in pr_commits:
+            if not _run_della_pr(run, pr, pr_commits):
                 continue
             if run.get("event") != "pull_request_target" or str(run.get("path") or "").split("@")[0] != percorso:
                 scarti.append(f"run {run.get('id')}: evento o percorso non ufficiale")
@@ -535,7 +590,9 @@ def official_attestations(
                 errori = attestation_valid(att, reviewer=reviewer, pr=pr, repo=gh.repo)
                 if int(att.get("run_id") or 0) != int(run["id"]):
                     errori.append("l'attestazione nomina un altro run")
-                if att.get("range_head") != run.get("head_sha"):
+                if att.get("range_head") not in pr_commits:
+                    errori.append("l'attestazione nomina un head che non e' un commit della PR")
+                elif run.get("head_sha") in pr_commits and att.get("range_head") != run.get("head_sha"):
                     errori.append("l'attestazione nomina un head diverso da quello del run")
                 if errori:
                     scarti.append(f"run {run['id']}: " + "; ".join(errori))
@@ -583,18 +640,26 @@ def cmd_verify(args: argparse.Namespace) -> int:
         commits = _pr_commit_shas(gh, args.pr)
         if args.head_sha not in commits:
             raise RuntimeError("il head indicato non e' un commit della PR")
-        atts, scarti = official_attestations(
-            gh, pr=args.pr, reviewer=args.reviewer, workflow_file=args.workflow_file, pr_commits=commits
-        )
-        if args.local_attestation and os.path.exists(args.local_attestation):
-            with open(args.local_attestation, encoding="utf-8") as fh:
-                locale = json.load(fh)
-            errori = attestation_valid(locale, reviewer=args.reviewer, pr=args.pr, repo=args.repo)
-            if not errori and locale.get("range_head") == args.head_sha:
-                atts.append(locale)
-            elif errori:
-                scarti.append("attestazione di questo run: " + "; ".join(errori))
-        catena = verify_chain(atts, head_sha=args.head_sha, is_root=_root_checker(gh, args.base_sha, commits))
+        is_root = _root_checker(gh, args.base_sha, commits)
+        scadenza = time.monotonic() + max(0, args.wait_seconds)
+        while True:
+            atts, scarti = official_attestations(
+                gh, pr=args.pr, reviewer=args.reviewer, workflow_file=args.workflow_file, pr_commits=commits
+            )
+            atts = atts + _attestazione_locale(args, scarti)
+            catena = verify_chain(atts, head_sha=args.head_sha, is_root=is_root)
+            # Push ravvicinati: il run del push precedente puo' non aver ancora
+            # caricato la sua attestazione (rilievo Codex su #539). Finche' ci
+            # sono run ufficiali della PR in corso si aspetta e si rilegge;
+            # scaduta l'attesa vale lo stato reale (fail-closed).
+            if catena["ok"] or time.monotonic() >= scadenza:
+                break
+            in_corso = runs_in_corso(gh, pr=args.pr, workflow_file=args.workflow_file, pr_commits=commits,
+                                     escludi_run=int(os.environ.get("GITHUB_RUN_ID") or 0))
+            if not in_corso:
+                break
+            esito["waited_for_runs"] = in_corso
+            time.sleep(max(1, args.poll_seconds))
         esito.update(catena)
         esito["attestations_used"] = len(atts)
         esito["discarded"] = scarti
@@ -605,6 +670,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
             json.dump(esito, fh, indent=2, ensure_ascii=False)
     print(json.dumps(esito, indent=2, ensure_ascii=False))
     return 0 if esito.get("ok") is True else 1
+
+
+def _attestazione_locale(args: argparse.Namespace, scarti: list[str]) -> list[dict[str, Any]]:
+    """L'attestazione scritta da QUESTO run, se valida e sul head richiesto."""
+    if not (args.local_attestation and os.path.exists(args.local_attestation)):
+        return []
+    with open(args.local_attestation, encoding="utf-8") as fh:
+        locale = json.load(fh)
+    errori = attestation_valid(locale, reviewer=args.reviewer, pr=args.pr, repo=args.repo)
+    if errori:
+        scarti.append("attestazione di questo run: " + "; ".join(errori))
+        return []
+    return [locale] if locale.get("range_head") == args.head_sha else []
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -618,6 +696,9 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--base-sha", required=True)
     v.add_argument("--head-sha", required=True)
     v.add_argument("--local-attestation", default="")
+    v.add_argument("--wait-seconds", type=int, default=0,
+                   help="attesa massima dei run ufficiali ancora in corso (push ravvicinati)")
+    v.add_argument("--poll-seconds", type=int, default=30)
     v.add_argument("--output", default="")
     args = parser.parse_args(argv)
     if args.cmd == "verify":

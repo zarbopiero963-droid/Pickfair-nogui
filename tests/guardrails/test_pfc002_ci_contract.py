@@ -254,3 +254,21 @@ def test_full_suite_prova_il_merge_con_il_main_corrente():
     assert re.search(r"merge --no-ff --no-edit origin/main \|\| \{", merge["run"])
     assert "exit 1" in merge["run"] and "set -euo pipefail" in merge["run"]
     assert "if" not in steps[i_run] and "if" not in steps[i_install]
+
+
+@pytest.mark.parametrize("nome", sorted(REVIEWERS))
+def test_il_timeout_del_job_regge_review_e_attesa_dei_predecessori(nome):
+    # Rilievo Codex su #539: la verifica aspetta fino a --wait-seconds i run
+    # ufficiali ancora in corso. Il caso peggiore della review (stesso calcolo di
+    # test_ai_review_timeout) piu' l'attesa deve stare nel timeout del job.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "timeout_reviewer", ROOT / "tests" / "guardrails" / "test_ai_review_timeout.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    workflow = f".github/workflows/{nome}"
+    tentativi, limite, backoff = mod._attesa_modello(workflow)
+    peggiore = tentativi * limite + backoff + mod._attesa_github(workflow) + mod.AVVIO_RUNNER
+    verifica = _wf(nome)["jobs"]["review"]["steps"][-1]["run"]
+    attesa = int(re.search(r"--wait-seconds (\d+)", verifica).group(1))
+    assert 0 < attesa and peggiore + attesa + 120 <= mod._timeout_job(workflow), (nome, peggiore, attesa)
