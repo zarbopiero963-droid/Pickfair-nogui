@@ -102,6 +102,8 @@ jobs:
             echo "- blockers: \`$(jq '.blockers | length' .merge-readiness/decision.json)\`"
             echo "- pending: \`$(jq '.pending | length' .merge-readiness/decision.json)\`"
             echo "- ignored checks: \`$(jq '.ignored_self_checks | length' .merge-readiness/decision.json)\`"
+            # PF-REVIEW-RECOVERY-01 (#550): gate Sol/Grok dai commenti grezzi, INFORMATIVO (non cambia can_merge).
+            echo "- ai_review_gate: \`$(jq -r '.ai_review_gate_status // "UNKNOWN"' .merge-readiness/decision.json)\`"
             echo ""
             echo "### Reasons"
             jq -r '.reasons[]? | "- " + .' .merge-readiness/decision.json

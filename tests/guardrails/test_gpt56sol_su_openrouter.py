@@ -317,19 +317,19 @@ def _messaggi_di_non_review(albero: ast.Module) -> set[str]:
     }
 
 
-def _prefissi_del_guard(albero: ast.Module) -> tuple[str, ...]:
+def _guard_e_sullo_stato(albero: ast.Module) -> None:
+    """PF-REVIEW-RECOVERY-01 (#550): il done_marker dipende SOLO dallo stato
+    classificato (`review_complete = attempt_state in RR_VALID_STATES`), non da
+    una lista di prefissi da tenere allineata a mano."""
     for nodo in ast.walk(albero):
         if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
                 and isinstance(nodo.targets[0], ast.Name)
                 and nodo.targets[0].id == "review_complete"):
-            # review_complete = not review.lstrip().startswith((...))
-            chiamata = next((n for n in ast.walk(nodo)
-                             if isinstance(n, ast.Call)
-                             and getattr(n.func, "attr", "") == "startswith"), None)
-            assert chiamata and chiamata.args, "guard startswith senza argomenti"
-            arg = chiamata.args[0]
-            elementi = arg.elts if isinstance(arg, (ast.Tuple, ast.List)) else [arg]
-            return tuple(e.value for e in elementi if isinstance(e, ast.Constant))
+            ok = (isinstance(nodo.value, ast.Compare) and isinstance(nodo.value.left, ast.Name)
+                  and nodo.value.left.id == "attempt_state" and isinstance(nodo.value.ops[0], ast.In)
+                  and getattr(nodo.value.comparators[0], "id", "") == "RR_VALID_STATES")
+            assert ok, "review_complete non deriva dallo stato classificato del tentativo"
+            return
     raise AssertionError(
         "assegnazione `review_complete` non trovata: il guard che decide il "
         "done_marker e' cambiato forma, questo test va aggiornato con esso"
@@ -337,18 +337,17 @@ def _prefissi_del_guard(albero: ast.Module) -> tuple[str, ...]:
 
 
 def test_block_ogni_non_review_fa_scattare_il_guard() -> None:
+    from scripts import pr_autonomy_policy as policy
     albero = ast.parse(_script_python())
-    guard = _prefissi_del_guard(albero)
+    _guard_e_sullo_stato(albero)
     messaggi = _messaggi_di_non_review(albero)
     assert messaggi, "nessun messaggio di non-review trovato: regex o codice cambiati?"
-
-    sfuggiti = sorted(m for m in messaggi if not m.lstrip().startswith(guard))
+    # Ogni non-review, classificata, NON e' uno stato valido: niente done_marker.
+    sfuggiti = sorted(m for m in messaggi if policy.rr_classify_output(m)[0] in policy.RR_VALID_STATES)
     assert not sfuggiti, (
-        f"questi messaggi di NON-review non fanno scattare il guard: {sfuggiti}.\n"
-        f"Prefissi riconosciuti: {list(guard)}.\n"
-        f"Conseguenza: review_complete=True, done_marker scritto, il range "
-        f"registrato come recensito e i re-run deduplicati — una non-review "
-        f"pubblicata come completa."
+        f"questi messaggi di NON-review risultano review valide: {sfuggiti}.\n"
+        f"Conseguenza: done_marker scritto, il range registrato come recensito e "
+        f"i re-run deduplicati — una non-review pubblicata come completa."
     )
 
 
@@ -384,16 +383,23 @@ def _intestazioni_di_errore_di_chiamata(albero: ast.Module) -> set[str]:
 
 
 def test_block_lerrore_di_chiamata_fa_scattare_il_guard() -> None:
+    from scripts import pr_autonomy_policy as policy
     albero = ast.parse(_script_python())
     intestazioni = _intestazioni_di_errore_di_chiamata(albero)
     assert intestazioni, (
         "nessuna intestazione '## Review ...' nel ramo except intorno a "
         "call_model: il codice ha cambiato forma e questo test va aggiornato"
     )
-    guard = _prefissi_del_guard(albero)
-    sfuggite = sorted(i for i in intestazioni if not i.startswith(guard))
-    assert not sfuggite, (
-        f"l'errore di chiamata pubblica {sfuggite} ma il guard riconosce solo "
-        f"{list(guard)}: una chiamata fallita verrebbe registrata come review "
-        f"completa, col done_marker che impedisce di rifarla"
-    )
+    _guard_e_sullo_stato(albero)
+    # Il ramo except classifica con rr_classify_error, che non restituisce MAI
+    # uno stato valido: una chiamata fallita non e' mai una review completa.
+    gestori = [g for n in ast.walk(albero) if isinstance(n, ast.Try)
+               and any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "call_model"
+                       for parte in n.body for c in ast.walk(parte))
+               for g in n.handlers]
+    assert any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "rr_classify_error"
+               for g in gestori for c in ast.walk(g)), "il ramo except non classifica l'errore"
+    for errore in ("HTTP 500", "HTTP 402 Payment Required", "timed out", "", "qualunque"):
+        assert policy.rr_classify_error(errore) not in policy.RR_VALID_STATES
+    for intestazione in intestazioni:
+        assert policy.rr_classify_output(intestazione)[0] not in policy.RR_VALID_STATES

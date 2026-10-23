@@ -445,6 +445,139 @@ def codex_triage_complete(findings: Sequence[Mapping[str, Any]], unresolved_thre
 # ---------------------------------------------------------------------------
 # Review (§0.7)
 # ---------------------------------------------------------------------------
+# PF-REVIEW-RECOVERY-01 (#550). Il blocco fra i due delimitatori e' copiato
+# IDENTICO nei workflow di Sol e Grok, che non fanno checkout e non possono
+# importarlo; tests/scripts/test_pr_review_recovery.py verifica che le tre copie
+# coincidano. Solo libreria standard (`re`), nessun effetto collaterale.
+# >>> REVIEW_RECOVERY_CORE >>>
+RR_VALID_PASS = "VALID_PASS"
+RR_VALID_BLOCKERS = "VALID_BLOCKERS"
+RR_INCOMPLETE = "INCOMPLETE"
+RR_TIMEOUT = "TIMEOUT"
+RR_PROVIDER_ERROR = "PROVIDER_ERROR"
+RR_CREDITS_EXHAUSTED = "CREDITS_EXHAUSTED"
+RR_UNKNOWN = "UNKNOWN"
+RR_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS, RR_INCOMPLETE, RR_TIMEOUT,
+             RR_PROVIDER_ERROR, RR_CREDITS_EXHAUSTED, RR_UNKNOWN)
+RR_VALID_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS)
+# Tentativi TOTALI per reviewer e range: l'originale piu' una sola ripetizione.
+RR_MAX_ATTEMPTS = 2
+RR_OWNER_DECISION = "REVIEW_UNKNOWN_OWNER_DECISION"
+
+_RR_CREDIT_HINTS = (
+    "crediti esauriti", "insufficient credits", "insufficient_quota",
+    "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
+    "credit_balance_exhausted", "credit balance", "exceeded your current quota",
+    "insufficient_balance", "out of credits",
+)
+_RR_TIMEOUT_HINTS = ("timed out", "timeout", "read operation timed out", "http error 408")
+_RR_NO_BLOCKERS = re.compile(
+    r"[-*]?\s*nessun(?:o)?\s+bloccante(?:\s+(?:evidente|rilevato|rilevante|trovato|individuato))?\s*[.!]?",
+    re.IGNORECASE)
+_RR_H2 = re.compile(r"^##(?!#)[ \t]*(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
+_RR_ATTEMPT_RE = re.compile(
+    r"<!-- ([a-z0-9]+)-pr-review-attempt:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}):([0-9]+):([A-Z_]+) -->")
+
+
+def rr_sanitize(text):
+    """L'output del modello e' contenuto non fidato: nessun commento HTML, quindi nessun marker forgiato."""
+    return str(text or "").replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+
+
+def rr_classify_error(error_text):
+    """Chiamata al modello fallita: crediti/quota, timeout, oppure errore del provider."""
+    low = str(error_text or "").lower()
+    if any(h in low for h in _RR_CREDIT_HINTS):
+        return RR_CREDITS_EXHAUSTED
+    if any(h in low for h in _RR_TIMEOUT_HINTS):
+        return RR_TIMEOUT
+    return RR_PROVIDER_ERROR
+
+
+def rr_classify_output(text, truncated=False):
+    """(stato, motivo) del TESTO restituito dal modello, prima di qualunque marker.
+
+    Valida e' solo una review con le due sezioni obbligatorie, uniche, in ordine
+    e non vuote. Il testo troncato, vuoto o senza sezioni e' INCOMPLETE; uno
+    schema inatteso (sezioni duplicate o in piu', commenti HTML) e' UNKNOWN.
+    """
+    body = str(text or "").strip()
+    if truncated:
+        return RR_INCOMPLETE, "testo troncato (finish_reason=length)"
+    if not body:
+        return RR_INCOMPLETE, "testo vuoto"
+    if "<!--" in body or "-->" in body:
+        return RR_UNKNOWN, "commento HTML nell'output: possibile marker forgiato"
+    titles = [t.strip().lower() for t in _RR_H2.findall(body)]
+    for title in ("bloccanti", "verdetto finale"):
+        if titles.count(title) > 1:
+            return RR_UNKNOWN, f"sezione '{title}' duplicata"
+    if "bloccanti" not in titles or "verdetto finale" not in titles:
+        return RR_INCOMPLETE, "sezioni obbligatorie assenti"
+    if titles != ["bloccanti", "verdetto finale"]:
+        return RR_UNKNOWN, "sezioni fuori schema o fuori ordine"
+    parts = _RR_H2.split(body)
+    # split con un gruppo: [prima, titolo1, corpo1, titolo2, corpo2]
+    blockers, verdict = parts[2].strip(), parts[4].strip()
+    if parts[0].strip():
+        return RR_UNKNOWN, "testo prima della sezione Bloccanti"
+    if not blockers:
+        return RR_INCOMPLETE, "sezione Bloccanti vuota"
+    if not verdict:
+        return RR_INCOMPLETE, "Verdetto finale vuoto"
+    if _RR_NO_BLOCKERS.fullmatch(blockers):
+        return RR_VALID_PASS, ""
+    return RR_VALID_BLOCKERS, "bloccanti da triagiare"
+
+
+def rr_attempt_marker(review_id, base, head, number, state):
+    return (f"<!-- {review_id}-pr-review-attempt:pickfair-nogui:"
+            f"{str(base)[:12]}...{str(head)[:12]}:{int(number)}:{state} -->")
+
+
+def rr_owner_decision_marker(review_id, base, head):
+    return f"<!-- {review_id}-pr-review-owner-decision:pickfair-nogui:{str(base)[:12]}...{str(head)[:12]} -->"
+
+
+def rr_attempts(body, review_id, base, head):
+    """Stati dei tentativi registrati per QUESTO reviewer e range, in ordine di numero (uno per numero)."""
+    found = {}
+    for m in _RR_ATTEMPT_RE.finditer(str(body or "")):
+        if m.group(1) != review_id or m.group(2) != str(base)[:12] or m.group(3) != str(head)[:12]:
+            continue
+        state = m.group(5) if m.group(5) in RR_STATES else RR_UNKNOWN
+        found.setdefault(int(m.group(4)), state)
+    return [found[n] for n in sorted(found)]
+
+
+def rr_next_action(attempts, done_present):
+    """SKIP_DONE: review valida gia' registrata; OWNER_DECISION: tentativi finiti, nessuna nuova
+    chiamata a pagamento; CALL: si puo' chiamare il modello (primo tentativo o l'unica ripetizione)."""
+    if done_present:
+        return "SKIP_DONE"
+    if len(attempts or []) >= RR_MAX_ATTEMPTS:
+        return "OWNER_DECISION"
+    return "CALL"
+
+
+def rr_owner_decision_note(model_label, reviewer_key, pr_number, head, states, run_url):
+    """Richiesta di decisione all'owner, scritta una sola volta per range (il commento e' per range)."""
+    return (
+        f"\n## {RR_OWNER_DECISION}\n\n"
+        f"{model_label} non ha prodotto una review valida in {len(states)} tentativi su questo range "
+        f"({', '.join(states)}). Non e' un PASS e non parte nessun altro tentativo a pagamento.\n\n"
+        f"- Reviewer: `{reviewer_key}`\n"
+        f"- Head: `{head}`\n"
+        f"- Run: {run_url}\n"
+        "- Prove sostitutive da valutare: review dell'altro reviewer sul current head, CI verde, "
+        "hard verify, audit dell'agente sul diff completo.\n"
+        "- Deroga: SOLO l'owner, scritta a mano su GitHub (non tramite app o agente), in una riga:\n\n"
+        f"  `PF-REVIEW-WAIVER pr={pr_number} head={head} reviewer={reviewer_key} reason=<motivo>`\n\n"
+        "  Vale solo per questa PR, questo head e questo reviewer: un nuovo push la fa scadere. "
+        "Non copre bloccanti, crediti esauriti, CI rossa, hard verify o altri gate.\n"
+    )
+# <<< REVIEW_RECOVERY_CORE <<<
+
 _DONE_RE = re.compile(r"<!-- ([a-z0-9]+-pr-review-done):pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}) -->")
 
 
@@ -460,8 +593,50 @@ def _section(body: str, title: str) -> str | None:
     return found[0].strip() if len(found) == 1 else None
 
 
+_REVIEW_IDS = {"sol": "gpt56sol", "grok": "grok46"}
+_OWNER_DECISION_RE = re.compile(
+    r"<!-- ([a-z0-9]+)-pr-review-owner-decision:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}) -->")
+# Stato del tentativo (scritto dal workflow fidato) -> stato del gate.
+_ATTEMPT_STATUS = {
+    RR_CREDITS_EXHAUSTED: "QUOTA",
+    RR_TIMEOUT: "TIMEOUT",
+    RR_PROVIDER_ERROR: "PROVIDER_ERROR",
+    RR_INCOMPLETE: "INCOMPLETE",
+    RR_UNKNOWN: "INCOMPLETE",
+}
+_RETRYABLE = frozenset({"TIMEOUT", "PROVIDER_ERROR", "INCOMPLETE"})
+
+
+def _same_head(range_head: str, head_sha: str) -> bool:
+    return str(head_sha).startswith(range_head) or range_head.startswith(str(head_sha))
+
+
+def _recorded_attempts(body: str, review_id: str, head_sha: str) -> tuple[list[str], bool, bool]:
+    """(stati dei tentativi sul range che finisce sul current head, decisione owner registrata,
+    tentativi presenti solo su un head vecchio)."""
+    on_head: dict[tuple[str, str], list[str]] = {}
+    stale = False
+    for m in _RR_ATTEMPT_RE.finditer(body):
+        if m.group(1) != review_id:
+            continue
+        if _same_head(m.group(3), head_sha):
+            on_head.setdefault((m.group(2), m.group(3)), [])
+        else:
+            stale = True
+    attempts: list[str] = []
+    for base, head in on_head:
+        attempts = rr_attempts(body, review_id, base, head)
+    decision = any(m.group(1) == review_id and _same_head(m.group(3), head_sha)
+                   for m in _OWNER_DECISION_RE.finditer(body))
+    return attempts, decision, stale and not on_head
+
+
 def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
-    """Una review conta solo se è leggibile, marcata, sul current head e senza bloccanti."""
+    """Una review conta solo se è leggibile, marcata, sul current head e senza bloccanti.
+
+    Oltre a `status` riporta `classification` (stati di PF-REVIEW-RECOVERY-01),
+    `attempts` (tentativi registrati dal workflow sul current head) e
+    `owner_decision` (tentativi esauriti: decide l'owner)."""
     if not isinstance(review, Mapping):
         return {"status": "UNKNOWN", "reason": "review non strutturata"}
     reviewer = str(review.get("reviewer") or "").lower()
@@ -481,57 +656,227 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
         return {"status": "UNKNOWN", "reason": "schema review incompleto"}
     if author != REVIEW_BOT_LOGIN:
         return {"status": "INVALID", "reason": "autore non è il bot dei workflow"}
+    attempts, owner_decision, attempts_stale = _recorded_attempts(body, _REVIEW_IDS[reviewer], str(head_sha))
+    result = _validate_review_body(body, reviewer, str(head_sha), attempts, owner_decision, attempts_stale)
+    # Una review con marker di completamento conta come un tentativo anche se
+    # scritta da un workflow precedente, che non registrava i tentativi (#547).
+    result["attempts"] = max(len(attempts), 1 if _DONE_RE.search(body) else 0)
+    result["owner_decision"] = result["status"] == RR_OWNER_DECISION
+    return result
+
+
+def _validate_review_body(body: str, reviewer: str, head_sha: str, attempts: list[str],
+                          owner_decision: bool, attempts_stale: bool) -> dict[str, Any]:
     lowered = body.lower()
     done = [m for m in _DONE_RE.finditer(body) if m.group(1) == ACTIVE_REVIEWERS[reviewer]]
     if not done:
+        if attempts_stale:
+            return {"status": "STALE_HEAD", "classification": RR_UNKNOWN,
+                    "reason": "tentativi registrati solo su un head vecchio"}
+        if attempts:
+            last = attempts[-1]
+            if owner_decision or len(attempts) >= RR_MAX_ATTEMPTS:
+                return {"status": RR_OWNER_DECISION, "classification": last,
+                        "reason": f"{len(attempts)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
+            if last in RR_VALID_STATES:
+                # Un tentativo valido scrive SEMPRE il marker di completamento:
+                # stato valido senza marker = commento alterato, mai PASS.
+                return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
+                        "reason": "tentativo valido senza marker di completamento"}
+            return {"status": _ATTEMPT_STATUS.get(last, "INCOMPLETE"), "classification": last,
+                    "reason": f"tentativo {len(attempts)}/{RR_MAX_ATTEMPTS} non valido: {last}"}
         if any(h in lowered for h in _QUOTA_HINTS):
-            return {"status": "QUOTA", "reason": "crediti/quota esauriti"}
+            return {"status": "QUOTA", "classification": RR_CREDITS_EXHAUSTED, "reason": "crediti/quota esauriti"}
         if any(h in lowered for h in _TIMEOUT_HINTS):
-            return {"status": "TIMEOUT", "reason": "review non completata per timeout"}
+            return {"status": "TIMEOUT", "classification": RR_TIMEOUT, "reason": "review non completata per timeout"}
         if any(h in lowered for h in _INCOMPLETE_HINTS):
-            return {"status": "PROVIDER_ERROR", "reason": "review non completata: errore del provider, non timeout"}
-        return {"status": "MISSING_MARKER", "reason": "job verde ma marker di completamento assente"}
+            return {"status": "PROVIDER_ERROR", "classification": RR_PROVIDER_ERROR,
+                    "reason": "review non completata: errore del provider, non timeout"}
+        return {"status": "MISSING_MARKER", "classification": RR_UNKNOWN,
+                "reason": "job verde ma marker di completamento assente"}
     range_head = done[-1].group(3)
-    if not str(head_sha).startswith(range_head) and not range_head.startswith(str(head_sha)):
-        return {"status": "STALE_HEAD", "reason": "il range non termina sul current head"}
+    if not _same_head(range_head, head_sha):
+        return {"status": "STALE_HEAD", "classification": RR_UNKNOWN, "reason": "il range non termina sul current head"}
+    if attempts and attempts[-1] not in RR_VALID_STATES:
+        return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
+                "reason": "marker di completamento con ultimo tentativo non valido"}
     section = _bloccanti_section(body)
     if section is None:
-        return {"status": "UNKNOWN", "reason": "sezione Bloccanti assente o duplicata: schema inatteso"}
+        return {"status": "UNKNOWN", "classification": RR_INCOMPLETE,
+                "reason": "sezione Bloccanti assente o duplicata: schema inatteso"}
     # Schema a due sezioni completo (rilievi Codex/Sol #499): «Bloccanti» vuota
     # o «Verdetto finale» assente/vuoto = review incompleta, mai pulita.
     if not section:
-        return {"status": "UNKNOWN", "reason": "sezione Bloccanti vuota: review incompleta"}
+        return {"status": "UNKNOWN", "classification": RR_INCOMPLETE, "reason": "sezione Bloccanti vuota: review incompleta"}
     if not _section(body, "Verdetto finale"):
-        return {"status": "UNKNOWN", "reason": "Verdetto finale assente o vuoto: review incompleta"}
+        return {"status": "UNKNOWN", "classification": RR_INCOMPLETE,
+                "reason": "Verdetto finale assente o vuoto: review incompleta"}
     if _NO_BLOCKERS.fullmatch(section.strip()):
-        return {"status": "VALID_CLEAN", "reason": ""}
-    return {"status": "VALID_WITH_BLOCKERS", "reason": "bloccanti da triagiare"}
+        return {"status": "VALID_CLEAN", "classification": RR_VALID_PASS, "reason": ""}
+    return {"status": "VALID_WITH_BLOCKERS", "classification": RR_VALID_BLOCKERS, "reason": "bloccanti da triagiare"}
 
 
-def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any) -> dict[str, Any]:
-    """Esito combinato Sol + Grok. Sospesi e advisory non entrano nel gate."""
-    if not isinstance(grok_attempts, int) or isinstance(grok_attempts, bool) or grok_attempts < 1:
+# ---------------------------------------------------------------------------
+# Deroga owner (PF-REVIEW-RECOVERY-01, requisito 5)
+# ---------------------------------------------------------------------------
+WAIVER_RE = re.compile(
+    r"^PF-REVIEW-WAIVER[ \t]+pr=([0-9]+)[ \t]+head=([0-9a-f]{40})[ \t]+reviewer=(sol|grok)"
+    r"[ \t]+reason=(\S.*?)[ \t]*$", re.MULTILINE)
+# Firma dei commenti scritti dall'agente: l'agente usa l'account dell'owner,
+# quindi un suo commento non è mai un atto dell'owner.
+_AGENT_SIGNATURES = ("generated by [claude code]", "generated with [claude code]", "claude.ai/code")
+
+
+def parse_owner_waiver(comment: Mapping[str, Any], *, owner_login: Any, pr_number: Any,
+                       head_sha: Any) -> dict[str, Any]:
+    """Deroga valida SOLO se scritta a mano dall'owner, per questa PR e questo head esatto.
+
+    Il commento arriva dalla REST API delle issue comment: `user.login`,
+    `author_association`, `body` e `performed_via_github_app` sono obbligatori.
+    Un commento creato tramite un'app (l'agente lavora con l'account dell'owner
+    attraverso la GitHub App di Claude) o firmato dall'agente non è una deroga.
+    """
+    def no(problem: str) -> dict[str, Any]:
+        return {"valid": False, "problem": problem}
+    if not isinstance(comment, Mapping):
+        return no("commento non strutturato")
+    if not _nonempty_str(owner_login) or not _nonempty_str(head_sha) or not re.fullmatch(r"[0-9a-f]{40}", str(head_sha)):
+        return no("owner o head corrente sconosciuti")
+    if not isinstance(pr_number, int) or isinstance(pr_number, bool):
+        return no("numero PR sconosciuto")
+    user = comment.get("user")
+    login = user.get("login") if isinstance(user, Mapping) else None
+    if login != owner_login:
+        return no("autore diverso dall'owner")
+    if comment.get("author_association") != "OWNER":
+        return no("author_association diversa da OWNER")
+    if "performed_via_github_app" not in comment:
+        return no("provenienza del commento non verificabile")
+    if comment.get("performed_via_github_app") is not None:
+        return no("commento creato tramite un'app: non è un atto manuale dell'owner")
+    body = comment.get("body")
+    if not isinstance(body, str):
+        return no("corpo assente")
+    if any(sig in body.lower() for sig in _AGENT_SIGNATURES):
+        return no("commento firmato dall'agente")
+    found = WAIVER_RE.findall(body)
+    if len(found) != 1:
+        return no("deroga assente o ambigua (serve una sola riga PF-REVIEW-WAIVER)")
+    pr, head, reviewer, reason = found[0]
+    if int(pr) != pr_number:
+        return no("deroga per un'altra PR")
+    if head != head_sha:
+        return no("deroga per un altro head: scaduta con il nuovo push")
+    return {"valid": True, "reviewer": reviewer, "head": head, "reason": reason.strip(),
+            "comment_id": comment.get("id"), "problem": ""}
+
+
+def collect_owner_waivers(comments: Any, *, owner_login: Any, pr_number: Any, head_sha: Any) -> dict[str, dict[str, Any]]:
+    """Deroghe valide per reviewer (la prima valida vince; le altre righe non contano)."""
+    waivers: dict[str, dict[str, Any]] = {}
+    for comment in comments if isinstance(comments, list) else []:
+        parsed = parse_owner_waiver(comment, owner_login=owner_login, pr_number=pr_number, head_sha=head_sha)
+        if parsed["valid"]:
+            waivers.setdefault(parsed["reviewer"], parsed)
+    return waivers
+
+
+def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any = None, *,
+                  waivers: Mapping[str, Mapping[str, Any]] | None = None, head_sha: Any = None) -> dict[str, Any]:
+    """Esito combinato Sol + Grok. Sospesi e advisory non entrano nel gate.
+
+    Una review non valida (timeout, errore del provider, testo incompleto) ha
+    diritto a UNA sola ripetizione (`RERUN_REVIEW_ONCE`); dopo il secondo
+    tentativo non valido decide l'owner (`REVIEW_UNKNOWN_OWNER_DECISION`). La
+    deroga owner copre solo quel caso, per quel reviewer e quel head: mai una
+    review con bloccanti, mai crediti esauriti."""
+    if grok_attempts is not None and (not isinstance(grok_attempts, int) or isinstance(grok_attempts, bool)
+                                      or grok_attempts < 1):
         return {"status": "UNKNOWN", "reason": "tentativi Grok sconosciuti"}
-    statuses = {name: (results.get(name) or {}).get("status") for name in ACTIVE_REVIEWERS}
+    statuses: dict[str, Any] = {}
+    attempts: dict[str, Any] = {}
+    for name in ACTIVE_REVIEWERS:
+        entry = results.get(name) or {}
+        statuses[name] = entry.get("status")
+        recorded = entry.get("attempts", 1)
+        if name == "grok" and grok_attempts is not None:
+            recorded = max(grok_attempts, recorded) if isinstance(recorded, int) else grok_attempts
+        attempts[name] = recorded
+    for name, status in statuses.items():
+        value = attempts[name]
+        if (status in _RETRYABLE or status == RR_OWNER_DECISION) and \
+                (not isinstance(value, int) or isinstance(value, bool) or value < 1):
+            return {"status": "UNKNOWN", "reason": f"tentativi {name} sconosciuti"}
     if any(s == "QUOTA" for s in statuses.values()):
         return {"status": "STOP_OWNER", "reason": "CREDITI_ESAURITI (P41)"}
-    if statuses.get("grok") == "TIMEOUT":
-        if grok_attempts < MAX_GROK_ATTEMPTS:
-            return {"status": "RERUN_GROK_ONCE", "reason": "primo timeout Grok: un solo rerun"}
-        # «PRONTA PER MERGE» solo se Sol è pulita sul current head (rilievo
-        # Codex #499): il secondo timeout non deve nascondere un blocco di Sol.
-        sol = statuses.get("sol")
-        if sol == "VALID_CLEAN":
-            return {"status": "STOP_OWNER", "reason": "PRONTA PER MERGE — Grok assente per timeout"}
-        if sol in (None, "UNKNOWN"):
-            return {"status": "UNKNOWN", "reason": "Grok assente per timeout e Sol non leggibile"}
-        return {"status": "BLOCKED", "reason": f"Grok assente per timeout e Sol non valida: {sol}"}
-    if any(s in (None, "UNKNOWN") for s in statuses.values()):
+    rerun = sorted(n for n, s in statuses.items() if s in _RETRYABLE and attempts[n] < RR_MAX_ATTEMPTS)
+    if rerun:
+        return {"status": "RERUN_REVIEW_ONCE", "reviewers": rerun,
+                "reason": f"un solo nuovo tentativo per {', '.join(rerun)} (max {RR_MAX_ATTEMPTS} in totale)"}
+    exhausted = sorted(n for n, s in statuses.items() if s == RR_OWNER_DECISION or s in _RETRYABLE)
+    others = {n: s for n, s in statuses.items() if n not in exhausted}
+    if any(s in (None, "UNKNOWN") for s in others.values()):
         return {"status": "UNKNOWN", "reason": "review non leggibile o assente"}
-    bad = {n: s for n, s in statuses.items() if s != "VALID_CLEAN"}
+    bad = {n: s for n, s in others.items() if s != "VALID_CLEAN"}
     if bad:
         return {"status": "BLOCKED", "reason": f"review non valide sul current head: {bad}"}
-    return {"status": "PASS", "reason": ""}
+    if not exhausted:
+        return {"status": "PASS", "reason": ""}
+
+    def waived(name: str) -> bool:
+        waiver = (waivers or {}).get(name)
+        return (isinstance(waiver, Mapping) and waiver.get("valid") is True and waiver.get("reviewer") == name
+                and _nonempty_str(head_sha) and waiver.get("head") == head_sha)
+
+    missing = [n for n in exhausted if not waived(n)]
+    if missing:
+        return {"status": "STOP_OWNER", "owner_decision": missing,
+                "reason": f"PRONTA PER MERGE — {', '.join(missing)} assente: {RR_OWNER_DECISION}"}
+    return {"status": "PASS_WITH_OWNER_WAIVER", "owner_waivers": [dict(waivers[n]) for n in exhausted],
+            "reason": f"deroga owner per {', '.join(exhausted)} sull'head {str(head_sha)[:12]}"}
+
+
+_RANGE_MARKER_RE = re.compile(r"<!-- ([a-z0-9]+)-pr-review:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}) -->")
+
+
+def review_gate_from_comments(payload: Any) -> dict[str, Any]:
+    """Gate dei reviewer attivi calcolato dai commenti grezzi della REST API.
+
+    Input: `head_sha` (40 hex), `pr_number`, `owner_login`, `comments` (lista
+    delle issue comment così come le restituisce GitHub). Per ogni reviewer si
+    legge il commento del bot il cui range finisce sul current head; le
+    deroghe si leggono dagli stessi commenti con `parse_owner_waiver`."""
+    if not isinstance(payload, Mapping):
+        return {"gate": {"status": "UNKNOWN", "reason": "input non strutturato"}}
+    head = payload.get("head_sha")
+    comments = payload.get("comments")
+    if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head) or not isinstance(comments, list):
+        return {"gate": {"status": "UNKNOWN", "reason": "head o commenti illeggibili"}}
+    results: dict[str, dict[str, Any]] = {}
+    for name, review_id in _REVIEW_IDS.items():
+        candidates = []
+        for c in comments:
+            if not isinstance(c, Mapping):
+                continue
+            login = (c.get("user") or {}).get("login") if isinstance(c.get("user"), Mapping) else None
+            body = c.get("body") if isinstance(c.get("body"), str) else ""
+            if login != REVIEW_BOT_LOGIN:
+                continue
+            for m in _RANGE_MARKER_RE.finditer(body):
+                if m.group(1) == review_id and _same_head(m.group(3), head):
+                    candidates.append(c)
+                    break
+        if not candidates:
+            results[name] = {"status": None, "reason": "nessuna review del bot sul current head"}
+            continue
+        # Con piu' range sullo stesso head vince quello completato, poi il piu' recente.
+        done_id = ACTIVE_REVIEWERS[name]
+        chosen = sorted(candidates, key=lambda c: (done_id in (c.get("body") or ""), c.get("id") or 0))[-1]
+        results[name] = validate_review({"reviewer": name, "author": REVIEW_BOT_LOGIN, "body": chosen.get("body")}, head)
+    waivers = collect_owner_waivers(comments, owner_login=payload.get("owner_login"),
+                                    pr_number=payload.get("pr_number"), head_sha=head)
+    gate = reviewer_gate(results, waivers=waivers, head_sha=head)
+    return {"gate": gate, "reviews": results, "waivers": waivers}
 
 
 # ---------------------------------------------------------------------------
@@ -1097,8 +1442,20 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
     elif introduced:
         reasons.append("introduced_p0_p1_open")
     gate = state.get("reviewer_gate")
+    waivers_used: list[dict[str, Any]] = []
     if gate == "STOP_OWNER":
         stops.append("reviewer_stop_owner")
+    elif gate == "PASS_WITH_OWNER_WAIVER":
+        # PF-REVIEW-RECOVERY-01: la deroga vale solo se riportata per esteso e
+        # per l'head valutato; non sostituisce nessun altro gate qui sotto.
+        listed = state.get("reviewer_waivers")
+        if (not isinstance(listed, list) or not listed
+                or not all(isinstance(w, Mapping) and w.get("valid") is True and w.get("head") == current
+                           and w.get("reviewer") in ACTIVE_REVIEWERS and _nonempty_str(w.get("reason"))
+                           for w in listed)):
+            stops.append("reviewer_waiver_unverified")
+        else:
+            waivers_used = [dict(w) for w in listed]
     elif gate != "PASS":
         (stops if gate in (None, "UNKNOWN") else reasons).append(f"reviewer_gate_{gate}")
     readiness = state.get("merge_readiness")
@@ -1130,7 +1487,7 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         why = (["owner_manual_merge_files"] if full.get("owner_manual_merge_required") is not False else [])
         return {"status": "READY_FOR_OWNER_MANUAL_MERGE",
                 "reasons": why + (["manual_review_label"] if manual_label else []),
-                "safety_critical": safety}
+                "safety_critical": safety, "owner_waivers": waivers_used}
     # PR safety-critical: l'auto-merge richiede la DICHIARAZIONE della policy
     # (`PR safety-critical: yes — <file>`) provata sull'head corrente (rilievo
     # Codex #499). Non è un'approvazione owner e non rende la PR manuale: prova
@@ -1140,7 +1497,7 @@ def merge_decision(state: Mapping[str, Any]) -> dict[str, Any]:
         problem = _safety_declaration_problem(state.get("safety_critical_declaration"), current, safety)
         if problem:
             return {"status": "NEEDS_MANUAL", "reasons": [problem], "safety_critical": safety}
-    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety}
+    return {"status": "READY_FOR_AUTO_MERGE", "reasons": [], "safety_critical": safety, "owner_waivers": waivers_used}
 
 
 def _safety_declaration_problem(declaration: Any, current_head: str, safety: Sequence[str]) -> str | None:
@@ -1444,14 +1801,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     fd.add_argument("--base-sha", required=True)
     fd.add_argument("--head-sha", required=True)
     fd.add_argument("--repo-kind", choices=("pickfair", "mcp"), default="pickfair")
-    for name in ("classify-finding", "merge-decision", "next-pr"):
+    for name in ("classify-finding", "merge-decision", "next-pr", "review-gate"):
         p = sub.add_parser(name)
         p.add_argument("--input", required=True, help="file JSON con le prove")
     args = parser.parse_args(argv)
     if args.cmd == "full-diff":
         return _cmd_full_diff(args)
     func = {"classify-finding": classify_finding, "merge-decision": merge_decision,
-            "next-pr": next_pr_decision}[args.cmd]
+            "next-pr": next_pr_decision, "review-gate": review_gate_from_comments}[args.cmd]
     return _cmd_eval(func, args)
 
 

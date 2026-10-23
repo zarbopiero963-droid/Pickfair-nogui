@@ -795,6 +795,137 @@ jobs:
                   f"- Costo stimato base: `~${estimated:.4f}`\n"
               )
 
+          # PF-REVIEW-RECOVERY-01 (#550): copia IDENTICA del blocco in scripts/pr_autonomy_policy.py
+          # (verificata da tests/scripts/test_pr_review_recovery.py). Non modificare solo qui.
+          # >>> REVIEW_RECOVERY_CORE >>>
+          RR_VALID_PASS = "VALID_PASS"
+          RR_VALID_BLOCKERS = "VALID_BLOCKERS"
+          RR_INCOMPLETE = "INCOMPLETE"
+          RR_TIMEOUT = "TIMEOUT"
+          RR_PROVIDER_ERROR = "PROVIDER_ERROR"
+          RR_CREDITS_EXHAUSTED = "CREDITS_EXHAUSTED"
+          RR_UNKNOWN = "UNKNOWN"
+          RR_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS, RR_INCOMPLETE, RR_TIMEOUT,
+                       RR_PROVIDER_ERROR, RR_CREDITS_EXHAUSTED, RR_UNKNOWN)
+          RR_VALID_STATES = (RR_VALID_PASS, RR_VALID_BLOCKERS)
+          # Tentativi TOTALI per reviewer e range: l'originale piu' una sola ripetizione.
+          RR_MAX_ATTEMPTS = 2
+          RR_OWNER_DECISION = "REVIEW_UNKNOWN_OWNER_DECISION"
+
+          _RR_CREDIT_HINTS = (
+              "crediti esauriti", "insufficient credits", "insufficient_quota",
+              "quota exceeded", "usage-quota", "http 402", "http error 402", "payment required",
+              "credit_balance_exhausted", "credit balance", "exceeded your current quota",
+              "insufficient_balance", "out of credits",
+          )
+          _RR_TIMEOUT_HINTS = ("timed out", "timeout", "read operation timed out", "http error 408")
+          _RR_NO_BLOCKERS = re.compile(
+              r"[-*]?\s*nessun(?:o)?\s+bloccante(?:\s+(?:evidente|rilevato|rilevante|trovato|individuato))?\s*[.!]?",
+              re.IGNORECASE)
+          _RR_H2 = re.compile(r"^##(?!#)[ \t]*(.*?)[ \t]*#*[ \t]*$", re.MULTILINE)
+          _RR_ATTEMPT_RE = re.compile(
+              r"<!-- ([a-z0-9]+)-pr-review-attempt:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}):([0-9]+):([A-Z_]+) -->")
+
+
+          def rr_sanitize(text):
+              """L'output del modello e' contenuto non fidato: nessun commento HTML, quindi nessun marker forgiato."""
+              return str(text or "").replace("<!--", "&lt;!--").replace("-->", "--&gt;")
+
+
+          def rr_classify_error(error_text):
+              """Chiamata al modello fallita: crediti/quota, timeout, oppure errore del provider."""
+              low = str(error_text or "").lower()
+              if any(h in low for h in _RR_CREDIT_HINTS):
+                  return RR_CREDITS_EXHAUSTED
+              if any(h in low for h in _RR_TIMEOUT_HINTS):
+                  return RR_TIMEOUT
+              return RR_PROVIDER_ERROR
+
+
+          def rr_classify_output(text, truncated=False):
+              """(stato, motivo) del TESTO restituito dal modello, prima di qualunque marker.
+
+              Valida e' solo una review con le due sezioni obbligatorie, uniche, in ordine
+              e non vuote. Il testo troncato, vuoto o senza sezioni e' INCOMPLETE; uno
+              schema inatteso (sezioni duplicate o in piu', commenti HTML) e' UNKNOWN.
+              """
+              body = str(text or "").strip()
+              if truncated:
+                  return RR_INCOMPLETE, "testo troncato (finish_reason=length)"
+              if not body:
+                  return RR_INCOMPLETE, "testo vuoto"
+              if "<!--" in body or "-->" in body:
+                  return RR_UNKNOWN, "commento HTML nell'output: possibile marker forgiato"
+              titles = [t.strip().lower() for t in _RR_H2.findall(body)]
+              for title in ("bloccanti", "verdetto finale"):
+                  if titles.count(title) > 1:
+                      return RR_UNKNOWN, f"sezione '{title}' duplicata"
+              if "bloccanti" not in titles or "verdetto finale" not in titles:
+                  return RR_INCOMPLETE, "sezioni obbligatorie assenti"
+              if titles != ["bloccanti", "verdetto finale"]:
+                  return RR_UNKNOWN, "sezioni fuori schema o fuori ordine"
+              parts = _RR_H2.split(body)
+              # split con un gruppo: [prima, titolo1, corpo1, titolo2, corpo2]
+              blockers, verdict = parts[2].strip(), parts[4].strip()
+              if parts[0].strip():
+                  return RR_UNKNOWN, "testo prima della sezione Bloccanti"
+              if not blockers:
+                  return RR_INCOMPLETE, "sezione Bloccanti vuota"
+              if not verdict:
+                  return RR_INCOMPLETE, "Verdetto finale vuoto"
+              if _RR_NO_BLOCKERS.fullmatch(blockers):
+                  return RR_VALID_PASS, ""
+              return RR_VALID_BLOCKERS, "bloccanti da triagiare"
+
+
+          def rr_attempt_marker(review_id, base, head, number, state):
+              return (f"<!-- {review_id}-pr-review-attempt:pickfair-nogui:"
+                      f"{str(base)[:12]}...{str(head)[:12]}:{int(number)}:{state} -->")
+
+
+          def rr_owner_decision_marker(review_id, base, head):
+              return f"<!-- {review_id}-pr-review-owner-decision:pickfair-nogui:{str(base)[:12]}...{str(head)[:12]} -->"
+
+
+          def rr_attempts(body, review_id, base, head):
+              """Stati dei tentativi registrati per QUESTO reviewer e range, in ordine di numero (uno per numero)."""
+              found = {}
+              for m in _RR_ATTEMPT_RE.finditer(str(body or "")):
+                  if m.group(1) != review_id or m.group(2) != str(base)[:12] or m.group(3) != str(head)[:12]:
+                      continue
+                  state = m.group(5) if m.group(5) in RR_STATES else RR_UNKNOWN
+                  found.setdefault(int(m.group(4)), state)
+              return [found[n] for n in sorted(found)]
+
+
+          def rr_next_action(attempts, done_present):
+              """SKIP_DONE: review valida gia' registrata; OWNER_DECISION: tentativi finiti, nessuna nuova
+              chiamata a pagamento; CALL: si puo' chiamare il modello (primo tentativo o l'unica ripetizione)."""
+              if done_present:
+                  return "SKIP_DONE"
+              if len(attempts or []) >= RR_MAX_ATTEMPTS:
+                  return "OWNER_DECISION"
+              return "CALL"
+
+
+          def rr_owner_decision_note(model_label, reviewer_key, pr_number, head, states, run_url):
+              """Richiesta di decisione all'owner, scritta una sola volta per range (il commento e' per range)."""
+              return (
+                  f"\n## {RR_OWNER_DECISION}\n\n"
+                  f"{model_label} non ha prodotto una review valida in {len(states)} tentativi su questo range "
+                  f"({', '.join(states)}). Non e' un PASS e non parte nessun altro tentativo a pagamento.\n\n"
+                  f"- Reviewer: `{reviewer_key}`\n"
+                  f"- Head: `{head}`\n"
+                  f"- Run: {run_url}\n"
+                  "- Prove sostitutive da valutare: review dell'altro reviewer sul current head, CI verde, "
+                  "hard verify, audit dell'agente sul diff completo.\n"
+                  "- Deroga: SOLO l'owner, scritta a mano su GitHub (non tramite app o agente), in una riga:\n\n"
+                  f"  `PF-REVIEW-WAIVER pr={pr_number} head={head} reviewer={reviewer_key} reason=<motivo>`\n\n"
+                  "  Vale solo per questa PR, questo head e questo reviewer: un nuovo push la fa scadere. "
+                  "Non copre bloccanti, crediti esauriti, CI rossa, hard verify o altri gate.\n"
+              )
+          # <<< REVIEW_RECOVERY_CORE <<<
+
           try:
               range_base, range_head, range_scope, compared = resolve_range()
           except Exception as exc:
@@ -877,6 +1008,47 @@ jobs:
                   f"{REVIEW_ID}: review già presente per {range_base[:12]}...{range_head[:12]} "
                   "→ salto la chiamata AI a pagamento."
               )
+              sys.exit(0)
+
+          # PF-REVIEW-RECOVERY-01: i tentativi di QUESTO range stanno nel commento
+          # del bot per il range. Al massimo RR_MAX_ATTEMPTS chiamate in totale:
+          # poi nessuna nuova chiamata a pagamento, decide l'owner. Il workflow
+          # e' serializzato per head (concurrency), quindi due run dello stesso
+          # range non leggono la stessa storia.
+          def bot_comment_body(marker: str) -> str:
+              page = 1
+              while page <= 20:
+                  comments = gh_request(
+                      "GET",
+                      f"/repos/{REPO}/issues/{PR_NUMBER}/comments?per_page=100&page={page}",
+                  ) or []
+                  for c in comments:
+                      if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and marker in (c.get("body") or ""):
+                          return c.get("body") or ""
+                  if len(comments) < 100:
+                      return ""
+                  page += 1
+              return ""
+
+          try:
+              existing_body = bot_comment_body(marker)
+          except Exception as exc:
+              # Storia illeggibile: un tentativo in piu' resta limitato a questo run
+              # (nessun ciclo: ogni run parte solo da un push o da un rerun manuale).
+              existing_body = ""
+              print(f"::warning::{REVIEW_ID}: lettura dei tentativi fallita: {redact(str(exc))[:300]}")
+          previous_attempts = rr_attempts(existing_body, REVIEW_ID, range_base, range_head)
+          run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}/actions/runs/"
+                     f"{os.environ.get('GITHUB_RUN_ID', '?')}")
+          if rr_next_action(previous_attempts, False) == "OWNER_DECISION":
+              if manual_files or compare_truncated:
+                  try_add_label()
+              decision_marker = rr_owner_decision_marker(REVIEW_ID, range_base, range_head)
+              if decision_marker not in existing_body:
+                  upsert_comment(marker, (existing_body + decision_marker + rr_owner_decision_note(
+                      MODEL_LABEL, "sol", PR_NUMBER, range_head, previous_attempts, run_url))[:64000])
+              print(f"{REVIEW_ID}: {len(previous_attempts)} tentativi gia' registrati per "
+                    f"{range_base[:12]}...{range_head[:12]} → nessuna nuova chiamata, decide l'owner.")
               sys.exit(0)
 
           # Label e avviso calcolati PRIMA di ogni uscita: una push-range di soli
@@ -988,7 +1160,15 @@ jobs:
 
           try:
               review, usage = call_model(system_prompt, user_prompt)
+              if review.lstrip().startswith(("Output troncato", "Il modello non ha restituito testo")):
+                  attempt_state, attempt_reason = RR_INCOMPLETE, "testo troncato o vuoto"
+              elif review.lstrip().startswith("Il modello non ha restituito choices"):
+                  attempt_state, attempt_reason = RR_PROVIDER_ERROR, "risposta senza choices"
+              else:
+                  # Classificato sul testo GREZZO: un marker forgiato nell'output va visto prima della sanificazione.
+                  attempt_state, attempt_reason = rr_classify_output(review)
           except Exception as exc:
+              attempt_state, attempt_reason = rr_classify_error(str(exc)), "chiamata al modello fallita"
               review = (
                   "## Review GPT-6.1 Sol non completata\n\n"
                   f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
@@ -999,28 +1179,28 @@ jobs:
           # non coperto dalla redaction dell'input o echo del prompt) non deve finire
           # in chiaro nel commento PR (Codex P2).
           review = redact(review)
+          # Nessun commento HTML dall'output del modello: niente marker forgiati (#550).
+          review = rr_sanitize(review)
 
           # La review conta come COMPLETATA solo se il modello ha prodotto testo reale:
           # né troncamento (budget esaurito), né "nessun testo", né errore di chiamata.
           # Solo in quel caso scriviamo done_marker → la dedup salterà i futuri re-run;
           # altrimenti done_line resta vuoto e un re-run rifarà la review (retry sicuro).
-          review_complete = not review.lstrip().startswith((
-              "Output troncato",
-              "Il modello non ha restituito testo",
-              # chat/completions puo' rispondere con `choices` vuoto: e' un
-              # messaggio DIVERSO da "nessun testo" e va elencato a parte.
-              # Senza questa voce il guard non scatta, il done_marker viene
-              # scritto e una NON-review resta registrata come recensione
-              # completa — i re-run la deduplicano via (rilievo Fable 5 su
-              # #463). Il ramo `choices` arriva dal trasporto OpenRouter, il
-              # guard dal file OpenAI, dove `choices` non esiste: il difetto e'
-              # nato nel trapianto. Fugu Ultra questa voce ce l'ha gia'.
-              "Il modello non ha restituito choices",
-              "## Review GPT-6.1 Sol non completata",
-          ))
+          # #550: completa solo con le due sezioni obbligatorie valide (rr_classify_output).
+          review_complete = attempt_state in RR_VALID_STATES
           done_line = done_marker if review_complete else ""
+          attempt_states = previous_attempts + [attempt_state]
+          attempt_lines = "".join(rr_attempt_marker(REVIEW_ID, range_base, range_head, n, st)
+                                  for n, st in enumerate(attempt_states, start=1))
+          decision_line = decision_note = ""
+          if not review_complete and len(attempt_states) >= RR_MAX_ATTEMPTS:
+              decision_line = rr_owner_decision_marker(REVIEW_ID, range_base, range_head)
+              decision_note = rr_owner_decision_note(MODEL_LABEL, "sol", PR_NUMBER, range_head,
+                                                     attempt_states, run_url)
+          esito = (f"**Esito tentativo:** `{len(attempt_states)}/{RR_MAX_ATTEMPTS}` — `{attempt_state}`"
+                   + (f" ({attempt_reason})" if attempt_reason else ""))
 
-          body = f"""{marker}{done_line}
+          body = f"""{marker}{done_line}{attempt_lines}{decision_line}
           # GPT-6.1 Sol PR Review
 
           **Modalità:** push-range diff via GitHub Compare API
@@ -1029,6 +1209,7 @@ jobs:
           **Commits nel range:** `{commit_count}`
           **Checkout codice PR:** no
           **Esecuzione codice PR:** no
+          {esito}
           **Auto-merge / auto-approve:** no
           **Model:** `{OPENROUTER_MODEL}`
           **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
@@ -1037,6 +1218,8 @@ jobs:
           {manual_warning}
 
           {review}
+
+          {decision_note}
 
           {usage_note(usage, system_prompt, user_prompt, review)}
 

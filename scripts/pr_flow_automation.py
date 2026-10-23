@@ -20,6 +20,10 @@ try:
     import scripts.pr_automation_controller as controller
 except ModuleNotFoundError:
     import pr_automation_controller as controller
+try:
+    import scripts.pr_autonomy_policy as autonomy_policy
+except ModuleNotFoundError:
+    import pr_autonomy_policy as autonomy_policy
 
 SELF_CHECK_NAMES = {
     "safe pr autofix",
@@ -603,7 +607,10 @@ def _base_decision_status(
 
 def _base_decision_result(can_merge: bool, already_merged: bool) -> dict[str, Any]:
     next_action = "already_merged" if already_merged else ("ready_to_merge" if can_merge else "blocked")
-    return {"next_action": next_action}
+    # PF-REVIEW-RECOVERY-01: UNKNOWN finche' cmd_readiness non lo calcola dai commenti (mai PASS di default).
+    return {"next_action": next_action,
+            "ai_review_gate": {"gate": {"status": "UNKNOWN", "reason": "non calcolato"}},
+            "ai_review_gate_status": "UNKNOWN"}
 
 
 def _pr_actor_login(value: Any) -> Any:
@@ -1762,10 +1769,33 @@ def cmd_readiness(args: argparse.Namespace) -> int:
         if motivo not in decision.setdefault("reasons", []):
             decision["reasons"].append(motivo)
 
+    decision["ai_review_gate"] = ai_review_gate(args.repo, args.pr, decision.get("headRefOid"))
+    decision["ai_review_gate_status"] = str(((decision["ai_review_gate"] or {}).get("gate") or {}).get("status")
+                                            or "UNKNOWN")
     print(json.dumps(decision, indent=2, sort_keys=True))
     if args.output:
         write_json(Path(args.output), decision)
     return 0 if decision["can_merge"] or args.no_fail else 1
+
+
+def ai_review_gate(repo: str, pr_number: str, head_sha: Any) -> dict[str, Any]:
+    """PF-REVIEW-RECOVERY-01 (#550): gate di Sol e Grok sui commenti GREZZI della REST API.
+
+    INFORMATIVO: non cambia `can_merge`. Serve come prova autentica per
+    `merge_decision` (spec §0.7): qui `performed_via_github_app` arriva
+    dall'API, quindi una deroga scritta tramite un'app non passa per manuale.
+    Qualunque errore => UNKNOWN, mai PASS."""
+    try:
+        pages = gh_json(["gh", "api", f"repos/{repo}/issues/{pr_number}/comments", "--paginate", "--slurp"])
+        # --slurp: una lista di pagine. Oltre 100 commenti senza --slurp l'output non sarebbe un JSON unico.
+        comments = [c for page in pages for c in page] if isinstance(pages, list) and all(
+            isinstance(page, list) for page in pages) else None
+        return autonomy_policy.review_gate_from_comments({
+            "head_sha": head_sha, "pr_number": int(pr_number), "owner_login": repo.split("/", 1)[0],
+            "comments": comments,
+        })
+    except (RuntimeError, ValueError, OSError, TypeError) as exc:
+        return {"gate": {"status": "UNKNOWN", "reason": f"commenti illeggibili: {type(exc).__name__}"}}
 
 
 def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:

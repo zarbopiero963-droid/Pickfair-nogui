@@ -325,8 +325,12 @@ giro di label.
 head), porta il marker di completamento (`gpt56sol-pr-review-done` /
 `grok46-pr-review-done`), non ha bloccanti irrisolti ed è leggibile — non un
 commento d'errore. Job verde senza marker = fallimento; schema/API incompleti
-= UNKNOWN. Timeout Grok: un solo rerun; secondo timeout → STOP all'owner
-(«PRONTA PER MERGE — Grok assente per timeout»). Quota/crediti su Sol o Grok →
+= UNKNOWN. Review incompleta, troncata, senza sezioni, in timeout o con errore
+del provider: niente marker, al massimo 2 tentativi in totale per reviewer e
+range (un solo rerun del workflow); al secondo insuccesso
+`REVIEW_UNKNOWN_OWNER_DECISION`, mai PASS. Deroga solo con la riga
+`PF-REVIEW-WAIVER` scritta a mano dall'owner per quella PR, quell'head e quel
+reviewer (spec §0.7, PF-REVIEW-RECOVERY-01). Quota/crediti su Sol o Grok →
 CREDITI ESAURITI (sezione AUTO-MERGE).
 
 **Label (spec §0.8).** «Safety-critical» (`CRITICAL_PATTERNS`, elencati nel
