@@ -2522,6 +2522,22 @@
         "tests/testsuite/test_false_green_semantics.py"
       ],
       "max_files": 11
+    },
+    "pfc004-g7a-sim-funds-reservation": {
+      "description": "Roadmap canonica #461, PFC-004 = PF-001/M008 (G7-a), decisione owner #531, ordine owner del 23/10/2026; merge OWNER. Il SimulationBroker riserva stake BACK e liability LAY anche sul non abbinato (caso peggiore per runner, una copertura non chiede fondi), riserva ricavata dagli ordini EXECUTABLE e liberata a cancellazione/sostituzione/decadenza/settlement, INSUFFICIENT_FUNDS oltre il disponibile (batch tutto o niente, sostituzione oltre i fondi lascia l'originale). Tocca solo simulation_broker.py in produzione (modalita' SIM, nessun effetto LIVE); test G7 senza xfail, due test che codificavano il difetto aggiornati, 4 mutazioni nel catalogo, docs di verifica e tracciabilita'. G7-b (PFC-005) e G7-c (PFC-006) restano aperti.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/traceability/requirements.json",
+        "docs/verification/continuous_formal_verification.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/acceptance/test_g7_sim_funds_reservation.py",
+        "tests/acceptance/test_issue437_pr28d_rectification.py",
+        "tests/integration/test_simulation_broker_commission_semantics.py",
+        "tests/unit/test_pfc004_sim_funds_reservation.py"
+      ],
+      "max_files": 10
     }
   }
 }

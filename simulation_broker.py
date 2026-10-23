@@ -296,6 +296,73 @@ class SimulationBroker:
         return applied
 
     # =========================================================
+    # RISERVA DEI FONDI (PFC-004, G7-a; decisione owner #531)
+    # =========================================================
+    # Come Betfair, il saldo disponibile tiene conto anche degli ordini NON
+    # abbinati: un BACK riserva lo stake, un LAY la liability. Conta il caso
+    # peggiore della posizione del runner (stessa granularita' del
+    # PositionLedger): un ordine non abbinato pesa solo nello scenario in cui fa
+    # perdere, quindi una copertura che riduce l'esposizione non chiede fondi in
+    # piu'. La riserva non e' un saldo a parte: si ricava dagli ordini
+    # EXECUTABLE (residuo = size - matched_size), quindi si libera da sola a
+    # cancellazione, sostituzione, decadenza e settlement, e dopo un riavvio si
+    # ricalcola dagli ordini persistiti senza doppi conteggi.
+    _TOLLERANZA_FONDI = 1e-9
+
+    @staticmethod
+    def _residuo(order: SimOrder) -> float:
+        return max(0.0, float(order.size) - float(order.matched_size))
+
+    def _riserva_runner_locked(self, market_id: str, selection_id: int, ordini: List[SimOrder]) -> float:
+        ledger = self.state.position_ledgers.get(self._ledger_key(market_id, selection_id))
+        vince = perde = 0.0  # perdita se il runner vince / perde (negativa = guadagno)
+        if ledger is not None:
+            snap = ledger.snapshot()
+            if snap.open_size > 0.0 and snap.open_side == "BACK":
+                vince, perde = -snap.open_size * (snap.avg_entry_price - 1.0), snap.open_size
+            elif snap.open_size > 0.0 and snap.open_side == "LAY":
+                vince, perde = snap.open_size * (snap.avg_entry_price - 1.0), -snap.open_size
+        abbinata = max(0.0, vince, perde)
+        for order in ordini:
+            residuo = self._residuo(order)
+            if order.side == "BACK":
+                perde += residuo
+            else:
+                vince += residuo * (float(order.price) - 1.0)
+        return max(0.0, max(0.0, vince, perde) - abbinata)
+
+    def _riserva_totale_locked(self, candidati: Optional[List[SimOrder]] = None,
+                               escludi: Optional[set] = None) -> float:
+        per_runner: Dict[Tuple[str, int], List[SimOrder]] = {}
+        for order in self.state.orders.values():
+            if order.status != "EXECUTABLE" or (escludi and order.bet_id in escludi):
+                continue
+            per_runner.setdefault((str(order.market_id), int(order.selection_id)), []).append(order)
+        for order in candidati or []:
+            per_runner.setdefault((str(order.market_id), int(order.selection_id)), []).append(order)
+        return float(sum(self._riserva_runner_locked(m, s, o) for (m, s), o in per_runner.items()))
+
+    def _fondi_sufficienti_locked(self, candidati: List[SimOrder], escludi: Optional[set] = None) -> bool:
+        """I candidati, contati come interamente NON abbinati (caso peggiore), stanno nel saldo?"""
+        richiesta = self._riserva_totale_locked(candidati, escludi)
+        return float(self.state.balance) - richiesta >= -self._TOLLERANZA_FONDI
+
+    @staticmethod
+    def _rifiuto_fondi(market_id: str, n_istruzioni: int = 1) -> Dict[str, Any]:
+        """Risposta come Betfair: richiesta FAILURE con errorCode INSUFFICIENT_FUNDS, nulla piazzato."""
+        return {
+            "status": "FAILURE",
+            "errorCode": "INSUFFICIENT_FUNDS",
+            "marketId": str(market_id),
+            "instructionReports": [
+                {"status": "FAILURE", "errorCode": "INSUFFICIENT_FUNDS", "orderStatus": "", "betId": "",
+                 "sizeMatched": 0.0, "averagePriceMatched": 0.0}
+                for _ in range(max(1, int(n_istruzioni)))
+            ],
+            "simulated": True,
+        }
+
+    # =========================================================
     # SESSION
     # =========================================================
     def login(self, password: Optional[str] = None) -> Dict[str, Any]:
@@ -318,10 +385,12 @@ class SimulationBroker:
     # =========================================================
     def get_account_funds(self) -> Dict[str, float]:
         with self._lock:
+            riserva = self._riserva_totale_locked()
             return {
-                "available": float(self.state.balance),
-                "exposure": float(self.state.exposure),
+                "available": float(self.state.balance) - riserva,
+                "exposure": float(self.state.exposure) + riserva,
                 "total": float(self.state.balance + self.state.exposure),
+                "reserved_unmatched": riserva,
                 "simulated": True,
             }
 
@@ -839,6 +908,12 @@ class SimulationBroker:
         )
 
         with self._lock:
+            # PFC-004: l'ordine intero, come se restasse non abbinato, deve stare
+            # nel disponibile; altrimenti INSUFFICIENT_FUNDS e nulla viene
+            # memorizzato, abbinato o scritto. Su un mercato gia' regolato
+            # l'ordine decade (LAPSED) e non riserva nulla.
+            if order.market_id not in self.state.settlements and not self._fondi_sufficienti_locked([order]):
+                return self._rifiuto_fondi(order.market_id)
             self._match_order(order)
             self.state.orders[order.bet_id] = order
         self._persist_order(order)
@@ -875,10 +950,56 @@ class SimulationBroker:
         event_name: str = "",
         market_name: str = "",
     ) -> Dict[str, Any]:
+        with self._lock:  # RLock: place_bet lo riprende per ogni gamba
+            return self._place_orders_locked(
+                market_id=market_id, instructions=instructions, customer_ref=customer_ref,
+                event_key=event_key, table_id=table_id, batch_id=batch_id,
+                event_name=event_name, market_name=market_name,
+            )
+
+    def _candidati_batch(self, market_id: str, instructions: List[Any]) -> List[SimOrder]:
+        """Le gambe valide del batch come ordini non abbinati, per il controllo dei fondi."""
+        candidati = []
+        for item in instructions or []:
+            if not isinstance(item, dict):
+                continue
+            sides = {v.strip().upper() for v in (item.get("side"), item.get("bet_type"))
+                     if isinstance(v, str) and v.strip()}
+            selection_id = _to_int(item.get("selection_id", item.get("selectionId")), 0)
+            price = _to_float(item.get("price"), 0.0)
+            size = _to_float(item.get("size", item.get("stake")), 0.0)
+            if (len(sides) != 1 or not sides <= {"BACK", "LAY"} or selection_id <= 0
+                    or not math.isfinite(price) or price <= 1.0 or not math.isfinite(size) or size <= 0.0):
+                continue  # rifiutata comunque gamba per gamba, sotto
+            candidati.append(SimOrder(bet_id="", market_id=str(market_id), selection_id=selection_id,
+                                      side=sides.pop(), price=price, size=size))
+        return candidati
+
+    def _place_orders_locked(
+        self,
+        *,
+        market_id: str,
+        instructions: List[Dict[str, Any]],
+        customer_ref: str,
+        event_key: str,
+        table_id: Any,
+        batch_id: str,
+        event_name: str,
+        market_name: str,
+    ) -> Dict[str, Any]:
+        # PFC-004: come Betfair (INSUFFICIENT_FUNDS e' un errore dell'intera
+        # richiesta, «fondi non sufficienti a coprire tutte le scommesse») il
+        # batch che non sta nel disponibile non piazza nessuna gamba: niente
+        # Dutching parziale (PF-EXEC-02), niente ridimensionamento (PF-EXEC-04).
+        # Il lock e' tenuto per tutto il batch: nessun ordine concorrente si
+        # infila fra il controllo e le gambe.
+        if str(market_id) not in self.state.settlements and not self._fondi_sufficienti_locked(
+                self._candidati_batch(str(market_id), instructions)):
+            return self._rifiuto_fondi(str(market_id), len(instructions or []))
         reports = []
-        # NOTE: place_orders is intentionally not batch-atomic. Each valid instruction
-        # is processed through place_bet, which acquires the broker lock for its own
-        # state mutation/persistence path.
+        # NOTE: oltre al controllo dei fondi qui sopra, place_orders non e' atomico:
+        # ogni istruzione valida passa da place_bet, e una gamba non valida non
+        # ferma le altre.
         for item in instructions or []:
             if not isinstance(item, dict):
                 reports.append(
@@ -1235,6 +1356,17 @@ class SimulationBroker:
                 }
 
             remaining = max(0.0, old.size - old.matched_size)
+            # PFC-004: la sostituzione riserva il residuo alla quota nuova al posto
+            # di quella vecchia; oltre il disponibile resta l'ordine originale.
+            sostituto = SimOrder(bet_id="", market_id=old.market_id, selection_id=old.selection_id,
+                                 side=old.side, price=price_f, size=remaining)
+            if not self._fondi_sufficienti_locked([sostituto], escludi={old.bet_id}):
+                return {
+                    "status": "SUCCESS",
+                    "marketId": market_id_s,
+                    "instructionReports": [{"status": "FAILURE", "betId": bid, "errorCode": "INSUFFICIENT_FUNDS"}],
+                    "simulated": True,
+                }
             old.status = "CANCELLED"
             old.updated_at = datetime.utcnow().isoformat()
 
@@ -1493,6 +1625,7 @@ class SimulationBroker:
             "simulated": True,
             "balance": self.state.balance,
             "exposure": self.state.exposure,
+            "reserved_unmatched": self._riserva_totale_locked(),
             "starting_balance": self.state.starting_balance,
             "commission_pct": self.state.commission_pct,
             "realized_pnl": self.state.realized_pnl,
