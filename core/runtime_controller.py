@@ -2635,10 +2635,7 @@ class RuntimeController:
                 error=str(exc),
             )
             raise
-        self.risk_desk.sync_bankroll(float(funds.get("available", 0.0) or 0.0))
-        self._record_account_snapshot(funds, source="start", read_at=start_funds)  # PF-ALL-F026
-        if not self._load_expansion_baseline():                       # F032: primo avvio => apre il ciclo
-            self._start_expansion_cycle("first_start", funds=funds)
+        self._applica_fondi_avvio(funds, read_at=start_funds)
 
         start_telegram = time.monotonic()
         try:
@@ -5918,6 +5915,11 @@ class RuntimeController:
         if not isinstance(funds, dict):
             out["reason"] = "BALANCE_PAYLOAD_NOT_DICT"
             return out
+        if funds.get("error"):
+            # PFC-007 (PF-FIN-02): un errore del servizio o del broker (lettura fallita, campo mancante,
+            # registro dei fill SIM incoerente) rende i fondi NON verificabili, anche se i campi ci sono.
+            out["reason"] = "BALANCE_ERROR:" + str(funds.get("error"))
+            return out
         if funds.get("available") is None or funds.get("exposure") is None:
             out["reason"] = "BALANCE_FIELD_MISSING"
             return out
@@ -5978,6 +5980,24 @@ class RuntimeController:
         if validators.exceeds_cap(pending_exposure, available):
             return f"fondi_insufficienti:riserve_pendenti={pending_exposure:.2f}€,disponibile={available:.2f}€"
         return ""
+
+    def _applica_fondi_avvio(self, funds: Any, *, read_at: Optional[float] = None) -> dict:
+        """Fondi letti all'avvio: snapshot (F026), bankroll e baseline del primo ciclo (F032).
+
+        PFC-007 (PF-FIN-02): con fondi non verificabili (errore del servizio o del broker, campo mancante,
+        valore non valido) bankroll e baseline restano invariati e nessuna baseline viene persistita su dati
+        non validi; il gate dei fondi blocca le nuove entrate finche' una lettura valida non arriva.
+        """
+        account = self._record_account_snapshot(funds, source="start", read_at=read_at)  # PF-ALL-F026
+        if account["ok"]:
+            self.risk_desk.sync_bankroll(account["available"])
+            if not self._load_expansion_baseline():                   # F032: primo avvio => apre il ciclo
+                self._start_expansion_cycle("first_start", funds=funds)
+        else:
+            logger.warning("Avvio con fondi non verificabili (%s): bankroll e baseline invariati",
+                           account.get("reason"))
+            self._load_expansion_baseline()
+        return account
 
     def _record_account_snapshot(self, funds: Any, *, source: str, read_at: Optional[float] = None) -> dict:
         """Registra lo snapshot del conto e il picco dell'equity di cassa (solo dati validi). ``read_at``: istante
@@ -7198,6 +7218,11 @@ class RuntimeController:
             result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
             result["reason"] = "BALANCE_PAYLOAD_NOT_DICT"
             return result
+        if funds.get("error"):
+            # PFC-007: fondi non verificabili => nessuna sincronizzazione del bankroll.
+            result["bankroll_sync_status"] = "SYNC_FAILED_BALANCE_UNAVAILABLE"
+            result["reason"] = "BALANCE_ERROR:" + str(funds.get("error"))
+            return result
 
         available = funds.get("available")
         try:
@@ -8008,12 +8033,12 @@ class RuntimeController:
                 error=str(exc),
             )
             raise
-        bankroll_current = float(
-            funds.get("available", self.risk_desk.bankroll_current)
-            or self.risk_desk.bankroll_current
-        )
-
-        if bankroll_current != float(self.risk_desk.bankroll_current):
+        bankroll_current = float(self.risk_desk.bankroll_current)
+        # PFC-007: il bankroll si allinea solo a una lettura valida (niente errore, finita, non negativa);
+        # prima un NaN arrivava a sync_bankroll e un errore con available 0 veniva ignorato a caso.
+        lettura = self._account_from_funds(funds)
+        if lettura["ok"] and lettura["available"] > 0.0 and lettura["available"] != bankroll_current:
+            bankroll_current = lettura["available"]
             self.risk_desk.sync_bankroll(bankroll_current)
 
         snapshot = self.risk_desk.build_snapshot(

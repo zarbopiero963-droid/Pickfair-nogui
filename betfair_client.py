@@ -1355,9 +1355,20 @@ class BetfairClient:
         if not isinstance(result, dict):
             raise RuntimeError("INVALID_ACCOUNT_FUNDS")
 
+        def _fondo(valore: Any) -> Optional[float]:
+            # PFC-007 (PF-FIN-02): un saldo assente o non numerico NON vale 0: None => il servizio lo marca
+            # BALANCE_FIELD_MISSING e i fondi risultano non verificabili.
+            if valore is None or isinstance(valore, bool):
+                return None
+            try:
+                numero = float(valore)
+            except (TypeError, ValueError):
+                return None
+            return numero if math.isfinite(numero) else None
+
         return {
-            "available": self._safe_float(result.get("availableToBetBalance"), 0.0),
-            "exposure": self._safe_float(result.get("exposure"), 0.0),
+            "available": _fondo(result.get("availableToBetBalance")),
+            "exposure": _fondo(result.get("exposure")),
             "retained_commission": self._safe_float(result.get("retainedCommission"), 0.0),
             "exposure_limit": self._safe_float(result.get("exposureLimit"), 0.0),
             "discount_rate": self._safe_float(result.get("discountRate"), 0.0),

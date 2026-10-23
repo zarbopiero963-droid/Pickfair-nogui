@@ -2598,8 +2598,8 @@ class TradingEngine:
         # Fondi disponibili: fonte OBBLIGATORIA (rilievo Codex #512, decisione owner 1 del
         # 17/10): risposta assente, non ok o senza `available` => cap non disponibile, nessuno
         # stub; l'headroom locale da solo non dimostra che i fondi dell'exchange bastino.
-        if not isinstance(funds, dict) or funds.get("ok", True) is False:
-            return None
+        if not isinstance(funds, dict) or funds.get("ok", True) is False or funds.get("error"):
+            return None  # PFC-007: fondi non verificabili => cap non disponibile
         raw = funds.get("available")
         if raw is None or isinstance(raw, bool):
             return None

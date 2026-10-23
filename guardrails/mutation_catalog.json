@@ -1017,7 +1017,8 @@
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "rationale": "#461 PR28-e (Codex #531): lo snapshot del settlement con errore del servizio alimenta l'auto-next."
+      "rationale": "#461 PR28-e (Codex #531): lo snapshot del settlement con errore del servizio alimenta l'auto-next.",
+      "equivalent": "Dal PFC-007 `_account_from_funds` restituisce gia' ok=False per un payload con `error`, quindi lo snapshot letto dal gate non e' mai valido quando c'e' un errore: senza questo controllo il risultato osservabile e' identico (fondi non verificabili). Resta come seconda difesa; la prima e' coperta da funds_runtime_error_payload_counts_as_valid."
     },
     {
       "id": "funds_gate_auto_next_without_table",
@@ -2552,6 +2553,18 @@
         "tests/unit/test_pfc006_sim_restart_durability.py"
       ],
       "rationale": "PFC-006: fill differiti e settlement andrebbero persi a un crash (se il chiamante non salva lo snapshot)."
+    },
+    {
+      "id": "funds_runtime_error_payload_counts_as_valid",
+      "module": "core.runtime_controller",
+      "area": "funds",
+      "file": "core/runtime_controller.py",
+      "original": "        if funds.get(\"error\"):\n            # PFC-007 (PF-FIN-02)",
+      "mutated": "        if False:\n            # PFC-007 (PF-FIN-02)",
+      "tests": [
+        "tests/unit/test_pfc007_funds_unverifiable.py"
+      ],
+      "rationale": "PFC-007: fondi con errore (registro SIM incoerente, campo mancante) varrebbero come saldo valido: bankroll e baseline su dati non verificabili."
     }
   ]
 }

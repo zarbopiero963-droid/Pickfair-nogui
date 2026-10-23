@@ -2566,6 +2566,22 @@
         "tests/unit/test_pfc006_sim_restart_durability.py"
       ],
       "max_files": 8
+    },
+    "pfc007-funds-unverifiable-fail-closed": {
+      "description": "Roadmap canonica #461, PFC-007 = M013 PF-FIN-02 residuo (fondi con dati exchange incompleti) + issue #544, mandato owner del 23/10/2026. Un saldo assente, non numerico, non finito o con errore (registro dei fill SIM incoerente) e' fondi non verificabili lungo tutta la catena: BetfairClient (None invece di 0.0), BetfairService (propaga error e reserved_unmatched, BALANCE_NOT_FINITE), RuntimeController (conto non valido, avvio/settlement/get_status senza sync del bankroll ne' baseline su dati non validi), TradingEngine (cap Microstake non disponibile); StreamingFeed passa numberOfWinners. Nessun cambio alla base dei cap percentuali di Money Management (decisione owner aperta). LIVE resta disabilitato.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "betfair_client.py",
+        "core/runtime_controller.py",
+        "core/trading_engine.py",
+        "guardrails/mutation_catalog.json",
+        "services/betfair_service.py",
+        "services/streaming_feed.py",
+        "tests/acceptance/test_issue461_pr28e_funds_gate.py",
+        "tests/unit/test_pfc007_funds_unverifiable.py"
+      ],
+      "max_files": 10
     }
   }
 }
