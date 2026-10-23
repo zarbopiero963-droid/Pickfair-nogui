@@ -51,8 +51,11 @@ class _Config:
     # limite non valido => blocco fail-closed. In produzione e' None.
     max_session_loss = None
     max_exposure_stop = None
-    # PFC-008: il cap del totale si ricontrolla sulla lettura fresca d'ingresso; 0 dal catch-all non e' valido.
+    # PFC-008: i cap percentuali si ricontrollano sulla lettura fresca d'ingresso; 0 dal catch-all non e' valido.
+    max_single_bet_pct = 100.0
     max_total_exposure_pct = 100.0
+    max_event_exposure_pct = 100.0
+    max_stake_abs = None             # tetto assoluto del singolo ordine non attivo (0 dal catch-all = blocca tutto)
 
     def __getattr__(self, _name):
         return 0

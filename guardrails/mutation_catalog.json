@@ -2891,6 +2891,42 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "PFC-008: l'ACK sincrono ricevuto ma non applicato lascia la riserva pendente (doppio conteggio nel cap totale)."
+    },
+    {
+      "id": "fresh_caps_single_skipped",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(order, self._max_single_stake_abs(base)):\n            return \"supera_max_single_bet\"\n",
+      "mutated": "        if False:\n            return \"supera_max_single_bet\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 4ce44a7: con la cassa scesa il singolo ordine resta approvato sul 18% della cassa registrata."
+    },
+    {
+      "id": "fresh_caps_event_skipped",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(event, self._max_event_exposure_abs(base)):\n            return \"supera_max_event_exposure\"\n",
+      "mutated": "        if False:\n            return \"supera_max_event_exposure\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 4ce44a7: con la cassa scesa l'esposizione dell'evento resta approvata sulla cassa registrata."
+    },
+    {
+      "id": "funds_reading_stale_mutates_bankroll",
+      "module": "core.risk_desk",
+      "area": "exposure",
+      "file": "core/risk_desk.py",
+      "original": "            if iniziata is not None and ultima is not None and iniziata < ultima:\n                return False\n            if bankroll is not None:\n",
+      "mutated": "            if bankroll is not None:\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P2 su 4ce44a7: una lettura vecchia arrivata tardi riscrive il bankroll e invalida la cassa piu' recente."
     }
   ]
 }

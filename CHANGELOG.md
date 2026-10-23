@@ -30,7 +30,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     sulla lettura fresca d'ingresso (impegnato esterno cresciuto o cassa scesa dopo l'ultima lettura registrata =>
     `supera_max_total_exposure` prima di `CMD_QUICK_BET`; rilievo Codex P1 su 45c9aa2). Il TradingEngine pubblica l'ACK sincrono
     `QUICK_BET_SUBMIT_ACK` sull'ordine accettato dal broker: la riserva risulta a mercato e non e' contata due volte;
-    un ordine AMBIGUOUS resta contato in entrambi i modi (fail-closed). Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
+    un ordine AMBIGUOUS resta contato in entrambi i modi (fail-closed). Sulla lettura fresca si ricontrollano anche
+    singolo ordine ed evento (`fresh_caps_reason`); bankroll e cassa di una lettura si applicano insieme dopo il
+    controllo di `read_at` (una lettura vecchia arrivata tardi non riscrive il bankroll; rilievi Codex su 4ce44a7). Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
     precede i nuovi blocchi;
   - `RoserpinaConfig` non ha piu' default per le quattro percentuali ne' per il recovery; le fixture dei test le
     dichiarano esplicitamente (`tests/risk_config_fixtures.py`);

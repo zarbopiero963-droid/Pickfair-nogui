@@ -427,3 +427,119 @@ def test_ack_sincrono_marca_la_riserva_a_mercato_senza_rilasciarla(tmp_path):
     assert "placed_at" in c.rc.table_manager.get_table(cmd["table_id"]).meta
     assert c.rc.table_manager.pending_exposure(since=time.monotonic()) == 0.0
     assert c.rc.table_manager.total_exposure() == 4.0
+
+
+# --- lettura fresca: singolo ordine ed evento (rilievo Codex P1 su 4ce44a7) -----------------------------------------
+
+def _rc_tre_cap(fresca):
+    """Cassa registrata 100 (80 + 20); cap 18% singolo ed evento, 35% totale; lettura fresca `fresca`."""
+    rc, bus = _make_controller(responses=[fresca])
+    with_explicit_risk_pct(rc.mm.config, max_total_exposure_pct=35.0, max_single_bet_pct=18.0,
+                           max_event_exposure_pct=18.0, min_stake=0.01)
+    rc.config.anti_duplication_enabled = False
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0}, read_at=time.monotonic())
+    rc.mode = RuntimeMode.ACTIVE
+    rifiuti = []
+    rc._reject_signal = lambda _s, motivo: rifiuti.append(motivo)
+    return rc, bus, rifiuti
+
+
+@pytest.mark.parametrize("side,stake", [("BACK", 15.0), ("LAY", 7.5)])      # esposizione 15
+def test_lettura_fresca_cassa_scesa_ricontrolla_singolo_ordine(side, stake):
+    # Esempio Codex: 15 <= 18% di 100 (registrata), ma > 18% di 50 (fresca, 50 + 0) = 9. Il totale fresco regge
+    # (15 <= 17.5): senza il ricontrollo del singolo ordine partiva CMD_QUICK_BET.
+    rc, bus, rifiuti = _rc_tre_cap({"available": 50.0, "exposure": 0.0})
+    rc._on_signal_received_serial(_segnale(side, stake))
+    assert not _ordini(bus)
+    assert rifiuti == ["supera_max_single_bet"], rifiuti
+
+
+def test_lettura_fresca_cassa_scesa_ricontrolla_l_evento():
+    # Stesso evento gia' esposto per 5 (tavolo del bot). Nuovo BACK 6: singolo 6 <= 9 (18% di 50), totale
+    # 5 + 6 = 11 <= 17.5, evento 5 + 6 = 11 > 9 => rifiutato sulla cassa fresca (sulla registrata 11 <= 18).
+    rc, bus, rifiuti = _rc_tre_cap({"available": 45.0, "exposure": -5.0})
+    rc.table_manager.activate(table_id=2, event_key="evt-stesso", exposure=5.0, market_id="1.2", selection_id=2,
+                              meta={"event_id": "E1", "event_name": "A v B", "event_identity": "id:E1"})
+    rc.table_manager.mark_placed(2, "evt-stesso", at=time.monotonic() - 1.0)
+    rc._on_signal_received_serial(_segnale("BACK", 6.0))
+    assert not _ordini(bus)
+    assert rifiuti == ["supera_max_event_exposure"], rifiuti
+
+
+def test_lettura_fresca_tre_cap_entro_i_limiti_ammette():
+    rc, bus, rifiuti = _rc_tre_cap({"available": 80.0, "exposure": -20.0})
+    rc._on_signal_received_serial(_segnale("BACK", 9.0))
+    assert _ordini(bus) and not rifiuti, rifiuti
+
+
+# --- letture fuori ordine: bankroll e cassa insieme (rilievo Codex P2 su 4ce44a7) ------------------------------------
+
+def test_lettura_vecchia_arrivata_tardi_non_tocca_bankroll_ne_cassa():
+    # Lettura piu' recente applicata (60 + 40); una piu' vecchia (80 + 20) finisce dopo: prima riscriveva il
+    # bankroll a 80 e invalidava la cassa (CASH_NOT_READ) senza poterla ripristinare.
+    rc, _bus = _make_controller(responses=[])
+    rc._applica_fondi_avvio({"available": 60.0, "exposure": -40.0}, read_at=10.0)
+    vecchia = 5.0
+    rc.betfair_service.get_account_funds = lambda: {"available": 80.0, "exposure": -20.0}
+    clock = iter([vecchia] + [vecchia + 0.01] * 50)
+    import core.runtime_controller as modulo
+    originale = modulo.time.monotonic
+    modulo.time.monotonic = lambda: next(clock)
+    try:
+        rc.get_status()
+    finally:
+        modulo.time.monotonic = originale
+    assert rc.risk_desk.bankroll_current == 60.0
+    assert rc.risk_desk.cash_basis() == (100.0, 40.0, 10.0)
+    assert rc.risk_desk.cash_equity_reason == ""
+
+
+def test_sync_funds_reading_atomico_ignora_la_lettura_vecchia():
+    desk = RiskDesk()
+    assert desk.sync_funds_reading(60.0, 100.0, 60.0, committed_exposure=40.0, read_at=2.0) is True
+    assert desk.sync_funds_reading(80.0, 100.0, 80.0, committed_exposure=20.0, read_at=1.0) is False
+    assert desk.bankroll_current == 60.0 and desk.cash_basis() == (100.0, 40.0, 2.0)
+    assert desk.sync_funds_reading(None, 100.0, 60.0, committed_exposure=40.0, read_at=3.0) is True
+    assert desk.cash_basis() == (100.0, 40.0, 3.0)
+
+
+# --- rilievi Grok su 4ce44a7: riserva del bot pendente e ACK durante la lettura fresca ------------------------------
+
+def _rc_con_riserva_bot(fresca_fn):
+    # Lettura registrata 100 + 0: il MM ammette (tavoli 20 + 1 <= 35). L'impegnato esterno 20 compare solo nella
+    # lettura fresca d'ingresso, quindi il rifiuto, se c'e', viene dal ricontrollo fresco.
+    rc, bus = _make_controller(responses=[])
+    _pct(rc.mm.config)
+    rc.config.anti_duplication_enabled = False
+    rc._applica_fondi_avvio({"available": 100.0, "exposure": 0.0}, read_at=time.monotonic())
+    rc.mode = RuntimeMode.ACTIVE
+    rifiuti = []
+    rc._reject_signal = lambda _s, motivo: rifiuti.append(motivo)
+    rc.table_manager.activate(table_id=2, event_key="evt-bot", exposure=20.0, market_id="1.9", selection_id=9)
+    rc.betfair_service.get_account_funds = fresca_fn(rc)
+    return rc, bus, rifiuti
+
+
+def test_lettura_fresca_conta_la_riserva_del_bot_non_ancora_a_mercato():
+    # Cassa 100, impegnato esterno 20 nella lettura fresca, riserva del bot 20 non a mercato, cap 35%: la riserva
+    # e' fra le pendenti (placed_at assente) e si somma all'impegnato: 20 + 20 + 1 = 41 > 35 => rifiuto.
+    rc, bus, rifiuti = _rc_con_riserva_bot(lambda _rc: lambda: {"available": 80.0, "exposure": -20.0})
+    rc._on_signal_received_serial(_segnale("BACK", 1.0))
+    assert not _ordini(bus)
+    assert "supera_max_total_exposure" in rifiuti, rifiuti
+
+
+def test_ack_arrivato_durante_la_lettura_fresca_resta_fra_le_pendenti():
+    # L'ACK della riserva del bot arriva a lettura gia' iniziata e la lettura non la riflette: placed_at > read_at,
+    # quindi resta fra le pendenti (mai sotto-stima): 20 + 20 + 1 > 35 => rifiuto.
+    def lettura(rc):
+        def _f():
+            time.sleep(0.001)
+            rc.table_manager.mark_placed(2, "evt-bot", at=time.monotonic())
+            return {"available": 80.0, "exposure": -20.0}
+        return _f
+    rc, bus, rifiuti = _rc_con_riserva_bot(lettura)
+    rc._on_signal_received_serial(_segnale("BACK", 1.0))
+    assert "placed_at" in rc.table_manager.get_table(2).meta
+    assert not _ordini(bus)
+    assert "supera_max_total_exposure" in rifiuti, rifiuti

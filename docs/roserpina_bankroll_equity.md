@@ -37,8 +37,10 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   cassa 100 con 20 impegnati esterni, cap 35% ⇒ 15; con in più una riserva pendente del bot da 10 ⇒ 5.
   Il tavolo di un lotto Dutching (`legs_total`) risulta a mercato solo quando tutte le gambe distinte
   (`customer_ref`) hanno avuto un esito a mercato: le gambe ancora in volo restano riserve pendenti.
-  Il segnale singolo (BACK/LAY) ricontrolla il cap totale anche sulla **lettura fresca d'ingresso** del gate
-  fondi (`RuntimeController._entry_total_cap_reason`): stessa formula sulla cassa e sull'impegnato appena letti.
+  Il segnale singolo (BACK/LAY) ricontrolla **tutti e tre i cap percentuali** (singolo ordine, totale, evento)
+  anche sulla **lettura fresca d'ingresso** del gate fondi (`RuntimeController._entry_total_cap_reason` →
+  `RoserpinaMoneyManagement.fresh_caps_reason`): stesse formule sulla cassa e sull'impegnato appena letti
+  (cassa registrata 100, fresca 50 + 0, cap 18%: un BACK da 15 viene rifiutato con `supera_max_single_bet`).
   Un impegnato esterno cresciuto o una cassa scesa dopo l'ultima lettura registrata riducono quindi il limite
   prima di `CMD_QUICK_BET` (cassa 100 registrata con 20 impegnati, lettura fresca 60 + 40, cap 35%: un BACK
   da 15 viene rifiutato con `supera_max_total_exposure`); lettura fresca non verificata ⇒
@@ -52,6 +54,9 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
   `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del
   cap totale: il loro cap temporaneo resta limitato ai fondi disponibili (#548, mandato owner PFC-008 punto 5).
+- **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme
+  (`RiskDesk.sync_funds_reading`), con il controllo di `read_at` prima di toccare il bankroll: una lettura iniziata
+  prima dell'ultima applicata non riscrive il disponibile né invalida la cassa più recente.
 - Un campo mancante, non numerico, non finito o negativo rende lo snapshot non valido. Un'esposizione mancante
   **non** vale zero.
 - La base dello stake target non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test

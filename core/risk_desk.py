@@ -114,6 +114,23 @@ class RiskDesk:
         self.cash_equity_reason = str(reason)
         self.cash_committed_exposure = 0.0
 
+    def sync_funds_reading(self, bankroll: Any, cash_equity: Any, available: Any, *, reason: str = "",
+                           committed_exposure: Any = 0.0, read_at: Any = None) -> bool:
+        """PFC-008 (rilievo Codex su 4ce44a7): bankroll e cassa della stessa lettura applicati in un'unica operazione.
+
+        Il controllo di `read_at` viene PRIMA di toccare il bankroll: una lettura iniziata prima dell'ultima
+        applicata e' ignorata per intero (False), cosi' non riscrive il disponibile ne' invalida la cassa piu'
+        recente. `bankroll` None = disponibile invariato (si registra solo la cassa)."""
+        with self._lock:
+            iniziata, ultima = finite_number(read_at), self._cash_read_at
+            if iniziata is not None and ultima is not None and iniziata < ultima:
+                return False
+            if bankroll is not None:
+                self.sync_bankroll(bankroll)
+            self.sync_cash_equity(cash_equity, available, reason=reason, committed_exposure=committed_exposure,
+                                  read_at=read_at)
+            return True
+
     def sync_cash_equity(self, cash_equity: Any, available: Any, *, reason: str = "",
                          committed_exposure: Any = 0.0, read_at: Any = None) -> None:
         """Registra la cassa verificata letta insieme al disponibile `available` (PFC-008).

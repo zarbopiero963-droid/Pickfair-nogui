@@ -21,10 +21,11 @@ from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain
 
 
 def _chain(tmp_path, **kwargs):
-    # Questi test isolano il gate dei fondi (MM sostituito da una decisione fissa): il cap percentuale del totale,
-    # ricontrollato da PFC-008 sulla lettura fresca d'ingresso, e' dichiarato al 100% per non sovrapporsi.
+    # Questi test isolano il gate dei fondi (MM sostituito da una decisione fissa): i cap percentuali, ricontrollati
+    # da PFC-008 sulla lettura fresca d'ingresso, sono dichiarati al 100% per non sovrapporsi.
     c = _chain_base(tmp_path, **kwargs)
-    c.rc.config.max_total_exposure_pct = 100.0
+    for key in ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct"):
+        setattr(c.rc.config, key, 100.0)
     return c
 
 

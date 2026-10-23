@@ -101,6 +101,29 @@ class RoserpinaMoneyManagement:
             bankroll_current * (self._safe_float(self.config.max_event_exposure_pct, 0.0) / 100.0),
         )
 
+    def fresh_caps_reason(self, *, cash: Any, order_exposure: Any, total_exposure: Any,
+                          event_exposure: Any) -> str:
+        """PFC-008 (rilievi Codex su 45c9aa2 e 4ce44a7): i tre cap percentuali di `calculate` ricontrollati sulla
+        cassa verificata di una lettura piu' recente (la lettura fresca d'ingresso), con la stessa base e gli
+        stessi limiti. `total_exposure` ed `event_exposure` sono gia' comprensivi del nuovo ordine. '' se tutti
+        reggono, altrimenti il motivo (percentuale non valida, valore non finito, cap superato)."""
+        for key in ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct"):
+            reason = validators.risk_pct_reason(key, getattr(self.config, key, None))
+            if reason:
+                return reason
+        base = validators.finite_number(cash)
+        values = [validators.finite_number(v) for v in (order_exposure, total_exposure, event_exposure)]
+        if base is None or base <= 0 or any(v is None for v in values):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        order, total, event = values
+        if validators.exceeds_cap(order, self._max_single_stake_abs(base)):
+            return "supera_max_single_bet"
+        if validators.exceeds_cap(total, self._max_total_exposure_abs(base)):
+            return "supera_max_total_exposure"
+        if validators.exceeds_cap(event, self._max_event_exposure_abs(base)):
+            return "supera_max_event_exposure"
+        return ""
+
     # =========================================================
     # DESK MODE
     # =========================================================

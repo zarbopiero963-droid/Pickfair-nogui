@@ -2584,7 +2584,7 @@
       "max_files": 10
     },
     "pfc008-risk-pct-required-verified-cash": {
-      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548). Estensione dichiarata: core/table_manager.py (lotto Dutching a mercato solo con tutte le gambe, review PFC-008) e tests/unit/test_pfc008_exposure_beyond_tables.py. Estensione dichiarata (rilievo Codex P1 su 45c9aa2, ACK sincrono QUICK_BET_SUBMIT_ACK): tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py e tests/unit/test_runtime_controller_best_price_direct.py.",
+      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548). Estensione dichiarata: core/table_manager.py (lotto Dutching a mercato solo con tutte le gambe, review PFC-008) e tests/unit/test_pfc008_exposure_beyond_tables.py. Estensione dichiarata (rilievo Codex P1 su 45c9aa2, ACK sincrono QUICK_BET_SUBMIT_ACK): tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py e tests/unit/test_runtime_controller_best_price_direct.py. Estensione dichiarata (rilievi Codex su 4ce44a7): tests/f026/child_f026.py. Estensione dichiarata (mandato owner PF-FINANCIAL-IMPACT-GATE-01): docs/financial_impact_gate.md.",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
@@ -2600,6 +2600,7 @@
         "core/validators.py",
         "docs/design/design_handoff.md",
         "docs/design/screenshots/pfc008-roserpina-guidata.png",
+        "docs/financial_impact_gate.md",
         "docs/microstake_native.md",
         "docs/roserpina41_parameter_dossier.md",
         "docs/roserpina_bankroll_equity.md",
@@ -2631,6 +2632,7 @@
         "tests/e2e/test_dutching_controller_e2e.py",
         "tests/f001/child_autoreset.py",
         "tests/f001/child_runtime.py",
+        "tests/f026/child_f026.py",
         "tests/f026/test_f026_financial.py",
         "tests/f026/test_f032_rsr12_units.py",
         "tests/failure/test_dutching_controller_failures.py",
@@ -2663,7 +2665,7 @@
         "tests/unit/test_pr5_numeric_guardrails.py",
         "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
-      "max_files": 76
+      "max_files": 78
     }
   }
 }
