@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 72,
- "updated_at": "2026-10-23T11:13:27Z",
+ "seq": 73,
+ "updated_at": "2026-10-23T12:15:57Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "STOP NEEDS_MANUAL definitivo sulla #539 head 2636104 (ciclo straordinario 11/11 usato), c.6363583732: /commits/<sha>/pulls non elenca PR chiuse non mergiate -> scenario 2 (branch diverso) falso verde reale. Attendere la decisione architetturale owner (es. registro persistente dei bloccanti). Nessun ciclo, nessun merge, ruleset invariato, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "#539 CHIUSA senza merge il 23/10 12:15Z (head 2636104 conservato sul branch ccr-764b0316-9r1a1d). Il commento di 'parcheggio PFC-002 -> PFC-003' (c.6364637158) e' stato pubblicato tramite l'app chatgpt-codex-connector, non dalla UI dell'owner: non verificabile come istruzione owner e in conflitto col mandato LEDGER-01 ('Non procedere con PFC-003'). Attendere conferma diretta dell'owner: PFC-003 da main (senza cherry-pick del gate) oppure ledger. Nessun merge, nessun LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "4e5f249546482647752b90bcc61963c1c551a564",
- "lotto_corrente": "PFC-002 PR #539 su 2636104: NEEDS_MANUAL dopo ciclo 11/11; serve decisione architetturale owner",
+ "previous_checkpoint_sha": "bc5d898ca1e21efc5cb344151d04e3bd637ff47a",
+ "lotto_corrente": "PFC-002 #539 chiusa senza merge (parcheggiata); proposta ledger pubblicata c.6364092454; in attesa conferma owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -608,7 +608,7 @@
   "patch": {
    "head": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
    "tree": "732ce81524a19016ee5fa537c200e0feb8e869a2",
-   "captured_at": "2026-10-23T11:13:27+00:00",
+   "captured_at": "2026-10-23T12:15:57+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -1435,6 +1435,9 @@
   "verdict": "NEEDS_MANUAL, #539 c.6363583732",
   "owner_decisions": "D1-D4 (persistenza bloccanti fail-closed, triage owner, D3 CheckRun, D4 ruleset dopo merge); terzo audit opzione 1 (legame ai commit)",
   "audits": "5 audit indipendenti: i difetti dei primi 3 corretti prima del push; 4 conferma D1/D2/B; 5 (finale su aa3bb57) NON FAVOREVOLE: force-push + nuova PR",
-  "scenari": "coperti 1,2b,3a,4,5,6,7(stesso branch); falso verde 2 (branch diverso: API non elenca PR chiuse non mergiate); non coperto 3b; parziale 8 (branch riusato)"
+  "scenari": "coperti 1,2b,3a,4,5,6,7(stesso branch); falso verde 2 (branch diverso: API non elenca PR chiuse non mergiate); non coperto 3b; parziale 8 (branch riusato)",
+  "state": "CLOSED (non mergiata)",
+  "ledger_proposal": "#539 c.6364092454",
+  "closure_note": "commento di parcheggio via app chatgpt-codex-connector; chiusura senza app indicata"
  }
 }

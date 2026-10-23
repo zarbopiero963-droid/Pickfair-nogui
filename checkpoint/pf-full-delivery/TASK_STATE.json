@@ -59,9 +59,9 @@
   "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
   "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)"
  ],
- "lotto_corrente": "PFC-002 PR #539 su 2636104: NEEDS_MANUAL dopo ciclo 11/11; serve decisione architetturale owner",
+ "lotto_corrente": "PFC-002 #539 chiusa senza merge (parcheggiata); proposta ledger pubblicata c.6364092454; in attesa conferma owner",
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "STOP NEEDS_MANUAL definitivo sulla #539 head 2636104 (ciclo straordinario 11/11 usato), c.6363583732: /commits/<sha>/pulls non elenca PR chiuse non mergiate -> scenario 2 (branch diverso) falso verde reale. Attendere la decisione architetturale owner (es. registro persistente dei bloccanti). Nessun ciclo, nessun merge, ruleset invariato, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "#539 CHIUSA senza merge il 23/10 12:15Z (head 2636104 conservato sul branch ccr-764b0316-9r1a1d). Il commento di 'parcheggio PFC-002 -> PFC-003' (c.6364637158) e' stato pubblicato tramite l'app chatgpt-codex-connector, non dalla UI dell'owner: non verificabile come istruzione owner e in conflitto col mandato LEDGER-01 ('Non procedere con PFC-003'). Attendere conferma diretta dell'owner: PFC-003 da main (senza cherry-pick del gate) oppure ledger. Nessun merge, nessun LIVE.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
