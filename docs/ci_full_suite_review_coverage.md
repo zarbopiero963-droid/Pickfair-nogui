@@ -211,20 +211,48 @@ Regole in vigore (`review_coverage.py`: `attestazioni_con_bloccanti`,
    rerun, commit vuoti, merge di main, modifiche di titolo/descrizione, cambio
    di base e modifiche non pertinenti.
 
-   **Legame ai commit** (decisione owner sul terzo audit di #539). Contano
-   anche le attestazioni di **qualunque PR** che terminano su un commit di
-   questa: chiudere la PR e aprirne una nuova con gli stessi commit non azzera
-   i bloccanti. I run si cercano anche per SHA (`head_sha`), perché quelli
-   della PR chiusa sono nati prima della nuova. Il triage si fa sulla PR in
-   cui si verifica: l'id dipende dal range, non dal numero di PR.
+   **PR storiche collegate** (decisioni owner sul terzo audit e deroga 11/11 su
+   #539, `pr_collegate`). Contano anche i bloccanti delle PR **non mergiate**
+   collegate a questa, in modo transitivo (al massimo 10, oltre: rosso):
+   - per **branch** (`/pulls?state=closed&head=<owner>:<branch>`): nuova PR
+     sullo stesso branch, anche dopo force-push e con commit riscritti da un
+     rebase;
+   - per **commit in comune** (`/commits/<sha>/pulls`, che elenca anche le PR
+     chiuse): nuova PR su un branch diverso che riusa almeno un commit.
+
+   Di ogni PR collegata si leggono i run del **suo** branch solo nella
+   finestra in cui era aperta (`created=<apertura>..<chiusura>`): cosi' si
+   ritrovano anche i run sui commit tolti dal force-push, e un branch riusato
+   in un'altra epoca non e' letto (ne' riempie il tetto di pagine). Contano le
+   attestazioni con il numero di una PR collegata o che terminano su un commit
+   di questa. Le PR mergiate non trasmettono bloccanti (sono passate dal merge
+   owner). Il triage dell'owner vale anche se scritto sulla PR storica che ha
+   trovato il bloccante.
+
+   | Scenario | Esito | Test |
+   |---|---|---|
+   | PR bloccata, force-push, chiusura, nuova PR sullo stesso branch (stessi commit o rebase) | rosso | `test_s1_*` |
+   | Stessa sequenza su un branch diverso con un commit in comune | rosso | `test_s2_*` |
+   | Cambio di base | rosso | `test_s4_*` |
+   | Rerun con attestazione incompleta | rosso | `test_d1_*` (unità ed e2e) |
+   | Bloccante precedente ancora aperto (commit vuoto, merge di main) | rosso | `test_d2_*` |
+   | Falso positivo con triage owner, anche sulla PR storica | verde; triage da app: rosso | `test_s7_*`, `test_triage_*` |
+   | Nuova PR indipendente (altro branch, nessun commit in comune) | verde, nessuna PR collegata | `test_s8_*` |
+   | PR storica mergiata sullo stesso branch, run di un'altra epoca, branch riusato a lungo | verde | `test_pr_storica_mergiata_*`, `test_run_della_pr_storica_fuori_*`, `test_branch_riusato_*` |
+
+   **Scenario NON coperto, per costruzione.** Una PR nuova su un branch
+   **diverso** con commit **tutti riscritti** (cherry-pick, riscrittura) non ha
+   alcun legame verificabile con la PR precedente: per il codice è
+   indistinguibile da una PR indipendente (scenario `s8`), che non deve
+   ereditare niente. Distinguerle richiederebbe un sistema strutturalmente
+   diverso (un registro dei bloccanti di repository, o un confronto del
+   contenuto), fuori da questa PR. Riceve comunque la review **completa** dal
+   branch base, che può non ripetere il bloccante.
 
    **Divieto di governance.** L'agente non chiude, ricrea o riapre una PR, né
-   riscrive i commit, per azzerare i bloccanti di una review. Una PR nuova con
-   commit riscritti su un altro branch è codice nuovo: riceve la review
-   **completa** dal branch base (il primo evento di una PR rivede sempre
-   `BASE...HEAD`), ma i bloccanti della PR precedente non la seguono. È un
-   **rischio residuo, non risolto dal codice**: lo copre la policy, che va
-   riportata anche in AGENTS.md (file dell'owner, modifica a suo carico).
+   riscrive i commit su un altro branch, per azzerare i bloccanti di una
+   review. È l'unica copertura dello scenario qui sopra, e va riportata anche
+   in AGENTS.md (file dell'owner, modifica a suo carico).
 2. Cio' che impedisce di leggere tutte le attestazioni è rosso, non uno scarto
    silenzioso:
    - un **run della PR ancora in corso** (anche legato alla PR solo dal

@@ -53,6 +53,7 @@ import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from dataclasses import dataclass, field
@@ -771,6 +772,7 @@ def attestazioni_con_bloccanti(
     pr_commits: set[str],
     head_ref: str,
     created_since: str,
+    collegate: Iterable[dict[str, Any]] = (),
     max_pages: int = 10,
 ) -> tuple[list[dict[str, Any]], list[str], list[str], list[dict[str, Any]]]:
     """TUTTE le attestazioni ufficiali della PR, complete o no, di ogni tentativo.
@@ -827,6 +829,27 @@ def attestazioni_con_bloccanti(
         for run in runs:
             if run.get("head_sha") == sha:
                 candidati.setdefault(str(run.get("id")), run)
+    # 3) i run delle PR storiche collegate (`pr_collegate`), dal LORO branch e solo
+    #    nella finestra in cui erano aperte: un force-push le ha tolto i commit
+    #    (ciclo 11 su #539), e un branch riusato in un'altra epoca non e' loro.
+    numeri_collegati = set()
+    for altra in collegate:
+        numeri_collegati.add(str(altra.get("number")))
+        ref = str((altra.get("head") or {}).get("ref") or "")
+        finestra = f"{altra.get('created_at') or '*'}..{altra.get('closed_at') or '*'}"
+        letta = False
+        for page in range(1, max_pages + 1):
+            runs = (gh.get(f"{base_url}&branch={urllib.parse.quote(ref, safe='')}&created={finestra}&page={page}")
+                    or {}).get("workflow_runs") or []
+            for run in runs:
+                if run.get("head_branch") == ref:
+                    candidati.setdefault(str(run.get("id")), run)
+            if len(runs) < 100:
+                letta = True
+                break
+        if not letta:
+            motivi.append(f"storico dei run della PR #{altra.get('number')} non letto per intero: "
+                          "bloccanti non verificabili")
     for run in candidati.values():
         if run.get("event") != "pull_request_target" or str(run.get("path") or "").split("@")[0] != percorso:
             continue
@@ -851,6 +874,7 @@ def attestazioni_con_bloccanti(
                             str(exc)[:120])
                 continue
             della_pr = isinstance(att, dict) and (str(att.get("pr")) == str(pr)
+                                                  or str(att.get("pr")) in numeri_collegati
                                                   or att.get("range_head") in pr_commits)
             if (not della_pr or att.get("schema") != SCHEMA or att.get("reviewer") != reviewer
                     or att.get("repo") != gh.repo or str(att.get("run_id")) != str(run["id"])):
@@ -859,6 +883,64 @@ def attestazioni_con_bloccanti(
                 continue
             trovate.append(att)
     return trovate, motivi, note, illeggibili
+
+
+def pr_collegate(gh: GitHub, *, pr: int, pr_commits: set[str], head_ref: str,
+                 max_pr: int = 10) -> tuple[list[dict[str, Any]], list[str]]:
+    """PR storiche pertinenti: NON mergiate, collegate a questa per branch o per commit.
+
+    Ciclo 11 su #539 (deroga owner). Un bloccante non deve sparire chiudendo
+    una PR e aprendone un'altra dopo un force-push. Legami verificabili, in
+    modo transitivo:
+    - stesso branch (`/pulls?state=closed&head=<owner>:<branch>`): copre la
+      nuova PR sullo stesso branch, anche con commit riscritti (rebase);
+    - un commit in comune (`/commits/<sha>/pulls`, che elenca anche le PR
+      chiuse): copre la nuova PR su un branch diverso che riusa un commit.
+    Le PR mergiate non trasmettono bloccanti: sono passate dal merge owner.
+    NON e' collegabile una PR nuova su un branch diverso SENZA commit in
+    comune (cherry-pick, riscrittura): per costruzione e' indistinguibile da
+    una PR indipendente. Limite dichiarato, coperto dalla policy.
+    Oltre `max_pr` PR collegate: rosso (motivo), non una lettura parziale.
+    """
+    owner = gh.repo.split("/")[0]
+    trovate: dict[int, dict[str, Any]] = {}
+    motivi: list[str] = []
+    refs, shas = [head_ref] if head_ref else [], list(pr_commits)
+    visti_ref: set[str] = set()
+    visti_sha: set[str] = set()
+
+    def aggiungi(altra: dict[str, Any]) -> None:
+        try:
+            numero = int(altra.get("number"))
+        except (TypeError, ValueError):
+            return
+        if numero == int(pr) or numero in trovate or altra.get("merged_at"):
+            return
+        trovate[numero] = altra
+        refs.append(str((altra.get("head") or {}).get("ref") or ""))
+        for page in range(1, 4):
+            commits = gh.get(f"/repos/{gh.repo}/pulls/{numero}/commits?per_page=100&page={page}") or []
+            shas.extend(c.get("sha") for c in commits if c.get("sha"))
+            if len(commits) < 100:
+                break
+
+    while (refs or shas) and len(trovate) <= max_pr:
+        if refs:
+            ref = refs.pop()
+            if ref and ref not in visti_ref:
+                visti_ref.add(ref)
+                testa = urllib.parse.quote(f"{owner}:{ref}", safe="")
+                for altra in gh.get(f"/repos/{gh.repo}/pulls?state=closed&head={testa}&per_page=100") or []:
+                    aggiungi(altra)
+            continue
+        sha = shas.pop()
+        if sha and sha not in visti_sha:
+            visti_sha.add(sha)
+            for altra in gh.get(f"/repos/{gh.repo}/commits/{sha}/pulls?per_page=100") or []:
+                aggiungi(altra)
+    if len(trovate) > max_pr:
+        motivi.append(f"oltre {max_pr} PR collegate per branch o commit: bloccanti non verificabili")
+    return [trovate[n] for n in sorted(trovate)], motivi
 
 
 def triage_dell_owner(gh: GitHub, *, pr: int, reviewer: str) -> set[str]:
@@ -963,16 +1045,21 @@ def cmd_verify(args: argparse.Namespace) -> int:
                           "leggibili, si rilancia la verifica quando finiscono")
         # Bloccanti persistenti: tutte le attestazioni della PR, di ogni tentativo
         # e di ogni range, piu' quella di questo run (non ancora fra gli artifact).
+        collegate, motivi_collegate = pr_collegate(gh, pr=args.pr, pr_commits=commits, head_ref=head_ref)
         tutte, motivi_scan, note, illeggibili = attestazioni_con_bloccanti(
             gh, pr=args.pr, reviewer=args.reviewer, workflow_file=args.workflow_file, pr_commits=commits,
-            head_ref=head_ref, created_since=str(info.get("created_at") or ""),
+            head_ref=head_ref, created_since=str(info.get("created_at") or ""), collegate=collegate,
         )
+        motivi_scan = motivi_collegate + motivi_scan
         # Quella di questo run anche se incompleta: il suo artifact puo' non
         # essere ancora elencato (terzo audit su #539).
         visti = {(str(a.get("run_id")), str(a.get("run_attempt"))) for a in tutte}
         tutte += [a for a in atts + _attestazione_locale_grezza(args)
                   if (str(a.get("run_id")), str(a.get("run_attempt"))) not in visti]
-        triaged = triage_dell_owner(gh, pr=args.pr, reviewer=args.reviewer)
+        # il triage dell'owner vale anche se scritto sulla PR storica che ha trovato il bloccante
+        triaged = set()
+        for numero in [args.pr] + [int(a["number"]) for a in collegate]:
+            triaged |= triage_dell_owner(gh, pr=numero, reviewer=args.reviewer)
         aperti, note_b = bloccanti_aperti(tutte, reviewer=args.reviewer, triaged=triaged)
         aperti += [b for b in illeggibili if b["id"] not in triaged]
         motivi += motivi_scan
@@ -980,6 +1067,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
         trovati = {b["id"] for b in bloccanti_aperti(tutte, reviewer=args.reviewer, triaged=set())[0]}
         trovati |= {b["id"] for b in illeggibili}
         esito["open_blockers"] = aperti
+        esito["linked_prs"] = [int(a["number"]) for a in collegate]
         esito["triaged_blockers"] = sorted(triaged & trovati)
         esito["notes"] = note + note_b
         esito["reasons"] = motivi

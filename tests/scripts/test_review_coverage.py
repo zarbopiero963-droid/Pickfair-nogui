@@ -14,6 +14,7 @@ import json
 import subprocess
 import sys
 import textwrap
+import urllib.parse
 import zipfile
 from pathlib import Path
 
@@ -248,32 +249,99 @@ def _zip(*contenuti: dict) -> bytes:
 
 
 class FakeGitHub(rc.GitHub):
+    """GitHub in memoria, FEDELE ai filtri che il codice usa (ciclo 11 su #539).
+
+    Prima ignorava `created`, `head_sha` e `branch` e restituiva tutti i run a
+    ogni ricerca: un test poteva passare per un run che l'API vera non avrebbe
+    mai restituito (verifica indipendente finale su #539). Ora:
+    - `/actions/workflows/<f>/runs` applica `branch`, `head_sha`, `created`
+      (`>=X` oppure `A..B`) e la paginazione; NON filtra per file ne' per
+      evento, di proposito: i test di difesa vogliono vedere scartati dal
+      codice anche i run che l'API non dovrebbe restituire;
+    - le PR (`pulls`) hanno stato, merge, date, branch e commit propri;
+      `/commits/<sha>/pulls` e `/pulls?state=closed&head=...` rispondono da li'.
+    """
+
     def __init__(self, runs, artifacts, commits=(SHA_1, SHA_2, SHA_3), base_ancestors=(), comments=(),
-                 expired=()):
+                 expired=(), pulls=None, pr_commits=None, commit_pulls=None):
         super().__init__(REPO, "token")
         self.runs = runs
         self.artifacts = artifacts  # run_id -> list[(name, bytes)]
         self.commits = list(commits)
         self.base_ancestors = set(base_ancestors)
-        self.comments = list(comments)
+        self.comments = comments if isinstance(comments, dict) else {7: list(comments)}
         self.expired = set(expired)  # run_id con artifact scaduti
+        self.pulls = {7: {"number": 7, "state": "open", "merged_at": None, "created_at": "2026-10-01T00:00:00Z",
+                          "closed_at": None, "head": {"ref": "feature"}}}
+        self.pulls.update(pulls or {})
+        self.pr_commits = {7: self.commits}
+        self.pr_commits.update(pr_commits or {})
+        self.commit_pulls = {}  # sha -> numeri di PR (anche chiuse, come l'API vera)
+        for numero, shas in self.pr_commits.items():
+            for sha in shas:
+                self.commit_pulls.setdefault(sha, set()).add(numero)
+        for sha, numeri in (commit_pulls or {}).items():
+            self.commit_pulls.setdefault(sha, set()).update(numeri)
+
+    @staticmethod
+    def _query(path):
+        q = {}
+        for parte in (path.split("?", 1)[1] if "?" in path else "").split("&"):
+            if "=" in parte:
+                k, v = parte.split("=", 1)
+                q[k] = urllib.parse.unquote(v)  # come l'API vera
+        return q
+
+    @staticmethod
+    def _pagina(items, q):
+        per_page, page = int(q.get("per_page", 30)), int(q.get("page", 1))
+        return items[(page - 1) * per_page: page * per_page]
+
+    def _runs(self, q):
+        sel = list(self.runs)
+        if "branch" in q:
+            sel = [r for r in sel if r.get("head_branch") == q["branch"]]
+        if "head_sha" in q:
+            sel = [r for r in sel if r.get("head_sha") == q["head_sha"]]
+        if "created" in q:
+            c = q["created"]
+            if c.startswith(">="):
+                sel = [r for r in sel if r.get("created_at", "") >= c[2:]]
+            elif ".." in c:
+                a, b = c.split("..", 1)
+                sel = [r for r in sel if (a == "*" or r.get("created_at", "") >= a)
+                       and (b == "*" or r.get("created_at", "") <= b)]
+        return self._pagina(sel, q)
 
     def get(self, path):
-        if "/pulls/7/commits" in path:
-            return [{"sha": s} for s in self.commits] if "page=1" in path else []
-        if path.split("?")[0].endswith("/pulls/7"):
-            return {"created_at": "2026-10-01T00:00:00Z", "head": {"ref": "feature"}}
-        if "/issues/7/comments" in path:
-            return self.comments if "page=1" in path else []
-        if "/actions/workflows/" in path:
-            return {"workflow_runs": self.runs} if "page=1" in path else {"workflow_runs": []}
-        if path.endswith("/artifacts?per_page=100"):
-            run_id = int(path.split("/runs/")[1].split("/")[0])
+        q = self._query(path)
+        base = path.split("?")[0]
+        if "/actions/workflows/" in base:
+            return {"workflow_runs": self._runs(q)}
+        m = re.search(r"/pulls/(\d+)/commits$", base)
+        if m:
+            return self._pagina([{"sha": s} for s in self.pr_commits.get(int(m.group(1)), [])], q)
+        m = re.search(r"/pulls/(\d+)$", base)
+        if m:
+            return self.pulls[int(m.group(1))]
+        if base.endswith("/pulls") and "/commits/" not in base:
+            ref = q.get("head", ":").split(":", 1)[1]
+            stato = q.get("state", "open")
+            return [pr for pr in self.pulls.values() if pr["head"]["ref"] == ref
+                    and (stato == "all" or pr["state"] == stato)]
+        m = re.search(r"/commits/([0-9a-f]{40})/pulls$", base)
+        if m:
+            return [self.pulls[n] for n in sorted(self.commit_pulls.get(m.group(1), set())) if n in self.pulls]
+        m = re.search(r"/issues/(\d+)/comments$", base)
+        if m:
+            return self._pagina(self.comments.get(int(m.group(1)), []), q)
+        if base.endswith("/artifacts"):
+            run_id = int(base.split("/runs/")[1].split("/")[0])
             return {"artifacts": [{"name": n, "archive_download_url": f"zip:{run_id}:{i}",
                                    "expired": run_id in self.expired}
                                   for i, (n, _b) in enumerate(self.artifacts.get(run_id, []))]}
-        if "/compare/" in path:
-            sha = path.split("/compare/")[1].split("...")[0]
+        if "/compare/" in base:
+            sha = base.split("/compare/")[1].split("...")[0]
             return {"status": "ahead" if sha in self.base_ancestors else "diverged"}
         raise AssertionError(path)
 
@@ -282,8 +350,10 @@ class FakeGitHub(rc.GitHub):
         return self.artifacts[int(run_id)][int(idx)][1]
 
 
-def _run(run_id, head, event="pull_request_target", path=".github/workflows/pr-review.yml"):
-    return {"id": run_id, "head_sha": head, "event": event, "path": path, "status": "completed"}
+def _run(run_id, head, event="pull_request_target", path=".github/workflows/pr-review.yml",
+         created="2026-10-10T00:00:00Z", branch="feature"):
+    return {"id": run_id, "head_sha": head, "event": event, "path": path, "status": "completed",
+            "created_at": created, "head_branch": branch}
 
 
 def test_solo_i_run_ufficiali_del_workflow_del_revisore_contano():
@@ -857,3 +927,128 @@ def test_id_di_un_artifact_illeggibile_non_dipende_dal_messaggio_di_errore():
         gh2, pr=7, reviewer="gpt56sol", workflow_file="pr-review.yml", pr_commits={SHA_1}, head_ref="",
         created_since="")
     assert illeggibili[0]["id"] == illeggibili2[0]["id"]
+
+
+# ---------------------------------------------------------------------------
+# Ciclo straordinario 11/11 (deroga owner su #539): bloccanti delle PR storiche
+# pertinenti. La PR A (5) trova un bloccante sul commit Z, un force-push la
+# porta su SHA_1 (review pulita), poi viene chiusa senza merge. La PR B (7) e'
+# aperta dopo.
+# ---------------------------------------------------------------------------
+Z = "c" * 40
+NUOVA_BASE = "b" * 40
+
+
+def _storia(ref_a="feature", ref_b="feature", commits_b=(SHA_2,), merged_a=False, comments=None, extra_runs=()):
+    pr_a = {"number": 5, "state": "closed", "merged_at": "2026-10-12T00:00:00Z" if merged_a else None,
+            "created_at": "2026-10-05T00:00:00Z", "closed_at": "2026-10-12T00:00:00Z", "head": {"ref": ref_a}}
+    pr_b = {"number": 7, "state": "open", "merged_at": None, "created_at": "2026-10-13T00:00:00Z",
+            "closed_at": None, "head": {"ref": ref_b}}
+    run_z = _run(21, Z, created="2026-10-06T00:00:00Z", branch=ref_a)
+    run_1 = _run(22, SHA_1, created="2026-10-08T00:00:00Z", branch=ref_a)
+    run_b = _run(12, commits_b[-1], created="2026-10-14T00:00:00Z", branch=ref_b)
+    att_z = dict(_attestazione(SHA_BASE, Z, 21, bloccanti=[BLOCCANTE]), pr=5)
+    att_1 = dict(_attestazione(SHA_BASE, SHA_1, 22), pr=5)
+    return FakeGitHub(
+        [run_z, run_1, run_b, *extra_runs], {21: [(NOME_ART, _zip(att_z))], 22: [(NOME_ART, _zip(att_1))]},
+        commits=commits_b, pulls={5: pr_a, 7: pr_b}, pr_commits={5: [SHA_1], 7: list(commits_b)},
+        commit_pulls={Z: {5}}, comments=comments or {},
+    )
+
+
+def _verifica_b(monkeypatch, tmp_path, gh, head, base=SHA_BASE):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(rc, "GitHub", lambda repo, token: gh)
+    loc = tmp_path / "l.json"
+    loc.write_text(json.dumps(_attestazione(base, head, 12)))
+    out = tmp_path / "o.json"
+    code = rc.main(["verify", "--repo", REPO, "--pr", "7", "--reviewer", "gpt56sol", "--workflow-file",
+                    "pr-review.yml", "--base-sha", base, "--head-sha", head, "--output", str(out),
+                    "--local-attestation", str(loc)])
+    return code, json.loads(out.read_text())
+
+
+def _ha_il_bloccante(out):
+    return any("stake raddoppiato" in m for m in out["reasons"])
+
+
+@pytest.mark.parametrize("commits_b", [(SHA_1,), (SHA_2,)], ids=["stessi-commit", "commit-riscritti-rebase"])
+def test_s1_force_push_chiusura_e_nuova_pr_sullo_stesso_branch(commits_b, monkeypatch, tmp_path):
+    # Scenari 1 e 3a: la PR A e' trovata per branch; i suoi run si leggono
+    # nella finestra in cui era aperta, compreso quello sul commit Z.
+    code, out = _verifica_b(monkeypatch, tmp_path, _storia(commits_b=commits_b), commits_b[-1])
+    assert code == 1 and _ha_il_bloccante(out), out["reasons"]
+    assert out["linked_prs"] == [5]
+
+
+def test_s2_stessa_sequenza_con_branch_diverso_e_un_commit_in_comune(monkeypatch, tmp_path):
+    # La PR A e' trovata dal commit in comune (`/commits/<sha>/pulls`), poi i
+    # suoi run dal SUO branch: Z non e' fra i commit di B, il bloccante si'.
+    gh = _storia(ref_b="altro", commits_b=(SHA_1, SHA_2))
+    code, out = _verifica_b(monkeypatch, tmp_path, gh, SHA_2)
+    assert code == 1 and _ha_il_bloccante(out) and out["linked_prs"] == [5]
+
+
+def test_s4_cambio_di_base_non_cancella_il_bloccante(monkeypatch, tmp_path):
+    # Stessa PR: review dell'intera PR contro la base nuova, pulita.
+    runs = [_run(11, SHA_1), _run(12, SHA_1)]
+    vecchia = _attestazione(SHA_BASE, SHA_1, 11, bloccanti=[BLOCCANTE])
+    gh = FakeGitHub(runs, {11: [(NOME_ART, _zip(vecchia))]}, commits=(SHA_1,), base_ancestors={NUOVA_BASE})
+    code, out = _verifica_b(monkeypatch, tmp_path, gh, SHA_1, base=NUOVA_BASE)
+    assert code == 1 and _ha_il_bloccante(out)
+
+
+def test_s7_triage_dell_owner_sulla_pr_storica_chiude_il_bloccante_ereditato(monkeypatch, tmp_path):
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{Z}")
+    code, out = _verifica_b(monkeypatch, tmp_path, _storia(comments={5: [_commento_triage(bid)]}), SHA_2)
+    assert code == 0, out["reasons"]
+    # un triage scritto tramite app sulla PR storica non vale
+    falso = _storia(comments={5: [_commento_triage(bid, app={"slug": "claude"})]})
+    code, out = _verifica_b(monkeypatch, tmp_path, falso, SHA_2)
+    assert code == 1
+
+
+def test_s8_nuova_pr_indipendente_non_eredita_bloccanti_estranei(monkeypatch, tmp_path):
+    # Branch diverso e nessun commit in comune con la PR A: nessun legame.
+    code, out = _verifica_b(monkeypatch, tmp_path, _storia(ref_b="altro", commits_b=(SHA_2,)), SHA_2)
+    assert code == 0, out["reasons"]
+    assert out["linked_prs"] == []
+
+
+def test_pr_storica_mergiata_non_si_eredita(monkeypatch, tmp_path):
+    # Il branch designato si riusa fra PR successive: una PR gia' mergiata
+    # (merge owner, gate superati) non trasmette i suoi bloccanti.
+    code, out = _verifica_b(monkeypatch, tmp_path, _storia(merged_a=True), SHA_2)
+    assert code == 0, out["reasons"]
+
+
+def test_run_della_pr_storica_fuori_dalla_sua_finestra_non_conta(monkeypatch, tmp_path):
+    # Un run sullo stesso branch di un'ALTRA epoca (prima che A esistesse) non e' di A.
+    estraneo = _run(30, "d" * 40, created="2026-09-01T00:00:00Z", branch="feature")
+    gh = _storia(extra_runs=[estraneo])
+    gh.artifacts[30] = [(NOME_ART, _zip(dict(_attestazione(SHA_BASE, "d" * 40, 30,
+                                                           bloccanti=["[lotto 1/1] altro problema"]), pr=4)))]
+    code, out = _verifica_b(monkeypatch, tmp_path, gh, SHA_2)
+    assert code == 1 and _ha_il_bloccante(out)
+    assert not any("altro problema" in m for m in out["reasons"])
+
+
+def test_troppe_pr_collegate_e_rosso(monkeypatch, tmp_path):
+    gh = _storia()
+    for n in range(40, 52):
+        gh.pulls[n] = {"number": n, "state": "closed", "merged_at": None, "created_at": "2026-10-02T00:00:00Z",
+                       "closed_at": "2026-10-03T00:00:00Z", "head": {"ref": "feature"}}
+    code, out = _verifica_b(monkeypatch, tmp_path, gh, SHA_2)
+    assert code == 1 and any("PR collegate" in m for m in out["reasons"])
+
+
+def test_branch_riusato_a_lungo_non_esaurisce_la_lettura(monkeypatch, tmp_path):
+    # Liveness: il branch designato si riusa fra PR successive. Senza la
+    # finestra della PR storica, i run di altre epoche (qui 1100) superano il
+    # tetto di pagine e la PR nuova resterebbe rossa senza un id da triagiare.
+    antichi = [_run(100000 + i, "e" * 40, created="2026-09-01T00:00:00Z", branch="feature") for i in range(1100)]
+    gh = _storia(extra_runs=antichi)
+    bid = rc.blocker_id("gpt56sol", BLOCCANTE, f"{SHA_BASE}...{Z}")
+    gh.comments = {5: [_commento_triage(bid)]}
+    code, out = _verifica_b(monkeypatch, tmp_path, gh, SHA_2)
+    assert code == 0, out["reasons"]

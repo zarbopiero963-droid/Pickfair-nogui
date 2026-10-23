@@ -119,9 +119,11 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
     (anche incompleta, di un rerun o di un commit tolto da un force-push), o
     l'esito non registrato nell'attestazione. Il bloccante si chiude solo con
     un commento di triage dell'owner dalla UI di GitHub
-    (`docs/ci_full_suite_review_coverage.md` §4.2). I bloccanti sono legati
-    anche ai commit: una PR nuova sugli stessi commit li eredita. L'agente non
-    ricrea PR né riscrive commit per azzerarli.
+    (`docs/ci_full_suite_review_coverage.md` §4.2). Una PR nuova collegata
+    a una PR non mergiata (stesso branch o un commit in comune) ne eredita i
+    bloccanti. L'agente non ricrea PR né riscrive commit per azzerarli: una PR
+    su un branch diverso con commit tutti riscritti non è collegabile, ed è un
+    limite dichiarato.
 
   Sul cambio di base (`edited`) i due revisori rivedono l'intera PR contro la
   base nuova; su titolo o descrizione modificati non chiamano il modello.

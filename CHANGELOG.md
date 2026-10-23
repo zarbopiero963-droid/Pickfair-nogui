@@ -41,8 +41,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - Un bloccante rende rosso il check e resta aperto per tutta la PR (rerun, commit vuoti, merge di main,
       force-push, attestazioni incomplete comprese) finché l'owner non lo triagia per id con un commento dalla UI
       di GitHub; i commenti pubblicati tramite un'app (l'agente) non contano. Nessuna chiusura automatica
-      (decisione owner D1–D4 su #539, dopo l'audit indipendente). I bloccanti valgono anche per una PR nuova sugli
-      stessi commit; i run in corso si aspettano anche con la catena completa; errori del provider e troncamenti
+      (decisione owner D1–D4 su #539, dopo l'audit indipendente). I bloccanti valgono anche per le PR nuove collegate
+      (stesso branch o un commit in comune) a una PR non mergiata, letta nella finestra in cui era aperta; scoperto
+      solo il caso di commit tutti riscritti su un branch diverso, indistinguibile da una PR indipendente; i run in corso si aspettano anche con la catena completa; errori del provider e troncamenti
       non lasciano bloccanti sintetici. Un range senza righe di testo pubblica comunque le sezioni canoniche.
     - Il cambio di base (`edited`) rilancia `full-suite`, i due revisori e Merge Readiness sullo stesso head;
       `full-suite` fonde la base vera della PR; titolo/descrizione modificati non ripagano la review.
