@@ -135,6 +135,7 @@ class FakeWorld:
         self.model_queue: list = []
         self.model_calls = 0
         self.labels = 0
+        self.comment_get_failures = 0      # le prossime N letture dei commenti falliscono (guasto transitorio)
         self._next_id = 100
 
     def add_comment(self, login, body, **extra):
@@ -163,6 +164,9 @@ class FakeWorld:
             return _Resp({"files": [{"filename": "core/x.py", "status": "modified", "additions": 1,
                                      "deletions": 1, "changes": 2, "patch": "@@ -1 +1 @@\n-a = 1\n+a = 2"}],
                           "commits": [{"sha": HEAD}]})
+        if re.search(r"/issues/\d+/comments\?", path) and method == "GET" and self.comment_get_failures:
+            self.comment_get_failures -= 1
+            raise urllib.error.HTTPError(url, 502, "Bad Gateway", {}, io.BytesIO(b"bad gateway"))
         if re.search(r"/issues/\d+/comments\?", path) and method == "GET":
             page = int(re.search(r"[?&]page=(\d+)", path).group(1))
             return _Resp(self.comments[(page - 1) * 100:page * 100])
@@ -478,3 +482,39 @@ def test_readiness_reports_the_review_gate_from_raw_comments(monkeypatch):
     assert flow.ai_review_gate(REPO, str(PR), HEAD)["gate"]["status"] == "UNKNOWN"
     monkeypatch.setattr(flow, "gh_json", lambda cmd: {"message": "not a list"})
     assert flow.ai_review_gate(REPO, str(PR), HEAD)["gate"]["status"] == "UNKNOWN"
+
+
+# ----------------------------------------------------------------------------- rilievi Codex su df68add
+def test_unreadable_attempt_history_neither_pays_nor_resets_the_budget(world, reviewer, monkeypatch):
+    world.model_queue = [("text", CASE_547)] * 5
+    run_review(world, reviewer, monkeypatch)
+    run_review(world, reviewer, monkeypatch)
+    before = bot_body(world, reviewer)
+    calls = world.model_calls
+    # Guasto transitorio: falliscono il controllo del done marker e la lettura della storia,
+    # la lettura successiva (upsert) riuscirebbe.
+    world.comment_get_failures = 2
+    run_review(world, reviewer, monkeypatch)
+    assert world.model_calls == calls                       # prima: terzo tentativo pagato
+    assert bot_body(world, reviewer) == before              # prima: storia riscritta da 1
+    assert policy.rr_attempts(before, WORKFLOWS[reviewer][1], BASE, HEAD) == ["INCOMPLETE", "INCOMPLETE"]
+
+
+def test_credits_exhausted_on_the_last_attempt_stays_a_credit_stop_not_a_waivable_decision():
+    body = (f"<!-- grok46-pr-review:pickfair-nogui:{BASE[:12]}...{HEAD[:12]} -->"
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 1, "INCOMPLETE")
+            + policy.rr_attempt_marker("grok46", BASE, HEAD, 2, "CREDITS_EXHAUSTED")
+            + policy.rr_owner_decision_marker("grok46", BASE, HEAD) + "\n# Grok\n")
+    res = policy.validate_review({"reviewer": "grok", "author": policy.REVIEW_BOT_LOGIN, "body": body}, HEAD)
+    assert res["status"] == "QUOTA"                          # prima: REVIEW_UNKNOWN_OWNER_DECISION
+    waiver = {"grok": {"valid": True, "reviewer": "grok", "head": HEAD, "reason": "x"}}
+    gate_res = policy.reviewer_gate({"sol": {"status": "VALID_CLEAN"}, "grok": res}, waivers=waiver, head_sha=HEAD)
+    assert gate_res == {"status": "STOP_OWNER", "reason": "CREDITI_ESAURITI (P41)"}
+
+
+def test_waivers_cannot_replace_every_review():
+    exhausted = {"status": policy.RR_OWNER_DECISION, "attempts": 2}
+    waivers = {n: {"valid": True, "reviewer": n, "head": HEAD, "reason": "x"} for n in ("sol", "grok")}
+    res = policy.reviewer_gate({"sol": exhausted, "grok": exhausted}, waivers=waivers, head_sha=HEAD)
+    assert res["status"] == "BLOCKED"                        # prima: PASS_WITH_OWNER_WAIVER senza review valide
+    assert "PRONTA PER MERGE" not in res["reason"]

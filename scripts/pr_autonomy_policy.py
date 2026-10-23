@@ -675,6 +675,10 @@ def _validate_review_body(body: str, reviewer: str, head_sha: str, attempts: lis
                     "reason": "tentativi registrati solo su un head vecchio"}
         if attempts:
             last = attempts[-1]
+            if last == RR_CREDITS_EXHAUSTED:
+                # Prima del tetto dei tentativi (rilievo Codex P1 su #552): i crediti
+                # esauriti restano STOP crediti, mai una decisione owner derogabile.
+                return {"status": "QUOTA", "classification": last, "reason": "crediti/quota esauriti"}
             if owner_decision or len(attempts) >= RR_MAX_ATTEMPTS:
                 return {"status": RR_OWNER_DECISION, "classification": last,
                         "reason": f"{len(attempts)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
@@ -822,6 +826,11 @@ def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any =
         return {"status": "BLOCKED", "reason": f"review non valide sul current head: {bad}"}
     if not exhausted:
         return {"status": "PASS", "reason": ""}
+    if not others:
+        # Nessuna review valida da nessun reviewer (rilievo Codex P1 su #552): la
+        # deroga copre un reviewer assente, non l'assenza di ogni review.
+        return {"status": "BLOCKED", "owner_decision": exhausted,
+                "reason": f"nessuna review valida: {', '.join(exhausted)} senza esito ({RR_OWNER_DECISION})"}
 
     def waived(name: str) -> bool:
         waiver = (waivers or {}).get(name)

@@ -1028,15 +1028,17 @@ jobs:
                   if len(comments) < 100:
                       return ""
                   page += 1
-              return ""
+              raise RuntimeError("storia dei tentativi oltre 20 pagine di commenti: non verificabile")
 
           try:
               existing_body = bot_comment_body(marker)
           except Exception as exc:
-              # Storia illeggibile: un tentativo in piu' resta limitato a questo run
-              # (nessun ciclo: ogni run parte solo da un push o da un rerun manuale).
-              existing_body = ""
-              print(f"::warning::{REVIEW_ID}: lettura dei tentativi fallita: {redact(str(exc))[:300]}")
+              # Storia illeggibile => nessuna chiamata a pagamento e nessuna riscrittura
+              # del commento: si ripartirebbe dal tentativo 1 e il tetto non varrebbe
+              # piu' (rilievo Codex P1 su #552). Un rerun riprova quando GitHub risponde.
+              print(f"::warning::{REVIEW_ID}: storia dei tentativi illeggibile, review non eseguita: "
+                    f"{redact(str(exc))[:300]}")
+              sys.exit(0)
           previous_attempts = rr_attempts(existing_body, REVIEW_ID, range_base, range_head)
           run_url = (f"{os.environ.get('GITHUB_SERVER_URL', 'https://github.com')}/{REPO}/actions/runs/"
                      f"{os.environ.get('GITHUB_RUN_ID', '?')}")
