@@ -2584,7 +2584,7 @@
       "max_files": 10
     },
     "pfc008-risk-pct-required-verified-cash": {
-      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548). Estensione dichiarata: core/table_manager.py (lotto Dutching a mercato solo con tutte le gambe, review PFC-008) e tests/unit/test_pfc008_exposure_beyond_tables.py.",
+      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548). Estensione dichiarata: core/table_manager.py (lotto Dutching a mercato solo con tutte le gambe, review PFC-008) e tests/unit/test_pfc008_exposure_beyond_tables.py. Estensione dichiarata (rilievo Codex P1 su 45c9aa2, ACK sincrono QUICK_BET_SUBMIT_ACK): tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py e tests/unit/test_runtime_controller_best_price_direct.py.",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
@@ -2614,6 +2614,7 @@
         "tests/acceptance/test_issue437_pr28d_integration_512.py",
         "tests/acceptance/test_issue437_pr28d_rectification.py",
         "tests/acceptance/test_issue461_pr28e_funds_gate.py",
+        "tests/acceptance/test_issue461_pr29a_release_bound_to_reservation.py",
         "tests/core/test_auto_trade_mm_gate.py",
         "tests/core/test_bankroll_sync.py",
         "tests/core/test_cycle_executor.py",
@@ -2659,9 +2660,10 @@
         "tests/unit/test_dutching_controller.py",
         "tests/unit/test_pfc008_exposure_beyond_tables.py",
         "tests/unit/test_pfc008_risk_pct_required.py",
-        "tests/unit/test_pr5_numeric_guardrails.py"
+        "tests/unit/test_pr5_numeric_guardrails.py",
+        "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
-      "max_files": 74
+      "max_files": 76
     }
   }
 }

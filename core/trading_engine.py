@@ -1300,6 +1300,9 @@ class TradingEngine:
 
         self._emit(ctx, audit, "SUBMIT_SUCCESS",
                    {"order_id": order_id, "response": response}, category="execution")
+        # PFC-008: l'ordine e' a mercato da ora; il runtime marca la riserva (letture del conto successive lo
+        # riflettono nell'impegnato, quindi non resta anche fra le riserve pendenti del cap totale).
+        self._publish_bus_event(ctx, "QUICK_BET_SUBMIT_ACK", order_id=order_id)
 
         # [ACK vs TERMINAL] Return ACK, NOT terminal lifecycle
         return self._build_ack_result(

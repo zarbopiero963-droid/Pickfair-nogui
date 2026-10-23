@@ -2843,6 +2843,54 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "Rilievo Sol su 7925fa7: rileggere i tavoli invece di usare il totale del chiamante fa sottostimare l'esposizione se una riserva viene rilasciata fra le letture."
+    },
+    {
+      "id": "entry_fresh_cap_skipped",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if cap_reason:\n            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,\n                                              reason=cap_reason)\n            return\n",
+      "mutated": "        if False:\n            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,\n                                              reason=cap_reason)\n            return\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 45c9aa2: senza il ricontrollo sulla lettura fresca d'ingresso un impegnato esterno cresciuto (o una cassa scesa) dopo l'ultima lettura registrata non riduce il cap e CMD_QUICK_BET parte oltre il 35%."
+    },
+    {
+      "id": "entry_fresh_cap_ignores_fresh_committed",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        vista = max(max(0.0, tavoli), committed + max(0.0, pendenti))\n",
+      "mutated": "        vista = max(0.0, tavoli)\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 45c9aa2: il ricontrollo che guarda solo i tavoli del bot ignora l'impegnato esterno della lettura fresca."
+    },
+    {
+      "id": "engine_submit_ack_not_published",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        self._publish_bus_event(ctx, \"QUICK_BET_SUBMIT_ACK\", order_id=order_id)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "PFC-008: senza l'ACK sincrono la riserva accettata dal broker resta pendente e una lettura successiva la conta due volte nel cap totale (impegnato + pendenti)."
+    },
+    {
+      "id": "runtime_submit_ack_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED.\"\"\"\n        self._mark_table_placed(payload)\n",
+      "mutated": "        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED.\"\"\"\n        return None\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "PFC-008: l'ACK sincrono ricevuto ma non applicato lascia la riserva pendente (doppio conteggio nel cap totale)."
     }
   ]
 }

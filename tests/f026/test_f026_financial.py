@@ -196,7 +196,10 @@ def test_F026_05_ambiguous_order_and_settlement_elsewhere():
     o = Oracle(s, {"1.733": True})
     assert any(x["market_id"] == "1.731" and x["status"] == "AMBIGUOUS" for x in s["orders"]), describe(s, o)
     assert s["auto_resets"] == 0, describe(s, o)
-    assert {"1.731", "1.732", "1.734"} <= table_markets(s) and "1.733" not in table_markets(s), describe(s, o)
+    # PFC-008: l'ordine AMBIGUOUS (risposta persa) puo' essere gia' nell'impegnato della lettura fresca oppure no:
+    # il cap totale lo conta in entrambi i modi (incertezza => fail-closed), 23 + 10 + 3 > 35 => 1.734 rifiutato.
+    assert {"1.731", "1.732"} <= table_markets(s) and not {"1.733", "1.734"} & table_markets(s), describe(s, o)
+    assert any(e["e"] == "SIGNAL_REJECTED" and e["reason"] == "supera_max_total_exposure" for e in r["events"])
     account_ok(s)
 
 

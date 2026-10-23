@@ -37,6 +37,17 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   cassa 100 con 20 impegnati esterni, cap 35% ⇒ 15; con in più una riserva pendente del bot da 10 ⇒ 5.
   Il tavolo di un lotto Dutching (`legs_total`) risulta a mercato solo quando tutte le gambe distinte
   (`customer_ref`) hanno avuto un esito a mercato: le gambe ancora in volo restano riserve pendenti.
+  Il segnale singolo (BACK/LAY) ricontrolla il cap totale anche sulla **lettura fresca d'ingresso** del gate
+  fondi (`RuntimeController._entry_total_cap_reason`): stessa formula sulla cassa e sull'impegnato appena letti.
+  Un impegnato esterno cresciuto o una cassa scesa dopo l'ultima lettura registrata riducono quindi il limite
+  prima di `CMD_QUICK_BET` (cassa 100 registrata con 20 impegnati, lettura fresca 60 + 40, cap 35%: un BACK
+  da 15 viene rifiutato con `supera_max_total_exposure`); lettura fresca non verificata ⇒
+  `cassa_non_verificata:<motivo>`.
+  Perché impegnato fresco e riserve pendenti non si sovrappongano, il TradingEngine pubblica l'ACK sincrono
+  `QUICK_BET_SUBMIT_ACK` quando il broker accetta l'ordine (stato SUBMITTED, il ciclo «ACCEPTED»): il runtime
+  marca la riserva a mercato (`placed_at`), senza rilasciarla né avviare il TTL. Prima, sul percorso SIM del
+  TradingEngine, la marca arrivava solo con un esito terminale e ogni lettura successiva contava l'ordine due
+  volte. Un ordine AMBIGUOUS non ha ACK: resta contato sia nell'impegnato sia fra le pendenti (fail-closed).
 - **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
   `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del

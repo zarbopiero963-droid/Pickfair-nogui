@@ -1494,6 +1494,7 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_SUBMIT_ACK", self._on_quick_bet_submit_ack)
         self.bus.subscribe("QUICK_BET_DUPLICATE", self._on_quick_bet_duplicate)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
@@ -4714,6 +4715,13 @@ class RuntimeController:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=funds_reason)
             return
+        # PFC-008 (rilievo Codex su 45c9aa2): il cap totale del MM usa la cassa dell'ultima lettura registrata; qui
+        # c'e' una lettura fresca, su cui si ricontrolla (impegnato esterno cresciuto, prelievo, settlement esterno).
+        cap_reason = self._entry_total_cap_reason(entry_funds.get("funds"), entry_funds.get("read_at"))
+        if cap_reason:
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=cap_reason)
+            return
 
         # PF-ALL-F030: la liquidita' eseguibile dell'ingresso singolo, alla quota finale, e' gia' nel
         # payload (letta sopra nella finestra di rete, fuori dal lock di ammissione).
@@ -6012,6 +6020,33 @@ class RuntimeController:
                                 error=str(error or ""))
         return {"funds": funds, "read_at": started_at}
 
+    def _entry_total_cap_reason(self, funds: Any, read_at: Optional[float]) -> str:
+        """PFC-008: cap percentuale dell'esposizione totale ricontrollato sulla lettura fresca d'ingresso.
+
+        La riserva dell'ingresso e' gia' sul tavolo (pendente): l'esposizione vista e'
+        max(tavoli, impegnato fresco + riserve non riflesse nella lettura), contro pct x cassa fresca verificata.
+        Cassa fresca non verificabile o percentuale non valida => rifiuto ('' se il cap regge)."""
+        verifica = self._cash_equity_verification(funds)
+        if not verifica["ok"]:
+            return "cassa_non_verificata:" + str(verifica["reason"] or "CASH_NOT_READ")
+        pct_raw = getattr(self.config, "max_total_exposure_pct", None)
+        pct_reason = validators.risk_pct_reason("max_total_exposure_pct", pct_raw)
+        if pct_reason:
+            return pct_reason
+        try:
+            tavoli = float(self.table_manager.total_exposure())
+            pendenti = float(self.table_manager.pending_exposure(since=read_at))
+        except Exception:
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        if not (math.isfinite(tavoli) and math.isfinite(pendenti)):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        committed = self._account_from_funds(funds)["committed"]
+        vista = max(max(0.0, tavoli), committed + max(0.0, pendenti))
+        limite = float(verifica["cash"]) * float(pct_raw) / 100.0
+        if validators.exceeds_cap(vista, limite):
+            return "supera_max_total_exposure"
+        return ""
+
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
         nuova entrata, stanno nel ``available`` del conto; altrimenti il motivo del rifiuto.
@@ -6502,6 +6537,13 @@ class RuntimeController:
             # cancellare l'incertezza di un tavolo riassegnato allo stesso evento (rilievo Codex P1 su #533).
             self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
+
+    def _on_quick_bet_submit_ack(self, payload: dict) -> None:
+        """PFC-008: ACK sincrono del TradingEngine (risposta del broker accettata, stato SUBMITTED). Marca SOLO la
+        riserva come a mercato, cosi' una lettura del conto iniziata dopo la conta nell'impegnato e non anche fra
+        le riserve pendenti (nessun doppio conteggio nel cap totale). Nessun rilascio, nessun tracciamento TTL:
+        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED."""
+        self._mark_table_placed(payload)
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_AMBIGUOUS")

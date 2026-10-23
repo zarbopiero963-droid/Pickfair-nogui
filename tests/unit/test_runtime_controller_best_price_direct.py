@@ -51,6 +51,8 @@ class _Config:
     # limite non valido => blocco fail-closed. In produzione e' None.
     max_session_loss = None
     max_exposure_stop = None
+    # PFC-008: il cap del totale si ricontrolla sulla lettura fresca d'ingresso; 0 dal catch-all non e' valido.
+    max_total_exposure_pct = 100.0
 
     def __getattr__(self, _name):
         return 0

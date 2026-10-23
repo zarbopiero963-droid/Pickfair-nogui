@@ -325,6 +325,8 @@ def test_lotto_reale_a_mercato_dopo_l_ultima_gamba(tmp_path):
     # mercato solo dopo l'ultima. Una gamba senza esito lascia il lotto pendente: sovrastima prudente.
     from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _busy_tables, _catena, _dutching, _leg_event
     c = _catena(tmp_path)
+    publish = c.bus.publish            # esiti delle gambe pilotati dal test: niente ACK sincrono dell'engine
+    c.bus.publish = lambda topic, payload=None: None if topic == "QUICK_BET_SUBMIT_ACK" else publish(topic, payload)
     assert _dutching(c).submit_dutching(_batch(sides=("BACK", "BACK", "BACK"), total_stake=15.0))["ok"] is True
     legs = c.bus.payloads("CMD_QUICK_BET")
     tavolo = _busy_tables(c)[0]
@@ -335,3 +337,93 @@ def test_lotto_reale_a_mercato_dopo_l_ultima_gamba(tmp_path):
     assert "placed_at" not in tavolo.meta
     _leg_event(c, legs[2], "QUICK_BET_SUCCESS")
     assert "placed_at" in tavolo.meta
+
+
+def test_lotto_reale_a_mercato_con_l_ack_sincrono_di_ogni_gamba(tmp_path):
+    # Senza esiti pilotati: l'ACK sincrono del TradingEngine (QUICK_BET_SUBMIT_ACK) di ogni gamba accettata dal
+    # broker porta il lotto a mercato, una volta per gamba distinta.
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _busy_tables, _catena, _dutching
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch(sides=("BACK", "BACK", "BACK"), total_stake=15.0))["ok"] is True
+    acks = c.bus.payloads("QUICK_BET_SUBMIT_ACK")
+    assert len({a["customer_ref"] for a in acks}) == 3
+    assert "placed_at" in _busy_tables(c)[0].meta
+
+
+# --- lettura fresca d'ingresso (rilievo Codex P1 su 45c9aa2) --------------------------------------------------------
+
+def _rc_lettura_fresca(fresca):
+    """Cassa registrata 100 con 20 impegnati; la lettura fresca d'ingresso restituisce `fresca`."""
+    rc, bus = _make_controller(responses=[fresca])
+    _pct(rc.mm.config)
+    rc.config.anti_duplication_enabled = False
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0}, read_at=time.monotonic())
+    rc.mode = RuntimeMode.ACTIVE
+    rifiuti = []
+    rc._reject_signal = lambda _s, motivo: rifiuti.append(motivo)
+    return rc, bus, rifiuti
+
+
+def _ordini(bus):
+    return [t for t, _p in bus.events if t == "CMD_QUICK_BET"]
+
+
+@pytest.mark.parametrize("side,stake,ammesso", [
+    ("BACK", 15.0, False),      # fresca: 40 impegnati + 15 = 55 > 35 (prima: CMD_QUICK_BET pubblicato)
+    ("LAY", 7.5, False),        # liability 15, idem
+    ("BACK", 4.0, False),       # 40 + 4 = 44 > 35: il cap e' gia' superato dall'esterno
+])
+def test_lettura_fresca_con_impegnato_cresciuto_ricontrolla_il_cap(side, stake, ammesso):
+    rc, bus, rifiuti = _rc_lettura_fresca({"available": 60.0, "exposure": -40.0})
+    rc._on_signal_received_serial(_segnale(side, stake))
+    assert not _ordini(bus)
+    assert "supera_max_total_exposure" in rifiuti, rifiuti
+
+
+def test_lettura_fresca_coerente_ammette_entro_il_cap():
+    # Lettura fresca identica alla registrata: 20 + 15 = 35 <= 35 => l'ordine parte.
+    rc, bus, rifiuti = _rc_lettura_fresca({"available": 80.0, "exposure": -20.0})
+    rc._on_signal_received_serial(_segnale("BACK", 15.0))
+    assert _ordini(bus), rifiuti
+    assert not rifiuti
+
+
+def test_lettura_fresca_cassa_scesa_riduce_il_limite():
+    # Prelievo: cassa fresca 60 (40 + 20), cap 21; 20 + 15 = 35 > 21 => rifiuto.
+    rc, bus, rifiuti = _rc_lettura_fresca({"available": 40.0, "exposure": -20.0})
+    rc._on_signal_received_serial(_segnale("BACK", 15.0))
+    assert not _ordini(bus)
+    assert "supera_max_total_exposure" in rifiuti, rifiuti
+
+
+@pytest.mark.parametrize("fresca,motivo", [
+    ({"available": 80.0, "exposure": -20.0, "simulated": True, "total": 150.0}, "CASH_TOTAL_MISMATCH"),
+    ({"available": 80.0, "exposure": -20.0, "simulated": True, "total": 100.0, "reserved_unmatched": 50.0},
+     "CASH_RESERVE_INCOHERENT"),
+])
+def test_lettura_fresca_cassa_non_verificabile_blocca(fresca, motivo):
+    # I fondi bastano (gate fondi superato) ma la lettura fresca non e' una cassa verificata: nessun ordine.
+    rc, bus, rifiuti = _rc_lettura_fresca(fresca)
+    rc._on_signal_received_serial(_segnale("BACK", 5.0))
+    assert not _ordini(bus)
+    assert rifiuti == ["cassa_non_verificata:" + motivo], rifiuti
+
+
+# --- ACK sincrono del TradingEngine (SUBMITTED) -----------------------------------------------------------------------
+
+def test_ack_sincrono_marca_la_riserva_a_mercato_senza_rilasciarla(tmp_path):
+    # Senza ACK l'ordine accettato dal broker restava "pendente" per sempre sul percorso SIM del TradingEngine: una
+    # lettura successiva lo contava nell'impegnato E fra le riserve pendenti (doppio conteggio nel cap totale).
+    from tests.acceptance.test_issue437_pr27 import _tavoli_occupati
+    from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _signal
+    c = _chain(tmp_path, stake=4.0, anti_duplication=True)
+    c.rc.betfair_service.get_account_funds = lambda: {"available": 100.0, "exposure": 0.0}
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    (ack,) = c.bus.payloads("QUICK_BET_SUBMIT_ACK")
+    assert (ack["table_id"], ack["event_key"], ack["customer_ref"]) == (
+        cmd["table_id"], cmd["event_key"], cmd["customer_ref"])
+    (tavolo,) = _tavoli_occupati(c)                         # nessun rilascio: chiude solo l'incertezza "a mercato"
+    assert "placed_at" in c.rc.table_manager.get_table(cmd["table_id"]).meta
+    assert c.rc.table_manager.pending_exposure(since=time.monotonic()) == 0.0
+    assert c.rc.table_manager.total_exposure() == 4.0

@@ -17,7 +17,23 @@ import pytest
 
 from core.system_state import RuntimeMode
 from tests.acceptance.test_issue437_pr27 import _rifiuti, _tavoli_occupati
-from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _decision, _signal
+from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain as _chain_base, _decision, _signal
+
+
+def _chain(tmp_path, **kwargs):
+    # Questi test isolano il gate dei fondi (MM sostituito da una decisione fissa): il cap percentuale del totale,
+    # ricontrollato da PFC-008 sulla lettura fresca d'ingresso, e' dichiarato al 100% per non sovrapporsi.
+    c = _chain_base(tmp_path, **kwargs)
+    c.rc.config.max_total_exposure_pct = 100.0
+    return c
+
+
+def _senza_ack(c):
+    """Ordine non ancora confermato a mercato: il TradingEngine non pubblica l'ACK sincrono (QUICK_BET_SUBMIT_ACK,
+    PFC-008), come quando la risposta del broker non e' ancora arrivata o l'esito e' AMBIGUOUS."""
+    publish = c.bus.publish
+    c.bus.publish = lambda topic, payload=None: None if topic == "QUICK_BET_SUBMIT_ACK" else publish(topic, payload)
+    return c
 
 
 def _con_fondi(c, available, exposure=0.0, **extra):
@@ -62,7 +78,7 @@ def test_back_entro_i_fondi_passa_anche_alla_soglia_esatta(tmp_path):
 def test_secondo_tavolo_conta_l_esposizione_gia_riservata(tmp_path):
     # Conto a 100; primo ingresso 60 riservato. Il conto non riflette ancora l'ordine (stesso disponibile):
     # il secondo 60 su un altro evento supererebbe i fondi => rifiutato.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
@@ -357,7 +373,7 @@ def test_sim_usa_il_saldo_simulato_senza_fondi_reali(tmp_path):
 def test_esito_incerto_non_e_rifiuto_definitivo_e_la_riserva_resta_addebitata(tmp_path):
     # Punto 2 owner: un AMBIGUOUS (timeout / risposta persa) non rilascia tavolo e chiave e non marca l'ordine
     # a mercato: la riserva resta e continua a consumare il disponibile per le nuove entrate.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     (primo,) = c.bus.payloads("CMD_QUICK_BET")
@@ -518,7 +534,7 @@ def test_lettura_iniziata_prima_del_success_vede_ancora_la_riserva_rilasciata(tm
     # Codex r4330918417: B inizia a leggere il conto, poi arriva il SUCCESS di A (60) che rilascia il tavolo;
     # la lettura di B restituisce il disponibile PRIMA del piazzamento (100). A va ancora addebitato a B:
     # 60 + 60 > 100 => B rifiutato.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     (primo,) = c.bus.payloads("CMD_QUICK_BET")
