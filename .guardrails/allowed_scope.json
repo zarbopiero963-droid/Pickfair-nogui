@@ -2507,7 +2507,7 @@
       "max_files": 9
     },
     "pfc002-ci-dedup-full-suite-review-coverage": {
-      "description": "Roadmap canonica #461, PFC-002 = M156 (deduplica CI) + M130 (raccolta/workflow e policy reviewer) + M159 (copertura review completa e attestata), mandato owner PF-PFC002-EXECUTION-01 del 23/10/2026, merge OWNER. Suite completa da 17 a 1 esecuzione per push nel check obbligatorio full-suite che giudica il report pytest (raccolta completa, nessuna deselezione, ogni test con esito, skip entro contratto); orchestratori non annidati, push solo su main per i workflow doppi, cancel-in-progress per SHA superati delle PR; review Sol/Grok segmentate deterministicamente senza troncamento, attestate per range e verificate sull'intera PR dai run ufficiali pull_request_target; Merge Readiness esige SUCCESS sui check obbligatori (SKIPPED/assente bloccano). Nessuna modifica di trading, money management, Betfair o config runtime. Enforcement GitHub pendente owner. I nuovi file di gate (full-suite.yml, scripts/ci/**) entrano fra i file a merge owner (OWNER_MANUAL_MERGE_FILES e MANUAL_AUTHORITY_PATTERNS, copia identica in Sol/Grok).",
+      "description": "Roadmap canonica #461, PFC-002 = M156 (deduplica CI) + M130 (raccolta/workflow e policy reviewer) + M159 (copertura review completa e attestata), mandato owner PF-PFC002-EXECUTION-01 del 23/10/2026, merge OWNER. Suite completa da 17 a 1 esecuzione per push nel check obbligatorio full-suite che giudica il report pytest (raccolta completa, nessuna deselezione, ogni test con esito, skip entro contratto); orchestratori non annidati, push solo su main per i workflow doppi, cancel-in-progress per SHA superati delle PR; review Sol/Grok segmentate deterministicamente senza troncamento, attestate per range e verificate sull'intera PR dai run ufficiali pull_request_target; Merge Readiness esige SUCCESS sui check obbligatori (SKIPPED/assente bloccano). Nessuna modifica di trading, money management, Betfair o config runtime. Enforcement GitHub pendente owner. I nuovi file di gate (full-suite.yml, scripts/ci/**) entrano fra i file a merge owner (OWNER_MANUAL_MERGE_FILES e MANUAL_AUTHORITY_PATTERNS, copia identica in Sol/Grok). ESTENSIONE DICHIARATA (rilievo Codex su #539, cambio di base): aggiunto .github/workflows/pr-merge-readiness.yml, solo il tipo di evento `edited` fra i trigger pull_request.",
       "files": [
         ".github/workflows/_module-ultra-check.yml",
         ".github/workflows/ci-dynamic-intelligent.yml",
@@ -2527,6 +2527,7 @@
         ".github/workflows/observability-tests.yml",
         ".github/workflows/pnl-engine.yml",
         ".github/workflows/pr-check.yml",
+        ".github/workflows/pr-merge-readiness.yml",
         ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
         ".github/workflows/pr-review-xai-grok46.yml",
         ".github/workflows/readiness-gate.yml",
@@ -2561,7 +2562,7 @@
         "tests/scripts/test_review_coverage.py",
         "tests/testsuite/test_false_green_semantics.py"
       ],
-      "max_files": 51
+      "max_files": 52
     }
   }
 }

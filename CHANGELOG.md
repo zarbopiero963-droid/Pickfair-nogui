@@ -38,6 +38,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
       branch base al head.
     - Segreto mancante, draft, fork, lotto troncato o segmento non riscontrato rendono il check rosso; prima era
       «saltato» verde.
+    - Un bloccante nella review del range sul head rende rosso il check (`blocking_findings` nell'attestazione);
+      un range senza righe di testo pubblica comunque le sezioni canoniche.
+    - Il cambio di base (`edited`) rilancia `full-suite`, i due revisori e Merge Readiness sullo stesso head;
+      `full-suite` fonde la base vera della PR; titolo/descrizione modificati non ripagano la review.
   - **Merge Readiness con check obbligatori** (`scripts/ci/required_checks.json`). `full-suite`,
     `mutation-guardrails / mutation`, Sol e Grok devono essere SUCCESS sull'head; assente, SKIPPED o NEUTRAL bloccano.
   - **Enforcement GitHub:** il ruleset non richiede ancora alcun check. Le istruzioni per l'owner sono nel doc.

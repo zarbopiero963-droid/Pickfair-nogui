@@ -8,8 +8,10 @@ on:
   # nel contesto del branch di DEFAULT, quindi pubblicavano il verdetto su
   # `main` — invisibile sulla PR, e 24 run rosse su 27 lasciate su `main`
   # (misurato sulla #463). Per rivalutare a mano c'e' `workflow_dispatch`.
+  # `edited`: il cambio di base rilancia suite e review sullo stesso head; il
+  # verdetto va ricalcolato con loro (rilievo Codex su #539).
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   workflow_dispatch:
     inputs:
       pr_number:

@@ -157,8 +157,15 @@ def test_full_suite_parte_su_ogni_pr_senza_filtri_e_senza_dispatch():
     on = _on(_wf("full-suite.yml"))
     pr = on["pull_request"] or {}
     assert not {"paths", "paths-ignore", "branches", "branches-ignore"} & set(pr)
-    assert {"opened", "synchronize", "reopened"} <= set(pr.get("types") or [])
+    # `edited` (rilievo Codex su #539): il cambio di base non cambia l'head,
+    # e senza un nuovo run il verde della base vecchia resterebbe sullo SHA.
+    assert {"opened", "synchronize", "reopened", "edited"} <= set(pr.get("types") or [])
     assert "workflow_dispatch" not in on
+
+
+def test_merge_readiness_si_ricalcola_al_cambio_di_base():
+    pr = _on(_wf("pr-merge-readiness.yml"))["pull_request"]
+    assert "edited" in pr["types"]
 
 
 @pytest.mark.parametrize("nome", sorted(REVIEWERS))
@@ -186,7 +193,10 @@ def test_reviewer_check_verde_solo_con_copertura_verificata(nome):
     assert checkout["with"]["sparse-checkout"].strip() == "scripts/ci/review_coverage.py"
     assert "github.event.pull_request.head.sha }}\n          path" not in raw
     assert sum(1 for s in steps if str(s.get("uses", "")).startswith("actions/checkout@")) == 1
-    assert _on(d) == {"pull_request_target": {"types": ["opened", "synchronize", "reopened", "ready_for_review"]}}
+    assert _on(d) == {"pull_request_target": {"types": ["opened", "synchronize", "reopened", "ready_for_review",
+                                                         "edited"]}}
+    # il cambio di base arriva allo script, che senza cambio di base non paga
+    assert d["jobs"]["review"]["env"]["BASE_FROM"] == "${{ github.event.changes.base.ref.from }}"
 
 
 @pytest.mark.parametrize("nome", sorted(REVIEWERS))
@@ -244,14 +254,19 @@ def test_full_suite_prova_il_merge_con_il_main_corrente():
     checkout = steps[nomi.index("Checkout")]
     assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
     assert checkout["with"]["fetch-depth"] == 0
-    i_merge = nomi.index("Merge the current main into the PR head")
+    i_merge = nomi.index("Merge the current base branch into the PR head")
     i_install = nomi.index("Install dependencies")
     i_run = nomi.index("Run the full suite and judge the report")
     assert nomi.index("Checkout") < i_merge < i_install < i_run
     merge = steps[i_merge]
     assert merge.get("if") == "github.event_name == 'pull_request'"
-    assert "git fetch --no-tags origin main" in merge["run"]
-    assert re.search(r"merge --no-ff --no-edit origin/main \|\| \{", merge["run"])
+    # la base VERA della PR, dall'evento e passata come variabile (mai
+    # interpolata nello script): dopo un cambio di base si prova quella nuova
+    job_env = _wf("full-suite.yml")["jobs"]["full-suite"]["env"]
+    assert job_env["PR_BASE_REF"] == "${{ github.event.pull_request.base.ref }}"
+    assert "${{" not in merge["run"]
+    assert 'git fetch --no-tags origin "refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}"' in merge["run"]
+    assert re.search(r'merge --no-ff --no-edit "origin/\$\{PR_BASE_REF\}" \|\| \{', merge["run"])
     assert "exit 1" in merge["run"] and "set -euo pipefail" in merge["run"]
     assert "if" not in steps[i_run] and "if" not in steps[i_install]
 

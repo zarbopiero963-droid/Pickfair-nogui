@@ -124,7 +124,7 @@ class Fake:
 
 
 def _esegui(nome, files, tmp_path, monkeypatch, modo="ok", max_calls=None, done_marker_gia_presente=False,
-            evento="opened", before="", prepara=None):
+            evento="opened", before="", prepara=None, base_from=""):
     codice, env = _script_e_env(nome)
     chiave, _host = WORKFLOWS[nome]
     base_dir = tmp_path / "_base" / "scripts" / "ci"
@@ -137,7 +137,7 @@ def _esegui(nome, files, tmp_path, monkeypatch, modo="ok", max_calls=None, done_
     valori.update({
         chiave: "chiave-finta", "GITHUB_TOKEN": "token-finto", "REPO": "owner/repo", "PR_NUMBER": "7",
         "EVENT_ACTION": evento, "BEFORE_SHA": before, "AFTER_SHA": HEAD, "HEAD_SHA": HEAD, "BASE_SHA": BASE,
-        "GITHUB_RUN_ID": "4242", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ENV": str(gh_env),
+        "BASE_FROM": base_from, "GITHUB_RUN_ID": "4242", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_ENV": str(gh_env),
         "GITHUB_WORKSPACE": str(tmp_path), "ATTESTATION_FILE": str(tmp_path / "rc" / "attestation.json"),
     })
     if max_calls is not None:
@@ -307,6 +307,53 @@ def test_un_bloccante_in_un_lotto_resta_visibile_al_gate(nome, tmp_path, monkeyp
     esito = _valida(fake.commenti[0], env["REVIEW_ID"])
     assert esito["status"] == "VALID_WITH_BLOCKERS"
     assert "stake raddoppiato" in fake.commenti[0].split("## Bloccanti", 1)[1].split("## Verdetto finale")[0]
+    # Rilievo Codex su #539: i bloccanti entrano nell'attestazione, e la verifica
+    # della copertura (il check obbligatorio) diventa rossa.
+    assert att["complete"] is True
+    assert any("stake raddoppiato" in b for b in att["blocking_findings"])
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_review_pulita_attesta_zero_bloccanti(nome, tmp_path, monkeypatch):
+    _fake, att, _env = _esegui(nome, _diff_grande(1, 10), tmp_path, monkeypatch)
+    assert att["complete"] is True and att["blocking_findings"] == []
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_range_senza_patch_testuale_pubblica_le_sezioni_canoniche(nome, tmp_path, monkeypatch):
+    # Rilievo Codex su #539: un range di soli rename pubblicava il done_marker
+    # senza `## Bloccanti` / `## Verdetto finale`, e il gate lo leggeva UNKNOWN.
+    files = [{"filename": "nuovo.py", "previous_filename": "vecchio.py", "status": "renamed",
+              "changes": 0, "additions": 0, "deletions": 0}]
+    fake, att, env = _esegui(nome, files, tmp_path, monkeypatch)
+    assert fake.prompt_ricevuti == []
+    assert att["complete"] is True and att["blocking_findings"] == []
+    assert "-pr-review-done:" in fake.commenti[0]
+    assert _valida(fake.commenti[0], env["REVIEW_ID"])["status"] == "VALID_CLEAN"
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_oltre_il_tetto_le_sezioni_dicono_bloccante(nome, tmp_path, monkeypatch):
+    fake, att, env = _esegui(nome, _diff_grande(6, 220), tmp_path, monkeypatch, max_calls=1)
+    sezione = fake.commenti[0].split("## Bloccanti", 1)[1].split("## Verdetto finale")[0]
+    assert "Nessun bloccante" not in sezione and "copertura" in sezione
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_edited_senza_cambio_di_base_non_chiama_il_modello(nome, tmp_path, monkeypatch):
+    # Rilievo Codex su #539: `edited` serve per il cambio di base; un titolo o
+    # una descrizione modificati non devono ripagare la review. Nessuna
+    # attestazione nuova: la verifica usa quelle ufficiali gia' caricate.
+    fake, att, _env = _esegui(nome, _diff_grande(1, 10), tmp_path, monkeypatch, evento="edited")
+    assert fake.prompt_ricevuti == [] and fake.commenti == [] and att is None
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_cambio_di_base_rivede_l_intera_pr(nome, tmp_path, monkeypatch):
+    fake, att, _env = _esegui(nome, _diff_grande(1, 10), tmp_path, monkeypatch, evento="edited",
+                              base_from="release")
+    assert len(fake.prompt_ricevuti) == 1
+    assert att["range_base"] == BASE and att["range_head"] == HEAD and att["complete"] is True
 
 
 @pytest.mark.parametrize("nome", sorted(WORKFLOWS))

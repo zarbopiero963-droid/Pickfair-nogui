@@ -67,7 +67,9 @@ esecuzioni erano quindi la stessa suite sullo stesso albero, e una basta.
 L'unica differenza era `merge-simulation-hard`, che rifaceva il merge con il
 main più recente e poi eseguiva pytest. Ora quel merge lo fa `full-suite` stessa.
 Su `pull_request` parte dall'**head della PR**, non da `refs/pull/N/merge`, e
-fonde il main corrente (step *Merge the current main into the PR head*). Un
+fonde la base corrente della PR, di norma `main` (step *Merge the current base
+branch into the PR head*; il nome del branch arriva dall'evento come variabile
+`PR_BASE_REF`, mai interpolato nello script). Un
 conflitto rende il check rosso. Le dipendenze si installano **dopo** il merge,
 così valgono quelle dell'albero provato. La suite prova quindi l'albero che il
 merge produrrà davvero, anche se main si è mosso dopo l'evento (rilievi Grok 4.7
@@ -85,7 +87,12 @@ File: `.github/workflows/full-suite.yml`. Job unico, nome stabile
 `full-suite`, adatto a un required status check:
 
 - parte su ogni `pull_request` (opened, synchronize, reopened,
-  ready_for_review) **senza filtri di path o branch**, e su `push` a `main`;
+  ready_for_review, edited) **senza filtri di path o branch**, e su `push` a
+  `main`. `edited` copre il **cambio di base**: l'head resta lo stesso, quindi
+  senza un nuovo run il verde calcolato sulla base vecchia resterebbe attaccato
+  allo SHA (rilievo Codex su #539). Gira anche su titolo o descrizione
+  modificati: un run in più, mai un verde non verificato. Per la stessa ragione
+  `edited` è anche fra i trigger dei due revisori e di Merge Readiness;
 - **nessun `if:`** sul job e **nessun `workflow_dispatch`**: un dispatch sul
   branch della PR farebbe girare la versione del file presente nella PR e
   attaccherebbe un verde al suo head;
@@ -177,6 +184,28 @@ sezioni duplicate come UNKNOWN (rilievo Codex su #539).
 Un commento oltre 64 000 caratteri verrebbe tagliato: la copertura risulta
 incompleta e il `done_marker` non viene scritto.
 
+Anche un range **senza righe di testo cambiate** (soli rename, file venuti dal
+branch base) pubblica le due sezioni canoniche: «Nessun bloccante evidente» se
+la copertura è completa, l'elenco dei motivi se non lo è (tetto di lotti). Prima
+il commento portava il `done_marker` senza sezioni e il gate lo leggeva UNKNOWN
+(rilievo Codex su #539).
+
+**Un bloccante rende rosso il check.** I bloccanti aggregati entrano
+nell'attestazione (`blocking_findings`). La verifica (§4.4) è rossa se la review
+del range che termina sul head ne ha anche uno solo, o se l'esito non è
+registrato. Prima bastava la copertura completa, e Merge Readiness leggeva solo
+il SUCCESS del check anche con `## Bloccanti` piena (rilievo Codex su #539).
+Conta il range sul head, come in `validate_review`: un bloccante di una push
+precedente si chiude con la push che lo corregge (che viene rivista) o con la
+risposta nel thread. Un falso positivo sul head tiene il check rosso finché
+una push successiva non riceve una review pulita.
+
+**`edited` senza cambio di base** (titolo, descrizione): nessuna chiamata al
+modello e nessuna attestazione nuova; la verifica legge quelle già caricate. Con
+il cambio di base (`changes.base.ref.from` presente) si rivede l'intera PR
+contro la base nuova: le attestazioni vecchie partono da commit che non sono
+della base nuova e non fanno catena.
+
 ### 4.3 Attestazione
 
 Per ogni range il workflow scrive un JSON, schema `pickfair-review-coverage/v1`,
@@ -186,7 +215,8 @@ con:
 - segmenti con sha256, lotti ed esito per lotto;
 - segmenti revisionati e non revisionati;
 - file binari, file rinominati senza modifiche, file di testo senza patch;
-- `complete` e i motivi di incompletezza.
+- `complete` e i motivi di incompletezza;
+- `blocking_findings`: i bloccanti della review aggregata (lista vuota = pulita).
 
 Il JSON si carica come artifact del run
 (`review-coverage-<reviewer>-<base12>-<head12>-a<attempt>`). Un artifact non si
@@ -217,7 +247,8 @@ quel range (rilievo Codex su #539).
 L'ultimo step del job (`Verify review coverage of the whole PR`, `if: always()`)
 esegue `review_coverage.py verify`. Il check del revisore è verde **solo se**
 le attestazioni complete formano una **catena di range** che parte da un commit
-del branch base e arriva al head corrente.
+del branch base e arriva al head corrente, **e** la review del range che termina
+sul head non riporta bloccanti (`blocking_findings` vuota; assente = rosso).
 
 Ogni riga del diff finale è stata scritta da una push, e quella push è un
 anello della catena.

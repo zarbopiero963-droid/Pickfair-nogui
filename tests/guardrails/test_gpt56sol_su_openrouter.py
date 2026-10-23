@@ -270,7 +270,9 @@ def test_block_resta_un_reviewer_per_push_senza_label_gate() -> None:
     # c'e' piu': e' la forma che esegue il file dal branch BASE, cosi' una PR
     # non puo' esfiltrare i secret modificando il proprio .yml.
     tipi = _tipi_del_trigger("pull_request_target")
-    assert set(tipi) == {"opened", "synchronize", "reopened", "ready_for_review"}, (
+    # `edited` (PFC-002, rilievo Codex su #539): il cambio di base riapre la
+    # review dell'intera PR sullo stesso head; non e' un gate a label.
+    assert set(tipi) == {"opened", "synchronize", "reopened", "ready_for_review", "edited"}, (
         f"il gating per-push e' cambiato: {tipi}. GPT-6.1 Sol e' uno dei due "
         f"reviewer che girano su OGNI push (con Grok 4.7); i gate a label "
         f"sono dei reviewer forti."

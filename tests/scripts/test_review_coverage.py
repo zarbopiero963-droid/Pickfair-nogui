@@ -184,7 +184,7 @@ def test_riscontro_completo_parziale_assente_e_troncato():
     assert not finto["reviewed"]
 
 
-def _attestazione(base=SHA_BASE, head=SHA_1, run_id=11, completa=True, reviewer="gpt56sol", pr=7):
+def _attestazione(base=SHA_BASE, head=SHA_1, run_id=11, completa=True, reviewer="gpt56sol", pr=7, bloccanti=()):
     plan = rc.plan_review([{"filename": "a.py", "patch": _patch(1, 3), "changes": 3}],
                           max_segment_chars=7000, max_batch_chars=24000, max_calls=8)
     ids = plan.batches[0]
@@ -192,7 +192,7 @@ def _attestazione(base=SHA_BASE, head=SHA_1, run_id=11, completa=True, reviewer=
     esito = rc.batch_outcome(testo, completed=True, expected=ids)
     return rc.build_attestation(reviewer=reviewer, model="m", repo=REPO, pr=pr, range_base=base, range_head=head,
                                 run_id=run_id, run_attempt=1, workflow_file="pr-review.yml", plan=plan,
-                                outcomes=[esito])
+                                outcomes=[esito], blocking_findings=list(bloccanti))
 
 
 def test_attestazione_completa_e_incompleta():
@@ -497,3 +497,44 @@ def test_verdetto_assente_vuoto_o_duplicato_non_e_pulito(verdetto):
                                    "text": "## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK"}])
     assert "Nessun bloccante" not in unita["bloccanti"]
     assert "[lotto 1/2] sezione Verdetto finale" in unita["bloccanti"]
+
+
+def test_aggregate_espone_la_lista_dei_bloccanti():
+    pulito = "## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK"
+    con_bug = "## Bloccanti\n- core/x.py: liability LAY ignorata\n## Verdetto finale\nNo"
+    assert rc.aggregate_reviews([{"indice": 1, "totale": 1, "text": pulito}])["lista_bloccanti"] == []
+    misto = rc.aggregate_reviews([{"indice": 1, "totale": 2, "text": pulito},
+                                  {"indice": 2, "totale": 2, "text": con_bug}])
+    assert misto["lista_bloccanti"] == ["[lotto 2/2] core/x.py: liability LAY ignorata"]
+
+
+def test_bloccanti_della_review_sul_head_rendono_rossa_la_verifica(monkeypatch, tmp_path):
+    # Rilievo Codex su #539: con ogni segmento riscontrato ma un bloccante reale
+    # nella review, la verifica era verde e Merge Readiness leggeva solo SUCCESS.
+    nome = "review-coverage-gpt56sol-x"
+    runs = [_run(11, SHA_1), _run(12, SHA_2)]
+
+    def gh():
+        return FakeGitHub(runs, {11: [(nome, _zip(_attestazione(SHA_BASE, SHA_1, 11)))]})
+    code, out = _verify(monkeypatch, tmp_path, gh(), SHA_2,
+                        locale=_attestazione(SHA_1, SHA_2, 12, bloccanti=["[lotto 1/1] stake raddoppiato"]))
+    assert code == 1 and out["ok"] is False
+    assert any("stake raddoppiato" in m for m in out["reasons"])
+    # pulita sul head: verde
+    code, out = _verify(monkeypatch, tmp_path, gh(), SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 0 and out["ok"] is True
+    # esito della review non registrato nell'attestazione: rosso (fail-closed)
+    senza = _attestazione(SHA_1, SHA_2, 12)
+    del senza["blocking_findings"]
+    code, out = _verify(monkeypatch, tmp_path, gh(), SHA_2, locale=senza)
+    assert code == 1 and any("non registrato" in m for m in out["reasons"])
+
+
+def test_bloccanti_di_un_range_precedente_non_bloccano_il_head_pulito(monkeypatch, tmp_path):
+    # Come validate_review: conta la review del range che termina sul head.
+    nome = "review-coverage-gpt56sol-x"
+    runs = [_run(11, SHA_1), _run(12, SHA_2)]
+    vecchia = _attestazione(SHA_BASE, SHA_1, 11, bloccanti=["[lotto 1/1] vecchio rilievo"])
+    gh = FakeGitHub(runs, {11: [(nome, _zip(vecchia))]})
+    code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
+    assert code == 0 and out["ok"] is True

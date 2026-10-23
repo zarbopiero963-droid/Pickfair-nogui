@@ -300,6 +300,9 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
         dettagli.append(re.sub(r"(?m)^#+[ \t]*", "#### ", testo))
     return {
         "bloccanti": "\n".join(bloccanti) if bloccanti else "Nessun bloccante evidente",
+        # gli stessi bloccanti, senza il trattino: vanno nell'attestazione e
+        # rendono rossa la verifica (rilievo Codex su #539)
+        "lista_bloccanti": [b[2:] for b in bloccanti],
         "verdetto": "\n".join(verdetti) if verdetti else "(nessun lotto)",
         "dettagli": dettagli,
     }
@@ -361,7 +364,11 @@ def build_attestation(
     compare_truncated: bool = False,
     excluded_from_base: list[str] | None = None,
     reasons: list[str] | None = None,
+    blocking_findings: list[str] | None = None,
 ) -> dict[str, Any]:
+    """`blocking_findings`: i bloccanti della review aggregata (lista vuota =
+    review pulita). `None` = esito non registrato: la verifica lo tratta come
+    rosso, mai come pulito."""
     motivi = list(reasons or [])
     outcomes = list(outcomes or [])
     if plan is None:
@@ -421,6 +428,7 @@ def build_attestation(
         "excluded_from_base": sorted(excluded_from_base or []),
         "complete": not motivi,
         "reasons": motivi,
+        "blocking_findings": None if blocking_findings is None else [str(b) for b in blocking_findings],
     }
 
 
@@ -692,6 +700,29 @@ def _root_checker(gh: GitHub, base_sha: str, pr_commits: set[str]) -> Callable[[
     return is_root
 
 
+def bloccanti_sul_head(attestations: list[dict[str, Any]], head_sha: str) -> list[str]:
+    """Motivi per cui la review sul head corrente non e' pulita (vuota = pulita).
+
+    Conta la review del range che termina sul head, come `validate_review` di
+    `pr_autonomy_policy`: un bloccante di una push precedente e' gia' passato
+    dal triage (fix nella push successiva, o risposta nel thread). Con piu'
+    attestazioni sullo stesso head basta un bloccante in una sola. Rilievo
+    Codex su #539: prima la copertura completa bastava al check, e Merge
+    Readiness ne leggeva solo il SUCCESS anche con `## Bloccanti` non vuota.
+    """
+    motivi: list[str] = []
+    for att in attestations:
+        if att.get("range_head") != head_sha:
+            continue
+        trovati = att.get("blocking_findings")
+        rng = f"{str(att.get('range_base'))[:12]}...{head_sha[:12]}"
+        if not isinstance(trovati, list):
+            motivi.append(f"range {rng}: esito della review non registrato nell'attestazione")
+        else:
+            motivi.extend(f"range {rng}: bloccante della review: {b}" for b in trovati)
+    return motivi
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     esito: dict[str, Any] = {
         "schema": SCHEMA,
@@ -730,6 +761,11 @@ def cmd_verify(args: argparse.Namespace) -> int:
             esito["waited_for_runs"] = in_corso
             time.sleep(max(1, args.poll_seconds))
         esito.update(catena)
+        if catena["ok"]:
+            bloccanti = bloccanti_sul_head(atts, args.head_sha)
+            if bloccanti:
+                esito["ok"] = False
+                esito["reasons"] = bloccanti
         esito["attestations_used"] = len(atts)
         esito["discarded"] = scarti
     except Exception as exc:

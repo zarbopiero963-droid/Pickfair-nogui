@@ -48,7 +48,9 @@ on:
   # (head.repo.full_name == github.repository), quindi non ricevono mai i secret.
   # Resta diff-only: nessun checkout né esecuzione del codice della PR.
   pull_request_target:
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `edited` per il cambio di base (rilievo Codex su #539): stesso head, diff
+    # diverso. Un titolo o una descrizione modificati non chiamano il modello.
+    types: [opened, synchronize, reopened, ready_for_review, edited]
 
 permissions:
   contents: read
@@ -88,6 +90,7 @@ jobs:
       AFTER_SHA: ${{ github.event.after }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      BASE_FROM: ${{ github.event.changes.base.ref.from }}
       PR_DRAFT: ${{ github.event.pull_request.draft }}
       PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
       REVIEW_WORKFLOW_FILE: pr-review-openrouter-gpt56-sol.yml
@@ -202,6 +205,7 @@ jobs:
           REPO = os.environ["REPO"]
           PR_NUMBER = os.environ["PR_NUMBER"]
           EVENT_ACTION = os.environ.get("EVENT_ACTION", "")
+          BASE_FROM = os.environ.get("BASE_FROM", "")
           BEFORE_SHA = os.environ.get("BEFORE_SHA", "") or ""
           AFTER_SHA = os.environ.get("AFTER_SHA", "") or ""
           HEAD_SHA = os.environ["HEAD_SHA"]
@@ -854,13 +858,14 @@ jobs:
 
 
           def scrivi_attestazione(range_base, range_head, plan, outcomes, *, compare_truncated=False,
-                                  esclusi=None, reasons=None):
+                                  esclusi=None, reasons=None, bloccanti=None):
               """Attestazione del range, caricata come artifact dallo step successivo."""
               att = rc.build_attestation(
                   reviewer=REVIEW_ID, model=OPENROUTER_MODEL, repo=REPO, pr=int(PR_NUMBER),
                   range_base=range_base, range_head=range_head, run_id=RUN_ID, run_attempt=RUN_ATTEMPT,
                   workflow_file=WORKFLOW_FILE, plan=plan, outcomes=outcomes,
                   compare_truncated=compare_truncated, excluded_from_base=esclusi, reasons=reasons,
+                  blocking_findings=bloccanti,
               )
               os.makedirs(os.path.dirname(ATTESTATION_FILE) or ".", exist_ok=True)
               with open(ATTESTATION_FILE, "w", encoding="utf-8") as fh:
@@ -869,6 +874,13 @@ jobs:
                   fh.write(f"COVERAGE_ARTIFACT={rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}\n")
               return att
 
+
+          if EVENT_ACTION == "edited" and not BASE_FROM:
+              # Titolo/descrizione modificati: head e base invariati, nessuna
+              # review nuova da pagare. La verifica legge le attestazioni gia'
+              # caricate dai run precedenti.
+              print(f"::notice::{REVIEW_ID}: PR modificata senza cambio di base: nessuna nuova review")
+              sys.exit(0)
 
           try:
               range_base, range_head, range_scope, compared = resolve_range()
@@ -1036,7 +1048,7 @@ jobs:
 
           if plan.budget_exceeded or not plan.segments:
               att = scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
-                                        esclusi=files_dal_base)
+                                        esclusi=files_dal_base, bloccanti=[])
               if plan.budget_exceeded:
                   motivo = (
                       f"Il range richiede {len(plan.batches)} lotti, il tetto e' MAX_REVIEW_CALLS={MAX_REVIEW_CALLS}: "
@@ -1045,10 +1057,24 @@ jobs:
                   )
               else:
                   motivo = "Nessun patch testuale analizzabile trovato."
+              # Le sezioni canoniche anche qui (rilievo Codex su #539): senza, il
+              # gate leggeva UNKNOWN una review completa di soli rename.
+              if att["complete"]:
+                  sezione_bloccanti = "Nessun bloccante evidente"
+                  sezione_verdetto = "Nessuna riga di testo cambiata nel range: nulla da revisionare."
+              else:
+                  sezione_bloccanti = "\n".join(f"- copertura incompleta: {m}" for m in att["reasons"][:20])
+                  sezione_verdetto = "Review non eseguita: copertura incompleta."
               pubblicato = upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
           # GPT-6.1 Sol PR Review
 
           {motivo}
+
+          ## Bloccanti
+          {sezione_bloccanti}
+
+          ## Verdetto finale
+          {sezione_verdetto}
 
           **Scope:** `{range_scope}`
           **Range:** `{range_base[:12]}...{range_head[:12]}`
@@ -1063,7 +1089,7 @@ jobs:
           """[:64000])
               if not pubblicato:
                   scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
-                                      esclusi=files_dal_base,
+                                      esclusi=files_dal_base, bloccanti=[],
                                       reasons=["commento della review non pubblicato: la review non e' leggibile"])
               sys.exit(0)
 
@@ -1165,8 +1191,16 @@ jobs:
           with concurrent.futures.ThreadPoolExecutor(max_workers=len(plan.batches)) as pool:
               risultati = list(pool.map(esegui_lotto, range(len(plan.batches))))
 
+          # Una sola coppia `## Bloccanti` / `## Verdetto finale` per range, con i
+          # bloccanti di tutti i lotti (rilievo Codex su #539): sezioni duplicate
+          # renderebbero la review UNKNOWN per il lettore del gate. I bloccanti
+          # vanno anche nell'attestazione: con uno solo la verifica e' rossa.
+          unita = rc.aggregate_reviews([
+              {"indice": r[0] + 1, "totale": len(plan.batches), "text": r[1]} for r in risultati
+          ])
           att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
-                                    compare_truncated=compare_truncated, esclusi=files_dal_base)
+                                    compare_truncated=compare_truncated, esclusi=files_dal_base,
+                                    bloccanti=unita["lista_bloccanti"])
           # La review conta come COMPLETATA solo se l'attestazione lo e': ogni lotto con
           # risposta completa e ogni segmento riscontrato. Solo allora done_marker → la
           # dedup salterà i futuri re-run; altrimenti un re-run rifarà la review.
@@ -1174,18 +1208,13 @@ jobs:
           done_line = done_marker if review_complete else ""
 
           costo_totale = 0.0
-          lotti_testo, note_costo = [], []
+          note_costo = []
           for indice, review, usage, user_prompt, esito in risultati:
               nota = usage_note(usage, system_prompt, user_prompt, review)
               trovato = re.search(r"Costo stimato base:\s*`~\$([0-9.]+)`", nota)
               if trovato:
                   costo_totale += float(trovato.group(1))
               note_costo.append(nota.replace("Costo stimato base", "Costo stimato lotto"))
-              lotti_testo.append({"indice": indice + 1, "totale": len(plan.batches), "text": review})
-          # Una sola coppia `## Bloccanti` / `## Verdetto finale` per range, con i
-          # bloccanti di tutti i lotti (rilievo Codex su #539): sezioni duplicate
-          # renderebbero la review UNKNOWN per il lettore del gate.
-          unita = rc.aggregate_reviews(lotti_testo)
           sezioni = []
           for (indice, review, usage, user_prompt, esito), dettaglio, nota in zip(risultati, unita["dettagli"], note_costo):
               stato = "revisionato" if esito["reviewed"] else "NON revisionato"
@@ -1241,7 +1270,7 @@ jobs:
           if motivi_pubblicazione:
               scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
                                   compare_truncated=compare_truncated, esclusi=files_dal_base,
-                                  reasons=motivi_pubblicazione)
+                                  bloccanti=unita["lista_bloccanti"], reasons=motivi_pubblicazione)
           PY
 
       - name: Upload review coverage attestation

@@ -15,9 +15,14 @@ env:
 # - nome del job stabile: `full-suite`;
 # - niente `workflow_dispatch`: un dispatch sul branch della PR farebbe girare
 #   la versione del file presente nella PR e attaccherebbe un verde al suo head.
+#
+# `edited` (rilievo Codex su #539): cambiare la base di una PR non cambia il suo
+# head, quindi senza questo tipo il verde calcolato sulla base vecchia restava
+# attaccato allo stesso SHA. Gira anche su titolo/descrizione: un run in piu',
+# mai un verde non verificato.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
 
@@ -39,6 +44,7 @@ jobs:
     timeout-minutes: 45
     env:
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
     steps:
       # Su pull_request si parte dall'HEAD della PR, non da refs/pull/N/merge, e
       # si fonde il main CORRENTE: e' l'albero che il merge produrra' davvero.
@@ -51,17 +57,19 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Merge the current main into the PR head
+      # Si fonde la base VERA della PR (di norma main), letta dall'evento: dopo un
+      # cambio di base la suite prova l'albero contro la base nuova.
+      - name: Merge the current base branch into the PR head
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
-          git fetch --no-tags origin main
+          git fetch --no-tags origin "refs/heads/${PR_BASE_REF}:refs/remotes/origin/${PR_BASE_REF}"
           git -c user.name=full-suite -c user.email=full-suite@ci.invalid \
-            merge --no-ff --no-edit origin/main || {
-              echo "::error::merge con il main corrente in conflitto: full-suite non eseguibile"
+            merge --no-ff --no-edit "origin/${PR_BASE_REF}" || {
+              echo "::error::merge con la base corrente (${PR_BASE_REF}) in conflitto: full-suite non eseguibile"
               exit 1
             }
-          echo "MERGED_MAIN_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+          echo "MERGED_MAIN_SHA=$(git rev-parse "origin/${PR_BASE_REF}")" >> "$GITHUB_ENV"
           echo "TESTED_TREE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Setup Python

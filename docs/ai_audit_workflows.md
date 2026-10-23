@@ -115,6 +115,11 @@ sull'intera PR). Su push che toccano solo workflow/docs/test il job parte ma
   - PR in draft o da fork;
   - errore del provider;
   - lotto troncato o segmento non riscontrato.
+  - un bloccante nella review del range che termina sul head (o l'esito non
+    registrato nell'attestazione).
+
+  Sul cambio di base (`edited`) i due revisori rivedono l'intera PR contro la
+  base nuova; su titolo o descrizione modificati non chiamano il modello.
 
   Prima il job usciva verde («saltato»). I workflow sospesi (Fugu, Fable, Astra)
   restano come prima: sul loro gate a label una review non eseguibile fallisce
