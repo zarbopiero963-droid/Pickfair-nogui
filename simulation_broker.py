@@ -111,6 +111,10 @@ class SimulationState:
         # piu' volte (al piazzamento e quando il book lo raggiunge), e il
         # settlement ripercorre i fill nell'ordine in cui sono avvenuti.
         self.fills: List[Dict[str, Any]] = []
+        # Una voce del registro scartata al caricamento (malformata) lo rende
+        # inaffidabile per sempre, anche se il resto torna (Codex su #542):
+        # persistito, si azzera solo con reset().
+        self.fills_corrupted = False
         # Liquidita' del book gia' presa dagli ordini SIM, per livello
         # (mercato|selezione|lato|quota): il feed esterno non sa dei nostri
         # abbinamenti virtuali, quindi un book riletto la ripresenterebbe.
@@ -140,6 +144,7 @@ class SimulationState:
             },
             "settlements": copy.deepcopy(self.settlements),
             "fills": copy.deepcopy(self.fills),
+            "fills_corrupted": bool(self.fills_corrupted),
             "liquidity_consumed": dict(self.liquidity_consumed),
         }
 
@@ -217,13 +222,18 @@ class SimulationState:
                 self.settlements[str(market_id)] = copy.deepcopy(record)
 
         self.fills = []
+        self.fills_corrupted = data.get("fills_corrupted") is True
         if "fills" in data:
             # Registro presente: si usa solo se e' una lista; altrimenti resta vuoto
             # e, con ordini abbinati, il registro non torna (fail-closed). Mai la
             # ricostruzione dagli ordini, che perderebbe la cronologia dei fill.
+            if not isinstance(data["fills"], list):
+                self.fills_corrupted = True
             for item in data["fills"] if isinstance(data["fills"], list) else []:
                 fill = _fill_valido(item)
-                if fill is not None:  # una voce scartata rende il registro incoerente: fail-closed
+                if fill is None:
+                    self.fills_corrupted = True  # fail-closed: vedi sopra
+                else:
                     self.fills.append(fill)
         else:
             # Stato salvato prima di PFC-005: ogni ordine si abbinava una volta
@@ -563,7 +573,10 @@ class SimulationBroker:
         esito_settlement: Optional[Dict[str, Any]] = None
         da_persistere: List[SimOrder] = []
         with self._lock:
-            self._applica_liquidita_consumata_locked(market_id, normalized)
+            # Book non numerico: nessuna pulizia del consumo (una quota illeggibile
+            # non e' "un'altra quota", Codex su #542) e nessun abbinamento differito.
+            if self._book_numerico(normalized):
+                self._applica_liquidita_consumata_locked(market_id, normalized)
             self.state.market_books[market_id] = normalized
             self._refresh_unrealized_for_market(market_id)
             event_name = str(
@@ -692,7 +705,7 @@ class SimulationBroker:
                         numerico = float(valore)
                     except (TypeError, ValueError):
                         return False
-                    if not math.isfinite(numerico):
+                    if not math.isfinite(numerico) or (campo == "size" and numerico < 0.0):
                         return False
         return True
 
@@ -713,6 +726,13 @@ class SimulationBroker:
             # Codex su #542: un valore non numerico fermerebbe il ciclo a meta',
             # con alcuni fill applicati e non persistiti. Nessun abbinamento.
             logger.warning("Book SIM %s con prezzi/dimensioni non numerici: nessun abbinamento differito", market_id)
+            return []
+        try:
+            self._ricostruisci_fill_mercato_locked(market_id)
+        except (TypeError, ValueError):
+            # Codex su #542: con la contabilita' non verificabile nessun nuovo fill,
+            # come per i nuovi ordini (fail-closed).
+            logger.warning("Registro dei fill SIM del mercato %s incoerente: nessun abbinamento differito", market_id)
             return []
         sospesi = set()
         for runner in market_book.get("runners") or []:
@@ -766,6 +786,8 @@ class SimulationBroker:
         deve tornare con gli ordini (somma dei fill = abbinato di ogni ordine):
         altrimenti, come per valori non validi, ``ValueError``.
         """
+        if self.state.fills_corrupted:
+            raise _RegistroFillIncoerente("registro dei fill con voci malformate al caricamento")
         ledgers: Dict[int, PositionLedger] = {}
         cassa = 0.0
         per_ordine: Dict[str, float] = {}
@@ -1772,7 +1794,8 @@ class SimulationBroker:
 
         # Codex su #542: una dimensione NaN farebbe saltare entrambi i rami
         # "available_size > 0" e varrebbe come liquidita' illimitata.
-        if not math.isfinite(best_price) or not math.isfinite(available_size) or best_price <= 1.0:
+        if (not math.isfinite(best_price) or not math.isfinite(available_size) or available_size < 0.0
+                or best_price <= 1.0):
             order.status = "EXECUTABLE"
             return
 

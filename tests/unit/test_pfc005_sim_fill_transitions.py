@@ -379,3 +379,62 @@ def test_dimensione_nan_al_piazzamento_non_vale_liquidita_illimitata():
     b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
         "availableToBack": [{"price": 2.5, "size": float("nan")}]}}]})
     assert _place(b, "BACK", 2.0, 60.0)[1]["sizeMatched"] == 0.0
+
+
+# --- quarto giro Codex su #542 ----------------------------------------------------------------------
+
+def test_registro_incoerente_blocca_anche_l_abbinamento_differito():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)  # 10 abbinati, 90 a riposo
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    stato["fills"] = []  # registro perso
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    _book(nuovo, runners={1: (2.0, 2.02, 1000.0)})
+    assert nuovo.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)  # nessun nuovo fill
+    assert nuovo.state.fills == []
+
+
+def test_voce_malformata_in_piu_rende_il_registro_inaffidabile_anche_dopo_un_salvataggio():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (3.0, 3.1, 100.0)})
+    _place(b, "BACK", 3.0, 10.0)
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    extra = dict(stato["fills"][0], fill_id="altro")
+    del extra["price"]
+    stato["fills"].append(extra)  # i fill validi tornano ancora con l'ordine
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    assert nuovo.get_account_funds()["error"] == "FILL_LEDGER_INCONSISTENT"
+    di_nuovo = _broker(balance=1000.0)
+    di_nuovo.state.load_from_dict(json.loads(json.dumps(nuovo.state.to_dict())))  # salvato e ricaricato
+    assert di_nuovo.get_account_funds()["error"] == "FILL_LEDGER_INCONSISTENT"
+    assert _chiuso(di_nuovo, "1.1", {1: "WINNER"})["settlement_status"] == "LEDGER_INCONSISTENT"
+    di_nuovo.reset()
+    assert "error" not in di_nuovo.get_account_funds()
+
+
+def test_quota_illeggibile_non_cancella_la_liquidita_consumata():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": "abc", "size": 10.0}]}}]})
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    assert b.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)
+
+
+@pytest.mark.parametrize("fase", ["piazzamento", "differito"])
+def test_dimensione_negativa_non_vale_liquidita_illimitata(fase):
+    b = _broker(balance=1000.0)
+    negativo = {"status": "OPEN", "runners": [{"selectionId": 1, "status": "ACTIVE", "ex": {
+        "availableToBack": [{"price": 2.5, "size": -5.0}]}}]}
+    if fase == "piazzamento":
+        b.update_market_book("1.1", negativo)
+        assert _place(b, "BACK", 2.0, 60.0)[1]["sizeMatched"] == 0.0
+    else:
+        _book(b, runners={1: (1.8, 1.82, 100.0)})
+        _, rep = _place(b, "BACK", 2.0, 60.0)
+        b.update_market_book("1.1", negativo)
+        assert b.state.orders[rep["betId"]].matched_size == 0.0

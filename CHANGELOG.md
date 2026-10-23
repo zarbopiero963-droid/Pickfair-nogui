@@ -36,6 +36,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - ogni ordine deve tornare con i suoi fill anche per runner, lato e quota media, non solo per importo; un
     prezzo o una dimensione NaN/infinita nel book non abbina (prima una dimensione NaN valeva "illimitata",
     anche al piazzamento);
+  - una voce del registro scartata al caricamento lo marca inaffidabile in modo persistente (`fills_corrupted`,
+    azzerato solo da `reset()`); con il registro non verificabile neanche l'abbinamento differito avviene; una
+    quota illeggibile non cancella la liquidita' consumata; una dimensione negativa non vale "illimitata";
   - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
     LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**

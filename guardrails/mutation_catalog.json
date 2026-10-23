@@ -2498,8 +2498,8 @@
       "module": "simulation_broker",
       "area": "funds",
       "file": "simulation_broker.py",
-      "original": "            self._applica_liquidita_consumata_locked(market_id, normalized)",
-      "mutated": "            pass",
+      "original": "                self._applica_liquidita_consumata_locked(market_id, normalized)",
+      "mutated": "                pass",
       "tests": [
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
@@ -2510,8 +2510,8 @@
       "module": "simulation_broker",
       "area": "live_safety",
       "file": "simulation_broker.py",
-      "original": "        if not math.isfinite(best_price) or not math.isfinite(available_size) or best_price <= 1.0:",
-      "mutated": "        if best_price <= 1.0:",
+      "original": "        if (not math.isfinite(best_price) or not math.isfinite(available_size) or available_size < 0.0",
+      "mutated": "        if (False",
       "tests": [
         "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
