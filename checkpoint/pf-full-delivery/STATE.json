@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 66,
+ "seq": 67,
  "updated_at": "2026-10-22T18:10:15Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "Attendere il merge owner di PR #538 (head b83fde3: CI 70 success/41 skipped/0 failure, Merge Readiness success, 0 thread, fix loop 1/10). Nessun merge automatico: enforcement indipendente non verificato. Dopo il merge: CI post-merge main, registri #453/#461, poi PFC-002 (merge OWNER). NO LIVE.",
+ "next_atomic_action": "Attendere il merge MANUALE owner di #538 (solo se SHA b83fde3 e base 3bb4477 invariati). Dopo: CI post-merge main, registri, poi PFC-002 = M156 + M130 + M159 (dedup CI, full-suite obbligatoria non saltabile, copertura review completa e attestata con segmentazione deterministica e blocco merge), merge OWNER. Nessun merge automatico. NO LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "4ffaf2f66694623f5bd33cc9dbb58932e99dab06",
- "lotto_corrente": "PFC-001 (PR #538) READY_FOR_OWNER_MANUAL_MERGE su b83fde3",
+ "previous_checkpoint_sha": "5fd745e99f85691daa7559afb466409fe81f7717",
+ "lotto_corrente": "PFC-001 (PR #538) READY_FOR_OWNER_MANUAL_MERGE su b83fde3 con eccezione owner una tantum sulla copertura review",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -598,14 +598,14 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
+ "mandate_id": "PF-PFC001-REVIEW-EXCEPTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
   "sha": "b83fde309a106d672b767c624fbb81500325b81b",
   "patch": {
    "head": "b83fde309a106d672b767c624fbb81500325b81b",
    "tree": "0594c58b7da44d18ba98bc0ee62821e3876816a9",
-   "captured_at": "2026-10-22T22:29:54+00:00",
+   "captured_at": "2026-10-23T06:11:21+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -1373,8 +1373,9 @@
   "prs_future": 108,
   "executable": 101,
   "suspended": 7,
-  "atomic_requirements": 164,
-  "merge_owner_prs": 11
+  "atomic_requirements": 165,
+  "merge_owner_prs": 11,
+  "m159": "PFC-002: copertura review completa e attestata (#461 commento PF-ROADMAP-108-M159)"
  },
  "pfc001": {
   "pr": 538,
@@ -1390,6 +1391,13 @@
   "fix_loop": "1/10",
   "codex_p2": "r4354025687 fixed in b83fde3, resolved",
   "verdict_comment": 6352717373,
-  "review_coverage": "parziale: troncamenti per budget per file (Sol: child_f026, pr28d; Grok: coda child_f026, guard test)"
+  "review_coverage": "parziale: troncamenti per budget per file (Sol: child_f026, pr28d; Grok: coda child_f026, guard test)",
+  "exception": {
+   "decision": "PF-PFC001-REVIEW-EXCEPTION-01",
+   "registry": "#426 c.6358682757",
+   "pr_comment": 6358680517,
+   "scope": "solo PR #538 e SHA b83fde3",
+   "codex_manual_review": "c.6358643665 nessun finding"
+  }
  }
 }

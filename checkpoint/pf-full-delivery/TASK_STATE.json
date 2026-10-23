@@ -56,9 +56,9 @@
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)"
  ],
- "lotto_corrente": "PFC-001 (PR #538) READY_FOR_OWNER_MANUAL_MERGE su b83fde3",
- "mandate_id": "PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01 (owner 22/10/2026)",
- "next_atomic_action": "Attendere il merge owner di PR #538 (head b83fde3: CI 70 success/41 skipped/0 failure, Merge Readiness success, 0 thread, fix loop 1/10). Nessun merge automatico: enforcement indipendente non verificato. Dopo il merge: CI post-merge main, registri #453/#461, poi PFC-002 (merge OWNER). NO LIVE.",
+ "lotto_corrente": "PFC-001 (PR #538) READY_FOR_OWNER_MANUAL_MERGE su b83fde3 con eccezione owner una tantum sulla copertura review",
+ "mandate_id": "PF-PFC001-REVIEW-EXCEPTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
+ "next_atomic_action": "Attendere il merge MANUALE owner di #538 (solo se SHA b83fde3 e base 3bb4477 invariati). Dopo: CI post-merge main, registri, poi PFC-002 = M156 + M130 + M159 (dedup CI, full-suite obbligatoria non saltabile, copertura review completa e attestata con segmentazione deterministica e blocco merge), merge OWNER. Nessun merge automatico. NO LIVE.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
