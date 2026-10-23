@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 71,
- "updated_at": "2026-10-23T10:36:38Z",
+ "seq": 72,
+ "updated_at": "2026-10-23T11:13:27Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "STOP NEEDS_MANUAL (fix_loop_budget_exhausted 10/10) sulla #539 head aa3bb57, c.6362969140: falso verde residuo force-push + nuova PR (verifica indipendente finale). Attendere decisione owner: deroga di un ciclo / rischio accettato / altro meccanismo. Nessun merge, ruleset non attivato, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "STOP NEEDS_MANUAL definitivo sulla #539 head 2636104 (ciclo straordinario 11/11 usato), c.6363583732: /commits/<sha>/pulls non elenca PR chiuse non mergiate -> scenario 2 (branch diverso) falso verde reale. Attendere la decisione architetturale owner (es. registro persistente dei bloccanti). Nessun ciclo, nessun merge, ruleset invariato, nessun LIVE, PFC-003 non si apre.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "fe948b23f5dea52536dc36473d24c48073d6ef2d",
- "lotto_corrente": "PFC-002 PR #539 su aa3bb57: NEEDS_MANUAL fix_loop_budget_exhausted; difetto residuo force-push + nuova PR",
+ "previous_checkpoint_sha": "4e5f249546482647752b90bcc61963c1c551a564",
+ "lotto_corrente": "PFC-002 PR #539 su 2636104: NEEDS_MANUAL dopo ciclo 11/11; serve decisione architetturale owner",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -554,7 +554,8 @@
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)",
   "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)",
-  "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)"
+  "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
+  "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -603,11 +604,11 @@
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "aa3bb57d1ee79410aad6f06a007914ae11457db5",
+  "sha": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
   "patch": {
-   "head": "aa3bb57d1ee79410aad6f06a007914ae11457db5",
-   "tree": "d4e73cb389064affc5b65022121f699fc4c50231",
-   "captured_at": "2026-10-23T10:36:39+00:00",
+   "head": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
+   "tree": "732ce81524a19016ee5fa537c200e0feb8e869a2",
+   "captured_at": "2026-10-23T11:13:27+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -1425,14 +1426,15 @@
  },
  "pfc002": {
   "pr": 539,
-  "head": "aa3bb57d1ee79410aad6f06a007914ae11457db5",
-  "fix_loop": "10/10 (esaurito)",
+  "head": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
+  "fix_loop": "11/11 (deroga owner, esaurito)",
   "ci_measured": "36feca0: full-suite SUCCESS 9092 raccolti/9072 passed/15 skipped/5 xfailed in 702.6s (artifact 12489531139); mutation SUCCESS; Merge Readiness ready_to_merge; 52.8 job-min per push (prima 342-391)",
-  "local": "regressione 9105 passed; RED 33 -> GREEN 248; mutazioni tutte uccise",
+  "local": "regressione 9115 passed; RED 7 -> GREEN; mutazioni uccise",
   "stop": "risolto: crediti ricaricati dall'owner",
   "reviews": "Sol pulito (copertura parziale: workflow base tronca); Grok 1 bloccante falso positivo diff-only (c.6360802222) + non-review su 96d61de...060b5ee; Codex 16 rilievi corretti, usage-limit su 36feca0; 16/16 thread risolti",
-  "verdict": "NEEDS_MANUAL, #539 c.6362969140",
+  "verdict": "NEEDS_MANUAL, #539 c.6363583732",
   "owner_decisions": "D1-D4 (persistenza bloccanti fail-closed, triage owner, D3 CheckRun, D4 ruleset dopo merge); terzo audit opzione 1 (legame ai commit)",
-  "audits": "5 audit indipendenti: i difetti dei primi 3 corretti prima del push; 4 conferma D1/D2/B; 5 (finale su aa3bb57) NON FAVOREVOLE: force-push + nuova PR"
+  "audits": "5 audit indipendenti: i difetti dei primi 3 corretti prima del push; 4 conferma D1/D2/B; 5 (finale su aa3bb57) NON FAVOREVOLE: force-push + nuova PR",
+  "scenari": "coperti 1,2b,3a,4,5,6,7(stesso branch); falso verde 2 (branch diverso: API non elenca PR chiuse non mergiate); non coperto 3b; parziale 8 (branch riusato)"
  }
 }

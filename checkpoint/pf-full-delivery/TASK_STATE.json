@@ -56,11 +56,12 @@
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)",
   "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)",
-  "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)"
+  "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
+  "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)"
  ],
- "lotto_corrente": "PFC-002 PR #539 su aa3bb57: NEEDS_MANUAL fix_loop_budget_exhausted; difetto residuo force-push + nuova PR",
+ "lotto_corrente": "PFC-002 PR #539 su 2636104: NEEDS_MANUAL dopo ciclo 11/11; serve decisione architetturale owner",
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "STOP NEEDS_MANUAL (fix_loop_budget_exhausted 10/10) sulla #539 head aa3bb57, c.6362969140: falso verde residuo force-push + nuova PR (verifica indipendente finale). Attendere decisione owner: deroga di un ciclo / rischio accettato / altro meccanismo. Nessun merge, ruleset non attivato, nessun LIVE, PFC-003 non si apre.",
+ "next_atomic_action": "STOP NEEDS_MANUAL definitivo sulla #539 head 2636104 (ciclo straordinario 11/11 usato), c.6363583732: /commits/<sha>/pulls non elenca PR chiuse non mergiate -> scenario 2 (branch diverso) falso verde reale. Attendere la decisione architetturale owner (es. registro persistente dei bloccanti). Nessun ciclo, nessun merge, ruleset invariato, nessun LIVE, PFC-003 non si apre.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [
