@@ -14,7 +14,26 @@ dell'agente (HTTP 403) e resta da verificare dall'owner.
 
 Le lane di modulo chiamano `_module-ultra-check.yml`: esistenza del modulo e
 dei file guardrail, validazione JSON, `scripts/guardrail_runner.py`, test
-mirati e infine la suite completa (`pytest -q`) come backstop.
+mirati e infine la suite completa come backstop.
+
+**Suite completa in parallelo (PFC-003, M157).** I tre job che eseguono
+l'intera suite (il backstop di `_module-ultra-check.yml`, `merge-simulation-hard.yml`
+e `pr-check.yml`) la dividono in due comandi:
+
+1. `pytest -q -n auto --dist worksteal -m "not serial"`: in parallelo con
+   xdist; `worksteal` ridistribuisce i test lenti fra i worker liberi;
+2. `pytest -q -m serial`: in serie i test marcati `serial` (widget Tk reali sul
+   display X condiviso, PFC-001).
+
+Le due selezioni sono complementari e insieme coprono l'intera raccolta.
+`tests/guardrails/test_pfc003_parallel_backstop.py` prende i due comandi **dal
+workflow** e li esegue su un mini-repository: ogni test deve girare una volta
+sola, quindi un comando tolto o una selezione cambiata fanno fallire il test.
+Con `set -euo pipefail` un comando rosso ferma il passo; se un giorno non
+esistesse piu' nessun test `serial`, il secondo comando uscirebbe con rc 5 e il
+passo diventerebbe rosso (fail-closed). La deduplica delle esecuzioni della
+suite fra job e orchestratori (17 per push) era in PFC-002 (#539), chiusa senza
+merge: qui non cambia.
 
 Profondità massima del grafo: 4 livelli
 (master → dynamic → modulo → `_module-ultra-check`).
@@ -55,6 +74,16 @@ complete non stavano nei 45 minuti del job, che veniva interrotto
 (`cancelled`): nei run 39386046315, 39386046149, 39387530346 e 39387530343
 sulla #527. Il gate era rosso per costruzione, non un falso verde, ma non
 misurava nulla.
+
+**In parallelo (PFC-003, M157).** `--jobs N` esegue le mutazioni con N worker,
+ciascuno con la **sua** sandbox (una mutazione modifica un file e lo
+ripristina: due worker sulla stessa copia si vedrebbero a vicenda il codice
+mutato). I risultati tornano nell'ordine del catalogo, l'output di ogni
+mutazione esce in un blocco solo e il report è identico al run sequenziale; il
+primo errore del runner ferma tutti i worker. Il workflow usa `--jobs 4`, i vCPU
+del runner GitHub. Misurato in locale sul catalogo reale (195 mutazioni, 4 CPU):
+seriale 11 min 10 s, `--jobs 4` 3 min 30 s, con esiti identici mutazione per
+mutazione e lo stesso summary (gate PASS, score 100).
 
 **Il runner attuale.** Applica le mutazioni di `guardrails/mutation_catalog.json`:
 67 voci (36 della #525, 31 della #523 su Dutching e bet manuale), ciascuna con una riga intera del sorgente, la sua variante dannosa e i

@@ -46,9 +46,12 @@ jobs:
         run: |
           python scripts/validate_guardrails.py
 
+      # PFC-003 (M157): parallelo (worksteal) + serial, insieme l'intera raccolta.
       - name: Run full pytest after merge simulation
         run: |
-          pytest -q -x
+          set -euo pipefail
+          pytest -q -n auto --dist worksteal -m "not serial" -x
+          pytest -q -x -m serial
 
       - name: Upload pytest logs
         if: always()

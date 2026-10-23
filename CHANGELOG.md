@@ -10,6 +10,15 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-003 — suite completa e mutation in parallelo (M157, roadmap #461; merge owner):**
+  - i tre job che eseguono l'intera suite (`_module-ultra-check` backstop, `merge-simulation-hard`, `pr-check`)
+    girano `pytest -n auto --dist worksteal -m "not serial"` e poi `pytest -m serial`: selezioni complementari,
+    verificate da `tests/guardrails/test_pfc003_parallel_backstop.py` eseguendo i comandi del workflow su un
+    mini-repository (ogni test una volta sola);
+  - `scripts/run_mutation_guardrails.py --jobs N`: una sandbox per worker, risultati nell'ordine del catalogo e
+    report identico al run seriale; `mutation-guardrails` usa `--jobs 4`;
+  - indipendente da PFC-002 (#539, chiusa senza merge): la deduplica delle esecuzioni non e' inclusa.
+
 - **PFC-001 — test deterministici e veloci, nessuna modifica di produzione (roadmap canonica ratificata
   PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01, #528):**
   - `tests/f026/child_f026.py`: le attese fisse (1,5 s dopo ogni segnale, 4 s prima del settlement) diventano

@@ -291,3 +291,64 @@ def test_il_timeout_funziona_anche_senza_killpg(tmp_path, monkeypatch):
     report = json.loads(out.read_text(encoding="utf-8"))
     assert report["results"][0]["status"] == runner.INCONCLUSIVE
     assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# PFC-003 (M157): mutation in parallelo con --jobs, stesso esito del seriale
+# ---------------------------------------------------------------------------
+def _quattro_mutazioni():
+    return [
+        _mut("liab_stake", LIAB, "    return stake"),
+        _mut("lay_inverted", '    return side == "LAY"', '    return side != "LAY"', area="side"),
+        _mut("liab_zero", LIAB, "    return 0.0"),
+        _mut("liab_double", LIAB, "    return stake * (price - 1.0) * 2"),
+    ]
+
+
+def test_jobs_danno_lo_stesso_report_del_seriale_nello_stesso_ordine(tmp_path):
+    repo = _repo(tmp_path, _quattro_mutazioni(), areas=("lay_liability", "side"))
+    rc1, seriale = _run(repo, tmp_path / "s", "--jobs", "1")
+    rc3, parallelo = _run(repo, tmp_path / "p", "--jobs", "3")
+    chiave = [(r["mutation_id"], r["status"]) for r in seriale["results"]]
+    assert chiave == [(r["mutation_id"], r["status"]) for r in parallelo["results"]]
+    assert chiave == [("liab_stake", runner.KILLED), ("lay_inverted", runner.SURVIVED),
+                      ("liab_zero", runner.KILLED), ("liab_double", runner.KILLED)]
+    assert seriale["summary"] == parallelo["summary"] and rc1 == rc3 == 1
+
+
+def test_jobs_usano_sandbox_separate_e_lavorano_insieme(tmp_path, monkeypatch):
+    # Tre mutazioni sullo stesso file in tre sandbox diverse, nello stesso
+    # momento: la barriera si rompe (timeout) se non girano insieme, e una
+    # sandbox condivisa vedrebbe il file mutato da un altro worker.
+    import threading
+    repo = _repo(tmp_path, _quattro_mutazioni()[:1] + [
+        _mut("liab_zero", LIAB, "    return 0.0"), _mut("liab_double", LIAB, "    return stake * (price - 1.0) * 2")])
+    originale = runner._run_pytest
+    barriera = threading.Barrier(3, timeout=20)
+    sandbox_viste = []
+
+    def in_parallelo(sandbox, tests, pytest_args, timeout_sec):
+        mutato = (sandbox / "calc.py").read_text(encoding="utf-8") != MODULO
+        if mutato:
+            sandbox_viste.append(str(sandbox))
+            barriera.wait()
+        return originale(sandbox, tests, pytest_args, timeout_sec)
+
+    monkeypatch.setattr(runner, "_run_pytest", in_parallelo)
+    rc, report = _run(repo, tmp_path, "--jobs", "3")
+    assert len(set(sandbox_viste)) == 3
+    assert [r["status"] for r in report["results"]] == [runner.KILLED] * 3 and rc == 0
+
+
+@pytest.mark.parametrize("jobs", ["0", "-2"])
+def test_jobs_non_validi_rifiutati(tmp_path, jobs):
+    repo = _repo(tmp_path, _quattro_mutazioni()[:1])
+    with pytest.raises(SystemExit):
+        runner.main(["--repo-root", str(repo), "--output", str(tmp_path / "r.json"), "--jobs", jobs])
+
+
+def test_con_i_jobs_il_repository_non_viene_modificato(tmp_path):
+    repo = _repo(tmp_path, _quattro_mutazioni(), areas=("lay_liability", "side"))
+    before = hashlib.sha256((repo / "calc.py").read_bytes()).hexdigest()
+    _run(repo, tmp_path, "--jobs", "4")
+    assert hashlib.sha256((repo / "calc.py").read_bytes()).hexdigest() == before

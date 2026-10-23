@@ -27,7 +27,8 @@ jobs:
 
       - name: Run mutation guardrails
         run: |
-          python scripts/run_mutation_guardrails.py --fail-under 80 --output mutation_guardrails_report.json
+          # PFC-003 (M157): una sandbox per worker, 4 = vCPU del runner
+          python scripts/run_mutation_guardrails.py --fail-under 80 --jobs 4 --output mutation_guardrails_report.json
 
       - name: Upload mutation report
         uses: actions/upload-artifact@v4
