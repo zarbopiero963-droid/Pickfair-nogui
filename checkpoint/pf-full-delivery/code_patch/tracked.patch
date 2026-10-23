@@ -1,0 +1,1910 @@
+diff --git a/.github/workflows/_module-ultra-check.yml b/.github/workflows/_module-ultra-check.yml
+index a7073c8..699fc81 100644
+--- a/.github/workflows/_module-ultra-check.yml
++++ b/.github/workflows/_module-ultra-check.yml
+@@ -234,13 +234,13 @@ jobs:
+           echo "::warning::No focused tests found for module $MODULE_PATH"
+ 
+       # =========================================================
+-      # FULL SUITE BACKSTOP (SEMPRE)
++      # FULL SUITE: NON QUI (PFC-002, M156)
+       # =========================================================
+-      - name: Run full test suite (backstop)
+-        shell: bash
+-        run: |
+-          set -euo pipefail
+-          pytest -q
++      # Fino alla PFC-002 ogni lane rieseguiva qui l'intera suite come
++      # backstop: 10 copie per push nel solo ci-master-gate, sullo stesso
++      # albero. La suite completa gira ora UNA volta per push nel check
++      # obbligatorio `full-suite` (.github/workflows/full-suite.yml), con un
++      # verdetto che legge il report e non solo l'exit code.
+ 
+       # =========================================================
+       # UPLOAD DEBUG ARTIFACT
+diff --git a/.github/workflows/ci-dynamic-intelligent.yml b/.github/workflows/ci-dynamic-intelligent.yml
+index 0b4de31..8aadaf8 100644
+--- a/.github/workflows/ci-dynamic-intelligent.yml
++++ b/.github/workflows/ci-dynamic-intelligent.yml
+@@ -2,11 +2,21 @@ name: ci-dynamic-intelligent
+ env:
+   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+ 
++# PFC-002 (M156). Prima questo workflow girava due volte per push: da solo e
++# annidato in ci-master-gate. Ora solo da solo (niente piu' `workflow_call`),
++# e qui restano soltanto le lane che nessun altro workflow esegue sempre:
++# `dutching` e `pnl-engine`, avviate da `detect`. Le altre lane di modulo,
++# chaos-critical, live-gate e mutation-guardrails le esegue ci-master-gate su
++# ogni PR; noise-free-pr-gate, repo-guardrails-extended e merge-simulation-hard
++# partono da soli su ogni PR. La suite completa gira nel check `full-suite`.
+ on:
+-  workflow_call:
+   pull_request:
+   workflow_dispatch:
+ 
++concurrency:
++  group: ci-dynamic-intelligent-${{ github.event.pull_request.number || github.run_id }}
++  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
++
+ jobs:
+   detect:
+     runs-on: ubuntu-latest
+@@ -81,12 +91,6 @@ jobs:
+           name: changed-modules
+           path: changed_modules.json
+ 
+-  noise-free-pr-gate:
+-    uses: ./.github/workflows/noise-free-pr-gate.yml
+-
+-  repo-guardrails-extended:
+-    uses: ./.github/workflows/repo-guardrails-extended.yml
+-
+   dutching:
+     needs: detect
+     if: needs.detect.outputs.run_dutching == 'true'
+@@ -96,79 +100,3 @@ jobs:
+     needs: detect
+     if: needs.detect.outputs.run_pnl_engine == 'true'
+     uses: ./.github/workflows/pnl-engine.yml
+-
+-  trading-engine:
+-    needs: detect
+-    if: needs.detect.outputs.run_trading_engine == 'true'
+-    uses: ./.github/workflows/trading-engine.yml
+-
+-  order-manager:
+-    needs: detect
+-    if: needs.detect.outputs.run_order_manager == 'true'
+-    uses: ./.github/workflows/order-manager.yml
+-
+-  execution-guard:
+-    needs: detect
+-    if: needs.detect.outputs.run_execution_guard == 'true'
+-    uses: ./.github/workflows/execution-guard.yml
+-
+-  risk-middleware:
+-    needs: detect
+-    if: needs.detect.outputs.run_risk_middleware == 'true'
+-    uses: ./.github/workflows/risk-middleware.yml
+-
+-  runtime-controller:
+-    needs: detect
+-    if: needs.detect.outputs.run_runtime_controller == 'true'
+-    uses: ./.github/workflows/runtime-controller.yml
+-
+-  money-management:
+-    needs: detect
+-    if: needs.detect.outputs.run_money_management == 'true'
+-    uses: ./.github/workflows/money-management.yml
+-
+-  telegram-listener:
+-    needs: detect
+-    if: needs.detect.outputs.run_telegram_listener == 'true'
+-    uses: ./.github/workflows/telegram-listener.yml
+-
+-  copy-engine:
+-    needs: detect
+-    if: needs.detect.outputs.run_copy_engine == 'true'
+-    uses: ./.github/workflows/copy-engine.yml
+-
+-  simulation-broker:
+-    needs: detect
+-    if: needs.detect.outputs.run_simulation_broker == 'true'
+-    uses: ./.github/workflows/simulation-broker.yml
+-
+-  session-manager:
+-    needs: detect
+-    if: needs.detect.outputs.run_session_manager == 'true'
+-    uses: ./.github/workflows/session-manager.yml
+-
+-  rate-limiter:
+-    needs: detect
+-    if: needs.detect.outputs.run_rate_limiter == 'true'
+-    uses: ./.github/workflows/rate-limiter.yml
+-
+-  live-gate:
+-    needs: detect
+-    if: needs.detect.outputs.run_live_gate == 'true'
+-    uses: ./.github/workflows/live-gate.yml
+-
+-  chaos-critical:
+-    needs: detect
+-    if: needs.detect.outputs.run_chaos_critical == 'true'
+-    uses: ./.github/workflows/chaos-critical.yml
+-
+-  mutation-guardrails:
+-    needs: detect
+-    if: needs.detect.outputs.run_mutation_guardrails == 'true'
+-    uses: ./.github/workflows/mutation-guardrails.yml
+-
+-  merge-simulation-hard:
+-    needs:
+-      - noise-free-pr-gate
+-      - repo-guardrails-extended
+-    uses: ./.github/workflows/merge-simulation-hard.yml
+diff --git a/.github/workflows/ci-master-gate.yml b/.github/workflows/ci-master-gate.yml
+index bc70add..8c18960 100644
+--- a/.github/workflows/ci-master-gate.yml
++++ b/.github/workflows/ci-master-gate.yml
+@@ -1,13 +1,23 @@
+ name: ci-master-gate
+ 
++# PFC-002 (M156). Tolti due duplicati dimostrati:
++# - `dynamic` (ci-dynamic-intelligent annidato): lo stesso workflow parte gia'
++#   da solo su ogni pull_request, quindi la copia annidata rifaceva detect, le
++#   lane di modulo, mutation e merge-simulation-hard una seconda volta;
++# - `merge-simulation-hard`: parte gia' da solo su ogni pull_request.
++# La suite completa non gira piu' qui dentro (backstop di ogni lane): gira una
++# volta sola nel check `full-suite`.
++
+ on:
+   pull_request:
+   workflow_dispatch:
+ 
+-jobs:
+-  dynamic:
+-    uses: ./.github/workflows/ci-dynamic-intelligent.yml
++concurrency:
++  # Un push nuovo sulla stessa PR rende inutile il run dello SHA superato.
++  group: ci-master-gate-${{ github.event.pull_request.number || github.run_id }}
++  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+ 
++jobs:
+   trading-engine:
+     uses: ./.github/workflows/trading-engine.yml
+ 
+@@ -49,6 +59,3 @@ jobs:
+ 
+   mutation-guardrails:
+     uses: ./.github/workflows/mutation-guardrails.yml
+-
+-  merge-simulation-hard:
+-    uses: ./.github/workflows/merge-simulation-hard.yml
+\ No newline at end of file
+diff --git a/.github/workflows/core-guardrails.yml b/.github/workflows/core-guardrails.yml
+index 246435f..8d49aa4 100644
+--- a/.github/workflows/core-guardrails.yml
++++ b/.github/workflows/core-guardrails.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/core-invariants.yml b/.github/workflows/core-invariants.yml
+index f5afcaa..1dbadfc 100644
+--- a/.github/workflows/core-invariants.yml
++++ b/.github/workflows/core-invariants.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/dutching.yml b/.github/workflows/dutching.yml
+index 6104d02..b4919bc 100644
+--- a/.github/workflows/dutching.yml
++++ b/.github/workflows/dutching.yml
+@@ -3,6 +3,10 @@ name: dutching
+ on:
+   workflow_call:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "dutching.py"
+       - "guardrails/specs/dutching.json"
+diff --git a/.github/workflows/e2e.yml b/.github/workflows/e2e.yml
+index 08da74a..182705d 100644
+--- a/.github/workflows/e2e.yml
++++ b/.github/workflows/e2e.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/failure.yml b/.github/workflows/failure.yml
+index 27bdee1..3a1ccfa 100644
+--- a/.github/workflows/failure.yml
++++ b/.github/workflows/failure.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "**.py"
+       - "tests/failure/**"
+diff --git a/.github/workflows/incident-snapshot.yml b/.github/workflows/incident-snapshot.yml
+index 6be48cd..a2b619e 100644
+--- a/.github/workflows/incident-snapshot.yml
++++ b/.github/workflows/incident-snapshot.yml
+@@ -10,6 +10,10 @@ on:
+       - "tests/scripts/test_incident_snapshot.py"
+       - ".github/workflows/incident-snapshot.yml"
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "ops/incident_playbook.md"
+       - "scripts/incident_snapshot.py"
+diff --git a/.github/workflows/integration.yml b/.github/workflows/integration.yml
+index ddf3e91..213a76f 100644
+--- a/.github/workflows/integration.yml
++++ b/.github/workflows/integration.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/live-gate.yml b/.github/workflows/live-gate.yml
+index 71c7b11..423a5f1 100644
+--- a/.github/workflows/live-gate.yml
++++ b/.github/workflows/live-gate.yml
+@@ -12,6 +12,10 @@ on:
+       - "tests/scripts/test_live_gate.py"
+       - ".github/workflows/live-gate.yml"
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "ops/paper_trading_gate.md"
+       - "ops/live_microstake_gate.md"
+diff --git a/.github/workflows/merge-simulation-hard.yml b/.github/workflows/merge-simulation-hard.yml
+index 3bb7377..73e2b2e 100644
+--- a/.github/workflows/merge-simulation-hard.yml
++++ b/.github/workflows/merge-simulation-hard.yml
+@@ -2,11 +2,19 @@ name: merge-simulation-hard
+ env:
+   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+ 
++# PFC-002 (M156): girava tre volte per push (da solo, annidato in ci-master-gate
++# e in ci-dynamic-intelligent), ognuna con la suite completa. Ora parte solo da
++# se' e non riesegue piu' pytest: la suite completa gira nel check `full-suite`
++# sullo stesso albero (refs/pull/N/merge). Qui restano i controlli propri del
++# merge con il main piu' recente: conflitti, marker e JSON dei guardrail.
+ on:
+-  workflow_call:
+   pull_request:
+   workflow_dispatch:
+ 
++concurrency:
++  group: merge-simulation-hard-${{ github.event.pull_request.number || github.run_id }}
++  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
++
+ jobs:
+   simulate-merge:
+     runs-on: ubuntu-latest
+@@ -40,19 +48,7 @@ jobs:
+           python -m pip install --upgrade pip
+           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+-          pip install pytest pytest-xdist
+ 
+       - name: Validate all guardrail JSON
+         run: |
+           python scripts/validate_guardrails.py
+-
+-      - name: Run full pytest after merge simulation
+-        run: |
+-          pytest -q -x
+-
+-      - name: Upload pytest logs
+-        if: always()
+-        uses: actions/upload-artifact@v4
+-        with:
+-          name: merge-simulation-logs
+-          path: .pytest_cache
+\ No newline at end of file
+diff --git a/.github/workflows/net.yml b/.github/workflows/net.yml
+index c49939a..5d32b0f 100644
+--- a/.github/workflows/net.yml
++++ b/.github/workflows/net.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "**.py"
+       - "tests/net/**"
+diff --git a/.github/workflows/observability-minimum.yml b/.github/workflows/observability-minimum.yml
+index a83da18..5c28409 100644
+--- a/.github/workflows/observability-minimum.yml
++++ b/.github/workflows/observability-minimum.yml
+@@ -10,6 +10,10 @@ on:
+       - "tests/scripts/test_observability_minimum_check.py"
+       - ".github/workflows/observability-minimum.yml"
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "ops/observability_minimum.md"
+       - "scripts/observability_minimum_check.py"
+diff --git a/.github/workflows/observability-tests.yml b/.github/workflows/observability-tests.yml
+index 8d1d932..b2f7524 100644
+--- a/.github/workflows/observability-tests.yml
++++ b/.github/workflows/observability-tests.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "observability/**"
+       - "tests/observability/**"
+diff --git a/.github/workflows/pnl-engine.yml b/.github/workflows/pnl-engine.yml
+index 7b5908c..6e7ca1f 100644
+--- a/.github/workflows/pnl-engine.yml
++++ b/.github/workflows/pnl-engine.yml
+@@ -5,6 +5,10 @@ env:
+ on:
+   workflow_call:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "pnl_engine.py"
+       - "core/pnl_engine.py"
+diff --git a/.github/workflows/pr-check.yml b/.github/workflows/pr-check.yml
+deleted file mode 100644
+index 058263f..0000000
+--- a/.github/workflows/pr-check.yml
++++ /dev/null
+@@ -1,31 +0,0 @@
+-name: pr-check
+-env:
+-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+-
+-on:
+-  pull_request:
+-    branches: [main]
+-
+-jobs:
+-  tests:
+-    runs-on: ubuntu-latest
+-    timeout-minutes: 30
+-
+-    steps:
+-      - name: Checkout
+-        uses: actions/checkout@v4
+-
+-      - name: Set up Python
+-        uses: actions/setup-python@v5
+-        with:
+-          python-version: "3.11"
+-
+-      - name: Install dependencies
+-        run: |
+-          python -m pip install --upgrade pip
+-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+-          if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
+-
+-      - name: Run tests
+-        run: |
+-          pytest -q 
+\ No newline at end of file
+diff --git a/.github/workflows/pr-review-openrouter-gpt56-sol.yml b/.github/workflows/pr-review-openrouter-gpt56-sol.yml
+index e8b7edc..e27e5cf 100644
+--- a/.github/workflows/pr-review-openrouter-gpt56-sol.yml
++++ b/.github/workflows/pr-review-openrouter-gpt56-sol.yml
+@@ -54,6 +54,8 @@ permissions:
+   contents: read
+   pull-requests: write
+   issues: write
++  # PFC-002: la verifica della copertura legge run e artifact del workflow.
++  actions: read
+ 
+ concurrency:
+   group: pr-review-openrouter-gpt56sol-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+@@ -70,10 +72,6 @@ jobs:
+     # una risposta lunga prima che il ceiling fosse realmente utilizzabile.
+     timeout-minutes: 105
+ 
+-    if: >
+-      github.event.pull_request.draft == false &&
+-      github.event.pull_request.head.repo.full_name == github.repository
+-
+     env:
+       # Stessa chiave di Fugu Ultra: nessun secret nuovo da creare.
+       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_PICKFAIR }}
+@@ -89,6 +87,14 @@ jobs:
+       AFTER_SHA: ${{ github.event.after }}
+       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+       BASE_SHA: ${{ github.event.pull_request.base.sha }}
++      PR_DRAFT: ${{ github.event.pull_request.draft }}
++      PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
++      REVIEW_WORKFLOW_FILE: pr-review-openrouter-gpt56-sol.yml
++      # PFC-002 (M159): il diff si divide in segmenti e lotti invece di essere
++      # troncato; oltre questo numero di lotti non si chiama il modello e la
++      # copertura risulta incompleta (decisione owner: dividere o alzare).
++      MAX_REVIEW_CALLS: "8"
++      ATTESTATION_FILE: review-coverage/attestation.json
+ 
+       REVIEW_ID: gpt56sol
+       MODEL_LABEL: GPT-6.1 Sol
+@@ -147,14 +153,37 @@ jobs:
+       MANUAL_REVIEW_LABEL: manual-review-required
+ 
+     steps:
++      # Eleggibilita' e segreto si controllano DENTRO lo step, non con un `if:`
++      # a livello di job: un job saltato da `if:` risulta "skipped", e GitHub
++      # conta un required check skipped come soddisfatto. Qui la PR in draft,
++      # quella da fork e il segreto mancante NON producono review: lo step di
++      # verifica qui sotto fallisce, cioe' il check e' rosso (PFC-002, M159).
++      - name: Checkout trusted base helpers (no PR code)
++        uses: actions/checkout@v4
++        with:
++          ref: ${{ github.event.pull_request.base.sha }}
++          path: _base
++          sparse-checkout: scripts/ci/review_coverage.py
++          sparse-checkout-cone-mode: false
++          persist-credentials: false
++
+       - name: Review pushed commit range with GPT-6.1 Sol (OpenRouter)
+         shell: bash
+         run: |
+           set -euo pipefail
+ 
+-          # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
++          if [ "$PR_DRAFT" = "true" ]; then
++            echo "::error::PR in draft: review GPT-6.1 Sol non eseguita, copertura NON provata."
++            exit 0
++          fi
++          if [ "$PR_HEAD_REPO" != "$REPO" ]; then
++            echo "::error::PR da fork: review GPT-6.1 Sol non eseguita (niente segreti ai fork), copertura NON provata."
++            exit 0
++          fi
++          # Reviewer ATTIVO (P41): senza secret nessuna review, e il check di
++          # copertura qui sotto fallisce. Prima usciva verde ("saltato").
+           if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+-            echo "::notice::OPENROUTER_API_KEY non configurato: reviewer GPT-6.1 Sol saltato (nessun check rosso)."
++            echo "::error::OPENROUTER_API_KEY non configurato: review GPT-6.1 Sol NON eseguita, copertura NON provata."
+             exit 0
+           fi
+ 
+@@ -568,14 +597,26 @@ jobs:
+                   "E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
+                   "che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
+                   "Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
+-                  "VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
+-                  "diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
+-                  "vedi solo l'inizio."
++                  "VERIFICABILE invece di darlo per mancante. Un file lungo arriva\n"
++                  "diviso in SEGMENTI, anche su lotti diversi: un segmento che qui non\n"
++                  "vedi e' revisionato in un altro lotto dello stesso range."
+               )
+ 
+           def build_patch_payload(files):
+-              chunks, skipped, critical = [], [], []
+-              total = 0
++              """Prepara i file del range per la segmentazione (PFC-002, requisito M159).
++
++              Fino alla PFC-002 questa funzione TAGLIAVA ogni patch a
++              MAX_PATCH_PER_FILE_CHARS e SALTAVA i file oltre MAX_TOTAL_PATCH_CHARS: quella
++              parte del diff non arrivava a nessun revisore, e il job restava verde lo
++              stesso. Ora non taglia piu' nulla: redige i segreti, neutralizza i fence e
++              passa i file a `review_coverage.plan_review`, che divide i patch lunghi in
++              segmenti e i segmenti in lotti, una chiamata per lotto. I due tetti restano,
++              ma come dimensione del segmento e del lotto, non come soglia oltre la quale
++              il codice sparisce.
++
++              Ritorna (file preparati, file senza patch, file safety-critical).
++              """
++              prepared, skipped, critical = [], [], []
+ 
+               for f in files:
+                   # Nome file redatto E ripulito dai control-char (può contenere
+@@ -583,8 +624,6 @@ jobs:
+                   filename = safe_display(f.get("filename", ""))
+                   prev = f.get("previous_filename")
+                   status = f.get("status", "")
+-                  additions = f.get("additions", 0)
+-                  deletions = f.get("deletions", 0)
+                   changes = f.get("changes", 0)
+                   patch = f.get("patch")
+ 
+@@ -597,6 +636,7 @@ jobs:
+ 
+                   if not patch:
+                       skipped.append(filename)
++                      prepared.append({"filename": filename, "status": status, "changes": changes, "patch": None})
+                       continue
+ 
+                   patch = redact(patch)
+@@ -604,24 +644,9 @@ jobs:
+                   # deve chiudere il blocco delimitato e far uscire testo non
+                   # attendibile dal recinto anti-injection.
+                   patch = patch.replace("```", "` ` `")
++                  prepared.append({"filename": filename, "status": status, "changes": changes, "patch": patch})
+ 
+-                  if len(patch) > MAX_PATCH_PER_FILE_CHARS:
+-                      patch = patch[:MAX_PATCH_PER_FILE_CHARS] + "\n...[PATCH FILE TRONCATO PER BUDGET TOKEN]..."
+-
+-                  block = (
+-                      f"\n\n### FILE: {filename}\n"
+-                      f"status: {status} | changes: {changes} | additions: {additions} | deletions: {deletions}\n"
+-                      f"```diff\n{patch}\n```"
+-                  )
+-
+-                  if total + len(block) > MAX_TOTAL_PATCH_CHARS:
+-                      skipped.append(filename)
+-                      continue
+-
+-                  chunks.append(block)
+-                  total += len(block)
+-
+-              return "\n".join(chunks), sorted(set(skipped)), sorted(set(critical))
++              return prepared, sorted(set(skipped)), sorted(set(critical))
+ 
+           def try_add_label():
+               try:
+@@ -795,12 +820,46 @@ jobs:
+                   f"- Costo stimato base: `~${estimated:.4f}`\n"
+               )
+ 
++          # --- Copertura attestata (PFC-002, requisito M159) ----------------------
++          # Il modulo arriva dal checkout del BRANCH BASE (step precedente), mai dalla
++          # PR: e' codice fidato come il resto di questo script, che gira da
++          # pull_request_target. La PR non puo' cambiare ne' come si segmenta ne' come
++          # si attesta.
++          import concurrent.futures
++
++          sys.path.insert(0, os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "_base", "scripts", "ci"))
++          import review_coverage as rc  # noqa: E402
++
++          RUN_ID = int(os.environ.get("GITHUB_RUN_ID") or 0)
++          RUN_ATTEMPT = int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1)
++          WORKFLOW_FILE = os.environ["REVIEW_WORKFLOW_FILE"]
++          MAX_REVIEW_CALLS = int(os.environ.get("MAX_REVIEW_CALLS", "8"))
++          ATTESTATION_FILE = os.environ.get("ATTESTATION_FILE", "review-coverage/attestation.json")
++
++
++          def scrivi_attestazione(range_base, range_head, plan, outcomes, *, compare_truncated=False,
++                                  esclusi=None, reasons=None):
++              """Attestazione del range, caricata come artifact dallo step successivo."""
++              att = rc.build_attestation(
++                  reviewer=REVIEW_ID, model=OPENROUTER_MODEL, repo=REPO, pr=int(PR_NUMBER),
++                  range_base=range_base, range_head=range_head, run_id=RUN_ID, run_attempt=RUN_ATTEMPT,
++                  workflow_file=WORKFLOW_FILE, plan=plan, outcomes=outcomes,
++                  compare_truncated=compare_truncated, excluded_from_base=esclusi, reasons=reasons,
++              )
++              os.makedirs(os.path.dirname(ATTESTATION_FILE) or ".", exist_ok=True)
++              with open(ATTESTATION_FILE, "w", encoding="utf-8") as fh:
++                  json.dump(att, fh, indent=2, ensure_ascii=False)
++              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
++                  fh.write(f"COVERAGE_ARTIFACT={rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}\n")
++              return att
++
++
+           try:
+               range_base, range_head, range_scope, compared = resolve_range()
+           except Exception as exc:
+-              # Errore infra GitHub (Compare/commit API): reviewer opzionale,
+-              # non deve bloccare la PR.
+-              print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API), PR non bloccata: {redact(str(exc))[:500]}")
++              # Errore infra GitHub (Compare/commit API): nessuna review e nessuna
++              # attestazione. Lo step di verifica fallisce: la copertura non e' provata.
++              print(f"::error::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API): nessuna review, copertura NON provata: {redact(str(exc))[:500]}")
+               sys.exit(0)
+           files = compared.get("files") or []
+           # Prima di qualunque altra cosa: via i file che vengono dal branch base.
+@@ -813,27 +872,26 @@ jobs:
+                     f"perche' provenienti dal branch base (gia' revisionati e mergiati): "
+                     f"{', '.join(files_dal_base[:10])}")
+           commit_count = len(compared.get("commits") or [])
+-          diff_text, skipped_files, critical_files = build_patch_payload(files)
++          prepared_files, skipped_files, critical_files = build_patch_payload(files)
+           manual_files = manual_authority_files(files)
+ 
+           # La Compare API tronca i file a 300: se raggiunto il tetto non possiamo
+           # garantire di aver visto tutti i file sensibili del range → forziamo il
+-          # controllo manuale (fail-closed).
++          # controllo manuale (fail-closed). Ora rende anche l'attestazione incompleta.
+           compare_truncated = len(files) >= 300
+ 
+           marker = f"<!-- {REVIEW_ID}-pr-review:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
+           # Marker di COMPLETAMENTO: presente nel commento SOLO quando la review è
+-          # arrivata davvero (testo reale del modello, non troncata/errore). La dedup
+-          # a pagamento guarda QUESTO marker, non `marker`: così un commento troncato
+-          # o d'errore (che porta `marker` ma NON `done_marker`) non blocca il retry —
+-          # altrimenti il gate resterebbe verde senza una review reale (P1 CodeRabbit/Codex).
++          # arrivata davvero E l'attestazione di copertura e' completa. La dedup a
++          # pagamento guarda QUESTO marker, non `marker`: così un commento troncato,
++          # d'errore o con segmenti non coperti non blocca il retry.
+           done_marker = f"<!-- {REVIEW_ID}-pr-review-done:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
+ 
+           # Anti-doppia-review a pagamento: se esiste GIÀ una review COMPLETATA per
+           # QUESTO range (done_marker), non richiamare il modello — un re-run del
+-          # workflow o togli/rimetti label NON devono ripagare la stessa review. Un
+-          # nuovo push = nuovo range = nuovo marker → gira normalmente. Fail-open: se
+-          # il controllo stesso fallisce, si procede con la review (non si salta).
++          # workflow NON deve ripagare la stessa review. La sua attestazione e' gia'
++          # nell'artifact del run che l'ha prodotta, e lo step di verifica la trova li'.
++          # Fail-open SOLO sulla spesa: se il controllo stesso fallisce, si rifa' la review.
+           def comment_exists(marker: str) -> bool:
+               # cap anti-loop (Sourcery bug_risk): se l'API restituisse sempre 100
+               # commenti, il while non terminerebbe. Nessuna PR reale ha >2000
+@@ -851,6 +909,8 @@ jobs:
+                       # dagli SHA pubblici: senza questo filtro un utente che può
+                       # commentare la PR potrebbe forgiarlo e far saltare la review
+                       # finale obbligatoria / il gate a label (CodeRabbit Major).
++                      # Il marker decide solo se SPENDERE di nuovo: la copertura la
++                      # decide l'artifact del run ufficiale, che un commento non forgia.
+                       if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and marker in (c.get("body") or ""):
+                           return True
+                   if len(comments) < 100:
+@@ -919,22 +979,53 @@ jobs:
+           skipped_note = ""
+           if skipped_files:
+               skipped_note = (
+-                  "\n\n## File non inviati al modello\n"
+-                  "Saltati perché binari, senza patch o oltre budget:\n"
++                  "\n\n## File senza patch testuale\n"
++                  "Binari, rinominati senza modifiche o oltre il limite con cui GitHub fornisce il patch "
++                  "(questi ultimi rendono l'attestazione INCOMPLETA):\n"
+                   + "\n".join(f"- `{name}`" for name in skipped_files[:40])
+                   + ("\n- ... altri file omessi" if len(skipped_files) > 40 else "")
+                   + "\n"
+               )
+ 
+-          if not diff_text.strip():
+-              upsert_comment(marker, f"""{marker}
++          plan = rc.plan_review(
++              prepared_files,
++              max_segment_chars=MAX_PATCH_PER_FILE_CHARS,
++              max_batch_chars=MAX_TOTAL_PATCH_CHARS,
++              max_calls=MAX_REVIEW_CALLS,
++          )
++
++
++          def nota_copertura(att) -> str:
++              stato = "COMPLETA" if att["complete"] else "INCOMPLETA"
++              righe = [
++                  f"**Copertura attestata:** `{stato}` — "
++                  f"{len(att['reviewed_segments'])}/{len(att['segments'])} segmenti revisionati, "
++                  f"{len(att['batches'])} lotti, artifact `{rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}`",
++              ]
++              righe.extend(f"- ❌ {motivo}" for motivo in att["reasons"][:20])
++              return "\n".join(righe)
++
++
++          if plan.budget_exceeded or not plan.segments:
++              att = scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
++                                        esclusi=files_dal_base)
++              if plan.budget_exceeded:
++                  motivo = (
++                      f"Il range richiede {len(plan.batches)} lotti, il tetto e' MAX_REVIEW_CALLS={MAX_REVIEW_CALLS}: "
++                      "nessun modello e' stato chiamato, per non pagare una review che resterebbe incompleta. "
++                      "Dividere la PR o alzare il tetto (decisione owner)."
++                  )
++              else:
++                  motivo = "Nessun patch testuale analizzabile trovato."
++              upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
+           # GPT-6.1 Sol PR Review
+ 
+-          Nessun patch testuale analizzabile trovato.
++          {motivo}
+ 
+           **Scope:** `{range_scope}`
+           **Range:** `{range_base[:12]}...{range_head[:12]}`
+           **Commits nel range:** `{commit_count}`
++          {nota_copertura(att)}
+ 
+           {manual_warning}
+ 
+@@ -962,17 +1053,23 @@ jobs:
+             "Nessun bloccante evidente".
+           - Niente ripetizione del diff, niente teoria/tutorial/blocchi di codice,
+             niente rischi minori, niente miglioramenti opzionali, niente sezioni extra.
++          - Dopo il verdetto, l'ULTIMA riga e' il riscontro dei segmenti letti
++            ("SEGMENTI ESAMINATI: ..."), come chiesto nel messaggio.
+           """
+ 
+           copertura = blocco_copertura(files, skipped_files)
+ 
+-          user_prompt = f"""
++
++          def prompt_lotto(indice: int) -> str:
++              ids = plan.batches[indice]
++              user_prompt = f"""
+           Repository: {REPO}
+           PR: #{PR_NUMBER}
+           Scope: {range_scope}
+           Range: {range_base}...{range_head}
+           Commits nel range: {commit_count}
+           Modello: {MODEL_LABEL} ({OPENROUTER_MODEL})
++          Lotto: {indice + 1} di {len(plan.batches)}
+ 
+           Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
+           sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
+@@ -982,48 +1079,81 @@ jobs:
+ 
+           {copertura}
+ 
+-          Diff del range appena pushato:
+-          {diff_text}
++          SEGMENTAZIONE: il diff di questo range e' diviso in {len(plan.segments)} segmenti
++          e {len(plan.batches)} lotti. Qui ricevi i segmenti {", ".join(ids)}. Gli altri
++          sono revisionati in altri lotti dello stesso range: non sono assenti.
++
++          {rc.ack_instruction(ids)}
++
++          Diff del range appena pushato (segmenti di questo lotto):
++          {rc.render_batch(plan, indice)}
+           """
++              return user_prompt
+ 
+-          try:
+-              review, usage = call_model(system_prompt, user_prompt)
+-          except Exception as exc:
+-              review = (
+-                  "## Review GPT-6.1 Sol non completata\n\n"
+-                  f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
+-              )
+-              usage = {}
+-
+-          # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
+-          # non coperto dalla redaction dell'input o echo del prompt) non deve finire
+-          # in chiaro nel commento PR (Codex P2).
+-          review = redact(review)
+-
+-          # La review conta come COMPLETATA solo se il modello ha prodotto testo reale:
+-          # né troncamento (budget esaurito), né "nessun testo", né errore di chiamata.
+-          # Solo in quel caso scriviamo done_marker → la dedup salterà i futuri re-run;
+-          # altrimenti done_line resta vuoto e un re-run rifarà la review (retry sicuro).
+-          review_complete = not review.lstrip().startswith((
++
++          # Una risposta che comincia cosi' NON e' una review: troncata, vuota, o
++          # errore di chiamata. chat/completions puo' rispondere con `choices` vuoto: e'
++          # un messaggio DIVERSO da "nessun testo" e va elencato a parte, o una
++          # NON-review resterebbe registrata come completa (rilievo Fable 5 su #463).
++          RISPOSTE_INCOMPLETE = (
+               "Output troncato",
+               "Il modello non ha restituito testo",
+-              # chat/completions puo' rispondere con `choices` vuoto: e' un
+-              # messaggio DIVERSO da "nessun testo" e va elencato a parte.
+-              # Senza questa voce il guard non scatta, il done_marker viene
+-              # scritto e una NON-review resta registrata come recensione
+-              # completa — i re-run la deduplicano via (rilievo Fable 5 su
+-              # #463). Il ramo `choices` arriva dal trasporto OpenRouter, il
+-              # guard dal file OpenAI, dove `choices` non esiste: il difetto e'
+-              # nato nel trapianto. Fugu Ultra questa voce ce l'ha gia'.
+               "Il modello non ha restituito choices",
+               "## Review GPT-6.1 Sol non completata",
+-          ))
++          )
++
++
++          def esegui_lotto(indice: int):
++              prompt_utente = prompt_lotto(indice)
++              chiamata_ok = True
++              try:
++                  review, usage = call_model(system_prompt, prompt_utente)
++              except Exception as exc:
++                  chiamata_ok = False
++                  review = (
++                      "## Review GPT-6.1 Sol non completata\n\n"
++                      f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
++                  )
++                  usage = {}
++              # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
++              # non coperto dalla redaction dell'input o echo del prompt) non deve finire
++              # in chiaro nel commento PR (Codex P2).
++              review = redact(review)
++              completa = chiamata_ok and not review.lstrip().startswith(RISPOSTE_INCOMPLETE)
++              esito = rc.batch_outcome(review, completed=completa, expected=list(plan.batches[indice]))
++              return indice, review, usage, prompt_utente, esito
++
++
++          # I lotti girano in parallelo: il tempo del job resta quello di una chiamata,
++          # e il timeout del job (calcolato sul caso peggiore di UNA chiamata) regge.
++          with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan.batches))) as pool:
++              risultati = list(pool.map(esegui_lotto, range(len(plan.batches))))
++
++          att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
++                                    compare_truncated=compare_truncated, esclusi=files_dal_base)
++          # La review conta come COMPLETATA solo se l'attestazione lo e': ogni lotto con
++          # risposta completa e ogni segmento riscontrato. Solo allora done_marker → la
++          # dedup salterà i futuri re-run; altrimenti un re-run rifarà la review.
++          review_complete = att["complete"]
+           done_line = done_marker if review_complete else ""
+ 
++          sezioni, costo_totale = [], 0.0
++          for indice, review, usage, user_prompt, esito in risultati:
++              nota = usage_note(usage, system_prompt, user_prompt, review)
++              trovato = re.search(r"Costo stimato base:\s*`~\$([0-9.]+)`", nota)
++              if trovato:
++                  costo_totale += float(trovato.group(1))
++              nota = nota.replace("Costo stimato base", "Costo stimato lotto")
++              stato = "revisionato" if esito["reviewed"] else "NON revisionato"
++              sezioni.append(
++                  f"## Lotto {indice + 1}/{len(plan.batches)} — segmenti {', '.join(esito['segments'])} ({stato})\n\n"
++                  f"{review}\n{nota}"
++              )
++
+           body = f"""{marker}{done_line}
+           # GPT-6.1 Sol PR Review
+ 
+-          **Modalità:** push-range diff via GitHub Compare API
++          **Modalità:** push-range diff via GitHub Compare API, segmentato
+           **Scope:** `{range_scope}`
+           **Range:** `{range_base[:12]}...{range_head[:12]}`
+           **Commits nel range:** `{commit_count}`
+@@ -1031,14 +1161,16 @@ jobs:
+           **Esecuzione codice PR:** no
+           **Auto-merge / auto-approve:** no
+           **Model:** `{OPENROUTER_MODEL}`
+-          **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
+-          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
++          **Budget per segmento / per lotto:** `{MAX_PATCH_PER_FILE_CHARS}` / `{MAX_TOTAL_PATCH_CHARS}` caratteri, max `{MAX_REVIEW_CALLS}` lotti
++          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max per lotto
++          {nota_copertura(att)}
+ 
+           {manual_warning}
+ 
+-          {review}
++          {chr(10).join(sezioni)}
+ 
+-          {usage_note(usage, system_prompt, user_prompt, review)}
++          ## Uso token / costo stimato (totale)
++          - Costo stimato base: `~${costo_totale:.4f}`
+ 
+           {skipped_note}
+ 
+@@ -1048,3 +1180,31 @@ jobs:
+ 
+           upsert_comment(marker, body[:64000])
+           PY
++
++      - name: Upload review coverage attestation
++        if: always() && env.COVERAGE_ARTIFACT != ''
++        uses: actions/upload-artifact@v4
++        with:
++          name: ${{ env.COVERAGE_ARTIFACT }}
++          path: review-coverage/attestation.json
++          if-no-files-found: error
++          retention-days: 90
++
++      - name: Verify review coverage of the whole PR
++        if: always()
++        shell: bash
++        run: |
++          set -euo pipefail
++          # Il verdetto del check: verde SOLO se le review complete dei run
++          # ufficiali di questo workflow formano una catena dal branch base al
++          # head corrente. Push senza review, lotto troncato, segmento non
++          # riscontrato, artifact mancante o forgiato altrove => rosso.
++          python3 _base/scripts/ci/review_coverage.py verify \
++            --repo "$REPO" \
++            --pr "$PR_NUMBER" \
++            --reviewer "$REVIEW_ID" \
++            --workflow-file "$REVIEW_WORKFLOW_FILE" \
++            --base-sha "$BASE_SHA" \
++            --head-sha "$HEAD_SHA" \
++            --local-attestation review-coverage/attestation.json \
++            --output review-coverage/verify.json
+diff --git a/.github/workflows/pr-review-xai-grok46.yml b/.github/workflows/pr-review-xai-grok46.yml
+index 0040a6e..18a218c 100644
+--- a/.github/workflows/pr-review-xai-grok46.yml
++++ b/.github/workflows/pr-review-xai-grok46.yml
+@@ -22,6 +22,8 @@ permissions:
+   contents: read
+   pull-requests: write
+   issues: write
++  # PFC-002: la verifica della copertura legge run e artifact del workflow.
++  actions: read
+ 
+ concurrency:
+   group: pr-review-grok46-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+@@ -36,10 +38,6 @@ jobs:
+     # margine per paginazione/commenti senza troncare una review valida.
+     timeout-minutes: 30
+ 
+-    if: >
+-      github.event.pull_request.draft == false &&
+-      github.event.pull_request.head.repo.full_name == github.repository
+-
+     env:
+       XAI_API_KEY: ${{ secrets.GROK_PICKFAIR }}
+       XAI_MODEL: grok-4.7
+@@ -52,6 +50,14 @@ jobs:
+       AFTER_SHA: ${{ github.event.after }}
+       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+       BASE_SHA: ${{ github.event.pull_request.base.sha }}
++      PR_DRAFT: ${{ github.event.pull_request.draft }}
++      PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
++      REVIEW_WORKFLOW_FILE: pr-review-xai-grok46.yml
++      # PFC-002 (M159): il diff si divide in segmenti e lotti invece di essere
++      # troncato; oltre questo numero di lotti non si chiama il modello e la
++      # copertura risulta incompleta (decisione owner: dividere o alzare).
++      MAX_REVIEW_CALLS: "8"
++      ATTESTATION_FILE: review-coverage/attestation.json
+ 
+       # `grok46` resta com'e' anche dopo il passaggio a 4.7: e' un
+       # IDENTIFICATORE, non una descrizione — entra nei done_marker dei
+@@ -103,14 +109,37 @@ jobs:
+       MANUAL_REVIEW_LABEL: manual-review-required
+ 
+     steps:
++      # Eleggibilita' e segreto si controllano DENTRO lo step, non con un `if:`
++      # a livello di job: un job saltato da `if:` risulta "skipped", e GitHub
++      # conta un required check skipped come soddisfatto. Qui la PR in draft,
++      # quella da fork e il segreto mancante NON producono review: lo step di
++      # verifica qui sotto fallisce, cioe' il check e' rosso (PFC-002, M159).
++      - name: Checkout trusted base helpers (no PR code)
++        uses: actions/checkout@v4
++        with:
++          ref: ${{ github.event.pull_request.base.sha }}
++          path: _base
++          sparse-checkout: scripts/ci/review_coverage.py
++          sparse-checkout-cone-mode: false
++          persist-credentials: false
++
+       - name: Review pushed commit range with Grok 4.7
+         shell: bash
+         run: |
+           set -euo pipefail
+ 
+-          # Reviewer OPZIONALE: senza secret il job non deve far fallire la PR.
++          if [ "$PR_DRAFT" = "true" ]; then
++            echo "::error::PR in draft: review Grok 4.7 non eseguita, copertura NON provata."
++            exit 0
++          fi
++          if [ "$PR_HEAD_REPO" != "$REPO" ]; then
++            echo "::error::PR da fork: review Grok 4.7 non eseguita (niente segreti ai fork), copertura NON provata."
++            exit 0
++          fi
++          # Reviewer ATTIVO (P41): senza secret nessuna review, e il check di
++          # copertura qui sotto fallisce. Prima usciva verde ("saltato").
+           if [ -z "${XAI_API_KEY:-}" ]; then
+-            echo "::notice::XAI_API_KEY non configurato: reviewer Grok 4.7 saltato (nessun check rosso)."
++            echo "::error::XAI_API_KEY non configurato: review Grok 4.7 NON eseguita, copertura NON provata."
+             exit 0
+           fi
+ 
+@@ -518,14 +547,26 @@ jobs:
+                   "E' NON VERIFICABILE, non assente. Non dedurne che il codice manchi,\n"
+                   "che il cambiamento non sia stato fatto o che la PR sia incompleta.\n"
+                   "Se un rilievo dipende da uno di questi file, dichiaralo NON\n"
+-                  "VERIFICABILE invece di darlo per mancante. Stessa regola dove nel\n"
+-                  "diff compare [PATCH FILE TRONCATO PER BUDGET TOKEN]: di quel file\n"
+-                  "vedi solo l'inizio."
++                  "VERIFICABILE invece di darlo per mancante. Un file lungo arriva\n"
++                  "diviso in SEGMENTI, anche su lotti diversi: un segmento che qui non\n"
++                  "vedi e' revisionato in un altro lotto dello stesso range."
+               )
+ 
+           def build_patch_payload(files):
+-              chunks, skipped, critical = [], [], []
+-              total = 0
++              """Prepara i file del range per la segmentazione (PFC-002, requisito M159).
++
++              Fino alla PFC-002 questa funzione TAGLIAVA ogni patch a
++              MAX_PATCH_PER_FILE_CHARS e SALTAVA i file oltre MAX_TOTAL_PATCH_CHARS: quella
++              parte del diff non arrivava a nessun revisore, e il job restava verde lo
++              stesso. Ora non taglia piu' nulla: redige i segreti, neutralizza i fence e
++              passa i file a `review_coverage.plan_review`, che divide i patch lunghi in
++              segmenti e i segmenti in lotti, una chiamata per lotto. I due tetti restano,
++              ma come dimensione del segmento e del lotto, non come soglia oltre la quale
++              il codice sparisce.
++
++              Ritorna (file preparati, file senza patch, file safety-critical).
++              """
++              prepared, skipped, critical = [], [], []
+ 
+               for f in files:
+                   # Nome file redatto E ripulito dai control-char (può contenere
+@@ -533,8 +574,6 @@ jobs:
+                   filename = safe_display(f.get("filename", ""))
+                   prev = f.get("previous_filename")
+                   status = f.get("status", "")
+-                  additions = f.get("additions", 0)
+-                  deletions = f.get("deletions", 0)
+                   changes = f.get("changes", 0)
+                   patch = f.get("patch")
+ 
+@@ -547,6 +586,7 @@ jobs:
+ 
+                   if not patch:
+                       skipped.append(filename)
++                      prepared.append({"filename": filename, "status": status, "changes": changes, "patch": None})
+                       continue
+ 
+                   patch = redact(patch)
+@@ -554,24 +594,9 @@ jobs:
+                   # deve chiudere il blocco delimitato e far uscire testo non
+                   # attendibile dal recinto anti-injection.
+                   patch = patch.replace("```", "` ` `")
++                  prepared.append({"filename": filename, "status": status, "changes": changes, "patch": patch})
+ 
+-                  if len(patch) > MAX_PATCH_PER_FILE_CHARS:
+-                      patch = patch[:MAX_PATCH_PER_FILE_CHARS] + "\n...[PATCH FILE TRONCATO PER BUDGET TOKEN]..."
+-
+-                  block = (
+-                      f"\n\n### FILE: {filename}\n"
+-                      f"status: {status} | changes: {changes} | additions: {additions} | deletions: {deletions}\n"
+-                      f"```diff\n{patch}\n```"
+-                  )
+-
+-                  if total + len(block) > MAX_TOTAL_PATCH_CHARS:
+-                      skipped.append(filename)
+-                      continue
+-
+-                  chunks.append(block)
+-                  total += len(block)
+-
+-              return "\n".join(chunks), sorted(set(skipped)), sorted(set(critical))
++              return prepared, sorted(set(skipped)), sorted(set(critical))
+ 
+           def try_add_label():
+               try:
+@@ -792,12 +817,46 @@ jobs:
+                   f"- Costo stimato base: `~${estimated:.4f}`\n"
+               )
+ 
++          # --- Copertura attestata (PFC-002, requisito M159) ----------------------
++          # Il modulo arriva dal checkout del BRANCH BASE (step precedente), mai dalla
++          # PR: e' codice fidato come il resto di questo script, che gira da
++          # pull_request_target. La PR non puo' cambiare ne' come si segmenta ne' come
++          # si attesta.
++          import concurrent.futures
++
++          sys.path.insert(0, os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "_base", "scripts", "ci"))
++          import review_coverage as rc  # noqa: E402
++
++          RUN_ID = int(os.environ.get("GITHUB_RUN_ID") or 0)
++          RUN_ATTEMPT = int(os.environ.get("GITHUB_RUN_ATTEMPT") or 1)
++          WORKFLOW_FILE = os.environ["REVIEW_WORKFLOW_FILE"]
++          MAX_REVIEW_CALLS = int(os.environ.get("MAX_REVIEW_CALLS", "8"))
++          ATTESTATION_FILE = os.environ.get("ATTESTATION_FILE", "review-coverage/attestation.json")
++
++
++          def scrivi_attestazione(range_base, range_head, plan, outcomes, *, compare_truncated=False,
++                                  esclusi=None, reasons=None):
++              """Attestazione del range, caricata come artifact dallo step successivo."""
++              att = rc.build_attestation(
++                  reviewer=REVIEW_ID, model=XAI_MODEL, repo=REPO, pr=int(PR_NUMBER),
++                  range_base=range_base, range_head=range_head, run_id=RUN_ID, run_attempt=RUN_ATTEMPT,
++                  workflow_file=WORKFLOW_FILE, plan=plan, outcomes=outcomes,
++                  compare_truncated=compare_truncated, excluded_from_base=esclusi, reasons=reasons,
++              )
++              os.makedirs(os.path.dirname(ATTESTATION_FILE) or ".", exist_ok=True)
++              with open(ATTESTATION_FILE, "w", encoding="utf-8") as fh:
++                  json.dump(att, fh, indent=2, ensure_ascii=False)
++              with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as fh:
++                  fh.write(f"COVERAGE_ARTIFACT={rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}\n")
++              return att
++
++
+           try:
+               range_base, range_head, range_scope, compared = resolve_range()
+           except Exception as exc:
+-              # Errore infra GitHub (Compare/commit API): reviewer opzionale,
+-              # non deve bloccare la PR.
+-              print(f"::warning::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API), PR non bloccata: {redact(str(exc))[:500]}")
++              # Errore infra GitHub (Compare/commit API): nessuna review e nessuna
++              # attestazione. Lo step di verifica fallisce: la copertura non e' provata.
++              print(f"::error::{REVIEW_ID}: impossibile risolvere il range (errore GitHub API): nessuna review, copertura NON provata: {redact(str(exc))[:500]}")
+               sys.exit(0)
+           files = compared.get("files") or []
+           # Prima di qualunque altra cosa: via i file che vengono dal branch base.
+@@ -810,27 +869,26 @@ jobs:
+                     f"perche' provenienti dal branch base (gia' revisionati e mergiati): "
+                     f"{', '.join(files_dal_base[:10])}")
+           commit_count = len(compared.get("commits") or [])
+-          diff_text, skipped_files, critical_files = build_patch_payload(files)
++          prepared_files, skipped_files, critical_files = build_patch_payload(files)
+           manual_files = manual_authority_files(files)
+ 
+           # La Compare API tronca i file a 300: se raggiunto il tetto non possiamo
+           # garantire di aver visto tutti i file sensibili del range → forziamo il
+-          # controllo manuale (fail-closed).
++          # controllo manuale (fail-closed). Ora rende anche l'attestazione incompleta.
+           compare_truncated = len(files) >= 300
+ 
+           marker = f"<!-- {REVIEW_ID}-pr-review:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
+           # Marker di COMPLETAMENTO: presente nel commento SOLO quando la review è
+-          # arrivata davvero (testo reale del modello, non troncata/errore). La dedup
+-          # a pagamento guarda QUESTO marker, non `marker`: così un commento troncato
+-          # o d'errore (che porta `marker` ma NON `done_marker`) non blocca il retry —
+-          # altrimenti il gate resterebbe verde senza una review reale (P1 CodeRabbit/Codex).
++          # arrivata davvero E l'attestazione di copertura e' completa. La dedup a
++          # pagamento guarda QUESTO marker, non `marker`: così un commento troncato,
++          # d'errore o con segmenti non coperti non blocca il retry.
+           done_marker = f"<!-- {REVIEW_ID}-pr-review-done:pickfair-nogui:{range_base[:12]}...{range_head[:12]} -->"
+ 
+           # Anti-doppia-review a pagamento: se esiste GIÀ una review COMPLETATA per
+           # QUESTO range (done_marker), non richiamare il modello — un re-run del
+-          # workflow o togli/rimetti label NON devono ripagare la stessa review. Un
+-          # nuovo push = nuovo range = nuovo marker → gira normalmente. Fail-open: se
+-          # il controllo stesso fallisce, si procede con la review (non si salta).
++          # workflow NON deve ripagare la stessa review. La sua attestazione e' gia'
++          # nell'artifact del run che l'ha prodotta, e lo step di verifica la trova li'.
++          # Fail-open SOLO sulla spesa: se il controllo stesso fallisce, si rifa' la review.
+           def comment_exists(marker: str) -> bool:
+               # cap anti-loop (Sourcery bug_risk): se l'API restituisse sempre 100
+               # commenti, il while non terminerebbe. Nessuna PR reale ha >2000
+@@ -848,6 +906,8 @@ jobs:
+                       # dagli SHA pubblici: senza questo filtro un utente che può
+                       # commentare la PR potrebbe forgiarlo e far saltare la review
+                       # finale obbligatoria / il gate a label (CodeRabbit Major).
++                      # Il marker decide solo se SPENDERE di nuovo: la copertura la
++                      # decide l'artifact del run ufficiale, che un commento non forgia.
+                       if ((c.get("user") or {}).get("login") or "") == "github-actions[bot]" and marker in (c.get("body") or ""):
+                           return True
+                   if len(comments) < 100:
+@@ -916,22 +976,53 @@ jobs:
+           skipped_note = ""
+           if skipped_files:
+               skipped_note = (
+-                  "\n\n## File non inviati al modello\n"
+-                  "Saltati perché binari, senza patch o oltre budget:\n"
++                  "\n\n## File senza patch testuale\n"
++                  "Binari, rinominati senza modifiche o oltre il limite con cui GitHub fornisce il patch "
++                  "(questi ultimi rendono l'attestazione INCOMPLETA):\n"
+                   + "\n".join(f"- `{name}`" for name in skipped_files[:40])
+                   + ("\n- ... altri file omessi" if len(skipped_files) > 40 else "")
+                   + "\n"
+               )
+ 
+-          if not diff_text.strip():
+-              upsert_comment(marker, f"""{marker}
++          plan = rc.plan_review(
++              prepared_files,
++              max_segment_chars=MAX_PATCH_PER_FILE_CHARS,
++              max_batch_chars=MAX_TOTAL_PATCH_CHARS,
++              max_calls=MAX_REVIEW_CALLS,
++          )
++
++
++          def nota_copertura(att) -> str:
++              stato = "COMPLETA" if att["complete"] else "INCOMPLETA"
++              righe = [
++                  f"**Copertura attestata:** `{stato}` — "
++                  f"{len(att['reviewed_segments'])}/{len(att['segments'])} segmenti revisionati, "
++                  f"{len(att['batches'])} lotti, artifact `{rc.artifact_name(REVIEW_ID, range_base, range_head, RUN_ATTEMPT)}`",
++              ]
++              righe.extend(f"- ❌ {motivo}" for motivo in att["reasons"][:20])
++              return "\n".join(righe)
++
++
++          if plan.budget_exceeded or not plan.segments:
++              att = scrivi_attestazione(range_base, range_head, plan, [], compare_truncated=compare_truncated,
++                                        esclusi=files_dal_base)
++              if plan.budget_exceeded:
++                  motivo = (
++                      f"Il range richiede {len(plan.batches)} lotti, il tetto e' MAX_REVIEW_CALLS={MAX_REVIEW_CALLS}: "
++                      "nessun modello e' stato chiamato, per non pagare una review che resterebbe incompleta. "
++                      "Dividere la PR o alzare il tetto (decisione owner)."
++                  )
++              else:
++                  motivo = "Nessun patch testuale analizzabile trovato."
++              upsert_comment(marker, f"""{marker}{done_marker if att["complete"] else ""}
+           # xAI Grok 4.7 PR Review
+ 
+-          Nessun patch testuale analizzabile trovato.
++          {motivo}
+ 
+           **Scope:** `{range_scope}`
+           **Range:** `{range_base[:12]}...{range_head[:12]}`
+           **Commits nel range:** `{commit_count}`
++          {nota_copertura(att)}
+ 
+           {manual_warning}
+ 
+@@ -959,17 +1050,23 @@ jobs:
+             "Nessun bloccante evidente".
+           - Niente ripetizione del diff, niente teoria/tutorial/blocchi di codice,
+             niente rischi minori, niente miglioramenti opzionali, niente sezioni extra.
++          - Dopo il verdetto, l'ULTIMA riga e' il riscontro dei segmenti letti
++            ("SEGMENTI ESAMINATI: ..."), come chiesto nel messaggio.
+           """
+ 
+           copertura = blocco_copertura(files, skipped_files)
+ 
+-          user_prompt = f"""
++
++          def prompt_lotto(indice: int) -> str:
++              ids = plan.batches[indice]
++              user_prompt = f"""
+           Repository: {REPO}
+           PR: #{PR_NUMBER}
+           Scope: {range_scope}
+           Range: {range_base}...{range_head}
+           Commits nel range: {commit_count}
+           Modello: {MODEL_LABEL} ({XAI_MODEL})
++          Lotto: {indice + 1} di {len(plan.batches)}
+ 
+           Produci Markdown, MASSIMO 150 parole, SOLO queste due sezioni (i rischi di
+           sicurezza / Betfair / dutching / segreti vanno dentro "Bloccanti", non in sezioni a parte):
+@@ -979,40 +1076,81 @@ jobs:
+ 
+           {copertura}
+ 
+-          Diff del range appena pushato:
+-          {diff_text}
++          SEGMENTAZIONE: il diff di questo range e' diviso in {len(plan.segments)} segmenti
++          e {len(plan.batches)} lotti. Qui ricevi i segmenti {", ".join(ids)}. Gli altri
++          sono revisionati in altri lotti dello stesso range: non sono assenti.
++
++          {rc.ack_instruction(ids)}
++
++          Diff del range appena pushato (segmenti di questo lotto):
++          {rc.render_batch(plan, indice)}
+           """
++              return user_prompt
+ 
+-          try:
+-              review, usage = call_model(system_prompt, user_prompt)
+-          except Exception as exc:
+-              review = (
+-                  "## Review Grok 4.7 non completata\n\n"
+-                  f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
+-              )
+-              usage = {}
+-
+-          # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
+-          # non coperto dalla redaction dell'input o echo del prompt) non deve finire
+-          # in chiaro nel commento PR (Codex P2).
+-          review = redact(review)
+-
+-          # La review conta come COMPLETATA solo se il modello ha prodotto testo reale:
+-          # né troncamento (budget esaurito), né "nessun testo", né errore di chiamata.
+-          # Solo in quel caso scriviamo done_marker → la dedup salterà i futuri re-run;
+-          # altrimenti done_line resta vuoto e un re-run rifarà la review (retry sicuro).
+-          review_complete = not review.lstrip().startswith((
++
++          # Una risposta che comincia cosi' NON e' una review: troncata, vuota, o
++          # errore di chiamata. chat/completions puo' rispondere con `choices` vuoto: e'
++          # un messaggio DIVERSO da "nessun testo" e va elencato a parte, o una
++          # NON-review resterebbe registrata come completa (rilievo Fable 5 su #463).
++          RISPOSTE_INCOMPLETE = (
+               "Output troncato",
+               "Il modello non ha restituito testo",
+               "Il modello non ha restituito choices",
+               "## Review Grok 4.7 non completata",
+-          ))
++          )
++
++
++          def esegui_lotto(indice: int):
++              prompt_utente = prompt_lotto(indice)
++              chiamata_ok = True
++              try:
++                  review, usage = call_model(system_prompt, prompt_utente)
++              except Exception as exc:
++                  chiamata_ok = False
++                  review = (
++                      "## Review Grok 4.7 non completata\n\n"
++                      f"Errore sintetico:\n\n```text\n{redact(str(exc))[:3000]}\n```"
++                  )
++                  usage = {}
++              # Redigi anche l'OUTPUT del modello: se ripete un valore segreto (formato
++              # non coperto dalla redaction dell'input o echo del prompt) non deve finire
++              # in chiaro nel commento PR (Codex P2).
++              review = redact(review)
++              completa = chiamata_ok and not review.lstrip().startswith(RISPOSTE_INCOMPLETE)
++              esito = rc.batch_outcome(review, completed=completa, expected=list(plan.batches[indice]))
++              return indice, review, usage, prompt_utente, esito
++
++
++          # I lotti girano in parallelo: il tempo del job resta quello di una chiamata,
++          # e il timeout del job (calcolato sul caso peggiore di UNA chiamata) regge.
++          with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(plan.batches))) as pool:
++              risultati = list(pool.map(esegui_lotto, range(len(plan.batches))))
++
++          att = scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
++                                    compare_truncated=compare_truncated, esclusi=files_dal_base)
++          # La review conta come COMPLETATA solo se l'attestazione lo e': ogni lotto con
++          # risposta completa e ogni segmento riscontrato. Solo allora done_marker → la
++          # dedup salterà i futuri re-run; altrimenti un re-run rifarà la review.
++          review_complete = att["complete"]
+           done_line = done_marker if review_complete else ""
+ 
++          sezioni, costo_totale = [], 0.0
++          for indice, review, usage, user_prompt, esito in risultati:
++              nota = usage_note(usage, system_prompt, user_prompt, review)
++              trovato = re.search(r"Costo stimato base:\s*`~\$([0-9.]+)`", nota)
++              if trovato:
++                  costo_totale += float(trovato.group(1))
++              nota = nota.replace("Costo stimato base", "Costo stimato lotto")
++              stato = "revisionato" if esito["reviewed"] else "NON revisionato"
++              sezioni.append(
++                  f"## Lotto {indice + 1}/{len(plan.batches)} — segmenti {', '.join(esito['segments'])} ({stato})\n\n"
++                  f"{review}\n{nota}"
++              )
++
+           body = f"""{marker}{done_line}
+           # xAI Grok 4.7 PR Review
+ 
+-          **Modalità:** push-range diff via GitHub Compare API
++          **Modalità:** push-range diff via GitHub Compare API, segmentato
+           **Scope:** `{range_scope}`
+           **Range:** `{range_base[:12]}...{range_head[:12]}`
+           **Commits nel range:** `{commit_count}`
+@@ -1020,14 +1158,16 @@ jobs:
+           **Esecuzione codice PR:** no
+           **Auto-merge / auto-approve:** no
+           **Model:** `{XAI_MODEL}`
+-          **Budget patch:** `{MAX_TOTAL_PATCH_CHARS}` caratteri max
+-          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max
++          **Budget per segmento / per lotto:** `{MAX_PATCH_PER_FILE_CHARS}` / `{MAX_TOTAL_PATCH_CHARS}` caratteri, max `{MAX_REVIEW_CALLS}` lotti
++          **Budget output:** `{MAX_OUTPUT_TOKENS}` token max per lotto
++          {nota_copertura(att)}
+ 
+           {manual_warning}
+ 
+-          {review}
++          {chr(10).join(sezioni)}
+ 
+-          {usage_note(usage, system_prompt, user_prompt, review)}
++          ## Uso token / costo stimato (totale)
++          - Costo stimato base: `~${costo_totale:.4f}`
+ 
+           {skipped_note}
+ 
+@@ -1037,3 +1177,31 @@ jobs:
+ 
+           upsert_comment(marker, body[:64000])
+           PY
++
++      - name: Upload review coverage attestation
++        if: always() && env.COVERAGE_ARTIFACT != ''
++        uses: actions/upload-artifact@v4
++        with:
++          name: ${{ env.COVERAGE_ARTIFACT }}
++          path: review-coverage/attestation.json
++          if-no-files-found: error
++          retention-days: 90
++
++      - name: Verify review coverage of the whole PR
++        if: always()
++        shell: bash
++        run: |
++          set -euo pipefail
++          # Il verdetto del check: verde SOLO se le review complete dei run
++          # ufficiali di questo workflow formano una catena dal branch base al
++          # head corrente. Push senza review, lotto troncato, segmento non
++          # riscontrato, artifact mancante o forgiato altrove => rosso.
++          python3 _base/scripts/ci/review_coverage.py verify \
++            --repo "$REPO" \
++            --pr "$PR_NUMBER" \
++            --reviewer "$REVIEW_ID" \
++            --workflow-file "$REVIEW_WORKFLOW_FILE" \
++            --base-sha "$BASE_SHA" \
++            --head-sha "$HEAD_SHA" \
++            --local-attestation review-coverage/attestation.json \
++            --output review-coverage/verify.json
+diff --git a/.github/workflows/readiness-gate.yml b/.github/workflows/readiness-gate.yml
+index 18b15d2..2c1ad45 100644
+--- a/.github/workflows/readiness-gate.yml
++++ b/.github/workflows/readiness-gate.yml
+@@ -12,6 +12,10 @@ on:
+       - "tests/scripts/test_readiness_gate.py"
+       - ".github/workflows/readiness-gate.yml"
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "ops/readiness_checklist.md"
+       - "ops/db_backup_restore.md"
+diff --git a/.github/workflows/reconciliation-engine.yml b/.github/workflows/reconciliation-engine.yml
+index 0cc978f..50d0c70 100644
+--- a/.github/workflows/reconciliation-engine.yml
++++ b/.github/workflows/reconciliation-engine.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "core/reconciliation_engine.py"
+       - "tests/reconciliation/*"
+diff --git a/.github/workflows/recovery-guardrails.yml b/.github/workflows/recovery-guardrails.yml
+index aadffc6..4a75692 100644
+--- a/.github/workflows/recovery-guardrails.yml
++++ b/.github/workflows/recovery-guardrails.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/repo-guardrails.yml b/.github/workflows/repo-guardrails.yml
+index 2d914de..a0a7bdc 100644
+--- a/.github/workflows/repo-guardrails.yml
++++ b/.github/workflows/repo-guardrails.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/rollback-gate.yml b/.github/workflows/rollback-gate.yml
+index 6ac8a0d..d49ade4 100644
+--- a/.github/workflows/rollback-gate.yml
++++ b/.github/workflows/rollback-gate.yml
+@@ -12,6 +12,10 @@ on:
+       - "tests/scripts/test_rollback_gate.py"
+       - ".github/workflows/rollback-gate.yml"
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "ops/rollback_checklist.md"
+       - "ops/db_backup_restore.md"
+diff --git a/.github/workflows/smoke-core-fast.yml b/.github/workflows/smoke-core-fast.yml
+index 19494e2..e83f380 100644
+--- a/.github/workflows/smoke-core-fast.yml
++++ b/.github/workflows/smoke-core-fast.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "core/**"
+       - "order_manager.py"
+diff --git a/.github/workflows/smoke.yml b/.github/workflows/smoke.yml
+index 527e1d3..02c93b2 100644
+--- a/.github/workflows/smoke.yml
++++ b/.github/workflows/smoke.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+   pull_request:
+ 
+ jobs:
+diff --git a/.github/workflows/trading-engine-hard-tests.yml b/.github/workflows/trading-engine-hard-tests.yml
+index ece598d..902d078 100644
+--- a/.github/workflows/trading-engine-hard-tests.yml
++++ b/.github/workflows/trading-engine-hard-tests.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "core/trading_engine.py"
+       - "tests/core/test_trading_engine.py"
+diff --git a/.github/workflows/unit.yml b/.github/workflows/unit.yml
+index 80f0416..fdc79c3 100644
+--- a/.github/workflows/unit.yml
++++ b/.github/workflows/unit.yml
+@@ -4,6 +4,10 @@ env:
+ 
+ on:
+   push:
++    # PFC-002 (M156): solo main. Senza filtro il push sul branch di una PR
++    # faceva girare questo workflow due volte, una per `push` e una per
++    # `pull_request`, sullo stesso contenuto.
++    branches: [main]
+     paths:
+       - "**.py"
+       - "tests/unit/**"
+diff --git a/scripts/pr_flow_automation.py b/scripts/pr_flow_automation.py
+index 37baa2c..e100575 100755
+--- a/scripts/pr_flow_automation.py
++++ b/scripts/pr_flow_automation.py
+@@ -152,7 +152,62 @@ def pr_view(repo: str, pr: str) -> dict[str, Any]:
+     ])
+ 
+ 
+-def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, list[dict[str, Any]]]:
++#: Manifest dei check OBBLIGATORI (PFC-002). Sta fuori da questo file perche' lo
++#: legge anche il test che lo confronta con i job reali dei workflow.
++REQUIRED_CHECKS_FILE = Path(__file__).resolve().parent / "ci" / "required_checks.json"
++
++
++def load_required_checks(path: Path = REQUIRED_CHECKS_FILE) -> tuple[str, ...]:
++    """Nomi dei check che devono essere SUCCESS sull'head, ne' assenti ne' SKIPPED.
++
++    Manifest illeggibile o vuoto => errore: un gate che non sa cosa e'
++    obbligatorio non puo' dire "pronta" (fail-closed, deciso dal chiamante).
++    """
++    data = json.loads(path.read_text(encoding="utf-8"))
++    names = data.get("required_checks") if isinstance(data, dict) else None
++    if not isinstance(names, list) or not names or not all(isinstance(n, str) and n.strip() for n in names):
++        raise ValueError(f"{path}: required_checks assente, vuoto o malformato")
++    return tuple(n.strip() for n in names)
++
++
++def _required_check_verdicts(
++    seen: list[dict[str, Any]], required: tuple[str, ...], head_sha: str
++) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
++    """(blockers, pending) dovuti ai check obbligatori.
++
++    Per gli altri check SKIPPED e NEUTRAL restano accettabili (le lane di
++    modulo si saltano da sole quando il diff non le riguarda). Per un check
++    OBBLIGATORIO no: SKIPPED non prova niente, e GitHub stesso conta un
++    required check skipped come soddisfatto. Qui vale solo SUCCESS.
++    """
++    blockers: list[dict[str, Any]] = []
++    pending: list[dict[str, Any]] = []
++    for name in required:
++        items = [i for i in seen if i["name"] == name]
++        if not items:
++            pending.append({"name": name, "state": "MISSING", "required": True,
++                            "reason": "required check not reported on the head"})
++            continue
++        for item in items:
++            if item["state"] in PENDING_STATES:
++                continue  # gia' fra i pending
++            if item["state"] != "SUCCESS":
++                if item["state"] not in BAD_STATES:  # SKIPPED/NEUTRAL: per gli altri sarebbe ok
++                    blockers.append({**item, "required": True,
++                                     "reason": f"required check is {item['state']}, only SUCCESS counts"})
++                continue
++            if head_sha and item.get("head_sha") and item["head_sha"] != head_sha:
++                blockers.append({**item, "required": True,
++                                 "reason": f"required check ran on {item['head_sha'][:12]}, head is {head_sha[:12]}"})
++    return blockers, pending
++
++
++def split_checks(
++    pr: dict[str, Any],
++    *,
++    ignore_self: bool = True,
++    required: tuple[str, ...] = (),
++) -> dict[str, list[dict[str, Any]]]:
+     blockers: list[dict[str, Any]] = []
+     pending: list[dict[str, Any]] = []
+     ignored: list[dict[str, Any]] = []
+@@ -160,6 +215,7 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
+     # Quanti check REALI sono stati osservati: esclusi il self-check del gate e
+     # i servizi dismessi, inclusi quelli gia' passati.
+     visti = 0
++    osservati: list[dict[str, Any]] = []
+ 
+     for payload in pr.get("statusCheckRollup") or []:
+         raw = payload if isinstance(payload, dict) else {}
+@@ -200,11 +256,19 @@ def split_checks(pr: dict[str, Any], *, ignore_self: bool = True) -> dict[str, l
+         # o "tutto verde" e "nessun check ancora registrato" diventano
+         # indistinguibili — ed e' la differenza fra "pronta" e "non lo so".
+         visti += 1
++        osservati.append(item)
+         if item["state"] in PENDING_STATES:
+             pending.append(item)
+         elif item["state"] not in OK_STATES:
+             blockers.append(item)
+ 
++    if required:
++        req_blockers, req_pending = _required_check_verdicts(
++            osservati, required, str(pr.get("headRefOid") or "")
++        )
++        blockers.extend(req_blockers)
++        pending.extend(req_pending)
++
+     return {
+         "blockers": blockers,
+         "pending": pending,
+@@ -415,10 +479,16 @@ def build_decision(
+     *,
+     ignore_self: bool = True,
+     review_threads: list[dict[str, Any]] | None = None,
++    required_checks: tuple[str, ...] = (),
+ ) -> dict[str, Any]:
+-    """Build merge readiness decision and apply blocker taxonomy routing."""
++    """Build merge readiness decision and apply blocker taxonomy routing.
++
++    `required_checks`: nomi che devono essere SUCCESS sull'head (vedi
++    `load_required_checks`). Il gate CI li passa sempre; il default vuoto serve
++    ai chiamanti di libreria che giudicano solo lo stato del rollup.
++    """
+     pr = pr_view(repo, pr_number)
+-    checks = split_checks(pr, ignore_self=ignore_self)
++    checks = split_checks(pr, ignore_self=ignore_self, required=tuple(required_checks))
+     active_review_threads = eligible_review_comments_for_auto_resolve(review_threads or [])
+     checks = _apply_deepsource_advisory_policy(pr, checks, active_review_threads)
+     merge_state = _merge_readiness_state(pr, checks, active_review_threads)
+@@ -1769,15 +1839,26 @@ def cmd_readiness(args: argparse.Namespace) -> int:
+ 
+ 
+ def _readiness_decision(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
++    # PFC-002: il gate CI esige sempre i check obbligatori. Manifest illeggibile
++    # => si usa un nome che nessun check porta, cosi' il gate resta rosso e il
++    # motivo e' nel rollup ("required check not reported"), mai un verde.
++    try:
++        required = load_required_checks()
++    except (OSError, ValueError) as exc:
++        required = (f"<required checks manifest unreadable: {exc}>",)
+     try:
+         review_threads = fetch_all_review_threads(repo, pr_number)
+     except (RuntimeError, ValueError, OSError, AttributeError):
+-        return _readiness_review_api_blocked(repo, pr_number, ignore_self)
+-    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads)
++        return _readiness_review_api_blocked(repo, pr_number, ignore_self, required)
++    return build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=review_threads,
++                          required_checks=required)
+ 
+ 
+-def _readiness_review_api_blocked(repo: str, pr_number: str, ignore_self: bool) -> dict[str, Any]:
+-    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None)
++def _readiness_review_api_blocked(
++    repo: str, pr_number: str, ignore_self: bool, required: tuple[str, ...] = ()
++) -> dict[str, Any]:
++    decision = build_decision(repo, pr_number, ignore_self=ignore_self, review_threads=None,
++                              required_checks=required)
+     reasons = decision.get("reasons")
+     if isinstance(reasons, list) and "review_threads_api_unavailable" not in reasons:
+         reasons.append("review_threads_api_unavailable")
+diff --git a/tests/guardrails/test_gpt56sol_su_openrouter.py b/tests/guardrails/test_gpt56sol_su_openrouter.py
+index c408985..2f0a5c1 100644
+--- a/tests/guardrails/test_gpt56sol_su_openrouter.py
++++ b/tests/guardrails/test_gpt56sol_su_openrouter.py
+@@ -318,6 +318,24 @@ def _messaggi_di_non_review(albero: ast.Module) -> set[str]:
+ 
+ 
+ def _prefissi_del_guard(albero: ast.Module) -> tuple[str, ...]:
++    # PFC-002: con la review a lotti il guard vive nella tupla
++    # RISPOSTE_INCOMPLETE, applicata a ogni lotto in `esegui_lotto`
++    # (`completa = ... not review.lstrip().startswith(RISPOSTE_INCOMPLETE)`), e
++    # `review_complete` viene dall'attestazione, che e' completa solo se lo e'
++    # ogni lotto. Il controllo resta lo stesso: ogni messaggio di non-review
++    # deve cominciare con uno di questi prefissi.
++    for nodo in ast.walk(albero):
++        if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
++                and isinstance(nodo.targets[0], ast.Name)
++                and nodo.targets[0].id == "RISPOSTE_INCOMPLETE"
++                and isinstance(nodo.value, (ast.Tuple, ast.List))):
++            usata = any(
++                isinstance(n, ast.Call) and getattr(n.func, "attr", "") == "startswith"
++                and n.args and isinstance(n.args[0], ast.Name) and n.args[0].id == "RISPOSTE_INCOMPLETE"
++                for n in ast.walk(albero)
++            )
++            assert usata, "RISPOSTE_INCOMPLETE definita ma nessun startswith la usa: guard scollegato"
++            return tuple(e.value for e in nodo.value.elts if isinstance(e, ast.Constant))
+     for nodo in ast.walk(albero):
+         if (isinstance(nodo, ast.Assign) and len(nodo.targets) == 1
+                 and isinstance(nodo.targets[0], ast.Name)
+diff --git a/tests/scripts/test_pr_flow_automation.py b/tests/scripts/test_pr_flow_automation.py
+index 8c0e58a..2e3a3fd 100644
+--- a/tests/scripts/test_pr_flow_automation.py
++++ b/tests/scripts/test_pr_flow_automation.py
+@@ -2032,9 +2032,10 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
+ 
+     monkeypatch.setattr(flow, "fetch_all_review_threads", lambda *_args: expected_threads)
+ 
+-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
++    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
+         captured["ignore_self"] = ignore_self
+         captured["review_threads"] = review_threads
++        captured["required_checks"] = required_checks
+         return {
+             "already_merged": False,
+             "can_merge": False,
+@@ -2060,6 +2061,9 @@ def test_cmd_readiness_passes_review_threads_to_build_decision(monkeypatch):
+ 
+     ASSERTIONS.assertEqual(rc, 0)
+     ASSERTIONS.assertEqual(captured["review_threads"], expected_threads)
++    # PFC-002: il gate CI passa SEMPRE il manifest dei check obbligatori
++    ASSERTIONS.assertEqual(captured["required_checks"], flow.load_required_checks())
++    ASSERTIONS.assertIn("full-suite", captured["required_checks"])
+ 
+ 
+ def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
+@@ -2070,7 +2074,7 @@ def test_cmd_readiness_active_review_thread_blocks_merge(monkeypatch):
+         lambda *_args: [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
+     )
+ 
+-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
++    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
+         ASSERTIONS.assertEqual(ignore_self, True)
+         ASSERTIONS.assertEqual(review_threads, [{"id": "thread-1", "isResolved": False, "isOutdated": False}])
+         return {
+@@ -2142,7 +2146,7 @@ def test_cmd_readiness_review_thread_fetch_failure_fails_closed(monkeypatch):
+     captured: dict[str, object] = {}
+     _stub_readiness_fetch_failure(monkeypatch)
+ 
+-    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None):
++    def _fake_build_decision(_repo: str, _pr: str, *, ignore_self: bool, review_threads=None, required_checks=()):
+         ASSERTIONS.assertTrue(ignore_self)
+         captured["review_threads"] = review_threads
+         return {
+diff --git a/tests/testsuite/test_false_green_semantics.py b/tests/testsuite/test_false_green_semantics.py
+index 83a46e4..f88cafa 100644
+--- a/tests/testsuite/test_false_green_semantics.py
++++ b/tests/testsuite/test_false_green_semantics.py
+@@ -296,25 +296,33 @@ def test_post_merge_task_automation_has_canonical_owner_and_no_duplicate_closed_
+     _assert_no_forbidden_workflow_tokens(legacy_raw, legacy_rel)
+ 
+ 
+-def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
+-    wf = _workflow(".github/workflows/pr-check.yml")
+-    run_blocks = _run_text(wf)
+-    trigger_block = _trigger_block(wf, ".github/workflows/pr-check.yml")
++def test_full_suite_workflow_is_the_single_unconditional_full_pytest_gate():
++    # PFC-002 (M156): `pr-check.yml` (pytest -q nudo) e' assorbito dal check
++    # obbligatorio `full-suite`, che giudica il report e non solo l'exit code.
++    assert not Path(".github/workflows/pr-check.yml").exists()
++    rel = ".github/workflows/full-suite.yml"
++    wf = _workflow(rel)
++    trigger_block = _trigger_block(wf, rel)
+ 
+     assert "pull_request" in trigger_block
+-    pull = trigger_block.get("pull_request")
+-    assert isinstance(pull, dict), (
+-        f"pr-check.yml: sotto `pull_request:` non c'e' una mappa ({pull!r}), quindi "
+-        "non c'e' `branches`: con `on:` in forma scalare o lista il gate non e' piu' "
+-        "ancorato a main, e questo controllo esiste per accorgersene."
+-    )
+-    branches = pull.get("branches")
+-    assert isinstance(branches, list), (
+-        f"pr-check.yml: `branches` non e' una lista ({branches!r})."
+-    )
+-    assert "main" in [str(x) for x in branches]
+-
+-    assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
++    pull = trigger_block.get("pull_request") or {}
++    assert isinstance(pull, dict)
++    # un required check non deve poter non partire: niente filtri di path/branch
++    for filtro in ("paths", "paths-ignore", "branches", "branches-ignore"):
++        assert filtro not in pull, f"full-suite: filtro `{filtro}` sul pull_request"
++    assert (trigger_block.get("push") or {}).get("branches") == ["main"]
++    assert "workflow_dispatch" not in trigger_block, (
++        "un dispatch sul branch della PR farebbe girare la versione del file nella PR"
++    )
++
++    jobs = wf.get("jobs") or {}
++    assert list(jobs) == ["full-suite"]
++    job = jobs["full-suite"]
++    assert job.get("name") == "full-suite"
++    assert "if" not in job, "un job saltato da `if:` risulta skipped, e skipped soddisfa un required check"
++    run_blocks = _run_text(wf)
++    assert re.search(r"python\s+scripts/ci/full_suite_gate\.py\s+run\b", run_blocks)
++    assert not re.search(r"\|\|\s*true", run_blocks)
+ 
+ 
+ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
+@@ -322,12 +330,16 @@ def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():
+     run_blocks = _run_text(wf)
+     trigger_block = _trigger_block(wf, ".github/workflows/merge-simulation-hard.yml")
+ 
+-    assert "workflow_call" in trigger_block
++    # PFC-002: parte solo da se' (nessuno lo annida piu') e la suite completa
++    # si e' spostata nel check `full-suite`, sullo stesso albero di merge.
+     assert "pull_request" in trigger_block
++    assert "workflow_call" not in trigger_block
+ 
+     assert re.search(r"git\s+fetch\s+origin\s+main", run_blocks)
+     assert re.search(r"git\s+merge\b[^\n]*origin/main", run_blocks)
+-    assert re.search(r"pytest\s+-q(?:\s+-x|\s+.*\s-x|\s+-x\s+.*)", run_blocks)
++    assert re.search(r"python\s+scripts/check_merge_markers\.py", run_blocks)
++    assert re.search(r"python\s+scripts/validate_guardrails\.py", run_blocks)
++    assert not re.search(r"\bpytest\b", run_blocks), "la suite completa gira solo in full-suite"
+ 
+ 
+ def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
+@@ -338,7 +350,8 @@ def test_merge_simulation_legacy_is_manual_only_diagnostic_fallback():
+ 
+     assert "pull_request" in hard_trigger_block or "workflow_call" in hard_trigger_block
+     assert re.search(r"git\s+merge\b", hard_run) or ("origin/main" in hard_run) or ("fetch-depth" in hard_raw)
+-    assert "pytest" in hard_run
++    # PFC-002: la suite completa gira in `full-suite`, non piu' qui
++    assert "pytest" not in hard_run
+     if "validate_guardrails.py" in hard_raw:
+         assert re.search(r"python\s+scripts/validate_guardrails\.py", hard_run)
+ 
+@@ -406,7 +419,9 @@ def test_observability_runtime_workflow_keeps_critical_path_filters():
+ def test_ci_dynamic_intelligent_and_changed_modules_cover_critical_routing():
+     workflow = _read(".github/workflows/ci-dynamic-intelligent.yml")
+     assert re.search(r"python\s+scripts/ci_changed_modules\.py\s+origin/main\s*>\s*changed_modules\.json", workflow)
+-    assert "merge-simulation-hard:" in workflow
++    # PFC-002: merge-simulation-hard parte da solo su ogni PR; annidarlo qui
++    # lo rifaceva una seconda volta sullo stesso push
++    assert "./.github/workflows/merge-simulation-hard.yml" not in workflow
+ 
+     spec = importlib.util.spec_from_file_location("ci_changed_modules", "scripts/ci_changed_modules.py")
+     assert spec and spec.loader
+@@ -468,14 +483,19 @@ def test_module_ultra_check_uses_validation_only_guardrail_runner_fail_closed():
+             runner_run = step_run
+         if "Run module-focused tests" in step_name:
+             focused_idx = idx
+-        if "Run full test suite (backstop)" in step_name:
++        if "Run full test suite (backstop)" in step_name or re.search(r"(?m)^\s*pytest\s+-q\s*$", step_run):
+             full_idx = idx
+ 
+     assert json_idx is not None
+     assert runner_idx is not None
+     assert runner_idx == json_idx + 1
+     assert focused_idx is not None and runner_idx < focused_idx
+-    assert full_idx is not None and runner_idx < full_idx
++    # PFC-002 (M156): il backstop completo NON sta piu' qui (10 copie per push
++    # sullo stesso albero). L'asserzione non sparisce: si sposta sul check
++    # obbligatorio unico `full-suite`, verificato in
++    # test_full_suite_workflow_is_the_single_unconditional_full_pytest_gate.
++    assert full_idx is None, "la suite completa gira una volta sola, nel check full-suite"
++    assert Path(".github/workflows/full-suite.yml").exists()
+     assert "set -euo pipefail" in runner_run
+     assert "--run-mutations" not in runner_run
+     assert "--mutation-timeout-sec" not in runner_run

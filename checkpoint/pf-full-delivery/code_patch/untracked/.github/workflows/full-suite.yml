@@ -1,0 +1,88 @@
+name: full-suite
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+# PFC-002 (M156 + check obbligatorio). L'UNICA esecuzione dell'intera suite per
+# push: prima girava 17 volte (10 backstop di `_module-ultra-check`, 3 dentro
+# `ci-dynamic-intelligent`, 3 con `merge-simulation-hard`, 1 in `pr-check`),
+# sempre su `refs/pull/N/merge`, cioe' sullo stesso albero. Ora una volta, con
+# un verdetto che legge il report e non solo l'exit code
+# (`scripts/ci/full_suite_gate.py`).
+#
+# Regole che lo rendono adatto a un required status check:
+# - nessun filtro `paths`/`branches` sul pull_request e nessun `if:` sul job:
+#   un check che puo' non partire, o risultare "skipped", non prova niente;
+# - nome del job stabile: `full-suite`;
+# - niente `workflow_dispatch`: un dispatch sul branch della PR farebbe girare
+#   la versione del file presente nella PR e attaccherebbe un verde al suo head.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  # Un push nuovo sulla stessa PR rende inutile la suite dello SHA vecchio. Su
+  # `main` non si cancella mai: ogni merge ha la sua suite completa, e il gruppo
+  # per SHA evita anche che GitHub scarti un run in attesa (lo fa nello stesso
+  # gruppo anche con cancel-in-progress false).
+  group: full-suite-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  full-suite:
+    name: full-suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
+          pip install pytest
+
+      # Marker di merge e JSON dei guardrail restano in `merge-simulation-hard`,
+      # che li controlla dopo il merge con il main piu' recente.
+      - name: Run the full suite and judge the report
+        run: python scripts/ci/full_suite_gate.py run --out-dir full-suite
+
+      - name: Evidence summary
+        if: always()
+        run: |
+          if [ -f full-suite/full-suite-evidence.json ]; then
+            {
+              echo "## full-suite"
+              echo ""
+              echo '```json'
+              cat full-suite/full-suite-evidence.json
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "## full-suite: nessuna evidenza prodotta (FAIL)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-suite-evidence-${{ github.sha }}-a${{ github.run_attempt }}
+          path: full-suite/
+          if-no-files-found: ignore
