@@ -177,13 +177,17 @@ due sezioni «Bloccanti» e «Verdetto finale», uniche, in quest'ordine, non
 vuote, senza testo prima né sezioni in più; testo vuoto, troncato o senza
 sezioni → INCOMPLETE; schema inatteso o commento HTML nell'output (marker
 forgiato) → UNKNOWN. Il marker di completamento si scrive SOLO per gli stati
-validi; l'output del modello viene sanificato (nessun `<!--`). Ogni tentativo
-lascia un marker `<!-- <id>-pr-review-attempt:…:<n>:<STATO> -->` nel commento
-del range: al massimo **2 tentativi in totale** per reviewer e range (originale
-più una ripetizione, con un rerun del workflow fidato; niente commit vuoti,
-niente marker cancellati). Timeout, errore del provider e testo incompleto
-danno diritto alla stessa unica ripetizione (`RERUN_REVIEW_ONCE`); i crediti
-esauriti fermano subito. Dopo il secondo tentativo non valido il workflow non
+validi; l'output del modello e i nomi file vengono sanificati (nessun `<!--`).
+Ogni tentativo lascia un marker `<!-- <id>-pr-review-attempt:…:<n>:<STATO> -->`
+nella PRIMA riga del commento del range, registrato (come `UNKNOWN`) PRIMA della
+chiamata al modello: se la registrazione non riesce, o la storia è illeggibile,
+il modello non si chiama. Il lettore considera solo i marker della prima riga,
+con range esatto. Al massimo **2 tentativi in totale** per reviewer e range
+(originale più una ripetizione, con un rerun del workflow fidato; niente commit
+vuoti, niente marker cancellati). Timeout, errore del provider e testo
+incompleto danno diritto alla stessa unica ripetizione (`RERUN_REVIEW_ONCE`); i
+crediti esauriti fermano subito (STOP crediti, mai derogabile) e non consumano
+il tetto: dopo la ricarica un rerun revisiona il range. Dopo il secondo tentativo non valido il workflow non
 chiama più il modello e scrive, una sola volta, la richiesta
 `REVIEW_UNKNOWN_OWNER_DECISION` (reviewer, head, run, prove sostitutive): il
 gate è STOP owner («PRONTA PER MERGE — <reviewer> assente:
@@ -194,7 +198,9 @@ BLOCKED/UNKNOWN. **Mai PASS.**
 `PF-REVIEW-WAIVER pr=<n> head=<sha 40> reviewer=<sol|grok> reason=<motivo>` in
 un commento dell'owner (`author_association` OWNER, login dell'owner) scritto a
 mano su GitHub: un commento creato tramite un'app (`performed_via_github_app`,
-come quelli dell'agente) o firmato dall'agente non vale. Copre solo quella PR,
+come quelli dell'agente), firmato dall'agente o modificato dopo la creazione non
+vale. Se nessun reviewer ha una review valida, il gate è BLOCKED anche con le
+deroghe. Copre solo quella PR,
 quell'head esatto e quel reviewer: un nuovo push la fa scadere. Non copre
 bloccanti, crediti esauriti, CI rossa, hard verify o altri gate; il gate
 diventa `PASS_WITH_OWNER_WAIVER` e `merge_decision` lo accetta solo con la

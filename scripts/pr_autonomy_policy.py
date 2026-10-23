@@ -550,12 +550,18 @@ def rr_attempts(body, review_id, base, head):
     return [found[n] for n in sorted(found)]
 
 
+def rr_counted(attempts):
+    """Tentativi che consumano il tetto: i crediti esauriti no (il provider rifiuta, nessuna review
+    pagata), cosi' dopo la ricarica il range si puo' ancora revisionare con un rerun."""
+    return [a for a in (attempts or []) if a != RR_CREDITS_EXHAUSTED]
+
+
 def rr_next_action(attempts, done_present):
     """SKIP_DONE: review valida gia' registrata; OWNER_DECISION: tentativi finiti, nessuna nuova
     chiamata a pagamento; CALL: si puo' chiamare il modello (primo tentativo o l'unica ripetizione)."""
     if done_present:
         return "SKIP_DONE"
-    if len(attempts or []) >= RR_MAX_ATTEMPTS:
+    if len(rr_counted(attempts)) >= RR_MAX_ATTEMPTS:
         return "OWNER_DECISION"
     return "CALL"
 
@@ -605,38 +611,45 @@ _ATTEMPT_STATUS = {
     RR_UNKNOWN: "INCOMPLETE",
 }
 _RETRYABLE = frozenset({"TIMEOUT", "PROVIDER_ERROR", "INCOMPLETE"})
+_RANGE_MARKER_RE = re.compile(r"<!-- ([a-z0-9]+)-pr-review:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}) -->")
 
 
 def _same_head(range_head: str, head_sha: str) -> bool:
     return str(head_sha).startswith(range_head) or range_head.startswith(str(head_sha))
 
 
-def _recorded_attempts(body: str, review_id: str, head_sha: str) -> tuple[list[str], bool, bool]:
-    """(stati dei tentativi sul range che finisce sul current head, decisione owner registrata,
-    tentativi presenti solo su un head vecchio)."""
-    on_head: dict[tuple[str, str], list[str]] = {}
-    stale = False
-    for m in _RR_ATTEMPT_RE.finditer(body):
-        if m.group(1) != review_id:
-            continue
-        if _same_head(m.group(3), head_sha):
-            on_head.setdefault((m.group(2), m.group(3)), [])
-        else:
-            stale = True
-    attempts: list[str] = []
-    for base, head in on_head:
-        attempts = rr_attempts(body, review_id, base, head)
-    decision = any(m.group(1) == review_id and _same_head(m.group(3), head_sha)
-                   for m in _OWNER_DECISION_RE.finditer(body))
-    return attempts, decision, stale and not on_head
+def _first_line_markers(body: str, reviewer: str) -> dict[str, Any]:
+    """Marker del bot letti SOLO dalla prima riga del commento, dove li scrive il workflow.
+
+    Tutto il resto del commento contiene testo non fidato (output del modello,
+    nomi file): un marker li' non conta (rilievo della review indipendente su
+    #552). Il range e' quello del marker del commento; done, tentativi e
+    decisione owner contano solo se combaciano esattamente con quel range."""
+    first = body.split("\n", 1)[0]
+    review_id = _REVIEW_IDS[reviewer]
+    ranges = [(m.group(2), m.group(3)) for m in _RANGE_MARKER_RE.finditer(first) if m.group(1) == review_id]
+    dones = [(m.group(2), m.group(3)) for m in _DONE_RE.finditer(first) if m.group(1) == ACTIVE_REVIEWERS[reviewer]]
+    if len(set(ranges)) > 1 or len(set(dones)) > 1:
+        return {"error": "piu' range nella stessa intestazione"}
+    key = ranges[0] if ranges else (dones[0] if dones else None)
+    if key is None:
+        return {"key": None, "done": False, "attempts": [], "decision": False}
+    if len(key[0]) != 12 or len(key[1]) != 12:
+        return {"error": "range del marker non a 12 caratteri"}
+    if dones and dones[0] != key:
+        return {"error": "marker di completamento di un altro range"}
+    decision = any(m.group(1) == review_id and (m.group(2), m.group(3)) == key
+                   for m in _OWNER_DECISION_RE.finditer(first))
+    return {"key": key, "done": bool(dones), "attempts": rr_attempts(first, review_id, key[0], key[1]),
+            "decision": decision}
 
 
 def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
     """Una review conta solo se è leggibile, marcata, sul current head e senza bloccanti.
 
     Oltre a `status` riporta `classification` (stati di PF-REVIEW-RECOVERY-01),
-    `attempts` (tentativi registrati dal workflow sul current head) e
-    `owner_decision` (tentativi esauriti: decide l'owner)."""
+    `attempts` (tentativi che consumano il tetto, registrati dal workflow sul
+    range) e `owner_decision` (tentativi esauriti: decide l'owner)."""
     if not isinstance(review, Mapping):
         return {"status": "UNKNOWN", "reason": "review non strutturata"}
     reviewer = str(review.get("reviewer") or "").lower()
@@ -656,39 +669,44 @@ def validate_review(review: Mapping[str, Any], head_sha: Any) -> dict[str, Any]:
         return {"status": "UNKNOWN", "reason": "schema review incompleto"}
     if author != REVIEW_BOT_LOGIN:
         return {"status": "INVALID", "reason": "autore non è il bot dei workflow"}
-    attempts, owner_decision, attempts_stale = _recorded_attempts(body, _REVIEW_IDS[reviewer], str(head_sha))
-    result = _validate_review_body(body, reviewer, str(head_sha), attempts, owner_decision, attempts_stale)
+    markers = _first_line_markers(body, reviewer)
+    if "error" in markers:
+        return {"status": "UNKNOWN", "classification": RR_UNKNOWN, "reason": markers["error"],
+                "attempts": 0, "owner_decision": False}
+    result = _validate_review_body(body, str(head_sha), markers)
+    counted = rr_counted(markers["attempts"])
     # Una review con marker di completamento conta come un tentativo anche se
     # scritta da un workflow precedente, che non registrava i tentativi (#547).
-    result["attempts"] = max(len(attempts), 1 if _DONE_RE.search(body) else 0)
+    result["attempts"] = max(len(counted), 1 if markers["done"] else 0)
     result["owner_decision"] = result["status"] == RR_OWNER_DECISION
     return result
 
 
-def _validate_review_body(body: str, reviewer: str, head_sha: str, attempts: list[str],
-                          owner_decision: bool, attempts_stale: bool) -> dict[str, Any]:
+def _validate_review_body(body: str, head_sha: str, markers: Mapping[str, Any]) -> dict[str, Any]:
     lowered = body.lower()
-    done = [m for m in _DONE_RE.finditer(body) if m.group(1) == ACTIVE_REVIEWERS[reviewer]]
-    if not done:
-        if attempts_stale:
-            return {"status": "STALE_HEAD", "classification": RR_UNKNOWN,
-                    "reason": "tentativi registrati solo su un head vecchio"}
+    key, attempts = markers["key"], markers["attempts"]
+    if key is not None and not _same_head(key[1], head_sha):
+        return {"status": "STALE_HEAD", "classification": RR_UNKNOWN, "reason": "il range non termina sul current head"}
+    if not markers["done"]:
         if attempts:
             last = attempts[-1]
             if last == RR_CREDITS_EXHAUSTED:
                 # Prima del tetto dei tentativi (rilievo Codex P1 su #552): i crediti
                 # esauriti restano STOP crediti, mai una decisione owner derogabile.
                 return {"status": "QUOTA", "classification": last, "reason": "crediti/quota esauriti"}
-            if owner_decision or len(attempts) >= RR_MAX_ATTEMPTS:
+            counted = rr_counted(attempts)
+            if markers["decision"] or len(counted) >= RR_MAX_ATTEMPTS:
                 return {"status": RR_OWNER_DECISION, "classification": last,
-                        "reason": f"{len(attempts)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
+                        "reason": f"{len(counted)} tentativi non validi ({', '.join(attempts)}): decide l'owner"}
             if last in RR_VALID_STATES:
                 # Un tentativo valido scrive SEMPRE il marker di completamento:
                 # stato valido senza marker = commento alterato, mai PASS.
                 return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
                         "reason": "tentativo valido senza marker di completamento"}
             return {"status": _ATTEMPT_STATUS.get(last, "INCOMPLETE"), "classification": last,
-                    "reason": f"tentativo {len(attempts)}/{RR_MAX_ATTEMPTS} non valido: {last}"}
+                    "reason": f"tentativo {len(counted)}/{RR_MAX_ATTEMPTS} non valido: {last}"}
+        if markers["decision"]:
+            return {"status": RR_OWNER_DECISION, "classification": RR_UNKNOWN, "reason": "decisione owner registrata"}
         if any(h in lowered for h in _QUOTA_HINTS):
             return {"status": "QUOTA", "classification": RR_CREDITS_EXHAUSTED, "reason": "crediti/quota esauriti"}
         if any(h in lowered for h in _TIMEOUT_HINTS):
@@ -698,9 +716,9 @@ def _validate_review_body(body: str, reviewer: str, head_sha: str, attempts: lis
                     "reason": "review non completata: errore del provider, non timeout"}
         return {"status": "MISSING_MARKER", "classification": RR_UNKNOWN,
                 "reason": "job verde ma marker di completamento assente"}
-    range_head = done[-1].group(3)
-    if not _same_head(range_head, head_sha):
-        return {"status": "STALE_HEAD", "classification": RR_UNKNOWN, "reason": "il range non termina sul current head"}
+    if markers["decision"]:
+        return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
+                "reason": "marker di completamento insieme alla decisione owner: commento incoerente"}
     if attempts and attempts[-1] not in RR_VALID_STATES:
         return {"status": "UNKNOWN", "classification": RR_UNKNOWN,
                 "reason": "marker di completamento con ultimo tentativo non valido"}
@@ -758,6 +776,11 @@ def parse_owner_waiver(comment: Mapping[str, Any], *, owner_login: Any, pr_numbe
         return no("provenienza del commento non verificabile")
     if comment.get("performed_via_github_app") is not None:
         return no("commento creato tramite un'app: non è un atto manuale dell'owner")
+    created, updated = comment.get("created_at"), comment.get("updated_at")
+    if not _nonempty_str(created) or updated != created:
+        # Un commento modificato non e' piu' l'atto scritto a mano: l'agente, tramite
+        # l'app, potrebbe aggiungere la riga a un vecchio commento dell'owner.
+        return no("commento modificato dopo la creazione o date assenti")
     body = comment.get("body")
     if not isinstance(body, str):
         return no("corpo assente")
@@ -843,9 +866,6 @@ def reviewer_gate(results: Mapping[str, Mapping[str, Any]], grok_attempts: Any =
                 "reason": f"PRONTA PER MERGE — {', '.join(missing)} assente: {RR_OWNER_DECISION}"}
     return {"status": "PASS_WITH_OWNER_WAIVER", "owner_waivers": [dict(waivers[n]) for n in exhausted],
             "reason": f"deroga owner per {', '.join(exhausted)} sull'head {str(head_sha)[:12]}"}
-
-
-_RANGE_MARKER_RE = re.compile(r"<!-- ([a-z0-9]+)-pr-review:pickfair-nogui:([0-9a-f]{7,40})\.\.\.([0-9a-f]{7,40}) -->")
 
 
 def review_gate_from_comments(payload: Any) -> dict[str, Any]:
