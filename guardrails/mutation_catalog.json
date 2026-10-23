@@ -2957,7 +2957,7 @@
       "module": "core.trading_engine",
       "area": "ambiguous",
       "file": "core/trading_engine.py",
-      "original": "        if response.get(\"snapshot_persisted\") is False:\n            raise ExecutionError(\n                f\"SIM_SNAPSHOT_NOT_PERSISTED:",
+      "original": "        if final_persisted is False or (response.get(\"snapshot_persisted\") is False and final_persisted is not True):\n            raise ExecutionError(\n                f\"SIM_SNAPSHOT_NOT_PERSISTED:",
       "mutated": "        if False:\n            raise ExecutionError(\n                f\"SIM_SNAPSHOT_NOT_PERSISTED:",
       "tests": [
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
@@ -2981,8 +2981,8 @@
       "module": "simulation_broker",
       "area": "recovery",
       "file": "simulation_broker.py",
-      "original": "                self.db.save_simulation_state(\"default\", snapshot)\n                self._snapshot_durevole = True\n",
-      "mutated": "                self.db.save_simulation_state(\"default\", snapshot)\n",
+      "original": "                    raise\n                self._snapshot_durevole = True\n",
+      "mutated": "                    raise\n",
       "tests": [
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
       ],

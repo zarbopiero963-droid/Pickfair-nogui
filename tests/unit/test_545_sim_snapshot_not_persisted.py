@@ -375,3 +375,118 @@ def test_replay_of_ambiguous_command_while_not_durable_keeps_the_original_reserv
     assert dict(c.rc._uncertain_reservations_map()) == incerti     # incertezza intatta
     assert len(c.broker.state.orders) == 1                         # nessun secondo invio
     assert [r["status"] for r in _db_rows(c)] == ["AMBIGUOUS", "DUPLICATE_BLOCKED"]   # traccia del doppione
+
+
+# ----------------------------------------------------------------------------- 9. rilievi su 6c2d462 e audit #551
+class _RecordingLock:
+    """RLock reale che registra il flag di durabilita' a ogni rilascio: cio' che vede il primo lettore successivo."""
+
+    def __init__(self, broker):
+        import threading
+        self._inner = threading.RLock()
+        self.broker = broker
+        self.on_release = []
+
+    def __enter__(self):
+        self._inner.acquire()
+        return self
+
+    def __exit__(self, *exc):
+        self.on_release.append(getattr(self.broker, "_snapshot_durevole", None))
+        self._inner.release()
+        return False
+
+    def acquire(self, *a, **k):
+        return self._inner.acquire(*a, **k)
+
+    def release(self):
+        self.on_release.append(getattr(self.broker, "_snapshot_durevole", None))
+        self._inner.release()
+
+
+def test_failed_snapshot_flag_is_set_before_the_lock_is_released(tmp_path):
+    """Rilievo Grok su 6c2d462: fra la scrittura fallita e il flag nessun lettore deve poter vedere «durevole»."""
+    c = _chain_with_durable_broker(tmp_path)
+    fault = _inject(c)
+    lock = _RecordingLock(c.broker)
+    c.broker._lock = lock
+    fault.active = True
+    assert c.broker._salva_snapshot() is False
+    assert lock.on_release[0] is False                             # prima: True al primo rilascio
+    assert c.broker.is_durable() is False
+
+
+@pytest.mark.parametrize("wrapper", ["top", "nested"])
+def test_cancel_unpersisted_in_a_nested_container_is_not_confirmed(wrapper):
+    """Rilievo Sol su 6c2d462: il flag annidato sotto `result` (wrapper) non deve lasciar passare una conferma."""
+    inner = {"status": "SUCCESS", "instructionReports": [{"status": "SUCCESS", "betId": "B1", "sizeCancelled": 2.0}]}
+    durable = {"ok": True, "result": dict(inner)}
+    assert response_confirms_cancel(durable) is True                # controllo: senza flag la conferma regge
+    if wrapper == "top":
+        res = {"ok": True, "snapshot_persisted": False, "result": dict(inner)}
+    else:
+        res = {"ok": True, "result": dict(inner, snapshot_persisted=False)}
+    assert response_confirms_cancel(res) is False                   # prima: True con il flag annidato
+
+
+def _microstake_engine():
+    from tests.test_microstake_engine_native import _engine, _payload
+    engine, broker, _db = _engine()
+    return engine, broker, _payload
+
+
+def test_microstake_intermediate_snapshot_repaired_by_the_final_one_is_not_ambiguous():
+    """Audit PF-FINANCIAL-IMPACT-GATE-01 su #551: snapshot intermedio fallito, finale scritto (stato intero) =>
+    saga ACTIVE e broker durevole; l'engine non deve trasformarlo in AMBIGUOUS trattenendo tavolo e chiavi."""
+    engine, broker, payload = _microstake_engine()
+    calls, orig = [], broker.persist_snapshot
+    broker.persist_snapshot = lambda: (calls.append(1), False if len(calls) == 1 else orig())[1]
+    res = engine.submit_quick_bet(payload("ms-int", size=0.10, price=3.0))
+    saga = engine.microstake_executor.store.load("ms-int")
+    assert saga["phase"] == "ACTIVE" and broker.is_durable() is True
+    assert res.get("status") != "AMBIGUOUS", res                    # prima: AMBIGUOUS (SIM_SNAPSHOT_NOT_PERSISTED)
+
+
+def test_microstake_final_snapshot_unpersisted_stays_ambiguous_for_the_engine():
+    engine, _broker, _ = _microstake_engine()
+    for res in ({"status": "SUCCESS", "snapshot_persisted": False, "snapshot_final_persisted": False},
+                {"status": "SUCCESS", "snapshot_persisted": True, "snapshot_final_persisted": False},
+                {"status": "SUCCESS", "snapshot_persisted": False}):
+        with pytest.raises(ExecutionError) as exc:
+            TradingEngine._raise_if_failed_semantic_response(engine, res)
+        assert exc.value.ambiguity_reason == AMBIGUITY_PERSISTED_NOT_CONFIRMED, res
+    ok = {"status": "SUCCESS", "betId": "MS1", "snapshot_persisted": False, "snapshot_final_persisted": True}
+    TradingEngine._raise_if_failed_semantic_response(engine, ok)  # finale scritto: nessuna eccezione
+
+
+@pytest.mark.parametrize("entry_snapshot_ok", [True, False])
+def test_concurrent_unpersisted_fill_after_the_gate_is_covered_by_the_entry_own_snapshot(tmp_path, entry_snapshot_ok):
+    """Rilievo Sol su 6c2d462 (gate non atomico col piazzamento): un fill concorrente fallisce lo snapshot DOPO
+    `ensure_durable()`. L'ingresso gia' ammesso scrive lo snapshot dello stato INTERO: se riesce ripara anche il
+    fill (nulla si perde al riavvio); se fallisce l'ingresso e' AMBIGUOUS, mai certo."""
+    c = _chain_with_durable_broker(tmp_path)
+    fault = _inject(c)
+    c.rc._on_signal_received(_signal())                            # ordine a riposo, snapshot OK
+    orig, chiamate = c.broker.ensure_durable, []
+
+    def ensure_then_concurrent_fill():
+        chiamate.append(1)
+        ok = orig()
+        fault.active = True
+        fill = _book(c.broker, back=2.5)                           # fill concorrente nella finestra
+        assert fill["snapshot_persisted"] is False
+        fault.active = not entry_snapshot_ok
+        return ok
+
+    c.broker.ensure_durable = ensure_then_concurrent_fill
+    c.rc._on_signal_received(_other_market_signal())
+    stati = [r["status"] for r in _db_rows(c)]
+    assert chiamate == [1]                                         # il gate e' passato davvero dalla finestra
+    assert len(c.broker.state.orders) == 2                         # l'ingresso ammesso e' stato inviato
+    if entry_snapshot_ok:
+        assert c.broker.is_durable() is True and "AMBIGUOUS" not in stati
+        fault.active = False
+        r = _crash_and_restart(c)
+        assert r.broker.state.to_dict()["orders"] == c.broker.state.to_dict()["orders"]   # fill e ingresso salvi
+    else:
+        assert c.broker.is_durable() is False and stati[-1] == "AMBIGUOUS"

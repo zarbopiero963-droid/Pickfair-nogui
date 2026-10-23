@@ -1443,15 +1443,19 @@ class SimulationBroker:
         try:
             # Salvataggio SOTTO il lock (rilievo Grok #512): due saghe concorrenti non possono
             # pubblicare uno snapshot piu' vecchio dopo uno piu' nuovo (lost update).
+            # Il flag si aggiorna nella STESSA sezione critica della scrittura, anche sul fallimento (rilievo Grok
+            # #551): nessun lettore vede "durevole" fra una scrittura fallita e il suo flag.
             with self._lock:
-                snapshot = self.state.to_dict()
-                self.db.save_simulation_state("default", snapshot)
+                try:
+                    snapshot = self.state.to_dict()
+                    self.db.save_simulation_state("default", snapshot)
+                except Exception:
+                    self._snapshot_durevole = False
+                    raise
                 self._snapshot_durevole = True
             return True
         except Exception:
             logger.exception("Errore save_simulation_state (persist_snapshot)")
-            with self._lock:
-                self._snapshot_durevole = False
             return False
 
     def is_durable(self) -> bool:

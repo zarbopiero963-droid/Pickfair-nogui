@@ -356,6 +356,9 @@ class NativeSimMicrostakeExecutor(NativeMicrostakeExecutor):
             if len(self.port.operation_log) > before:
                 # dichiarato, mai silenzioso: la fonte di reload del broker e' aggiornata oppure no
                 out["snapshot_persisted"] = self.port.snapshot_failures == snapshot_failures_before
+                # #551: lo snapshot e' lo stato intero, quindi conta l'ULTIMO. Uno intermedio fallito e riparato dal
+                # finale lascia la fonte di reload aggiornata: non e' un esito incerto per l'engine.
+                out["snapshot_final_persisted"] = bool(self.port.last_snapshot_persisted)
                 if out.get("status") == "SUCCESS" and out.get("phase") == Phase.ACTIVE.value \
                         and not self.port.last_snapshot_persisted:
                     out = self._demote_unpersisted_active(payload, out)

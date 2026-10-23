@@ -1432,7 +1432,10 @@ class TradingEngine:
         # #545: il broker SIM ha eseguito l'operazione in memoria ma NON ha scritto lo snapshot di reload: un
         # riavvio ripartirebbe da prima. Non e' un esito certo: AMBIGUOUS, riserva e chiavi trattenute, riga
         # AMBIGUOUS che F018 rileva come incerta (stessa semantica di `_demote_unpersisted_active` del Microstake).
-        if response.get("snapshot_persisted") is False:
+        # Il Microstake dichiara anche l'esito dell'ULTIMO snapshot (stato intero): se il finale e' scritto, uno
+        # intermedio fallito e' gia' riparato (audit PF-FINANCIAL-IMPACT-GATE-01 su #551).
+        final_persisted = response.get("snapshot_final_persisted")
+        if final_persisted is False or (response.get("snapshot_persisted") is False and final_persisted is not True):
             raise ExecutionError(
                 f"SIM_SNAPSHOT_NOT_PERSISTED:{response.get('status')}",
                 error_type=ERROR_AMBIGUOUS,
