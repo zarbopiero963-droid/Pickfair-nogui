@@ -17,7 +17,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - rimosso `pr-check.yml`;
     - `ci-master-gate` non annida più `ci-dynamic-intelligent` né `merge-simulation-hard`;
     - `ci-dynamic-intelligent` tiene solo `detect`; `dutching`/`pnl-engine` partono una volta sola dai loro
-      `paths`, allargati ai path del detector;
+      `paths` (quelli di `dutching` allargati ai due path che vedeva solo il detector; quelli di `pnl-engine` li
+      coprivano gia'; un test vincola la copertura);
     - `mutation-guardrails` gira una volta per push;
     - il `push` dei workflow doppi gira solo su `main`;
     - i run degli SHA superati delle PR vengono cancellati (su `main` mai).

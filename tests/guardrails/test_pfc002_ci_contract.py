@@ -272,3 +272,41 @@ def test_il_timeout_del_job_regge_review_e_attesa_dei_predecessori(nome):
     verifica = _wf(nome)["jobs"]["review"]["steps"][-1]["run"]
     attesa = int(re.search(r"--wait-seconds (\d+)", verifica).group(1))
     assert 0 < attesa and peggiore + attesa + 120 <= mod._timeout_job(workflow), (nome, peggiore, attesa)
+
+
+def _glob_re(pattern: str) -> re.Pattern:
+    # semantica dei filtri `paths` di GitHub: `**` attraversa le cartelle, `*` no
+    out, i = "", 0
+    while i < len(pattern):
+        if pattern.startswith("**/", i):
+            out, i = out + "(?:.*/)?", i + 3
+        elif pattern.startswith("**", i):
+            out, i = out + ".*", i + 2
+        elif pattern[i] == "*":
+            out, i = out + "[^/]*", i + 1
+        else:
+            out, i = out + re.escape(pattern[i]), i + 1
+    return re.compile(out + r"\Z")
+
+
+@pytest.mark.parametrize("regola,workflow", [("dutching", "dutching.yml"), ("pnl-engine", "pnl-engine.yml")])
+def test_i_path_del_detector_restano_coperti_dalla_lane_diretta(regola, workflow):
+    # Rilievo Grok 4.7 su #539: ci-dynamic-intelligent non lancia piu' le lane
+    # dutching e pnl-engine. Ogni path che il detector associava a una lane deve
+    # far partire la lane diretta su pull_request E su push a main, o una PR su
+    # quel file non avrebbe piu' la lane money (senza check rosso).
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ci_changed_modules", ROOT / "scripts" / "ci_changed_modules.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    paths_detector = next(r["paths"] for r in mod.MODULE_RULES if r.get("name") == regola)
+    on = _on(_wf(workflow))
+    for evento in ("pull_request", "push"):
+        filtri = [_glob_re(p) for p in on[evento]["paths"]]
+        scoperti = []
+        for path in paths_detector:
+            # un path del detector puo' essere esso stesso un glob: si prova un esempio concreto
+            esempio = path.replace("**/", "x/").replace("*", "x")
+            if not any(f.match(path) or f.match(esempio) for f in filtri):
+                scoperti.append(path)
+        assert scoperti == [], f"{workflow} ({evento}): path del detector senza lane diretta: {scoperti}"
