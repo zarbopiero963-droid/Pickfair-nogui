@@ -328,6 +328,8 @@ class SimulationBroker:
         )
         self._market_net_realized_aggregator.ledger = self.state.market_commission_ledger
         self._lock = threading.RLock()
+        # #545: False dall'ultima scrittura fallita dello snapshot di reload finche' una successiva non riesce.
+        self._snapshot_durevole = True
 
     @staticmethod
     def _ledger_key(market_id: str, selection_id: int) -> str:
@@ -1441,13 +1443,33 @@ class SimulationBroker:
         try:
             # Salvataggio SOTTO il lock (rilievo Grok #512): due saghe concorrenti non possono
             # pubblicare uno snapshot piu' vecchio dopo uno piu' nuovo (lost update).
+            # Il flag si aggiorna nella STESSA sezione critica della scrittura, anche sul fallimento (rilievo Grok
+            # #551): nessun lettore vede "durevole" fra una scrittura fallita e il suo flag.
             with self._lock:
-                snapshot = self.state.to_dict()
-                self.db.save_simulation_state("default", snapshot)
+                try:
+                    snapshot = self.state.to_dict()
+                    self.db.save_simulation_state("default", snapshot)
+                except Exception:
+                    self._snapshot_durevole = False
+                    raise
+                self._snapshot_durevole = True
             return True
         except Exception:
             logger.exception("Errore save_simulation_state (persist_snapshot)")
             return False
+
+    def is_durable(self) -> bool:
+        """#545: True se lo stato in memoria e' quello dello snapshot di reload (nessuna scrittura fallita in
+        sospeso). Lo snapshot e' lo stato intero: la prima scrittura riuscita dopo un guasto ripara il buco."""
+        with self._lock:
+            return bool(self._snapshot_durevole)
+
+    def ensure_durable(self) -> bool:
+        """#545: se l'ultima scrittura dello snapshot e' fallita la ritenta (stato intero, idempotente) e dice se
+        ora lo stato e' durevole. Senza DB configurato non c'e' nulla da rendere durevole: True."""
+        if self.is_durable():
+            return True
+        return self._salva_snapshot() is not False
 
     @staticmethod
     def _con_durabilita(risposta: Dict[str, Any], salvato: Optional[bool]) -> Dict[str, Any]:

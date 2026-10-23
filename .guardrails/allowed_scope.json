@@ -2666,6 +2666,23 @@
         "tests/unit/test_runtime_controller_best_price_direct.py"
       ],
       "max_files": 78
+    },
+    "pfc006b-sim-snapshot-not-persisted-ambiguous": {
+      "description": "Roadmap #461, follow-up PFC-006 (#545, P1 riprodotto in verifica, c.6371809453; mandati owner PF-G7-FINANCIAL-CLOSEOUT-01 e PFC-008 FINAL FIX): un esito SIM con snapshot di reload non scritto (snapshot_persisted: false) non e' mai un esito certo. TradingEngine: AMBIGUOUS (PERSISTED_NOT_CONFIRMED), riserva/chiavi trattenute, F018 incerto; cancellazione non confermata; hedge OrderRouter AMBIGUOUS; SimulationBroker is_durable/ensure_durable e gate d'ingresso SIM_SNAPSHOT_NON_DUREVOLE finche' il broker non torna durevole. Solo SIM, nessun effetto LIVE. Estensione dichiarata dello scope (audit PF-FINANCIAL-IMPACT-GATE-01 su #551): core/microstake_sim_port.py dichiara anche l'esito dello snapshot finale (snapshot_final_persisted), cosi' uno intermedio riparato dal finale non diventa AMBIGUOUS.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "cashout_cancel_adapter.py",
+        "core/microstake_sim_port.py",
+        "core/order_router.py",
+        "core/trading_engine.py",
+        "docs/traceability/requirements.json",
+        "docs/verification/continuous_formal_verification.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/unit/test_545_sim_snapshot_not_persisted.py"
+      ],
+      "max_files": 11
     }
   }
 }

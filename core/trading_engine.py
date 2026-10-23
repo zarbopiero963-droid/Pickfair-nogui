@@ -894,6 +894,25 @@ class TradingEngine:
             return text if text.startswith("runtime_authority") else f"runtime_authority_check_failed:{text}"
         return ""
 
+    def _sim_durability_admission_block(self) -> str:
+        """#545: '' se il broker SIM della sessione e' durevole (o non c'e' un broker SIM); altrimenti il motivo.
+
+        Uno snapshot di reload non scritto significa che un riavvio ripartirebbe da uno stato precedente: nessuna
+        NUOVA esposizione finche' una scrittura non riesce (``ensure_durable`` la ritenta, stato intero). Le uscite
+        protettive non passano di qui (OrderRouter del cashout)."""
+        # Nessuna lettura della modalita' effettiva: `get_effective_execution_mode` verifica anche l'autorita' del
+        # runtime e ne registrerebbe la perdita qui invece che al suo controllo. Con LIVE dichiarato ma non
+        # consentito l'ordine va comunque al SIM: il gate vale per ogni broker SIM della sessione (fail-closed).
+        broker = self._current_simulation_broker()
+        ensure = getattr(broker, "ensure_durable", None)
+        if not callable(ensure):
+            return ""
+        try:
+            return "" if ensure() is True else "SIM_SNAPSHOT_NON_DUREVOLE"
+        except Exception:  # noqa: BLE001 - durabilita' non dimostrabile => nessuna nuova entrata
+            logger.exception("Verifica della durabilita' del broker SIM fallita")
+            return "SIM_SNAPSHOT_NON_DUREVOLE"
+
     def _discard_unchecked_admission_fence(self, payload: Dict[str, Any]) -> None:
         """Ordine rifiutato prima del controllo del fence: il runtime scarta il fence in coda della richiesta.
         Senza, una riconsegna con lo stesso customer_ref troverebbe due fence e resterebbe in conflitto."""
@@ -1060,13 +1079,23 @@ class TradingEngine:
                 return self._complete_order_lifecycle(
                     ctx, audit, order_id=None, status=STATUS_DENIED, reason=authority_block,
                     extra_fields=extra_fields)
-
             with self._lock:
                 if not self._dedup_allow(ctx):
                     # [FIX 3] Use dedicated helper with NO DB INSERT
                     return self._handle_duplicate_request(ctx, audit, normalized, extra_fields)
 
                 self._emit(ctx, audit, "DEDUP_DECISION", {"allowed": True}, category="guard")
+                # #545: broker SIM non durevole (snapshot di reload non scritto) => nessuna nuova esposizione. DOPO il
+                # dedupe (rilievo Codex su 6c2d462): la riconsegna di un intento gia' in volo segue il percorso
+                # duplicato e non riceve un DENIED terminale che rilascerebbe la riserva incerta dell'originale.
+                # Qui l'intento e' nuovo: il DENIED rilascia solo le sue chiavi, nessuna riga e' stata scritta.
+                durability_block = self._sim_durability_admission_block()
+                if durability_block:
+                    self._consume_admission_fence(normalized)
+                    self._emit(ctx, audit, "SIM_DURABILITY_DENIED", {"reason": durability_block}, category="guard")
+                    return self._complete_order_lifecycle(
+                        ctx, audit, order_id=None, status=STATUS_DENIED, reason=durability_block,
+                        extra_fields=extra_fields)
                 order_id = self._persist_inflight(ctx, normalized)
                 self._emit_critical(ctx, audit, "PERSIST_INFLIGHT",
                                     {"order_id": order_id}, category="persistence")
@@ -1398,6 +1427,19 @@ class TradingEngine:
                 f"DOWNSTREAM_AMBIGUOUS_RESPONSE:{response}",
                 error_type=ERROR_AMBIGUOUS,
                 ambiguity_reason=AMBIGUITY_SUBMIT_UNKNOWN,
+            )
+
+        # #545: il broker SIM ha eseguito l'operazione in memoria ma NON ha scritto lo snapshot di reload: un
+        # riavvio ripartirebbe da prima. Non e' un esito certo: AMBIGUOUS, riserva e chiavi trattenute, riga
+        # AMBIGUOUS che F018 rileva come incerta (stessa semantica di `_demote_unpersisted_active` del Microstake).
+        # Il Microstake dichiara anche l'esito dell'ULTIMO snapshot (stato intero): se il finale e' scritto, uno
+        # intermedio fallito e' gia' riparato (audit PF-FINANCIAL-IMPACT-GATE-01 su #551).
+        final_persisted = response.get("snapshot_final_persisted")
+        if final_persisted is False or (response.get("snapshot_persisted") is False and final_persisted is not True):
+            raise ExecutionError(
+                f"SIM_SNAPSHOT_NOT_PERSISTED:{response.get('status')}",
+                error_type=ERROR_AMBIGUOUS,
+                ambiguity_reason=AMBIGUITY_PERSISTED_NOT_CONFIRMED,
             )
 
         semantic_failure = (

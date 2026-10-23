@@ -86,6 +86,11 @@ def response_confirms_cancel(result: Any) -> bool:
         return False
     nested = result.get("result")
     containers = [result] + ([nested] if isinstance(nested, dict) else [])
+    if any(c.get("snapshot_persisted") is False for c in containers):
+        # #545: cancellazione eseguita in memoria ma snapshot SIM di reload non scritto: un riavvio la
+        # annullerebbe (l'ordine tornerebbe EXECUTABLE). Non e' una conferma (fail-closed), a qualunque
+        # livello del wrapper compaia il flag (rilievo Sol #551).
+        return False
     saw_confirmation = False
     for container in containers:
         verdict = _inspect_container(container)

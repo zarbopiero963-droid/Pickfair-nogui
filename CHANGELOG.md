@@ -10,6 +10,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **#545 — snapshot SIM non scritto mai come esito certo (follow-up PFC-006, roadmap #461, P1):**
+  - `TradingEngine`: un esito con `snapshot_persisted: false` (piazzamento, batch) e' AMBIGUOUS
+    (`PERSISTED_NOT_CONFIRMED`): riga AMBIGUOUS, tavolo, chiave anti-duplicato e dedupe trattenuti; dopo un crash
+    F018 la riserva risulta incerta, non chiusa. Prima: riga SUBMITTED, e dopo un crash ordine sparito, riserva
+    liberata e un intento diverso sullo stesso evento ammesso;
+  - cancellazione (`response_confirms_cancel`, adapter TTL e cashout): non confermata se lo snapshot non e'
+    scritto. Prima: confermata, e dopo il riavvio l'ordine tornava `EXECUTABLE` e si abbinava;
+  - hedge del cashout (`OrderRouter._normalize_sim`): `AMBIGUOUS`/`order_unknown`, bet registrata, nessun retry;
+  - `SimulationBroker.is_durable` / `ensure_durable`: il broker sa se l'ultima scrittura dello snapshot e' fallita
+    e la ritenta (stato intero). Finche' non torna durevole l'engine nega ogni nuova entrata
+    (`SIM_SNAPSHOT_NON_DUREVOLE`), cosi' sostituzioni, fill differiti e settlement non scritti non si sommano a
+    nuova esposizione; le uscite protettive non passano dal gate.
+  - Microstake: la saga dichiara anche l'esito dello snapshot FINALE (`snapshot_final_persisted`). Lo snapshot e' lo
+    stato intero, quindi uno intermedio fallito e riparato dal finale non diventa AMBIGUOUS nell'engine (saga ACTIVE,
+    broker durevole); un finale non scritto resta AMBIGUOUS. Il flag di durabilita' si aggiorna sotto lo stesso lock
+    della scrittura, e la cancellazione non e' confermata anche col flag annidato nel wrapper `result`.
+    Solo SIM, nessun effetto LIVE.
 - **PFC-008 — percentuali di rischio obbligatorie e cap sulla cassa verificata (roadmap #461, M019 + M020;
   decisione owner #426 c.6369802091):**
   - le quattro percentuali Roserpina (`target_profit_cycle_pct`, `max_single_bet_pct`, `max_total_exposure_pct`,
