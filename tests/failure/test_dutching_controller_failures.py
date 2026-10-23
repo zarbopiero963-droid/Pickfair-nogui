@@ -40,6 +40,7 @@ class FakeMode:
 class FakeConfig:
     anti_duplication_enabled = True
     allow_recovery = True
+    target_profit_cycle_pct = 3.0     # PFC-008: le quattro percentuali sono obbligatorie anche nel Dutching
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
     max_single_bet_pct = 100.0

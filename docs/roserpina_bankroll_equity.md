@@ -23,10 +23,16 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   (SIM: `reserved_unmatched` ≤ `exposure`; LIVE: l'exposure Betfair include la liability degli unmatched) e la
   liability LAY è già nell'esposizione: niente si somma due volte. In SIM disponibile + impegnato deve
   coincidere con `total` (tolleranza 1 centesimo); in LIVE vale availableToBetBalance + |exposure|.
-  `RiskDesk.sync_cash_equity` la registra solo se il disponibile è quello della stessa lettura; ogni altro
-  cambio del bankroll (`sync_bankroll`, PnL applicato, snapshot, ripristino) o una lettura fallita la azzera,
+  `RiskDesk.sync_cash_equity` la registra solo se il disponibile è quello della stessa lettura e solo se la
+  lettura non è iniziata prima dell'ultima applicata (`read_at` monotonic: una lettura arrivata tardi non
+  riporta in vita una cassa superata); ogni altro cambio del bankroll (`sync_bankroll`, PnL applicato,
+  snapshot, ripristino) o una lettura fallita, anche per eccezione, la azzera,
   con il motivo in `cash_equity_reason` (`CASH_NOT_READ`, `CASH_TOTAL_MISMATCH`, `CASH_RESERVE_INCOHERENT`,
   `BALANCE_ERROR:…`, …), esposto anche da `get_status` (`cash_equity_verified`, `cash_equity_reason`).
+- **Esposizione esterna:** con la cassa si registra `cash_external_exposure` = impegnato dello snapshot meno
+  l'esposizione dei tavoli del bot in quel momento (mai negativa): bet manuali, altre applicazioni o posizioni
+  non ricostruite entrano nella cassa e quindi si sottraggono anch'esse (MM `external_exposure`, Dutching,
+  headroom Microstake). Esempio: cassa 100 con 20 impegnati fuori dai tavoli, cap 35% ⇒ 15 di nuova esposizione.
 - **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
   `protective` dall'`OrderRouter`) non vengono bloccate: il loro cap temporaneo resta limitato ai fondi

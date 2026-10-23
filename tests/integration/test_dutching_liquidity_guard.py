@@ -47,6 +47,7 @@ class _Config:
     allow_recovery = True
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
+    target_profit_cycle_pct = 3.0  # PFC-008: obbligatoria anche nel Dutching
     max_single_bet_pct = 100.0
     book_warning = 105.0
     book_block = 110.0

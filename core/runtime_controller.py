@@ -4513,6 +4513,7 @@ class RuntimeController:
             signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
             cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
+            external_exposure=getattr(self.risk_desk, "cash_external_exposure", 0.0),
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
             event_current_exposure=event_exposure,
@@ -5973,10 +5974,23 @@ class RuntimeController:
             return {"ok": False, "cash": None, "reason": "CASH_NOT_POSITIVE"}
         return {"ok": True, "cash": cash, "reason": ""}
 
-    def _sync_cash_equity_from_funds(self, funds: Any, available: Any) -> None:
-        """PFC-008: registra nel RiskDesk la cassa verificata dello snapshot che ha dato `available`."""
+    def _sync_cash_equity_from_funds(self, funds: Any, available: Any, *, read_at: Any = None) -> None:
+        """PFC-008: registra nel RiskDesk la cassa verificata dello snapshot che ha dato `available`.
+
+        Insieme alla cassa registra l'esposizione dello snapshot che i tavoli del bot non conoscono
+        (impegnato - esposizione dei tavoli in quel momento, mai negativa): entra nella cassa e quindi va
+        sottratta anch'essa dai cap, altrimenti un'esposizione esterna allargherebbe il limite."""
         verifica = self._cash_equity_verification(funds)
-        self.risk_desk.sync_cash_equity(verifica["cash"], available, reason=verifica["reason"])
+        external = 0.0
+        if verifica["ok"]:
+            committed = self._account_from_funds(funds)["committed"]
+            try:
+                tavoli = float(self.table_manager.total_exposure())
+            except Exception:
+                tavoli = float("nan")
+            external = max(0.0, committed - tavoli) if math.isfinite(tavoli) else float("nan")
+        self.risk_desk.sync_cash_equity(verifica["cash"], available, reason=verifica["reason"],
+                                        external_exposure=external, read_at=read_at)
         motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
             # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
@@ -6039,7 +6053,7 @@ class RuntimeController:
         account = self._record_account_snapshot(funds, source="start", read_at=read_at)  # PF-ALL-F026
         if account["ok"]:
             self.risk_desk.sync_bankroll(account["available"])
-            self._sync_cash_equity_from_funds(funds, account["available"])  # PFC-008
+            self._sync_cash_equity_from_funds(funds, account["available"], read_at=read_at)  # PFC-008
             if not self._load_expansion_baseline():                   # F032: primo avvio => apre il ciclo
                 self._start_expansion_cycle("first_start", funds=funds)
         else:
@@ -7297,7 +7311,7 @@ class RuntimeController:
             return result
 
         self.risk_desk.sync_bankroll(available_f)
-        self._sync_cash_equity_from_funds(funds, available_f)  # PFC-008: cassa della stessa lettura
+        self._sync_cash_equity_from_funds(funds, available_f, read_at=started_at)  # PFC-008: stessa lettura
         self._processed_bankroll_sync_keys.add(settlement_key)
         result["bankroll_after"] = float(self.risk_desk.bankroll_current)
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
@@ -7538,6 +7552,7 @@ class RuntimeController:
             signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
             cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
+            external_exposure=getattr(self.risk_desk, "cash_external_exposure", 0.0),
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),
             event_current_exposure=next_event_exposure,
@@ -8086,6 +8101,8 @@ class RuntimeController:
                 ok=False,
                 error=str(exc),
             )
+            # PFC-008: lettura fallita => la cassa precedente non resta verificata.
+            self.risk_desk.sync_cash_equity(None, None, reason="BALANCE_READ_EXCEPTION", read_at=started_at)
             raise
         bankroll_current = float(self.risk_desk.bankroll_current)
         # PFC-007: il bankroll si allinea solo a una lettura valida (niente errore, finita, non negativa);
@@ -8096,7 +8113,8 @@ class RuntimeController:
             self.risk_desk.sync_bankroll(bankroll_current)
         # PFC-008: cassa verificata della stessa lettura (anche a disponibile invariato); una lettura non
         # valida la rende non verificata, mai la cassa di una lettura precedente.
-        self._sync_cash_equity_from_funds(funds, lettura["available"] if lettura["ok"] else None)
+        self._sync_cash_equity_from_funds(funds, lettura["available"] if lettura["ok"] else None,
+                                          read_at=started_at)
 
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,

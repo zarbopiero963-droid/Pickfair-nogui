@@ -58,6 +58,10 @@ class RiskDesk:
         # nuove entrate sono negate (`cassa_non_verificata`), nessun ripiego.
         self.cash_equity_current = None
         self.cash_equity_reason = "CASH_NOT_READ"
+        # Esposizione della stessa lettura non presente nei tavoli del bot (si sottrae anch'essa dai cap) e
+        # istante monotonic d'inizio dell'ultima lettura applicata: una lettura piu' vecchia non la sovrascrive.
+        self.cash_external_exposure = 0.0
+        self._cash_read_at = None
 
         self.realized_pnl = 0.0
         self.unrealized_pnl = 0.0
@@ -107,26 +111,37 @@ class RiskDesk:
     def _invalidate_cash_locked(self, reason: str) -> None:
         self.cash_equity_current = None
         self.cash_equity_reason = str(reason)
+        self.cash_external_exposure = 0.0
 
-    def sync_cash_equity(self, cash_equity: Any, available: Any, *, reason: str = "") -> None:
+    def sync_cash_equity(self, cash_equity: Any, available: Any, *, reason: str = "",
+                         external_exposure: Any = 0.0, read_at: Any = None) -> None:
         """Registra la cassa verificata letta insieme al disponibile `available` (PFC-008).
 
         Vale solo se `available` e' il bankroll corrente (stessa lettura) e la cassa e'
         un numero finito > 0 non inferiore al disponibile; altrimenti resta non verificata.
-        `reason` non vuoto = la verifica dello snapshot e' gia' fallita: cassa non verificata."""
+        `reason` non vuoto = la verifica dello snapshot e' gia' fallita: cassa non verificata.
+        `read_at` (monotonic d'inizio lettura): una lettura iniziata prima dell'ultima applicata
+        arriva tardi e viene ignorata, cosi' non riporta in vita una cassa gia' superata."""
         with self._lock:
+            started = finite_number(read_at)
+            if started is not None and self._cash_read_at is not None and started < self._cash_read_at:
+                return
+            if started is not None:
+                self._cash_read_at = started
             if reason:
                 self._invalidate_cash_locked(reason)
                 return
             cash = finite_number(cash_equity)
             avail = finite_number(available)
+            external = finite_number(external_exposure)
             if avail is None or avail != self.bankroll_current:
                 self._invalidate_cash_locked("CASH_READING_MISMATCH")
-            elif cash is None or cash <= 0 or cash < avail:
+            elif cash is None or cash <= 0 or cash < avail or external is None or external < 0:
                 self._invalidate_cash_locked("CASH_INCOHERENT")
             else:
                 self.cash_equity_current = cash
                 self.cash_equity_reason = ""
+                self.cash_external_exposure = external
 
     def set_bankroll_start(self, bankroll_start: float) -> None:
         with self._lock:

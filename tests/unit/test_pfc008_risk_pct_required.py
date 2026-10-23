@@ -514,3 +514,141 @@ def test_runtime_auto_next_senza_cassa_verificata_motivo_esplicito():
     esito = rc._last_auto_trade_result
     assert esito["auto_trade_status"] == "AUTO_TRADE_SKIPPED_MM_BLOCKED"
     assert esito["reason"] == "cassa_non_verificata:CASH_TOTAL_MISMATCH"
+
+
+def test_runtime_disponibile_verificato_zero_non_usa_il_bankroll_precedente():
+    # #546: get_status non riallinea il bankroll a un disponibile 0; con PFC-008 la cassa di quella lettura non
+    # appartiene al bankroll corrente (100 della lettura precedente) => cassa non verificata, entrate bloccate.
+    rc, _bus = _make_controller(responses=[{"available": 0.0, "exposure": -20.0}])
+    with_explicit_risk_pct(rc.mm.config)
+    rc._applica_fondi_avvio({"available": 100.0, "exposure": 0.0})
+    assert rc.risk_desk.cash_equity_current == 100.0
+    rc.get_status()
+    assert rc.risk_desk.bankroll_current == 100.0                       # bankroll vecchio, non riallineato
+    assert rc.risk_desk.cash_equity_current is None
+    assert rc.risk_desk.cash_equity_reason == "CASH_READING_MISMATCH"
+    rc.mode = RuntimeMode.ACTIVE
+    rifiuti = []
+    rc._reject_signal = lambda _s, motivo: rifiuti.append(motivo)
+    rc._on_signal_received_serial(dict(_SEGNALE, stake=0.5))
+    assert rifiuti == ["cassa_non_verificata:CASH_READING_MISMATCH"]
+
+
+# --- review indipendente PFC-008 (rilievi corretti) --------------------------------------------------------------
+
+def test_mm_esposizione_esterna_si_sottrae_dalla_cassa():
+    # Cassa 100 di cui 20 impegnati fuori dai tavoli del bot (bet manuale): cap 35% => 15, non 35.
+    cfg = _cfg(max_total_exposure_pct=35.0)
+    mm = RoserpinaMoneyManagement(cfg)
+    kw = dict(signal={"price": 3.0, "side": "BACK", "stake": 15.0}, bankroll_current=80.0, equity_peak=80.0,
+              current_total_exposure=0.0, event_current_exposure=0.0, table=None, cap_base_cash=100.0)
+    assert mm.calculate(external_exposure=20.0, **kw).approved is True
+    kw["signal"] = {"price": 3.0, "side": "BACK", "stake": 30.0}
+    d = mm.calculate(external_exposure=20.0, **kw)
+    assert d.approved is False and d.reason == "supera_max_total_exposure"
+
+
+@pytest.mark.parametrize("esterna", [float("nan"), -1.0, True, "x"])
+def test_mm_esposizione_esterna_illeggibile_blocca(esterna):
+    d = _calc(_cfg(), available=80.0, cash=100.0, stake=0.5)
+    assert d.approved is True
+    d = RoserpinaMoneyManagement(_cfg()).calculate(
+        signal={"price": 3.0, "side": "BACK", "stake": 0.5}, bankroll_current=80.0, equity_peak=80.0,
+        current_total_exposure=0.0, event_current_exposure=0.0, table=None, cap_base_cash=100.0,
+        external_exposure=esterna)
+    assert d.approved is False and d.reason == "cassa_non_verificata"
+
+
+def test_runtime_registra_e_passa_l_esposizione_esterna(monkeypatch):
+    # Avvio con 20 impegnati e nessun tavolo del bot: tutta l'esposizione e' esterna.
+    rc, _bus = _make_controller(responses=[])
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0})
+    assert rc.risk_desk.cash_external_exposure == 20.0
+    rc.mode = RuntimeMode.ACTIVE
+    visti = []
+
+    def _calcola(**kwargs):
+        visti.append((kwargs.get("cap_base_cash"), kwargs.get("external_exposure")))
+        return SimpleNamespace(approved=False, recommended_stake=0.0, reason="test_stop", table_id=1,
+                               desk_mode=rc._desk_mode(), metadata={})
+
+    monkeypatch.setattr(rc.mm, "calculate", _calcola)
+    rc._on_signal_received_serial(dict(_SEGNALE))
+    assert visti == [(100.0, 20.0)]
+
+
+def test_runtime_esposizione_dei_tavoli_non_e_esterna():
+    rc, _bus = _make_controller(responses=[])
+    rc.table_manager.total_exposure = lambda: 20.0           # i 20 impegnati sono del bot
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0})
+    assert rc.risk_desk.cash_external_exposure == 0.0
+
+
+def test_dutching_esposizione_esterna_si_sottrae(monkeypatch):
+    def _dutch(legs, external):
+        def fake_calculate_dutching(selections, total_stake):
+            _ = selections, total_stake
+            return ([{"selectionId": i + 1, "price": 3.0, "stake": s, "side": "BACK"} for i, s in enumerate(legs)],
+                    1.0, 90.0)
+        monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
+        runtime = FakeRuntime()
+        runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0,
+                                            cash_external_exposure=external)
+        runtime.config.max_total_exposure_pct = 35.0
+        runtime.config.target_profit_cycle_pct = 3.0
+        ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
+        return ctrl.precheck({"market_id": "1.300", "total_stake": sum(legs), "simulation_mode": True,
+                              "selections": [{"selectionId": i + 1, "price": 3.0, "side": "BACK"}
+                                             for i in range(len(legs))]})
+    assert _dutch([7.5, 7.5], 20.0)["ok"] is True
+    oltre = _dutch([7.5, 8.0], 20.0)
+    assert oltre["ok"] is False and oltre["error"] == "Esposizione globale oltre limite"
+
+
+def test_microstake_headroom_sottrae_l_esposizione_esterna():
+    m = _motore(35.0, 100.0)
+    m.runtime_controller.table_manager = SimpleNamespace(total_exposure=lambda: 0.0)
+    m.runtime_controller.risk_desk.sync_cash_equity(100.0, 80.0, external_exposure=20.0)
+    assert TradingEngine._native_transient_cap(m, {}) == pytest.approx(15.0)
+
+
+def test_dutching_richiede_anche_il_target(monkeypatch):
+    out = _dutching(monkeypatch, legs=[1.0, 1.0], cash=100.0, target_profit_cycle_pct=None)
+    assert out["ok"] is False and out["reason"] == "target_profit_cycle_pct_non_configurato"
+
+
+def test_riskdesk_lettura_piu_vecchia_non_resuscita_la_cassa():
+    # get_status legge F1 (80/-20) prima del settlement; il settlement applica F2 (80/0); F1 arriva tardi.
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(80.0, 80.0, read_at=2.0)           # F2, iniziata dopo
+    desk.sync_cash_equity(100.0, 80.0, read_at=1.0)          # F1, iniziata prima: ignorata
+    assert desk.cash_equity_current == 80.0
+    desk.sync_cash_equity(90.0, 80.0, read_at=3.0)           # lettura nuova: applicata
+    assert desk.cash_equity_current == 90.0
+
+
+def test_runtime_get_status_eccezione_invalida_la_cassa():
+    rc, _bus = _make_controller(responses=[RuntimeError("rete")])
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0})
+    assert rc.risk_desk.cash_equity_current == 100.0
+    with pytest.raises(RuntimeError):
+        rc.get_status()
+    assert rc.risk_desk.cash_equity_current is None
+    assert rc.risk_desk.cash_equity_reason == "BALANCE_READ_EXCEPTION"
+
+
+def test_mm_lockdown_resta_prima_dei_nuovi_blocchi():
+    # Escalation invariata: bankroll <= 0 e perdita giornaliera oltre il limite portano in LOCKDOWN anche con
+    # percentuali mancanti o cassa non verificata.
+    from core.system_state import DeskMode
+    vuota = RoserpinaConfig()
+    d = RoserpinaMoneyManagement(vuota).calculate(
+        signal={"price": 3.0, "side": "BACK"}, bankroll_current=0.0, equity_peak=100.0, current_total_exposure=0.0,
+        event_current_exposure=0.0, table=None)
+    assert d.desk_mode is DeskMode.LOCKDOWN and d.reason == "bankroll_non_valido"
+    vuota.max_daily_loss = 10.0
+    d = RoserpinaMoneyManagement(vuota).calculate(
+        signal={"price": 3.0, "side": "BACK", "daily_loss_snapshot": 10.0}, bankroll_current=100.0,
+        equity_peak=100.0, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
+    assert d.desk_mode is DeskMode.LOCKDOWN and d.approved is False

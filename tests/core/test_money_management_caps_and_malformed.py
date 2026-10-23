@@ -184,10 +184,8 @@ def test_malformed_bankroll_blocks_with_zero_stake(bad_bankroll):
     decision = _calc(mm, price=2.0, br=bad_bankroll, cash=100.0)
     assert decision.approved is False
     assert decision.recommended_stake == 0.0
-    # PFC-008: un disponibile negativo rende la lettura incoerente (cassa non verificabile), controllo che precede
-    # quello del bankroll; NaN/inf/testo/None diventano 0 e cadono su bankroll_non_valido come prima.
-    atteso = "cassa_non_verificata" if bad_bankroll == -100.0 else "bankroll_non_valido"
-    assert decision.reason == atteso
+    # PFC-008: il controllo del bankroll (LOCKDOWN) precede i nuovi blocchi, motivo invariato.
+    assert decision.reason == "bankroll_non_valido"
 
 
 @pytest.mark.core

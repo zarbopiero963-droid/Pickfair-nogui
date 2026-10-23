@@ -123,8 +123,8 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(exposure, max_total):",
+      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
+      "mutated": "        if validators.exceeds_cap(external + exposure, max_total):",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
       ],
@@ -2619,8 +2619,8 @@
       "module": "core.money_management",
       "area": "money_management",
       "file": "core/money_management.py",
-      "original": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current)\n        if cap_base is None:",
-      "mutated": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current) or bankroll_current\n        if cap_base is None:",
+      "original": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current)\n",
+      "mutated": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current) or bankroll_current\n",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
@@ -2733,6 +2733,54 @@
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
       "rationale": "PFC-008: senza cassa verificata il cap temporaneo d'ingresso userebbe total_cap(None) => eccezione o base non verificata."
+    },
+    {
+      "id": "mm_external_exposure_not_subtracted",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
+      "mutated": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P1: l'esposizione esterna entra nella cassa ma non verrebbe sottratta (cap allargato)."
+    },
+    {
+      "id": "riskdesk_stale_read_overwrites_cash",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            if started is not None and self._cash_read_at is not None and started < self._cash_read_at:\n                return",
+      "mutated": "            if False:\n                return",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P2: una lettura piu' vecchia riporterebbe in vita una cassa superata."
+    },
+    {
+      "id": "runtime_get_status_exception_keeps_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            self.risk_desk.sync_cash_equity(None, None, reason=\"BALANCE_READ_EXCEPTION\", read_at=started_at)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P3: un'eccezione di lettura lascerebbe verificata la cassa precedente."
+    },
+    {
+      "id": "runtime_external_exposure_ignored",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            external = max(0.0, committed - tavoli) if math.isfinite(tavoli) else float(\"nan\")",
+      "mutated": "            external = 0.0",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P1: l'impegnato dello snapshot fuori dai tavoli non verrebbe registrato come esposizione esterna."
     }
   ]
 }

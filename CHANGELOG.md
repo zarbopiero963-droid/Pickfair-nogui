@@ -23,8 +23,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     volta: cassa 100, esposizione 20, cap 35% => 15 di nuova esposizione (prima 8). La cassa e' verificata solo da
     uno snapshot coerente (SIM: disponibile + impegnato == `total`; riserve unmatched e liability LAY gia'
     nell'esposizione); altrimenti nuove entrate BLOCKED con diagnostica (`cassa_non_verificata:<motivo>`), senza
-    ripiego. L'hedge del cashout (uscita protettiva) non viene bloccato. Stake target, difesa, lockdown e
-    drawdown non cambiano base;
+    ripiego. L'esposizione dello snapshot fuori dai tavoli del bot (bet manuali, altre app) si sottrae anch'essa;
+    una lettura arrivata tardi non riporta in vita una cassa superata. L'hedge del cashout (uscita protettiva) non
+    viene bloccato. Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
+    precede i nuovi blocchi;
   - `RoserpinaConfig` non ha piu' default per le quattro percentuali ne' per il recovery; le fixture dei test le
     dichiarano esplicitamente (`tests/risk_config_fixtures.py`);
   - Dutching: con bankroll <= 0 o config assente i controlli di esposizione non vengono piu' saltati (fail-open);

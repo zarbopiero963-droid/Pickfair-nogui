@@ -2631,7 +2631,8 @@ class TradingEngine:
                     return None
             else:
                 try:
-                    headroom = float(total_cap(cap_base)) - float(open_exposure())
+                    external = float(getattr(desk, "cash_external_exposure", 0.0))
+                    headroom = float(total_cap(cap_base)) - float(open_exposure()) - external
                 except Exception:
                     return None
                 if not math.isfinite(headroom):

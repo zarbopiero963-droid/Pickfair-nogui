@@ -65,8 +65,9 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# PFC-008 (M019): cap percentuali obbligatori nei controlli di esposizione del Dutching.
-_DUTCHING_PCT_FIELDS = ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct")
+# PFC-008 (M019): le quattro percentuali obbligatorie, come nel Money Management (nessuna nuova operazione
+# se una manca, anche se il Dutching usa solo i tre cap di esposizione).
+_DUTCHING_PCT_FIELDS = validators.RISK_PCT_FIELDS
 
 
 def _side(value: Any) -> str:
@@ -729,18 +730,22 @@ class DutchingController:
         risk_desk = self._risk_desk()
         return validators.verified_cap_base(getattr(risk_desk, "cash_equity_current", None), bankroll)
 
-    def _risk_caps_failure(self, config: Any, bankroll: float) -> Optional[Dict[str, Any]]:
+    def _risk_caps_basis(self, config: Any, bankroll: float):
         """PFC-008: percentuali obbligatorie e cassa verificata prima di ogni controllo di esposizione.
 
-        Ritorna il risultato di rifiuto, oppure None se i cap si possono calcolare."""
+        Ritorna ``(rifiuto, None, None)`` oppure ``(None, base_dei_cap, esposizione_esterna)``, letti una sola
+        volta (una cassa invalidata fra due letture non puo' produrre una base None a meta' calcolo)."""
         pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)
         if pct_reason:
-            return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason)
-        if self._cap_base(bankroll) is None:
-            risk_desk = self._risk_desk()
+            return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason), None, None
+        risk_desk = self._risk_desk()
+        cap_base = self._cap_base(bankroll)
+        external = validators.finite_number(getattr(risk_desk, "cash_external_exposure", 0.0))
+        if cap_base is None or external is None or external < 0:
             return self._fail("Cassa non verificata: nessun nuovo ingresso", reason="cassa_non_verificata",
-                              cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ"))
-        return None
+                              cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
+                              ), None, None
+        return None, cap_base, external
 
     def _compute_order_exposure(self, item: Dict[str, Any]) -> float:
         side = _side(item.get("side"))
@@ -1315,10 +1320,11 @@ class DutchingController:
         # PFC-008 (M019): percentuale assente o non valida, o cassa non verificata => blocco esplicito.
         # Prima un default di codice sostituiva la percentuale, un NaN rendeva sempre falso il confronto
         # e con bankroll <= 0 o config assente i controlli di esposizione venivano saltati (fail-open).
-        failure = self._risk_caps_failure(config, bankroll)
+        failure, cap_base, external = self._risk_caps_basis(config, bankroll)
         if failure is not None:
             return failure
-        cap_base = self._cap_base(bankroll)
+        # Esposizione dello snapshot sconosciuta ai tavoli: si sottrae anch'essa (vedi RiskDesk).
+        current_total_exposure = current_total_exposure + external
         max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
         max_event_exposure = cap_base * (float(config.max_event_exposure_pct) / 100.0)
         max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
@@ -1764,11 +1770,10 @@ class DutchingController:
             exposure = validators.order_exposure(side, stake, price)
 
             bankroll = self._bankroll_current()
-            failure = self._risk_caps_failure(config, bankroll)   # PFC-008, come nel precheck
+            failure, cap_base, external = self._risk_caps_basis(config, bankroll)   # PFC-008, come nel precheck
             if failure is not None:
                 return failure
-            current_total_exposure = self._table_total_exposure()
-            cap_base = self._cap_base(bankroll)
+            current_total_exposure = self._table_total_exposure() + external
             max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
             max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
 
