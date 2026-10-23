@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "36feca0c6ea81637a50c0a7e1614fce0f90bdc70"
+  "sha": "aa3bb57d1ee79410aad6f06a007914ae11457db5"
  },
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "Attendere il merge MANUALE owner della #539 (READY_FOR_OWNER_MANUAL_MERGE, verdetto #539 c.6361041885). Dopo il merge: verificare merge SHA e CI post-merge su main, aggiornare #453/#461/#506, poi istruire/verificare il ruleset PICKFAIR-MAIN-PROTECTION (required checks, integration_id 15368) \u2014 ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre senza mandato.",
- "previous_checkpoint_sha": "c50f96fac8fc247af96d300e21734689a170e032",
+ "next_atomic_action": "STOP NEEDS_MANUAL (fix_loop_budget_exhausted 10/10) sulla #539 head aa3bb57, c.6362969140: falso verde residuo force-push + nuova PR (verifica indipendente finale). Attendere decisione owner: deroga di un ciclo / rischio accettato / altro meccanismo. Nessun merge, ruleset non attivato, nessun LIVE, PFC-003 non si apre.",
+ "previous_checkpoint_sha": "fe948b23f5dea52536dc36473d24c48073d6ef2d",
  "schema": "pf-current/1",
- "seq": 70
+ "seq": 71
 }
