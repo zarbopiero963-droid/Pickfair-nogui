@@ -10,6 +10,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-005 — G7-b: transizioni dei fondi SIM senza doppio conteggio (roadmap #461, decisione owner #531):**
+  - un ordine a riposo si abbina (anche in parte, in piu' volte) quando un book APERTO successivo lo
+    raggiunge; mai su mercato sospeso, senza stato o runner non ACTIVE (PF-EXEC-05); la riserva diventa
+    esposizione abbinata e il disponibile non cambia;
+  - registro cronologico dei fill (`state.fills`) persistito: il settlement e il riavvio ripercorrono i fill
+    nell'ordine in cui sono avvenuti; uno stato salvato prima lo ricostruisce dagli ordini; registro incoerente
+    con l'abbinato => ordini rifiutati e settlement `LEDGER_INCONSISTENT` (fail-closed);
+  - il disponibile e' cassa meno caso peggiore del MERCATO, calcolato per scenario sulle puntate abbinate e sul
+    non abbinato solo dove fa perdere: niente piu' disponibile negativo dalla compensazione del PositionLedger
+    a quote diverse, niente vincita condizionata contata come incassata prima del settlement; su un mercato a
+    vincitore unico un Dutching LAY gamba per gamba riserva la liability peggiore, non la somma; senza
+    `numberOfWinners == 1` le esposizioni dei runner si sommano (prudente);
+  - la liquidita' gia' presa dagli ordini SIM resta consumata quando il book viene riletto (anche dopo un
+    riavvio): si abbina solo l'incremento; un livello esaurito esce dal book invece di diventare "illimitato";
+  - una copertura che non aumenta l'esposizione passa anche con disponibile negativo (PF-EXEC-03); una gamba
+    di batch con lato non stringa non pesa sui fondi;
+  - registro dei fill validato al caricamento: una voce malformata e' un rifiuto pulito (fondi
+    `error: FILL_LEDGER_INCONSISTENT`, ordini rifiutati, settlement `LEDGER_INCONSISTENT`), mai un'eccezione;
+    un registro incoerente blocca gli ordini su tutti i mercati, uscite comprese (prudente);
+  - rilievi Codex su #542: un `fill_id` ripetuto nel registro e' incoerente (il ledger scartava il doppione e
+    la cassa risultava sovrastimata); un book con prezzi/dimensioni non numerici non abbina nessun ordine a
+    riposo (prima si fermava a meta' ciclo); la liquidita' consumata sopravvive a sospensioni e scale vuote e,
+    per uno stato precedente a PFC-005, si ricostruisce dai fill;
+  - ogni ordine deve tornare con i suoi fill anche per runner, lato e quota media, non solo per importo; un
+    prezzo o una dimensione NaN/infinita nel book non abbina (prima una dimensione NaN valeva "illimitata",
+    anche al piazzamento);
+  - una voce del registro scartata al caricamento lo marca inaffidabile in modo persistente (`fills_corrupted`,
+    azzerato solo da `reset()`); con il registro non verificabile neanche l'abbinamento differito avviene; una
+    quota illeggibile non cancella la liquidita' consumata; una dimensione negativa non vale "illimitata";
+  - modello della liquidita' consumata riscritto (rilievi Sol e Codex su #542): si toglie da ogni livello della
+    scala e da tutti i runner, decade solo se la sua quota sparisce dalla scala di un book aperto e valido; un
+    book e' valido solo con struttura corretta e quote > 1.0; gli id dei fill sono sempre liberi;
+  - abbinamento differito con priorita' temporale piena (l'ordine piu' vecchio esaurisce i livelli raggiungibili
+    prima del successivo) e solo se il PositionLedger vivo torna con la ricostruzione dei fill, come al
+    settlement (altrimenti nessun fill: il mercato resterebbe non regolabile);
+  - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
+    LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**
   - un ordine non abbinato riserva lo stake (BACK) o la liability (LAY) sul caso peggiore del runner: una
     copertura che riduce l'esposizione non chiede fondi in piu' (le uscite protettive non si bloccano);

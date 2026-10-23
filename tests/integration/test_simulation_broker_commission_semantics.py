@@ -309,8 +309,9 @@ def test_settlement_sim_match_parziale_e_residuo_decaduto():
 
 def _back_poi_lay(broker, market_id="2.4"):
     """BACK 10 @ 3.0, poi LAY 10 @ 2.0 sullo stesso runner. Il ledger
-    accredita subito (3 - 2) x 10 = +10 alla chiusura della posizione:
-    saldo 1010 prima del settlement."""
+    accredita subito (3 - 2) x 10 = +10 alla chiusura della posizione, ma la
+    vincita e' condizionata (vince: +10, perde: 0): come su Betfair il
+    disponibile resta 1000 fino al settlement (PFC-005, G7-b)."""
     broker.update_market_book(_aperto(market_id, {11: (3.0, 3.1, 100.0)}))
     broker.place_bet(market_id=market_id, selection_id=11, side="BACK", price=3.0, size=10.0)
     broker.update_market_book(_aperto(market_id, {11: (1.98, 2.0, 100.0)}))
@@ -330,7 +331,7 @@ def _back_poi_lay(broker, market_id="2.4"):
 def test_settlement_sim_back_poi_lay_corregge_il_credito_anticipato(esito, lordo, netto, saldo):
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
     _back_poi_lay(broker)
-    assert broker.get_account_funds()["available"] == pytest.approx(1010.0)
+    assert broker.get_account_funds()["available"] == pytest.approx(1000.0)
 
     broker.update_market_book(_chiuso("2.4", {11: esito}))
 
@@ -504,7 +505,7 @@ def test_settlement_sim_restart_prima_del_settlement_saldo_esatto():
 
     riavviato = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
     riavviato.state.load_from_dict(stato)
-    assert riavviato.get_account_funds()["available"] == pytest.approx(1010.0)
+    assert riavviato.get_account_funds()["available"] == pytest.approx(1000.0)
 
     riavviato.update_market_book(_chiuso("2.4", {11: "LOSER"}))
 
