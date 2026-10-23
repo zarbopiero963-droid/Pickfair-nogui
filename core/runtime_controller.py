@@ -4509,9 +4509,10 @@ class RuntimeController:
                 self._reject_signal(signal, "max_drawdown_abs_active")
                 return
 
-        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa.
+        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa, contro
+        # lo stesso totale dei tavoli passato come esposizione corrente (nessuna seconda lettura).
         cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,
-                                                     self.table_manager)
+                                                     self.table_manager, tables_total=total_exposure)
         decision = self.mm.calculate(
             signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
@@ -7545,16 +7546,18 @@ class RuntimeController:
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
-        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa.
+        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa, contro
+        # lo stesso totale dei tavoli passato come esposizione corrente (nessuna seconda lettura).
+        tavoli_ora = self.table_manager.total_exposure()
         cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,
-                                                     self.table_manager)
+                                                     self.table_manager, tables_total=tavoli_ora)
         decision = self.mm.evaluate_next_trade_after_settlement(
             signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
             cap_base_cash=cassa_e_esterna[0],  # PFC-008: cassa ed esposizione esterna della stessa lettura
             external_exposure=cassa_e_esterna[1],
             equity_peak=float(self.risk_desk.equity_peak),
-            current_total_exposure=self.table_manager.total_exposure(),
+            current_total_exposure=tavoli_ora,
             event_current_exposure=next_event_exposure,
             table=table,
             cycle_id=str(cycle_id or ""),

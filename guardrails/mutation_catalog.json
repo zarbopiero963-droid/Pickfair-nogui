@@ -2680,7 +2680,7 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,\n                                                     self.table_manager)\n        decision = self.mm.calculate(",
+      "original": "        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,\n                                                     self.table_manager, tables_total=total_exposure)\n        decision = self.mm.calculate(",
       "mutated": "        cassa_e_esterna = (None, 0.0)\n        decision = self.mm.calculate(",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
@@ -2777,8 +2777,8 @@
       "module": "core.validators",
       "area": "money_management",
       "file": "core/validators.py",
-      "original": "    return base, max(0.0, committed + max(0.0, pending) - max(0.0, tables_now))",
-      "mutated": "    return base, max(0.0, committed - max(0.0, tables_now))",
+      "original": "    floor = committed + max(0.0, pending)\n",
+      "mutated": "    floor = committed\n",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
@@ -2813,7 +2813,7 @@
       "module": "core.validators",
       "area": "money_management",
       "file": "core/validators.py",
-      "original": "    return base, max(0.0, committed + max(0.0, pending) - max(0.0, tables_now))",
+      "original": "    return base, max(0.0, floor - max(0.0, tables_total))",
       "mutated": "    return base, 0.0",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
@@ -2831,6 +2831,18 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "Review PFC-008 (S4): il lotto Dutching risulterebbe a mercato al primo esito di una gamba e le gambe in volo assorbirebbero l'impegnato esterno."
+    },
+    {
+      "id": "validators_tables_reread_race",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "        if tables_total is None:\n            tables_total = table_manager.total_exposure() if table_manager is not None else 0.0\n",
+      "mutated": "        tables_total = table_manager.total_exposure() if table_manager is not None else 0.0\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Sol su 7925fa7: rileggere i tavoli invece di usare il totale del chiamante fa sottostimare l'esposizione se una riserva viene rilasciata fra le letture."
     }
   ]
 }

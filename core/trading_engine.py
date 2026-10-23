@@ -2629,14 +2629,18 @@ class TradingEngine:
             # disponibili (mandato owner PFC-008 punto 5, PF-EXEC-03; issue #548).
             pct_reason = validators.risk_pct_reason(
                 "max_total_exposure_pct", getattr(getattr(mm, "config", None), "max_total_exposure_pct", None))
-            cap_base, external = validators.desk_cash_basis(desk, bankroll, tables)
+            try:
+                tavoli_ora = float(open_exposure())
+            except Exception:
+                tavoli_ora = float("nan")
+            cap_base, external = validators.desk_cash_basis(desk, bankroll, tables, tables_total=tavoli_ora)
             if payload.get("protective") is True:
                 pass
             elif pct_reason or cap_base is None:
                 return None
             else:
                 try:
-                    headroom = float(total_cap(cap_base)) - float(open_exposure()) - external
+                    headroom = float(total_cap(cap_base)) - tavoli_ora - external
                 except Exception:
                     return None
                 if not math.isfinite(headroom):

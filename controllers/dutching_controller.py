@@ -725,7 +725,7 @@ class DutchingController:
             return float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
         return 0.0
 
-    def _risk_caps_basis(self, config: Any, bankroll: float):
+    def _risk_caps_basis(self, config: Any, bankroll: float, tables_total: float):
         """PFC-008: percentuali obbligatorie e cassa verificata prima di ogni controllo di esposizione.
 
         Ritorna ``(rifiuto, None, None)`` oppure ``(None, base_dei_cap, esposizione_esterna)``, letti una sola
@@ -734,7 +734,9 @@ class DutchingController:
         if pct_reason:
             return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason), None, None
         risk_desk = self._risk_desk()
-        cap_base, external = validators.desk_cash_basis(risk_desk, bankroll, self._table_manager())
+        # `tables_total` e' lo stesso valore che il chiamante usa come esposizione corrente (nessuna seconda lettura).
+        cap_base, external = validators.desk_cash_basis(risk_desk, bankroll, self._table_manager(),
+                                                        tables_total=tables_total)
         if cap_base is None:
             return self._fail("Cassa non verificata: nessun nuovo ingresso", reason="cassa_non_verificata",
                               cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
@@ -1314,7 +1316,7 @@ class DutchingController:
         # PFC-008 (M019): percentuale assente o non valida, o cassa non verificata => blocco esplicito.
         # Prima un default di codice sostituiva la percentuale, un NaN rendeva sempre falso il confronto
         # e con bankroll <= 0 o config assente i controlli di esposizione venivano saltati (fail-open).
-        failure, cap_base, external = self._risk_caps_basis(config, bankroll)
+        failure, cap_base, external = self._risk_caps_basis(config, bankroll, current_total_exposure)
         if failure is not None:
             return failure
         # Esposizione dello snapshot sconosciuta ai tavoli: si sottrae anch'essa (vedi RiskDesk).
@@ -1766,10 +1768,12 @@ class DutchingController:
             exposure = validators.order_exposure(side, stake, price)
 
             bankroll = self._bankroll_current()
-            failure, cap_base, external = self._risk_caps_basis(config, bankroll)   # PFC-008, come nel precheck
+            current_total_exposure = self._table_total_exposure()
+            failure, cap_base, external = self._risk_caps_basis(config, bankroll,   # PFC-008, come nel precheck
+                                                                current_total_exposure)
             if failure is not None:
                 return failure
-            current_total_exposure = self._table_total_exposure() + external
+            current_total_exposure = current_total_exposure + external
             max_total_exposure = cap_base * (float(config.max_total_exposure_pct) / 100.0)
             max_single_bet = cap_base * (float(config.max_single_bet_pct) / 100.0)
 

@@ -268,3 +268,70 @@ def test_lotto_con_ack_parziale_non_assorbe_l_esterno():
     desk.sync_cash_equity(100.0, 70.0, committed_exposure=30.0, read_at=100.0)
     base, oltre = validators.desk_cash_basis(desk, 70.0, tm)
     assert base == 100.0 and tm.total_exposure() + oltre >= 50.0
+
+
+# --- race rilascio fra le letture (rilievo Sol su 7925fa7) ---------------------------------------------------------
+
+class _TavoliCheRilasciano:
+    """Riserva da 10 (pendente) rilasciata mentre si leggono le riserve pendenti."""
+
+    def __init__(self):
+        self.totale = 10.0
+
+    def total_exposure(self):
+        return self.totale
+
+    def pending_exposure(self, *, since):
+        self.totale = 0.0                       # rilascio concorrente: la riserva sparisce
+        return 0.0
+
+
+def test_rilascio_fra_le_letture_non_sottostima():
+    # Esterno 20 (cassa 100). Il chiamante legge i tavoli (10), poi la riserva viene rilasciata.
+    # Il cap deve vedere almeno l'esterno vero (20): totale letto dal chiamante + parte oltre i tavoli.
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    tm = _TavoliCheRilasciano()
+    tavoli_letti = tm.total_exposure()
+    base, oltre = validators.desk_cash_basis(desk, 80.0, tm, tables_total=tavoli_letti)
+    assert base == 100.0 and tavoli_letti + oltre >= 20.0
+
+
+def test_rilascio_prima_della_lettura_del_chiamante_resta_prudente():
+    # Ordine opposto: riserve pendenti lette (10) prima del rilascio, tavoli letti dopo (0): sovrastima prudente.
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    tm = SimpleNamespace(total_exposure=lambda: 0.0, pending_exposure=lambda since: 10.0)
+    base, oltre = validators.desk_cash_basis(desk, 80.0, tm, tables_total=0.0)
+    assert (base, oltre) == (100.0, 30.0)
+
+
+def test_riserva_nuova_fra_le_letture_vista_per_intero():
+    # Il chiamante legge i tavoli (0); subito dopo compare una riserva pendente da 10. Esterno 20.
+    # Il cap deve vedere 30 (0 letto + 30 oltre), non 20 (che darebbe una rilettura interna dei tavoli).
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    tm = SimpleNamespace(total_exposure=lambda: 10.0, pending_exposure=lambda since: 10.0)
+    base, oltre = validators.desk_cash_basis(desk, 80.0, tm, tables_total=0.0)
+    assert base == 100.0 and 0.0 + oltre == 30.0
+
+
+def test_lotto_reale_a_mercato_dopo_l_ultima_gamba(tmp_path):
+    # Catena reale DutchingController -> RuntimeController -> TradingEngine -> SimulationBroker: gli esiti delle
+    # gambe portano customer_ref/table_id/event_key della gamba; il tavolo del lotto (senza ref proprio) e' a
+    # mercato solo dopo l'ultima. Una gamba senza esito lascia il lotto pendente: sovrastima prudente.
+    from tests.acceptance.test_issue523_dutching_manual_bet import _batch, _busy_tables, _catena, _dutching, _leg_event
+    c = _catena(tmp_path)
+    assert _dutching(c).submit_dutching(_batch(sides=("BACK", "BACK", "BACK"), total_stake=15.0))["ok"] is True
+    legs = c.bus.payloads("CMD_QUICK_BET")
+    tavolo = _busy_tables(c)[0]
+    for leg in legs[:2]:
+        _leg_event(c, leg, "QUICK_BET_SUCCESS")
+        assert "placed_at" not in tavolo.meta
+    _leg_event(c, legs[0], "QUICK_BET_SUCCESS")                 # esito ripetuto della stessa gamba
+    assert "placed_at" not in tavolo.meta
+    _leg_event(c, legs[2], "QUICK_BET_SUCCESS")
+    assert "placed_at" in tavolo.meta

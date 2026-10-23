@@ -325,16 +325,18 @@ def verified_cap_base(cash_equity, available):
     return cash
 
 
-def desk_cash_basis(risk_desk, available, table_manager=None):
+def desk_cash_basis(risk_desk, available, table_manager=None, tables_total=None):
     """PFC-008: ``(base dei cap, esposizione oltre i tavoli)`` da un'unica lettura coerente della cassa.
 
-    La base e' la cassa verificata. L'esposizione che il cap totale deve vedere e' la maggiore fra quella dei
-    tavoli del bot (adesso) e ``impegnato della lettura + riserve del bot non ancora riflesse in quella
-    lettura`` (`TableManager.pending_exposure(since=read_at)`, come il gate fondi PR28-e): il secondo valore
-    tiene conto dell'impegnato fuori dai tavoli (bet manuali, altre app) senza che una riserva pendente lo
-    "assorba". Si restituisce la parte oltre i tavoli, che i chiamanti sommano all'esposizione dei tavoli.
-    Senza `pending_exposure` tutte le riserve contano come pendenti (prudente). ``(None, None)`` quando la
-    cassa non e' verificata o un dato manca o non e' finito (un oggetto senza il campo non vale zero)."""
+    La base e' la cassa verificata. L'esposizione che il cap totale deve vedere e' la maggiore fra
+    ``tables_total`` (l'esposizione dei tavoli del bot che il CHIAMANTE usa come esposizione corrente, letta una
+    volta) e ``impegnato della lettura + riserve del bot non ancora riflesse in quella lettura``
+    (`TableManager.pending_exposure(since=read_at)`, come il gate fondi PR28-e). Si restituisce la parte oltre
+    ``tables_total``, che il chiamante somma a quello stesso valore: niente seconda lettura dei tavoli, quindi un
+    rilascio concorrente fra le letture puo' solo far sovrastimare (rilievo Sol su 7925fa7), e una riserva
+    pendente non "assorbe" l'impegnato esterno (rilievo Codex su dd0b02b). Senza `pending_exposure` tutte le
+    riserve contano come pendenti (prudente). ``(None, None)`` quando la cassa non e' verificata o un dato manca
+    o non e' finito (un oggetto senza il campo non vale zero)."""
     reader = getattr(risk_desk, "cash_basis", None)
     if callable(reader):
         cash, committed_raw, read_at = reader()
@@ -346,17 +348,18 @@ def desk_cash_basis(risk_desk, available, table_manager=None):
     committed = finite_number(committed_raw)
     if base is None or committed is None or committed < 0:
         return None, None
-    tables_now, pending = 0.0, 0.0
-    if table_manager is not None:
-        try:
-            tables_now = float(table_manager.total_exposure())
-            pending_fn = getattr(table_manager, "pending_exposure", None)
-            pending = float(pending_fn(since=read_at)) if callable(pending_fn) else tables_now
-        except Exception:
-            return None, None
-    if not (math.isfinite(tables_now) and math.isfinite(pending)):
+    try:
+        if tables_total is None:
+            tables_total = table_manager.total_exposure() if table_manager is not None else 0.0
+        tables_total = float(tables_total)
+        pending_fn = getattr(table_manager, "pending_exposure", None)
+        pending = float(pending_fn(since=read_at)) if callable(pending_fn) else tables_total
+    except Exception:
         return None, None
-    return base, max(0.0, committed + max(0.0, pending) - max(0.0, tables_now))
+    if not (math.isfinite(tables_total) and math.isfinite(pending)):
+        return None, None
+    floor = committed + max(0.0, pending)
+    return base, max(0.0, floor - max(0.0, tables_total))
 
 
 def reaches_limit(amount, limit) -> bool:
