@@ -264,8 +264,8 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
     (`pr_autonomy_policy._section`) tratta una sezione duplicata come schema
     inatteso, UNKNOWN (rilievo Codex su #539). Qui i bloccanti di tutti i lotti
     finiscono in un'unica sezione, ciascuno etichettato col suo lotto; un lotto
-    senza una sezione Bloccanti unica e' esso stesso un bloccante (non si legge,
-    quindi non e' pulito). Il testo integrale dei lotti resta nei dettagli, con i
+    senza una sezione Bloccanti unica, o senza un Verdetto finale unico e non
+    vuoto, e' esso stesso un bloccante (non si legge, quindi non e' pulito). Il testo integrale dei lotti resta nei dettagli, con i
     titoli abbassati a `####`, cosi' non crea sezioni di primo livello.
 
     `lotti`: dict con `indice` (1-based), `totale`, `text`.
@@ -276,7 +276,10 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
     for lotto in lotti:
         tag = f"[lotto {lotto['indice']}/{lotto['totale']}]"
         testo = str(lotto.get("text") or "")
-        sezioni = _SEZIONE["Bloccanti"].findall(testo)
+        # la riga di riscontro chiude la risposta e cade dentro l'ultima sezione:
+        # non e' contenuto della review, quindi non conta per nessuna delle due
+        corpo = re.sub(r"(?im)^\s*\**\s*SEGMENTI ESAMINATI\s*\**\s*:.*$", "", testo)
+        sezioni = _SEZIONE["Bloccanti"].findall(corpo)
         contenuto = sezioni[0].strip() if len(sezioni) == 1 else None
         if not contenuto:
             bloccanti.append(f"- {tag} sezione Bloccanti assente, vuota o duplicata: lotto non leggibile")
@@ -285,9 +288,15 @@ def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
                 riga = riga.strip().lstrip("-*").strip()
                 if riga:
                     bloccanti.append(f"- {tag} {riga}")
-        ver = _SEZIONE["Verdetto finale"].findall(testo)
-        sintesi = " ".join(ver[0].split()) if len(ver) == 1 and ver[0].strip() else "(verdetto assente)"
-        verdetti.append(f"- {tag} {sintesi}")
+        ver = _SEZIONE["Verdetto finale"].findall(corpo)
+        if len(ver) == 1 and ver[0].strip():
+            verdetti.append(f"- {tag} {' '.join(ver[0].split())}")
+        else:
+            # Verdetto assente, vuoto o duplicato = lotto malformato, quindi non
+            # pulito: normalizzarlo in silenzio farebbe sembrare VALID_CLEAN una
+            # review che il gate tratterebbe come UNKNOWN (rilievo GPT-6.1 Sol su #539).
+            bloccanti.append(f"- {tag} sezione Verdetto finale assente, vuota o duplicata: lotto non leggibile")
+            verdetti.append(f"- {tag} (verdetto non leggibile)")
         dettagli.append(re.sub(r"(?m)^#+[ \t]*", "#### ", testo))
     return {
         "bloccanti": "\n".join(bloccanti) if bloccanti else "Nessun bloccante evidente",

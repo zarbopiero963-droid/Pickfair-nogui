@@ -485,3 +485,15 @@ def test_tetto_di_segmenti_per_lotto():
     assert all(len(b) <= rc.MAX_SEGMENTS_PER_BATCH for b in plan.batches)
     assert len(plan.batches) == 3
     assert "NON conta nel limite di parole" in rc.ack_instruction(["F001S01"])
+
+
+@pytest.mark.parametrize("verdetto", ["", "## Verdetto finale\n", "## Verdetto finale\nOK\n## Verdetto finale\nKO\n"])
+def test_verdetto_assente_vuoto_o_duplicato_non_e_pulito(verdetto):
+    # Rilievo GPT-6.1 Sol su #539: Bloccanti pulita ma Verdetto finale non
+    # univoco veniva normalizzato a "(verdetto assente)" e l'aggregato sembrava pulito.
+    testo = "## Bloccanti\nNessun bloccante evidente\n" + verdetto + "SEGMENTI ESAMINATI: F001S01"
+    unita = rc.aggregate_reviews([{"indice": 1, "totale": 2, "text": testo},
+                                  {"indice": 2, "totale": 2,
+                                   "text": "## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK"}])
+    assert "Nessun bloccante" not in unita["bloccanti"]
+    assert "[lotto 1/2] sezione Verdetto finale" in unita["bloccanti"]

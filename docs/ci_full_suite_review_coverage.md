@@ -164,7 +164,9 @@ rifiuto, da un errore o da altro testo non chiude la review (rilievo Codex su
 **Un solo commento leggibile dal gate.** Con più lotti, il commento pubblica una
 sola coppia `## Bloccanti` / `## Verdetto finale` (`aggregate_reviews`).
 - I bloccanti di tutti i lotti sono etichettati `[lotto i/n]`.
-- Un lotto senza una sezione Bloccanti unica conta esso stesso come bloccante.
+- Un lotto senza una sezione Bloccanti unica, o senza un Verdetto finale unico e
+  non vuoto, conta esso stesso come bloccante (rilievo GPT-6.1 Sol su #539). La
+  riga di riscontro non conta come contenuto di nessuna delle due sezioni.
 - Il testo integrale dei lotti resta nel dettaglio, con i titoli abbassati a
   `####`.
 
