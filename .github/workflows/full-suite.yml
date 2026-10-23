@@ -40,33 +40,18 @@ jobs:
     env:
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
+      # Su pull_request si parte dall'HEAD della PR, non da refs/pull/N/merge, e
+      # si fonde il main CORRENTE: e' l'albero che il merge produrra' davvero.
+      # refs/pull/N/merge e' il merge calcolato all'evento (rilievo Grok 4.7 su
+      # #539), e rifondervi sopra main non equivale sempre al merge diretto
+      # (rilievo GPT-6.1 Sol su #539). Su push a main l'albero e' main stesso.
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
-          if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
-          pip install pytest
-
-      # `refs/pull/N/merge` e' il merge con la base AL MOMENTO DELL'EVENTO. Se
-      # main e' andato avanti nel frattempo, la suite proverebbe un albero che
-      # non e' quello che verra' mergiato: prima della PFC-002 lo copriva il
-      # pytest di `merge-simulation-hard` (rilievo Grok 4.7 su #539). Qui si
-      # fonde il main corrente prima di eseguire la suite: una sola esecuzione
-      # copre entrambe le cose. Conflitto => rosso. Su `push` a main l'albero
-      # e' gia' main.
-      - name: Merge the current main into the PR tree
+      - name: Merge the current main into the PR head
         if: github.event_name == 'pull_request'
         run: |
           set -euo pipefail
@@ -78,6 +63,22 @@ jobs:
             }
           echo "MERGED_MAIN_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
           echo "TESTED_TREE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # DOPO il merge (rilievo GPT-6.1 Sol su #539): se main ha cambiato i
+      # requirements, la suite gira con le dipendenze dell'albero provato.
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
+          pip install pytest
 
       # Marker di merge e JSON dei guardrail restano in `merge-simulation-hard`.
       - name: Run the full suite and judge the report

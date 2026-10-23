@@ -235,16 +235,22 @@ def test_i_reviewer_mettono_la_label_sui_gate_pfc002(nome, path):
 
 
 def test_full_suite_prova_il_merge_con_il_main_corrente():
-    # Rilievo Grok 4.7 su #539: il pytest tolto da merge-simulation-hard provava
-    # il merge con il main PIU' RECENTE, refs/pull/N/merge quello dell'evento.
+    # Grok 4.7 su #539: il pytest tolto da merge-simulation-hard provava il merge
+    # con il main PIU' RECENTE. GPT-6.1 Sol su #539: il merge si costruisce
+    # dall'head della PR (non da refs/pull/N/merge) e le dipendenze si
+    # installano DOPO il merge.
     steps = _wf("full-suite.yml")["jobs"]["full-suite"]["steps"]
     nomi = [s.get("name") for s in steps]
-    i_merge = nomi.index("Merge the current main into the PR tree")
+    checkout = steps[nomi.index("Checkout")]
+    assert checkout["with"]["ref"] == "${{ github.event.pull_request.head.sha || github.sha }}"
+    assert checkout["with"]["fetch-depth"] == 0
+    i_merge = nomi.index("Merge the current main into the PR head")
+    i_install = nomi.index("Install dependencies")
     i_run = nomi.index("Run the full suite and judge the report")
-    assert i_merge < i_run
+    assert nomi.index("Checkout") < i_merge < i_install < i_run
     merge = steps[i_merge]
     assert merge.get("if") == "github.event_name == 'pull_request'"
     assert "git fetch --no-tags origin main" in merge["run"]
     assert re.search(r"merge --no-ff --no-edit origin/main \|\| \{", merge["run"])
     assert "exit 1" in merge["run"] and "set -euo pipefail" in merge["run"]
-    assert "if" not in steps[i_run]
+    assert "if" not in steps[i_run] and "if" not in steps[i_install]

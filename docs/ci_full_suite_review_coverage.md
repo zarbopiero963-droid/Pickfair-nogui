@@ -63,11 +63,13 @@ checkout di `refs/pull/N/merge`, cioè del merge della PR con la base. Le 17
 esecuzioni erano quindi la stessa suite sullo stesso albero, e una basta.
 
 L'unica differenza era `merge-simulation-hard`, che rifaceva il merge con il
-main più recente e poi eseguiva pytest. Ora quel merge lo fa `full-suite` stessa
-(step *Merge the current main into the PR tree*, solo su `pull_request`; un
-conflitto rende il check rosso). La suite prova quindi l'albero che verrà
-davvero mergiato, anche se main si è mosso dopo l'evento (rilievo Grok 4.7 su
-#539). `merge-simulation-hard` resta per conflitti, marker e JSON dei guardrail.
+main più recente e poi eseguiva pytest. Ora quel merge lo fa `full-suite` stessa.
+Su `pull_request` parte dall'**head della PR**, non da `refs/pull/N/merge`, e
+fonde il main corrente (step *Merge the current main into the PR head*). Un
+conflitto rende il check rosso. Le dipendenze si installano **dopo** il merge,
+così valgono quelle dell'albero provato. La suite prova quindi l'albero che il
+merge produrrà davvero, anche se main si è mosso dopo l'evento (rilievi Grok 4.7
+e GPT-6.1 Sol su #539). `merge-simulation-hard` resta per conflitti, marker e JSON dei guardrail.
 
 **Effetto collaterale dichiarato.** Alcuni workflow avevano filtri `paths` sul
 `push` più larghi di quelli sul `pull_request`. Per esempio
