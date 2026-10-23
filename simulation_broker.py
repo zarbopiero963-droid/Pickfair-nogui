@@ -15,6 +15,10 @@ from core.position_ledger import PositionLedger
 logger = logging.getLogger(__name__)
 
 
+class _RegistroFillIncoerente(ValueError):
+    """Il registro dei fill non torna con l'abbinato degli ordini (PFC-005)."""
+
+
 def _to_float(value: Any, default: float = 0.0) -> float:
     try:
         parsed = float(value)
@@ -103,6 +107,14 @@ class SimulationState:
         # settlement. Persistito col resto dello stato, e' la dedupe del broker:
         # un book CHIUSO ripetuto o un riavvio non regolano due volte.
         self.settlements: Dict[str, Dict[str, Any]] = {}
+        # Registro cronologico dei fill (PFC-005): un ordine puo' abbinarsi in
+        # piu' volte (al piazzamento e quando il book lo raggiunge), e il
+        # settlement ripercorre i fill nell'ordine in cui sono avvenuti.
+        self.fills: List[Dict[str, Any]] = []
+        # Liquidita' del book gia' presa dagli ordini SIM, per livello
+        # (mercato|selezione|lato|quota): il feed esterno non sa dei nostri
+        # abbinamenti virtuali, quindi un book riletto la ripresenterebbe.
+        self.liquidity_consumed: Dict[str, float] = {}
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -127,6 +139,8 @@ class SimulationState:
                 for key, ledger in self.position_ledgers.items()
             },
             "settlements": copy.deepcopy(self.settlements),
+            "fills": copy.deepcopy(self.fills),
+            "liquidity_consumed": dict(self.liquidity_consumed),
         }
 
     # skipcq: PY-R1000 - pre-existing state-restoration complexity; PR3 only adds defensive parsing.
@@ -202,6 +216,49 @@ class SimulationState:
             if isinstance(record, dict) and str(market_id).strip():
                 self.settlements[str(market_id)] = copy.deepcopy(record)
 
+        self.fills = []
+        if isinstance(data.get("fills"), list):
+            for item in data["fills"]:
+                fill = _fill_valido(item)
+                if fill is not None:  # una voce scartata rende il registro incoerente: fail-closed
+                    self.fills.append(fill)
+        else:
+            # Stato salvato prima di PFC-005: ogni ordine si abbinava una volta
+            # sola, al piazzamento, in ordine d'inserimento.
+            for order in self.orders.values():
+                if order.matched_size > 0.0:
+                    self.fills.append({
+                        "fill_id": order.bet_id, "bet_id": order.bet_id,
+                        "market_id": order.market_id, "selection_id": int(order.selection_id),
+                        "side": order.side, "price": float(order.avg_price_matched),
+                        "size": float(order.matched_size),
+                    })
+        self.liquidity_consumed = {}
+        for key, value in dict(data.get("liquidity_consumed") or {}).items():
+            consumato = _to_float(value, 0.0)
+            if math.isfinite(consumato) and consumato > 0.0:
+                self.liquidity_consumed[str(key)] = consumato
+
+
+def _fill_valido(item: Any) -> Optional[Dict[str, Any]]:
+    """Voce del registro dei fill con tutti i campi validi, normalizzata; altrimenti None."""
+    if not isinstance(item, dict):
+        return None
+    try:
+        fill = {
+            "fill_id": str(item["fill_id"]).strip(), "bet_id": str(item["bet_id"]).strip(),
+            "market_id": str(item["market_id"]).strip(), "selection_id": int(item["selection_id"]),
+            "side": str(item["side"]).strip().upper(), "price": float(item["price"]),
+            "size": float(item["size"]),
+        }
+    except (KeyError, TypeError, ValueError):
+        return None
+    if (not fill["fill_id"] or not fill["bet_id"] or not fill["market_id"] or fill["selection_id"] <= 0
+            or fill["side"] not in {"BACK", "LAY"} or not math.isfinite(fill["price"]) or fill["price"] <= 1.0
+            or not math.isfinite(fill["size"]) or fill["size"] <= 0.0):
+        return None
+    return fill
+
 
 class SimulationBroker:
     """
@@ -215,8 +272,8 @@ class SimulationBroker:
       e' <= di quel prezzo, e prende il prezzo del book;
     - un LAY si abbina sul miglior ``availableToLay`` se la quota chiesta
       e' >= di quel prezzo, e prende il prezzo del book;
-    - solo il primo livello, solo al piazzamento: un ordine rimasto a riposo
-      non si riabbina quando il book si muove;
+    - solo il primo livello; un ordine rimasto a riposo si abbina (anche in
+      parte) quando un book APERTO successivo lo raggiunge (PFC-005);
     - nessun auto-close
     - stato persistibile
     """
@@ -296,56 +353,106 @@ class SimulationBroker:
         return applied
 
     # =========================================================
-    # RISERVA DEI FONDI (PFC-004, G7-a; decisione owner #531)
+    # RISERVA DEI FONDI (PFC-004 G7-a, PFC-005 G7-b; decisione owner #531)
     # =========================================================
-    # Come Betfair, il saldo disponibile tiene conto anche degli ordini NON
-    # abbinati: un BACK riserva lo stake, un LAY la liability. Conta il caso
-    # peggiore della posizione del runner (stessa granularita' del
-    # PositionLedger): un ordine non abbinato pesa solo nello scenario in cui fa
-    # perdere, quindi una copertura che riduce l'esposizione non chiede fondi in
-    # piu'. La riserva non e' un saldo a parte: si ricava dagli ordini
-    # EXECUTABLE (residuo = size - matched_size), quindi si libera da sola a
-    # cancellazione, sostituzione, decadenza e settlement, e dopo un riavvio si
-    # ricalcola dagli ordini persistiti senza doppi conteggi.
+    # Come Betfair, il disponibile e' la cassa meno l'esposizione del caso
+    # peggiore di ogni mercato, ordini NON abbinati compresi: un BACK pesa per
+    # lo stake, un LAY per la liability, ma solo negli scenari in cui fanno
+    # perdere, quindi una copertura che riduce l'esposizione non chiede fondi
+    # in piu'. Il P&L di ogni scenario si somma sulle puntate abbinate
+    # (importo e quota media dell'ordine: il P&L e' lineare), senza passare
+    # dalla compensazione del PositionLedger, che a quote diverse tratta una
+    # perdita condizionata come gia' realizzata. Scenari: su un mercato che
+    # dichiara un solo vincitore, "vince il runner r" per ogni runner piu'
+    # "non vince nessuno dei runner noti" (prudente: il book puo' non elencarli
+    # tutti); altrimenti ogni runner si valuta da solo (vince/perde) e le
+    # esposizioni si sommano. La cassa e' il saldo al netto degli effetti dei
+    # fill sui mercati non ancora regolati. Nulla di questo e' un saldo a
+    # parte: si ricava da ordini e registro dei fill, quindi si libera da sola
+    # a cancellazione, sostituzione, abbinamento, decadenza e settlement, e
+    # dopo un riavvio si ricalcola senza doppi conteggi.
     _TOLLERANZA_FONDI = 1e-9
 
     @staticmethod
     def _residuo(order: SimOrder) -> float:
         return max(0.0, float(order.size) - float(order.matched_size))
 
-    def _riserva_runner_locked(self, market_id: str, selection_id: int, ordini: List[SimOrder]) -> float:
-        ledger = self.state.position_ledgers.get(self._ledger_key(market_id, selection_id))
-        vince = perde = 0.0  # perdita se il runner vince / perde (negativa = guadagno)
-        if ledger is not None:
-            snap = ledger.snapshot()
-            if snap.open_size > 0.0 and snap.open_side == "BACK":
-                vince, perde = -snap.open_size * (snap.avg_entry_price - 1.0), snap.open_size
-            elif snap.open_size > 0.0 and snap.open_side == "LAY":
-                vince, perde = snap.open_size * (snap.avg_entry_price - 1.0), -snap.open_size
-        abbinata = max(0.0, vince, perde)
-        for order in ordini:
-            residuo = self._residuo(order)
-            if order.side == "BACK":
-                perde += residuo
-            else:
-                vince += residuo * (float(order.price) - 1.0)
-        return max(0.0, max(0.0, vince, perde) - abbinata)
+    @staticmethod
+    def _pnl_puntata(side: str, price: float, size: float, vince: bool) -> float:
+        if side == "BACK":
+            return size * (price - 1.0) if vince else -size
+        return -size * (price - 1.0) if vince else size
 
-    def _riserva_totale_locked(self, candidati: Optional[List[SimOrder]] = None,
-                               escludi: Optional[set] = None) -> float:
-        per_runner: Dict[Tuple[str, int], List[SimOrder]] = {}
+    def _esposizione_mercato_locked(self, market_id: str, candidati: List[SimOrder],
+                                    escludi: set, solo_abbinato: bool = False) -> float:
+        abbinate: List[Tuple[int, str, float, float]] = []
+        non_abbinate: List[Tuple[int, str, float, float]] = []
         for order in self.state.orders.values():
-            if order.status != "EXECUTABLE" or (escludi and order.bet_id in escludi):
+            if str(order.market_id) != market_id:
                 continue
-            per_runner.setdefault((str(order.market_id), int(order.selection_id)), []).append(order)
-        for order in candidati or []:
-            per_runner.setdefault((str(order.market_id), int(order.selection_id)), []).append(order)
-        return float(sum(self._riserva_runner_locked(m, s, o) for (m, s), o in per_runner.items()))
+            if order.matched_size > 0.0:
+                abbinate.append((int(order.selection_id), order.side,
+                                 float(order.avg_price_matched), float(order.matched_size)))
+            if order.status == "EXECUTABLE" and order.bet_id not in escludi and self._residuo(order) > 0.0:
+                non_abbinate.append((int(order.selection_id), order.side, float(order.price),
+                                     self._residuo(order)))
+        for order in candidati:
+            non_abbinate.append((int(order.selection_id), order.side, float(order.price), self._residuo(order)))
+        if solo_abbinato:
+            non_abbinate = []
+        if not abbinate and not non_abbinate:
+            return 0.0
+
+        def _peggiore(vincitore: Optional[int], selezioni: Optional[set] = None) -> float:
+            totale = 0.0
+            for sel, side, price, size in abbinate:
+                if selezioni is None or sel in selezioni:
+                    totale += self._pnl_puntata(side, price, size, sel == vincitore)
+            for sel, side, price, size in non_abbinate:
+                if selezioni is None or sel in selezioni:
+                    totale += min(0.0, self._pnl_puntata(side, price, size, sel == vincitore))
+            return totale
+
+        selezioni = {p[0] for p in abbinate} | {p[0] for p in non_abbinate}
+        book = self.state.market_books.get(market_id) or {}
+        if self._vincitori_attesi(book) == 1:
+            scenari = [_peggiore(sel) for sel in selezioni] + [_peggiore(None)]
+            return max(0.0, -min(scenari))
+        return float(sum(max(0.0, -min(_peggiore(sel, {sel}), _peggiore(None, {sel}))) for sel in selezioni))
+
+    def _esposizione_totale_locked(self, candidati: Optional[List[SimOrder]] = None,
+                                   escludi: Optional[set] = None, solo_abbinato: bool = False) -> float:
+        mercati = {str(o.market_id) for o in self.state.orders.values()} | {
+            str(o.market_id) for o in candidati or []}
+        mercati -= set(self.state.settlements)
+        return float(sum(
+            self._esposizione_mercato_locked(
+                m, [o for o in candidati or [] if str(o.market_id) == m], escludi or set(), solo_abbinato)
+            for m in mercati))
+
+    def _cassa_locked(self) -> float:
+        """Saldo senza gli effetti dei fill sui mercati non ancora regolati."""
+        mercati = {str(f.get("market_id")) for f in self.state.fills} | {
+            str(o.market_id) for o in self.state.orders.values() if o.matched_size > 0.0}
+        mercati -= set(self.state.settlements)
+        return float(self.state.balance) - float(
+            sum(self._ricostruisci_fill_mercato_locked(m)[0] for m in mercati))
 
     def _fondi_sufficienti_locked(self, candidati: List[SimOrder], escludi: Optional[set] = None) -> bool:
-        """I candidati, contati come interamente NON abbinati (caso peggiore), stanno nel saldo?"""
-        richiesta = self._riserva_totale_locked(candidati, escludi)
-        return float(self.state.balance) - richiesta >= -self._TOLLERANZA_FONDI
+        """I candidati, contati come interamente NON abbinati (caso peggiore), stanno nella cassa?
+
+        Un ordine che non aumenta l'esposizione (copertura, uscita protettiva:
+        PF-EXEC-03) passa comunque. Cassa non ricostruibile => rifiuto.
+        """
+        try:
+            cassa = self._cassa_locked()
+        except (TypeError, ValueError):
+            logger.warning("Fondi SIM non verificabili: registro dei fill incoerente, ordine rifiutato")
+            return False
+        dopo = self._esposizione_totale_locked(candidati, escludi)
+        if cassa - dopo >= -self._TOLLERANZA_FONDI:
+            return True
+        return dopo <= self._esposizione_totale_locked() + self._TOLLERANZA_FONDI
 
     @staticmethod
     def _rifiuto_fondi(market_id: str, n_istruzioni: int = 1) -> Dict[str, Any]:
@@ -385,12 +492,23 @@ class SimulationBroker:
     # =========================================================
     def get_account_funds(self) -> Dict[str, float]:
         with self._lock:
-            riserva = self._riserva_totale_locked()
+            esposizione = self._esposizione_totale_locked()
+            abbinata = self._esposizione_totale_locked(solo_abbinato=True)
+            try:
+                cassa = self._cassa_locked()
+            except (TypeError, ValueError):
+                # Registro dei fill incoerente: fondi NON verificabili, non "zero".
+                logger.warning("Fondi SIM non verificabili: registro dei fill incoerente")
+                return {
+                    "available": 0.0, "exposure": esposizione, "total": 0.0,
+                    "reserved_unmatched": max(0.0, esposizione - abbinata),
+                    "error": "FILL_LEDGER_INCONSISTENT", "simulated": True,
+                }
             return {
-                "available": float(self.state.balance) - riserva,
-                "exposure": float(self.state.exposure) + riserva,
-                "total": float(self.state.balance + self.state.exposure),
-                "reserved_unmatched": riserva,
+                "available": cassa - esposizione,
+                "exposure": esposizione,
+                "total": cassa,
+                "reserved_unmatched": max(0.0, esposizione - abbinata),
                 "simulated": True,
             }
 
@@ -422,13 +540,14 @@ class SimulationBroker:
         if not market_id:
             return {"ok": False, "reason": "missing_market_id", "simulated": True}
 
-        normalized = dict(market_book)
+        normalized = copy.deepcopy(market_book)
         normalized["marketId"] = market_id
         normalized["market_id"] = market_id
 
         esito_settlement: Optional[Dict[str, Any]] = None
         da_persistere: List[SimOrder] = []
         with self._lock:
+            self._applica_liquidita_consumata_locked(market_id, normalized)
             self.state.market_books[market_id] = normalized
             self._refresh_unrealized_for_market(market_id)
             event_name = str(
@@ -466,13 +585,17 @@ class SimulationBroker:
                     "market_name": market_name,
                 }
 
+            if market_id not in self.state.settlements:
+                da_persistere.extend(self._riabbina_mercato_locked(market_id, normalized))
+
             # PR03 (#461): il book CHIUSO e' il segnale di settlement del
             # mercato, come su Betfair. Stesso lock dei fill: nessun ordine
             # si abbina a meta' di un settlement.
             if self._book_chiuso(normalized):
-                esito_settlement, da_persistere = self._settle_closed_market_locked(
+                esito_settlement, regolati = self._settle_closed_market_locked(
                     market_id, normalized
                 )
+                da_persistere.extend(regolati)
 
         for order in da_persistere:
             self._persist_order(order)
@@ -480,6 +603,79 @@ class SimulationBroker:
         if esito_settlement is not None:
             esito.update(esito_settlement)
         return esito
+
+    @staticmethod
+    def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
+        return f"{market_id}|{int(selection_id)}|{lato}|{float(price):.6f}"
+
+    def _applica_liquidita_consumata_locked(self, market_id: str, market_book: Dict[str, Any]) -> None:
+        """Il book riletto non ripresenta la liquidita' gia' presa (review PFC-005).
+
+        Sul miglior livello di ogni lato si toglie quanto i nostri ordini hanno
+        gia' abbinato a quella quota; se la quota del miglior livello cambia, il
+        conteggio di quel livello decade. Una dimensione in crescita lascia
+        abbinare solo l'incremento: la SIM non sovrastima i fill.
+        """
+        prefisso = f"{market_id}|"
+        vivi = set()
+        if not self._book_chiuso(market_book):
+            for runner in market_book.get("runners") or []:
+                if not isinstance(runner, dict):
+                    continue
+                selezione = _to_int(runner.get("selectionId") or runner.get("selection_id"), 0)
+                ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
+                for lato in ("availableToBack", "availableToLay"):
+                    livelli = ex.get(lato)
+                    # Un livello esaurito si toglie: nel SIM una dimensione 0 o
+                    # assente vale "liquidita' illimitata".
+                    while isinstance(livelli, list) and livelli and isinstance(livelli[0], dict):
+                        chiave = self._chiave_liquidita(
+                            market_id, selezione, lato, _to_float(livelli[0].get("price"), 0.0))
+                        consumato = self.state.liquidity_consumed.get(chiave, 0.0)
+                        if consumato <= 0.0:
+                            break
+                        vivi.add(chiave)
+                        residuo = _to_float(livelli[0].get("size"), 0.0) - consumato
+                        if residuo > 0.0:
+                            livelli[0]["size"] = residuo
+                            break
+                        livelli.pop(0)
+        for chiave in [k for k in self.state.liquidity_consumed if k.startswith(prefisso) and k not in vivi]:
+            del self.state.liquidity_consumed[chiave]
+
+    def _riabbina_mercato_locked(self, market_id: str, market_book: Dict[str, Any]) -> List[SimOrder]:
+        """PFC-005: gli ordini a riposo si abbinano quando il book li raggiunge.
+
+        Solo su un book APERTO (sospeso, chiuso o senza stato: nessun
+        abbinamento, PF-EXEC-05) e solo per runner ACTIVE quando lo stato del
+        runner e' indicato. In ordine di piazzamento (priorita' temporale
+        dell'exchange); il residuo si abbina al prezzo del book come al
+        piazzamento. L'esposizione non cresce mai: la parte abbinata pesa nello
+        scenario quanto pesava da non abbinata, o meno.
+        """
+        stato = market_book.get("status")
+        if not (isinstance(stato, str) and stato.strip().upper() == "OPEN"):
+            return []
+        sospesi = set()
+        for runner in market_book.get("runners") or []:
+            if not isinstance(runner, dict):
+                continue
+            stato_runner = runner.get("status")
+            if stato_runner is not None and not (
+                    isinstance(stato_runner, str) and stato_runner.strip().upper() == "ACTIVE"):
+                sospesi.add(_to_int(runner.get("selectionId") or runner.get("selection_id"), 0))
+        cambiati: List[SimOrder] = []
+        for order in list(self.state.orders.values()):
+            if (str(order.market_id) != market_id or order.status != "EXECUTABLE"
+                    or int(order.selection_id) in sospesi or self._residuo(order) <= 0.0):
+                continue
+            prima = float(order.matched_size)
+            self._match_order(order)
+            if order.matched_size > prima:
+                cambiati.append(order)
+        if cambiati:
+            self._refresh_unrealized_for_market(market_id)
+        return cambiati
 
     # =========================================================
     # SETTLEMENT DEL MERCATO CHIUSO (PR03 #461)
@@ -503,36 +699,46 @@ class SimulationBroker:
 
     def _ricostruisci_fill_mercato_locked(self, market_id: str) -> Tuple[float, Dict[int, float]]:
         """Effetto di cassa gia' applicato al saldo dai fill del mercato, ed
-        esposizione residua per selezione, ricostruiti dagli ordini.
+        esposizione residua per selezione, ricostruiti dal registro dei fill.
 
-        Ogni ordine si abbina una volta sola (``place_bet`` o il nuovo ordine
-        di ``replace_orders``) con un fill ``bet_id`` a quota e importo
-        abbinati: ripercorrerli in ordine d'inserimento su ledger nuovi
-        riproduce esattamente i movimenti di saldo dei fill. Non si usa il
-        ledger vivo, che dopo un riavvio non conserva il realizzato gia'
-        accreditato. Un ordine con valori non validi solleva ``ValueError``.
+        I fill si ripercorrono nell'ordine in cui sono avvenuti (un ordine puo'
+        abbinarsi in piu' volte, PFC-005) su ledger nuovi: si riproducono
+        esattamente i movimenti di saldo. Non si usa il ledger vivo, che dopo
+        un riavvio non conserva il realizzato gia' accreditato. Il registro
+        deve tornare con gli ordini (somma dei fill = abbinato di ogni ordine):
+        altrimenti, come per valori non validi, ``ValueError``.
         """
         ledgers: Dict[int, PositionLedger] = {}
         cassa = 0.0
-        for order in self.state.orders.values():
-            if str(order.market_id) != market_id or not order.matched_size > 0.0:
+        per_ordine: Dict[str, float] = {}
+        for fill in self.state.fills:
+            if str(fill.get("market_id")) != market_id:
                 continue
-            selezione = int(order.selection_id)
+            selezione = int(fill["selection_id"])
+            size = float(fill["size"])
+            per_ordine[str(fill.get("bet_id"))] = per_ordine.get(str(fill.get("bet_id")), 0.0) + size
             ledger = ledgers.get(selezione)
             if ledger is None:
                 ledger = PositionLedger(market_id=market_id, runner_id=selezione)
                 ledgers[selezione] = ledger
             prima = ledger.snapshot()
             applicato = ledger.apply_fill(
-                fill_id=str(order.bet_id),
-                side=order.side,
-                price=order.avg_price_matched,
-                size=order.matched_size,
+                fill_id=str(fill["fill_id"]),
+                side=str(fill["side"]),
+                price=float(fill["price"]),
+                size=size,
             )
             dopo = applicato["snapshot"]
             cassa += (float(prima.exposure) - float(dopo.exposure)) + float(
                 applicato.get("realized_delta") or 0.0
             )
+        for order in self.state.orders.values():
+            if str(order.market_id) != market_id:
+                continue
+            if abs(per_ordine.pop(order.bet_id, 0.0) - float(order.matched_size)) > 1e-6:
+                raise _RegistroFillIncoerente(f"fill dell'ordine {order.bet_id} incoerenti con l'abbinato")
+        if per_ordine:
+            raise _RegistroFillIncoerente(f"fill senza ordine: {sorted(per_ordine)}")
         esposizioni = {sel: float(led.snapshot().exposure) for sel, led in ledgers.items()}
         return cassa, esposizioni
 
@@ -573,6 +779,8 @@ class SimulationBroker:
 
         try:
             cassa_fill, esposizioni = self._ricostruisci_fill_mercato_locked(market_id)
+        except _RegistroFillIncoerente as exc:
+            return _rifiuto("LEDGER_INCONSISTENT", str(exc))
         except (TypeError, ValueError) as exc:
             return _rifiuto("INVALID_BET", str(exc))
 
@@ -963,8 +1171,10 @@ class SimulationBroker:
         for item in instructions or []:
             if not isinstance(item, dict):
                 continue
-            sides = {v.strip().upper() for v in (item.get("side"), item.get("bet_type"))
-                     if isinstance(v, str) and v.strip()}
+            aliases = (item.get("side"), item.get("bet_type"))
+            if any(v is not None and not isinstance(v, str) for v in aliases):
+                continue  # rifiutata gamba per gamba, sotto: non pesa sui fondi
+            sides = {v.strip().upper() for v in aliases if isinstance(v, str) and v.strip()}
             selection_id = _to_int(item.get("selection_id", item.get("selectionId")), 0)
             price = _to_float(item.get("price"), 0.0)
             size = _to_float(item.get("size", item.get("stake")), 0.0)
@@ -1498,7 +1708,9 @@ class SimulationBroker:
             order.status = "EXECUTABLE"
             return
 
-        requested = float(order.size)
+        requested = self._residuo(order)
+        if requested <= 0.0:
+            return
         matched = requested
 
         if self.partial_fill_enabled and available_size > 0:
@@ -1513,8 +1725,11 @@ class SimulationBroker:
             order.status = "EXECUTABLE"
             return
 
-        order.matched_size = matched
-        order.avg_price_matched = best_price
+        gia_abbinato = float(order.matched_size)
+        order.matched_size = gia_abbinato + matched
+        order.avg_price_matched = (
+            gia_abbinato * float(order.avg_price_matched) + matched * best_price
+        ) / order.matched_size
         if matched >= requested:
             order.status = "EXECUTION_COMPLETE"
         else:
@@ -1526,10 +1741,27 @@ class SimulationBroker:
 
         if self.consume_liquidity and available_size > 0:
             best_counter["size"] = max(0.0, available_size - matched)
+            if best_counter["size"] <= 0.0:
+                # Livello esaurito: fuori dal book (dimensione 0 = illimitata).
+                (backs if order.side == "BACK" else lays).pop(0)
+            chiave = self._chiave_liquidita(
+                order.market_id, int(order.selection_id),
+                "availableToBack" if order.side == "BACK" else "availableToLay", best_price)
+            self.state.liquidity_consumed[chiave] = self.state.liquidity_consumed.get(chiave, 0.0) + matched
 
     def _apply_balance_effect(self, order: SimOrder, matched: float, price: float) -> None:
+        # Il primo fill di un ordine si chiama come l'ordine (stato precedente a
+        # PFC-005 compatibile); i successivi bet_id#2, #3...: il ledger scarta
+        # come duplicato un fill_id gia' visto.
+        n = 1 + sum(1 for f in self.state.fills if f.get("bet_id") == order.bet_id)
+        fill_id = str(order.bet_id) if n == 1 else f"{order.bet_id}#{n}"
+        self.state.fills.append({
+            "fill_id": fill_id, "bet_id": str(order.bet_id), "market_id": str(order.market_id),
+            "selection_id": int(order.selection_id), "side": order.side,
+            "price": float(price), "size": float(matched),
+        })
         self._apply_fill_to_position_ledger(
-            fill_id=str(order.bet_id),
+            fill_id=fill_id,
             market_id=order.market_id,
             selection_id=int(order.selection_id),
             side=order.side,
@@ -1625,7 +1857,8 @@ class SimulationBroker:
             "simulated": True,
             "balance": self.state.balance,
             "exposure": self.state.exposure,
-            "reserved_unmatched": self._riserva_totale_locked(),
+            "reserved_unmatched": max(0.0, self._esposizione_totale_locked()
+                                          - self._esposizione_totale_locked(solo_abbinato=True)),
             "starting_balance": self.state.starting_balance,
             "commission_pct": self.state.commission_pct,
             "realized_pnl": self.state.realized_pnl,

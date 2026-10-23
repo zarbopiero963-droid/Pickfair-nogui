@@ -2401,7 +2401,8 @@
       "original": "            if order.market_id not in self.state.settlements and not self._fondi_sufficienti_locked([order]):",
       "mutated": "            if False:",
       "tests": [
-        "tests/unit/test_pfc004_sim_funds_reservation.py"
+        "tests/unit/test_pfc004_sim_funds_reservation.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
       "rationale": "PFC-004: il SimulationBroker accetterebbe un ordine oltre il disponibile (nessun INSUFFICIENT_FUNDS)."
     },
@@ -2410,36 +2411,99 @@
       "module": "simulation_broker",
       "area": "lay_liability",
       "file": "simulation_broker.py",
-      "original": "                vince += residuo * (float(order.price) - 1.0)",
-      "mutated": "                vince += residuo",
+      "original": "        return -size * (price - 1.0) if vince else size",
+      "mutated": "        return -size if vince else size",
       "tests": [
-        "tests/unit/test_pfc004_sim_funds_reservation.py"
+        "tests/unit/test_pfc004_sim_funds_reservation.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
-      "rationale": "PFC-004: un LAY non abbinato riserverebbe lo stake invece della liability."
+      "rationale": "PFC-004/005: un LAY peserebbe per lo stake invece della liability."
     },
     {
       "id": "exposure_sim_reserve_double_counts_matched",
       "module": "simulation_broker",
       "area": "exposure",
       "file": "simulation_broker.py",
-      "original": "        return max(0.0, max(0.0, vince, perde) - abbinata)",
-      "mutated": "        return max(0.0, max(0.0, vince, perde))",
+      "original": "        return float(self.state.balance) - float(",
+      "mutated": "        return float(self.state.balance) - 0.0 * float(",
       "tests": [
-        "tests/unit/test_pfc004_sim_funds_reservation.py"
+        "tests/unit/test_pfc004_sim_funds_reservation.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
-      "rationale": "PFC-004: la parte abbinata (gia' nel ledger) verrebbe riservata due volte."
+      "rationale": "PFC-004/005: la parte abbinata, gia' tolta dal saldo al fill, verrebbe contata due volte."
     },
     {
       "id": "cashout_sim_hedge_requires_funds",
       "module": "simulation_broker",
       "area": "cashout",
       "file": "simulation_broker.py",
-      "original": "                vince, perde = -snap.open_size * (snap.avg_entry_price - 1.0), snap.open_size",
-      "mutated": "                vince, perde = 0.0, snap.open_size",
+      "original": "                    totale += min(0.0, self._pnl_puntata(side, price, size, sel == vincitore))",
+      "mutated": "                    totale += -abs(self._pnl_puntata(side, price, size, sel == vincitore))",
       "tests": [
-        "tests/unit/test_pfc004_sim_funds_reservation.py"
+        "tests/unit/test_pfc004_sim_funds_reservation.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
       ],
-      "rationale": "PFC-004: una copertura che riduce l'esposizione chiederebbe fondi e verrebbe bloccata (PF-EXEC-03)."
+      "rationale": "PFC-004/005: una copertura che riduce l'esposizione chiederebbe fondi e verrebbe bloccata (PF-EXEC-03)."
+    },
+    {
+      "id": "funds_sim_resting_order_never_rematches",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "                da_persistere.extend(self._riabbina_mercato_locked(market_id, normalized))",
+      "mutated": "                pass",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005: un ordine a riposo non si abbinerebbe mai quando il book lo raggiunge."
+    },
+    {
+      "id": "lay_liability_sim_dutching_per_runner_sum",
+      "module": "simulation_broker",
+      "area": "lay_liability",
+      "file": "simulation_broker.py",
+      "original": "        if self._vincitori_attesi(book) == 1:",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005: su un mercato a vincitore unico il Dutching LAY riserverebbe la somma delle liability e verrebbe rifiutato."
+    },
+    {
+      "id": "reconciliation_sim_fill_id_reused",
+      "module": "simulation_broker",
+      "area": "reconciliation",
+      "file": "simulation_broker.py",
+      "original": "        fill_id = str(order.bet_id) if n == 1 else f\"{order.bet_id}#{n}\"",
+      "mutated": "        fill_id = str(order.bet_id)",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005: il secondo fill di un ordine avrebbe lo stesso id e il ledger lo scarterebbe come duplicato."
+    },
+    {
+      "id": "live_safety_sim_rematch_on_suspended_market",
+      "module": "simulation_broker",
+      "area": "live_safety",
+      "file": "simulation_broker.py",
+      "original": "        if not (isinstance(stato, str) and stato.strip().upper() == \"OPEN\"):",
+      "mutated": "        if False:",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005: un ordine si abbinerebbe su un mercato sospeso o senza stato (PF-EXEC-05)."
+    },
+    {
+      "id": "funds_sim_reread_book_reoffers_consumed_liquidity",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "            self._applica_liquidita_consumata_locked(market_id, normalized)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "rationale": "PFC-005: un book riletto ripresenterebbe la liquidita' gia' presa e la SIM sovrastimerebbe i fill."
     }
   ]
 }

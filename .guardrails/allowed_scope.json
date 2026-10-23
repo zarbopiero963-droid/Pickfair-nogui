@@ -2538,6 +2538,20 @@
         "tests/unit/test_pfc004_sim_funds_reservation.py"
       ],
       "max_files": 10
+    },
+    "pfc005-g7b-sim-fill-transitions": {
+      "description": "Roadmap canonica #461, PFC-005 = G7-b, decisione owner #531, mandato owner del 23/10/2026 (autonomia e merge automatico delle PR conformi). Il SimulationBroker abbina gli ordini a riposo quando un book APERTO li raggiunge (mai su mercato sospeso/senza stato/runner non ACTIVE), con registro cronologico dei fill persistito ripercorso da settlement e riavvio (stato precedente ricostruito dagli ordini, registro incoerente => fail-closed); il disponibile diventa cassa meno caso peggiore del mercato per scenario (risolve il disponibile negativo da compensazione del PositionLedger e la riserva per runner del Dutching LAY segnalati dalla review indipendente di PFC-004). Tocca solo simulation_broker.py in produzione (modalita' SIM, nessun effetto LIVE); due test che codificavano il credito anticipato aggiornati, 4 mutazioni nuove e 3 riallineate, docs di verifica e tracciabilita'. G7-c (PFC-006) resta aperto.",
+      "files": [
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/traceability/requirements.json",
+        "docs/verification/continuous_formal_verification.md",
+        "guardrails/mutation_catalog.json",
+        "simulation_broker.py",
+        "tests/integration/test_simulation_broker_commission_semantics.py",
+        "tests/unit/test_pfc005_sim_fill_transitions.py"
+      ],
+      "max_files": 8
     }
   }
 }
