@@ -32,7 +32,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     `QUICK_BET_SUBMIT_ACK` sull'ordine accettato dal broker: la riserva risulta a mercato e non e' contata due volte;
     un ordine AMBIGUOUS resta contato in entrambi i modi (fail-closed). Sulla lettura fresca si ricontrollano anche
     singolo ordine ed evento (`fresh_caps_reason`); bankroll e cassa di una lettura si applicano insieme dopo il
-    controllo di `read_at` (una lettura vecchia arrivata tardi non riscrive il bankroll; rilievi Codex su 4ce44a7). Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
+    controllo di `read_at` (una lettura vecchia arrivata tardi non riscrive il bankroll; rilievi Codex su 4ce44a7). P&L realizzato, snapshot e
+    ripristino spostano la soglia delle letture: una lettura iniziata prima del settlement non rivalida la cassa
+    superata (audit PF-FINANCIAL-IMPACT-GATE-01). Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
     precede i nuovi blocchi;
   - `RoserpinaConfig` non ha piu' default per le quattro percentuali ne' per il recovery; le fixture dei test le
     dichiarano esplicitamente (`tests/risk_config_fixtures.py`);

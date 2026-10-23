@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import time
 from datetime import datetime
 from threading import RLock
 from typing import Any, Dict
@@ -114,6 +115,15 @@ class RiskDesk:
         self.cash_equity_reason = str(reason)
         self.cash_committed_exposure = 0.0
 
+    def _invalidate_cash_with_barrier_locked(self, reason: str) -> None:
+        """PFC-008 (audit PF-FINANCIAL-IMPACT-GATE-01): il conto e' cambiato fuori da una lettura (P&L realizzato,
+        snapshot, ripristino). Oltre a invalidare la cassa, sposta la soglia di `read_at` ad adesso: una lettura
+        iniziata prima di questo istante e applicata dopo non rimette in vigore la cassa precedente."""
+        self._invalidate_cash_locked(reason)
+        adesso = time.monotonic()
+        if self._cash_read_at is None or self._cash_read_at < adesso:
+            self._cash_read_at = adesso
+
     def sync_funds_reading(self, bankroll: Any, cash_equity: Any, available: Any, *, reason: str = "",
                            committed_exposure: Any = 0.0, read_at: Any = None) -> bool:
         """PFC-008 (rilievo Codex su 4ce44a7): bankroll e cassa della stessa lettura applicati in un'unica operazione.
@@ -188,7 +198,7 @@ class RiskDesk:
             pnl = float(pnl or 0.0)
             self.realized_pnl += pnl
             self.bankroll_current += pnl
-            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: bankroll cambiato senza lettura del conto
+            self._invalidate_cash_with_barrier_locked("CASH_NOT_READ")  # PFC-008: P&L applicato senza lettura
 
             if self.bankroll_current > self.equity_peak:
                 self.equity_peak = self.bankroll_current
@@ -202,7 +212,7 @@ class RiskDesk:
         with self._lock:
             self.bankroll_current = float(bankroll_current or 0.0)
             self.unrealized_pnl = float(unrealized_pnl or 0.0)
-            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: bankroll cambiato senza lettura del conto
+            self._invalidate_cash_with_barrier_locked("CASH_NOT_READ")  # PFC-008: snapshot senza lettura del conto
 
             if self.bankroll_start <= 0.0:
                 self.bankroll_start = self.bankroll_current
@@ -349,7 +359,7 @@ class RiskDesk:
         with self._lock:
             self.bankroll_start = float(data.get("bankroll_start", 0.0) or 0.0)
             self.bankroll_current = float(data.get("bankroll_current", 0.0) or 0.0)
-            self._invalidate_cash_locked("CASH_NOT_READ")  # PFC-008: stato ripristinato, cassa da rileggere
+            self._invalidate_cash_with_barrier_locked("CASH_NOT_READ")  # PFC-008: stato ripristinato, da rileggere
             self.equity_peak = float(data.get("equity_peak", 0.0) or 0.0)
             self.realized_pnl = float(data.get("realized_pnl", 0.0) or 0.0)
             self.unrealized_pnl = float(data.get("unrealized_pnl", 0.0) or 0.0)

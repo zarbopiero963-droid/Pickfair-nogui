@@ -57,6 +57,9 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 - **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme
   (`RiskDesk.sync_funds_reading`), con il controllo di `read_at` prima di toccare il bankroll: una lettura iniziata
   prima dell'ultima applicata non riscrive il disponibile né invalida la cassa più recente.
+  Quando il conto cambia fuori da una lettura (P&L realizzato al settlement, snapshot, ripristino dello stato) la
+  cassa viene invalidata e la soglia di `read_at` passa ad adesso: una lettura iniziata prima non la rimette in
+  vigore (audit PF-FINANCIAL-IMPACT-GATE-01).
 - Un campo mancante, non numerico, non finito o negativo rende lo snapshot non valido. Un'esposizione mancante
   **non** vale zero.
 - La base dello stake target non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test

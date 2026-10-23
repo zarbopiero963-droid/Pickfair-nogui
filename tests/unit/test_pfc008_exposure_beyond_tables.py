@@ -543,3 +543,46 @@ def test_ack_arrivato_durante_la_lettura_fresca_resta_fra_le_pendenti():
     assert "placed_at" in rc.table_manager.get_table(2).meta
     assert not _ordini(bus)
     assert "supera_max_total_exposure" in rifiuti, rifiuti
+
+
+# --- audit PF-FINANCIAL-IMPACT-GATE-01: lettura iniziata prima del settlement ---------------------------------------
+
+def test_lettura_iniziata_prima_del_p_l_realizzato_non_rivalida_la_cassa():
+    # La cassa 100 (80 + 20) e' invalidata da un settlement in perdita (P&L applicato senza lettura del conto).
+    # Una lettura iniziata PRIMA del settlement e applicata dopo non deve rimettere in vigore 100: i cap singolo ed
+    # evento si calcolerebbero sulla cassa superata (18 invece di 14.40 con cap 18%).
+    desk = RiskDesk()
+    desk.sync_funds_reading(80.0, 100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    prima_del_settlement = time.monotonic()
+    prima = desk.bankroll_current
+    desk.apply_closed_pnl(-20.0)
+    desk.sync_bankroll(prima)
+    assert desk.cash_basis()[0] is None
+    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0,
+                                   read_at=prima_del_settlement) is False
+    assert desk.cash_basis()[0] is None
+    # una lettura iniziata dopo il settlement vale
+    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=time.monotonic()) is True
+    assert desk.cash_basis()[0] == 100.0
+
+
+def test_runtime_lettura_di_stato_in_volo_durante_il_settlement_non_rivalida():
+    rc, _bus = _make_controller(responses=[])
+    _pct(rc.mm.config)
+    rc._applica_fondi_avvio({"available": 80.0, "exposure": -20.0}, read_at=time.monotonic())
+    in_volo = time.monotonic()                                  # get_status inizia la sua lettura ...
+    rc._apply_realized_pnl_without_mutating_bankroll(-20.0)     # ... intanto il settlement applica il P&L
+    rc._sync_cash_equity_from_funds({"available": 80.0, "exposure": -20.0}, 80.0, read_at=in_volo)
+    assert validators.desk_cash_basis(rc.risk_desk, rc.risk_desk.bankroll_current, rc.table_manager)[0] is None
+
+
+@pytest.mark.parametrize("cambia", [
+    lambda d: d.apply_open_exposure_snapshot(80.0),
+    lambda d: d.load_from_dict({"bankroll_start": 80.0, "bankroll_current": 80.0, "equity_peak": 100.0}),
+])
+def test_snapshot_o_ripristino_spostano_la_soglia_delle_letture(cambia):
+    desk = RiskDesk()
+    desk.sync_funds_reading(80.0, 100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    iniziata = time.monotonic()
+    cambia(desk)
+    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=iniziata) is False

@@ -2927,6 +2927,18 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "Rilievo Codex P2 su 4ce44a7: una lettura vecchia arrivata tardi riscrive il bankroll e invalida la cassa piu' recente."
+    },
+    {
+      "id": "cash_invalidation_without_read_barrier",
+      "module": "core.risk_desk",
+      "area": "exposure",
+      "file": "core/risk_desk.py",
+      "original": "        if self._cash_read_at is None or self._cash_read_at < adesso:\n            self._cash_read_at = adesso\n",
+      "mutated": "        if False:\n            self._cash_read_at = adesso\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Audit PF-FINANCIAL-IMPACT-GATE-01: senza la soglia una lettura iniziata prima di un settlement (o di uno snapshot/ripristino) rimette in vigore la cassa superata."
     }
   ]
 }
