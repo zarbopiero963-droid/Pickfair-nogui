@@ -35,6 +35,7 @@ from core.dutching_batch_manager import DutchingBatchManager
 from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import DeskMode, RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 from core.trading_engine import TradingEngine
 from database import Database
 from simulation_broker import SimulationBroker
@@ -72,7 +73,7 @@ class _Settings:
         self._anti_duplication = anti_duplication
 
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = self._anti_duplication
         return cfg
 
@@ -494,6 +495,7 @@ def _auto_trade_ref(c, batch_id, **overrides):
 def test_pass_auto_trade_order_identity_bound_to_settlement(tmp_path):
     c = _chain(tmp_path, db_name="at.db")
     c.rc.risk_desk.sync_bankroll(100.0)
+    c.rc.risk_desk.sync_cash_equity(c.rc.risk_desk.bankroll_current, c.rc.risk_desk.bankroll_current)  # PFC-008
 
     ref_1 = _auto_trade_ref(c, "batch-pr26a-1")
     # #461 PR29-c: il secondo settlement e' quello della posizione aperta dal primo auto-trade (la sua identita');
@@ -511,6 +513,7 @@ def test_pass_auto_trade_order_identity_bound_to_settlement(tmp_path):
     # Restart: stesso settlement rivalutato da un processo nuovo -> stesso ref.
     fresh = _chain(tmp_path, db_name="at-restart.db")
     fresh.rc.risk_desk.sync_bankroll(100.0)
+    fresh.rc.risk_desk.sync_cash_equity(fresh.rc.risk_desk.bankroll_current, fresh.rc.risk_desk.bankroll_current)  # PFC-008
     assert _auto_trade_ref(fresh, "batch-pr26a-1") == ref_1
 
 
@@ -526,6 +529,7 @@ class _DutchRuntime:
         allow_recovery = True
         max_total_exposure_pct = 100.0
         max_event_exposure_pct = 100.0
+        target_profit_cycle_pct = 3.0  # PFC-008: obbligatoria anche nel Dutching
         max_single_bet_pct = 100.0
 
     class _Guard:
@@ -560,7 +564,7 @@ class _DutchRuntime:
     def __init__(self):
         self.mode = self._Mode()
         self.config = self._Config()
-        self.risk_desk = SimpleNamespace(bankroll_current=1000.0)
+        self.risk_desk = SimpleNamespace(bankroll_current=1000.0, cash_equity_current=1000.0, cash_committed_exposure=0.0)
         self.duplication_guard = self._Guard()
         self.table_manager = self._Tables()
         self.dutching_batch_manager = None

@@ -68,13 +68,21 @@ try:
     R["bankroll_syncs"] = []
     _sync = rt.risk_desk.sync_bankroll
 
+    def caller_name():
+        # PFC-008: bankroll e cassa si applicano insieme (RiskDesk.sync_funds_reading): il chiamante e' il primo
+        # frame fuori da quei due passaggi interni.
+        frame = sys._getframe(2)
+        while frame.f_code.co_name in ("sync_funds_reading", "_sync_cash_equity_from_funds"):
+            frame = frame.f_back
+        return frame.f_code.co_name
+
     def sync_rec(value):
         # registra ogni allineamento del bankroll con l'equity dell'exchange in quell'istante (anche dentro start())
         b = app.betfair_service.get_simulation_broker()
         f = dict(b.get_account_funds()) if b is not None else {}
         R["bankroll_syncs"].append({"value": value, "available": f.get("available"), "exposure": f.get("exposure"),
                                     "total": f.get("total"), "in_start": "start" not in R,
-                                    "caller": sys._getframe(1).f_code.co_name})
+                                    "caller": caller_name()})
         return _sync(value)
     rt.risk_desk.sync_bankroll = sync_rec
     R["mm_calls"] = []

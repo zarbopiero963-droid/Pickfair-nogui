@@ -20,6 +20,7 @@ from core.risk_gate import (
     RoserpinaRiskLimits,
 )
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from core.trading_engine import TradingEngine
 
 # Rettifica owner 18-19/10/2026: MAX_WIN non e' piu' attivo di default (trading_config.MAX_WIN = None).
@@ -710,7 +711,7 @@ def test_roserpina_vista_applica_i_limiti_salvati_dall_owner() -> None:
 
 def test_roserpina_vista_refresh_a_ogni_check_senza_riavvio() -> None:
     """L'owner salva a bot acceso: il check DOPO applica il valore nuovo."""
-    gate, servizio = _gate_roserpina(RoserpinaConfig())
+    gate, servizio = _gate_roserpina(legacy_test_config())
     assert gate.check(payload(price=1.30))["allowed"] is True  # default 1.02
     servizio.cfg = RoserpinaConfig(min_price=1.50)  # "salvataggio" owner
     r = gate.check(payload(price=1.30))
@@ -721,7 +722,7 @@ def test_roserpina_vista_refresh_a_ogni_check_senza_riavvio() -> None:
 
 def test_roserpina_vista_default_vergini_identici_alle_costanti() -> None:
     """Zero delta a settings vergini: stessi verdetti del modulo costanti."""
-    gate, _ = _gate_roserpina(RoserpinaConfig())
+    gate, _ = _gate_roserpina(legacy_test_config())
     assert gate.check(payload())["allowed"] is True
     assert gate.check(payload(price=1.01))["reason"] == "RISK_PRICE_BELOW_MIN"
     assert gate.check(payload(stake=0.05))["reason"] == "RISK_BELOW_MIN_STAKE"
@@ -852,7 +853,7 @@ def test_gate_check_concorrenti_ognuno_col_suo_snapshot() -> None:
             barriera.wait()  # forza la sovrapposizione dei due check
             if _t.current_thread().name == "restrittivo":
                 return RoserpinaConfig(min_price=1.50)
-            return RoserpinaConfig()  # default: min_price 1.02
+            return legacy_test_config()  # default: min_price 1.02
 
     gate = RiskGate(config=RoserpinaRiskLimits(_SettingsPerThread()))
     esiti: Dict[str, Dict[str, Any]] = {}

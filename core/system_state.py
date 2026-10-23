@@ -59,10 +59,12 @@ class TelegramRuntimeConfig:
 
 @dataclass
 class RoserpinaConfig:
-    target_profit_cycle_pct: float = 3.0
-    max_single_bet_pct: float = 18.0
-    max_total_exposure_pct: float = 35.0
-    max_event_exposure_pct: float = 18.0
+    # PFC-008 (M019): le quattro percentuali di rischio sono OBBLIGATORIE e non hanno default: None =
+    # non configurata, ogni nuova entrata e' negata (`<chiave>_non_configurato`, core/validators.py).
+    target_profit_cycle_pct: Optional[float] = None
+    max_single_bet_pct: Optional[float] = None
+    max_total_exposure_pct: Optional[float] = None
+    max_event_exposure_pct: Optional[float] = None
     max_daily_loss: Optional[float] = None
     max_drawdown_hard_stop_pct: Optional[float] = None
     max_open_exposure: Optional[float] = None
@@ -105,8 +107,9 @@ class RoserpinaConfig:
     risk_profile: RiskProfile = RiskProfile.BALANCED
 
     table_count: int = 5
-    max_recovery_tables: int = 2
-    allow_recovery: bool = True
+    # PFC-008 (M019): nessun recovery e nessun tavolo di recovery senza una scelta esplicita.
+    max_recovery_tables: int = 0
+    allow_recovery: bool = False
     anti_duplication_enabled: bool = True
 
     commission_pct: float = 4.5
@@ -163,7 +166,7 @@ class RoserpinaConfig:
     # max_*_pct); default 30.0 = trading_config.MAX_STAKE_PCT (0.30). Semantica
     # (controllers/dutching_controller.precheck): se batch_exposure > bankroll*30%
     # => stake_pct_warning nel risultato, MAI un blocco. Distinto dal blocco
-    # cumulativo max_total_exposure_pct (35%). FAIL-OPEN su bankroll<=0.
+    # cumulativo max_total_exposure_pct. FAIL-OPEN su bankroll<=0.
     max_stake_pct: float = 30.0
 
     # Tolleranza WARNING (non blocca mai) sulla varianza di profitto NETTO tra gli

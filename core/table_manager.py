@@ -439,6 +439,20 @@ class TableManager:
             reserved_ref = str((table.meta or {}).get("customer_ref") or "")
             if reserved_ref and reserved_ref != str(customer_ref or ""):
                 return False
+            # PFC-008 (review indipendente): un lotto (Dutching) e' a mercato solo quando TUTTE le sue gambe hanno
+            # avuto un esito a mercato; prima le gambe ancora in volo resterebbero fuori dalle riserve pendenti e
+            # la lettura del conto le "conterebbe" senza che l'exchange le abbia. Gambe distinte per customer_ref;
+            # un esito senza ref non fa avanzare il conteggio (prudente).
+            legs_total = (table.meta or {}).get("legs_total")
+            if legs_total:
+                ref = str(customer_ref or "")
+                if not ref:
+                    return False
+                acked = set(table.meta.get("acked_leg_refs") or [])
+                acked.add(ref)
+                table.meta["acked_leg_refs"] = sorted(acked)
+                if len(acked) < int(legs_total):
+                    return False
             table.meta.setdefault("placed_at", float(at))
             return True
 

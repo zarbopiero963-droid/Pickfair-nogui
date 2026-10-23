@@ -28,7 +28,9 @@ try:
             # v18+ (gate T80U): parametri di rischio confermati esplicitamente (valori SIM dichiarati)
             "roserpina.commission_pct": 4.5, "roserpina.max_event_exposure_pct": 10.0, "roserpina.max_single_bet_pct": 5.0,
             "roserpina.max_stake_abs": 1000.0, "roserpina.max_total_exposure_pct": 50.0,
-            "roserpina.max_daily_loss": 500.0, "roserpina.max_drawdown_hard_stop_pct": 50.0, "roserpina.max_open_exposure": 500.0}
+            "roserpina.max_daily_loss": 500.0, "roserpina.max_drawdown_hard_stop_pct": 50.0, "roserpina.max_open_exposure": 500.0,
+            # PFC-008 (M019): target e recovery non hanno piu' default di codice; valori di prima, dichiarati
+            "roserpina.target_profit_cycle_pct": 3.0, "roserpina.allow_recovery": True, "roserpina.max_recovery_tables": 2}
     try:
         app.settings_service.save_settings(caps); R["harness_caps"] = caps
     except Exception as e:

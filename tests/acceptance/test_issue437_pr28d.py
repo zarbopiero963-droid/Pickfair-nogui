@@ -169,6 +169,7 @@ def test_absolute_drawdown_reaches_threshold_and_blocks(tmp_path):
     c.rc.config.max_drawdown_abs = 10.0
     c.rc.risk_desk.equity_peak = 100.0
     c.rc.risk_desk.bankroll_current = 90.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc._on_signal_received(_signal(stake=0.5, bet_type="BACK"))
     assert c.broker.state.orders == {}
     assert _rifiuti(c)[-1] == "max_drawdown_abs_active"

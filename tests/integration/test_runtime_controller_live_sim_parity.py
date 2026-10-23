@@ -4,6 +4,7 @@ from core.pnl_engine import PnLEngine as EventDrivenPnLEngine
 from core.risk_middleware import RiskMiddleware
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig, RuntimeMode, DeskMode
+from tests.risk_config_fixtures import legacy_test_config
 from services.settings_service import SettingsService
 from simulation_broker import SimulationBroker
 
@@ -50,7 +51,7 @@ class _SettingsDb:
 
 class _Settings:
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = False
         cfg.max_daily_loss = 100.0
         cfg.max_drawdown_hard_stop_pct = 20.0
@@ -474,7 +475,7 @@ def test_duplication_lock_released_on_table_allocation_failure():
 
     class _SettingsAntiDup:
         def load_roserpina_config(self):
-            cfg = RoserpinaConfig()
+            cfg = legacy_test_config()
             cfg.anti_duplication_enabled = True
             return cfg
 
@@ -515,7 +516,7 @@ def test_duplication_lock_released_on_mm_rejection():
 
     class _SettingsAntiDup:
         def load_roserpina_config(self):
-            cfg = RoserpinaConfig()
+            cfg = legacy_test_config()
             cfg.anti_duplication_enabled = True
             return cfg
 

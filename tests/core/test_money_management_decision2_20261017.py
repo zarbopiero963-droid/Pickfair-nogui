@@ -9,10 +9,11 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 
 
 def _mm(max_single_pct=1.0):
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.base_stake_pct = 3.0
     cfg.min_stake = 0.10
     cfg.max_single_bet_pct = max_single_pct
@@ -22,7 +23,7 @@ def _mm(max_single_pct=1.0):
 
 
 def _calc(mm, *, side="BACK", price=2.0, br=100.0):
-    return mm.calculate(signal={"price": price, "bet_type": side, "stake": 3.0}, bankroll_current=br,
+    return mm.calculate(signal={"price": price, "bet_type": side, "stake": 3.0}, bankroll_current=br, cap_base_cash=br,
                         equity_peak=br, current_total_exposure=0.0, event_current_exposure=0.0,
                         table={"table_id": 1, "loss_amount": 0.0, "in_recovery": False})
 

@@ -15,6 +15,7 @@ import threading
 
 from core.runtime_controller import RuntimeController
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.catalog_sync_service import CatalogSyncService
 
 
@@ -33,7 +34,7 @@ class _DB:
 
 class _Settings:
     def load_roserpina_config(self):
-        cfg = RoserpinaConfig()
+        cfg = legacy_test_config()
         cfg.anti_duplication_enabled = False
         return cfg
 

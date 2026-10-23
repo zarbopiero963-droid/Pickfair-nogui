@@ -20,10 +20,13 @@ import os
 import sys
 from types import SimpleNamespace
 
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT
+
 import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.settings_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,6 +47,7 @@ class _Config:
     allow_recovery = True
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
+    target_profit_cycle_pct = 3.0  # PFC-008: obbligatoria anche nel Dutching
     max_single_bet_pct = 100.0
     book_warning = 105.0
     book_block = 110.0
@@ -55,6 +59,8 @@ class _Config:
 
 class _RiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
+    cash_committed_exposure = 0.0  # PFC-008: nessun impegnato fuori dai tavoli
 
 
 class _DupGuard:
@@ -372,7 +378,7 @@ class _InMemoryDB:
 def test_liquidity_config_round_trip():
     db = _InMemoryDB()
     SettingsService(db).save_roserpina_config(
-        RoserpinaConfig(
+        legacy_test_config(
             table_count=3,
             liquidity_guard_enabled=False,
             liquidity_multiplier=4.5,
@@ -407,6 +413,8 @@ class _CapturingService(FakeSettingsService):
 
     def load_roserpina_config(self):
         return SimpleNamespace(
+            **EXPLICIT_RISK_PCT,  # PFC-008: percentuali obbligatorie salvate dall'utente
+            
             liquidity_guard_enabled=False,
             liquidity_multiplier=2.5,
             min_liquidity_absolute=0.0,

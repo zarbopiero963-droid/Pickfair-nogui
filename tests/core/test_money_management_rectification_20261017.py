@@ -8,10 +8,11 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import DeskMode, RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 
 
 def _mm(**over):
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.max_single_bet_pct = cfg.max_total_exposure_pct = cfg.max_event_exposure_pct = 100.0
     cfg.target_profit_cycle_pct = 3.0
     for k, v in over.items():
@@ -20,7 +21,7 @@ def _mm(**over):
 
 
 def _calc(mm, bankroll=30.0, price=2.0):
-    return mm.calculate(signal={"price": price, "side": "BACK", "bet_type": "BACK"}, bankroll_current=bankroll,
+    return mm.calculate(signal={"price": price, "side": "BACK", "bet_type": "BACK"}, bankroll_current=bankroll, cap_base_cash=bankroll,
                         equity_peak=bankroll, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
 
 

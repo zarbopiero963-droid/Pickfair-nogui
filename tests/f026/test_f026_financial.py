@@ -34,7 +34,11 @@ def q(x):
 
 # Parametro SIM dichiarato: soglia di lockdown alta, per isolare F026/F2 dal lockdown sul drawdown del disponibile
 # (base «caso peggiore», invariata: la base del drawdown e' una decisione owner aperta, D04 6.O2).
-SETTINGS = {"roserpina.lockdown_drawdown_pct": 60.0}
+# PFC-008 (M019): le percentuali di rischio non hanno piu' un default di codice; la harness le configura
+# esplicitamente con i valori che il loader metteva prima (3/18/35/18).
+SETTINGS = {"roserpina.lockdown_drawdown_pct": 60.0, "roserpina.target_profit_cycle_pct": 3.0,
+            "roserpina.max_single_bet_pct": 18.0, "roserpina.max_total_exposure_pct": 35.0,
+            "roserpina.max_event_exposure_pct": 18.0}
 
 
 def run(steps, home=None, settings=None, **flags):
@@ -192,7 +196,10 @@ def test_F026_05_ambiguous_order_and_settlement_elsewhere():
     o = Oracle(s, {"1.733": True})
     assert any(x["market_id"] == "1.731" and x["status"] == "AMBIGUOUS" for x in s["orders"]), describe(s, o)
     assert s["auto_resets"] == 0, describe(s, o)
-    assert {"1.731", "1.732", "1.734"} <= table_markets(s) and "1.733" not in table_markets(s), describe(s, o)
+    # PFC-008: l'ordine AMBIGUOUS (risposta persa) puo' essere gia' nell'impegnato della lettura fresca oppure no:
+    # il cap totale lo conta in entrambi i modi (incertezza => fail-closed), 23 + 10 + 3 > 35 => 1.734 rifiutato.
+    assert {"1.731", "1.732"} <= table_markets(s) and not {"1.733", "1.734"} & table_markets(s), describe(s, o)
+    assert any(e["e"] == "SIGNAL_REJECTED" and e["reason"] == "supera_max_total_exposure" for e in r["events"])
     account_ok(s)
 
 

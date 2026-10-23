@@ -10,6 +10,43 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-008 — percentuali di rischio obbligatorie e cap sulla cassa verificata (roadmap #461, M019 + M020;
+  decisione owner #426 c.6369802091):**
+  - le quattro percentuali Roserpina (`target_profit_cycle_pct`, `max_single_bet_pct`, `max_total_exposure_pct`,
+    `max_event_exposure_pct`) non hanno piu' un default di codice: assenti => `<chiave>_non_configurato`, testo,
+    bool, NaN/inf, <= 0 o > 100 => `<chiave>_non_valido`; Money Management, Dutching (precheck e bet manuale) e
+    cap temporaneo Microstake negano ogni nuovo ordine. Prima il loader metteva 3/18/35/18 in silenzio e nel
+    Dutching un NaN rendeva sempre falso il confronto (fail-open);
+  - chiavi recovery assenti => nessun recovery (`allow_recovery` False, `max_recovery_tables` 0; prima True e 2);
+  - i cap percentuali di capacita'/esposizione si calcolano sulla **cassa complessiva verificata** (disponibile +
+    impegnato della stessa lettura, `RiskDesk.cash_equity_current`) e l'esposizione corrente si sottrae una sola
+    volta: cassa 100, esposizione 20, cap 35% => 15 di nuova esposizione (prima 8). La cassa e' verificata solo da
+    uno snapshot coerente (SIM: disponibile + impegnato == `total`; riserve unmatched e liability LAY gia'
+    nell'esposizione); altrimenti nuove entrate BLOCKED con diagnostica (`cassa_non_verificata:<motivo>`), senza
+    ripiego. L'esposizione dello snapshot fuori dai tavoli del bot (bet manuali, altre app) si sottrae anch'essa;
+    una lettura arrivata tardi non riporta in vita una cassa superata. L'hedge del cashout (uscita protettiva,
+    `protective` solo dall'OrderRouter) non viene bloccato da percentuali mancanti, cassa non verificata o
+    headroom del cap totale esaurito: resta il limite dei fondi disponibili (#548). Il segnale singolo ricontrolla il cap totale
+    sulla lettura fresca d'ingresso (impegnato esterno cresciuto o cassa scesa dopo l'ultima lettura registrata =>
+    `supera_max_total_exposure` prima di `CMD_QUICK_BET`; rilievo Codex P1 su 45c9aa2). Il TradingEngine pubblica l'ACK sincrono
+    `QUICK_BET_SUBMIT_ACK` sull'ordine accettato dal broker: la riserva risulta a mercato e non e' contata due volte;
+    un ordine AMBIGUOUS resta contato in entrambi i modi (fail-closed). Sulla lettura fresca si ricontrollano anche
+    singolo ordine ed evento (`fresh_caps_reason`); bankroll e cassa di una lettura si applicano insieme dopo il
+    controllo di `read_at` (una lettura vecchia arrivata tardi non riscrive il bankroll; rilievi Codex su 4ce44a7). P&L realizzato, snapshot e
+    ripristino spostano la soglia delle letture: una lettura iniziata prima del settlement non rivalida la cassa
+    superata (audit PF-FINANCIAL-IMPACT-GATE-01). Una lettura d'ingresso superata da una
+    lettura piu' recente del RiskDesk si ricontrolla anche su quella (rilievo Codex su 0dbadbb). Stake target, difesa, lockdown e drawdown non cambiano base e l'escalation a LOCKDOWN
+    precede i nuovi blocchi;
+  - `RoserpinaConfig` non ha piu' default per le quattro percentuali ne' per il recovery; le fixture dei test le
+    dichiarano esplicitamente (`tests/risk_config_fixtures.py`);
+  - Dutching: con bankroll <= 0 o config assente i controlli di esposizione non vengono piu' saltati (fail-open);
+  - GUI F10, configurazione guidata: se una percentuale manca o non e' valida, avviso nella barra in alto con il
+    pulsante "Configura Money Management" e apertura della tab Roserpina all'avvio (solo in quel caso); ogni campo
+    spiega a cosa serve; campi vuoti, mai precompilati; il salvataggio con campo vuoto o fuori da (0, 100] viene
+    annullato con errore esplicito; dopo un salvataggio valido nessuna richiesta, neppure ai riavvii;
+  - M020: rimosso da `config.example.json` il blocco `roserpina` (non letto da nessun codice) che suggeriva un
+    `max_daily_loss` fisso di 50 EUR; test di guardia sui default (loader, dataclass, esempio).
+
 - **PFC-007 — fondi non verificabili non valgono come saldo (roadmap #461, M013 PF-FIN-02 residuo; #544):**
   - `BetfairClient.get_account_funds`: un `availableToBetBalance`/`exposure` assente, non numerico o non finito
     e' `None`, non 0.0: il servizio lo marca `BALANCE_FIELD_MISSING`;

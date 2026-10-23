@@ -24,6 +24,7 @@ import pytest
 
 import mini_gui
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT, legacy_test_config
 from services.settings_service import SettingsService
 
 # La dir dei test (senza __init__) e' su sys.path in prepend-mode; l'inserimento
@@ -109,7 +110,7 @@ def test_empty_field_does_not_overwrite_persisted_hard_stop_real_service():
     # Save "GUI-like": solo max_daily_loss modificato (campo pieno); gli altri due
     # lasciati vuoti => None (come li produce _parse_hard_stop per il campo vuoto).
     svc.save_roserpina_config(
-        RoserpinaConfig(
+        legacy_test_config(
             table_count=3,
             max_daily_loss=_P("150", "x"),                        # campo pieno
             max_open_exposure=_P("", "x"),                        # vuoto => None
@@ -138,6 +139,8 @@ class _CapturingService(FakeSettingsService):
             max_daily_loss=250.0,
             max_open_exposure=None,
             max_drawdown_hard_stop_pct=30.0,
+            # PFC-008: percentuali obbligatorie dichiarate, altrimenti il salvataggio viene (giustamente) rifiutato.
+            **EXPLICIT_RISK_PCT,
         )
 
     def save_roserpina_config(self, cfg):

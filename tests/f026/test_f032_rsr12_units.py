@@ -17,6 +17,7 @@ from core.money_management import RoserpinaMoneyManagement
 from core.risk_desk import RiskDesk
 from core.runtime_controller import RuntimeController
 from core.system_state import DeskMode, RoserpinaConfig, RuntimeMode
+from tests.risk_config_fixtures import legacy_test_config
 from core.table_manager import TableManager
 from database import Database
 
@@ -52,7 +53,7 @@ def _rc(db_path, funds=None, tables=3):
 
 # ------------------------------------------------------------------ F032 — money management
 def _mm(**over):
-    cfg = RoserpinaConfig()
+    cfg = legacy_test_config()
     cfg.max_single_bet_pct = cfg.max_total_exposure_pct = cfg.max_event_exposure_pct = 100.0
     cfg.min_stake = 0.01
     cfg.target_profit_cycle_pct = 4.0
@@ -64,7 +65,7 @@ def _mm(**over):
 
 
 def _calc(mm, **sig):
-    return mm.calculate(signal=dict({"price": 3.0, "side": "BACK", "bet_type": "BACK"}, **sig), bankroll_current=100.0,
+    return mm.calculate(signal=dict({"price": 3.0, "side": "BACK", "bet_type": "BACK"}, **sig), bankroll_current=100.0, cap_base_cash=100.0,
                         equity_peak=100.0, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
 
 
@@ -87,6 +88,7 @@ def test_f032_expansion_never_overrides_defense_or_caps():
     assert d.approved is False and d.reason == "supera_max_single_bet" and d.recommended_stake > 2.0
     lock = mm.calculate(signal={"price": 3.0, "side": "BACK", "expansion_growth_snapshot": 50.0},
                         bankroll_current=70.0, equity_peak=100.0, current_total_exposure=0.0,
+                        cap_base_cash=70.0,  # PFC-008: cassa verificata del test
                         event_current_exposure=0.0, table=None)
     assert lock.approved is False and lock.reason == "desk_lockdown", "espansione non aggira il LOCKDOWN"
 
@@ -109,6 +111,7 @@ def test_f032_baseline_is_not_the_drawdown_peak_and_does_not_follow_the_balance(
     for cash in (101.0, 103.0, 106.0):                                 # profitti regolati successivi
         rc._record_account_snapshot({"available": cash, "exposure": 0.0}, source="settlement")
         rc.risk_desk.sync_bankroll(cash)
+        rc.risk_desk.sync_cash_equity(rc.risk_desk.bankroll_current, rc.risk_desk.bankroll_current)  # PFC-008
     assert rc._expansion_growth_pct() == pytest.approx(6.0)
     assert rc.risk_desk.equity_peak == pytest.approx(106.0) and rc._expansion_baseline == pytest.approx(100.0)
 

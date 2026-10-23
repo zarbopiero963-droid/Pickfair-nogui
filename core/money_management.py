@@ -101,6 +101,29 @@ class RoserpinaMoneyManagement:
             bankroll_current * (self._safe_float(self.config.max_event_exposure_pct, 0.0) / 100.0),
         )
 
+    def fresh_caps_reason(self, *, cash: Any, order_exposure: Any, total_exposure: Any,
+                          event_exposure: Any) -> str:
+        """PFC-008 (rilievi Codex su 45c9aa2 e 4ce44a7): i tre cap percentuali di `calculate` ricontrollati sulla
+        cassa verificata di una lettura piu' recente (la lettura fresca d'ingresso), con la stessa base e gli
+        stessi limiti. `total_exposure` ed `event_exposure` sono gia' comprensivi del nuovo ordine. '' se tutti
+        reggono, altrimenti il motivo (percentuale non valida, valore non finito, cap superato)."""
+        for key in ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct"):
+            reason = validators.risk_pct_reason(key, getattr(self.config, key, None))
+            if reason:
+                return reason
+        base = validators.finite_number(cash)
+        values = [validators.finite_number(v) for v in (order_exposure, total_exposure, event_exposure)]
+        if base is None or base <= 0 or any(v is None for v in values):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        order, total, event = values
+        if validators.exceeds_cap(order, self._max_single_stake_abs(base)):
+            return "supera_max_single_bet"
+        if validators.exceeds_cap(total, self._max_total_exposure_abs(base)):
+            return "supera_max_total_exposure"
+        if validators.exceeds_cap(event, self._max_event_exposure_abs(base)):
+            return "supera_max_event_exposure"
+        return ""
+
     # =========================================================
     # DESK MODE
     # =========================================================
@@ -286,6 +309,8 @@ class RoserpinaMoneyManagement:
         current_total_exposure: float,
         event_current_exposure: float,
         table: Any,
+        cap_base_cash: Any = None,
+        external_exposure: Any = 0.0,
     ) -> MoneyManagementDecision:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         equity_peak = self._safe_float(equity_peak, bankroll_current)
@@ -372,6 +397,37 @@ class RoserpinaMoneyManagement:
                     "equity_peak": equity_peak,
                 },
             )
+        # PFC-008 (M019): percentuali di rischio assenti o non valide => nessuno stake. Dopo il LOCKDOWN
+        # (bankroll, perdita giornaliera, drawdown), che resta l'escalation di prima.
+        # Prima `_safe_float` le portava a 0 in silenzio e il rifiuto aveva un motivo
+        # fuorviante (stake sotto il minimo); un default di codice non vale mai come scelta.
+        pct_reason = validators.risk_pcts_reason(self.config)
+        if pct_reason:
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=0.0,
+                desk_mode=desk_mode,
+                reason=pct_reason,
+                table_id=table_id,
+                metadata={name: repr(getattr(self.config, name, None)) for name in validators.RISK_PCT_FIELDS},
+            )
+        # PFC-008 (decisione owner #426 c.6369802091): i cap percentuali di capacita'/esposizione si
+        # calcolano sulla cassa complessiva VERIFICATA; senza, nessuna nuova entrata (nessun ripiego).
+        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current)
+        # Esposizione dello snapshot che i tavoli non conoscono (bet manuali, altre app, posizioni non
+        # ricostruite): entra nella cassa, quindi si sottrae anch'essa. Illeggibile => cassa non verificata.
+        external = validators.finite_number(external_exposure)
+        if external is None or external < 0:
+            cap_base = None
+        if cap_base is None:
+            return MoneyManagementDecision(
+                approved=False,
+                recommended_stake=0.0,
+                desk_mode=desk_mode,
+                reason="cassa_non_verificata",
+                table_id=table_id,
+                metadata={"cap_base_cash": repr(cap_base_cash), "bankroll_current": bankroll_current},
+            )
 
         if in_recovery and not bool(self.config.allow_recovery):
             return MoneyManagementDecision(
@@ -420,9 +476,11 @@ class RoserpinaMoneyManagement:
         # Fallback su trading_config.MIN_STAKE (fonte unica #320-D2), non su un
         # literal duplicato: se il floor globale cambia, anche la difesa lo segue.
         min_stake = self._safe_float(self.config.min_stake, trading_config.MIN_STAKE)
-        max_single = self._max_single_stake_abs(bankroll_current)
-        max_total = self._max_total_exposure_abs(bankroll_current)
-        max_event = self._max_event_exposure_abs(bankroll_current)
+        # PFC-008: base = cassa verificata (sopra); l'esposizione corrente si sottrae una sola volta
+        # nei confronti sotto.
+        max_single = self._max_single_stake_abs(cap_base)
+        max_total = self._max_total_exposure_abs(cap_base)
+        max_event = self._max_event_exposure_abs(cap_base)
 
         if recommended <= 0.0:
             return MoneyManagementDecision(
@@ -481,7 +539,7 @@ class RoserpinaMoneyManagement:
                 },
             )
 
-        if validators.exceeds_cap(current_total_exposure + exposure, max_total):
+        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):
             return MoneyManagementDecision(
                 approved=False,
                 recommended_stake=0.0,
@@ -490,6 +548,7 @@ class RoserpinaMoneyManagement:
                 table_id=table_id,
                 metadata={
                     "current_total_exposure": current_total_exposure,
+                    "external_exposure": external,
                     "recommended": recommended,
                     "exposure": exposure,
                     "side": side,
@@ -524,6 +583,7 @@ class RoserpinaMoneyManagement:
                 "side": side,
                 "exposure": exposure,
                 "target_profit": self._target_profit_eur(bankroll_current),
+                "cap_base": cap_base,
                 "table_loss": table_loss,
                 "base_stake": base_stake,
                 "risk_mult": risk_mult,
@@ -547,6 +607,8 @@ class RoserpinaMoneyManagement:
         cycle_id: str = "",
         cycle_active: bool = True,
         target_reached: bool = False,
+        cap_base_cash: Any = None,
+        external_exposure: Any = 0.0,
     ) -> PostSettlementDecision:
         bankroll_current = self._safe_float(bankroll_current, 0.0)
         table_id = self._extract_table_id(table)
@@ -636,6 +698,8 @@ class RoserpinaMoneyManagement:
             current_total_exposure=current_total_exposure,
             event_current_exposure=event_current_exposure,
             table=table,
+            cap_base_cash=cap_base_cash,
+            external_exposure=external_exposure,
         )
         next_stake = float(decision.recommended_stake or 0.0)
         if decision.approved and next_stake > 0.0:

@@ -16,16 +16,6 @@
     "auto_stake": 1.0,
     "monitored_chat_ids": []
   },
-  "roserpina": {
-    "target_profit_cycle_pct": 3.0,
-    "max_single_bet_pct": 18.0,
-    "max_total_exposure_pct": 35.0,
-    "max_event_exposure_pct": 18.0,
-    "max_daily_loss": 50.0,
-    "min_stake": 0.1,
-    "risk_profile": "BALANCED",
-    "allow_recovery": true
-  },
   "active_parser": "x",
   "parser_by_chat": {},
   "proxy": {

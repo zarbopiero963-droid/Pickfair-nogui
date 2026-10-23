@@ -11,8 +11,11 @@ from tests.acceptance.test_issue437_pr27 import _rifiuti, _tavoli_occupati
 from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _signal
 
 
-def _segnale_piazzato(tmp_path, **kw):
+def _segnale_piazzato(tmp_path, *, senza_ack=False, **kw):
     c = _chain(tmp_path, stake=10.0, **kw)
+    if senza_ack:
+        publish = c.bus.publish
+        c.bus.publish = lambda t, p=None: None if t == "QUICK_BET_SUBMIT_ACK" else publish(t, p)
     c.rc.betfair_service.get_account_funds = lambda: {"available": 1000.0, "exposure": 0.0}
     c.rc._on_signal_received(_signal())
     (cmd,) = c.bus.payloads("CMD_QUICK_BET")
@@ -20,7 +23,9 @@ def _segnale_piazzato(tmp_path, **kw):
 
 
 def test_success_da_doppione_non_rilascia_tavolo_ne_chiave_dell_originale(tmp_path):
-    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    # Senza l'ACK sincrono dell'originale (QUICK_BET_SUBMIT_ACK, PFC-008): si verifica che il SUCCESS del doppione,
+    # da solo, non marchi nulla a mercato.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True, senza_ack=True)
     c.rc._on_quick_bet_success({**cmd, "status": "DUPLICATE_BLOCKED", "outcome": "SUCCESS"})
     assert _tavoli_occupati(c) == [cmd["table_id"]]
     assert c.rc.table_manager.get_table(cmd["table_id"]).current_exposure == 10.0
@@ -108,7 +113,8 @@ def test_doppione_bloccato_da_un_altro_processo_rilascia_la_propria_riserva_mai_
 def test_doppione_dello_stesso_processo_conserva_la_riserva_viva(tmp_path):
     # Replay nello stesso processo: l'originale e' in volo nella memoria del motore => duplicate_in_process=True,
     # nessun rilascio (PF-C29-01.03).
-    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    # Originale ancora in volo (nessun ACK sincrono): la riserva e' rilasciabile, il controllo e' esercitato.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True, senza_ack=True)
     c.bus.publish("CMD_QUICK_BET", dict(cmd))
     (dup,) = c.bus.payloads("QUICK_BET_DUPLICATE")
     assert dup.get("duplicate_in_process") is True, dup
@@ -118,7 +124,8 @@ def test_doppione_dello_stesso_processo_conserva_la_riserva_viva(tmp_path):
 
 def test_doppione_esterno_non_rilascia_una_riserva_di_un_altro_ordine(tmp_path):
     # Il tavolo indicato dall'evento porta ora la riserva di un altro intento (ref diverso): nessun rilascio.
-    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    # Originale ancora in volo (nessun ACK sincrono): la riserva e' rilasciabile, il controllo e' esercitato.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True, senza_ack=True)
     c.rc._on_quick_bet_duplicate({**cmd, "customer_ref": "ref-di-un-altro-ordine", "duplicate_in_process": False})
     assert _tavoli_occupati(c) == [cmd["table_id"]]
     c.rc._on_quick_bet_duplicate({**cmd, "duplicate_in_process": None})        # dato assente => si conserva
@@ -170,7 +177,8 @@ def test_doppione_esterno_tardivo_non_rilascia_un_tavolo_riassegnato_a_meta_oper
     # Rilievo Codex su #533 (P1): fra la verifica dell'identita' e il rilascio un reset/sweep libera il tavolo e una
     # nuova ammissione lo riusa per lo STESSO event_key con un altro intento. Il rilascio non deve colpirla:
     # verifica e rilascio sono una sola operazione atomica del TableManager.
-    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    # Originale ancora in volo (nessun ACK sincrono): la riserva e' rilasciabile, il controllo e' esercitato.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True, senza_ack=True)
     tm, tid = c.rc.table_manager, cmd["table_id"]
     stato = {"fatto": False}
 
@@ -295,7 +303,8 @@ def test_doppione_esterno_non_cancella_l_incertezza_di_una_riserva_riassegnata_d
     # Rilievo Codex su #533 (P1): fra lo sblocco atomico e la pulizia dell'incertezza il tavolo e' riusato per lo
     # stesso event_key da un ordine che diventa AMBIGUOUS. Il callback tardivo del doppione non deve togliere la
     # sua incertezza ne' la chiave: la riserva mai inviata non e' mai incerta, quindi non si tocca l'incertezza.
-    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True)
+    # Originale ancora in volo (nessun ACK sincrono): la riserva e' rilasciabile, il controllo e' esercitato.
+    c, cmd = _segnale_piazzato(tmp_path, anti_duplication=True, senza_ack=True)
     tm, tid = c.rc.table_manager, cmd["table_id"]
     atomico = tm.force_unlock_if_unplaced_reservation
 

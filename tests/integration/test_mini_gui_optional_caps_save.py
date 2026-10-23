@@ -12,6 +12,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from test_mini_gui_integration import _install_mini_gui_fakes  # noqa: E402
 
 from database import Database  # noqa: E402
+# PFC-008: le percentuali obbligatorie sono dichiarate nei preset dei test che salvano con successo.
+from tests.risk_config_fixtures import EXPLICIT_RISK_SETTINGS  # noqa: E402
 from services.settings_service import SettingsService as RealSettingsService  # noqa: E402
 
 
@@ -34,7 +36,7 @@ def _load(path):
 
 def test_blank_cap_field_saved_from_the_gui_deactivates_the_persisted_cap(monkeypatch, tmp_path):
     app, path, errors = _app(monkeypatch, tmp_path, preset={
-        "roserpina.max_order_exposure": "1.0", "roserpina.max_daily_loss": "50"})
+        **EXPLICIT_RISK_SETTINGS, "roserpina.max_order_exposure": "1.0", "roserpina.max_daily_loss": "50"})
     try:
         assert app.rs_max_order_exposure_var.get() == "1.0"
         app.rs_max_order_exposure_var.set("")
@@ -51,7 +53,8 @@ def test_blank_cap_field_saved_from_the_gui_deactivates_the_persisted_cap(monkey
 
 
 def test_untouched_cap_survives_a_save_of_another_field(monkeypatch, tmp_path):
-    app, path, errors = _app(monkeypatch, tmp_path, preset={"roserpina.max_market_exposure": "2.5"})
+    app, path, errors = _app(monkeypatch, tmp_path, preset={**EXPLICIT_RISK_SETTINGS,
+                                                            "roserpina.max_market_exposure": "2.5"})
     try:
         app.rs_commission_var.set("5.0")
         app._save_roserpina_settings()

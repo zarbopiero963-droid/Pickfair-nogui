@@ -33,6 +33,7 @@ import pytest
 
 from core.money_management import RoserpinaMoneyManagement
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from core.trading_engine import STATUS_DUPLICATE_BLOCKED, STATUS_FAILED
 from database import Database
 from order_manager import ValidationError
@@ -162,6 +163,7 @@ def _catena(tmp_path, **cfg):
     c = _chain(tmp_path, anti_duplication=True)
     del c.rc.mm.calculate  # money management VERO
     c.rc.risk_desk.bankroll_current = 1000.0
+    c.rc.risk_desk.cash_equity_current = c.rc.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     c.rc.risk_desk.equity_peak = 1000.0
     for chiave, valore in cfg.items():
         setattr(c.rc.config, chiave, valore)
@@ -268,13 +270,14 @@ def test_block_esposizione_tavolo_corrotta_blocca_il_segnale(tmp_path, valore):
 # 3. Money management: stake fisso del segnale ed esposizioni
 # ==========================================================================
 def _mm(**cfg) -> RoserpinaMoneyManagement:
-    return RoserpinaMoneyManagement(RoserpinaConfig(**cfg))
+    return RoserpinaMoneyManagement(legacy_test_config(**cfg))
 
 
 def _calcola(mm, *, signal=None, totale=0.0, evento=0.0, loss=0.0):
     return mm.calculate(
         signal={"price": 2.0, **(signal or {})},
         bankroll_current=1000.0,
+        cap_base_cash=1000.0,  # PFC-008: cassa verificata del test
         equity_peak=1000.0,
         current_total_exposure=totale,
         event_current_exposure=evento,
@@ -355,10 +358,12 @@ def test_block_cap_recovery_booleano_e_config_corrotta():
 def test_pass_cap_recovery_disarmato_da_config_salvata(salvato):
     """#450 end-to-end: 0/vuoto/None dal DB => cap DISARMATO, chase storico."""
     from services.setting_service import SettingsService
+    from tests.risk_config_fixtures import EXPLICIT_RISK_SETTINGS
 
     class _Db:
         def get_settings(self):
-            return {"roserpina.max_recovery_chase_abs": salvato}
+            # PFC-008 (M019): il target del ciclo non ha piu' default nel loader, lo si dichiara.
+            return {**EXPLICIT_RISK_SETTINGS, "roserpina.max_recovery_chase_abs": salvato}
 
         def get_all_settings(self):
             return self.get_settings()

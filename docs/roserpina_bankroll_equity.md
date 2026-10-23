@@ -8,14 +8,63 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
 
 | Grandezza | Fonte | Uso |
 |---|---|---|
-| `bankroll_current` (RiskDesk) | saldo **disponibile** dell'exchange | base invariata di stake, limiti %, difesa e lockdown |
+| `bankroll_current` (RiskDesk) | saldo **disponibile** dell'exchange | base di stake target, difesa e lockdown |
+| `cash_equity_current` (RiskDesk, PFC-008) | `cash_equity` della **stessa** lettura che ha dato `bankroll_current` | base dei cap percentuali di capacità ed esposizione (singolo, totale, evento, headroom Microstake) |
 | `available`, `committed` = \|exposure\|, `cash_equity` = disponibile + impegnato | `RuntimeController._account_from_funds` (soli campi exchange) | snapshot del conto (`_account_snapshot`) e picco di cassa (`_cash_equity_peak`) |
 
-- `cash_equity` è il **saldo di cassa regolato**, non un'equity mark-to-market. Non decide né stake, né limiti,
-  né ammissione degli ordini.
+- `cash_equity` è il **saldo di cassa regolato**, non un'equity mark-to-market. Non decide né lo stake target
+  né l'ammissione degli ordini (che resta sui fondi disponibili e sulle riserve).
+- **Cap percentuali sulla cassa (PFC-008, decisione owner #426 c.6369802091).** I cap `max_single_bet_pct`,
+  `max_total_exposure_pct` e `max_event_exposure_pct` si calcolano sulla cassa complessiva verificata e
+  l'esposizione corrente si sottrae una sola volta. Esempio: cassa 100, esposizione 20, cap 35% ⇒ totale
+  ammesso 35, nuova esposizione 15 (prima: 35% di 80 = 28 ⇒ solo 8).
+- **Cassa verificata** (`RuntimeController._cash_equity_verification`): disponibile + impegnato solo da uno
+  snapshot valido e coerente col contratto del broker. Le riserve unmatched sono una parte dell'esposizione
+  (SIM: `reserved_unmatched` ≤ `exposure`; LIVE: l'exposure Betfair include la liability degli unmatched) e la
+  liability LAY è già nell'esposizione: niente si somma due volte. In SIM disponibile + impegnato deve
+  coincidere con `total` (tolleranza 1 centesimo); in LIVE vale availableToBetBalance + |exposure|.
+  `RiskDesk.sync_cash_equity` la registra solo se il disponibile è quello della stessa lettura e solo se la
+  lettura non è iniziata prima dell'ultima applicata (`read_at` monotonic: una lettura arrivata tardi non
+  riporta in vita una cassa superata); ogni altro cambio del bankroll (`sync_bankroll`, PnL applicato,
+  snapshot, ripristino) o una lettura fallita, anche per eccezione, la azzera,
+  con il motivo in `cash_equity_reason` (`CASH_NOT_READ`, `CASH_TOTAL_MISMATCH`, `CASH_RESERVE_INCOHERENT`,
+  `BALANCE_ERROR:…`, …), esposto anche da `get_status` (`cash_equity_verified`, `cash_equity_reason`).
+- **Esposizione oltre i tavoli:** con la cassa si registrano l'impegnato dello snapshot (`cash_committed_exposure`)
+  e l'istante di lettura. Al momento della decisione (`validators.desk_cash_basis`) l'esposizione che il cap totale
+  vede è la maggiore fra quella dei tavoli del bot e impegnato + riserve del bot non ancora riflesse nella lettura
+  (`TableManager.pending_exposure(since=read_at)`, come il gate fondi PR28-e). Così bet manuali, altre
+  applicazioni o posizioni non ricostruite si sottraggono, e una riserva pendente non le «assorbe». Esempi:
+  cassa 100 con 20 impegnati esterni, cap 35% ⇒ 15; con in più una riserva pendente del bot da 10 ⇒ 5.
+  Il tavolo di un lotto Dutching (`legs_total`) risulta a mercato solo quando tutte le gambe distinte
+  (`customer_ref`) hanno avuto un esito a mercato: le gambe ancora in volo restano riserve pendenti.
+  Il segnale singolo (BACK/LAY) ricontrolla **tutti e tre i cap percentuali** (singolo ordine, totale, evento)
+  anche sulla **lettura fresca d'ingresso** del gate fondi (`RuntimeController._entry_total_cap_reason` →
+  `RoserpinaMoneyManagement.fresh_caps_reason`): stesse formule sulla cassa e sull'impegnato appena letti
+  (cassa registrata 100, fresca 50 + 0, cap 18%: un BACK da 15 viene rifiutato con `supera_max_single_bet`).
+  Se mentre la lettura d'ingresso è in volo il RiskDesk registra una lettura più recente (per esempio da
+  `get_status`), i cap si ricontrollano anche su quella; se quella non è verificata l'ingresso è rifiutato.
+  Un impegnato esterno cresciuto o una cassa scesa dopo l'ultima lettura registrata riducono quindi il limite
+  prima di `CMD_QUICK_BET` (cassa 100 registrata con 20 impegnati, lettura fresca 60 + 40, cap 35%: un BACK
+  da 15 viene rifiutato con `supera_max_total_exposure`); lettura fresca non verificata ⇒
+  `cassa_non_verificata:<motivo>`.
+  Perché impegnato fresco e riserve pendenti non si sovrappongano, il TradingEngine pubblica l'ACK sincrono
+  `QUICK_BET_SUBMIT_ACK` quando il broker accetta l'ordine (stato SUBMITTED, il ciclo «ACCEPTED»): il runtime
+  marca la riserva a mercato (`placed_at`), senza rilasciarla né avviare il TTL. Prima, sul percorso SIM del
+  TradingEngine, la marca arrivava solo con un esito terminale e ogni lettura successiva contava l'ordine due
+  volte. Un ordine AMBIGUOUS non ha ACK: resta contato sia nell'impegnato sia fra le pendenti (fail-closed).
+- **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
+  cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
+  `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del
+  cap totale: il loro cap temporaneo resta limitato ai fondi disponibili (#548, mandato owner PFC-008 punto 5).
+- **Letture fuori ordine:** bankroll e cassa della stessa lettura si applicano insieme
+  (`RiskDesk.sync_funds_reading`), con il controllo di `read_at` prima di toccare il bankroll: una lettura iniziata
+  prima dell'ultima applicata non riscrive il disponibile né invalida la cassa più recente.
+  Quando il conto cambia fuori da una lettura (P&L realizzato al settlement, snapshot, ripristino dello stato) la
+  cassa viene invalidata e la soglia di `read_at` passa ad adesso: una lettura iniziata prima non la rimette in
+  vigore (audit PF-FINANCIAL-IMPACT-GATE-01).
 - Un campo mancante, non numerico, non finito o negativo rende lo snapshot non valido. Un'esposizione mancante
   **non** vale zero.
-- La base di stake e limiti non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test
+- La base dello stake target non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test
   d'integrazione: ogni sincronizzazione dall'exchange usa il disponibile di quell'istante.
 
 ## Auto-reset

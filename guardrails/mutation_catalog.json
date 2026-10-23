@@ -123,8 +123,8 @@
       "module": "core.money_management",
       "area": "exposure",
       "file": "core/money_management.py",
-      "original": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
-      "mutated": "        if validators.exceeds_cap(exposure, max_total):",
+      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
+      "mutated": "        if validators.exceeds_cap(external + exposure, max_total):",
       "tests": [
         "tests/core/test_money_management_caps_and_malformed.py"
       ],
@@ -897,7 +897,8 @@
       "tests": [
         "tests/acceptance/test_issue461_pr28e_funds_gate.py"
       ],
-      "rationale": "#461 PR28-e: l'auto-next ignora le riserve pendenti degli altri tavoli."
+      "rationale": "#461 PR28-e: l'auto-next ignora le riserve pendenti degli altri tavoli.",
+      "equivalent": "Da PFC-008 il cap totale del MM vede max(tavoli, impegnato + riserve pendenti dalla stessa lettura) + nuovo ordine <= pct * (disponibile + impegnato), con pct <= 100 (validators.risk_pct_reason): ne segue riserve pendenti + nuovo <= disponibile, la stessa condizione del gate fondi, letta dallo stesso snapshot del settlement. Il gate non puo' quindi bloccare per primo: senza il termine `pending` il risultato osservabile e' identico (l'auto-next e' rifiutato dal cap, supera_max_total_exposure). Comportamento verificato da test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato e test_auto_next_riserva_pendente_e_impegnato_esterno. Il termine resta come seconda difesa."
     },
     {
       "id": "funds_gate_stale_funds_read",
@@ -2565,6 +2566,391 @@
         "tests/unit/test_pfc007_funds_unverifiable.py"
       ],
       "rationale": "PFC-007: fondi con errore (registro SIM incoerente, campo mancante) varrebbero come saldo valido: bankroll e baseline su dati non verificabili."
+    },
+    {
+      "id": "mm_risk_pct_missing_not_blocking",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        pct_reason = validators.risk_pcts_reason(self.config)\n        if pct_reason:",
+      "mutated": "        pct_reason = validators.risk_pcts_reason(self.config)\n        if False:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: percentuale di rischio assente/non valida non bloccherebbe il MM (default permissivo)."
+    },
+    {
+      "id": "validators_risk_pct_range_unchecked",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if pct is None or pct <= 0 or pct > 100:\n        return f\"{name}_non_valido\"",
+      "mutated": "    if pct is None:\n        return f\"{name}_non_valido\"",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: percentuale 0, negativa o > 100 passerebbe come valida."
+    },
+    {
+      "id": "validators_cap_base_ignores_cash",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:\n        return None\n    return cash",
+      "mutated": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:\n        return None\n    return avail",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Decisione owner #426 c.6369802091: i cap tornerebbero sul disponibile, esposizione sottratta due volte."
+    },
+    {
+      "id": "validators_cap_base_accepts_incoherent_cash",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if cash is None or avail is None or avail < 0 or cash <= 0 or cash < avail:",
+      "mutated": "    if cash is None or avail is None or avail < 0 or cash <= 0:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: una cassa inferiore al disponibile (snapshot incoerente) diventerebbe base dei cap."
+    },
+    {
+      "id": "mm_cap_base_double_counts_exposure",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current)\n",
+      "mutated": "        cap_base = validators.verified_cap_base(cap_base_cash, bankroll_current) or bankroll_current\n",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008: senza cassa verificata il MM ricadrebbe sul disponibile invece di bloccare (BLOCKED)."
+    },
+    {
+      "id": "dutching_risk_pct_nan_fail_open",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "        pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)\n        if pct_reason:",
+      "mutated": "        pct_reason = validators.risk_pcts_reason(config, _DUTCHING_PCT_FIELDS)\n        if False:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: NaN/assente nel Dutching renderebbe sempre falso il confronto (fail-open)."
+    },
+    {
+      "id": "dutching_recovery_default_on",
+      "module": "controllers.dutching_controller",
+      "area": "money_management",
+      "file": "controllers/dutching_controller.py",
+      "original": "        allow_recovery = getattr(config, \"allow_recovery\", False) is True",
+      "mutated": "        allow_recovery = bool(getattr(config, \"allow_recovery\", True))",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008 M019: recovery attivo senza configurazione esplicita."
+    },
+    {
+      "id": "riskdesk_cash_survives_bankroll_sync",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            # non e' piu' verificata (`sync_cash_equity` la rifissa).\n            self._invalidate_cash_locked(\"CASH_NOT_READ\")",
+      "mutated": "            # non e' piu' verificata (`sync_cash_equity` la rifissa).\n            pass",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: cassa di una lettura precedente resterebbe base dei cap dopo un nuovo disponibile."
+    },
+    {
+      "id": "riskdesk_cash_from_other_reading",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            if avail is None or avail != self.bankroll_current:",
+      "mutated": "            if avail is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: cassa registrata da una lettura diversa da quella del bankroll corrente."
+    },
+    {
+      "id": "runtime_mm_without_verified_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,\n                                                     self.table_manager, tables_total=total_exposure)\n        decision = self.mm.calculate(",
+      "mutated": "        cassa_e_esterna = (None, 0.0)\n        decision = self.mm.calculate(",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Decisione owner #426 c.6369802091: il runtime non passerebbe la cassa verificata al MM."
+    },
+    {
+      "id": "microstake_headroom_double_counts_exposure",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "            if payload.get(\"protective\") is True:\n                pass\n            elif pct_reason or cap_base is None:",
+      "mutated": "            if False:\n                pass\n            elif pct_reason or cap_base is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 5 (#548): l'hedge del cashout (uscita protettiva) verrebbe bloccato da percentuali mancanti, cassa non verificata o headroom esaurito."
+    },
+    {
+      "id": "runtime_cash_total_mismatch_accepted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if total is None or abs(cash - total) > cls._CASH_TOTAL_TOLERANCE:",
+      "mutated": "            if total is None:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 2: una ricostruzione SIM che non coincide con la cassa del broker varrebbe come verificata."
+    },
+    {
+      "id": "runtime_cash_reserve_double_counted",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            if reserved is None or reserved < 0 or validators.exceeds_cap(reserved, committed):",
+      "mutated": "            if reserved is None or reserved < 0:",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Mandato owner PFC-008 punto 2: riserve unmatched oltre l'esposizione (contate due volte) non bloccherebbero la cassa."
+    },
+    {
+      "id": "microstake_entry_without_cash_uses_funds",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "            elif pct_reason or cap_base is None:\n                return None",
+      "mutated": "            elif pct_reason:\n                return None",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "PFC-008: senza cassa verificata il cap temporaneo d'ingresso userebbe total_cap(None) => eccezione o base non verificata.",
+      "equivalent": "Con cassa non verificata `desk_cash_basis` restituisce (None, None): senza questo controllo il ramo successivo calcola total_cap(None) - esposizione - None, solleva TypeError dentro il try e restituisce None (cap non disponibile, BLOCKED). Il risultato osservabile e' identico; il controllo esplicito resta come prima difesa leggibile. Comportamento verificato da test_microstake_ingresso_bloccato_senza_percentuale_o_cassa[35.0-None]."
+    },
+    {
+      "id": "mm_external_exposure_not_subtracted",
+      "module": "core.money_management",
+      "area": "money_management",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(current_total_exposure + external + exposure, max_total):",
+      "mutated": "        if validators.exceeds_cap(current_total_exposure + exposure, max_total):",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P1: l'esposizione esterna entra nella cassa ma non verrebbe sottratta (cap allargato)."
+    },
+    {
+      "id": "riskdesk_stale_read_overwrites_cash",
+      "module": "core.risk_desk",
+      "area": "money_management",
+      "file": "core/risk_desk.py",
+      "original": "            if started is not None and self._cash_read_at is not None and started < self._cash_read_at:\n                return",
+      "mutated": "            if False:\n                return",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P2: una lettura piu' vecchia riporterebbe in vita una cassa superata."
+    },
+    {
+      "id": "runtime_get_status_exception_keeps_cash",
+      "module": "core.runtime_controller",
+      "area": "money_management",
+      "file": "core/runtime_controller.py",
+      "original": "            self.risk_desk.sync_cash_equity(None, None, reason=\"BALANCE_READ_EXCEPTION\", read_at=started_at)",
+      "mutated": "            pass",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P3: un'eccezione di lettura lascerebbe verificata la cassa precedente."
+    },
+    {
+      "id": "runtime_external_exposure_ignored",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    floor = committed + max(0.0, pending)\n",
+      "mutated": "    floor = committed\n",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Rilievo Codex P1 su dd0b02b: una riserva del bot non ancora a mercato assorbirebbe l'impegnato esterno (cap allargato)."
+    },
+    {
+      "id": "engine_entry_keeps_spoofed_protective",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "        payload = {k: v for k, v in payload.items() if k != \"protective\"}\n",
+      "mutated": "        payload = dict(payload)\n",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review Grok PFC-008: un ingresso con `protective` aggirerebbe il cap temporaneo Microstake senza cassa verificata."
+    },
+    {
+      "id": "validators_missing_external_counts_as_zero",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if base is None or committed is None or committed < 0:\n        return None, None",
+      "mutated": "    if base is None:\n        return None, None",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review Grok PFC-008: un RiskDesk senza impegnato leggibile varrebbe 'nessun impegnato' (fail-open)."
+    },
+    {
+      "id": "validators_committed_ignored_beyond_tables",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    return base, max(0.0, floor - max(0.0, tables_total))",
+      "mutated": "    return base, 0.0",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review PFC-008 P1: l'impegnato dello snapshot fuori dai tavoli del bot non verrebbe sottratto dai cap."
+    },
+    {
+      "id": "table_batch_placed_on_first_leg",
+      "module": "core.table_manager",
+      "area": "exposure",
+      "file": "core/table_manager.py",
+      "original": "                if len(acked) < int(legs_total):\n                    return False",
+      "mutated": "                if False:\n                    return False",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Review PFC-008 (S4): il lotto Dutching risulterebbe a mercato al primo esito di una gamba e le gambe in volo assorbirebbero l'impegnato esterno."
+    },
+    {
+      "id": "validators_tables_reread_race",
+      "module": "core.validators",
+      "area": "exposure",
+      "file": "core/validators.py",
+      "original": "        if tables_total is None:\n            tables_total = table_manager.total_exposure() if table_manager is not None else 0.0\n",
+      "mutated": "        tables_total = table_manager.total_exposure() if table_manager is not None else 0.0\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Sol su 7925fa7: rileggere i tavoli invece di usare il totale del chiamante fa sottostimare l'esposizione se una riserva viene rilasciata fra le letture."
+    },
+    {
+      "id": "entry_fresh_cap_skipped",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if cap_reason:\n            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,\n                                              reason=cap_reason)\n            return\n",
+      "mutated": "        if False:\n            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,\n                                              reason=cap_reason)\n            return\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 45c9aa2: senza il ricontrollo sulla lettura fresca d'ingresso un impegnato esterno cresciuto (o una cassa scesa) dopo l'ultima lettura registrata non riduce il cap e CMD_QUICK_BET parte oltre il 35%."
+    },
+    {
+      "id": "entry_fresh_cap_ignores_fresh_committed",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        vista = max(max(0.0, tavoli), committed + max(0.0, pendenti))\n",
+      "mutated": "        vista = max(0.0, tavoli)\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 45c9aa2: il ricontrollo che guarda solo i tavoli del bot ignora l'impegnato esterno della lettura fresca."
+    },
+    {
+      "id": "engine_submit_ack_not_published",
+      "module": "core.trading_engine",
+      "area": "exposure",
+      "file": "core/trading_engine.py",
+      "original": "        self._publish_bus_event(ctx, \"QUICK_BET_SUBMIT_ACK\", order_id=order_id)\n",
+      "mutated": "        pass\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "PFC-008: senza l'ACK sincrono la riserva accettata dal broker resta pendente e una lettura successiva la conta due volte nel cap totale (impegnato + pendenti)."
+    },
+    {
+      "id": "runtime_submit_ack_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED.\"\"\"\n        self._mark_table_placed(payload)\n",
+      "mutated": "        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED.\"\"\"\n        return None\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "PFC-008: l'ACK sincrono ricevuto ma non applicato lascia la riserva pendente (doppio conteggio nel cap totale)."
+    },
+    {
+      "id": "fresh_caps_single_skipped",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(order, self._max_single_stake_abs(base)):\n            return \"supera_max_single_bet\"\n",
+      "mutated": "        if False:\n            return \"supera_max_single_bet\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 4ce44a7: con la cassa scesa il singolo ordine resta approvato sul 18% della cassa registrata."
+    },
+    {
+      "id": "fresh_caps_event_skipped",
+      "module": "core.money_management",
+      "area": "exposure",
+      "file": "core/money_management.py",
+      "original": "        if validators.exceeds_cap(event, self._max_event_exposure_abs(base)):\n            return \"supera_max_event_exposure\"\n",
+      "mutated": "        if False:\n            return \"supera_max_event_exposure\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 4ce44a7: con la cassa scesa l'esposizione dell'evento resta approvata sulla cassa registrata."
+    },
+    {
+      "id": "funds_reading_stale_mutates_bankroll",
+      "module": "core.risk_desk",
+      "area": "exposure",
+      "file": "core/risk_desk.py",
+      "original": "            if iniziata is not None and ultima is not None and iniziata < ultima:\n                return False\n            if bankroll is not None:\n",
+      "mutated": "            if bankroll is not None:\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P2 su 4ce44a7: una lettura vecchia arrivata tardi riscrive il bankroll e invalida la cassa piu' recente."
+    },
+    {
+      "id": "cash_invalidation_without_read_barrier",
+      "module": "core.risk_desk",
+      "area": "exposure",
+      "file": "core/risk_desk.py",
+      "original": "        if self._cash_read_at is None or self._cash_read_at < adesso:\n            self._cash_read_at = adesso\n",
+      "mutated": "        if False:\n            self._cash_read_at = adesso\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Audit PF-FINANCIAL-IMPACT-GATE-01: senza la soglia una lettura iniziata prima di un settlement (o di uno snapshot/ripristino) rimette in vigore la cassa superata."
+    },
+    {
+      "id": "entry_read_superseded_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if letta_recente is None or read_at is None or float(letta_recente) < float(read_at):\n            return \"\"                                    # stesso istante: ricontrollo anche su quella (prudente)\n",
+      "mutated": "        if True:\n            return \"\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 0dbadbb: una lettura d'ingresso superata da una lettura piu' recente (cassa scesa o non verificata) approva ancora sulla cassa vecchia."
     }
   ]
 }

@@ -17,7 +17,24 @@ import pytest
 
 from core.system_state import RuntimeMode
 from tests.acceptance.test_issue437_pr27 import _rifiuti, _tavoli_occupati
-from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _decision, _signal
+from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain as _chain_base, _decision, _signal
+
+
+def _chain(tmp_path, **kwargs):
+    # Questi test isolano il gate dei fondi (MM sostituito da una decisione fissa): i cap percentuali, ricontrollati
+    # da PFC-008 sulla lettura fresca d'ingresso, sono dichiarati al 100% per non sovrapporsi.
+    c = _chain_base(tmp_path, **kwargs)
+    for key in ("max_single_bet_pct", "max_total_exposure_pct", "max_event_exposure_pct"):
+        setattr(c.rc.config, key, 100.0)
+    return c
+
+
+def _senza_ack(c):
+    """Ordine non ancora confermato a mercato: il TradingEngine non pubblica l'ACK sincrono (QUICK_BET_SUBMIT_ACK,
+    PFC-008), come quando la risposta del broker non e' ancora arrivata o l'esito e' AMBIGUOUS."""
+    publish = c.bus.publish
+    c.bus.publish = lambda topic, payload=None: None if topic == "QUICK_BET_SUBMIT_ACK" else publish(topic, payload)
+    return c
 
 
 def _con_fondi(c, available, exposure=0.0, **extra):
@@ -62,7 +79,7 @@ def test_back_entro_i_fondi_passa_anche_alla_soglia_esatta(tmp_path):
 def test_secondo_tavolo_conta_l_esposizione_gia_riservata(tmp_path):
     # Conto a 100; primo ingresso 60 riservato. Il conto non riflette ancora l'ordine (stesso disponibile):
     # il secondo 60 su un altro evento supererebbe i fondi => rifiutato.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     assert len(c.bus.payloads("CMD_QUICK_BET")) == 1
@@ -157,8 +174,8 @@ def _auto_next(next_signal, *, funds, riservato=0.0, pct_totale=None):
     rc, bus = _make_controller(responses=[funds])
     rc.mode = RuntimeMode.ACTIVE
     if pct_totale is not None:
-        # La percentuale di esposizione totale del MM non ha tetto superiore in config: oltre il 100%
-        # il cap percentuale non protegge piu' la cassa, resta solo il gate dei fondi.
+        # PFC-008: la percentuale di esposizione totale e' ammessa solo in (0, 100] e si applica alla cassa
+        # verificata (disponibile + impegnato); al 100% il cap percentuale lascia lavorare il gate dei fondi.
         rc.config.max_total_exposure_pct = pct_totale
     if riservato:
         # Un altro tavolo (id 2) tiene gia' un'entrata aperta: la sua esposizione impegna la cassa.
@@ -184,16 +201,18 @@ def _auto_next(next_signal, *, funds, riservato=0.0, pct_totale=None):
 def test_auto_next_lay_liability_oltre_i_fondi_e_rifiutato():
     rc, bus, esito = _auto_next(
         # Il tavolo 2 ha riservato 95 non ancora a mercato (l'exchange non lo vede: exposure 0).
-        # Cassa 100; liability LAY 2*(6-1)=10 entro max_single_bet (18% di 100) e, con
-        # max_total_exposure_pct=200, entro il cap percentuale (105 <= 200); ma
+        # Cassa verificata 100; liability LAY 2*(6-1)=10 entro max_single_bet (18% di 100); ma
         # 95 + 10 = 105 > 100 di cassa => la nuova entrata eccede i fondi.
+        # PFC-008: una percentuale > 100 non e' piu' ammessa (max_total_exposure_pct_non_valido) e al 100%
+        # il cap sulla cassa verificata ferma l'entrata prima del gate dei fondi (che resta provato da
+        # test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato, dove la cassa e' 200).
         {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
         funds={"available": 100.0, "exposure": 0.0},
         riservato=95.0,
-        pct_totale=200.0,
+        pct_totale=100.0,
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"].startswith("fondi_insufficienti"), esito
+    assert esito["reason"] == "supera_max_total_exposure", esito
 
 
 def test_auto_next_entro_i_fondi_passa():
@@ -210,7 +229,8 @@ def test_auto_next_con_fondi_non_validi_e_rifiutato():
         funds={"available": 150.0},                     # esposizione mancante: dato non valido
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"] == "fondi_non_verificabili", esito
+    # PFC-008: con l'esposizione mancante la cassa non e' verificabile e il MM nega prima del gate dei fondi.
+    assert esito["reason"] == "cassa_non_verificata:BALANCE_FIELD_MISSING", esito   # PFC-008: motivo esplicito
 
 
 # ---------------------------------------------------------------- servizio reale: lettura fallita
@@ -311,14 +331,17 @@ def test_ack_a_mercato_marca_il_tavolo_della_riserva_e_il_rilascio_lo_azzera():
 def test_auto_next_con_impegnato_esterno_e_riserva_pendente_e_rifiutato():
     # Snapshot del settlement: 100 disponibili + 100 impegnati esterni; tavolo 2 pendente da 95. LAY 2@6
     # (liability 10): 95 + 10 = 105 > 100 disponibili.
+    # PFC-008: il cap totale sulla cassa verificata (200) vede impegnato 100 + riserva pendente 95 + 10 = 205
+    # (rilievo Codex: una riserva pendente non "assorbe" l'impegnato esterno). Con cap <= 100% della cassa questo
+    # caso fallisce sempre prima il cap del gate fondi; il gate fondi resta provato dagli altri test del file.
     rc, bus, esito = _auto_next(
         {"market_id": "1.2", "selection_id": 2, "price": 6.0, "stake": 2.0, "bet_type": "LAY"},
         funds={"available": 100.0, "exposure": 100.0},
         riservato=95.0,
-        pct_totale=200.0,
+        pct_totale=100.0,
     )
     assert [e for e in bus.events if e[0] == "CMD_QUICK_BET"] == [], esito
-    assert esito["reason"].startswith("fondi_insufficienti"), esito
+    assert esito["reason"] == "supera_max_total_exposure", esito
 
 
 # ---------------------------------------------------------------- verifiche owner prima del merge (#531)
@@ -351,7 +374,7 @@ def test_sim_usa_il_saldo_simulato_senza_fondi_reali(tmp_path):
 def test_esito_incerto_non_e_rifiuto_definitivo_e_la_riserva_resta_addebitata(tmp_path):
     # Punto 2 owner: un AMBIGUOUS (timeout / risposta persa) non rilascia tavolo e chiave e non marca l'ordine
     # a mercato: la riserva resta e continua a consumare il disponibile per le nuove entrate.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     (primo,) = c.bus.payloads("CMD_QUICK_BET")
@@ -512,7 +535,7 @@ def test_lettura_iniziata_prima_del_success_vede_ancora_la_riserva_rilasciata(tm
     # Codex r4330918417: B inizia a leggere il conto, poi arriva il SUCCESS di A (60) che rilascia il tavolo;
     # la lettura di B restituisce il disponibile PRIMA del piazzamento (100). A va ancora addebitato a B:
     # 60 + 60 > 100 => B rifiutato.
-    c = _chain(tmp_path, stake=60.0, anti_duplication=True)
+    c = _senza_ack(_chain(tmp_path, stake=60.0, anti_duplication=True))
     _con_fondi(c, 100.0)
     c.rc._on_signal_received(_signal())
     (primo,) = c.bus.payloads("CMD_QUICK_BET")

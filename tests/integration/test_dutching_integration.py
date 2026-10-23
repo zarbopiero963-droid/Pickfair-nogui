@@ -1,5 +1,8 @@
 import pytest
 import math
+from types import SimpleNamespace
+
+from tests.risk_config_fixtures import explicit_risk_config
 
 from dutching import calculate_cashout, calculate_dutching_stakes, dynamic_cashout_single
 from controllers.dutching_controller import DutchingController
@@ -13,8 +16,10 @@ class _Runtime:
     mode = _Mode()
     duplication_guard = None
     table_manager = None
-    config = None
-    risk_desk = None
+    # PFC-008: i controlli di esposizione del Dutching non si saltano piu' con config/RiskDesk assenti; qui le
+    # percentuali sono esplicite al 100% e la cassa verificata ampia, cosi' i cap non intervengono nei calcoli testati.
+    config = explicit_risk_config(max_single_bet_pct=100.0, max_total_exposure_pct=100.0, max_event_exposure_pct=100.0)
+    risk_desk = SimpleNamespace(bankroll_current=100000.0, cash_equity_current=100000.0, cash_committed_exposure=0.0)
     dutching_batch_manager = None
 
 

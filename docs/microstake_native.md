@@ -46,8 +46,11 @@ sono raggiunti solo dall'engine o dal router). Importi >= 2 EUR restano sul perc
    nominale temporaneo da 2 EUR della procedura — nessun cap fisso 1/2 EUR sul Microstake. L'esposizione temporanea
    dello stub (BACK: 2 EUR; LAY: `2 × (stub − 1)`) resta però un rischio reale per pochi istanti e deve stare dentro
    ciò che è davvero disponibile: minimo fra fondi disponibili dell'exchange (servizio Betfair del runtime o, senza
-   runtime, il broker SIM) e headroom dell'esposizione totale configurata (`max_total_exposure` sul bankroll noto
-   meno l'esposizione aperta). I fondi disponibili sono una fonte **obbligatoria**: risposta assente, `ok=False` o
+   runtime, il broker SIM) e headroom dell'esposizione totale configurata (`max_total_exposure` sulla cassa
+   verificata meno l'esposizione aperta e quella esterna, PFC-008; percentuale mancante o cassa non verificata ⇒
+   cap non disponibile per un ingresso). **Eccezione PFC-008 (#548, mandato owner punto 5, PF-EXEC-03):** l'hedge
+   del cashout (`protective`, impostato solo dall'`OrderRouter`; l'engine lo toglie dagli ingressi) non è una
+   nuova entrata: l'headroom non lo limita mai e resta il solo limite dei fondi disponibili. I fondi disponibili sono una fonte **obbligatoria**: risposta assente, `ok=False` o
    senza `available` ⇒ cap non disponibile, nessuno stub (l'headroom locale da solo non basta; ciclo 4 #512,
    decisione owner 1 del 17/10). Nessuna fonte leggibile => BLOCKED (`transient_cap_unavailable`); uguale al limite
    consentito, oltre bloccato (owner #426 6141450045). Prova: `test_per_order_cap_of_one_euro_no_longer_blocks_...`,

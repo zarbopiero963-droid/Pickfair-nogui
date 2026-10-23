@@ -16,10 +16,13 @@ import os
 import sys
 from types import SimpleNamespace
 
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT
+
 import pytest
 
 import trading_config
 from core.system_state import RoserpinaConfig
+from tests.risk_config_fixtures import legacy_test_config
 from services.setting_service import SettingsService
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -41,12 +44,15 @@ class _Config:
     # Gate bloccanti RILASSATI (100%) => non interferiscono col warning testato.
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
+    target_profit_cycle_pct = 3.0  # PFC-008: obbligatoria anche nel Dutching
     max_single_bet_pct = 100.0
     # max_stake_pct volutamente ASSENTE di default: verifica fallback costante.
 
 
 class _RiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
+    cash_committed_exposure = 0.0  # PFC-008: nessun impegnato fuori dai tavoli
 
 
 class _DupGuard:
@@ -107,6 +113,7 @@ def _runtime_with(max_stake_pct=None, bankroll=None):
     if bankroll is not None:
         rt.risk_desk = _RiskDesk()
         rt.risk_desk.bankroll_current = bankroll
+        rt.risk_desk.cash_equity_current = rt.risk_desk.bankroll_current  # PFC-008: cassa verificata della lettura
     return rt
 
 
@@ -166,8 +173,12 @@ def test_lay_uses_liability_for_stake_pct(monkeypatch):
 
 def test_fail_open_bankroll_zero(monkeypatch):
     # bankroll 0 => nessun warning (fail-open), nessun blocco.
+    # PFC-008: i cap di esposizione richiedono la cassa verificata; disponibile 0 con cassa 1000 = tutto impegnato,
+    # lettura coerente. L'avviso max_stake_pct resta calcolato sul disponibile (0) e non scatta.
     _patch_results(monkeypatch, _BACK_OVER)
-    res = _controller(_runtime_with(bankroll=0.0)).precheck(_payload())
+    rt = _runtime_with(bankroll=0.0)
+    rt.risk_desk.cash_equity_current = 1000.0
+    res = _controller(rt).precheck(_payload())
     assert res["ok"] is True
     assert res["stake_pct_warning"] is False
     assert res["stake_pct_ratio"] == 0.0
@@ -207,7 +218,7 @@ class _InMemoryDB:
 
 def test_max_stake_pct_round_trip():
     db = _InMemoryDB()
-    SettingsService(db).save_roserpina_config(RoserpinaConfig(table_count=3, max_stake_pct=22.0))
+    SettingsService(db).save_roserpina_config(legacy_test_config(table_count=3, max_stake_pct=22.0))
     assert SettingsService(db).load_roserpina_config().max_stake_pct == 22.0
 
 
@@ -226,7 +237,9 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(max_stake_pct=27.0)
+        return SimpleNamespace(
+            **EXPLICIT_RISK_PCT,  # PFC-008: percentuali obbligatorie salvate dall'utente
+            max_stake_pct=27.0)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg

@@ -183,6 +183,27 @@ Bottone `Salva Roserpina`. I campi hard-stop sono fail-closed: vuoto = non
 impostato (il gate resta bloccante); valore non numerico o ≤0 (o % >100)
 annulla il salvataggio.
 
+PFC-008: `Target Profit Cycle %`, `Max Single Bet %`, `Max Total Exposure %` e
+`Max Event Exposure %` sono obbligatori. Una chiave mai salvata si mostra come
+campo vuoto (nessun valore di codice) e finché resta tale il runtime nega ogni
+nuovo ordine; al salvataggio vuoto, testo, NaN/inf, ≤0 o >100 lo annullano con
+«<campo>: obbligatorio (percentuale tra 0 e 100).», «<campo>: valore non
+numerico.» o «<campo>: deve essere maggiore di 0 e al massimo 100.» (virgola o
+punto ammessi). `Allow Recovery` mai salvato si carica spento.
+
+Configurazione guidata (PFC-008), solo se una delle quattro manca o non è
+valida: sotto il titolo della tab, testo arancione «Money Management da
+configurare: <campi>. Nuovi ingressi bloccati finché non salvi valori validi
+(tab Roserpina).»; lo stesso testo nella barra in alto (terza riga) con il
+bottone `Configura Money Management`, che apre la tab Roserpina; all'avvio la
+tab Roserpina si apre da sola. Sotto ciascuno dei quattro campi una riga grigia
+spiega a cosa serve e ricorda «Obbligatorio: maggiore di 0 e al massimo 100.».
+Con le quattro valide avviso e bottone spariscono e nulla viene richiesto ai
+riavvii. Configurazione illeggibile: «Configurazione Money Management non
+leggibile: nuovi ingressi bloccati, salvataggio sospeso.».
+[Screenshot reale](screenshots/pfc008-roserpina-guidata.png) (Xvfb, primo
+avvio con database nuovo, 1420×900).
+
 ## 8. Tab Simulazione
 
 Testo descrittivo: parametri attivi solo in SIMULAZIONE; «La commissione

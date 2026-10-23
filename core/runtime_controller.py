@@ -1494,6 +1494,7 @@ class RuntimeController:
         self.bus.subscribe("QUICK_BET_FILLED", self._on_quick_bet_filled)
         self.bus.subscribe("QUICK_BET_ROLLBACK_DONE", self._on_quick_bet_rollback_done)
         self.bus.subscribe("QUICK_BET_SUCCESS", self._on_quick_bet_success)
+        self.bus.subscribe("QUICK_BET_SUBMIT_ACK", self._on_quick_bet_submit_ack)
         self.bus.subscribe("QUICK_BET_DUPLICATE", self._on_quick_bet_duplicate)
         self.bus.subscribe("QUICK_BET_AMBIGUOUS", self._on_quick_bet_ambiguous)
         self.bus.subscribe("RUNTIME_CLOSE_POSITION", self._on_close_position)
@@ -4509,14 +4510,24 @@ class RuntimeController:
                 self._reject_signal(signal, "max_drawdown_abs_active")
                 return
 
+        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa, contro
+        # lo stesso totale dei tavoli passato come esposizione corrente (nessuna seconda lettura).
+        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,
+                                                     self.table_manager, tables_total=total_exposure)
         decision = self.mm.calculate(
             signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
+            cap_base_cash=cassa_e_esterna[0],  # PFC-008: cassa ed esposizione esterna della stessa lettura
+            external_exposure=cassa_e_esterna[1],
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
             event_current_exposure=event_exposure,
             table=table,
         )
+        if not decision.approved and decision.reason == "cassa_non_verificata":
+            # PFC-008: diagnostica esplicita del perche' la cassa non e' verificata.
+            decision.reason = "cassa_non_verificata:" + str(
+                getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
 
         # Enforcement A2: Max Open Exposure (Cap Assoluto €) (#320)
         order_exposure = validators.order_exposure_or_inf(  # PR28: LAY = liability
@@ -4703,6 +4714,16 @@ class RuntimeController:
         if funds_reason:
             self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
                                               reason=funds_reason)
+            return
+        # PFC-008 (rilievo Codex su 45c9aa2): il cap totale del MM usa la cassa dell'ultima lettura registrata; qui
+        # c'e' una lettura fresca, su cui si ricontrolla (impegnato esterno cresciuto, prelievo, settlement esterno).
+        # Rilievo Codex su 4ce44a7: anche singolo ordine ed evento, non solo il totale.
+        cap_reason = self._entry_total_cap_reason(entry_funds.get("funds"), entry_funds.get("read_at"),
+                                                  order_exposure=order_exposure, signal=signal,
+                                                  event_exposure_at_decision=event_exposure)
+        if cap_reason:
+            self._release_acquired_and_reject(signal, event_key=event_key, table_id=decision.table_id,
+                                              reason=cap_reason)
             return
 
         # PF-ALL-F030: la liquidita' eseguibile dell'ingresso singolo, alla quota finale, e' gia' nel
@@ -5935,6 +5956,63 @@ class RuntimeController:
         out.update(ok=True, available=available, committed=committed, cash_equity=available + committed)
         return out
 
+    # PFC-008: tolleranza sul confronto disponibile + impegnato == totale dello snapshot SIM (centesimo).
+    _CASH_TOTAL_TOLERANCE = 0.01
+
+    @classmethod
+    def _cash_equity_verification(cls, funds: Any) -> dict:
+        """PFC-008 (decisione owner #426 c.6369802091): cassa complessiva VERIFICATA di uno snapshot fondi.
+
+        La cassa vale disponibile + impegnato solo se lo snapshot e' valido (`_account_from_funds`: nessun
+        errore, campi presenti, finiti, disponibile >= 0) e coerente col contratto del broker:
+        - le riserve unmatched sono una PARTE dell'esposizione (SIM: `reserved_unmatched` <= exposure; LIVE:
+          l'exposure Betfair include gia' la liability degli unmatched), quindi non si sommano di nuovo;
+        - la liability LAY e' gia' nell'exposure (caso peggiore per scenario nel SIM, liability Betfair LIVE);
+        - SIM: disponibile + impegnato deve coincidere con `total` (la cassa del broker), altrimenti la
+          ricostruzione non e' verificata; LIVE: Betfair non espone il saldo e il contratto e'
+          availableToBetBalance + |exposure|.
+        Ritorna ``{"ok", "cash", "reason"}``; ok=False => nuove entrate negate (`cassa_non_verificata`)."""
+        account = cls._account_from_funds(funds)
+        if not account["ok"]:
+            return {"ok": False, "cash": None, "reason": account["reason"] or "CASH_ACCOUNT_INVALID"}
+        available, committed = account["available"], account["committed"]
+        if "reserved_unmatched" in funds:
+            reserved = validators.finite_number(funds.get("reserved_unmatched"))
+            if reserved is None or reserved < 0 or validators.exceeds_cap(reserved, committed):
+                return {"ok": False, "cash": None, "reason": "CASH_RESERVE_INCOHERENT"}
+        cash = available + committed
+        if funds.get("simulated") is True:
+            total = validators.finite_number(funds.get("total"))
+            if total is None or abs(cash - total) > cls._CASH_TOTAL_TOLERANCE:
+                return {"ok": False, "cash": None, "reason": "CASH_TOTAL_MISMATCH"}
+        if not cash > 0:
+            return {"ok": False, "cash": None, "reason": "CASH_NOT_POSITIVE"}
+        return {"ok": True, "cash": cash, "reason": ""}
+
+    def _sync_cash_equity_from_funds(self, funds: Any, available: Any, *, read_at: Any = None,
+                                     bankroll: Any = None) -> bool:
+        """PFC-008: registra nel RiskDesk la cassa verificata dello snapshot che ha dato `available`.
+
+        Insieme alla cassa registra l'impegnato dello stesso snapshot e l'istante di lettura: l'esposizione che
+        il cap totale deve vedere si calcola al momento della decisione (`validators.desk_cash_basis`) come il
+        maggiore fra i tavoli del bot e impegnato + riserve del bot non ancora riflesse in quella lettura, cosi'
+        ne' un'esposizione esterna (bet manuali, altre app) ne' una riserva pendente allargano il limite.
+        Con `bankroll` il disponibile si sincronizza nella stessa operazione, dopo il controllo di `read_at`
+        (`RiskDesk.sync_funds_reading`): una lettura arrivata tardi non tocca ne' bankroll ne' cassa (False)."""
+        verifica = self._cash_equity_verification(funds)
+        committed = self._account_from_funds(funds)["committed"] if verifica["ok"] else 0.0
+        applicata = self.risk_desk.sync_funds_reading(bankroll, verifica["cash"], available,
+                                                      reason=verifica["reason"], committed_exposure=committed,
+                                                      read_at=read_at)
+        if not applicata:
+            return False
+        motivo = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
+        if motivo and motivo != getattr(self, "_cash_warning_reason", ""):
+            # Una volta per motivo, non a ogni lettura di stato (la GUI legge i fondi periodicamente).
+            logger.warning("Cassa non verificata (%s): nuove entrate bloccate", motivo)
+        self._cash_warning_reason = motivo
+        return True
+
     def _read_funds_for_entry(self) -> dict:
         """#461 PR28-e: lettura fresca del conto per il gate fondi di una nuova entrata, da eseguire FUORI dal
         lock d'ammissione (rete). ``{"funds", "read_at"}``: ``read_at`` e' l'istante monotonic d'inizio lettura.
@@ -5951,6 +6029,51 @@ class RuntimeController:
         self._record_runtime_io(operation="betfair_get_account_funds", started_at=started_at, ok=not error,
                                 error=str(error or ""))
         return {"funds": funds, "read_at": started_at}
+
+    def _entry_total_cap_reason(self, funds: Any, read_at: Optional[float], *, order_exposure: Any,
+                                signal: dict, event_exposure_at_decision: Any) -> str:
+        """PFC-008: cap percentuali (singolo ordine, totale, evento) ricontrollati sulla lettura fresca d'ingresso.
+
+        La riserva dell'ingresso e' gia' sul tavolo (pendente): l'esposizione totale vista e'
+        max(tavoli, impegnato fresco + riserve non riflesse nella lettura); quella dell'evento e' la maggiore fra
+        quella valutata dal MM piu' il nuovo ordine e quella dei tavoli adesso. Tutto contro pct x cassa fresca
+        verificata (`RoserpinaMoneyManagement.fresh_caps_reason`). Cassa fresca non verificabile, percentuale non
+        valida o esposizione illeggibile => rifiuto ('' se tutti i cap reggono)."""
+        verifica = self._cash_equity_verification(funds)
+        if not verifica["ok"]:
+            return "cassa_non_verificata:" + str(verifica["reason"] or "CASH_NOT_READ")
+        try:
+            tavoli = float(self.table_manager.total_exposure())
+            pendenti = float(self.table_manager.pending_exposure(since=read_at))
+            evento_ora = float(self._event_current_exposure(signal))
+            evento_decisione = float(event_exposure_at_decision) + float(order_exposure)
+        except Exception:
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        if not all(math.isfinite(v) for v in (tavoli, pendenti, evento_ora, evento_decisione)):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        committed = self._account_from_funds(funds)["committed"]
+        vista = max(max(0.0, tavoli), committed + max(0.0, pendenti))
+        evento = max(evento_decisione, max(0.0, evento_ora))
+        reason = self.mm.fresh_caps_reason(cash=verifica["cash"], order_exposure=order_exposure,
+                                           total_exposure=vista, event_exposure=evento)
+        if reason:
+            return reason
+        # Rilievo Codex su 0dbadbb: una lettura piu' recente (es. get_status) applicata al RiskDesk mentre questa
+        # era in volo la supera. Si ricontrolla anche su quella; se non e' verificata, l'ingresso e' rifiutato.
+        cassa_recente, impegnato_recente, letta_recente = self.risk_desk.cash_basis()
+        if letta_recente is None or read_at is None or float(letta_recente) < float(read_at):
+            return ""                                    # stesso istante: ricontrollo anche su quella (prudente)
+        if cassa_recente is None:
+            return "cassa_non_verificata:" + str(getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
+        try:
+            pendenti_recenti = float(self.table_manager.pending_exposure(since=letta_recente))
+        except Exception:
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        if not math.isfinite(pendenti_recenti):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        vista_recente = max(max(0.0, tavoli), float(impegnato_recente) + max(0.0, pendenti_recenti))
+        return self.mm.fresh_caps_reason(cash=cassa_recente, order_exposure=order_exposure,
+                                         total_exposure=vista_recente, event_exposure=evento)
 
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la
@@ -5990,7 +6113,8 @@ class RuntimeController:
         """
         account = self._record_account_snapshot(funds, source="start", read_at=read_at)  # PF-ALL-F026
         if account["ok"]:
-            self.risk_desk.sync_bankroll(account["available"])
+            self._sync_cash_equity_from_funds(funds, account["available"], read_at=read_at,  # PFC-008
+                                              bankroll=account["available"])
             if not self._load_expansion_baseline():                   # F032: primo avvio => apre il ciclo
                 self._start_expansion_cycle("first_start", funds=funds)
         else:
@@ -6441,6 +6565,13 @@ class RuntimeController:
             # cancellare l'incertezza di un tavolo riassegnato allo stesso evento (rilievo Codex P1 su #533).
             self._mark_table_placed(payload)
         self._track_direct_order(payload, event_name="QUICK_BET_SUCCESS")
+
+    def _on_quick_bet_submit_ack(self, payload: dict) -> None:
+        """PFC-008: ACK sincrono del TradingEngine (risposta del broker accettata, stato SUBMITTED). Marca SOLO la
+        riserva come a mercato, cosi' una lettura del conto iniziata dopo la conta nell'impegnato e non anche fra
+        le riserve pendenti (nessun doppio conteggio nel cap totale). Nessun rilascio, nessun tracciamento TTL:
+        quelli restano agli esiti ACCEPTED/PARTIAL/FILLED/SUCCESS/FAILED."""
+        self._mark_table_placed(payload)
 
     def _on_quick_bet_ambiguous(self, payload: dict) -> None:
         self._track_direct_order(payload, event_name="QUICK_BET_AMBIGUOUS")
@@ -7247,7 +7378,8 @@ class RuntimeController:
             result["reason"] = "BALANCE_ZERO_AMBIGUOUS_OR_FALLBACK"
             return result
 
-        self.risk_desk.sync_bankroll(available_f)
+        # PFC-008: bankroll e cassa della stessa lettura in un'unica operazione (una lettura tardiva non li tocca).
+        self._sync_cash_equity_from_funds(funds, available_f, read_at=started_at, bankroll=available_f)
         self._processed_bankroll_sync_keys.add(settlement_key)
         result["bankroll_after"] = float(self.risk_desk.bankroll_current)
         result["bankroll_sync_status"] = "SYNC_SUCCESS"
@@ -7484,11 +7616,18 @@ class RuntimeController:
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
+        # PFC-008: base dei cap ed esposizione oltre i tavoli da un'unica lettura coerente della cassa, contro
+        # lo stesso totale dei tavoli passato come esposizione corrente (nessuna seconda lettura).
+        tavoli_ora = self.table_manager.total_exposure()
+        cassa_e_esterna = validators.desk_cash_basis(self.risk_desk, self.risk_desk.bankroll_current,
+                                                     self.table_manager, tables_total=tavoli_ora)
         decision = self.mm.evaluate_next_trade_after_settlement(
             signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
+            cap_base_cash=cassa_e_esterna[0],  # PFC-008: cassa ed esposizione esterna della stessa lettura
+            external_exposure=cassa_e_esterna[1],
             equity_peak=float(self.risk_desk.equity_peak),
-            current_total_exposure=self.table_manager.total_exposure(),
+            current_total_exposure=tavoli_ora,
             event_current_exposure=next_event_exposure,
             table=table,
             cycle_id=str(cycle_id or ""),
@@ -7555,6 +7694,9 @@ class RuntimeController:
                 result["cycle_executor_status"] = "CYCLE_SKIPPED_MM_BLOCKED"
                 result["recovery_status"] = "RECOVERY_SKIPPED_MM_BLOCKED" if has_checkpoint else result["recovery_status"]
             result["reason"] = str(decision.stop_reason or "mm_blocked")
+            if result["reason"] == "cassa_non_verificata":
+                # PFC-008: stessa diagnostica esplicita del percorso segnale.
+                result["reason"] += ":" + str(getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
             if settlement_key:
                 self._processed_auto_trade_keys.add(settlement_key)
             return result
@@ -8032,14 +8174,21 @@ class RuntimeController:
                 ok=False,
                 error=str(exc),
             )
+            # PFC-008: lettura fallita => la cassa precedente non resta verificata.
+            self.risk_desk.sync_cash_equity(None, None, reason="BALANCE_READ_EXCEPTION", read_at=started_at)
             raise
         bankroll_current = float(self.risk_desk.bankroll_current)
         # PFC-007: il bankroll si allinea solo a una lettura valida (niente errore, finita, non negativa);
         # prima un NaN arrivava a sync_bankroll e un errore con available 0 veniva ignorato a caso.
         lettura = self._account_from_funds(funds)
+        nuovo_bankroll = None
         if lettura["ok"] and lettura["available"] > 0.0 and lettura["available"] != bankroll_current:
-            bankroll_current = lettura["available"]
-            self.risk_desk.sync_bankroll(bankroll_current)
+            nuovo_bankroll = lettura["available"]
+        # PFC-008: cassa verificata della stessa lettura (anche a disponibile invariato); una lettura non
+        # valida la rende non verificata, mai la cassa di una lettura precedente. Bankroll e cassa insieme, dopo
+        # il controllo di read_at: una lettura arrivata tardi non li tocca (rilievo Codex su 4ce44a7).
+        self._sync_cash_equity_from_funds(funds, lettura["available"] if lettura["ok"] else None,
+                                          read_at=started_at, bankroll=nuovo_bankroll)
 
         snapshot = self.risk_desk.build_snapshot(
             runtime_mode=self.mode,
@@ -8057,6 +8206,9 @@ class RuntimeController:
         data["tables"] = self.table_manager.snapshot()
         data["duplication_guard"] = self.duplication_guard.snapshot()
         data["simulation_mode"] = bool(self.simulation_mode)
+        # PFC-008: diagnostica della base dei cap percentuali (None = cassa non verificata, entrate bloccate).
+        data["cash_equity_verified"] = getattr(self.risk_desk, "cash_equity_current", None)
+        data["cash_equity_reason"] = str(getattr(self.risk_desk, "cash_equity_reason", "") or "")
         data["execution_mode"] = str(self.execution_mode)
         data["live_enabled"] = bool(self.live_enabled)
         data["live_readiness_ok"] = bool(self.live_readiness_ok)

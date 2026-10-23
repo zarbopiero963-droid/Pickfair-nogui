@@ -436,6 +436,7 @@ def test_delay_seconds_fail_open_on_config_error():
 # ==========================================================================
 def test_config_round_trip():
     from core.system_state import RoserpinaConfig
+    from tests.risk_config_fixtures import legacy_test_config
     from services.setting_service import SettingsService
 
     class _DB:
@@ -450,7 +451,7 @@ def test_config_round_trip():
 
     db = _DB()
     SettingsService(db).save_roserpina_config(
-        RoserpinaConfig(table_count=3, auto_green_delay_enabled=True, auto_green_delay_sec=4.0)
+        legacy_test_config(table_count=3, auto_green_delay_enabled=True, auto_green_delay_sec=4.0)
     )
     r = SettingsService(db).load_roserpina_config()
     assert r.auto_green_delay_enabled is True and r.auto_green_delay_sec == 4.0
@@ -477,6 +478,7 @@ import sys  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "integration"))
 from test_mini_gui_integration import _install_mini_gui_fakes, FakeSettingsService  # noqa: E402
+from tests.risk_config_fixtures import EXPLICIT_RISK_PCT  # noqa: E402
 
 
 class _CapturingService(FakeSettingsService):
@@ -485,7 +487,8 @@ class _CapturingService(FakeSettingsService):
         self.saved_cfg = None
 
     def load_roserpina_config(self):
-        return SimpleNamespace(auto_green_delay_enabled=True, auto_green_delay_sec=6.0)
+        # PFC-008: percentuali obbligatorie dichiarate, altrimenti il salvataggio viene (giustamente) rifiutato.
+        return SimpleNamespace(auto_green_delay_enabled=True, auto_green_delay_sec=6.0, **EXPLICIT_RISK_PCT)
 
     def save_roserpina_config(self, cfg):
         self.saved_cfg = cfg

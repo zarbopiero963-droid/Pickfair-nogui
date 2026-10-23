@@ -18,11 +18,14 @@ class FakeConfig:
     allow_recovery = True
     max_total_exposure_pct = 100.0
     max_event_exposure_pct = 100.0
+    target_profit_cycle_pct = 3.0  # PFC-008: obbligatoria anche nel Dutching
     max_single_bet_pct = 100.0
 
 
 class FakeRiskDesk:
     bankroll_current = 1000.0
+    cash_equity_current = 1000.0  # PFC-008: cassa verificata
+    cash_committed_exposure = 0.0  # PFC-008: nessun impegnato fuori dai tavoli
 
 
 class FakeRuntime:
