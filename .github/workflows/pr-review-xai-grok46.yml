@@ -1073,7 +1073,8 @@ jobs:
           Sii concreto: cita file/area/motivo. Evita frasi generiche.
 
           Vincolo costo/output (RISPETTALO alla lettera):
-          - Review MIRATA e CORTA: MASSIMO 150 parole totali.
+          - Review MIRATA e CORTA: MASSIMO 150 parole totali (la riga finale
+            "SEGMENTI ESAMINATI: ..." NON conta nel limite).
           - SOLO due sezioni: "## Bloccanti" e "## Verdetto finale". Nessun'altra sezione.
           - In "Bloccanti" elenca SOLO problemi BLOCCANTI reali — bug, regressioni,
             sicurezza, segreti, money management/dutching, Betfair, race condition,
@@ -1168,17 +1169,25 @@ jobs:
           review_complete = att["complete"]
           done_line = done_marker if review_complete else ""
 
-          sezioni, costo_totale = [], 0.0
+          costo_totale = 0.0
+          lotti_testo, note_costo = [], []
           for indice, review, usage, user_prompt, esito in risultati:
               nota = usage_note(usage, system_prompt, user_prompt, review)
               trovato = re.search(r"Costo stimato base:\s*`~\$([0-9.]+)`", nota)
               if trovato:
                   costo_totale += float(trovato.group(1))
-              nota = nota.replace("Costo stimato base", "Costo stimato lotto")
+              note_costo.append(nota.replace("Costo stimato base", "Costo stimato lotto"))
+              lotti_testo.append({"indice": indice + 1, "totale": len(plan.batches), "text": review})
+          # Una sola coppia `## Bloccanti` / `## Verdetto finale` per range, con i
+          # bloccanti di tutti i lotti (rilievo Codex su #539): sezioni duplicate
+          # renderebbero la review UNKNOWN per il lettore del gate.
+          unita = rc.aggregate_reviews(lotti_testo)
+          sezioni = []
+          for (indice, review, usage, user_prompt, esito), dettaglio, nota in zip(risultati, unita["dettagli"], note_costo):
               stato = "revisionato" if esito["reviewed"] else "NON revisionato"
               sezioni.append(
-                  f"## Lotto {indice + 1}/{len(plan.batches)} — segmenti {', '.join(esito['segments'])} ({stato})\n\n"
-                  f"{review}\n{nota}"
+                  f"### Lotto {indice + 1}/{len(plan.batches)} — segmenti {', '.join(esito['segments'])} ({stato})\n\n"
+                  f"{dettaglio}\n{nota.replace('## Uso token', '#### Uso token')}"
               )
 
           body = f"""{marker}{done_line}
@@ -1198,6 +1207,13 @@ jobs:
 
           {manual_warning}
 
+          ## Bloccanti
+          {unita["bloccanti"]}
+
+          ## Verdetto finale
+          {unita["verdetto"]}
+
+          ## Dettaglio per lotto
           {chr(10).join(sezioni)}
 
           ## Uso token / costo stimato (totale)
@@ -1209,10 +1225,19 @@ jobs:
           Nota: questa review AI è un filtro tecnico economico, non sostituisce il controllo umano.
           """
 
+          # Un commento oltre il limite di GitHub verrebbe tagliato, e con lui i
+          # bloccanti dei lotti in coda: la review non sarebbe leggibile per
+          # intero, quindi la copertura non e' provata (rilievo Codex su #539).
+          motivi_pubblicazione = []
+          if len(body) > 64000:
+              motivi_pubblicazione.append(f"review di {len(body)} caratteri oltre il limite del commento: troncata")
+              body = body.replace(done_line, "", 1) if done_line else body
           if not upsert_comment(marker, body[:64000]):
+              motivi_pubblicazione.append("commento della review non pubblicato: la review non e' leggibile")
+          if motivi_pubblicazione:
               scrivi_attestazione(range_base, range_head, plan, [r[4] for r in risultati],
                                   compare_truncated=compare_truncated, esclusi=files_dal_base,
-                                  reasons=["commento della review non pubblicato: la review non e' leggibile"])
+                                  reasons=motivi_pubblicazione)
           PY
 
       - name: Upload review coverage attestation

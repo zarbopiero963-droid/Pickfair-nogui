@@ -8,6 +8,7 @@ e mostra la perdita; il secondo mostra che la segmentazione non perde nulla.
 from __future__ import annotations
 
 import ast
+import re
 import io
 import json
 import subprocess
@@ -459,3 +460,28 @@ def test_verify_non_aspetta_se_nessun_run_e_in_corso(monkeypatch, tmp_path):
     monkeypatch.setattr(rc.time, "sleep", lambda s: chiamate.append(s))
     code, out = _verify(monkeypatch, tmp_path, gh, SHA_2, locale=_attestazione(SHA_1, SHA_2, 12))
     assert code == 1 and chiamate == []
+
+
+def test_aggregate_una_sola_coppia_di_sezioni_canoniche():
+    pulito = "## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK\nSEGMENTI ESAMINATI: F001S01"
+    con_bug = "## Bloccanti\n- core/x.py: liability LAY ignorata\n## Verdetto finale\nNon approvo\nSEGMENTI ESAMINATI: F002S01"
+    rotto = "solo testo libero"
+    tutti_puliti = rc.aggregate_reviews([{"indice": 1, "totale": 2, "text": pulito},
+                                         {"indice": 2, "totale": 2, "text": pulito}])
+    assert tutti_puliti["bloccanti"] == "Nessun bloccante evidente"
+    misto = rc.aggregate_reviews([{"indice": 1, "totale": 3, "text": pulito},
+                                  {"indice": 2, "totale": 3, "text": con_bug},
+                                  {"indice": 3, "totale": 3, "text": rotto}])
+    assert "[lotto 2/3] core/x.py: liability LAY ignorata" in misto["bloccanti"]
+    assert "[lotto 3/3] sezione Bloccanti assente" in misto["bloccanti"]
+    assert "Nessun bloccante" not in misto["bloccanti"]
+    # i dettagli non contengono piu' titoli di secondo livello
+    assert all(not re.search(r"(?m)^##\s", d) for d in misto["dettagli"])
+
+
+def test_tetto_di_segmenti_per_lotto():
+    files = [{"filename": f"f{i}.py", "patch": "@@ -1 +1 @@\n+x\n", "changes": 1} for i in range(100)]
+    plan = rc.plan_review(files, max_segment_chars=7000, max_batch_chars=24000, max_calls=8)
+    assert all(len(b) <= rc.MAX_SEGMENTS_PER_BATCH for b in plan.batches)
+    assert len(plan.batches) == 3
+    assert "NON conta nel limite di parole" in rc.ack_instruction(["F001S01"])

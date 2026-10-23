@@ -188,12 +188,16 @@ def render_segment(seg: Segment) -> str:
     )
 
 
+MAX_SEGMENTS_PER_BATCH = 40
+
+
 def plan_review(
     files: Iterable[dict[str, Any]],
     *,
     max_segment_chars: int,
     max_batch_chars: int,
     max_calls: int,
+    max_segments_per_batch: int = MAX_SEGMENTS_PER_BATCH,
 ) -> Plan:
     """Segmenti e lotti di un range. `files` porta `filename`, `patch` (gia'
     redatto e neutralizzato) e opzionalmente `changes`.
@@ -226,7 +230,10 @@ def plan_review(
                 f"segmento {seg.seg_id} ({dimensione} caratteri) oltre il budget del lotto "
                 f"({max_batch_chars}): max_segment_chars deve stare sotto max_batch_chars"
             )
-        if corrente and usato + dimensione > max_batch_chars:
+        # Anche un tetto sul NUMERO di segmenti: con molti file piccoli un lotto
+        # porterebbe centinaia di id da riscontrare, e il riscontro non starebbe
+        # nella risposta corta richiesta al modello (rilievo Codex su #539).
+        if corrente and (usato + dimensione > max_batch_chars or len(corrente) >= max_segments_per_batch):
             plan.batches.append(corrente)
             corrente, usato = [], 0
         corrente.append(seg.seg_id)
@@ -242,9 +249,56 @@ def render_batch(plan: Plan, batch_index: int) -> str:
     return "".join(render_segment(segmenti[sid]) for sid in plan.batches[batch_index])
 
 
+_SEZIONE = {titolo: re.compile(rf"^##\s*{titolo}\s*$(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
+            for titolo in ("Bloccanti", "Verdetto finale")}
+_NESSUN_BLOCCANTE = re.compile(
+    r"[-*]?\s*nessun(?:o)?\s+bloccante(?:\s+(?:evidente|rilevato|rilevante|trovato|individuato))?\s*[.!]?",
+    re.IGNORECASE)
+
+
+def aggregate_reviews(lotti: list[dict[str, Any]]) -> dict[str, str]:
+    """Una sola coppia canonica `## Bloccanti` / `## Verdetto finale` per range.
+
+    Con piu' lotti ogni risposta porta le sue due sezioni: incollate una dopo
+    l'altra, il commento avrebbe sezioni duplicate, e il lettore delle review
+    (`pr_autonomy_policy._section`) tratta una sezione duplicata come schema
+    inatteso, UNKNOWN (rilievo Codex su #539). Qui i bloccanti di tutti i lotti
+    finiscono in un'unica sezione, ciascuno etichettato col suo lotto; un lotto
+    senza una sezione Bloccanti unica e' esso stesso un bloccante (non si legge,
+    quindi non e' pulito). Il testo integrale dei lotti resta nei dettagli, con i
+    titoli abbassati a `####`, cosi' non crea sezioni di primo livello.
+
+    `lotti`: dict con `indice` (1-based), `totale`, `text`.
+    """
+    bloccanti: list[str] = []
+    verdetti: list[str] = []
+    dettagli: list[str] = []
+    for lotto in lotti:
+        tag = f"[lotto {lotto['indice']}/{lotto['totale']}]"
+        testo = str(lotto.get("text") or "")
+        sezioni = _SEZIONE["Bloccanti"].findall(testo)
+        contenuto = sezioni[0].strip() if len(sezioni) == 1 else None
+        if not contenuto:
+            bloccanti.append(f"- {tag} sezione Bloccanti assente, vuota o duplicata: lotto non leggibile")
+        elif not _NESSUN_BLOCCANTE.fullmatch(contenuto):
+            for riga in contenuto.splitlines():
+                riga = riga.strip().lstrip("-*").strip()
+                if riga:
+                    bloccanti.append(f"- {tag} {riga}")
+        ver = _SEZIONE["Verdetto finale"].findall(testo)
+        sintesi = " ".join(ver[0].split()) if len(ver) == 1 and ver[0].strip() else "(verdetto assente)"
+        verdetti.append(f"- {tag} {sintesi}")
+        dettagli.append(re.sub(r"(?m)^#+[ \t]*", "#### ", testo))
+    return {
+        "bloccanti": "\n".join(bloccanti) if bloccanti else "Nessun bloccante evidente",
+        "verdetto": "\n".join(verdetti) if verdetti else "(nessun lotto)",
+        "dettagli": dettagli,
+    }
+
+
 def ack_instruction(batch_ids: list[str]) -> str:
     return (
-        "OBBLIGATORIO, come ULTIMA riga della risposta, esattamente:\n"
+        "OBBLIGATORIO, come ULTIMA riga della risposta (NON conta nel limite di parole), esattamente:\n"
         f"{ACK_PREFIX} " + ", ".join(batch_ids) + "\n"
         "elencando SOLO i segmenti che hai davvero letto per intero. Un segmento che non "
         "hai letto NON va elencato: la review di quel segmento verra' rifatta."

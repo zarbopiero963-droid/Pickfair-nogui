@@ -112,7 +112,12 @@ class Fake:
             citati = citati[:-1]
         if self.modo == "troncato" and len(self.prompt_ricevuti) == 1:
             finish = "length"
-        testo = "## Bloccanti\nNessun bloccante evidente\n## Verdetto finale\nOK\nSEGMENTI ESAMINATI: " + ", ".join(citati)
+        bloccanti = "Nessun bloccante evidente"
+        if self.modo == "bloccante_nel_secondo" and len(self.prompt_ricevuti) == 2:
+            bloccanti = "- modulo_x.py: stake raddoppiato"
+        corpo_extra = "x" * 33000 if self.modo == "lungo" else ""
+        testo = (f"## Bloccanti\n{bloccanti}\n## Verdetto finale\nOK {corpo_extra}\n"
+                 "SEGMENTI ESAMINATI: " + ", ".join(citati))
         corpo = {"choices": [{"message": {"content": testo}, "finish_reason": finish}],
                  "usage": {"prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 120}}
         return _Risposta(json.dumps(corpo).encode())
@@ -275,3 +280,39 @@ def test_tutti_i_lotti_girano_insieme(nome, tmp_path, monkeypatch):
     fake, att, _ = _esegui(nome, files, tmp_path, monkeypatch, prepara=barriera)
     assert len(fake.prompt_ricevuti) == lotti
     assert att["complete"] is True, att["reasons"]
+
+
+def _valida(commento: str, rid: str):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("pol", ROOT / "scripts" / "pr_autonomy_policy.py")
+    pol = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pol)
+    nome = "sol" if rid == "gpt56sol" else "grok"
+    return pol.validate_review({"reviewer": nome, "author": "github-actions[bot]", "body": commento}, HEAD)
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_review_a_piu_lotti_leggibile_dal_gate(nome, tmp_path, monkeypatch):
+    # Rilievo Codex su #539: con piu' lotti il commento aveva una coppia
+    # Bloccanti/Verdetto per lotto, e pr_autonomy_policy._section tratta le
+    # sezioni duplicate come schema inatteso (UNKNOWN).
+    fake, att, env = _esegui(nome, _diff_grande(4, 220), tmp_path, monkeypatch)
+    assert len(fake.prompt_ricevuti) > 1 and att["complete"] is True
+    assert _valida(fake.commenti[0], env["REVIEW_ID"])["status"] == "VALID_CLEAN"
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_un_bloccante_in_un_lotto_resta_visibile_al_gate(nome, tmp_path, monkeypatch):
+    fake, att, env = _esegui(nome, _diff_grande(4, 220), tmp_path, monkeypatch, modo="bloccante_nel_secondo")
+    esito = _valida(fake.commenti[0], env["REVIEW_ID"])
+    assert esito["status"] == "VALID_WITH_BLOCKERS"
+    assert "stake raddoppiato" in fake.commenti[0].split("## Bloccanti", 1)[1].split("## Verdetto finale")[0]
+
+
+@pytest.mark.parametrize("nome", sorted(WORKFLOWS))
+def test_review_oltre_il_limite_del_commento_non_copre(nome, tmp_path, monkeypatch):
+    # Rilievo Codex su #539: il commento veniva tagliato a 64000 caratteri in
+    # silenzio, perdendo i bloccanti dei lotti in coda.
+    fake, att, env = _esegui(nome, _diff_grande(2, 220), tmp_path, monkeypatch, modo="lungo")
+    assert att["complete"] is False and any("oltre il limite" in m for m in att["reasons"])
+    assert "-pr-review-done:" not in fake.commenti[0]

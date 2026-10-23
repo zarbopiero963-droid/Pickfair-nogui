@@ -134,7 +134,9 @@ workflow di Sol e Grok.
   si divide per righe, una riga più lunga per caratteri. La concatenazione dei
   segmenti è il patch originale, e ogni segmento ha id (`F003S02`) e sha256.
 - I segmenti si impacchettano in **lotti** entro `MAX_TOTAL_PATCH_CHARS`, nel
-  testo esatto che finisce nel prompt. Un lotto corrisponde a una chiamata al
+  testo esatto che finisce nel prompt, e con al massimo 40 segmenti per lotto:
+  con molti file piccoli il riscontro non starebbe nella risposta corta chiesta
+  al modello (rilievo Codex su #539). Un lotto corrisponde a una chiamata al
   modello.
 - I lotti girano **tutti insieme**, uno per worker, quindi il job dura quanto una
   chiamata e il timeout del job resta valido. Con meno worker che lotti le
@@ -154,9 +156,23 @@ Il prompt di ogni lotto elenca i propri segmenti e chiede come ultima riga
   non un errore del provider;
 - l'ultima riga di riscontro cita **tutti** i suoi segmenti.
 
-Vale solo l'**ultima riga non vuota** della risposta. Un riscontro seguito da un
+La riga di riscontro non conta nel limite di 150 parole. Vale solo l'**ultima
+riga non vuota** della risposta. Un riscontro seguito da un
 rifiuto, da un errore o da altro testo non chiude la review (rilievo Codex su
 #539).
+
+**Un solo commento leggibile dal gate.** Con più lotti, il commento pubblica una
+sola coppia `## Bloccanti` / `## Verdetto finale` (`aggregate_reviews`).
+- I bloccanti di tutti i lotti sono etichettati `[lotto i/n]`.
+- Un lotto senza una sezione Bloccanti unica conta esso stesso come bloccante.
+- Il testo integrale dei lotti resta nel dettaglio, con i titoli abbassati a
+  `####`.
+
+Il lettore delle review del gate (`pr_autonomy_policy._section`) tratta le
+sezioni duplicate come UNKNOWN (rilievo Codex su #539).
+
+Un commento oltre 64 000 caratteri verrebbe tagliato: la copertura risulta
+incompleta e il `done_marker` non viene scritto.
 
 ### 4.3 Attestazione
 
