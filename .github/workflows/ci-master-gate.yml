@@ -4,7 +4,10 @@ name: ci-master-gate
 # - `dynamic` (ci-dynamic-intelligent annidato): lo stesso workflow parte gia'
 #   da solo su ogni pull_request, quindi la copia annidata rifaceva detect, le
 #   lane di modulo, mutation e merge-simulation-hard una seconda volta;
-# - `merge-simulation-hard`: parte gia' da solo su ogni pull_request.
+# - `merge-simulation-hard`: parte gia' da solo su ogni pull_request;
+# - `live-gate`: parte gia' da solo sui suoi `paths` (rilievo Codex su #539), e
+#   il suo unico test (`tests/scripts/test_live_gate.py`) gira comunque in
+#   `full-suite` su ogni PR.
 # La suite completa non gira piu' qui dentro (backstop di ogni lane): gira una
 # volta sola nel check `full-suite`.
 
@@ -50,9 +53,6 @@ jobs:
 
   rate-limiter:
     uses: ./.github/workflows/rate-limiter.yml
-
-  live-gate:
-    uses: ./.github/workflows/live-gate.yml
 
   chaos-critical:
     uses: ./.github/workflows/chaos-critical.yml

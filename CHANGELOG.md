@@ -19,7 +19,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
     - `ci-dynamic-intelligent` tiene solo `detect`; `dutching`/`pnl-engine` partono una volta sola dai loro
       `paths` (quelli di `dutching` allargati ai due path che vedeva solo il detector; quelli di `pnl-engine` li
       coprivano gia'; un test vincola la copertura);
-    - `mutation-guardrails` gira una volta per push;
+    - `mutation-guardrails` gira una volta per push; `live-gate` non è più chiamato da `ci-master-gate` (parte
+      dai suoi `paths`, il suo test gira in `full-suite`);
     - il `push` dei workflow doppi gira solo su `main`;
     - i run degli SHA superati delle PR vengono cancellati (su `main` mai).
   - **Check `full-suite`** (`.github/workflows/full-suite.yml`, `scripts/ci/full_suite_gate.py`,

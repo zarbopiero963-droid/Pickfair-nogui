@@ -1,8 +1,8 @@
 # Orchestratori CI (`ci-master-gate`, `ci-dynamic-intelligent`)
 
 > **Aggiornamento PFC-002 (23/10/2026).**
-> - `ci-master-gate` non annida più `ci-dynamic-intelligent` né
->   `merge-simulation-hard`.
+> - `ci-master-gate` non annida più `ci-dynamic-intelligent`, né
+>   `merge-simulation-hard`, né `live-gate` (che parte dai suoi `paths`).
 > - `ci-dynamic-intelligent` non è più richiamabile (`workflow_call` tolto) e
 >   contiene solo `detect`. `dutching` e `pnl-engine` partono dai loro `paths`,
 >   che includono quelli del detector.

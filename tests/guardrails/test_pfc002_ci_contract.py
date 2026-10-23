@@ -310,3 +310,13 @@ def test_i_path_del_detector_restano_coperti_dalla_lane_diretta(regola, workflow
             if not any(f.match(path) or f.match(esempio) for f in filtri):
                 scoperti.append(path)
         assert scoperti == [], f"{workflow} ({evento}): path del detector senza lane diretta: {scoperti}"
+
+
+def test_live_gate_parte_da_un_solo_punto():
+    # Rilievo Codex su #539: live-gate partiva dai suoi paths E da ci-master-gate.
+    master = (WF / "ci-master-gate.yml").read_text(encoding="utf-8")
+    assert "live-gate.yml" not in master
+    on = _on(_wf("live-gate.yml"))
+    assert on["pull_request"]["paths"], "la lane diretta deve restare sui suoi paths"
+    # e il suo test gira comunque nella suite completa
+    assert (ROOT / "tests" / "scripts" / "test_live_gate.py").is_file()

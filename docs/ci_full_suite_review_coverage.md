@@ -40,6 +40,7 @@ trading, money management, Betfair o configurazione runtime.
 | Suite completa (`pytest` dell'intera raccolta) | 17 | **1**, nel check `full-suite` |
 | `mutation-guardrails` | fino a 3 (master, master→dynamic, dynamic) | **1** (`ci-master-gate`) |
 | `ci-dynamic-intelligent` | 2 (da solo e annidato) | **1** (da solo, solo `detect`: diagnostica) |
+| Lane `live-gate` | 2 su una PR che tocca i suoi file (path diretti + `ci-master-gate`) | **1** (path diretti; il suo test gira comunque in `full-suite`) |
 | Lane `dutching` / `pnl-engine` | 2 su una PR che tocca i loro file (path diretti + detector) | **1** (path diretti: per `dutching` allargati a `controllers/dutching_controller.py` e `dutching_state.py`; per `pnl-engine` già comprensivi dei path del detector. `test_i_path_del_detector_restano_coperti_dalla_lane_diretta` lo vincola) |
 | `merge-simulation-hard` | 3, ognuno con la suite completa | **1**, senza pytest: merge con il main più recente, marker, JSON dei guardrail |
 | Workflow con `push` + `pull_request` | 2 run per push sul branch della PR | 1 (`push` solo su `main`) |
