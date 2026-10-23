@@ -35,8 +35,8 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   headroom Microstake). Esempio: cassa 100 con 20 impegnati fuori dai tavoli, cap 35% ⇒ 15 di nuova esposizione.
 - **Cassa non verificata ⇒ BLOCKED** delle nuove entrate (MM `cassa_non_verificata:<motivo>`, Dutching,
   cap temporaneo Microstake), nessun ripiego neppure sul disponibile. Le uscite protettive (hedge del cashout,
-  `protective` dall'`OrderRouter`) non vengono bloccate: il loro cap temporaneo resta limitato ai fondi
-  disponibili (`validators.verified_cap_base`).
+  `protective` dall'`OrderRouter`, che l'engine toglie dagli ingressi) non vengono bloccate né dall'headroom del
+  cap totale: il loro cap temporaneo resta limitato ai fondi disponibili (#548, mandato owner PFC-008 punto 5).
 - Un campo mancante, non numerico, non finito o negativo rende lo snapshot non valido. Un'esposizione mancante
   **non** vale zero.
 - La base dello stake target non cambia rispetto a prima di F026. È provato da `stake_base_unchanged` nei test

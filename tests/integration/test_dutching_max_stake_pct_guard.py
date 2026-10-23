@@ -52,6 +52,7 @@ class _Config:
 class _RiskDesk:
     bankroll_current = 1000.0
     cash_equity_current = 1000.0  # PFC-008: cassa verificata
+    cash_external_exposure = 0.0  # PFC-008: nessun impegnato fuori dai tavoli
 
 
 class _DupGuard:

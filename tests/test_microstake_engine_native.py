@@ -94,7 +94,7 @@ def _runtime(broker, *, mode="SIMULATION", max_win=10000.0, bankroll=100.0, avai
         is_live_allowed=lambda: False,
         betfair_service=SimpleNamespace(simulation_broker=broker, _session_invalid=False,
                                         get_account_funds=lambda: dict(funds)),
-        config=cfg, mm=RoserpinaMoneyManagement(cfg), risk_desk=SimpleNamespace(bankroll_current=bankroll, cash_equity_current=bankroll),
+        config=cfg, mm=RoserpinaMoneyManagement(cfg), risk_desk=SimpleNamespace(bankroll_current=bankroll, cash_equity_current=bankroll, cash_external_exposure=0.0),
         table_manager=SimpleNamespace(total_exposure=lambda: open_exposure),
     )
 

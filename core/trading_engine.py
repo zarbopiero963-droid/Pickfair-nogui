@@ -2420,6 +2420,9 @@ class TradingEngine:
         # alias discordante e' un errore pre-invio (INVALID_SIDE), identico in
         # SIM e LIVE, e non diventa mai un esito del Microstake.
         payload = self._con_lato_valido(payload)
+        # PFC-008: `protective` lo imposta solo l'OrderRouter per l'hedge del cashout; un ingresso che lo porta
+        # (campo arrivato da un produttore a monte) non deve aggirare il cap temporaneo => si rimuove.
+        payload = {k: v for k, v in payload.items() if k != "protective"}
         coordinator = self._bound_native_microstake_executor(mode)
         execute = getattr(coordinator, "execute", None)
         if not callable(execute):
@@ -2620,18 +2623,19 @@ class TradingEngine:
                 and not isinstance(bankroll, bool) and math.isfinite(bankroll) and bankroll > 0):
             # PFC-008: base = cassa verificata (decisione owner #426 c.6369802091), l'esposizione aperta si
             # sottrae una sola volta. Percentuale non configurata/non valida o cassa non verificata => per un
-            # ingresso il cap non e' disponibile (BLOCKED); per un'uscita protettiva (hedge del cashout,
-            # `protective`) l'headroom non si puo' calcolare e resta il solo limite dei fondi disponibili:
-            # il blocco delle nuove entrate non ferma la riduzione dell'esposizione gia' aperta.
+            # ingresso il cap non e' disponibile (BLOCKED). Un'uscita protettiva (hedge del cashout,
+            # `protective`, impostato solo dall'OrderRouter) non e' una nuova entrata: l'headroom del cap
+            # totale non la limita mai, nemmeno con esposizione al cap, e resta il solo limite dei fondi
+            # disponibili (mandato owner PFC-008 punto 5, PF-EXEC-03; issue #548).
             pct_reason = validators.risk_pct_reason(
                 "max_total_exposure_pct", getattr(getattr(mm, "config", None), "max_total_exposure_pct", None))
-            cap_base = validators.verified_cap_base(getattr(desk, "cash_equity_current", None), bankroll)
-            if pct_reason or cap_base is None:
-                if payload.get("protective") is not True:
-                    return None
+            cap_base, external = validators.desk_cash_basis(desk, bankroll)
+            if payload.get("protective") is True:
+                pass
+            elif pct_reason or cap_base is None:
+                return None
             else:
                 try:
-                    external = float(getattr(desk, "cash_external_exposure", 0.0))
                     headroom = float(total_cap(cap_base)) - float(open_exposure()) - external
                 except Exception:
                     return None

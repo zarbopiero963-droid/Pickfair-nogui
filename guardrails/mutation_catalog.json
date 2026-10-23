@@ -2679,8 +2679,8 @@
       "module": "core.runtime_controller",
       "area": "money_management",
       "file": "core/runtime_controller.py",
-      "original": "            bankroll_current=self.risk_desk.bankroll_current,\n            cap_base_cash=getattr(self.risk_desk, \"cash_equity_current\", None),  # PFC-008",
-      "mutated": "            bankroll_current=self.risk_desk.bankroll_current,\n            cap_base_cash=None,  # PFC-008",
+      "original": "        cassa_e_esterna = self.risk_desk.cash_basis()   # PFC-008: un'unica lettura coerente sotto lock\n        decision = self.mm.calculate(",
+      "mutated": "        cassa_e_esterna = (None, 0.0)\n        decision = self.mm.calculate(",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
@@ -2691,12 +2691,12 @@
       "module": "core.trading_engine",
       "area": "money_management",
       "file": "core/trading_engine.py",
-      "original": "                if payload.get(\"protective\") is not True:\n                    return None",
-      "mutated": "                if True:\n                    return None",
+      "original": "            if payload.get(\"protective\") is True:\n                pass\n            elif pct_reason or cap_base is None:",
+      "mutated": "            if False:\n                pass\n            elif pct_reason or cap_base is None:",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
-      "rationale": "Mandato owner PFC-008 punto 5: l'hedge del cashout (uscita protettiva) verrebbe bloccato da percentuali mancanti o cassa non verificata."
+      "rationale": "Mandato owner PFC-008 punto 5 (#548): l'hedge del cashout (uscita protettiva) verrebbe bloccato da percentuali mancanti, cassa non verificata o headroom esaurito."
     },
     {
       "id": "runtime_cash_total_mismatch_accepted",
@@ -2727,12 +2727,13 @@
       "module": "core.trading_engine",
       "area": "money_management",
       "file": "core/trading_engine.py",
-      "original": "            if pct_reason or cap_base is None:",
-      "mutated": "            if pct_reason:",
+      "original": "            elif pct_reason or cap_base is None:\n                return None",
+      "mutated": "            elif pct_reason:\n                return None",
       "tests": [
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
-      "rationale": "PFC-008: senza cassa verificata il cap temporaneo d'ingresso userebbe total_cap(None) => eccezione o base non verificata."
+      "rationale": "PFC-008: senza cassa verificata il cap temporaneo d'ingresso userebbe total_cap(None) => eccezione o base non verificata.",
+      "equivalent": "Con cassa non verificata `desk_cash_basis` restituisce (None, None): senza questo controllo il ramo successivo calcola total_cap(None) - esposizione - None, solleva TypeError dentro il try e restituisce None (cap non disponibile, BLOCKED). Il risultato osservabile e' identico; il controllo esplicito resta come prima difesa leggibile. Comportamento verificato da test_microstake_ingresso_bloccato_senza_percentuale_o_cassa[35.0-None]."
     },
     {
       "id": "mm_external_exposure_not_subtracted",
@@ -2781,6 +2782,30 @@
         "tests/unit/test_pfc008_risk_pct_required.py"
       ],
       "rationale": "Review PFC-008 P1: l'impegnato dello snapshot fuori dai tavoli non verrebbe registrato come esposizione esterna."
+    },
+    {
+      "id": "engine_entry_keeps_spoofed_protective",
+      "module": "core.trading_engine",
+      "area": "money_management",
+      "file": "core/trading_engine.py",
+      "original": "        payload = {k: v for k, v in payload.items() if k != \"protective\"}\n",
+      "mutated": "        payload = dict(payload)\n",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review Grok PFC-008: un ingresso con `protective` aggirerebbe il cap temporaneo Microstake senza cassa verificata."
+    },
+    {
+      "id": "validators_missing_external_counts_as_zero",
+      "module": "core.validators",
+      "area": "money_management",
+      "file": "core/validators.py",
+      "original": "    if base is None or external is None or external < 0:\n        return None, None",
+      "mutated": "    if base is None:\n        return None, None",
+      "tests": [
+        "tests/unit/test_pfc008_risk_pct_required.py"
+      ],
+      "rationale": "Review Grok PFC-008: un RiskDesk senza esposizione esterna leggibile varrebbe 'nessun impegnato esterno' (fail-open)."
     }
   ]
 }

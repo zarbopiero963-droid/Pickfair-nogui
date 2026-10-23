@@ -4509,11 +4509,12 @@ class RuntimeController:
                 self._reject_signal(signal, "max_drawdown_abs_active")
                 return
 
+        cassa_e_esterna = self.risk_desk.cash_basis()   # PFC-008: un'unica lettura coerente sotto lock
         decision = self.mm.calculate(
             signal=self._with_expansion_snapshot(signal),   # F032
             bankroll_current=self.risk_desk.bankroll_current,
-            cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
-            external_exposure=getattr(self.risk_desk, "cash_external_exposure", 0.0),
+            cap_base_cash=cassa_e_esterna[0],  # PFC-008: cassa ed esposizione esterna della stessa lettura
+            external_exposure=cassa_e_esterna[1],
             equity_peak=self.risk_desk.equity_peak,
             current_total_exposure=total_exposure,
             event_current_exposure=event_exposure,
@@ -7548,11 +7549,12 @@ class RuntimeController:
                                    if isinstance(signal, dict) else 0.0)
         except Exception:
             next_event_exposure = float("inf")
+        cassa_e_esterna = self.risk_desk.cash_basis()   # PFC-008: un'unica lettura coerente sotto lock
         decision = self.mm.evaluate_next_trade_after_settlement(
             signal=self._with_expansion_snapshot(signal) if isinstance(signal, dict) else signal,   # F032
             bankroll_current=float(self.risk_desk.bankroll_current),
-            cap_base_cash=getattr(self.risk_desk, "cash_equity_current", None),  # PFC-008
-            external_exposure=getattr(self.risk_desk, "cash_external_exposure", 0.0),
+            cap_base_cash=cassa_e_esterna[0],  # PFC-008: cassa ed esposizione esterna della stessa lettura
+            external_exposure=cassa_e_esterna[1],
             equity_peak=float(self.risk_desk.equity_peak),
             current_total_exposure=self.table_manager.total_exposure(),
             event_current_exposure=next_event_exposure,

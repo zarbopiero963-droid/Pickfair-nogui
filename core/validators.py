@@ -325,6 +325,24 @@ def verified_cap_base(cash_equity, available):
     return cash
 
 
+def desk_cash_basis(risk_desk, available):
+    """PFC-008: ``(base dei cap, esposizione esterna)`` del RiskDesk, letti in un'unica lettura coerente.
+
+    ``(None, None)`` quando la cassa non e' verificata, l'esposizione esterna manca o non e' un numero finito
+    >= 0 (un oggetto senza il campo non vale "zero esterno": fail-closed)."""
+    reader = getattr(risk_desk, "cash_basis", None)
+    if callable(reader):
+        cash, external_raw = reader()
+    else:
+        cash = getattr(risk_desk, "cash_equity_current", None)
+        external_raw = getattr(risk_desk, "cash_external_exposure", None)
+    base = verified_cap_base(cash, available)
+    external = finite_number(external_raw)
+    if base is None or external is None or external < 0:
+        return None, None
+    return base, external
+
+
 def reaches_limit(amount, limit) -> bool:
     """True se `amount` raggiunge `limit` (soglia di arresto, con tolleranza)."""
     return amount >= limit or math.isclose(amount, limit, rel_tol=EXPOSURE_REL_TOL, abs_tol=EXPOSURE_ABS_TOL)

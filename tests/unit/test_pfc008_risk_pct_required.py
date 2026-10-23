@@ -199,7 +199,7 @@ def _dutching(monkeypatch, *, legs, cash=None, available=80.0, total=20.0, **pct
 
     monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
     runtime = FakeRuntime()
-    runtime.risk_desk = SimpleNamespace(bankroll_current=available, cash_equity_current=cash)
+    runtime.risk_desk = SimpleNamespace(bankroll_current=available, cash_equity_current=cash, cash_external_exposure=0.0)
     runtime.table_manager.total_exposure = lambda: total
     for k, v in pct.items():
         setattr(runtime.config, k, v)
@@ -241,7 +241,7 @@ def test_dutching_config_assente_nega(monkeypatch):
     monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
     runtime = FakeRuntime()
     runtime.config = None
-    runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0)
+    runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0, cash_external_exposure=0.0)
     ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
     out = ctrl.precheck({"market_id": "1.300", "total_stake": 1.0, "simulation_mode": True,
                          "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"}]})
@@ -447,9 +447,12 @@ def test_microstake_hedge_protettivo_non_bloccato(pct, cash):
     assert TradingEngine._native_transient_cap(_motore(pct, cash), {"protective": True}) == pytest.approx(80.0)
 
 
-def test_microstake_hedge_protettivo_resta_nei_fondi_con_config_valida():
-    # Con config e cassa valide il cap dell'hedge e' quello di sempre (min fondi, headroom).
-    assert TradingEngine._native_transient_cap(_motore(35.0, 100.0), {"protective": True}) == pytest.approx(15.0)
+def test_microstake_hedge_protettivo_non_limitato_dall_headroom():
+    # #548 / mandato PFC-008 punto 5: con esposizione al cap l'ingresso ha headroom 0, l'hedge resta nei fondi.
+    m = _motore(35.0, 100.0)
+    m.runtime_controller.table_manager = SimpleNamespace(total_exposure=lambda: 35.0)
+    assert TradingEngine._native_transient_cap(m, {}) == pytest.approx(0.0)
+    assert TradingEngine._native_transient_cap(m, {"protective": True}) == pytest.approx(80.0)
 
 
 def test_order_router_marca_l_hedge_come_protettivo():
@@ -652,3 +655,45 @@ def test_mm_lockdown_resta_prima_dei_nuovi_blocchi():
         signal={"price": 3.0, "side": "BACK", "daily_loss_snapshot": 10.0}, bankroll_current=100.0,
         equity_peak=100.0, current_total_exposure=0.0, event_current_exposure=0.0, table=None)
     assert d.desk_mode is DeskMode.LOCKDOWN and d.approved is False
+
+
+# --- review Grok su 9c3e172 --------------------------------------------------------------------------------------
+
+def test_ingresso_con_protective_spoofato_non_aggira_il_cap_temporaneo():
+    # Solo l'OrderRouter (hedge del cashout) puo' marcare `protective`: un ingresso che lo porta non salta il cap.
+    from tests.test_microstake_engine_native import _engine, _orders, _payload
+    engine, broker, _ = _engine(bankroll=100.0)
+    engine.runtime_controller.risk_desk.cash_equity_current = None           # cassa non verificata
+    res = engine.submit_quick_bet(dict(_payload("spoof", size=0.10, price=2.0), protective=True))
+    assert res["ok"] is False and "transient_cap_unavailable" in str(res["error"]) and _orders(broker) == []
+
+
+@pytest.mark.parametrize("desk", [
+    SimpleNamespace(cash_equity_current=100.0),                               # campo esterno mancante
+    SimpleNamespace(cash_equity_current=100.0, cash_external_exposure=None),
+    SimpleNamespace(cash_equity_current=100.0, cash_external_exposure=float("nan")),
+    SimpleNamespace(cash_equity_current=None, cash_external_exposure=0.0),
+])
+def test_base_e_esterna_assenti_non_valgono_zero(desk):
+    assert validators.desk_cash_basis(desk, 80.0) == (None, None)
+
+
+def test_base_e_esterna_dalla_stessa_lettura():
+    desk = RiskDesk()
+    desk.sync_bankroll(80.0)
+    desk.sync_cash_equity(100.0, 80.0, external_exposure=20.0)
+    assert desk.cash_basis() == (100.0, 20.0)
+    assert validators.desk_cash_basis(desk, 80.0) == (100.0, 20.0)
+
+
+def test_dutching_risk_desk_senza_esposizione_esterna_blocca(monkeypatch):
+    def fake_calculate_dutching(selections, total_stake):
+        _ = selections, total_stake
+        return ([{"selectionId": 1, "price": 3.0, "stake": 0.5, "side": "BACK"}], 1.0, 90.0)
+    monkeypatch.setattr("controllers.dutching_controller.calculate_dutching", fake_calculate_dutching)
+    runtime = FakeRuntime()
+    runtime.risk_desk = SimpleNamespace(bankroll_current=80.0, cash_equity_current=100.0)
+    ctrl = DutchingController(bus=SimpleNamespace(publish=lambda *a, **k: None), runtime_controller=runtime)
+    out = ctrl.precheck({"market_id": "1.300", "total_stake": 0.5, "simulation_mode": True,
+                         "selections": [{"selectionId": 1, "price": 3.0, "side": "BACK"}]})
+    assert out["ok"] is False and out["reason"] == "cassa_non_verificata"

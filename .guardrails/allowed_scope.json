@@ -2584,7 +2584,7 @@
       "max_files": 10
     },
     "pfc008-risk-pct-required-verified-cash": {
-      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato.",
+      "description": "Roadmap canonica #461, PFC-008 = M019 (C3/t80u: chiavi pct e recovery assenti => blocco / nessun recovery, +F10 loader/GUI) + M020 (C1: nessun cap monetario fisso, config.example + test di guardia), con le decisioni owner #426 c.6369802091 (cap percentuali sulla cassa complessiva verificata, esposizione contata una volta) e i mandati owner PF-AUTONOMOUS-ENGINEERING-EXECUTION-01 e PFC-008 del 23/10/2026 (cassa non verificabile => BLOCKED senza ripiego; configurazione guidata F10 minimale; uscite protettive non bloccate). Le quattro percentuali non hanno default (loader, dataclass, GUI); MM, Dutching e cap temporaneo Microstake negano con <chiave>_non_configurato/_non_valido e cassa_non_verificata:<motivo>; RiskDesk tiene la cassa verificata della stessa lettura; l'hedge del cashout e' marcato protective. Test adeguati ai default rimossi con fixture esplicite (tests/risk_config_fixtures.py). Merge manuale owner. LIVE resta disabilitato. Estensione dichiarata dei files della propria task key: docs/microstake_native.md (eccezione dell'hedge protettivo dall'headroom, #548).",
       "files": [
         ".guardrails/allowed_scope.json",
         "CHANGELOG.md",
@@ -2599,6 +2599,7 @@
         "core/validators.py",
         "docs/design/design_handoff.md",
         "docs/design/screenshots/pfc008-roserpina-guidata.png",
+        "docs/microstake_native.md",
         "docs/roserpina41_parameter_dossier.md",
         "docs/roserpina_bankroll_equity.md",
         "guardrails/mutation_catalog.json",
@@ -2658,7 +2659,7 @@
         "tests/unit/test_pfc008_risk_pct_required.py",
         "tests/unit/test_pr5_numeric_guardrails.py"
       ],
-      "max_files": 71
+      "max_files": 72
     }
   }
 }

@@ -143,6 +143,12 @@ class RiskDesk:
                 self.cash_equity_reason = ""
                 self.cash_external_exposure = external
 
+    def cash_basis(self) -> tuple:
+        """PFC-008: ``(cassa, esposizione_esterna)`` letti insieme sotto lock: base dei cap e impegnato fuori dai
+        tavoli appartengono sempre alla stessa lettura. Cassa None = non verificata."""
+        with self._lock:
+            return self.cash_equity_current, self.cash_external_exposure
+
     def set_bankroll_start(self, bankroll_start: float) -> None:
         with self._lock:
             bankroll_start = float(bankroll_start or 0.0)

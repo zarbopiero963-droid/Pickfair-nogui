@@ -725,11 +725,6 @@ class DutchingController:
             return float(getattr(risk_desk, "bankroll_current", 0.0) or 0.0)
         return 0.0
 
-    def _cap_base(self, bankroll: float) -> Optional[float]:
-        """PFC-008: base dei cap percentuali = cassa verificata del RiskDesk (stessa regola del MM); None = BLOCKED."""
-        risk_desk = self._risk_desk()
-        return validators.verified_cap_base(getattr(risk_desk, "cash_equity_current", None), bankroll)
-
     def _risk_caps_basis(self, config: Any, bankroll: float):
         """PFC-008: percentuali obbligatorie e cassa verificata prima di ogni controllo di esposizione.
 
@@ -739,9 +734,8 @@ class DutchingController:
         if pct_reason:
             return self._fail("Limite di rischio % non configurato o non valido", reason=pct_reason), None, None
         risk_desk = self._risk_desk()
-        cap_base = self._cap_base(bankroll)
-        external = validators.finite_number(getattr(risk_desk, "cash_external_exposure", 0.0))
-        if cap_base is None or external is None or external < 0:
+        cap_base, external = validators.desk_cash_basis(risk_desk, bankroll)
+        if cap_base is None:
             return self._fail("Cassa non verificata: nessun nuovo ingresso", reason="cassa_non_verificata",
                               cash_reason=str(getattr(risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
                               ), None, None
