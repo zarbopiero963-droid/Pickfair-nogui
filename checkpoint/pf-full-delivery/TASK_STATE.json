@@ -56,9 +56,9 @@
   "#536 PR #537 cicli fix 1-6 fino a ae10708 (seq 62-63)",
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)"
  ],
- "lotto_corrente": "PFC-001 MERGED (99250c5, tree = b83fde3, CI main verde, suite 8896/15/5); PFC-002 in sviluppo sul branch ccr-764b0316-9r1a1d ripartito da main",
+ "lotto_corrente": "PFC-002 PR #539 aperta su 96d61de; STOP CREDITI ESAURITI Grok (xAI 403) sul range 50a8427...96d61de",
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "PFC-002 = M156 + M130 + M159: dedup CI, check full-suite obbligatorio, copertura review segmentata e attestata, Merge Readiness con check obbligatori SUCCESS; test RED->GREEN; PR unica, merge OWNER; istruzioni ruleset all owner (ENFORCEMENT PENDING OWNER). NO LIVE.",
+ "next_atomic_action": "Attendere ricarica crediti xAI e \"prosegui\" owner. Poi: rerun Grok su 96d61de, triage Codex su 96d61de, CI settled (full-suite, mutation, Merge Readiness), risolvere i thread corretti, verdetto READY_FOR_OWNER_MANUAL_MERGE con IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre.",
  "pr_505": "aperta, head 618884e, NON toccata e non commentata (owner 18/10: nessuna pubblicazione sulla #505 senza autorizzazione). Correzione GUI campo vuoto => cap opzionale disattivato: PATCH PREPARED nel worktree isolato wt_cap505 (branch lots/pf-cap-505-reconciliation, 6 commit fino a 022ee9d, RED 10 failed -> GREEN, suite 4440 passed, 3 riesami applicati); patch archiviate in results/cap_505_reconciliation_prep/",
  "schema": "pf-task-state/1",
  "tests_missing": [

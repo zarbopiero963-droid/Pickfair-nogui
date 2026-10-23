@@ -1,7 +1,0 @@
-{
-  "description": "Contratto del check full-suite (PFC-002). Abbassare una soglia e' una modifica esplicita e visibile nel diff, a merge owner come tutto scripts/ci. Baseline: CI di #538 su b83fde3 = 8896 passed, 15 skipped, 5 xfailed (8916 raccolti).",
-  "min_collected": 8916,
-  "max_skipped": 15,
-  "max_xfailed": 5,
-  "forbidden_pytest_args": ["-k", "-m", "--deselect", "--lf", "--last-failed", "--ff", "--sw", "--stepwise", "-x", "--exitfirst", "--maxfail"]
-}

@@ -3,11 +3,11 @@
  "checkpoint_commit": null,
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "99250c57f9d58ba758b0e0655f941e74172048aa"
+  "sha": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89"
  },
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
- "next_atomic_action": "PFC-002 = M156 + M130 + M159: dedup CI, check full-suite obbligatorio, copertura review segmentata e attestata, Merge Readiness con check obbligatori SUCCESS; test RED->GREEN; PR unica, merge OWNER; istruzioni ruleset all owner (ENFORCEMENT PENDING OWNER). NO LIVE.",
- "previous_checkpoint_sha": "c22bc41e0cf215615cbad191462d23e0880fa4a3",
+ "next_atomic_action": "Attendere ricarica crediti xAI e \"prosegui\" owner. Poi: rerun Grok su 96d61de, triage Codex su 96d61de, CI settled (full-suite, mutation, Merge Readiness), risolvere i thread corretti, verdetto READY_FOR_OWNER_MANUAL_MERGE con IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre.",
+ "previous_checkpoint_sha": "d3921afb3ec38d3f0582bc6ad0972e6f8dd5c8bd",
  "schema": "pf-current/1",
- "seq": 68
+ "seq": 69
 }

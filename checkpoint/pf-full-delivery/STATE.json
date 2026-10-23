@@ -1,6 +1,6 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 68,
+ "seq": 69,
  "updated_at": "2026-10-22T18:10:15Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "PFC-002 = M156 + M130 + M159: dedup CI, check full-suite obbligatorio, copertura review segmentata e attestata, Merge Readiness con check obbligatori SUCCESS; test RED->GREEN; PR unica, merge OWNER; istruzioni ruleset all owner (ENFORCEMENT PENDING OWNER). NO LIVE.",
+ "next_atomic_action": "Attendere ricarica crediti xAI e \"prosegui\" owner. Poi: rerun Grok su 96d61de, triage Codex su 96d61de, CI settled (full-suite, mutation, Merge Readiness), risolvere i thread corretti, verdetto READY_FOR_OWNER_MANUAL_MERGE con IMPLEMENTATION READY / ENFORCEMENT PENDING OWNER. Nessun merge autonomo, nessun LIVE, PFC-003 non si apre.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "c22bc41e0cf215615cbad191462d23e0880fa4a3",
- "lotto_corrente": "PFC-001 MERGED (99250c5, tree = b83fde3, CI main verde, suite 8896/15/5); PFC-002 in sviluppo sul branch ccr-764b0316-9r1a1d ripartito da main",
+ "previous_checkpoint_sha": "d3921afb3ec38d3f0582bc6ad0972e6f8dd5c8bd",
+ "lotto_corrente": "PFC-002 PR #539 aperta su 96d61de; STOP CREDITI ESAURITI Grok (xAI 403) sul range 50a8427...96d61de",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -601,61 +601,14 @@
  "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "99250c57f9d58ba758b0e0655f941e74172048aa",
+  "sha": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
   "patch": {
-   "head": "99250c57f9d58ba758b0e0655f941e74172048aa",
-   "tree": "0594c58b7da44d18ba98bc0ee62821e3876816a9",
-   "captured_at": "2026-10-23T06:36:58+00:00",
-   "modified": [
-    ".github/workflows/_module-ultra-check.yml",
-    ".github/workflows/ci-dynamic-intelligent.yml",
-    ".github/workflows/ci-master-gate.yml",
-    ".github/workflows/core-guardrails.yml",
-    ".github/workflows/core-invariants.yml",
-    ".github/workflows/dutching.yml",
-    ".github/workflows/e2e.yml",
-    ".github/workflows/failure.yml",
-    ".github/workflows/incident-snapshot.yml",
-    ".github/workflows/integration.yml",
-    ".github/workflows/live-gate.yml",
-    ".github/workflows/merge-simulation-hard.yml",
-    ".github/workflows/net.yml",
-    ".github/workflows/observability-minimum.yml",
-    ".github/workflows/observability-tests.yml",
-    ".github/workflows/pnl-engine.yml",
-    ".github/workflows/pr-check.yml",
-    ".github/workflows/pr-review-openrouter-gpt56-sol.yml",
-    ".github/workflows/pr-review-xai-grok46.yml",
-    ".github/workflows/readiness-gate.yml",
-    ".github/workflows/reconciliation-engine.yml",
-    ".github/workflows/recovery-guardrails.yml",
-    ".github/workflows/repo-guardrails.yml",
-    ".github/workflows/rollback-gate.yml",
-    ".github/workflows/smoke-core-fast.yml",
-    ".github/workflows/smoke.yml",
-    ".github/workflows/trading-engine-hard-tests.yml",
-    ".github/workflows/unit.yml",
-    "scripts/pr_flow_automation.py",
-    "tests/guardrails/test_gpt56sol_su_openrouter.py",
-    "tests/scripts/test_pr_flow_automation.py",
-    "tests/testsuite/test_false_green_semantics.py"
-   ],
-   "untracked": [
-    ".github/workflows/full-suite.yml",
-    "scripts/ci/full_suite_contract.json",
-    "scripts/ci/full_suite_gate.py",
-    "scripts/ci/full_suite_plugin.py",
-    "scripts/ci/required_checks.json",
-    "scripts/ci/review_coverage.py"
-   ],
+   "head": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
+   "tree": "0d38c410eca21e7da0a87a79f79f3faf9859eba9",
+   "captured_at": "2026-10-23T07:49:20+00:00",
+   "modified": [],
+   "untracked": [],
    "files": [
-    "code_patch/tracked.patch",
-    "code_patch/untracked/.github/workflows/full-suite.yml",
-    "code_patch/untracked/scripts/ci/full_suite_contract.json",
-    "code_patch/untracked/scripts/ci/full_suite_gate.py",
-    "code_patch/untracked/scripts/ci/full_suite_plugin.py",
-    "code_patch/untracked/scripts/ci/required_checks.json",
-    "code_patch/untracked/scripts/ci/review_coverage.py",
     "code_patch/BASELINE.json"
    ],
    "skipped_symlinks": {}
@@ -695,6 +648,12 @@
   "reconciliation_readonly": "PF-POST-PR29C-MERGE-AND-RECONCILIATION-01 (22/10): riconciliazione globale read-only autorizzata; Parallel Factory PENDING"
  },
  "tests_executed": [
+  {
+   "id": "pfc002_full_suite_ci_e4ca0ec",
+   "status": "PASS",
+   "sha": "e4ca0ecd8168ef2fcc3c918543da28b359640bc6",
+   "result": "9029 passed, 15 skipped, 5 xfailed (CI full-suite)"
+  },
   {
    "id": "pfc001_postmerge_main",
    "status": "PASS",
@@ -1461,5 +1420,13 @@
    "main_full_suite": "8896 passed, 15 skipped, 5 xfailed in 752.65s (reconciliation-engine ultra-check job 120271615734)",
    "registry": "#461 c.6359042506"
   }
+ },
+ "pfc002": {
+  "pr": 539,
+  "head": "96d61defa9480a7e25e0cc1c5ff64b9c3dea5c89",
+  "fix_loop": "6/10",
+  "ci_measured": "e4ca0ec: full-suite 9049 raccolti/9029 passed/15 skipped/5 xfailed in 742s; 52.8 job-min, wall 15m43s (prima 342-391 job-min, 25-30 min)",
+  "local": "regressione gate 9021 raccolti (2 transitori poi verdi), mutation 195 score 100 PASS, policy suite 2933 passed",
+  "stop": "CREDITI_ESAURITI Grok, #539 c.6360141896, #426 c.6360142758"
  }
 }
