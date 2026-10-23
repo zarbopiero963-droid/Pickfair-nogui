@@ -10,6 +10,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-006 — G7-c: riavvio con ordini SIM non abbinati (roadmap #461, decisione owner #531):**
+  - il `SimulationBroker` scrive lo snapshot di reload (`simulation_state`) dopo ogni operazione che cambia
+    ordini o fondi, prima di rispondere: piazzamento, batch, cancellazione (singola, parziale, di tutto il
+    mercato), sostituzione, fill differiti e settlement. Prima lo scriveva solo il servizio, all'aggiornamento
+    del book o alla disconnessione: un crash subito dopo un piazzamento faceva sparire l'ordine e liberava la
+    sua riserva; uno dopo una cancellazione resuscitava l'ordine `EXECUTABLE`, che con l'abbinamento
+    differito poteva abbinarsi;
+  - la cancellazione di tutto il mercato scrive anche la cronologia per-bet (prima no);
+  - uno snapshot di reload NON scritto (errore del DB) si dichiara nell'esito dell'operazione
+    (`snapshot_persisted: false`, anche per batch, sostituzione, cancellazione e book con fill differiti o
+    settlement) e si registra come errore, invece di restare un successo silenzioso (Codex su #542);
+  - dopo il riavvio l'ordine a riposo riserva gli stessi fondi, si abbina, si cancella e si regola senza doppi
+    conteggi; un ordine rifiutato non scrive nulla;
+  - la saga Microstake continua a chiamare `persist_snapshot()` e a contarne i fallimenti; il test che
+    contava le scritture sul DB ora verifica il contenuto dell'ultimo snapshot; 3 mutazioni nuove (area
+    `recovery`).
 - **PFC-005 — G7-b: transizioni dei fondi SIM senza doppio conteggio (roadmap #461, decisione owner #531):**
   - un ordine a riposo si abbina (anche in parte, in piu' volte) quando un book APERTO successivo lo
     raggiunge; mai su mercato sospeso, senza stato o runner non ACTIVE (PF-EXEC-05); la riserva diventa
