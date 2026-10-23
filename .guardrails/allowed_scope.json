@@ -2505,6 +2505,23 @@
         "tests/reconciliation/test_reconciliation_hardening.py"
       ],
       "max_files": 9
+    },
+    "pfc003-ci-parallel-backstop-mutation-jobs": {
+      "description": "Roadmap canonica #461, PFC-003 = M157 (CI-PARALLEL), ordine owner del 23/10/2026 (ripresa sviluppo, merge OWNER). Parte indipendente da PFC-002 (#539 chiusa senza merge, nessun cherry-pick del gate): i tre job che eseguono l'intera suite su main la dividono in xdist worksteal sui test non serial piu' un passo seriale per i test serial (selezioni complementari, verificate eseguendo i comandi del workflow su un mini-repository); il runner di mutation guadagna --jobs N con una sandbox per worker e report identico al seriale; mutation-guardrails usa --jobs 4. Nessuna modifica di produzione, trading, money management, Betfair o config runtime. Esclusi: deduplica delle esecuzioni (PFC-002) e modalita' FAST locale.",
+      "files": [
+        ".github/workflows/_module-ultra-check.yml",
+        ".github/workflows/merge-simulation-hard.yml",
+        ".github/workflows/mutation-guardrails.yml",
+        ".github/workflows/pr-check.yml",
+        ".guardrails/allowed_scope.json",
+        "CHANGELOG.md",
+        "docs/ci_orchestrators.md",
+        "scripts/run_mutation_guardrails.py",
+        "tests/guardrails/test_pfc003_parallel_backstop.py",
+        "tests/scripts/test_run_mutation_guardrails_reale.py",
+        "tests/testsuite/test_false_green_semantics.py"
+      ],
+      "max_files": 11
     }
   }
 }

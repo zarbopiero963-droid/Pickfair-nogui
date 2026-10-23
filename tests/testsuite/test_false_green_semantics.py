@@ -314,7 +314,13 @@ def test_pr_check_workflow_keeps_pull_request_and_full_pytest_gate():
     )
     assert "main" in [str(x) for x in branches]
 
-    assert re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
+    intera = re.search(r"pytest\s+(-q\s+)?(?:-x\s+)?(?:tests?[\w/\s\.-]*)?$", run_blocks, flags=re.MULTILINE)
+    # PFC-003 (M157): la suite completa divisa nelle due selezioni complementari,
+    # parallelo (xdist worksteal) sui test non `serial` piu' i `serial` in serie.
+    # Vale solo la coppia intera: uno dei due comandi da solo e' un sottoinsieme.
+    parallelo = re.search(r'^pytest -q -n auto --dist worksteal -m "not serial"$', run_blocks, flags=re.MULTILINE)
+    seriale = re.search(r"^pytest -q -m serial$", run_blocks, flags=re.MULTILINE)
+    assert intera or (parallelo and seriale), "pr-check non esegue piu' l'intera suite"
 
 
 def test_merge_simulation_hard_keeps_merge_validation_and_fail_closed_pytest():

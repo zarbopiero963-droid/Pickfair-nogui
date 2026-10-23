@@ -236,11 +236,16 @@ jobs:
       # =========================================================
       # FULL SUITE BACKSTOP (SEMPRE)
       # =========================================================
+      # PFC-003 (M157): in parallelo con xdist (worksteal) i test che lo
+      # permettono, poi in serie i `serial` (widget Tk sul display condiviso).
+      # `-m "not serial"` e `-m serial` sono complementari: insieme coprono
+      # l'intera raccolta (test_pfc003_parallel_backstop.py).
       - name: Run full test suite (backstop)
         shell: bash
         run: |
           set -euo pipefail
-          pytest -q
+          pytest -q -n auto --dist worksteal -m "not serial"
+          pytest -q -m serial
 
       # =========================================================
       # UPLOAD DEBUG ARTIFACT

@@ -41,6 +41,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -357,7 +358,72 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--pytest-arg", action="append", default=[], help="Extra argument passed to pytest (repeatable)"
     )
     parser.add_argument("--fail-under", type=float, default=80.0, help="Minimum mutation score (percent)")
+    parser.add_argument(
+        "--jobs", type=_jobs, default=1,
+        help="Mutations run in parallel, one sandbox per worker (default 1: sequential)",
+    )
     return parser.parse_args(argv)
+
+
+def _jobs(value: str) -> int:
+    n = int(value)
+    if n < 1:
+        raise argparse.ArgumentTypeError("--jobs must be >= 1")
+    return n
+
+
+def _run_all(entries: list[dict[str, Any]], repo_root: Path, tmp: str, jobs: int,
+             pytest_args: list[str], timeout_sec: int) -> list[MutationResult]:
+    """Esegue le mutazioni, in parallelo con `jobs` > 1 (PFC-003, M157).
+
+    Ogni worker ha la SUA sandbox: una mutazione modifica un file e lo
+    ripristina, quindi due worker sulla stessa copia si vedrebbero a vicenda il
+    codice mutato. I risultati tornano nell'ordine del catalogo e l'output di
+    ogni mutazione si stampa in un blocco solo, cosi' il report e' identico al
+    run sequenziale.
+    """
+    results: list[MutationResult | None] = [None] * len(entries)
+    baseline: dict[tuple[str, ...], int | None] = {}
+    lock = threading.Lock()
+    prossima = iter(range(len(entries)))
+    errori: list[BaseException] = []
+
+    def worker(numero: int) -> None:
+        sandbox = Path(tmp) / f"repo{numero}"
+        build_sandbox(repo_root, sandbox)
+        mia_baseline: dict[tuple[str, ...], int | None] = {}
+        while True:
+            with lock:
+                if errori:
+                    return
+                indice = next(prossima, None)
+                mia_baseline.update(baseline)
+            if indice is None:
+                return
+            entry = entries[indice]
+            try:
+                result = run_mutation(entry, sandbox, mia_baseline, pytest_args, timeout_sec)
+            except BaseException as exc:  # il primo errore ferma tutti i worker
+                with lock:
+                    errori.append(exc)
+                return
+            with lock:
+                baseline.update(mia_baseline)
+                results[indice] = result
+                print(f"-> {entry['id']} [{entry['area']}] {entry['file']}\n"
+                      f"   {result.status} (rc={result.return_code}, {result.duration_sec}s) {result.detail}",
+                      flush=True)
+
+    threads = [threading.Thread(target=worker, args=(n,), daemon=True) for n in range(min(jobs, len(entries)))]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    if errori:
+        raise errori[0]
+    if any(r is None for r in results):
+        raise MutationRunnerError("mutation run incomplete: some mutations were not executed")
+    return [r for r in results if r is not None]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -381,16 +447,8 @@ def main(argv: list[str] | None = None) -> int:
     watched = {e["file"] for e in entries}
     before = {f: _sha256(repo_root / f) for f in watched if (repo_root / f).is_file()}
 
-    results: list[MutationResult] = []
     with tempfile.TemporaryDirectory(prefix="pf_mutation_") as tmp:
-        sandbox = Path(tmp) / "repo"
-        build_sandbox(repo_root, sandbox)
-        baseline: dict[tuple[str, ...], int | None] = {}
-        for entry in entries:
-            print(f"-> {entry['id']} [{entry['area']}] {entry['file']}")
-            result = run_mutation(entry, sandbox, baseline, args.pytest_arg, args.timeout_sec)
-            print(f"   {result.status} (rc={result.return_code}, {result.duration_sec}s) {result.detail}")
-            results.append(result)
+        results = _run_all(entries, repo_root, tmp, args.jobs, args.pytest_arg, args.timeout_sec)
 
     after = {f: _sha256(repo_root / f) for f in before}
     if after != before:

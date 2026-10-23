@@ -26,6 +26,9 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
           if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
 
+      # PFC-003 (M157): parallelo (worksteal) + serial, insieme l'intera raccolta.
       - name: Run tests
         run: |
-          pytest -q 
+          set -euo pipefail
+          pytest -q -n auto --dist worksteal -m "not serial"
+          pytest -q -m serial
