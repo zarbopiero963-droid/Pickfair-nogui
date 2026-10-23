@@ -221,6 +221,7 @@ def test_registry_requires_live_key_without_requiring_delayed(setup):
     assert "demo-delayed" not in str(entries)
 
 
+@pytest.mark.serial  # PFC-001: widget Tk reali sul display X condiviso, mai in parallelo
 @pytest.mark.parametrize("real_widgets", [False, True])
 def test_gui_save_reopen_file_pickers_and_live_boundary(setup, monkeypatch, real_widgets):
     """Whole GUI bootstrap, actual SQLite/settings/client; stub dialogs/HTTP only."""
