@@ -1079,21 +1079,23 @@ class TradingEngine:
                 return self._complete_order_lifecycle(
                     ctx, audit, order_id=None, status=STATUS_DENIED, reason=authority_block,
                     extra_fields=extra_fields)
-            # #545: broker SIM non durevole (snapshot di reload non scritto) => nessuna nuova esposizione.
-            durability_block = self._sim_durability_admission_block()
-            if durability_block:
-                self._consume_admission_fence(normalized)
-                self._emit(ctx, audit, "SIM_DURABILITY_DENIED", {"reason": durability_block}, category="guard")
-                return self._complete_order_lifecycle(
-                    ctx, audit, order_id=None, status=STATUS_DENIED, reason=durability_block,
-                    extra_fields=extra_fields)
-
             with self._lock:
                 if not self._dedup_allow(ctx):
                     # [FIX 3] Use dedicated helper with NO DB INSERT
                     return self._handle_duplicate_request(ctx, audit, normalized, extra_fields)
 
                 self._emit(ctx, audit, "DEDUP_DECISION", {"allowed": True}, category="guard")
+                # #545: broker SIM non durevole (snapshot di reload non scritto) => nessuna nuova esposizione. DOPO il
+                # dedupe (rilievo Codex su 6c2d462): la riconsegna di un intento gia' in volo segue il percorso
+                # duplicato e non riceve un DENIED terminale che rilascerebbe la riserva incerta dell'originale.
+                # Qui l'intento e' nuovo: il DENIED rilascia solo le sue chiavi, nessuna riga e' stata scritta.
+                durability_block = self._sim_durability_admission_block()
+                if durability_block:
+                    self._consume_admission_fence(normalized)
+                    self._emit(ctx, audit, "SIM_DURABILITY_DENIED", {"reason": durability_block}, category="guard")
+                    return self._complete_order_lifecycle(
+                        ctx, audit, order_id=None, status=STATUS_DENIED, reason=durability_block,
+                        extra_fields=extra_fields)
                 order_id = self._persist_inflight(ctx, normalized)
                 self._emit_critical(ctx, audit, "PERSIST_INFLIGHT",
                                     {"order_id": order_id}, category="persistence")

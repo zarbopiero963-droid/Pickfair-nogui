@@ -2969,8 +2969,8 @@
       "module": "core.trading_engine",
       "area": "recovery",
       "file": "core/trading_engine.py",
-      "original": "            durability_block = self._sim_durability_admission_block()\n",
-      "mutated": "            durability_block = \"\"\n",
+      "original": "                durability_block = self._sim_durability_admission_block()\n",
+      "mutated": "                durability_block = \"\"\n",
       "tests": [
         "tests/unit/test_545_sim_snapshot_not_persisted.py"
       ],

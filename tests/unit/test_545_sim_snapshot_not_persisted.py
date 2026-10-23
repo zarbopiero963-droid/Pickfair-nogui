@@ -355,3 +355,23 @@ def test_production_readers_of_snapshot_persisted():
             readers.append(rel)
     assert sorted(readers) == ["cashout_cancel_adapter.py", "core/microstake_safe.py", "core/microstake_sim_port.py",
                                "core/order_router.py", "core/trading_engine.py", "simulation_broker.py"]
+
+
+# ----------------------------------------------------------------------------- 8. riconsegna (rilievo Codex P1 su 6c2d462)
+def test_replay_of_ambiguous_command_while_not_durable_keeps_the_original_reservation(tmp_path):
+    """La riconsegna dello STESSO comando, con il broker ancora non durevole, passa dal percorso duplicato: il gate di
+    durabilita' non deve emettere un DENIED terminale che rilascerebbe la riserva incerta dell'originale."""
+    c = _chain_with_durable_broker(tmp_path)
+    fault = _inject(c)
+    fault.active = True
+    c.rc._on_signal_received(_signal())
+    (cmd,) = c.bus.payloads("CMD_QUICK_BET")
+    occupati, incerti = _occupied(c), dict(c.rc._uncertain_reservations_map())
+    assert occupati and incerti
+
+    c.bus.publish("CMD_QUICK_BET", dict(cmd))                     # riconsegna con il guasto ancora attivo
+
+    assert _occupied(c) == occupati                                # riserva dell'originale trattenuta
+    assert dict(c.rc._uncertain_reservations_map()) == incerti     # incertezza intatta
+    assert len(c.broker.state.orders) == 1                         # nessun secondo invio
+    assert [r["status"] for r in _db_rows(c)] == ["AMBIGUOUS", "DUPLICATE_BLOCKED"]   # traccia del doppione
