@@ -285,8 +285,8 @@ def test_settlement_sim_mercato_in_perdita_senza_commissione():
 def test_settlement_sim_match_parziale_e_residuo_decaduto():
     """Liquidita' 4 a quota 3.0: della BACK da 10 se ne abbinano 4. Una
     seconda BACK a 3.5, sopra il miglior back, non si abbina. Vince la 11: lordo 4 x 2 = 8,
-    commissione 0,36, netto 7,64. Il residuo non abbinato decade senza
-    toccare il saldo."""
+    commissione 0,36, netto 7,64. Il residuo non abbinato decade e libera la
+    sua riserva (PFC-004) senza toccare il saldo."""
     broker = SimulationBroker(starting_balance=1000.0, commission_pct=4.5)
     broker.update_market_book(_aperto("2.3", {11: (3.0, 3.1, 4.0)}))
     parziale = broker.place_bet(market_id="2.3", selection_id=11, side="BACK", price=3.0, size=10.0)
@@ -294,7 +294,9 @@ def test_settlement_sim_match_parziale_e_residuo_decaduto():
     id_parziale = parziale["instructionReports"][0]["betId"]
     id_libera = non_abbinata["instructionReports"][0]["betId"]
     assert broker.state.orders[id_parziale].matched_size == pytest.approx(4.0)
-    assert broker.get_account_funds()["available"] == pytest.approx(996.0)
+    # PFC-004 (G7-a): 4 abbinati (ledger) + 6 e 5 non abbinati riservati come su Betfair: 1000 - 4 - 11.
+    # Prima il test si aspettava 996, cioe' il difetto G7 (il non abbinato non riservava nulla).
+    assert broker.get_account_funds()["available"] == pytest.approx(985.0)
 
     broker.update_market_book(_chiuso("2.3", {11: "WINNER"}))
 

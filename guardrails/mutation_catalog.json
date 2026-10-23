@@ -2392,6 +2392,54 @@
         "tests/acceptance/test_issue536_runtime_authority.py"
       ],
       "rationale": "#536 PF-RUNTIME-LOCK-01 (CI F032_01): transazione fenced in BEGIN differita, l'upgrade a scrittura fallisce se l'heartbeat rinnova nel mezzo."
+    },
+    {
+      "id": "funds_sim_place_without_check",
+      "module": "simulation_broker",
+      "area": "funds",
+      "file": "simulation_broker.py",
+      "original": "            if order.market_id not in self.state.settlements and not self._fondi_sufficienti_locked([order]):",
+      "mutated": "            if False:",
+      "tests": [
+        "tests/unit/test_pfc004_sim_funds_reservation.py"
+      ],
+      "rationale": "PFC-004: il SimulationBroker accetterebbe un ordine oltre il disponibile (nessun INSUFFICIENT_FUNDS)."
+    },
+    {
+      "id": "lay_liability_sim_reserve_as_stake",
+      "module": "simulation_broker",
+      "area": "lay_liability",
+      "file": "simulation_broker.py",
+      "original": "                vince += residuo * (float(order.price) - 1.0)",
+      "mutated": "                vince += residuo",
+      "tests": [
+        "tests/unit/test_pfc004_sim_funds_reservation.py"
+      ],
+      "rationale": "PFC-004: un LAY non abbinato riserverebbe lo stake invece della liability."
+    },
+    {
+      "id": "exposure_sim_reserve_double_counts_matched",
+      "module": "simulation_broker",
+      "area": "exposure",
+      "file": "simulation_broker.py",
+      "original": "        return max(0.0, max(0.0, vince, perde) - abbinata)",
+      "mutated": "        return max(0.0, max(0.0, vince, perde))",
+      "tests": [
+        "tests/unit/test_pfc004_sim_funds_reservation.py"
+      ],
+      "rationale": "PFC-004: la parte abbinata (gia' nel ledger) verrebbe riservata due volte."
+    },
+    {
+      "id": "cashout_sim_hedge_requires_funds",
+      "module": "simulation_broker",
+      "area": "cashout",
+      "file": "simulation_broker.py",
+      "original": "                vince, perde = -snap.open_size * (snap.avg_entry_price - 1.0), snap.open_size",
+      "mutated": "                vince, perde = 0.0, snap.open_size",
+      "tests": [
+        "tests/unit/test_pfc004_sim_funds_reservation.py"
+      ],
+      "rationale": "PFC-004: una copertura che riduce l'esposizione chiederebbe fondi e verrebbe bloccata (PF-EXEC-03)."
     }
   ]
 }

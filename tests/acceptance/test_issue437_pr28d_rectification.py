@@ -55,6 +55,9 @@ def _catena_reale(tmp_path, *, bankroll=100.0, **persisted):
     c.rc.risk_desk.equity_peak = bankroll
     # Conto coerente col bankroll: il gate fondi PR28-e verifica il disponibile reale.
     c.rc.betfair_service.get_account_funds = lambda: {"available": bankroll, "exposure": 0.0}
+    # PFC-004 (G7-a): il SimulationBroker ora riserva i fondi e rifiuta oltre il saldo
+    # (INSUFFICIENT_FUNDS), quindi anche il conto che ESEGUE l'ordine deve essere quello del bankroll.
+    c.broker.state.starting_balance = c.broker.state.balance = float(bankroll)
     c.db_settings = db
     return c
 

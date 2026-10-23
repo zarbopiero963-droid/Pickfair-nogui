@@ -683,7 +683,7 @@
     "stake economico oltre i fondi: bloccato su segnale e auto-next (#461 PR28-e); Dutching e bet manuale (corsie dormienti) non ancora coperti dal gate dei fondi",
     "riserve per processo (in memoria): la riserva durevole cross-process resta a PR29",
     "codici di errore fondi vs provider: PLANNED",
-    "G7 (aperto, decisione owner #531): il SimulationBroker non riserva fondi sugli ordini, quindi in SIM il gate non vede gli ordini aperti; parita' SIM/LIVE sui fondi NON certificata; RED tests/acceptance/test_g7_sim_funds_reservation.py; fase M6"
+    "G7 (decisione owner #531): G7-a corretto in PFC-004 (il SimulationBroker riserva stake BACK e liability LAY sul non abbinato e rifiuta oltre il disponibile, INSUFFICIENT_FUNDS; il gate in SIM vede gli ordini aperti; tests/acceptance/test_g7_sim_funds_reservation.py senza xfail). Aperti G7-b (PFC-005) e G7-c (PFC-006): parita' SIM/LIVE sui fondi NON ancora certificata; fase M6"
    ]
   },
   {

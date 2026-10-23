@@ -1,12 +1,11 @@
-"""G7 — parita' finanziaria SIM/LIVE: il SimulationBroker non riserva fondi sugli ordini (difetto APERTO).
+"""G7 — parita' finanziaria SIM/LIVE sui fondi riservati (CORRETTO in PFC-004, G7-a).
 
-Decisione owner su #531 (20/10/2026): G7 e' un difetto finanziario reale da correggere obbligatoriamente
-(fase M6, roadmap #461/#506); la SIM deve riprodurre disponibilita' e prenotazioni del broker LIVE secondo i
-contratti Betfair. Finche' G7 resta aperto la parita' SIM/LIVE NON e' certificata.
-
-Questi test sono la riproduzione RED, sul codice reale, del comportamento atteso. `xfail(strict=True)`:
-falliscono oggi (XFAIL); quando G7 sara' corretto passeranno e la CI li segnalera' (XPASS strict = errore),
-obbligando a togliere il marcatore nella PR della correzione. Non sono test di parita' PASS.
+Decisione owner su #531 (20/10/2026): G7 era un difetto finanziario reale da correggere obbligatoriamente
+(fase M6, roadmap #461/#506). Questi erano i test RED in `xfail(strict=True)` sul codice reale; con
+PFC-004 il SimulationBroker riserva stake BACK e liability LAY anche sul non abbinato e rifiuta oltre il
+disponibile (INSUFFICIENT_FUNDS), quindi passano e il marcatore e' stato tolto come previsto. Dettaglio dei
+casi (parziali, copertura, cancellazione, settlement, riavvio, batch, sostituzione) in
+`tests/unit/test_pfc004_sim_funds_reservation.py`.
 
 Comportamento LIVE di riferimento: Betfair riserva i fondi al piazzamento (BACK = stake, LAY = liability)
 anche per la parte non abbinata, e rifiuta un ordine oltre il disponibile (INSUFFICIENT_FUNDS).
@@ -19,17 +18,10 @@ from simulation_broker import SimulationBroker
 from tests.acceptance.test_issue437_pr27 import _rifiuti
 from tests.integration.test_issue461_pr26a_customer_ref_provenance import _chain, _signal
 
-G7 = pytest.mark.xfail(
-    strict=True,
-    reason="G7 aperto (decisione owner #531): il SimulationBroker non riserva fondi sugli ordini; fase M6",
-)
-
-
 def _broker(balance=100.0):
     return SimulationBroker(starting_balance=balance)
 
 
-@G7
 def test_g7_back_non_abbinato_riserva_lo_stake():
     b = _broker()
     assert b.place_bet(market_id="1.1", selection_id=1, side="BACK", price=2.0, size=60.0,
@@ -38,7 +30,6 @@ def test_g7_back_non_abbinato_riserva_lo_stake():
     assert funds["available"] == pytest.approx(40.0) and funds["exposure"] == pytest.approx(60.0), funds
 
 
-@G7
 def test_g7_lay_non_abbinato_riserva_la_liability():
     b = _broker()
     assert b.place_bet(market_id="1.1", selection_id=1, side="LAY", price=4.0, size=10.0,
@@ -47,7 +38,6 @@ def test_g7_lay_non_abbinato_riserva_la_liability():
     assert funds["available"] == pytest.approx(70.0) and funds["exposure"] == pytest.approx(30.0), funds
 
 
-@G7
 def test_g7_ordine_oltre_il_disponibile_e_rifiutato_dal_broker():
     b = _broker()
     b.place_bet(market_id="1.1", selection_id=1, side="BACK", price=2.0, size=60.0, customer_ref="g7-a")
@@ -56,7 +46,6 @@ def test_g7_ordine_oltre_il_disponibile_e_rifiutato_dal_broker():
     assert secondo["status"] != "SUCCESS", secondo
 
 
-@G7
 def test_g7_runtime_il_gate_in_sim_vede_gli_ordini_aperti(tmp_path):
     # Riproduzione runtime: in SIM il gate PR28-e legge il saldo del SimulationBroker. Un ordine da 60 gia'
     # piazzato (SUCCESS rilascia il tavolo) deve consumare il disponibile, come in LIVE: una seconda entrata

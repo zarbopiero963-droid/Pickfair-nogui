@@ -10,6 +10,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**
+  - un ordine non abbinato riserva lo stake (BACK) o la liability (LAY) sul caso peggiore del runner: una
+    copertura che riduce l'esposizione non chiede fondi in piu' (le uscite protettive non si bloccano);
+  - la riserva si ricava dagli ordini `EXECUTABLE` (residuo `size - matched_size`): si libera a cancellazione
+    (anche parziale), sostituzione, decadenza e settlement, e dopo un riavvio si ricalcola senza doppi conteggi;
+  - oltre il disponibile il broker risponde `FAILURE`/`INSUFFICIENT_FUNDS` e non memorizza nulla; un batch che
+    non sta nei fondi non piazza nessuna gamba; una sostituzione oltre i fondi lascia l'ordine originale;
+  - `get_account_funds()` espone `reserved_unmatched`; `available` e `exposure` includono la riserva, `total`
+    invariato;
+  - i 4 test G7 di accettazione passano senza `xfail`; due test che codificavano il difetto (disponibile 996
+    con ordini a riposo; conto SIM da 1000 sotto un bankroll da 500.000) aggiornati; 4 mutazioni nuove nel
+    catalogo (aree `funds`, `lay_liability`, `exposure`, `cashout`).
 - **PFC-003 — suite completa e mutation in parallelo (M157, roadmap #461; merge owner):**
   - i tre job che eseguono l'intera suite (`_module-ultra-check` backstop, `merge-simulation-hard`, `pr-check`)
     girano `pytest -n auto --dist worksteal -m "not serial"` e poi `pytest -m serial`: selezioni complementari,
