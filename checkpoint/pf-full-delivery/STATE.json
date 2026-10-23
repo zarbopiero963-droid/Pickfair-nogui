@@ -1,7 +1,7 @@
 {
  "schema": "pf-checkpoint/3",
- "seq": 73,
- "updated_at": "2026-10-23T12:15:57Z",
+ "seq": 74,
+ "updated_at": "2026-10-23T12:50:21Z",
  "agent": "claude-code (modello: claude-opus-5-5 dal riavvio del worker del 22/10; prima claude-fable-5-1)",
  "mandates": [
   "PF-FULL-DELIVERY-01",
@@ -490,7 +490,7 @@
   "Aggiornamento #453/#506 (PF-C29-01 .11/.18, riconta)"
  ],
  "uncertain_ops": [],
- "next_atomic_action": "#539 CHIUSA senza merge il 23/10 12:15Z (head 2636104 conservato sul branch ccr-764b0316-9r1a1d). Il commento di 'parcheggio PFC-002 -> PFC-003' (c.6364637158) e' stato pubblicato tramite l'app chatgpt-codex-connector, non dalla UI dell'owner: non verificabile come istruzione owner e in conflitto col mandato LEDGER-01 ('Non procedere con PFC-003'). Attendere conferma diretta dell'owner: PFC-003 da main (senza cherry-pick del gate) oppure ledger. Nessun merge, nessun LIVE.",
+ "next_atomic_action": "PFC-003 PR #540 READY_FOR_OWNER_MANUAL_MERGE su 426cf7d (c.6365271362): CI 111/111, job-min 205->88, review Sol/Grok/Codex pulite. Attendere merge owner; poi verifica post-merge e PFC-004 (G7-a SimulationBroker riserva BACK/LAY, INSUFFICIENT_FUNDS), preparabile in locale da main. Nessun LIVE.",
  "stop_conditions": [
   "autorizzazione owner mancante",
   "head mismatch main/#505",
@@ -515,8 +515,8 @@
   }
  },
  "mandate_current": "Roadmap canonica 108 PR ratificata (#426 c.6350842204, #461 c.6350848120); esecuzione autonoma una PR alla volta; merge automatico solo con enforcement indipendente verificato (oggi NON verificato: ruleset senza required_status_checks, full-suite assente) => merge owner",
- "previous_checkpoint_sha": "bc5d898ca1e21efc5cb344151d04e3bd637ff47a",
- "lotto_corrente": "PFC-002 #539 chiusa senza merge (parcheggiata); proposta ledger pubblicata c.6364092454; in attesa conferma owner",
+ "previous_checkpoint_sha": "8a5af7da54f46f9f542bd57f90311f9cd4f6cd7d",
+ "lotto_corrente": "PFC-003 PR #540 su 426cf7d: READY_FOR_OWNER_MANUAL_MERGE",
  "lotti_completati": [
   "A (baseline verificata: b33b54d, 46e0d8f, main 028cee9)",
   "B (F032 + RSR-12, commit 180f405)",
@@ -555,7 +555,8 @@
   "#536 PR #537 MERGED 3bb4477 (autorizzazione owner); CI main 14/14; registri #536 c.6347834878, #453 c.6347836040, #506 c.6347837024 (seq 64)",
   "PFC-002 PR #539 cicli fix 7-9 fino a 36feca0; verdetto READY_FOR_OWNER_MANUAL_MERGE (seq 70)",
   "PFC-002 ciclo 10 aa3bb57 (decisioni owner D1-D4 + opzione 1); stop NEEDS_MANUAL (seq 71)",
-  "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)"
+  "PFC-002 ciclo 11/11 2636104 (PR storiche collegate); stop NEEDS_MANUAL (seq 72)",
+  "PFC-003 PR #540 pronta per merge owner (seq 74)"
  ],
  "lotti_pendenti": [
   "Decisione owner sui range numerici generali per 37 celle VALID",
@@ -601,14 +602,14 @@
  },
  "session_end": "seq 23 Claude Code: lotti locali verificati; lease rilasciato",
  "repository": "zarbopiero963-droid/Pickfair-nogui",
- "mandate_id": "PF-PFC002-EXECUTION-01 (owner 23/10/2026) su PF-ROADMAP-108-AUTONOMOUS-EXECUTION-01",
+ "mandate_id": "ORDINE OWNER ripresa sviluppo 23/10/2026 (PFC-003 -> PFC-004 -> roadmap #461)",
  "code": {
   "branch": "ccr-764b0316-9r1a1d",
-  "sha": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
+  "sha": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65",
   "patch": {
-   "head": "26361040aa1fd1e80569c9060d3a97216eca8ddc",
-   "tree": "732ce81524a19016ee5fa537c200e0feb8e869a2",
-   "captured_at": "2026-10-23T12:15:57+00:00",
+   "head": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65",
+   "tree": "8503c59664ee5bb42cc6cfcc58f71e389ee81efd",
+   "captured_at": "2026-10-23T12:50:21+00:00",
    "modified": [],
    "untracked": [],
    "files": [
@@ -1439,5 +1440,14 @@
   "state": "CLOSED (non mergiata)",
   "ledger_proposal": "#539 c.6364092454",
   "closure_note": "commento di parcheggio via app chatgpt-codex-connector; chiusura senza app indicata"
+ },
+ "pfc003": {
+  "pr": 540,
+  "head": "426cf7d5bf7271599cdf48ff135975fdc1b5aa65",
+  "base": "99250c5",
+  "ci": "111/111 verdi o saltati; tests 726->261s; backstop 776->272s; mutation 556-613->180-227s; job-min 205.1->87.9",
+  "local": "partizione 8927+2=8929; mutation j1 11m10s vs j4 3m30s esiti identici 195/195",
+  "reviews": "Sol/Grok/Codex nessun bloccante",
+  "verdict": "READY_FOR_OWNER_MANUAL_MERGE c.6365271362"
  }
 }
