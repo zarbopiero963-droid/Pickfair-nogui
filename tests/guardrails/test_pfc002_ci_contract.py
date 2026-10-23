@@ -232,3 +232,19 @@ def test_i_reviewer_mettono_la_label_sui_gate_pfc002(nome, path):
                 and getattr(n.targets[0], "id", "") == "MANUAL_AUTHORITY_PATTERNS")
     patterns = ast.literal_eval(nodo.value)
     assert any(re.search(p, path) for p in patterns), f"{nome}: {path} senza manual-review-required"
+
+
+def test_full_suite_prova_il_merge_con_il_main_corrente():
+    # Rilievo Grok 4.7 su #539: il pytest tolto da merge-simulation-hard provava
+    # il merge con il main PIU' RECENTE, refs/pull/N/merge quello dell'evento.
+    steps = _wf("full-suite.yml")["jobs"]["full-suite"]["steps"]
+    nomi = [s.get("name") for s in steps]
+    i_merge = nomi.index("Merge the current main into the PR tree")
+    i_run = nomi.index("Run the full suite and judge the report")
+    assert i_merge < i_run
+    merge = steps[i_merge]
+    assert merge.get("if") == "github.event_name == 'pull_request'"
+    assert "git fetch --no-tags origin main" in merge["run"]
+    assert re.search(r"merge --no-ff --no-edit origin/main \|\| \{", merge["run"])
+    assert "exit 1" in merge["run"] and "set -euo pipefail" in merge["run"]
+    assert "if" not in steps[i_run]

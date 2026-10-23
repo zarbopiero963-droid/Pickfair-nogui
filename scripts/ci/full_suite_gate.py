@@ -104,6 +104,9 @@ def _evidence(verdetto: dict[str, Any], report: Any) -> dict[str, Any]:
         "duration_s": (report or {}).get("duration_s") if isinstance(report, dict) else None,
         "github_sha": os.environ.get("GITHUB_SHA", ""),
         "pr_head_sha": os.environ.get("PR_HEAD_SHA", ""),
+        # su pull_request: main corrente fuso prima della suite e albero provato
+        "merged_main_sha": os.environ.get("MERGED_MAIN_SHA", ""),
+        "tested_tree_sha": os.environ.get("TESTED_TREE_SHA", ""),
         "event": os.environ.get("GITHUB_EVENT_NAME", ""),
         "run_id": os.environ.get("GITHUB_RUN_ID", ""),
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),

@@ -59,8 +59,27 @@ jobs:
           if [ -f requirements-test.txt ]; then pip install -r requirements-test.txt; fi
           pip install pytest
 
-      # Marker di merge e JSON dei guardrail restano in `merge-simulation-hard`,
-      # che li controlla dopo il merge con il main piu' recente.
+      # `refs/pull/N/merge` e' il merge con la base AL MOMENTO DELL'EVENTO. Se
+      # main e' andato avanti nel frattempo, la suite proverebbe un albero che
+      # non e' quello che verra' mergiato: prima della PFC-002 lo copriva il
+      # pytest di `merge-simulation-hard` (rilievo Grok 4.7 su #539). Qui si
+      # fonde il main corrente prima di eseguire la suite: una sola esecuzione
+      # copre entrambe le cose. Conflitto => rosso. Su `push` a main l'albero
+      # e' gia' main.
+      - name: Merge the current main into the PR tree
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git -c user.name=full-suite -c user.email=full-suite@ci.invalid \
+            merge --no-ff --no-edit origin/main || {
+              echo "::error::merge con il main corrente in conflitto: full-suite non eseguibile"
+              exit 1
+            }
+          echo "MERGED_MAIN_SHA=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+          echo "TESTED_TREE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      # Marker di merge e JSON dei guardrail restano in `merge-simulation-hard`.
       - name: Run the full suite and judge the report
         run: python scripts/ci/full_suite_gate.py run --out-dir full-suite
 

@@ -62,9 +62,12 @@ GitHub scarterebbe un run in attesa nello stesso gruppo anche con
 checkout di `refs/pull/N/merge`, cioè del merge della PR con la base. Le 17
 esecuzioni erano quindi la stessa suite sullo stesso albero, e una basta.
 
-L'unica differenza era `merge-simulation-hard`, che rifà il merge con il main
-più recente. Quel controllo resta, senza pytest: con una sola PR attiva alla
-volta, il main non si muove fra l'evento e il job.
+L'unica differenza era `merge-simulation-hard`, che rifaceva il merge con il
+main più recente e poi eseguiva pytest. Ora quel merge lo fa `full-suite` stessa
+(step *Merge the current main into the PR tree*, solo su `pull_request`; un
+conflitto rende il check rosso). La suite prova quindi l'albero che verrà
+davvero mergiato, anche se main si è mosso dopo l'evento (rilievo Grok 4.7 su
+#539). `merge-simulation-hard` resta per conflitti, marker e JSON dei guardrail.
 
 **Effetto collaterale dichiarato.** Alcuni workflow avevano filtri `paths` sul
 `push` più larghi di quelli sul `pull_request`. Per esempio
@@ -105,7 +108,7 @@ Prima di lanciare pytest il gate cancella il report precedente, così un report
 vecchio non può valere per il run nuovo.
 
 L'evidenza `full-suite-evidence.json` contiene:
-- SHA del run e head della PR;
+- SHA del run e head della PR, più il main fuso e l'albero effettivamente provato;
 - evento, run e tentativo;
 - conteggi, durata ed esito.
 
