@@ -292,3 +292,57 @@ def test_livello_esaurito_non_diventa_liquidita_illimitata_per_l_ordine_dopo():
     _book(b, runners={1: (2.0, 2.02, 10.0)})
     assert _place(b, "BACK", 2.0, 10.0)[1]["sizeMatched"] == pytest.approx(10.0)
     assert _place(b, "BACK", 2.0, 50.0)[1]["sizeMatched"] == 0.0  # livello finito, non "senza limite"
+
+
+# --- rilievi Codex su #542 ------------------------------------------------------------------------
+
+def test_stato_precedente_con_parziale_a_riposo_non_riconsuma_la_liquidita():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)  # 10 abbinati, 90 a riposo
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    del stato["fills"], stato["liquidity_consumed"]  # formato precedente a PFC-005
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    _book(nuovo, runners={1: (2.0, 2.02, 10.0)})  # lo stesso book del feed
+    assert nuovo.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)
+
+
+def test_sospensione_con_scale_vuote_non_azzera_la_liquidita_consumata():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (2.0, 2.02, 10.0)})
+    _, rep = _place(b, "BACK", 2.0, 100.0)
+    b.update_market_book("1.1", {"status": "SUSPENDED", "runners": [
+        {"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": [], "availableToLay": []}}]})
+    b.update_market_book("1.1", {"status": "OPEN", "runners": [
+        {"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": [], "availableToLay": []}}]})
+    _book(b, runners={1: (2.0, 2.02, 10.0)})  # riapertura: il feed ripresenta lo stesso livello
+    assert b.state.orders[rep["betId"]].matched_size == pytest.approx(10.0)
+
+
+def test_book_con_valori_non_numerici_non_abbina_niente_e_non_solleva():
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (1.8, 1.82, 100.0), 2: (1.8, 1.82, 100.0)})
+    _, r1 = _place(b, "BACK", 2.0, 10.0, sel=1)
+    _, r2 = _place(b, "BACK", 2.0, 10.0, sel=2)
+    esito = b.update_market_book("1.1", {"status": "OPEN", "runners": [
+        {"selectionId": 1, "status": "ACTIVE", "ex": {"availableToBack": [{"price": 2.5, "size": 100.0}]}},
+        {"selectionId": 2, "status": "ACTIVE", "ex": {"availableToBack": [{"price": "abc", "size": 100.0}]}}]})
+    assert esito["ok"] is True
+    assert b.state.orders[r1["betId"]].matched_size == 0.0 and b.state.orders[r2["betId"]].matched_size == 0.0
+    assert b.state.fills == []
+
+
+def test_fill_id_ripetuto_nel_registro_persistito_e_incoerente():
+    # Codex su #542: BACK 10@3 e LAY 10@2 con lo stesso fill_id facevano dichiarare 1020 su 1000.
+    b = _broker(balance=1000.0)
+    _book(b, runners={1: (3.0, 3.1, 100.0)})
+    _place(b, "BACK", 3.0, 10.0)
+    _book(b, runners={1: (1.98, 2.0, 100.0)})
+    _place(b, "LAY", 2.0, 10.0)
+    stato = json.loads(json.dumps(b.state.to_dict()))
+    stato["fills"][1]["fill_id"] = stato["fills"][0]["fill_id"]
+    nuovo = _broker(balance=1000.0)
+    nuovo.state.load_from_dict(stato)
+    fondi = nuovo.get_account_funds()
+    assert fondi["error"] == "FILL_LEDGER_INCONSISTENT" and fondi["available"] == 0.0

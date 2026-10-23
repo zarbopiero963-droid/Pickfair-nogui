@@ -241,6 +241,19 @@ class SimulationState:
             consumato = _to_float(value, 0.0)
             if math.isfinite(consumato) and consumato > 0.0:
                 self.liquidity_consumed[str(key)] = consumato
+        if "fills" not in data and "liquidity_consumed" not in data:
+            # Stato precedente a PFC-005 (Codex su #542): la liquidita' presa dai
+            # fill al piazzamento resta consumata, altrimenti il primo book
+            # riletto la ripresenterebbe a un ordine parziale a riposo.
+            for fill in self.fills:
+                chiave = _chiave_liquidita(
+                    fill["market_id"], fill["selection_id"],
+                    "availableToBack" if fill["side"] == "BACK" else "availableToLay", fill["price"])
+                self.liquidity_consumed[chiave] = self.liquidity_consumed.get(chiave, 0.0) + fill["size"]
+
+
+def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
+    return f"{market_id}|{int(selection_id)}|{lato}|{float(price):.6f}"
 
 
 def _fill_valido(item: Any) -> Optional[Dict[str, Any]]:
@@ -609,7 +622,7 @@ class SimulationBroker:
 
     @staticmethod
     def _chiave_liquidita(market_id: str, selection_id: int, lato: str, price: float) -> str:
-        return f"{market_id}|{int(selection_id)}|{lato}|{float(price):.6f}"
+        return _chiave_liquidita(market_id, selection_id, lato, price)
 
     def _applica_liquidita_consumata_locked(self, market_id: str, market_book: Dict[str, Any]) -> None:
         """Il book riletto non ripresenta la liquidita' gia' presa (review PFC-005).
@@ -621,6 +634,12 @@ class SimulationBroker:
         """
         prefisso = f"{market_id}|"
         vivi = set()
+        # (selezione, lato) con un miglior livello visibile su un book APERTO: solo
+        # li' un conteggio a un'altra quota decade. Un book sospeso o con le scale
+        # vuote non cancella nulla (Codex su #542): alla riapertura il feed
+        # ripresenterebbe la stessa liquidita'.
+        osservati = set()
+        aperto = isinstance(market_book.get("status"), str) and market_book["status"].strip().upper() == "OPEN"
         if not self._book_chiuso(market_book):
             for runner in market_book.get("runners") or []:
                 if not isinstance(runner, dict):
@@ -629,6 +648,8 @@ class SimulationBroker:
                 ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
                 for lato in ("availableToBack", "availableToLay"):
                     livelli = ex.get(lato)
+                    if aperto and isinstance(livelli, list) and livelli:
+                        osservati.add(f"{prefisso}{int(selezione)}|{lato}|")
                     # Un livello esaurito si toglie: nel SIM una dimensione 0 o
                     # assente vale "liquidita' illimitata".
                     while isinstance(livelli, list) and livelli and isinstance(livelli[0], dict):
@@ -643,8 +664,35 @@ class SimulationBroker:
                             livelli[0]["size"] = residuo
                             break
                         livelli.pop(0)
+        chiuso = self._book_chiuso(market_book)
         for chiave in [k for k in self.state.liquidity_consumed if k.startswith(prefisso) and k not in vivi]:
-            del self.state.liquidity_consumed[chiave]
+            if chiuso or chiave.rsplit("|", 1)[0] + "|" in osservati:
+                del self.state.liquidity_consumed[chiave]
+
+    @staticmethod
+    def _book_numerico(market_book: Dict[str, Any]) -> bool:
+        """Ogni miglior livello ha prezzo e dimensione convertibili (assenti ammessi)."""
+        for runner in market_book.get("runners") or []:
+            if not isinstance(runner, dict):
+                continue
+            ex = runner.get("ex") if isinstance(runner.get("ex"), dict) else {}
+            for lato in ("availableToBack", "availableToLay"):
+                livelli = ex.get(lato) or []
+                if not isinstance(livelli, list):
+                    return False
+                if not livelli:
+                    continue
+                if not isinstance(livelli[0], dict):
+                    return False
+                for campo in ("price", "size"):
+                    valore = livelli[0].get(campo)
+                    if valore is None:
+                        continue
+                    try:
+                        float(valore)
+                    except (TypeError, ValueError):
+                        return False
+        return True
 
     def _riabbina_mercato_locked(self, market_id: str, market_book: Dict[str, Any]) -> List[SimOrder]:
         """PFC-005: gli ordini a riposo si abbinano quando il book li raggiunge.
@@ -658,6 +706,11 @@ class SimulationBroker:
         """
         stato = market_book.get("status")
         if not (isinstance(stato, str) and stato.strip().upper() == "OPEN"):
+            return []
+        if not self._book_numerico(market_book):
+            # Codex su #542: un valore non numerico fermerebbe il ciclo a meta',
+            # con alcuni fill applicati e non persistiti. Nessun abbinamento.
+            logger.warning("Book SIM %s con prezzi/dimensioni non numerici: nessun abbinamento differito", market_id)
             return []
         sospesi = set()
         for runner in market_book.get("runners") or []:
@@ -714,9 +767,15 @@ class SimulationBroker:
         ledgers: Dict[int, PositionLedger] = {}
         cassa = 0.0
         per_ordine: Dict[str, float] = {}
+        visti: set = set()
         for fill in self.state.fills:
             if str(fill.get("market_id")) != market_id:
                 continue
+            if fill["fill_id"] in visti:
+                # Codex su #542: il ledger scarterebbe il doppione e la cassa ricostruita
+                # sarebbe sbagliata (disponibile sovrastimato).
+                raise _RegistroFillIncoerente(f"fill_id ripetuto: {fill['fill_id']}")
+            visti.add(fill["fill_id"])
             selezione = int(fill["selection_id"])
             size = float(fill["size"])
             per_ordine[str(fill.get("bet_id"))] = per_ordine.get(str(fill.get("bet_id")), 0.0) + size
@@ -731,6 +790,8 @@ class SimulationBroker:
                 price=float(fill["price"]),
                 size=size,
             )
+            if not applicato.get("applied", False):
+                raise _RegistroFillIncoerente(f"fill non applicato: {fill['fill_id']}")
             dopo = applicato["snapshot"]
             cassa += (float(prima.exposure) - float(dopo.exposure)) + float(
                 applicato.get("realized_delta") or 0.0

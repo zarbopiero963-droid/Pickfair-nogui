@@ -29,6 +29,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   - registro dei fill validato al caricamento: una voce malformata e' un rifiuto pulito (fondi
     `error: FILL_LEDGER_INCONSISTENT`, ordini rifiutati, settlement `LEDGER_INCONSISTENT`), mai un'eccezione;
     un registro incoerente blocca gli ordini su tutti i mercati, uscite comprese (prudente);
+  - rilievi Codex su #542: un `fill_id` ripetuto nel registro e' incoerente (il ledger scartava il doppione e
+    la cassa risultava sovrastimata); un book con prezzi/dimensioni non numerici non abbina nessun ordine a
+    riposo (prima si fermava a meta' ciclo); la liquidita' consumata sopravvive a sospensioni e scale vuote e,
+    per uno stato precedente a PFC-005, si ricostruisce dai fill;
   - due test che codificavano il credito anticipato (disponibile 1010 prima del settlement di BACK 10@3 +
     LAY 10@2, i due esiti sono +10 o 0) aggiornati a 1000; 4 mutazioni nuove, 3 di PFC-004 riallineate.
 - **PFC-004 — G7-a: il SimulationBroker riserva i fondi come Betfair (roadmap #461, decisione owner #531):**
