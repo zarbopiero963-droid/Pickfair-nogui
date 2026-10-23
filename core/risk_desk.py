@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import math
 import time
 from datetime import datetime
 from threading import RLock
@@ -120,7 +121,10 @@ class RiskDesk:
         snapshot, ripristino). Oltre a invalidare la cassa, sposta la soglia di `read_at` ad adesso: una lettura
         iniziata prima di questo istante e applicata dopo non rimette in vigore la cassa precedente."""
         self._invalidate_cash_locked(reason)
-        adesso = time.monotonic()
+        # Subito dopo l'istante attuale: con un orologio a bassa risoluzione (Windows, ~15.6 ms) una lettura
+        # iniziata nello stesso tick ma prima dell'invalidazione avrebbe lo stesso read_at; cosi' e' scartata
+        # (prudente: vale la lettura successiva).
+        adesso = math.nextafter(time.monotonic(), math.inf)
         if self._cash_read_at is None or self._cash_read_at < adesso:
             self._cash_read_at = adesso
 

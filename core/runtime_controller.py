@@ -6053,9 +6053,27 @@ class RuntimeController:
             return "cassa_non_verificata:EXPOSURE_UNREADABLE"
         committed = self._account_from_funds(funds)["committed"]
         vista = max(max(0.0, tavoli), committed + max(0.0, pendenti))
-        return self.mm.fresh_caps_reason(cash=verifica["cash"], order_exposure=order_exposure,
-                                         total_exposure=vista,
-                                         event_exposure=max(evento_decisione, max(0.0, evento_ora)))
+        evento = max(evento_decisione, max(0.0, evento_ora))
+        reason = self.mm.fresh_caps_reason(cash=verifica["cash"], order_exposure=order_exposure,
+                                           total_exposure=vista, event_exposure=evento)
+        if reason:
+            return reason
+        # Rilievo Codex su 0dbadbb: una lettura piu' recente (es. get_status) applicata al RiskDesk mentre questa
+        # era in volo la supera. Si ricontrolla anche su quella; se non e' verificata, l'ingresso e' rifiutato.
+        cassa_recente, impegnato_recente, letta_recente = self.risk_desk.cash_basis()
+        if letta_recente is None or read_at is None or float(letta_recente) < float(read_at):
+            return ""                                    # stesso istante: ricontrollo anche su quella (prudente)
+        if cassa_recente is None:
+            return "cassa_non_verificata:" + str(getattr(self.risk_desk, "cash_equity_reason", "") or "CASH_NOT_READ")
+        try:
+            pendenti_recenti = float(self.table_manager.pending_exposure(since=letta_recente))
+        except Exception:
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        if not math.isfinite(pendenti_recenti):
+            return "cassa_non_verificata:EXPOSURE_UNREADABLE"
+        vista_recente = max(max(0.0, tavoli), float(impegnato_recente) + max(0.0, pendenti_recenti))
+        return self.mm.fresh_caps_reason(cash=cassa_recente, order_exposure=order_exposure,
+                                         total_exposure=vista_recente, event_exposure=evento)
 
     def _entry_funds_reason(self, account: Any, pending_exposure: float, *, read_at: Optional[float] = None) -> str:
         """#461 PR28-e (PF-CAP-09 / PF-CAP-19, PF-EXEC-04): '' se le riserve non ancora a mercato, COMPRESA la

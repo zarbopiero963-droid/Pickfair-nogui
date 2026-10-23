@@ -41,6 +41,8 @@ non vale zero), ATOMIC-RESERVE-01 regola 7 (nessun nuovo ingresso prima della ri
   anche sulla **lettura fresca d'ingresso** del gate fondi (`RuntimeController._entry_total_cap_reason` →
   `RoserpinaMoneyManagement.fresh_caps_reason`): stesse formule sulla cassa e sull'impegnato appena letti
   (cassa registrata 100, fresca 50 + 0, cap 18%: un BACK da 15 viene rifiutato con `supera_max_single_bet`).
+  Se mentre la lettura d'ingresso è in volo il RiskDesk registra una lettura più recente (per esempio da
+  `get_status`), i cap si ricontrollano anche su quella; se quella non è verificata l'ingresso è rifiutato.
   Un impegnato esterno cresciuto o una cassa scesa dopo l'ultima lettura registrata riducono quindi il limite
   prima di `CMD_QUICK_BET` (cassa 100 registrata con 20 impegnati, lettura fresca 60 + 40, cap 35%: un BACK
   da 15 viene rifiutato con `supera_max_total_exposure`); lettura fresca non verificata ⇒

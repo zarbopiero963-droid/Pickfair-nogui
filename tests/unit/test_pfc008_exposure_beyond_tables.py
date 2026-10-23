@@ -562,7 +562,8 @@ def test_lettura_iniziata_prima_del_p_l_realizzato_non_rivalida_la_cassa():
                                    read_at=prima_del_settlement) is False
     assert desk.cash_basis()[0] is None
     # una lettura iniziata dopo il settlement vale
-    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=time.monotonic()) is True
+    dopo = desk.cash_basis()[2] + 1.0
+    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=dopo) is True
     assert desk.cash_basis()[0] == 100.0
 
 
@@ -586,3 +587,75 @@ def test_snapshot_o_ripristino_spostano_la_soglia_delle_letture(cambia):
     iniziata = time.monotonic()
     cambia(desk)
     assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=iniziata) is False
+
+
+# --- lettura d'ingresso superata da una lettura piu' recente (rilievo Codex P1 su 0dbadbb) --------------------------
+
+def _rc_lettura_superata(nuova):
+    """Cassa registrata 100 (80 + 20), cap 18/35/18. Mentre la lettura d'ingresso e' in volo, una lettura di stato
+    piu' recente (`nuova`) viene applicata al RiskDesk; poi la lettura d'ingresso torna con il vecchio 80 + 20."""
+    rc, bus, rifiuti = _rc_tre_cap({"available": 80.0, "exposure": -20.0})
+
+    def lettura_in_volo():
+        recente = time.monotonic() + 1e-6
+        rc._sync_cash_equity_from_funds(nuova, nuova["available"], read_at=recente, bankroll=nuova["available"])
+        return {"available": 80.0, "exposure": -20.0}
+
+    rc.betfair_service.get_account_funds = lettura_in_volo
+    return rc, bus, rifiuti
+
+
+def test_lettura_d_ingresso_superata_da_cassa_piu_bassa_e_rifiutata():
+    # Esempio Codex: la lettura recente registra cassa 50 (50 + 0): singolo/evento al 18% = 9 < 15.
+    rc, bus, rifiuti = _rc_lettura_superata({"available": 50.0, "exposure": 0.0})
+    rc._on_signal_received_serial(_segnale("BACK", 15.0))
+    assert not _ordini(bus)
+    assert rifiuti and rifiuti[0] == "supera_max_single_bet", rifiuti
+
+
+def test_lettura_d_ingresso_superata_da_lettura_non_verificabile_e_rifiutata():
+    rc, bus, rifiuti = _rc_lettura_superata({"available": 80.0, "exposure": -20.0, "simulated": True, "total": 150.0})
+    rc._on_signal_received_serial(_segnale("BACK", 5.0))
+    assert not _ordini(bus)
+    assert rifiuti and rifiuti[0].startswith("cassa_non_verificata"), rifiuti
+
+
+def test_lettura_d_ingresso_superata_da_lettura_coerente_ammette():
+    rc, bus, rifiuti = _rc_lettura_superata({"available": 80.0, "exposure": -20.0})
+    rc._on_signal_received_serial(_segnale("BACK", 15.0))
+    assert _ordini(bus) and not rifiuti, rifiuti
+
+
+def test_lettura_nello_stesso_tick_dell_invalidazione_e_scartata(monkeypatch):
+    # Rilievo Grok su 0dbadbb: con un orologio a bassa risoluzione (Windows) una lettura iniziata nello stesso tick
+    # del settlement ma prima dell'invalidazione ha lo stesso read_at della soglia: deve essere scartata.
+    import core.risk_desk as modulo
+    desk = RiskDesk()
+    desk.sync_funds_reading(80.0, 100.0, 80.0, committed_exposure=20.0, read_at=1.0)
+    monkeypatch.setattr(modulo.time, "monotonic", lambda: 50.0)
+    desk.apply_closed_pnl(-20.0)
+    assert desk.sync_funds_reading(None, 100.0, 80.0, committed_exposure=20.0, read_at=50.0) is False
+    assert desk.cash_basis()[0] is None
+
+
+def test_lettura_recente_nello_stesso_istante_di_quella_d_ingresso_e_ricontrollata():
+    # Stesso read_at della lettura d'ingresso (orologio a bassa risoluzione): la lettura del RiskDesk e' un'altra
+    # lettura e si ricontrolla anche su quella (cassa 50 => singolo 9 < 15, rifiuto).
+    rc, bus, rifiuti = _rc_tre_cap({"available": 80.0, "exposure": -20.0})
+    import core.runtime_controller as modulo
+    reale = modulo.time.monotonic
+    orologio = {"t": reale() + 1000.0}                         # dopo la lettura d'avvio, fermo (stesso tick)
+
+    def lettura_in_volo():
+        rc._sync_cash_equity_from_funds({"available": 50.0, "exposure": 0.0}, 50.0, read_at=orologio["t"],
+                                        bankroll=50.0)
+        return {"available": 80.0, "exposure": -20.0}
+
+    rc.betfair_service.get_account_funds = lettura_in_volo
+    modulo.time.monotonic = lambda: orologio["t"]
+    try:
+        rc._on_signal_received_serial(_segnale("BACK", 15.0))
+    finally:
+        modulo.time.monotonic = reale
+    assert not _ordini(bus)
+    assert rifiuti and rifiuti[0] == "supera_max_single_bet", rifiuti

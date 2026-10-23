@@ -2939,6 +2939,18 @@
         "tests/unit/test_pfc008_exposure_beyond_tables.py"
       ],
       "rationale": "Audit PF-FINANCIAL-IMPACT-GATE-01: senza la soglia una lettura iniziata prima di un settlement (o di uno snapshot/ripristino) rimette in vigore la cassa superata."
+    },
+    {
+      "id": "entry_read_superseded_ignored",
+      "module": "core.runtime_controller",
+      "area": "exposure",
+      "file": "core/runtime_controller.py",
+      "original": "        if letta_recente is None or read_at is None or float(letta_recente) < float(read_at):\n            return \"\"                                    # stesso istante: ricontrollo anche su quella (prudente)\n",
+      "mutated": "        if True:\n            return \"\"\n",
+      "tests": [
+        "tests/unit/test_pfc008_exposure_beyond_tables.py"
+      ],
+      "rationale": "Rilievo Codex P1 su 0dbadbb: una lettura d'ingresso superata da una lettura piu' recente (cassa scesa o non verificata) approva ancora sulla cassa vecchia."
     }
   ]
 }
